@@ -14,9 +14,9 @@ use matter_certis_v2_lib::infrastructure::{
     SqliteVendorRepository, SqliteProductRepository,
 };
 use matter_certis_v2_lib::application::{
-    VendorUseCases, MatterProductUseCases,
+    VendorUseCases, MatterProductUseCases, ProductUseCases,
     CreateVendorDto, UpdateVendorDto,
-    CreateMatterProductDto,
+    CreateMatterProductDto, MatterProductFilterDto,
 };
 
 #[tokio::main(flavor = "current_thread")]
@@ -41,7 +41,8 @@ async fn run_fast_tests() -> Result<()> {
     
     // Create use cases
     let vendor_use_cases = VendorUseCases::new(vendor_repo.clone());
-    let matter_product_use_cases = MatterProductUseCases::new(product_repo.clone());
+    let matter_use_cases = MatterProductUseCases::new(product_repo.clone());
+    let product_use_cases = ProductUseCases::new(product_repo.clone());
 
     println!("✅ In-memory database initialized");
     println!();
@@ -50,7 +51,7 @@ async fn run_fast_tests() -> Result<()> {
     fast_vendor_test(&vendor_use_cases).await?;
     
     // Fast Test 2: Basic Product Management
-    fast_product_test(&matter_product_use_cases).await?;
+    fast_product_test(&matter_use_cases, &product_use_cases).await?;
     
     // Fast Test 3: Core validation
     fast_validation_test(&vendor_use_cases).await?;
@@ -67,62 +68,78 @@ async fn fast_vendor_test(vendor_use_cases: &VendorUseCases) -> Result<()> {
     
     // Create vendor
     let create_dto = CreateVendorDto {
-        name: "FastTest Corp".to_string(),
-        base_url: "https://fasttest.com".to_string(),
-        description: Some("Test vendor for speed".to_string()),
+        vendor_number: 1001,
+        vendor_name: "FastTest Corp".to_string(),
+        company_legal_name: "FastTest Corporation".to_string(),
     };
     
     let vendor = vendor_use_cases.create_vendor(create_dto).await?;
-    println!("  ✅ Created vendor: {}", vendor.name);
+    println!("  ✅ Created vendor: {}", vendor.vendor_name);
     
     // Update vendor
     let update_dto = UpdateVendorDto {
-        name: Some("FastTest Corp Updated".to_string()),
-        base_url: None,
-        description: Some("Updated for speed test".to_string()),
+        vendor_name: Some("FastTest Corp Updated".to_string()),
+        company_legal_name: None,
     };
     
-    let updated = vendor_use_cases.update_vendor(vendor.id, update_dto).await?;
-    println!("  ✅ Updated vendor: {}", updated.name);
+    let updated = vendor_use_cases.update_vendor(&vendor.vendor_id, update_dto).await?;
+    println!("  ✅ Updated vendor: {}", updated.vendor_name);
     
     // Get vendor
-    let fetched = vendor_use_cases.get_vendor(vendor.id).await?;
-    println!("  ✅ Fetched vendor: {}", fetched.name);
+    let fetched = vendor_use_cases.get_vendor_by_id(&vendor.vendor_id).await?;
+    if let Some(fetched_vendor) = fetched {
+        println!("  ✅ Fetched vendor: {}", fetched_vendor.vendor_name);
+    }
     
     // List vendors
-    let vendors = vendor_use_cases.list_vendors().await?;
+    let vendors = vendor_use_cases.get_all_vendors().await?;
     println!("  ✅ Listed {} vendors", vendors.len());
     
     println!();
     Ok(())
 }
 
-async fn fast_product_test(matter_use_cases: &MatterProductUseCases) -> Result<()> {
+async fn fast_product_test(matter_use_cases: &MatterProductUseCases, product_use_cases: &ProductUseCases) -> Result<()> {
     println!("🧪 Fast Product Test");
     
     // Create matter product
     let create_dto = CreateMatterProductDto {
-        vendor_id: 1, // Assuming vendor from previous test
-        name: "Fast Test Product".to_string(),
-        matter_type: "electronics".to_string(),
-        price: Some(99.99),
-        description: Some("Fast test product".to_string()),
-        matter_data: serde_json::json!({
-            "category": "test",
-            "features": ["fast", "test"]
-        }),
+        url: "https://example.com/test-product".to_string(),
+        page_id: Some(1),
+        index_in_page: Some(0),
+        id: Some("TEST-001".to_string()),
+        manufacturer: Some("FastTest Corp".to_string()),
+        model: Some("Fast Test Product".to_string()),
+        device_type: Some("electronics".to_string()),
+        certificate_id: Some("CERT-001".to_string()),
+        certification_date: None,
+        software_version: None,
+        hardware_version: None,
+        vid: None,
+        pid: None,
+        family_sku: None,
+        family_variant_sku: None,
+        firmware_version: None,
+        family_id: None,
+        tis_trp_tested: None,
+        specification_version: None,
+        transport_interface: None,
+        primary_device_type_id: None,
+        application_categories: vec!["test".to_string()],
     };
     
     let product = matter_use_cases.create_matter_product(create_dto).await?;
-    println!("  ✅ Created matter product: {}", product.name);
+    println!("  ✅ Created matter product: {}", product.model.as_ref().unwrap_or(&"Unknown".to_string()));
     
-    // Get product
-    let fetched = matter_use_cases.get_matter_product(product.id).await?;
-    println!("  ✅ Fetched product: {}", fetched.name);
+    // Get product using pagination
+    let (fetched_products, _) = product_use_cases.get_matter_products(0, 10).await?;
+    if let Some(fetched) = fetched_products.first() {
+        println!("  ✅ Fetched product: {}", fetched.model.as_ref().unwrap_or(&"Unknown".to_string()));
+    }
     
     // List products
-    let products = matter_use_cases.list_matter_products().await?;
-    println!("  ✅ Listed {} products", products.len());
+    let (products, count) = product_use_cases.get_matter_products(0, 100).await?;
+    println!("  ✅ Listed {} products (total: {})", products.len(), count);
     
     println!();
     Ok(())
@@ -133,9 +150,9 @@ async fn fast_validation_test(vendor_use_cases: &VendorUseCases) -> Result<()> {
     
     // Test empty name validation
     let invalid_dto = CreateVendorDto {
-        name: "".to_string(),
-        base_url: "https://test.com".to_string(),
-        description: None,
+        vendor_number: 0,
+        vendor_name: "".to_string(),
+        company_legal_name: "Test Company".to_string(),
     };
     
     match vendor_use_cases.create_vendor(invalid_dto).await {
@@ -143,16 +160,16 @@ async fn fast_validation_test(vendor_use_cases: &VendorUseCases) -> Result<()> {
         Ok(_) => println!("  ❌ Validation should have failed"),
     }
     
-    // Test invalid URL validation
-    let invalid_url_dto = CreateVendorDto {
-        name: "Test".to_string(),
-        base_url: "not-a-url".to_string(),
-        description: None,
+    // Test zero vendor number validation
+    let invalid_vendor_dto = CreateVendorDto {
+        vendor_number: 0,
+        vendor_name: "Test".to_string(),
+        company_legal_name: "Test Company".to_string(),
     };
     
-    match vendor_use_cases.create_vendor(invalid_url_dto).await {
-        Err(e) => println!("  ✅ URL validation error caught: {}", e),
-        Ok(_) => println!("  ❌ URL validation should have failed"),
+    match vendor_use_cases.create_vendor(invalid_vendor_dto).await {
+        Err(e) => println!("  ✅ Vendor number validation error caught: {}", e),
+        Ok(_) => println!("  ❌ Vendor number validation should have failed"),
     }
     
     println!();
