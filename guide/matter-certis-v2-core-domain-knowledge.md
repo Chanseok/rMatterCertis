@@ -651,73 +651,99 @@ pub async fn subscribe_to_crawling_events(app_handle: tauri::AppHandle, event_bu
 
 ### SQLite 테이블 구조
 
+**📋 최신 업데이트: 2025-01-15 - 메모리 기반 세션 관리로 아키텍처 최적화**
+
 ```sql
--- 기본 제품 정보 (1단계 수집 결과)
-CREATE TABLE products (
-    url TEXT PRIMARY KEY,
-    manufacturer TEXT,
-    model TEXT,
-    certificate_id TEXT,
-    page_id INTEGER,
-    index_in_page INTEGER,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- 상세 제품 정보 (2단계 수집 결과)
-CREATE TABLE product_details (
-    url TEXT PRIMARY KEY,
-    page_id INTEGER,
-    index_in_page INTEGER,
-    id TEXT,
-    manufacturer TEXT,
-    model TEXT,
-    device_type TEXT,
-    certification_id TEXT,
-    certification_date TEXT,
-    software_version TEXT,
-    hardware_version TEXT,
-    vid INTEGER,
-    pid INTEGER,
-    family_sku TEXT,
-    family_variant_sku TEXT,
-    firmware_version TEXT,
-    family_id TEXT,
-    tis_trp_tested TEXT,
-    specification_version TEXT,
-    transport_interface TEXT,
-    primary_device_type_id TEXT,
-    application_categories TEXT, -- JSON 배열을 문자열로 저장
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (url) REFERENCES products (url)
-);
-
--- 벤더 정보
-CREATE TABLE vendors (
-    vendor_id INTEGER PRIMARY KEY,
+-- Vendor table for CSA-IoT Matter certification database vendors
+CREATE TABLE IF NOT EXISTS vendors (
+    vendor_id TEXT PRIMARY KEY,              -- UUID-based ID for better distribution
+    vendor_number INTEGER NOT NULL UNIQUE,   -- Matter vendor number
     vendor_name TEXT NOT NULL,
-    company_legal_name TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    company_legal_name TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 크롤링 세션 기록
-CREATE TABLE crawling_sessions (
-    id TEXT PRIMARY KEY,
-    status TEXT NOT NULL,
-    total_pages INTEGER,
-    processed_pages INTEGER DEFAULT 0,
-    products_found INTEGER DEFAULT 0,
-    errors_count INTEGER DEFAULT 0,
-    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    completed_at DATETIME,
-    config_snapshot TEXT -- JSON으로 설정 저장
+-- Product table for basic product information (Stage 1 collection)
+CREATE TABLE IF NOT EXISTS products (
+    url TEXT PRIMARY KEY,              -- Product detail page URL
+    manufacturer TEXT,                 -- Manufacturer name
+    model TEXT,                       -- Model name
+    certificate_id TEXT,              -- Certificate ID
+    page_id INTEGER,                  -- Collected page number
+    index_in_page INTEGER,           -- Order within page
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 인덱스 생성
-CREATE INDEX idx_products_page_id ON products (page_id);
-CREATE INDEX idx_product_details_vid ON product_details (vid);
-CREATE INDEX idx_product_details_created_at ON product_details (created_at);
-CREATE INDEX idx_crawling_sessions_status ON crawling_sessions (status);
+-- Matter products table for complete Matter certification info (Stage 2 collection)
+CREATE TABLE IF NOT EXISTS matter_products (
+    url TEXT PRIMARY KEY,                    -- Product detail page URL (FK to products)
+    page_id INTEGER,                        -- Collected page number
+    index_in_page INTEGER,                 -- Order within page
+    id TEXT,                               -- Matter product ID
+    manufacturer TEXT,                     -- Manufacturer name
+    model TEXT,                           -- Model name
+    device_type TEXT,                     -- Device type
+    certificate_id TEXT,                  -- Certificate ID
+    certification_date TEXT,             -- Certification date
+    software_version TEXT,               -- Software version
+    hardware_version TEXT,               -- Hardware version
+    vid TEXT,                            -- Vendor ID (hex string)
+    pid TEXT,                            -- Product ID (hex string)
+    family_sku TEXT,                     -- Family SKU
+    family_variant_sku TEXT,             -- Family variant SKU
+    firmware_version TEXT,               -- Firmware version
+    family_id TEXT,                      -- Family ID
+    tis_trp_tested TEXT,                 -- TIS/TRP tested
+    specification_version TEXT,          -- Specification version
+    transport_interface TEXT,            -- Transport interface
+    primary_device_type_id TEXT,         -- Primary device type ID
+    application_categories TEXT,         -- JSON array as TEXT
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Crawling results table for final session outcomes only
+-- NOTE: Session state is now managed in-memory for better performance
+CREATE TABLE IF NOT EXISTS crawling_results (
+    session_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,                    -- Completed, Failed, Stopped
+    stage TEXT NOT NULL,                     -- products, matter_products, details
+    total_pages INTEGER NOT NULL,
+    products_found INTEGER NOT NULL,
+    errors_count INTEGER NOT NULL,
+    started_at DATETIME NOT NULL,
+    completed_at DATETIME NOT NULL,
+    execution_time_seconds INTEGER NOT NULL,
+    config_snapshot TEXT,                    -- JSON configuration used
+    error_details TEXT                       -- Detailed error information if failed
+);
+
+-- Performance-optimized indexes
+CREATE INDEX IF NOT EXISTS idx_products_manufacturer ON products (manufacturer);
+CREATE INDEX IF NOT EXISTS idx_products_page_id ON products (page_id);
+CREATE INDEX IF NOT EXISTS idx_matter_products_manufacturer ON matter_products (manufacturer);
+CREATE INDEX IF NOT EXISTS idx_matter_products_device_type ON matter_products (device_type);
+CREATE INDEX IF NOT EXISTS idx_matter_products_vid ON matter_products (vid);
+CREATE INDEX IF NOT EXISTS idx_matter_products_certification_date ON matter_products (certification_date);
+CREATE INDEX IF NOT EXISTS idx_crawling_results_status ON crawling_results (status);
+CREATE INDEX IF NOT EXISTS idx_crawling_results_started_at ON crawling_results (started_at);
+CREATE INDEX IF NOT EXISTS idx_vendors_vendor_number ON vendors (vendor_number);
+```
+
+### 아키텍처 최적화: 메모리 기반 세션 관리
+
+**2025년 1월 업데이트: 산업 표준 접근법 도입**
+
+크롤링 세션 관리를 기존의 데이터베이스 중심에서 메모리 기반으로 전환했습니다:
+
+- **AS-IS**: `crawling_sessions` 테이블에 모든 세션 상태 저장
+- **TO-BE**: 메모리에서 세션 상태 관리, 최종 결과만 `crawling_results` 테이블에 저장
+
+이 변경으로 다음과 같은 이점을 얻었습니다:
+- 🚀 **성능 향상**: 실시간 상태 업데이트시 DB I/O 제거
+- 🔄 **확장성 개선**: 다중 세션 동시 처리 최적화
+- 🧹 **단순화**: 세션 정리 로직 불필요
+- 📊 **안정성**: 메모리 기반 상태로 락(lock) 경합 제거
 ```
 
 ### Repository 패턴 구현

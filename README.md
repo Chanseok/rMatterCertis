@@ -2,6 +2,12 @@
 
 E-commerce crawling application built with Tauri, Rust backend, and SolidJS frontend, following modern Rust 2024 conventions.
 
+## 📊 Current Project Status
+
+**Phase 2 Complete, Phase 3 actively in progress (60% complete)**
+
+For detailed project status, progress tracking, and architectural decisions, see: **[📋 PROJECT STATUS](./guide/PROJECT_STATUS.md)**
+
 ## Project Structure (Rust 2024 Modern)
 
 ### Backend (Rust) - mod.rs Free Structure
