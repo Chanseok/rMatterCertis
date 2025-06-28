@@ -1,8 +1,16 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
+//! Matter Certis v2 - E-commerce Product Crawling Application
+//! 
+//! This application provides web crawling capabilities for e-commerce sites
+//! with a modern desktop interface built with Tauri and SolidJS.
+
+// Module declarations
+pub mod domain;
+pub mod application;
+pub mod infrastructure;
+pub mod commands;
+
+// Re-export commands for easier access
+pub use commands::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

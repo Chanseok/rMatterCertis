@@ -134,22 +134,32 @@ export default {
 
 ### 🏗️ 4단계: 기본 파일 생성
 
-#### Rust 기본 파일들
+#### Rust 모듈 파일들 (현대적인 방식)
 ```bash
-# 각 모듈의 mod.rs 파일 생성
-touch src-tauri/src/domain/mod.rs
-touch src-tauri/src/domain/entities/mod.rs
-touch src-tauri/src/domain/repositories/mod.rs
-touch src-tauri/src/domain/services/mod.rs
-touch src-tauri/src/application/mod.rs
-touch src-tauri/src/application/use_cases/mod.rs
-touch src-tauri/src/application/dto/mod.rs
-touch src-tauri/src/infrastructure/mod.rs
-touch src-tauri/src/infrastructure/database/mod.rs
-touch src-tauri/src/infrastructure/http/mod.rs
-touch src-tauri/src/infrastructure/config/mod.rs
-touch src-tauri/src/commands/mod.rs
+# 메인 모듈 파일들 생성 (mod.rs 대신 모듈명.rs 사용)
+touch src-tauri/src/domain.rs
+touch src-tauri/src/application.rs
+touch src-tauri/src/infrastructure.rs
+touch src-tauri/src/commands.rs
+
+# 도메인 하위 모듈들
+touch src-tauri/src/domain/entities.rs
+touch src-tauri/src/domain/repositories.rs
+touch src-tauri/src/domain/services.rs
+
+# 애플리케이션 하위 모듈들
+touch src-tauri/src/application/use_cases.rs
+touch src-tauri/src/application/dto.rs
+
+# 인프라스트럭처 하위 모듈들
+touch src-tauri/src/infrastructure/database.rs
+touch src-tauri/src/infrastructure/http.rs
+touch src-tauri/src/infrastructure/config.rs
 ```
+
+> **💡 모던 Rust 모듈 구조**  
+> `mod.rs` 파일 대신 모듈명과 동일한 파일명을 사용하는 것이 현재 권장되는 방식입니다.  
+> 이렇게 하면 IDE에서 여러 개의 `mod.rs` 탭으로 인한 혼란을 피할 수 있습니다.
 
 #### TypeScript 기본 파일들
 ```bash

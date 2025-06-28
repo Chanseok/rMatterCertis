@@ -1,14 +1,17 @@
 {
-  "name": "temp-matter-certis",
+  "name": "r-matter-certis",
   "version": "0.1.0",
-  "description": "",
+  "description": "rMatterCertis - E-commerce Product Crawling Application",
   "type": "module",
   "scripts": {
     "start": "vite",
     "dev": "vite",
     "build": "vite build",
     "serve": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "type-check": "tsc --noEmit"
   },
   "license": "MIT",
   "dependencies": {
