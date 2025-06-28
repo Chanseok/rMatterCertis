@@ -134,7 +134,7 @@ mod tests {
         // 연결 풀이 정상적으로 생성되었는지 확인
         assert!(!db.pool().is_closed());
 
-        println!("✅ Database connection test passed!");
+        println!("✅ Database connection test passed with optimized build!");
         Ok(())
     }
 

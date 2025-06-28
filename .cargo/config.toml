@@ -1,0 +1,39 @@
+# Cargo configuration for faster builds
+[build]
+# Use optimal number of CPU cores for compilation (automatic)
+jobs = 8  # Increased for better parallelization
+
+# Enable incremental compilation (for fastest iterative development)
+incremental = true
+
+# Note: sccache disabled because it conflicts with incremental compilation
+# For clean builds from scratch, sccache is better
+# For iterative development, incremental compilation is better
+
+# Use faster linker on macOS (LLD is faster than default ld)
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# Global configuration for better performance
+[profile.dev]
+# Faster builds by reducing optimizations
+debug = 1  # Less debug info for faster builds
+split-debuginfo = "unpacked"  # Better for macOS
+
+# Dependencies optimization (keeps dependencies fast)
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.test.package."*"]
+opt-level = 3
+debug = false
+
+# Use pipelined compilation (if available)
+[unstable]
+# Uncomment these if you want to try experimental features
+# build-std = ["std", "panic_abort"]  
+# build-std-features = ["panic_immediate_abort"]

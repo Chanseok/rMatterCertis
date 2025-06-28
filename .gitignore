@@ -3,3 +3,48 @@ dist
 data
 .vscode
 .DS_Store
+
+# Rust build artifacts
+target/
+*.db
+*.db-shm
+*.db-wal
+
+# Cache directories
+.cargo/.package-cache
+sccache/
+
+# IDE files
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Environment files
+.env.local
+.env.production
+
+# Rust/Cargo cache directories
+target/
+Cargo.lock
+*.pdb
+
+# Database files
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# IDE and editor files
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+build/
+out/

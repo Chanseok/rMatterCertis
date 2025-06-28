@@ -87,6 +87,28 @@ The application uses SQLite for local data storage with the following schema:
 
 ## Testing Guide
 
+### ⚡ Fast Development & Testing
+
+For optimal development experience, this project includes build optimizations:
+
+```bash
+# Load optimized development environment
+source .env.development
+
+# Run specific tests quickly
+./scripts/test-fast.sh database_connection
+
+# Run all tests
+./scripts/test-fast.sh
+```
+
+**Performance improvements:**
+- Initial build: ~1 minute (from ~3 minutes)
+- Incremental builds: ~0.5 seconds (from ~30 seconds)  
+- Small changes: ~2.6 seconds (from ~60 seconds)
+
+For detailed optimization information, see [Rust Build Optimization Guide](docs/rust-build-optimization.md).
+
 ### 🧪 Database Testing
 
 The application includes several ways to test database functionality:
