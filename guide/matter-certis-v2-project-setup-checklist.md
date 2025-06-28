@@ -43,10 +43,58 @@ cd rMatterCertis
 pnpm install
 ```
 
-### 🗂️ 2단계: 프로젝트 구조 생성 (모던 Rust 방식)
+### 🗂️ 2단계: 프로젝트 구조 생성 (Rust 2024 모던 방식)
 
 ```bash
-# Rust 백엔드 구조 (mod.rs 없는 모던 방식)
+# Rust 백엔드 구조 (mod.rs 없는 모던 방식 - 실제 검증됨)
+cd src-tauri/src
+
+# 도메인 계층
+mkdir -p domain
+touch domain.rs domain/entities.rs domain/repositories.rs domain/services.rs
+
+# 애플리케이션 계층  
+mkdir -p application
+touch application.rs application/dto.rs application/use_cases.rs
+
+# 인프라 계층
+mkdir -p infrastructure
+touch infrastructure.rs infrastructure/repositories.rs infrastructure/database_connection.rs infrastructure/config.rs infrastructure/database.rs infrastructure/http.rs
+
+# 명령어 및 유틸리티
+touch commands.rs
+mkdir -p bin
+touch bin/test_db.rs
+
+# 실제 생성된 구조:
+# src/
+# ├── main.rs
+# ├── lib.rs
+# ├── commands.rs
+# ├── domain.rs (mod.rs 대신)
+# ├── domain/
+# │   ├── entities.rs
+# │   ├── repositories.rs
+# │   └── services.rs
+# ├── application.rs (mod.rs 대신)
+# ├── application/
+# │   ├── dto.rs
+# │   └── use_cases.rs
+# ├── infrastructure.rs (mod.rs 대신)
+# ├── infrastructure/
+# │   ├── repositories.rs
+# │   ├── database_connection.rs
+# │   ├── config.rs
+# │   ├── database.rs
+# │   └── http.rs
+# └── bin/
+#     └── test_db.rs
+```
+
+#### ⚠️ 중요: mod.rs 파일을 생성하지 마세요!
+- Rust 2018+ 에서는 `mod.rs` 대신 모듈명과 같은 `.rs` 파일 사용
+- 예: `domain/mod.rs` ❌ → `domain.rs` ✅
+- 이는 현대적이고 더 명확한 모듈 구조를 제공합니다
 mkdir -p src-tauri/src/domain
 mkdir -p src-tauri/src/application  
 mkdir -p src-tauri/src/infrastructure
