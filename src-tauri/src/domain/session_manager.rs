@@ -333,6 +333,12 @@ impl SessionManager {
             .collect()
     }
 
+    /// Get all sessions (both active and inactive)
+    pub async fn get_all_sessions(&self) -> Vec<CrawlingSessionState> {
+        let sessions = self.sessions.read().await;
+        sessions.values().cloned().collect()
+    }
+
     /// Calculate estimated time of arrival
     async fn calculate_eta(&self, session: &CrawlingSessionState) -> Option<DateTime<Utc>> {
         if session.current_page == 0 || session.total_pages == 0 {

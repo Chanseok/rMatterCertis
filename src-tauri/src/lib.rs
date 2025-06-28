@@ -67,7 +67,18 @@ pub fn run() {
             create_matter_product,
             search_matter_products,
             filter_matter_products,
-            delete_product
+            delete_product,
+            
+            // Web crawling commands
+            start_crawling,
+            get_crawling_status,
+            stop_crawling,
+            pause_crawling,
+            resume_crawling,
+            get_crawling_stats,
+            get_active_crawling_sessions,
+            get_crawling_session_history,
+            get_enhanced_crawling_stats
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

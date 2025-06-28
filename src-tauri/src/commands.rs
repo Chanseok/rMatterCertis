@@ -8,15 +8,18 @@ use std::sync::Arc;
 use tauri::State;
 use crate::infrastructure::{
     database_connection::DatabaseConnection,
-    repositories::{SqliteVendorRepository, SqliteProductRepository}
+    repositories::{SqliteVendorRepository, SqliteProductRepository},
+    http_client::HttpClientConfig,
+    crawler::WebCrawler,
 };
+use crate::domain::session_manager::SessionManager;
 use crate::application::{
-    use_cases::{VendorUseCases, MatterProductUseCases},
+    use_cases::{VendorUseCases, MatterProductUseCases, CrawlingUseCases},
     dto::{
         CreateVendorDto, UpdateVendorDto, VendorResponseDto,
         CreateProductDto, CreateMatterProductDto, ProductResponseDto, MatterProductResponseDto,
         ProductSearchDto, MatterProductFilterDto, ProductSearchResultDto,
-        DatabaseSummaryDto
+        DatabaseSummaryDto, StartCrawlingDto, SessionStatusDto
     }
 };
 
@@ -300,6 +303,261 @@ pub async fn delete_product(
             Err(format!("Failed to delete product: {}", e))
         }
     }
+}
+
+// ============================================================================
+// Web Crawling Commands
+// ============================================================================
+
+/// Start a new crawling session
+#[tauri::command]
+pub async fn start_crawling(
+    dto: StartCrawlingDto,
+    db: State<'_, DatabaseConnection>
+) -> Result<String, String> {
+    println!("🕷️  Starting crawling session: {}", dto.start_url);
+    
+    // Initialize repositories
+    let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
+    let vendor_repo = Arc::new(SqliteVendorRepository::new(db.pool().clone()));
+    
+    // Initialize session manager
+    let session_manager = Arc::new(SessionManager::new());
+    
+    // Initialize crawler
+    let http_config = HttpClientConfig {
+        max_requests_per_second: 2,
+        ..Default::default()
+    };
+    
+    let crawler = WebCrawler::new(http_config, session_manager.clone())
+        .map_err(|e| format!("Failed to create crawler: {}", e))?;
+    
+    // Start crawling
+    match crawler.start_crawling(dto.into()).await {
+        Ok(session_id) => {
+            println!("✅ Crawling session started: {}", session_id);
+            Ok(session_id)
+        },
+        Err(e) => {
+            println!("❌ Failed to start crawling: {}", e);
+            Err(format!("Failed to start crawling: {}", e))
+        }
+    }
+}
+
+/// Get the status of a crawling session
+#[tauri::command]
+pub async fn get_crawling_status(
+    session_id: String,
+    db: State<'_, DatabaseConnection>
+) -> Result<Option<SessionStatusDto>, String> {
+    println!("📊 Getting status for session: {}", session_id);
+    
+    // Initialize repositories
+    let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
+    let vendor_repo = Arc::new(SqliteVendorRepository::new(db.pool().clone()));
+    
+    // Initialize use cases
+    let crawling_use_cases = CrawlingUseCases::new(
+        product_repo,
+        vendor_repo,
+        Arc::new(SessionManager::new()),
+    );
+    
+    match crawling_use_cases.get_session_status(&session_id).await {
+        Ok(Some(status)) => {
+            let dto = SessionStatusDto {
+                session_id: session_id.clone(),
+                status: format!("{:?}", status.status),
+                progress: status.current_page,
+                current_step: status.current_url.unwrap_or("N/A".to_string()),
+                started_at: status.started_at.to_rfc3339(),
+                last_updated: status.last_updated_at.to_rfc3339(),
+            };
+            Ok(Some(dto))
+        },
+        Ok(None) => {
+            println!("⚠️  Session not found: {}", session_id);
+            Ok(None)
+        },
+        Err(e) => {
+            println!("❌ Failed to get session status: {}", e);
+            Err(format!("Failed to get session status: {}", e))
+        }
+    }
+}
+
+/// Stop a running crawling session
+#[tauri::command]
+pub async fn stop_crawling(
+    session_id: String,
+    db: State<'_, DatabaseConnection>
+) -> Result<String, String> {
+    println!("⏹️  Stopping crawling session: {}", session_id);
+    
+    // Initialize repositories
+    let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
+    let vendor_repo = Arc::new(SqliteVendorRepository::new(db.pool().clone()));
+    
+    // Initialize use cases
+    let crawling_use_cases = CrawlingUseCases::new(
+        product_repo,
+        vendor_repo,
+        Arc::new(SessionManager::new()),
+    );
+    
+    match crawling_use_cases.complete_crawling(&session_id).await {
+        Ok(_) => {
+            println!("✅ Crawling session stopped: {}", session_id);
+            Ok("Crawling session stopped successfully".to_string())
+        },
+        Err(e) => {
+            println!("❌ Failed to stop crawling: {}", e);
+            Err(format!("Failed to stop crawling: {}", e))
+        }
+    }
+}
+
+/// Pause a running crawling session
+#[tauri::command]
+pub async fn pause_crawling(
+    session_id: String,
+    _db: State<'_, DatabaseConnection>
+) -> Result<String, String> {
+    println!("⏸️  Pausing crawling session: {}", session_id);
+    
+    // Note: Session pausing would need to be implemented in SessionManager
+    // For now, we'll return a placeholder response
+    Ok(format!("Pause functionality not yet implemented for session: {}", session_id))
+}
+
+/// Resume a paused crawling session
+#[tauri::command]
+pub async fn resume_crawling(
+    session_id: String,
+    _db: State<'_, DatabaseConnection>
+) -> Result<String, String> {
+    println!("▶️  Resuming crawling session: {}", session_id);
+    
+    // Note: Session resuming would need to be implemented in SessionManager
+    // For now, we'll return a placeholder response
+    Ok(format!("Resume functionality not yet implemented for session: {}", session_id))
+}
+
+/// Get crawling session statistics
+#[tauri::command]
+pub async fn get_crawling_stats(
+    _db: State<'_, DatabaseConnection>
+) -> Result<serde_json::Value, String> {
+    println!("📈 Getting crawling statistics");
+    
+    // Initialize session manager
+    let session_manager = Arc::new(SessionManager::new());
+    
+    let stats = session_manager.get_session_stats().await;
+    
+    let stats_json = serde_json::json!({
+        "active_sessions": stats.total_active_sessions,
+        "sessions_by_status": stats.sessions_by_status
+    });
+    
+    Ok(stats_json)
+}
+
+/// Get all active crawling sessions
+#[tauri::command]
+pub async fn get_active_crawling_sessions(
+    _db: State<'_, DatabaseConnection>
+) -> Result<Vec<serde_json::Value>, String> {
+    println!("📋 Getting active crawling sessions");
+    
+    // Initialize session manager
+    let session_manager = Arc::new(SessionManager::new());
+    
+    let sessions = session_manager.get_all_sessions().await;
+    let active_sessions: Vec<_> = sessions.into_iter()
+        .filter(|session| matches!(session.status, crate::domain::session_manager::SessionStatus::Running | crate::domain::session_manager::SessionStatus::Paused))
+        .map(|session| serde_json::json!({
+            "session_id": session.session_id,
+            "status": format!("{:?}", session.status),
+            "stage": format!("{:?}", session.stage),
+            "pages_crawled": session.current_page,
+            "max_pages": session.total_pages,
+            "current_url": session.current_url,
+            "start_time": session.started_at.to_rfc3339(),
+            "errors": session.error_details
+        }))
+        .collect();
+    
+    Ok(active_sessions)
+}
+
+/// Get crawling session history
+#[tauri::command]
+pub async fn get_crawling_session_history(
+    _db: State<'_, DatabaseConnection>
+) -> Result<Vec<serde_json::Value>, String> {
+    println!("📚 Getting crawling session history");
+    
+    // Initialize session manager
+    let session_manager = Arc::new(SessionManager::new());
+    
+    let sessions = session_manager.get_all_sessions().await;
+    let history: Vec<_> = sessions.into_iter()
+        .map(|session| serde_json::json!({
+            "session_id": session.session_id,
+            "status": format!("{:?}", session.status),
+            "stage": format!("{:?}", session.stage),
+            "pages_crawled": session.current_page,
+            "max_pages": session.total_pages,
+            "current_url": session.current_url,
+            "start_time": session.started_at.to_rfc3339(),
+            "errors": session.error_details
+        }))
+        .collect();
+    
+    Ok(history)
+}
+
+/// Get enhanced crawling statistics for dashboard
+#[tauri::command]
+pub async fn get_enhanced_crawling_stats(
+    _db: State<'_, DatabaseConnection>
+) -> Result<serde_json::Value, String> {
+    println!("📊 Getting enhanced crawling statistics");
+    
+    // Initialize session manager
+    let session_manager = Arc::new(SessionManager::new());
+    
+    let sessions = session_manager.get_all_sessions().await;
+    
+    let total_sessions = sessions.len();
+    let active_sessions = sessions.iter()
+        .filter(|s| matches!(s.status, crate::domain::session_manager::SessionStatus::Running | crate::domain::session_manager::SessionStatus::Paused))
+        .count();
+    let completed_sessions = sessions.iter()
+        .filter(|s| matches!(s.status, crate::domain::session_manager::SessionStatus::Completed))
+        .count();
+    let total_pages_crawled: u32 = sessions.iter()
+        .map(|s| s.current_page)
+        .sum();
+    
+    let success_rate = if total_sessions > 0 {
+        completed_sessions as f64 / total_sessions as f64
+    } else {
+        0.0
+    };
+    
+    let stats = serde_json::json!({
+        "total_sessions": total_sessions,
+        "active_sessions": active_sessions,
+        "completed_sessions": completed_sessions,
+        "total_pages_crawled": total_pages_crawled,
+        "average_success_rate": success_rate
+    });
+    
+    Ok(stats)
 }
 
 // ============================================================================
