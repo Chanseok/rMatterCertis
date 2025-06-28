@@ -651,13 +651,16 @@ pub async fn subscribe_to_crawling_events(app_handle: tauri::AppHandle, event_bu
 
 ### SQLite 테이블 구조
 
-**📋 최신 업데이트: 2025-01-15 - 메모리 기반 세션 관리로 아키텍처 최적화**
+**📋 최신 업데이트: 2025-06-29 - 현재 001_initial.sql 스키마와 동기화**
 
 ```sql
+-- Initial database schema for rMatterCertis
+-- Creates core tables for vendors, products, and crawling sessions
+
 -- Vendor table for CSA-IoT Matter certification database vendors
 CREATE TABLE IF NOT EXISTS vendors (
-    vendor_id TEXT PRIMARY KEY,              -- UUID-based ID for better distribution
-    vendor_number INTEGER NOT NULL UNIQUE,   -- Matter vendor number
+    vendor_id TEXT PRIMARY KEY,
+    vendor_number INTEGER NOT NULL UNIQUE,
     vendor_name TEXT NOT NULL,
     company_legal_name TEXT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -676,7 +679,7 @@ CREATE TABLE IF NOT EXISTS products (
 
 -- Matter products table for complete Matter certification info (Stage 2 collection)
 CREATE TABLE IF NOT EXISTS matter_products (
-    url TEXT PRIMARY KEY,                    -- Product detail page URL (FK to products)
+    url TEXT PRIMARY KEY,                    -- Product detail page URL
     page_id INTEGER,                        -- Collected page number
     index_in_page INTEGER,                 -- Order within page
     id TEXT,                               -- Matter product ID
@@ -687,8 +690,8 @@ CREATE TABLE IF NOT EXISTS matter_products (
     certification_date TEXT,             -- Certification date
     software_version TEXT,               -- Software version
     hardware_version TEXT,               -- Hardware version
-    vid TEXT,                            -- Vendor ID (hex string)
-    pid TEXT,                            -- Product ID (hex string)
+    vid TEXT,                            -- Vendor ID
+    pid TEXT,                            -- Product ID
     family_sku TEXT,                     -- Family SKU
     family_variant_sku TEXT,             -- Family variant SKU
     firmware_version TEXT,               -- Firmware version
@@ -703,7 +706,7 @@ CREATE TABLE IF NOT EXISTS matter_products (
 );
 
 -- Crawling results table for final session outcomes only
--- NOTE: Session state is now managed in-memory for better performance
+-- Replaces crawling_sessions for performance optimization
 CREATE TABLE IF NOT EXISTS crawling_results (
     session_id TEXT PRIMARY KEY,
     status TEXT NOT NULL,                    -- Completed, Failed, Stopped
@@ -718,7 +721,7 @@ CREATE TABLE IF NOT EXISTS crawling_results (
     error_details TEXT                       -- Detailed error information if failed
 );
 
--- Performance-optimized indexes
+-- Indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_products_manufacturer ON products (manufacturer);
 CREATE INDEX IF NOT EXISTS idx_products_page_id ON products (page_id);
 CREATE INDEX IF NOT EXISTS idx_matter_products_manufacturer ON matter_products (manufacturer);
