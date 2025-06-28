@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Matter Certis v2 - E-commerce Product Crawling Application"
 authors = ["Chanseok <hi007chans@gmail.com>"]
 edition = "2021"
+default-run = "matter-certis-v2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -36,4 +37,8 @@ tracing-subscriber = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = "3.8"
+tokio-test = "0.4"
 

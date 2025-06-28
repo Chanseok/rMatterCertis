@@ -6,10 +6,30 @@ import "./App.css";
 function App() {
   const [greetMsg, setGreetMsg] = createSignal("");
   const [name, setName] = createSignal("");
+  const [dbStatus, setDbStatus] = createSignal("");
+  const [dbInfo, setDbInfo] = createSignal("");
 
   async function greet() {
     // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
     setGreetMsg(await invoke("greet", { name: name() }));
+  }
+
+  async function testDatabase() {
+    try {
+      const result = await invoke("test_database_connection");
+      setDbStatus(`✅ ${result}`);
+    } catch (error) {
+      setDbStatus(`❌ ${error}`);
+    }
+  }
+
+  async function getDatabaseInfo() {
+    try {
+      const result = await invoke("get_database_info");
+      setDbInfo(`📊 ${result}`);
+    } catch (error) {
+      setDbInfo(`❌ ${error}`);
+    }
   }
 
   return (
@@ -44,6 +64,20 @@ function App() {
         <button type="submit">Greet</button>
       </form>
       <p>{greetMsg()}</p>
+
+      <div class="row">
+        <h2>rMatterCertis Database Tests</h2>
+      </div>
+      
+      <div class="row">
+        <button onClick={testDatabase}>Test Database Connection</button>
+        <button onClick={getDatabaseInfo}>Get Database Info</button>
+      </div>
+      
+      <div class="row">
+        <p>{dbStatus()}</p>
+        <p>{dbInfo()}</p>
+      </div>
     </main>
   );
 }
