@@ -3,7 +3,8 @@
 //! Contains DTOs for data exchange between Use Cases and Tauri Commands.
 
 use serde::{Deserialize, Serialize};
-use crate::domain::entities::{Vendor, Product, MatterProduct, CrawlingSession, CrawlingStatus, CrawlingStage, DatabaseSummary};
+use crate::domain::entities::{Vendor, Product, MatterProduct, DatabaseSummary};
+use crate::domain::session_manager::{CrawlingSessionState};
 
 // ============================================================================
 // Vendor DTOs
@@ -179,43 +180,35 @@ impl From<MatterProduct> for MatterProductResponseDto {
 }
 
 // ============================================================================
-// CrawlingSession DTOs
+// Session Management DTOs (Memory-based)
 // ============================================================================
 
 #[derive(Debug, Deserialize)]
-pub struct CreateCrawlingSessionDto {
-    pub status: CrawlingStatus,
-    pub current_stage: CrawlingStage,
-    pub config_snapshot: String,
+pub struct StartSessionDto {
+    pub session_id: String,
+    pub start_url: String,
+    pub target_domains: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct CrawlingSessionResponseDto {
-    pub id: String,
+pub struct SessionStatusDto {
+    pub session_id: String,
     pub status: String,
-    pub current_stage: String,
-    pub total_pages: Option<u32>,
-    pub processed_pages: u32,
-    pub products_found: u32,
-    pub errors_count: u32,
+    pub progress: u32,
+    pub current_step: String,
     pub started_at: String,
-    pub completed_at: Option<String>,
-    pub config_snapshot: String,
+    pub last_updated: String,
 }
 
-impl From<CrawlingSession> for CrawlingSessionResponseDto {
-    fn from(session: CrawlingSession) -> Self {
+impl From<CrawlingSessionState> for SessionStatusDto {
+    fn from(state: CrawlingSessionState) -> Self {
         Self {
-            id: session.id,
-            status: format!("{:?}", session.status),
-            current_stage: format!("{:?}", session.current_stage),
-            total_pages: session.total_pages,
-            processed_pages: session.processed_pages,
-            products_found: session.products_found,
-            errors_count: session.errors_count,
-            started_at: session.started_at.to_rfc3339(),
-            completed_at: session.completed_at.map(|dt| dt.to_rfc3339()),
-            config_snapshot: session.config_snapshot,
+            session_id: state.session_id,
+            status: format!("{:?}", state.status),
+            progress: state.products_found, // Use products_found as progress indicator
+            current_step: state.current_url.unwrap_or("Unknown".to_string()),
+            started_at: state.started_at.to_rfc3339(),
+            last_updated: state.last_updated_at.to_rfc3339(),
         }
     }
 }

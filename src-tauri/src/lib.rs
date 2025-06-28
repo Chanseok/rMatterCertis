@@ -11,6 +11,10 @@ pub mod application;
 pub mod infrastructure;
 pub mod commands;
 
+// Test utilities (only available during testing)
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 // Re-export commands for easier access
 pub use commands::*;
 

@@ -5,10 +5,12 @@
 
 pub mod database_connection;
 pub mod repositories;
+pub mod crawling_result_repository;
 pub mod config;
 pub mod database;
 pub mod http;
 
 // Re-export commonly used items
 pub use database_connection::DatabaseConnection;
-pub use repositories::{SqliteVendorRepository, SqliteProductRepository, SqliteCrawlingSessionRepository};
+pub use repositories::{SqliteVendorRepository, SqliteProductRepository};
+pub use crawling_result_repository::{CrawlingResultRepository, SqliteCrawlingResultRepository};

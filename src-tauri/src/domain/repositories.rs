@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use anyhow::Result;
 use std::collections::HashSet;
 use crate::domain::entities::{
-    Vendor, Product, MatterProduct, CrawlingSession, 
+    Vendor, Product, MatterProduct, 
     DatabaseSummary
 };
 
@@ -53,13 +53,5 @@ pub trait ProductRepository: Send + Sync {
     async fn delete_matter_product(&self, url: &str) -> Result<()>;
 }
 
-#[async_trait]
-pub trait CrawlingSessionRepository: Send + Sync {
-    async fn create(&self, session: &CrawlingSession) -> Result<()>;
-    async fn update(&self, session: &CrawlingSession) -> Result<()>;
-    async fn find_by_id(&self, session_id: &str) -> Result<Option<CrawlingSession>>;
-    async fn find_recent(&self, limit: u32) -> Result<Vec<CrawlingSession>>;
-    async fn find_active(&self) -> Result<Vec<CrawlingSession>>;
-    async fn delete(&self, session_id: &str) -> Result<()>;
-    async fn cleanup_old_sessions(&self, days: u32) -> Result<u32>;
-}
+// Note: CrawlingSessionRepository removed in favor of memory-based SessionManager
+// Final results are stored using CrawlingResultRepository in infrastructure layer

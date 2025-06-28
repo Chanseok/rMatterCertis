@@ -97,54 +97,16 @@ pub enum CrawlerType {
     Playwright,
 }
 
-/// Crawling session tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CrawlingSession {
-    pub id: String,
-    pub status: CrawlingStatus,
-    pub current_stage: CrawlingStage,
-    pub total_pages: Option<u32>,
-    pub processed_pages: u32,
-    pub products_found: u32,
-    pub errors_count: u32,
-    pub started_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub config_snapshot: String, // JSON snapshot of config
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CrawlingStatus {
-    Idle,
-    Initializing,
-    Running,
-    Paused,
-    Completed,
-    Error,
-    Stopped,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CrawlingStage {
-    Idle,
-    ProductList,      // Stage 1: Product list collection
-    Validation,       // Stage 1.5: Duplicate validation
-    ProductDetail,    // Stage 2: Detailed info collection
-    DatabaseSave,     // Stage 3: DB saving
-    Completed,
-    Failed,
-}
-
-/// Progress tracking for crawling operations
+/// Progress tracking for crawling operations (UI display only)
+/// Note: Actual session state is managed in memory by SessionManager
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlingProgress {
     pub current: u32,
     pub total: u32,
     pub percentage: f32,
     pub current_step: String,
-    pub current_stage: CrawlingStage,
     pub elapsed_time_secs: u64,
     pub remaining_time_secs: Option<u64>,
-    pub status: CrawlingStatus,
     pub message: Option<String>,
     // Batch processing info
     pub current_batch: Option<u32>,

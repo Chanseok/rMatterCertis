@@ -89,4 +89,5 @@ debug = false
 default = ["full"]
 full = ["reqwest", "scraper", "tracing", "tracing-subscriber"]
 minimal = []  # 최소 의존성으로 빠른 컴파일
+test-utils = []  # 테스트 유틸리티 활성화
 

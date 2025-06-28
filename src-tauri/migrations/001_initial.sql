@@ -49,18 +49,20 @@ CREATE TABLE IF NOT EXISTS matter_products (
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Crawling sessions table for tracking crawling operations
-CREATE TABLE IF NOT EXISTS crawling_sessions (
+-- Crawling results table for final session outcomes only
+-- Replaces crawling_sessions for performance optimization
+CREATE TABLE IF NOT EXISTS crawling_results (
     session_id TEXT PRIMARY KEY,
-    status TEXT NOT NULL DEFAULT 'pending', -- pending, running, completed, failed
-    stage TEXT NOT NULL,                    -- products, matter_products, details
-    start_page INTEGER,
-    end_page INTEGER,
-    current_page INTEGER,
-    products_found INTEGER NOT NULL DEFAULT 0,
-    errors_count INTEGER NOT NULL DEFAULT 0,
-    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    completed_at DATETIME
+    status TEXT NOT NULL,                    -- Completed, Failed, Stopped
+    stage TEXT NOT NULL,                     -- products, matter_products, details
+    total_pages INTEGER NOT NULL,
+    products_found INTEGER NOT NULL,
+    errors_count INTEGER NOT NULL,
+    started_at DATETIME NOT NULL,
+    completed_at DATETIME NOT NULL,
+    execution_time_seconds INTEGER NOT NULL,
+    config_snapshot TEXT,                    -- JSON configuration used
+    error_details TEXT                       -- Detailed error information if failed
 );
 
 -- Indexes for better query performance
@@ -70,5 +72,6 @@ CREATE INDEX IF NOT EXISTS idx_matter_products_manufacturer ON matter_products (
 CREATE INDEX IF NOT EXISTS idx_matter_products_device_type ON matter_products (device_type);
 CREATE INDEX IF NOT EXISTS idx_matter_products_vid ON matter_products (vid);
 CREATE INDEX IF NOT EXISTS idx_matter_products_certification_date ON matter_products (certification_date);
-CREATE INDEX IF NOT EXISTS idx_crawling_sessions_status ON crawling_sessions (status);
+CREATE INDEX IF NOT EXISTS idx_crawling_results_status ON crawling_results (status);
+CREATE INDEX IF NOT EXISTS idx_crawling_results_started_at ON crawling_results (started_at);
 CREATE INDEX IF NOT EXISTS idx_vendors_vendor_number ON vendors (vendor_number);

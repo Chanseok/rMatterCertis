@@ -9,10 +9,11 @@ use uuid::Uuid;
 use chrono::Utc;
 
 use crate::domain::entities::{
-    Vendor, Product, MatterProduct, CrawlingSession, CrawlingStatus, CrawlingStage,
+    Vendor, Product, MatterProduct, 
     CrawlerConfig, ValidationResult, ValidationSummary, DatabaseSummary
 };
-use crate::domain::repositories::{VendorRepository, ProductRepository, CrawlingSessionRepository};
+use crate::domain::repositories::{VendorRepository, ProductRepository};
+use crate::domain::session_manager::{SessionManager, CrawlingStage, SessionStatus, CrawlingSessionState};
 use crate::application::dto::{
     CreateVendorDto, UpdateVendorDto, VendorResponseDto,
     CreateProductDto, ProductResponseDto,
@@ -325,72 +326,50 @@ impl MatterProductUseCases {
     }
 }
 
-/// Use cases for starting and managing crawling operations
+/// Use cases for starting and managing crawling operations with memory-based session management
 pub struct CrawlingUseCases {
     product_repo: Arc<dyn ProductRepository>,
     #[allow(dead_code)]
     vendor_repo: Arc<dyn VendorRepository>,
-    #[allow(dead_code)]
-    session_repo: Arc<dyn CrawlingSessionRepository>,
+    session_manager: Arc<SessionManager>,
 }
 
 impl CrawlingUseCases {
     pub fn new(
         product_repo: Arc<dyn ProductRepository>,
         vendor_repo: Arc<dyn VendorRepository>,
-        session_repo: Arc<dyn CrawlingSessionRepository>,
+        session_manager: Arc<SessionManager>,
     ) -> Self {
         Self {
             product_repo,
             vendor_repo,
-            session_repo,
+            session_manager,
         }
     }
 
-    /// Start a new crawling session
-    pub async fn start_crawling(&self, config: CrawlerConfig) -> Result<CrawlingSession> {
-        let session = CrawlingSession {
-            id: Uuid::new_v4().to_string(),
-            status: CrawlingStatus::Initializing,
-            current_stage: CrawlingStage::ProductList,
-            total_pages: Some(config.page_range_limit),
-            processed_pages: 0,
-            products_found: 0,
-            errors_count: 0,
-            started_at: Utc::now(),
-            completed_at: None,
-            config_snapshot: serde_json::to_string(&config)?,
-        };
-
-        self.session_repo.create(&session).await?;
-        Ok(session)
+    /// Start a new crawling session (in-memory)
+    pub async fn start_crawling(&self, session_id: &str, start_url: &str, target_domains: Vec<String>) -> Result<()> {
+        self.session_manager.start_session_simple(session_id, start_url, target_domains).await
     }
 
-    /// Update crawling session status
-    pub async fn update_session_status(
+    /// Update crawling session progress
+    pub async fn update_crawling_progress(
         &self,
         session_id: &str,
-        status: CrawlingStatus,
-        stage: CrawlingStage,
-        processed_pages: u32,
-        products_found: u32,
-        errors_count: u32,
+        progress: u32,
+        current_step: &str,
     ) -> Result<()> {
-        if let Some(mut session) = self.session_repo.find_by_id(session_id).await? {
-            session.status = status.clone();
-            session.current_stage = stage;
-            session.processed_pages = processed_pages;
-            session.products_found = products_found;
-            session.errors_count = errors_count;
+        self.session_manager.update_session_progress(session_id, progress, current_step.to_string()).await
+    }
 
-            if matches!(status, CrawlingStatus::Completed | CrawlingStatus::Error | CrawlingStatus::Stopped) {
-                session.completed_at = Some(Utc::now());
-            }
+    /// Complete crawling session
+    pub async fn complete_crawling(&self, session_id: &str) -> Result<()> {
+        self.session_manager.complete_session_simple(session_id).await
+    }
 
-            self.session_repo.update(&session).await?;
-        }
-
-        Ok(())
+    /// Get session status
+    pub async fn get_session_status(&self, session_id: &str) -> Result<Option<CrawlingSessionState>> {
+        self.session_manager.get_session_state(session_id).await
     }
 
     /// Validate products against existing database (Stage 1.5)
@@ -447,16 +426,6 @@ impl CrawlingUseCases {
     pub async fn save_matter_products(&self, products: &[MatterProduct]) -> Result<()> {
         self.product_repo.save_matter_products_batch(products).await
     }
-
-    /// Get recent crawling sessions
-    pub async fn get_recent_sessions(&self, limit: u32) -> Result<Vec<CrawlingSession>> {
-        self.session_repo.find_recent(limit).await
-    }
-
-    /// Clean up old completed sessions
-    pub async fn cleanup_old_sessions(&self, days: u32) -> Result<u32> {
-        self.session_repo.cleanup_old_sessions(days).await
-    }
 }
 
 /// Use cases for product management and querying
@@ -510,20 +479,5 @@ impl ProductUseCases {
     }
 }
 
-// ============================================================================
-// CrawlingSession Use Cases (placeholder for future implementation)  
-// ============================================================================
-
-pub struct CrawlingSessionUseCases {
-    #[allow(dead_code)]
-    session_repo: Arc<dyn CrawlingSessionRepository>,
-}
-
-impl CrawlingSessionUseCases {
-    pub fn new(session_repo: Arc<dyn CrawlingSessionRepository>) -> Self {
-        Self { session_repo }
-    }
-
-    // TODO: Implement CrawlingSession-specific DTO-based methods
-    // For now, we'll focus on Vendor and Product management
-}
+// Note: Session management is now handled by SessionManager in the domain layer
+// Final crawling results are persisted using CrawlingResultRepository
