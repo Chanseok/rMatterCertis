@@ -15,12 +15,16 @@ pub struct CreateVendorDto {
     pub vendor_number: u32,           // Matter 인증 벤더 번호 (숫자)
     pub vendor_name: String,          // 벤더명
     pub company_legal_name: String,   // 법인명 (Matter 인증 필수)
+    pub vendor_url: Option<String>,   // 벤더 웹사이트 URL
+    pub csa_assigned_number: Option<String>, // CSA 할당 번호
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateVendorDto {
     pub vendor_name: Option<String>,
     pub company_legal_name: Option<String>,
+    pub vendor_url: Option<String>,
+    pub csa_assigned_number: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -35,7 +39,7 @@ pub struct VendorResponseDto {
 impl From<Vendor> for VendorResponseDto {
     fn from(vendor: Vendor) -> Self {
         Self {
-            vendor_id: vendor.vendor_id,
+            vendor_id: vendor.id,
             vendor_number: vendor.vendor_number,
             vendor_name: vendor.vendor_name,
             company_legal_name: vendor.company_legal_name,
@@ -98,29 +102,21 @@ impl From<Product> for ProductResponseDto {
 pub struct CreateMatterProductDto {
     pub url: String,                  // Product와 연결되는 URL
     pub page_id: Option<u32>,
-    pub index_in_page: Option<u32>,
-    pub id: Option<String>,
-    pub manufacturer: Option<String>,
-    pub model: Option<String>,
-    pub device_type: Option<String>,
-    pub certificate_id: Option<String>,
-    pub certification_date: Option<String>,
-    pub software_version: Option<String>,
-    pub hardware_version: Option<String>,
+    pub json_data: Option<String>,    // Raw JSON data from crawling
     pub vid: Option<String>,          // Vendor ID (Matter 특화)
     pub pid: Option<String>,          // Product ID (Matter 특화)
-    pub family_sku: Option<String>,
-    pub family_variant_sku: Option<String>,
-    pub firmware_version: Option<String>,
-    pub family_id: Option<String>,
-    pub tis_trp_tested: Option<String>,
-    pub specification_version: Option<String>,
-    pub transport_interface: Option<String>,
-    pub primary_device_type_id: Option<String>,
-    pub application_categories: Vec<String>,
+    pub device_name: Option<String>,  // Device name
+    pub device_type: Option<String>,  // Device type
+    pub manufacturer: Option<String>,
+    pub certification_date: Option<String>,
+    pub commissioning_method: Option<String>,
+    pub transport_protocol: Option<String>,
+    pub application_categories: Option<String>, // JSON string
+    pub clusters_client: Option<String>,        // JSON string
+    pub clusters_server: Option<String>,        // JSON string
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct MatterProductResponseDto {
     pub url: String,
     pub page_id: Option<u32>,
@@ -219,7 +215,7 @@ impl From<CrawlingSessionState> for SessionStatusDto {
 
 #[derive(Debug, Deserialize)]
 pub struct ProductSearchDto {
-    pub query: String,
+    pub query: Option<String>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
 }

@@ -3,7 +3,13 @@ import type {
   StartCrawlingRequest, 
   CrawlingSessionState, 
   CrawlingStats,
-  CrawlingStatusResponse 
+  CrawlingStatusResponse,
+  Product,
+  MatterProduct,
+  ProductSearchRequest,
+  ProductSearchResult,
+  MatterProductFilter,
+  DatabaseSummary
 } from "../types/crawling";
 
 export class CrawlingService {
@@ -62,5 +68,54 @@ export class CrawlingService {
    */
   static async getSessionHistory(): Promise<CrawlingSessionState[]> {
     return await invoke<CrawlingSessionState[]>("get_crawling_session_history");
+  }
+
+  /**
+   * Get all basic products from crawling results
+   */
+  static async getProducts(): Promise<Product[]> {
+    return await invoke<Product[]>("get_products");
+  }
+
+  /**
+   * Get all Matter products from crawling results
+   */
+  static async getMatterProducts(): Promise<MatterProduct[]> {
+    return await invoke<MatterProduct[]>("get_matter_products");
+  }
+
+  /**
+   * Search products with filters and pagination
+   */
+  static async searchProducts(searchRequest: ProductSearchRequest): Promise<ProductSearchResult> {
+    return await invoke<ProductSearchResult>("search_products", { searchDto: searchRequest });
+  }
+
+  /**
+   * Get products by manufacturer
+   */
+  static async getProductsByManufacturer(manufacturer: string): Promise<Product[]> {
+    return await invoke<Product[]>("get_products_by_manufacturer", { manufacturer });
+  }
+
+  /**
+   * Filter Matter products with advanced criteria
+   */
+  static async filterMatterProducts(filter: MatterProductFilter): Promise<MatterProduct[]> {
+    return await invoke<MatterProduct[]>("filter_matter_products", { filterDto: filter });
+  }
+
+  /**
+   * Get database summary with counts and statistics
+   */
+  static async getDatabaseSummary(): Promise<DatabaseSummary> {
+    return await invoke<DatabaseSummary>("get_database_summary");
+  }
+
+  /**
+   * Get recently added products
+   */
+  static async getRecentProducts(limit?: number): Promise<Product[]> {
+    return await invoke<Product[]>("get_recent_products", { limit });
   }
 }

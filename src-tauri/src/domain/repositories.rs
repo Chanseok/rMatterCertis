@@ -13,9 +13,11 @@ use crate::domain::entities::{
 #[async_trait]
 pub trait VendorRepository: Send + Sync {
     async fn create(&self, vendor: &Vendor) -> Result<()>;
+    async fn save(&self, vendor: &Vendor) -> Result<Vendor>;
     async fn find_by_id(&self, vendor_id: &str) -> Result<Option<Vendor>>;
     async fn find_by_number(&self, vendor_number: u32) -> Result<Option<Vendor>>;
     async fn find_all(&self) -> Result<Vec<Vendor>>;
+    async fn find_all_paginated(&self, page: u32, limit: u32) -> Result<(Vec<Vendor>, u32)>;
     async fn search_by_name(&self, name: &str) -> Result<Vec<Vendor>>;
     async fn update(&self, vendor: &Vendor) -> Result<()>;
     async fn delete(&self, vendor_id: &str) -> Result<()>;
@@ -51,7 +53,22 @@ pub trait ProductRepository: Send + Sync {
     // Cleanup operations
     async fn delete_product(&self, url: &str) -> Result<()>;
     async fn delete_matter_product(&self, url: &str) -> Result<()>;
+    
+    // Additional query methods
+    async fn get_all_products(&self) -> Result<Vec<Product>>;
+    async fn get_all_matter_products(&self) -> Result<Vec<MatterProduct>>;
+    async fn get_recent_products(&self, limit: u32) -> Result<Vec<Product>>;
+    async fn get_recent_matter_products(&self, limit: u32) -> Result<Vec<MatterProduct>>;
+    
+    // Advanced filtering and utilities
+    async fn filter_matter_products(
+        &self,
+        manufacturer: Option<&str>,
+        device_type: Option<&str>,
+        vid: Option<&str>,
+        certification_date_start: Option<&str>,
+        certification_date_end: Option<&str>,
+    ) -> Result<Vec<MatterProduct>>;
+    async fn get_unique_manufacturers(&self) -> Result<Vec<String>>;
+    async fn get_unique_device_types(&self) -> Result<Vec<String>>;
 }
-
-// Note: CrawlingSessionRepository removed in favor of memory-based SessionManager
-// Final results are stored using CrawlingResultRepository in infrastructure layer

@@ -222,3 +222,36 @@ npm run tauri build
 ```
 
 The application will create a SQLite database in `./data/matter_certis.db` and automatically run migrations on first launch.
+
+## 📦 Archive
+
+### Code Archive
+Legacy and backup code files have been archived for project cleanliness:
+
+- **Location**: `src-tauri/src/application/archive/`
+- **Archive file**: `use_cases_archive_YYYYMMDD_HHMMSS.zip`
+- **Contents**: Archived use_cases files (backup, clean, new, old versions)
+- **Purpose**: Clean project structure while preserving development history
+
+#### Archived Files:
+- `use_cases_backup.rs` - Backup version of use cases
+- `use_cases_clean.rs` - Clean version during refactoring
+- `use_cases_new.rs` - New implementation attempt
+- `use_cases_old.rs` - Original implementation
+
+If you need to restore any archived files:
+```bash
+cd src-tauri/src/application/archive/
+unzip use_cases_archive_*.zip
+```
+
+### Current Active Files:
+- `use_cases.rs` - Current working implementation (in use)
+
+## 🎯 Next Steps
+
+1. **Performance Optimization**: Implement connection pooling and query optimization
+2. **Enhanced UI**: Add more advanced filtering and visualization components
+3. **API Integration**: Connect with real Matter certification databases
+4. **Deployment**: Set up production deployment pipeline
+5. **Monitoring**: Add logging and performance monitoring

@@ -73,19 +73,6 @@ pub async fn get_database_info() -> Result<String, String> {
     Ok(info)
 }
 
-#[tauri::command]
-pub async fn get_database_summary(
-    db: State<'_, DatabaseConnection>
-) -> Result<DatabaseSummaryDto, String> {
-    let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
-    let use_cases = MatterProductUseCases::new(product_repo);
-    
-    match use_cases.get_database_summary().await {
-        Ok(summary) => Ok(summary),
-        Err(e) => Err(format!("Failed to get database summary: {}", e)),
-    }
-}
-
 // ============================================================================
 // Vendor Management Commands
 // ============================================================================
@@ -137,7 +124,7 @@ pub async fn get_vendor_by_id(
     let vendor_repo = Arc::new(SqliteVendorRepository::new(db.pool().clone()));
     let use_cases = VendorUseCases::new(vendor_repo);
     
-    match use_cases.get_vendor_by_id(&vendor_id).await {
+    match use_cases.get_vendor(&vendor_id).await {
         Ok(vendor) => Ok(vendor),
         Err(e) => Err(format!("Failed to get vendor: {}", e)),
     }
@@ -151,7 +138,7 @@ pub async fn search_vendors_by_name(
     let vendor_repo = Arc::new(SqliteVendorRepository::new(db.pool().clone()));
     let use_cases = VendorUseCases::new(vendor_repo);
     
-    match use_cases.search_vendors_by_name(&name).await {
+    match use_cases.search_vendors(&name).await {
         Ok(vendors) => {
             println!("✅ Found {} vendors for query: '{}'", vendors.len(), name);
             Ok(vendors)
@@ -208,12 +195,12 @@ pub async fn delete_vendor(
 #[tauri::command]
 pub async fn create_product(
     db: State<'_, DatabaseConnection>,
-    dto: CreateProductDto
-) -> Result<ProductResponseDto, String> {
+    dto: CreateMatterProductDto
+) -> Result<MatterProductResponseDto, String> {
     let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
     let use_cases = MatterProductUseCases::new(product_repo);
     
-    match use_cases.create_product(dto).await {
+    match use_cases.create_matter_product(dto).await {
         Ok(product) => {
             println!("✅ Product created: {}", product.url);
             Ok(product)
@@ -266,26 +253,6 @@ pub async fn search_matter_products(
 }
 
 #[tauri::command]
-pub async fn filter_matter_products(
-    db: State<'_, DatabaseConnection>,
-    filter: MatterProductFilterDto
-) -> Result<ProductSearchResultDto, String> {
-    let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
-    let use_cases = MatterProductUseCases::new(product_repo);
-    
-    match use_cases.filter_matter_products(filter).await {
-        Ok(result) => {
-            println!("✅ Filtered {} Matter products", result.total_count);
-            Ok(result)
-        },
-        Err(e) => {
-            println!("❌ Failed to filter Matter products: {}", e);
-            Err(format!("Failed to filter Matter products: {}", e))
-        }
-    }
-}
-
-#[tauri::command]
 pub async fn delete_product(
     db: State<'_, DatabaseConnection>,
     url: String
@@ -321,6 +288,10 @@ pub async fn start_crawling(
     let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
     let vendor_repo = Arc::new(SqliteVendorRepository::new(db.pool().clone()));
     
+    // Initialize repositories
+    let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
+    let vendor_repo = Arc::new(SqliteVendorRepository::new(db.pool().clone()));
+    
     // Initialize session manager
     let session_manager = Arc::new(SessionManager::new());
     
@@ -330,7 +301,7 @@ pub async fn start_crawling(
         ..Default::default()
     };
     
-    let crawler = WebCrawler::new(http_config, session_manager.clone())
+    let crawler = WebCrawler::new(http_config, session_manager.clone(), product_repo, vendor_repo)
         .map_err(|e| format!("Failed to create crawler: {}", e))?;
     
     // Start crawling
@@ -558,6 +529,195 @@ pub async fn get_enhanced_crawling_stats(
     });
     
     Ok(stats)
+}
+
+// ============================================================================
+// Product Results Management Commands  
+// ============================================================================
+
+/// Get all basic products from database
+#[tauri::command]
+pub async fn get_products(
+    db: State<'_, DatabaseConnection>
+) -> Result<Vec<ProductResponseDto>, String> {
+    println!("📊 Getting all products");
+    
+    let pool = db.pool();
+    let product_repo = Arc::new(SqliteProductRepository::new(pool.clone()));
+    let product_use_cases = MatterProductUseCases::new(product_repo);
+    
+    match product_use_cases.get_all_products().await {
+        Ok(products) => {
+            println!("✅ Retrieved {} products", products.len());
+            Ok(products)
+        }
+        Err(e) => {
+            println!("❌ Failed to get products: {}", e);
+            Err(format!("Failed to get products: {}", e))
+        }
+    }
+}
+
+/// Get all Matter products from database
+#[tauri::command]
+pub async fn get_matter_products(
+    db: State<'_, DatabaseConnection>
+) -> Result<Vec<MatterProductResponseDto>, String> {
+    println!("📊 Getting all Matter products");
+    
+    let pool = db.pool();
+    let product_repo = Arc::new(SqliteProductRepository::new(pool.clone()));
+    let product_use_cases = MatterProductUseCases::new(product_repo);
+    
+    match product_use_cases.get_all_matter_products().await {
+        Ok(products) => {
+            println!("✅ Retrieved {} Matter products", products.len());
+            Ok(products)
+        }
+        Err(e) => {
+            println!("❌ Failed to get Matter products: {}", e);
+            Err(format!("Failed to get Matter products: {}", e))
+        }
+    }
+}
+
+/// Search products with pagination and filters
+#[tauri::command]
+pub async fn search_products(
+    search_dto: ProductSearchDto,
+    db: State<'_, DatabaseConnection>
+) -> Result<ProductSearchResultDto, String> {
+    println!("🔍 Searching products with query: {:?}", search_dto.query);
+    
+    let pool = db.pool();
+    let product_repo = Arc::new(SqliteProductRepository::new(pool.clone()));
+    let product_use_cases = MatterProductUseCases::new(product_repo);
+    
+    match product_use_cases.search_products(search_dto).await {
+        Ok(results) => {
+            println!("✅ Found {} products", results.products.len());
+            Ok(results)
+        }
+        Err(e) => {
+            println!("❌ Failed to search products: {}", e);
+            Err(format!("Failed to search products: {}", e))
+        }
+    }
+}
+
+/// Get products filtered by manufacturer
+#[tauri::command]
+pub async fn get_products_by_manufacturer(
+    manufacturer: String,
+    db: State<'_, DatabaseConnection>
+) -> Result<Vec<MatterProductResponseDto>, String> {
+    println!("🔍 Getting products by manufacturer: {}", manufacturer);
+    
+    let pool = db.pool();
+    let product_repo = Arc::new(SqliteProductRepository::new(pool.clone()));
+    let product_use_cases = MatterProductUseCases::new(product_repo);
+    
+    match product_use_cases.get_products_by_manufacturer(&manufacturer).await {
+        Ok(products) => {
+            println!("✅ Found {} products for manufacturer: {}", products.len(), manufacturer);
+            Ok(products)
+        }
+        Err(e) => {
+            println!("❌ Failed to get products by manufacturer: {}", e);
+            Err(format!("Failed to get products by manufacturer: {}", e))
+        }
+    }
+}
+
+/// Get Matter products with advanced filtering
+#[tauri::command]
+pub async fn filter_matter_products(
+    filter_dto: MatterProductFilterDto,
+    db: State<'_, DatabaseConnection>
+) -> Result<Vec<MatterProductResponseDto>, String> {
+    println!("🔍 Filtering Matter products: {:?}", filter_dto);
+    
+    let pool = db.pool();
+    let product_repo = Arc::new(SqliteProductRepository::new(pool.clone()));
+    let product_use_cases = MatterProductUseCases::new(product_repo);
+    
+    match product_use_cases.get_all_matter_products().await {
+        Ok(products) => {
+            // Apply filtering if any filters are provided
+            let filtered_products = if filter_dto.manufacturer.is_some() || 
+                                     filter_dto.device_type.is_some() || 
+                                     filter_dto.vid.is_some() {
+                products.into_iter().filter(|p| {
+                    let manufacturer_match = filter_dto.manufacturer.as_ref()
+                        .map_or(true, |m| p.manufacturer.as_ref().map_or(false, |pm| pm.contains(m)));
+                    let device_type_match = filter_dto.device_type.as_ref()
+                        .map_or(true, |d| p.device_type.as_ref().map_or(false, |pd| pd.contains(d)));
+                    let vid_match = filter_dto.vid.as_ref()
+                        .map_or(true, |v| p.vid.as_ref().map_or(false, |pv| pv.contains(v)));
+                    
+                    manufacturer_match && device_type_match && vid_match
+                }).collect()
+            } else {
+                products
+            };
+            
+            println!("✅ Found {} filtered Matter products", filtered_products.len());
+            Ok(filtered_products)
+        }
+        Err(e) => {
+            println!("❌ Failed to filter Matter products: {}", e);
+            Err(format!("Failed to filter Matter products: {}", e))
+        }
+    }
+}
+
+/// Get database summary with product counts
+#[tauri::command]
+pub async fn get_database_summary(
+    db: State<'_, DatabaseConnection>
+) -> Result<DatabaseSummaryDto, String> {
+    println!("📊 Getting database summary");
+    
+    let pool = db.pool();
+    let product_repo = Arc::new(SqliteProductRepository::new(pool.clone()));
+    let product_use_cases = MatterProductUseCases::new(product_repo);
+    
+    match product_use_cases.get_database_summary().await {
+        Ok(summary) => {
+            println!("✅ Database summary - Products: {}, Matter Products: {}, Vendors: {}", 
+                summary.total_products, summary.total_matter_products, summary.total_vendors);
+            Ok(summary)
+        }
+        Err(e) => {
+            println!("❌ Failed to get database summary: {}", e);
+            Err(format!("Failed to get database summary: {}", e))
+        }
+    }
+}
+
+/// Get recently added products
+#[tauri::command]
+pub async fn get_recent_products(
+    limit: Option<u32>,
+    db: State<'_, DatabaseConnection>
+) -> Result<Vec<MatterProductResponseDto>, String> {
+    let limit = limit.unwrap_or(10);
+    println!("📊 Getting {} recent products", limit);
+    
+    let pool = db.pool();
+    let product_repo = Arc::new(SqliteProductRepository::new(pool.clone()));
+    let product_use_cases = MatterProductUseCases::new(product_repo);
+    
+    match product_use_cases.get_recent_products(limit).await {
+        Ok(products) => {
+            println!("✅ Retrieved {} recent products", products.len());
+            Ok(products)
+        }
+        Err(e) => {
+            println!("❌ Failed to get recent products: {}", e);
+            Err(format!("Failed to get recent products: {}", e))
+        }
+    }
 }
 
 // ============================================================================

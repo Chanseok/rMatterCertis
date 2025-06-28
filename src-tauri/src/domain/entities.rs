@@ -52,11 +52,14 @@ pub struct MatterProduct {
 /// Vendor information from Matter certification database
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vendor {
-    pub vendor_id: String,
+    pub id: String,
     pub vendor_number: u32,
     pub vendor_name: String,
     pub company_legal_name: String,
+    pub vendor_url: Option<String>,
+    pub csa_assigned_number: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Crawler configuration for Matter certification site

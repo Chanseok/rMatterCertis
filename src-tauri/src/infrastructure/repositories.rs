@@ -33,11 +33,14 @@ impl SqliteVendorRepository {
             .with_timezone(&Utc);
 
         Ok(Vendor {
-            vendor_id: row.try_get("vendor_id")?,
+            id: row.try_get("vendor_id")?,
             vendor_number: row.try_get("vendor_number")?,
             vendor_name: row.try_get("vendor_name")?,
             company_legal_name: row.try_get("company_legal_name")?,
+            vendor_url: None, // Not in current schema
+            csa_assigned_number: None, // Not in current schema
             created_at,
+            updated_at: created_at, // Use created_at for updated_at for now
         })
     }
 }
@@ -51,7 +54,7 @@ impl VendorRepository for SqliteVendorRepository {
             VALUES ($1, $2, $3, $4, $5)
             "#
         )
-        .bind(&vendor.vendor_id)
+        .bind(&vendor.id)
         .bind(vendor.vendor_number)
         .bind(&vendor.vendor_name)
         .bind(&vendor.company_legal_name)
@@ -128,7 +131,7 @@ impl VendorRepository for SqliteVendorRepository {
             WHERE vendor_id = $1
             "#
         )
-        .bind(&vendor.vendor_id)
+        .bind(&vendor.id)
         .bind(vendor.vendor_number)
         .bind(&vendor.vendor_name)
         .bind(&vendor.company_legal_name)
@@ -145,6 +148,48 @@ impl VendorRepository for SqliteVendorRepository {
             .await?;
 
         Ok(())
+    }
+
+    async fn save(&self, vendor: &Vendor) -> Result<Vendor> {
+        // Use create for INSERT and update for UPDATE
+        // For now, just do an INSERT OR REPLACE
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO vendors (vendor_id, vendor_number, vendor_name, company_legal_name, created_at)
+            VALUES ($1, $2, $3, $4, $5)
+            "#
+        )
+        .bind(&vendor.id)
+        .bind(vendor.vendor_number)
+        .bind(&vendor.vendor_name)
+        .bind(&vendor.company_legal_name)
+        .bind(vendor.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(vendor.clone())
+    }
+
+    async fn find_all_paginated(&self, page: u32, limit: u32) -> Result<(Vec<Vendor>, u32)> {
+        let offset = (page - 1) * limit;
+        
+        // Get total count
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vendors")
+            .fetch_one(&self.pool)
+            .await?;
+        
+        // Get paginated results
+        let rows = sqlx::query("SELECT * FROM vendors ORDER BY vendor_name LIMIT $1 OFFSET $2")
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let vendors = rows.iter()
+            .map(Self::row_to_vendor)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok((vendors, total as u32))
     }
 }
 
@@ -690,6 +735,156 @@ impl ProductRepository for SqliteProductRepository {
             .await?;
         Ok(())
     }
+
+    /// Get all basic products
+    async fn get_all_products(&self) -> Result<Vec<Product>> {
+        let rows = sqlx::query(
+            "SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at FROM products ORDER BY created_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let products = rows.iter()
+            .map(|row| Self::row_to_product(row))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(products)
+    }
+
+    /// Get all Matter products
+    async fn get_all_matter_products(&self) -> Result<Vec<MatterProduct>> {
+        let rows = sqlx::query(
+            "SELECT url, page_id, index_in_page, id, manufacturer, model, device_type, certificate_id, certification_date, software_version, hardware_version, vid, pid, family_sku, family_variant_sku, firmware_version, family_id, tis_trp_tested, specification_version, transport_interface, primary_device_type_id, application_categories, created_at, updated_at FROM matter_products ORDER BY created_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let products = rows.iter()
+            .map(|row| Self::row_to_matter_product(row))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(products)
+    }
+
+    /// Get recent products with limit
+    async fn get_recent_products(&self, limit: u32) -> Result<Vec<Product>> {
+        let rows = sqlx::query(
+            "SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at FROM products ORDER BY created_at DESC LIMIT $1"
+        )
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let products = rows.iter()
+            .map(|row| Self::row_to_product(row))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(products)
+    }
+
+    /// Get recent Matter products with limit
+    async fn get_recent_matter_products(&self, limit: u32) -> Result<Vec<MatterProduct>> {
+        let rows = sqlx::query(
+            "SELECT url, page_id, index_in_page, id, manufacturer, model, device_type, certificate_id, certification_date, software_version, hardware_version, vid, pid, family_sku, family_variant_sku, firmware_version, family_id, tis_trp_tested, specification_version, transport_interface, primary_device_type_id, application_categories, created_at, updated_at FROM matter_products ORDER BY created_at DESC LIMIT $1"
+        )
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let products = rows.iter()
+            .map(|row| Self::row_to_matter_product(row))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(products)
+    }
+
+    /// Filter Matter products with advanced criteria
+    async fn filter_matter_products(
+        &self,
+        manufacturer: Option<&str>,
+        device_type: Option<&str>,
+        vid: Option<&str>,
+        certification_date_start: Option<&str>,
+        certification_date_end: Option<&str>,
+    ) -> Result<Vec<MatterProduct>> {
+        let mut query = "SELECT url, page_id, index_in_page, id, manufacturer, model, device_type, certificate_id, certification_date, software_version, hardware_version, vid, pid, family_sku, family_variant_sku, firmware_version, family_id, tis_trp_tested, specification_version, transport_interface, primary_device_type_id, application_categories, created_at, updated_at FROM matter_products WHERE 1=1".to_string();
+        let mut bind_count = 0;
+
+        if manufacturer.is_some() {
+            bind_count += 1;
+            query.push_str(&format!(" AND manufacturer = ${}", bind_count));
+        }
+        if device_type.is_some() {
+            bind_count += 1;
+            query.push_str(&format!(" AND device_type = ${}", bind_count));
+        }
+        if vid.is_some() {
+            bind_count += 1;
+            query.push_str(&format!(" AND vid = ${}", bind_count));
+        }
+        if certification_date_start.is_some() {
+            bind_count += 1;
+            query.push_str(&format!(" AND certification_date >= ${}", bind_count));
+        }
+        if certification_date_end.is_some() {
+            bind_count += 1;
+            query.push_str(&format!(" AND certification_date <= ${}", bind_count));
+        }
+
+        query.push_str(" ORDER BY created_at DESC");
+
+        let mut db_query = sqlx::query(&query);
+
+        if let Some(m) = manufacturer {
+            db_query = db_query.bind(m);
+        }
+        if let Some(dt) = device_type {
+            db_query = db_query.bind(dt);
+        }
+        if let Some(v) = vid {
+            db_query = db_query.bind(v);
+        }
+        if let Some(start) = certification_date_start {
+            db_query = db_query.bind(start);
+        }
+        if let Some(end) = certification_date_end {
+            db_query = db_query.bind(end);
+        }
+
+        let rows = db_query.fetch_all(&self.pool).await?;
+
+        let products = rows.iter()
+            .map(|row| Self::row_to_matter_product(row))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(products)
+    }
+
+    /// Get unique manufacturers from Matter products
+    async fn get_unique_manufacturers(&self) -> Result<Vec<String>> {
+        let rows = sqlx::query("SELECT DISTINCT manufacturer FROM matter_products WHERE manufacturer IS NOT NULL ORDER BY manufacturer")
+            .fetch_all(&self.pool)
+            .await?;
+
+        let manufacturers = rows.iter()
+            .map(|row| row.try_get::<String, _>("manufacturer"))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(manufacturers)
+    }
+
+    /// Get unique device types from Matter products
+    async fn get_unique_device_types(&self) -> Result<Vec<String>> {
+        let rows = sqlx::query("SELECT DISTINCT device_type FROM matter_products WHERE device_type IS NOT NULL ORDER BY device_type")
+            .fetch_all(&self.pool)
+            .await?;
+
+        let device_types = rows.iter()
+            .map(|row| row.try_get::<String, _>("device_type"))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(device_types)
+    }
 }
 
 // Note: CrawlingSessionRepository removed - using memory-based SessionManager instead
@@ -738,6 +933,26 @@ mod tests {
         // Test find all
         let all_vendors = repo.find_all().await?;
         assert_eq!(all_vendors.len(), 1);
+
+        // Test save (insert or replace)
+        let updated_vendor = Vendor {
+            vendor_id: "0x1234".to_string(),
+            vendor_number: 4660,
+            vendor_name: "Updated Vendor".to_string(),
+            company_legal_name: "Updated Vendor Inc.".to_string(),
+            created_at: Utc::now(),
+        };
+        repo.save(&updated_vendor).await?;
+
+        // Verify update
+        let found_updated = repo.find_by_id("0x1234").await?;
+        assert!(found_updated.is_some());
+        assert_eq!(found_updated.unwrap().vendor_name, "Updated Vendor");
+
+        // Test find all paginated
+        let (vendors_paginated, total_count) = repo.find_all_paginated(1, 10).await?;
+        assert_eq!(vendors_paginated.len(), 1);
+        assert_eq!(total_count, 1);
 
         println!("✅ Vendor repository test passed!");
         Ok(())

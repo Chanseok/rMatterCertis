@@ -69,6 +69,13 @@ pub fn run() {
             filter_matter_products,
             delete_product,
             
+            // Product results management
+            get_products,
+            get_matter_products,
+            search_products,
+            get_products_by_manufacturer,
+            get_recent_products,
+            
             // Web crawling commands
             start_crawling,
             get_crawling_status,

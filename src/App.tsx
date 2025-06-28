@@ -2,6 +2,7 @@ import { createSignal, onMount, For, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { CrawlingDashboard } from "./components/CrawlingDashboard";
 import { CrawlingForm } from "./components/CrawlingForm";
+import CrawlingResults from "./components/CrawlingResults";
 import "./App.css";
 
 interface Vendor {
@@ -20,7 +21,7 @@ interface DatabaseSummary {
   last_crawling_date?: string;
 }
 
-type AppTab = "dashboard" | "crawling" | "database" | "vendors";
+type AppTab = "dashboard" | "crawling" | "results" | "database" | "vendors";
 
 function App() {
   const [currentTab, setCurrentTab] = createSignal<AppTab>("crawling");
@@ -133,6 +134,9 @@ function App() {
     switch (currentTab()) {
       case "crawling":
         return <CrawlingDashboard onStartCrawling={handleStartCrawling} />;
+      
+      case "results":
+        return <CrawlingResults />;
       
       case "database":
         return (
@@ -249,6 +253,12 @@ function App() {
           onClick={() => setCurrentTab("crawling")}
         >
           🕷️ 크롤링
+        </button>
+        <button 
+          class={`nav-tab ${currentTab() === "results" ? "active" : ""}`}
+          onClick={() => setCurrentTab("results")}
+        >
+          📋 크롤링 결과
         </button>
         <button 
           class={`nav-tab ${currentTab() === "database" ? "active" : ""}`}
