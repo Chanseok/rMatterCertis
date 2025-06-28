@@ -1,36 +1,27 @@
 import { createSignal, onMount, For, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { CrawlingDashboard } from "./components/CrawlingDashboard";
-import { CrawlingForm } from "./components/CrawlingForm";
-import CrawlingResults from "./components/CrawlingResults";
+import { StoreProvider, useStores } from "./stores/index.tsx";
+import { apiAdapter } from "./platform/tauri";
+import type { CreateVendorDto } from "./types/domain";
 import "./App.css";
-
-interface Vendor {
-  vendor_id: string;
-  vendor_number: number;
-  vendor_name: string;
-  company_legal_name: string;
-  created_at: string;
-}
-
-interface DatabaseSummary {
-  total_vendors: number;
-  total_products: number;
-  total_matter_products: number;
-  database_size_mb: number;
-  last_crawling_date?: string;
-}
 
 type AppTab = "dashboard" | "crawling" | "results" | "database" | "vendors";
 
+// Main App Component with Store Provider
 function App() {
-  const [currentTab, setCurrentTab] = createSignal<AppTab>("crawling");
+  return (
+    <StoreProvider>
+      <AppContent />
+    </StoreProvider>
+  );
+}
+
+// App Content Component (inside StoreProvider)
+function AppContent() {
+  const { uiStore, vendorStore } = useStores();
   const [showCrawlingForm, setShowCrawlingForm] = createSignal(false);
   
-  // Database state
+  // Local state for database status (can be moved to store later)
   const [dbStatus, setDbStatus] = createSignal("");
-  const [dbSummary, setDbSummary] = createSignal<DatabaseSummary | null>(null);
-  const [vendors, setVendors] = createSignal<Vendor[]>([]);
   
   // Form state for creating vendor
   const [vendorNumber, setVendorNumber] = createSignal("");
@@ -38,257 +29,207 @@ function App() {
   const [companyLegalName, setCompanyLegalName] = createSignal("");
 
   onMount(async () => {
+    // Test database connection
     await testDatabase();
-    await loadDatabaseSummary();
-    await loadVendors();
+    // Initialize vendor store with data
+    await vendorStore.loadAllVendors();
   });
 
   async function testDatabase() {
     try {
-      const result = await invoke("test_database_connection");
+      const result = await apiAdapter.testDatabaseConnection();
       setDbStatus(`✅ ${result}`);
     } catch (error) {
       setDbStatus(`❌ ${error}`);
     }
   }
 
-  async function loadDatabaseSummary() {
-    try {
-      const summary = await invoke<DatabaseSummary>("get_database_summary");
-      setDbSummary(summary);
-    } catch (error) {
-      console.error("Failed to load database summary:", error);
-    }
-  }
-
-  async function loadVendors() {
-    try {
-      const allVendors = await invoke<Vendor[]>("get_all_vendors");
-      setVendors(allVendors);
-    } catch (error) {
-      console.error("Failed to load vendors:", error);
-    }
-  }
-
   async function createVendor() {
-    try {
-      const vendorNumberValue = parseInt(vendorNumber());
-      if (isNaN(vendorNumberValue)) {
-        alert("벤더 번호는 숫자여야 합니다.");
-        return;
-      }
+    const vendorNumberNum = parseInt(vendorNumber());
+    if (isNaN(vendorNumberNum) || !vendorName() || !companyLegalName()) {
+      alert("Please fill in all required fields");
+      return;
+    }
 
-      const dto = {
-        vendor_number: vendorNumberValue,
-        vendor_name: vendorName(),
-        company_legal_name: companyLegalName()
-      };
+    const dto: CreateVendorDto = {
+      vendor_number: vendorNumberNum,
+      vendor_name: vendorName(),
+      company_legal_name: companyLegalName(),
+    };
 
-      await invoke("create_vendor", { dto });
-      
+    const success = await vendorStore.createVendor(dto);
+    if (success) {
       // Clear form
       setVendorNumber("");
       setVendorName("");
       setCompanyLegalName("");
-      
-      // Reload data
-      await loadVendors();
-      await loadDatabaseSummary();
-      
-      alert("✅ 벤더가 성공적으로 생성되었습니다!");
-    } catch (error) {
-      alert(`❌ 벤더 생성 실패: ${error}`);
+      alert("Vendor created successfully!");
+    } else {
+      alert(`Failed to create vendor: ${vendorStore.state.error}`);
     }
   }
 
-  async function deleteVendor(vendorId: string) {
-    if (!confirm("정말로 이 벤더를 삭제하시겠습니까?")) {
-      return;
-    }
+  const currentTab = () => uiStore.state.activeTab as AppTab;
+  const setCurrentTab = (tab: AppTab) => uiStore.setActiveTab(tab);
 
-    try {
-      await invoke("delete_vendor", { vendorId });
-      await loadVendors();
-      await loadDatabaseSummary();
-      alert("✅ 벤더가 삭제되었습니다!");
-    } catch (error) {
-      alert(`❌ 벤더 삭제 실패: ${error}`);
-    }
-  }
+  return (
+    <div class="app">
+      <div class="header">
+        <h1>Matter Certis v2</h1>
+        <div class="tab-navigation">
+          <button
+            class={currentTab() === "dashboard" ? "tab active" : "tab"}
+            onClick={() => setCurrentTab("dashboard")}
+          >
+            Dashboard
+          </button>
+          <button
+            class={currentTab() === "crawling" ? "tab active" : "tab"}
+            onClick={() => setCurrentTab("crawling")}
+          >
+            Crawling
+          </button>
+          <button
+            class={currentTab() === "results" ? "tab active" : "tab"}
+            onClick={() => setCurrentTab("results")}
+          >
+            Results
+          </button>
+          <button
+            class={currentTab() === "database" ? "tab active" : "tab"}
+            onClick={() => setCurrentTab("database")}
+          >
+            Database
+          </button>
+          <button
+            class={currentTab() === "vendors" ? "tab active" : "tab"}
+            onClick={() => setCurrentTab("vendors")}
+          >
+            Vendors
+          </button>
+        </div>
+      </div>
 
-  const handleStartCrawling = () => {
-    setShowCrawlingForm(true);
-  };
+      <div class="content">
+        <Show when={currentTab() === "dashboard"}>
+          <div>Dashboard placeholder - will integrate with stores</div>
+        </Show>
 
-  const handleCrawlingStarted = (sessionId: string) => {
-    setShowCrawlingForm(false);
-    setCurrentTab("crawling");
-    alert(`✅ 크롤링이 시작되었습니다! 세션 ID: ${sessionId.slice(0, 8)}`);
-  };
-
-  const handleCrawlingFormCancel = () => {
-    setShowCrawlingForm(false);
-  };
-
-  const renderTabContent = () => {
-    switch (currentTab()) {
-      case "crawling":
-        return <CrawlingDashboard onStartCrawling={handleStartCrawling} />;
-      
-      case "results":
-        return <CrawlingResults />;
-      
-      case "database":
-        return (
-          <div class="database-section">
-            <h2>📊 데이터베이스 상태</h2>
-            <p>{dbStatus()}</p>
-            <Show when={dbSummary()}>
-              <div class="db-summary">
-                <div class="summary-grid">
-                  <div class="summary-card">
-                    <h3>총 벤더</h3>
-                    <div class="summary-value">{dbSummary()!.total_vendors}</div>
-                  </div>
-                  <div class="summary-card">
-                    <h3>총 제품</h3>
-                    <div class="summary-value">{dbSummary()!.total_products}</div>
-                  </div>
-                  <div class="summary-card">
-                    <h3>Matter 제품</h3>
-                    <div class="summary-value">{dbSummary()!.total_matter_products}</div>
-                  </div>
-                  <div class="summary-card">
-                    <h3>DB 크기</h3>
-                    <div class="summary-value">{dbSummary()!.database_size_mb.toFixed(2)}MB</div>
-                  </div>
-                </div>
-              </div>
+        <Show when={currentTab() === "crawling"}>
+          <div class="crawling-section">
+            <div class="section-header">
+              <h2>Crawling Management</h2>
+              <button
+                class="btn-primary"
+                onClick={() => setShowCrawlingForm(!showCrawlingForm())}
+              >
+                {showCrawlingForm() ? "Hide Form" : "Start New Crawling"}
+              </button>
+            </div>
+            <Show when={showCrawlingForm()}>
+              <div>Crawling form placeholder - will integrate with crawling store</div>
             </Show>
-            <div class="database-actions">
-              <button class="btn btn-primary" onClick={testDatabase}>DB 연결 테스트</button>
-              <button class="btn btn-secondary" onClick={loadDatabaseSummary}>요약 새로고침</button>
+          </div>
+        </Show>
+
+        <Show when={currentTab() === "results"}>
+          <div>Results placeholder - will integrate with product store</div>
+        </Show>
+
+        <Show when={currentTab() === "database"}>
+          <div class="database-section">
+            <h2>Database Management</h2>
+            <div class="status-box">
+              <h3>Connection Status</h3>
+              <p>{dbStatus()}</p>
             </div>
           </div>
-        );
-      
-      case "vendors":
-        return (
+        </Show>
+
+        <Show when={currentTab() === "vendors"}>
           <div class="vendors-section">
-            <h2>🏢 벤더 관리</h2>
+            <h2>Vendor Management</h2>
             
-            {/* Create Vendor Form */}
+            {/* Vendor Creation Form */}
             <div class="vendor-form">
-              <h3>새 벤더 추가</h3>
-              <div class="form-row">
+              <h3>Create New Vendor</h3>
+              <div class="form-group">
+                <label>Vendor Number:</label>
                 <input
                   type="number"
-                  placeholder="벤더 번호 (숫자)"
                   value={vendorNumber()}
                   onInput={(e) => setVendorNumber(e.currentTarget.value)}
+                  placeholder="Enter vendor number"
                 />
+              </div>
+              <div class="form-group">
+                <label>Vendor Name:</label>
                 <input
                   type="text"
-                  placeholder="벤더명"
                   value={vendorName()}
                   onInput={(e) => setVendorName(e.currentTarget.value)}
+                  placeholder="Enter vendor name"
                 />
+              </div>
+              <div class="form-group">
+                <label>Company Legal Name:</label>
                 <input
                   type="text"
-                  placeholder="법인명"
                   value={companyLegalName()}
                   onInput={(e) => setCompanyLegalName(e.currentTarget.value)}
+                  placeholder="Enter company legal name"
                 />
-                <button class="btn btn-primary" onClick={createVendor}>벤더 생성</button>
               </div>
+              <button
+                class="btn-primary"
+                onClick={createVendor}
+                disabled={vendorStore.isCreating()}
+              >
+                {vendorStore.isCreating() ? "Creating..." : "Create Vendor"}
+              </button>
             </div>
 
-            {/* Vendors List */}
-            <div class="vendors-list">
-              <h3>등록된 벤더 목록 ({vendors().length}개)</h3>
-              <Show 
-                when={vendors().length > 0} 
-                fallback={<p class="empty-message">등록된 벤더가 없습니다.</p>}
-              >
-                <div class="vendors-grid">
-                  <For each={vendors()}>
+            {/* Vendor List */}
+            <div class="vendor-list">
+              <h3>Existing Vendors ({vendorStore.state.vendors.length})</h3>
+              <Show when={vendorStore.state.loading}>
+                <p>Loading vendors...</p>
+              </Show>
+              <Show when={vendorStore.state.error}>
+                <p class="error">Error: {vendorStore.state.error}</p>
+                <button onClick={() => vendorStore.clearError()}>Clear Error</button>
+              </Show>
+              <Show when={!vendorStore.state.loading && vendorStore.hasVendors}>
+                <div class="vendor-grid">
+                  <For each={vendorStore.state.vendors}>
                     {(vendor) => (
                       <div class="vendor-card">
-                        <div class="vendor-info">
-                          <h4>{vendor.vendor_name}</h4>
-                          <p><strong>번호:</strong> {vendor.vendor_number}</p>
-                          <p><strong>법인명:</strong> {vendor.company_legal_name}</p>
-                          <p><strong>등록일:</strong> {new Date(vendor.created_at).toLocaleDateString('ko-KR')}</p>
+                        <h4>{vendor.vendor_name}</h4>
+                        <p><strong>Number:</strong> {vendor.vendor_number}</p>
+                        <p><strong>Legal Name:</strong> {vendor.company_legal_name}</p>
+                        <p><strong>Created:</strong> {new Date(vendor.created_at).toLocaleDateString()}</p>
+                        <div class="vendor-actions">
+                          <button 
+                            class="btn-danger"
+                            onClick={() => vendorStore.deleteVendor(vendor.vendor_id)}
+                            disabled={vendorStore.isDeleting()}
+                          >
+                            {vendorStore.isDeleting() ? "Deleting..." : "Delete"}
+                          </button>
                         </div>
-                        <button 
-                          class="btn btn-danger btn-sm"
-                          onClick={() => deleteVendor(vendor.vendor_id)}
-                        >
-                          삭제
-                        </button>
                       </div>
                     )}
                   </For>
                 </div>
               </Show>
+              <Show when={!vendorStore.state.loading && !vendorStore.hasVendors}>
+                <p>No vendors found. Create one above to get started.</p>
+              </Show>
             </div>
           </div>
-        );
-      
-      default:
-        return <div>알 수 없는 탭입니다.</div>;
-    }
-  };
-
-  return (
-    <main class="app">
-      <header class="app-header">
-        <h1>rMatterCertis</h1>
-        <p>Matter 인증 제품 크롤링 및 관리 시스템</p>
-      </header>
-
-      <nav class="app-nav">
-        <button 
-          class={`nav-tab ${currentTab() === "crawling" ? "active" : ""}`}
-          onClick={() => setCurrentTab("crawling")}
-        >
-          🕷️ 크롤링
-        </button>
-        <button 
-          class={`nav-tab ${currentTab() === "results" ? "active" : ""}`}
-          onClick={() => setCurrentTab("results")}
-        >
-          📋 크롤링 결과
-        </button>
-        <button 
-          class={`nav-tab ${currentTab() === "database" ? "active" : ""}`}
-          onClick={() => setCurrentTab("database")}
-        >
-          📊 데이터베이스
-        </button>
-        <button 
-          class={`nav-tab ${currentTab() === "vendors" ? "active" : ""}`}
-          onClick={() => setCurrentTab("vendors")}
-        >
-          🏢 벤더 관리
-        </button>
-      </nav>
-
-      <div class="app-content">
-        {renderTabContent()}
+        </Show>
       </div>
-
-      <Show when={showCrawlingForm()}>
-        <CrawlingForm
-          onSuccess={handleCrawlingStarted}
-          onCancel={handleCrawlingFormCancel}
-        />
-      </Show>
-
-      <footer class="app-footer">
-        <p>Phase 3: 크롤링 엔진 및 프론트엔드 구현 완료 🎉</p>
-      </footer>
-    </main>
+    </div>
   );
 }
 
