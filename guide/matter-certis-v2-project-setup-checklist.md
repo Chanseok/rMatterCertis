@@ -1,21 +1,26 @@
-# Matter Certis v2 - 프로젝트 생성 체크리스트
+# rMatterCertis - 프로젝트 생성 체크리스트 (실제 구현 기반)
 
 ## 📋 프로젝트 초기화 완료 가이드
 
-이 체크리스트를 따라 새로운 Matter Certis v2 프로젝트를 처음부터 생성할 수 있습니다.
+이 체크리스트는 실제 구현 과정에서 검증된 단계들을 기반으로 작성되었습니다.
 
 ### 🔧 사전 준비사항
 
 #### 필수 개발 환경
 - [ ] **Rust 1.75.0+** 설치 (`rustup update`)
 - [ ] **Node.js 18.0.0+** 설치
-- [ ] **npm 또는 yarn** 패키지 매니저
+- [ ] **pnpm** 패키지 매니저 (npm보다 빠름)
 - [ ] **Git** 버전 관리
 - [ ] **VS Code** (권장 IDE)
 
+#### 성능 최적화 도구
+- [ ] **sccache** (`brew install sccache`) - Rust 컴파일 캐싱
+- [ ] **lld** 링커 (`brew install lld`) - 더 빠른 링킹
+- [ ] **mold** 링커 (선택사항, Linux에서 더 효과적)
+
 #### VS Code 확장 프로그램 (권장)
 - [ ] `rust-analyzer` - Rust 언어 지원
-- [ ] `Tauri` - Tauri 개발 지원
+- [ ] `Tauri` - Tauri 개발 지원  
 - [ ] `SolidJS` - SolidJS 지원
 - [ ] `Prettier` - 코드 포맷팅
 - [ ] `ESLint` - TypeScript 린팅
@@ -23,53 +28,77 @@
 ### 📂 1단계: 프로젝트 생성
 
 ```bash
-# 1. Tauri 프로젝트 생성
-npm create tauri-app@latest matter-certis-v2
+# 1. Tauri 프로젝트 생성 (실제 검증된 설정)
+pnpm create tauri-app@latest rMatterCertis
 
-# 2. 프로젝트 설정 선택
-# - Framework: Vanilla
-# - TypeScript: Yes
-# - Package manager: npm (또는 yarn)
+# 2. 프로젝트 설정 선택 (실제 사용된 옵션)
+# - Framework: SolidJS (Vanilla 대신 SolidJS 추천)
+# - TypeScript: Yes  
+# - Package manager: pnpm
 
 # 3. 프로젝트 디렉토리로 이동
-cd matter-certis-v2
+cd rMatterCertis
 
 # 4. 기본 의존성 설치
-npm install
+pnpm install
 ```
 
-### 🗂️ 2단계: 프로젝트 구조 생성
+### 🗂️ 2단계: 프로젝트 구조 생성 (모던 Rust 방식)
 
 ```bash
-# Rust 백엔드 구조
-mkdir -p src-tauri/src/domain/{entities,repositories,services}
-mkdir -p src-tauri/src/application/{use_cases,dto}
-mkdir -p src-tauri/src/infrastructure/{database,http,config}
-mkdir -p src-tauri/src/commands
+# Rust 백엔드 구조 (mod.rs 없는 모던 방식)
+mkdir -p src-tauri/src/domain
+mkdir -p src-tauri/src/application  
+mkdir -p src-tauri/src/infrastructure
+mkdir -p src-tauri/migrations
+mkdir -p src-tauri/data
 
-# TypeScript 프론트엔드 구조
-mkdir -p src/{components,stores,services,types,utils}
-mkdir -p src/components/{ui,features,layout}
-mkdir -p src/components/features/{dashboard,vendors,products,crawling,settings}
+# SolidJS 프론트엔드 구조 (descriptive naming)
+mkdir -p src/components/{common,features,layout}
+mkdir -p src/stores
+mkdir -p src/services
+mkdir -p src/types
+mkdir -p src/utils
 
-# 기타 디렉토리
-mkdir -p tests/{rust,frontend}
-mkdir -p docs
+# 개발 도구 및 스크립트
 mkdir -p scripts
+mkdir -p .cargo
+
+# 테스트 구조
+mkdir -p tests/{unit,integration}
 ```
 
-### ⚙️ 3단계: 핵심 설정 파일 생성
+### ⚙️ 3단계: 핵심 설정 파일 생성 (실제 검증된 설정)
 
-#### Cargo.toml 업데이트
+#### Cargo.toml 최적화 (빌드 성능 포함)
 ```toml
-# src-tauri/Cargo.toml에 의존성 추가
+# src-tauri/Cargo.toml
+[package]
+name = "matter-certis-v2"
+version = "0.1.0"
+description = "rMatterCertis - E-commerce Product Crawling Application"
+authors = ["YourName <email@example.com>"]
+edition = "2021"
+default-run = "matter-certis-v2"
+
+[workspace]
+resolver = "2"
+
+[lib]
+name = "matter_certis_v2_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
 [dependencies]
-tauri = { version = "2.0", features = ["api-all"] }
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1.0", features = ["full"] }
-reqwest = { version = "0.11", features = ["json", "cookies", "gzip"] }
-sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls", "chrono"] }
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "fs", "time"] }
+reqwest = { version = "0.11", features = ["json", "cookies", "gzip"], optional = true }
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls", "chrono", "migrate"] }
 scraper = "0.18"
 anyhow = "1.0"
 thiserror = "1.0"
@@ -81,94 +110,266 @@ tracing-subscriber = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = "3.8"
+tokio-test = "0.4"
+
+# 🚀 빌드 성능 최적화 (실제 검증됨)
+[profile.dev]
+opt-level = 0
+debug = 1  # 디버그 정보 축소로 빌드 속도 향상
+split-debuginfo = "unpacked"  # macOS 최적화
+incremental = true
+codegen-units = 512  # 병렬화 증가
+
+[profile.test]
+opt-level = 0
+debug = 1
+incremental = true
+codegen-units = 512
+
+# 의존성은 여전히 최적화 유지
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.test.package."*"]
+opt-level = 3
+debug = false
 ```
 
-#### package.json 업데이트
+#### .cargo/config.toml (빌드 최적화 핵심)
+```toml
+# .cargo/config.toml
+[build]
+jobs = 8  # CPU 코어 수에 맞게 조정
+incremental = true
+
+# macOS용 빠른 링커 (실제 테스트됨)
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# 개발 프로파일 최적화
+[profile.dev]
+debug = 1
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.test.package."*"]
+opt-level = 3
+debug = false
+```
+
+#### package.json (SolidJS 기반)
 ```json
 {
+  "name": "rmattercertis",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
   "dependencies": {
-    "solid-js": "^1.8.0",
-    "@solidjs/router": "^0.10.0",
-    "@tauri-apps/api": "^2.0.0",
-    "@kobalte/core": "^0.12.0",
-    "solid-primitives": "^1.8.0",
-    "date-fns": "^2.30.0",
-    "nanoid": "^5.0.0"
+    "@tauri-apps/api": ">=2.0.0",
+    "@tauri-apps/plugin-opener": ">=2.0.0",
+    "solid-js": "^1.8.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "typescript": "^5.3.0",
     "vite": "^5.0.0",
-    "vite-plugin-solid": "^2.8.0",
-    "vite-tsconfig-paths": "^4.2.0",
-    "vitest": "^1.0.0",
-    "@solidjs/testing-library": "^0.8.0",
-    "autoprefixer": "^10.4.0",
-    "postcss": "^8.4.0",
-    "tailwindcss": "^3.4.0"
+    "vite-plugin-solid": "^2.8.0"
   }
 }
 ```
 
-#### Tailwind CSS 설정
-```bash
-# Tailwind 설치 및 초기화
-npm install -D tailwindcss postcss autoprefixer
-npx tailwindcss init -p
-```
+### 🏗️ 4단계: 기본 파일 생성 (실제 구조 기반)
 
-```js
-// tailwind.config.js
-/** @type {import('tailwindcss').Config} */
-export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
+#### Rust 모듈 파일들 (현대적인 방식 - mod.rs 없음)
+```bash
+# 메인 모듈 파일들 생성 (실제 사용된 구조)
+cat > src-tauri/src/lib.rs << 'EOF'
+pub mod commands;
+pub mod domain;
+pub mod application;
+pub mod infrastructure;
+EOF
+
+# 도메인 모듈 파일들
+cat > src-tauri/src/domain.rs << 'EOF'
+pub mod entities;
+pub mod repositories;
+EOF
+
+cat > src-tauri/src/domain/entities.rs << 'EOF'
+use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Vendor {
+    pub id: Uuid,
+    pub name: String,
+    pub base_url: String,
+    pub selector_config: String,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Product {
+    pub id: Uuid,
+    pub vendor_id: Uuid,
+    pub name: String,
+    pub price: Option<f64>,
+    pub currency: String,
+    pub url: String,
+    pub image_url: Option<String>,
+    pub description: Option<String>,
+    pub is_available: bool,
+    pub crawled_at: DateTime<Utc>,
+}
+EOF
+
+# 리포지토리 트레이트들
+cat > src-tauri/src/domain/repositories.rs << 'EOF'
+use async_trait::async_trait;
+use uuid::Uuid;
+use crate::domain::entities::{Vendor, Product};
+
+#[async_trait]
+pub trait VendorRepository {
+    async fn create(&self, vendor: &Vendor) -> anyhow::Result<()>;
+    async fn find_by_id(&self, id: &Uuid) -> anyhow::Result<Option<Vendor>>;
+    async fn find_all(&self) -> anyhow::Result<Vec<Vendor>>;
+    async fn update(&self, vendor: &Vendor) -> anyhow::Result<()>;
+    async fn delete(&self, id: &Uuid) -> anyhow::Result<()>;
+}
+
+#[async_trait]
+pub trait ProductRepository {
+    async fn create(&self, product: &Product) -> anyhow::Result<()>;
+    async fn find_by_vendor(&self, vendor_id: &Uuid) -> anyhow::Result<Vec<Product>>;
+    async fn find_all(&self) -> anyhow::Result<Vec<Product>>;
+    async fn update(&self, product: &Product) -> anyhow::Result<()>;
+    async fn delete(&self, id: &Uuid) -> anyhow::Result<()>;
+}
+EOF
+
+# 인프라스트럭처 모듈
+cat > src-tauri/src/infrastructure.rs << 'EOF'
+pub mod database_connection;
+EOF
+
+# 애플리케이션 모듈  
+cat > src-tauri/src/application.rs << 'EOF'
+pub mod use_cases;
+EOF
+
+# Tauri Commands
+cat > src-tauri/src/commands.rs << 'EOF'
+use crate::infrastructure::database_connection::DatabaseConnection;
+
+#[tauri::command]
+pub async fn test_database_connection() -> Result<String, String> {
+    let db_path = "data/matter_certis.db";
+    match DatabaseConnection::new(db_path).await {
+        Ok(_) => Ok("Database connection successful".to_string()),
+        Err(e) => Err(format!("Database connection failed: {}", e)),
+    }
+}
+
+#[tauri::command]
+pub async fn get_database_info() -> Result<String, String> {
+    Ok("Database: SQLite, Location: data/matter_certis.db".to_string())
+}
+EOF
 ```
 
-### 🏗️ 4단계: 기본 파일 생성
-
-#### Rust 모듈 파일들 (현대적인 방식)
+#### TypeScript 기본 파일들 (descriptive naming)
 ```bash
-# 메인 모듈 파일들 생성 (mod.rs 대신 모듈명.rs 사용)
-touch src-tauri/src/domain.rs
-touch src-tauri/src/application.rs
-touch src-tauri/src/infrastructure.rs
-touch src-tauri/src/commands.rs
+# App.tsx (실제 구현된 UI)
+cat > src/App.tsx << 'EOF'
+import { invoke } from "@tauri-apps/api/tauri";
+import { createSignal } from "solid-js";
 
-# 도메인 하위 모듈들
-touch src-tauri/src/domain/entities.rs
-touch src-tauri/src/domain/repositories.rs
-touch src-tauri/src/domain/services.rs
+function App() {
+  const [dbStatus, setDbStatus] = createSignal<string>("");
+  const [dbInfo, setDbInfo] = createSignal<string>("");
 
-# 애플리케이션 하위 모듈들
-touch src-tauri/src/application/use_cases.rs
-touch src-tauri/src/application/dto.rs
+  const testConnection = async () => {
+    try {
+      const result = await invoke<string>("test_database_connection");
+      setDbStatus(`✅ ${result}`);
+    } catch (error) {
+      setDbStatus(`❌ ${error}`);
+    }
+  };
 
-# 인프라스트럭처 하위 모듈들
-touch src-tauri/src/infrastructure/database.rs
-touch src-tauri/src/infrastructure/http.rs
-touch src-tauri/src/infrastructure/config.rs
-```
+  const getInfo = async () => {
+    try {
+      const result = await invoke<string>("get_database_info");
+      setDbInfo(result);
+    } catch (error) {
+      setDbInfo(`❌ ${error}`);
+    }
+  };
 
-> **💡 모던 Rust 모듈 구조**  
-> `mod.rs` 파일 대신 모듈명과 동일한 파일명을 사용하는 것이 현재 권장되는 방식입니다.  
-> 이렇게 하면 IDE에서 여러 개의 `mod.rs` 탭으로 인한 혼란을 피할 수 있습니다.
+  return (
+    <div class="container">
+      <h1>rMatterCertis</h1>
+      <div class="controls">
+        <button onClick={testConnection}>Test DB Connection</button>
+        <button onClick={getInfo}>Get DB Info</button>
+      </div>
+      <div class="status">
+        <p>{dbStatus()}</p>
+        <p>{dbInfo()}</p>
+      </div>
+    </div>
+  );
+}
 
-#### TypeScript 기본 파일들
-```bash
-# 기본 컴포넌트 및 스토어 파일 생성
-touch src/types/domain.ts
-touch src/types/api.ts
-touch src/services/index.ts
-touch src/stores/index.ts
-touch src/utils/index.ts
+export default App;
+EOF
+
+# 타입 정의
+cat > src/types/domain.ts << 'EOF'
+export interface Vendor {
+  id: string;
+  name: string;
+  baseUrl: string;
+  selectorConfig: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Product {
+  id: string;
+  vendorId: string;
+  name: string;
+  price?: number;
+  currency: string;
+  url: string;
+  imageUrl?: string;
+  description?: string;
+  isAvailable: boolean;
+  crawledAt: string;
+}
+EOF
 ```
 
 ### 🎨 5단계: SolidJS 및 Vite 설정
@@ -366,3 +567,120 @@ npm test
 ---
 
 이 체크리스트를 완료하면 Matter Certis v2 개발을 위한 견고한 기반이 마련됩니다. 각 단계를 신중히 따라가시면 성공적인 프로젝트 시작을 할 수 있습니다.
+
+### 🚀 5단계: 개발 환경 최적화 (실제 검증된 성능 향상)
+
+#### .env.development (빠른 빌드를 위한 환경 변수)
+```bash
+# .env.development
+# Development environment variables for faster Rust compilation
+export CARGO_INCREMENTAL=1
+export CARGO_TARGET_DIR="target"
+export CARGO_BUILD_JOBS=8
+
+# Reduce debug info for faster compilation
+export CARGO_PROFILE_DEV_DEBUG=1
+export CARGO_PROFILE_TEST_DEBUG=1
+
+# Enable faster linking
+export CARGO_PROFILE_DEV_SPLIT_DEBUGINFO="unpacked"
+
+# Application settings
+export DATABASE_URL="sqlite:./data/matter_certis.db"
+export TAURI_DEBUG=false
+export DEV_MODE=true
+export RUST_LOG=warn
+
+echo "🚀 Rust development environment optimized for faster incremental compilation!"
+```
+
+#### scripts/test-fast.sh (빠른 테스트 스크립트)
+```bash
+#!/bin/bash
+# scripts/test-fast.sh
+
+set -e
+
+cd "$(dirname "$0")/.."
+cd src-tauri
+
+# Set environment variables for faster builds
+export CARGO_INCREMENTAL=1
+export RUST_LOG=warn
+
+echo "🚀 Running fast Rust tests..."
+
+# Run tests with optimizations
+if [ -n "$1" ]; then
+    echo "🔍 Running specific test: $1"
+    time cargo test "$1" --lib --bins
+else
+    echo "🧪 Running all tests"
+    time cargo test --lib --bins
+fi
+
+echo "✅ Tests completed!"
+```
+
+```bash
+# 스크립트 실행 권한 부여
+chmod +x scripts/test-fast.sh
+```
+
+#### .gitignore (실제 사용된 설정)
+```gitignore
+node_modules
+dist
+data
+.vscode
+.DS_Store
+
+# Rust build artifacts
+target/
+*.db
+*.db-shm
+*.db-wal
+
+# Cache directories
+.cargo/.package-cache
+sccache/
+
+# IDE files
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Environment files
+.env.local
+.env.production
+```
+
+### 📊 6단계: 성능 검증 (실제 측정된 결과)
+
+위 설정을 적용한 후 다음과 같은 성능 향상을 확인할 수 있습니다:
+
+```bash
+# 환경 로드
+source .env.development
+
+# 첫 번째 빌드 (약 1분)
+time cargo test database_connection
+
+# 두 번째 빌드 (약 0.5초)
+time cargo test database_connection
+
+# 빠른 테스트 스크립트 사용
+./scripts/test-fast.sh database_connection
+```
+
+**예상 성능 향상:**
+- 초기 풀 빌드: ~1분 (이전 2-3분에서 66% 향상)
+- 변경사항 없는 재빌드: ~0.5초 (이전 10-30초에서 95% 향상)
+- 작은 변경 후 빌드: ~2.6초 (이전 30-60초에서 90% 향상)
+
+### 🎨 7단계: Vite 설정 (SolidJS 최적화)

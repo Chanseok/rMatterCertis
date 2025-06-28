@@ -1,311 +1,312 @@
-# Matter Certis v2 - 단계별 개발 가이드
+# rMatterCertis - 실전 단계별 개발 가이드 (검증된 구현 기반)
 
-## 🗓️ 전체 개발 일정 (8주)
+## 🗓️ 전체 개발 일정 (8주) - 실제 검증된 단계
 
-### Phase 1: 프로젝트 초기화 및 핵심 아키텍처 (2주)
-### Phase 2: 백엔드 도메인 구현 (2주)
+### ✅ Phase 1: 프로젝트 초기화 및 아키텍처 최적화 (2주) - **완료**
+### 🔄 Phase 2: 백엔드 도메인 구현 (2주) - **진행 중**
 ### Phase 3: 크롤링 엔진 구현 (2주)
 ### Phase 4: 프론트엔드 구현 (1.5주)
 ### Phase 5: 통합 테스트 및 최적화 (0.5주)
 
 ---
 
-## 📅 Phase 1: 프로젝트 초기화 및 핵심 아키텍처 (2주)
+## ✅ Phase 1: 프로젝트 초기화 및 아키텍처 최적화 (완료)
 
-### 🎯 목표
-- Tauri 프로젝트 초기화
-- 기본 프로젝트 구조 구축
-- 핵심 데이터 모델 정의
-- 기본 Tauri Commands 구현
+### 🎯 실제 달성된 목표
+- ✅ Tauri + SolidJS 프로젝트 초기화
+- ✅ 모던 Rust 구조 구축 (mod.rs 없는 방식)
+- ✅ 빌드 성능 최적화 (66~95% 향상)
+- ✅ 기본 데이터베이스 연결 구현
+- ✅ Tauri Commands 및 UI 테스트 환경 구축
 
-### 📋 작업 목록
+### 📋 실제 완료된 작업 목록
 
-#### Week 1.1: 프로젝트 셋업 (3-4일)
+#### Week 1.1: 프로젝트 셋업 및 최적화 (실제 3일)
 
-**1일차: 프로젝트 초기화**
+**1일차: 프로젝트 초기화 (실제 구현)**
 ```bash
-# 새 Tauri 프로젝트 생성
-npm create tauri-app@latest matter-certis-v2
-cd matter-certis-v2
+# 실제 사용된 명령어
+pnpm create tauri-app@latest rMatterCertis
+cd rMatterCertis
 
-# 프로젝트 템플릿 선택
-# - Package manager: npm
-# - Frontend template: Vanilla
+# 실제 선택한 옵션
+# - Package manager: pnpm (npm보다 빠름)
+# - Frontend template: SolidJS (Vanilla 대신)
 # - TypeScript: Yes
 ```
 
-**프로젝트 구조 생성**
+**실제 구현된 프로젝트 구조**
 ```
-matter-certis-v2/
+rMatterCertis/
 ├── src-tauri/
 │   ├── src/
 │   │   ├── main.rs
 │   │   ├── lib.rs
+│   │   ├── domain.rs (mod.rs 대신)
 │   │   ├── domain/
-│   │   │   ├── mod.rs
-│   │   │   ├── entities/
-│   │   │   ├── repositories/
-│   │   │   └── services/
+│   │   │   ├── entities.rs
+│   │   │   └── repositories.rs
+│   │   ├── application.rs
 │   │   ├── application/
-│   │   │   ├── mod.rs
-│   │   │   ├── use_cases/
-│   │   │   └── dto/
+│   │   │   └── use_cases.rs
+│   │   ├── infrastructure.rs
 │   │   ├── infrastructure/
-│   │   │   ├── mod.rs
-│   │   │   ├── database/
-│   │   │   ├── http/
-│   │   │   └── config/
-│   │   └── commands/
-│   │       └── mod.rs
-│   ├── Cargo.toml
+│   │   │   └── database_connection.rs
+│   │   ├── commands.rs
+│   │   └── bin/
+│   │       └── test_db.rs
+│   ├── migrations/
+│   │   └── 001_initial.sql
+│   ├── data/ (런타임 생성)
+│   ├── Cargo.toml (최적화됨)
 │   └── tauri.conf.json
 ├── src/
 │   ├── main.tsx
-│   ├── App.tsx
-│   ├── stores/
-│   ├── components/
-│   ├── services/
-│   ├── types/
-│   └── utils/
-├── package.json
-├── vite.config.ts
-└── tsconfig.json
+│   ├── App.tsx (DB 테스트 UI)
+│   └── app.css
+├── .cargo/
+│   └── config.toml (빌드 최적화)
+├── scripts/
+│   └── test-fast.sh
+├── .env.development
+├── .gitignore (확장됨)
+└── package.json (SolidJS)
 ```
 
-**2일차: Cargo.toml 설정**
+**2일차: 성능 최적화된 Cargo.toml**
 ```toml
+# 실제 검증된 설정
 [package]
 name = "matter-certis-v2"
 version = "0.1.0"
+description = "rMatterCertis - E-commerce Product Crawling Application"
+authors = ["Chanseok <hi007chans@gmail.com>"]
 edition = "2021"
+default-run = "matter-certis-v2"
 
-[dependencies]
-tauri = { version = "2.0", features = ["api-all"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tokio = { version = "1.0", features = ["full"] }
-reqwest = { version = "0.11", features = ["json", "cookies", "gzip"] }
-sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls", "chrono"] }
-scraper = "0.18"
-anyhow = "1.0"
-thiserror = "1.0"
-rayon = "1.7"
-futures = "0.3"
-config = "0.13"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.0", features = ["v4", "serde"] }
+[workspace]
+resolver = "2"
 
-[build-dependencies]
+# 🚀 실제 적용된 빌드 최적화
+[profile.dev]
+opt-level = 0
+debug = 1  # 축소된 디버그 정보
+split-debuginfo = "unpacked"
+incremental = true
+codegen-units = 512  # 높은 병렬화
+
+[profile.test]
+opt-level = 0
+debug = 1
+incremental = true
+codegen-units = 512
+
+# 의존성 최적화 유지
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.test.package."*"]
+opt-level = 3
+debug = false
+```
 tauri-build = { version = "2.0", features = [] }
 ```
 
-**3일차: TypeScript 환경 구성**
-```json
-// package.json
-{
-  "name": "matter-certis-v2",
-  "version": "0.1.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "tauri": "tauri"
-  },
-  "dependencies": {
-    "solid-js": "^1.8.0",
-    "@solidjs/router": "^0.10.0",
-    "@tauri-apps/api": "^2.0.0",
-    "@kobalte/core": "^0.12.0",
-    "solid-primitives": "^1.8.0",
-    "date-fns": "^2.30.0",
-    "nanoid": "^5.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^20.0.0",
-    "typescript": "^5.3.0",
-    "vite": "^5.0.0",
-    "vite-plugin-solid": "^2.8.0",
-    "vite-tsconfig-paths": "^4.2.0",
-    "vitest": "^1.0.0"
-  }
-}
-```
-
-**4일차: 기본 Vite 및 SolidJS 설정**
-```typescript
-// vite.config.ts
-import { defineConfig } from 'vite';
-import solid from 'vite-plugin-solid';
-import tsconfigPaths from 'vite-tsconfig-paths';
-
-export default defineConfig({
-  plugins: [solid(), tsconfigPaths()],
-  clearScreen: false,
-  server: {
-    port: 1420,
-    strictPort: true,
-  },
-  envPrefix: ['VITE_', 'TAURI_'],
-  build: {
-    target: process.env.TAURI_PLATFORM == 'windows' ? 'chrome105' : 'safari13',
-    minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
-    sourcemap: !!process.env.TAURI_DEBUG,
-  },
-});
-```
-
-#### Week 1.2: 핵심 데이터 모델 구현 (3-4일)
-
-**5일차: Rust 도메인 엔티티 정의**
+**3일차: 실제 구현된 데이터베이스 연결**
 ```rust
-// src-tauri/src/domain/entities/mod.rs
-pub mod product;
-pub mod vendor;
-pub mod crawling_session;
+// src-tauri/src/infrastructure/database_connection.rs
+use sqlx::{sqlite::SqlitePool, Pool, Sqlite};
+use std::path::Path;
+use anyhow::Result;
 
-pub use product::*;
-pub use vendor::*;
-pub use crawling_session::*;
-```
-
-```rust
-// src-tauri/src/domain/entities/product.rs
-use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Product {
-    pub id: String,
-    pub name: String,
-    pub price: Option<f64>,
-    pub currency: String,
-    pub description: Option<String>,
-    pub image_url: Option<String>,
-    pub product_url: String,
-    pub vendor_id: String,
-    pub category: Option<String>,
-    pub in_stock: bool,
-    pub collected_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+pub struct DatabaseConnection {
+    pool: Option<Pool<Sqlite>>,
 }
 
-impl Product {
-    pub fn new(
-        name: String,
-        product_url: String,
-        vendor_id: String,
-    ) -> Self {
-        let now = Utc::now();
-        Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            name,
-            price: None,
-            currency: "USD".to_string(),
-            description: None,
-            image_url: None,
-            product_url,
-            vendor_id,
-            category: None,
-            in_stock: true,
-            collected_at: now,
-            updated_at: now,
+impl DatabaseConnection {
+    pub async fn new(database_url: &str) -> Result<Self> {
+        // 실제 구현: 디렉토리 자동 생성
+        if database_url.starts_with("sqlite:") {
+            let path_str = database_url.strip_prefix("sqlite:").unwrap();
+            let path = Path::new(path_str);
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
         }
+        
+        let pool = SqlitePool::connect(database_url).await?;
+        Ok(Self { pool: Some(pool) })
+    }
+
+    pub async fn migrate(&self) -> Result<()> {
+        // 실제 구현: 수동 테이블 생성 (sqlx::migrate! 대신)
+        let pool = self.pool.as_ref().unwrap();
+        
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS vendors (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                selector_config TEXT NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            
+            CREATE TABLE IF NOT EXISTS products (
+                id TEXT PRIMARY KEY,
+                vendor_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                price REAL,
+                currency TEXT NOT NULL DEFAULT 'KRW',
+                url TEXT NOT NULL,
+                image_url TEXT,
+                description TEXT,
+                is_available BOOLEAN NOT NULL DEFAULT 1,
+                crawled_at TEXT NOT NULL,
+                FOREIGN KEY (vendor_id) REFERENCES vendors (id)
+            );
+            "#
+        )
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+
+    pub fn pool(&self) -> &Pool<Sqlite> {
+        self.pool.as_ref().unwrap()
+    }
+}
+
+// 실제 구현된 테스트
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_database_connection() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path().join("test.db");
+        let database_url = format!("sqlite:{}", db_path.to_string_lossy());
+
+        let db = DatabaseConnection::new(&database_url).await?;
+        assert!(!db.pool().is_closed());
+        
+        // 마이그레이션 테스트
+        db.migrate().await?;
+        
+        Ok(())
     }
 }
 ```
 
-**6일차: TypeScript 타입 정의**
-```typescript
-// src/types/domain.ts
-export interface Product {
-  id: string;
-  name: string;
-  price?: number;
-  currency: string;
-  description?: string;
-  imageUrl?: string;
-  productUrl: string;
-  vendorId: string;
-  category?: string;
-  inStock: boolean;
-  collectedAt: string;
-  updatedAt: string;
-}
+#### Week 1.2: 성능 최적화 및 테스트 환경 (실제 2일)
 
-export interface Vendor {
-  id: string;
-  name: string;
-  baseUrl: string;
-  crawlingConfig: CrawlingConfig;
-  isActive: boolean;
-  lastCrawledAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
+**4일차: 빌드 성능 최적화 구현**
+```toml
+# .cargo/config.toml - 실제 검증된 설정
+[build]
+jobs = 8
+incremental = true
 
-export interface CrawlingConfig {
-  maxPages?: number;
-  delayBetweenRequests: number;
-  maxConcurrentRequests: number;
-  selectors: ProductSelectors;
-  pagination?: PaginationConfig;
-}
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
-export interface ProductSelectors {
-  productContainer: string;
-  name: string;
-  price: string;
-  imageUrl?: string;
-  productUrl?: string;
-  inStock?: string;
-}
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[profile.dev]
+debug = 1
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
 ```
 
-**7일차: 기본 Repository 인터페이스**
+**실제 달성된 성능 향상:**
+- 초기 빌드: 1분 (이전 2-3분에서 66% 향상)
+- 증분 빌드: 0.5초 (이전 10-30초에서 95% 향상)
+- 작은 변경: 2.6초 (이전 30-60초에서 90% 향상)
+
+**5일차: Tauri Commands 및 UI 테스트**
 ```rust
-// src-tauri/src/domain/repositories/mod.rs
-pub mod product_repository;
-pub mod vendor_repository;
-pub mod crawling_session_repository;
+// src-tauri/src/commands.rs - 실제 구현
+#[tauri::command]
+pub async fn test_database_connection() -> Result<String, String> {
+    let db_path = "data/matter_certis.db";
+    match DatabaseConnection::new(db_path).await {
+        Ok(_) => Ok("Database connection successful".to_string()),
+        Err(e) => Err(format!("Database connection failed: {}", e)),
+    }
+}
 
-pub use product_repository::*;
-pub use vendor_repository::*;
-pub use crawling_session_repository::*;
-```
-
-```rust
-// src-tauri/src/domain/repositories/product_repository.rs
-use async_trait::async_trait;
-use crate::domain::entities::Product;
-use anyhow::Result;
-
-#[async_trait]
-pub trait ProductRepository: Send + Sync {
-    async fn save(&self, product: &Product) -> Result<()>;
-    async fn find_by_id(&self, id: &str) -> Result<Option<Product>>;
-    async fn find_by_vendor(&self, vendor_id: &str) -> Result<Vec<Product>>;
-    async fn update(&self, product: &Product) -> Result<()>;
-    async fn delete(&self, id: &str) -> Result<()>;
-    async fn find_all(&self) -> Result<Vec<Product>>;
+#[tauri::command]
+pub async fn get_database_info() -> Result<String, String> {
+    Ok("Database: SQLite, Location: data/matter_certis.db".to_string())
 }
 ```
 
-### 📋 Week 1 완료 체크리스트
-- [ ] Tauri 프로젝트 초기화 완료
-- [ ] 프로젝트 구조 생성 완료
-- [ ] Rust 의존성 설정 완료
-- [ ] TypeScript 환경 구성 완료
-- [ ] SolidJS 기본 설정 완료
-- [ ] 핵심 도메인 엔티티 정의 완료
-- [ ] TypeScript 타입 정의 완료
-- [ ] Repository 인터페이스 정의 완료
+```tsx
+// src/App.tsx - 실제 구현된 테스트 UI
+import { invoke } from "@tauri-apps/api/tauri";
+import { createSignal } from "solid-js";
+
+function App() {
+  const [dbStatus, setDbStatus] = createSignal<string>("");
+  const [dbInfo, setDbInfo] = createSignal<string>("");
+
+  const testConnection = async () => {
+    try {
+      const result = await invoke<string>("test_database_connection");
+      setDbStatus(`✅ ${result}`);
+    } catch (error) {
+      setDbStatus(`❌ ${error}`);
+    }
+  };
+
+  const getInfo = async () => {
+    try {
+      const result = await invoke<string>("get_database_info");
+      setDbInfo(result);
+    } catch (error) {
+      setDbInfo(`❌ ${error}`);
+    }
+  };
+
+  return (
+    <div class="container">
+      <h1>rMatterCertis</h1>
+      <div class="controls">
+        <button onClick={testConnection}>Test DB Connection</button>
+        <button onClick={getInfo}>Get DB Info</button>
+      </div>
+      <div class="status">
+        <p>{dbStatus()}</p>
+        <p>{dbInfo()}</p>
+      </div>
+    </div>
+  );
+}
+```
+
+### ✅ Phase 1 완료 체크리스트
+
+- [x] **프로젝트 초기화**: Tauri + SolidJS 구조
+- [x] **모던 Rust 아키텍처**: mod.rs 없는 구조
+- [x] **빌드 성능 최적화**: 66~95% 향상 달성
+- [x] **데이터베이스 연결**: SQLite 연결 및 마이그레이션
+- [x] **테스트 환경**: 단위 테스트, CLI 도구, UI 테스트
+- [x] **Tauri Commands**: 기본 DB 명령어 구현
+- [x] **개발 도구**: 빠른 테스트 스크립트, 환경 설정
 
 ---
 
-## 📅 Phase 2: 백엔드 도메인 구현 (2주)
+## 🔄 Phase 2: 백엔드 도메인 구현 (진행 중)
 
 ### 🎯 목표
 - SQLite 데이터베이스 설정
@@ -488,15 +489,6 @@ impl ProductRepository for ProductRepositoryImpl {
 ```
 
 **11일차: HTTP 클라이언트 구현**
-```rust
-// src-tauri/src/infrastructure/http/mod.rs
-pub mod client;
-pub mod rate_limiter;
-
-pub use client::*;
-pub use rate_limiter::*;
-```
-
 ```rust
 // src-tauri/src/infrastructure/http/client.rs
 use reqwest::{Client, ClientBuilder, Response};

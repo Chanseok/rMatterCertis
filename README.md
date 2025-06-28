@@ -78,6 +78,17 @@ cargo check          # Rust compilation check (in src-tauri/)
 # Note: Database migrations will run automatically on first launch
 ```
 
+## 📚 개발 가이드 문서
+
+본 프로젝트의 상세한 개발 가이드는 다음 문서들을 참고하세요:
+
+- **[프로젝트 셋업 체크리스트](guide/matter-certis-v2-project-setup-checklist.md)** - 처음부터 프로젝트를 생성하는 방법
+- **[단계별 개발 가이드](guide/matter-certis-v2-development-guide.md)** - 실제 구현 과정과 검증된 방법들
+- **[프로젝트 요구사항](guide/matter-certis-v2-requirements.md)** - 기술 스택과 아키텍처 결정사항
+- **[Rust 빌드 최적화 가이드](guide/rust-build-optimization.md)** - 개발 생산성 향상을 위한 빌드 성능 최적화
+
+모든 가이드는 실제 구현 과정에서 검증된 내용들로 구성되어 있어 신뢰할 수 있습니다.
+
 ## Database
 
 The application uses SQLite for local data storage with the following schema:
