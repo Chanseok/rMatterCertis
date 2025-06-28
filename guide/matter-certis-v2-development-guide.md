@@ -3,8 +3,8 @@
 ## 🗓️ 전체 개발 일정 (8주) - 실제 검증된 단계
 
 ### ✅ Phase 1: 프로젝트 초기화 및 아키텍처 최적화 (완료)
-### ✅ Phase 2: 백엔드 도메인 구현 (90% 완료) - **현재 위치**
-### Phase 3: 크롤링 엔진 구현 (2주)
+### ✅ Phase 2: 백엔드 도메인 구현 (완료) - **현재 위치**
+### 🚧 Phase 3: 크롤링 엔진 구현 (시작 준비)
 ### Phase 4: 프론트엔드 구현 (1.5주)
 ### Phase 5: 통합 테스트 및 최적화 (0.5주)
 
@@ -13,7 +13,23 @@
 ## ✅ Phase 1: 프로젝트 초기화 및 아키텍처 최적화 (완료)
 
 ### 🎯 실제 달성된 목표
-- ✅ Tauri + SolidJS 프로젝트 초기화
+- ✅## ✅ Phase 2: 백엔드 도메인 구현 (완료) - **현재 위치**
+
+### 🎯 **완료된 목표** ✅
+- ✅ **모던 Rust 모듈 구조**: 모든 mod.rs 파일 제거 완료
+- ✅ **Repository 패턴 완전 구현**: trait 정의 및 모든 구현체 완성
+- ✅ **Matter 도메인 엔티티**: Product, MatterProduct, Vendor, CrawlingSession 완성
+- ✅ **데이터베이스 스키마**: Matter 인증 특화 스키마 완성
+- ✅ **Repository 테스트**: 모든 CRUD 테스트 통과 (5개 테스트 성공)
+- ✅ **DTO 계층 구현**: 278줄, 모든 도메인 DTO 완성
+- ✅ **Use Cases 비즈니스 로직**: 530줄, VendorUseCases + MatterProductUseCases 완성
+- ✅ **Tauri Commands API**: 313줄, 모든 CRUD + 검색 API 완성
+- ✅ **프론트엔드 API 연동 준비**: App.tsx에서 벤더 CRUD UI 구현
+
+### 🎯 **검증 및 테스트할 목표** 🚧
+- 🚧 **통합 테스트 시나리오** (엔드투엔드 테스트)
+- 🚧 **프론트엔드-백엔드 API 연동 검증** (실제 UI 테스트)
+- 🚧 **데이터베이스 마이그레이션 검증** (새로운 스키마)S 프로젝트 초기화
 - ✅ 모던 Rust 구조 구축 (mod.rs 없는 방식)
 - ✅ 빌드 성능 최적화 (66~95% 향상)
 - ✅ 기본 데이터베이스 연결 구현
@@ -656,10 +672,158 @@ pnpm tauri dev # UI에서 Vendor CRUD 동작 확인
 
 ---
 
-## Phase 3: 크롤링 엔진 구현 (예정)
+## 🚧 Phase 3: 크롤링 엔진 구현 (시작 준비) - **다음 단계**
 
-### 🎯 사전 준비 사항 (Phase 2 완료 후)
-- HTTP 클라이언트 검증 (reqwest 최적화)
-- HTML 파싱 성능 테스트 (scraper 라이브러리)
-- 비동기 처리 패턴 설계 (tokio + rayon)
-- 크롤링 설정 스키마 정의 (JSON/YAML)
+### 🎯 **Phase 3 목표 (2주 예상)**
+- 🎯 **HTML 파싱 엔진**: CSA-IoT Matter 사이트 구조 분석 및 파싱
+- 🎯 **HTTP 클라이언트**: 비동기 웹 요청 및 세션 관리
+- 🎯 **크롤링 워커**: 병렬 처리 및 진행 상황 추적
+- 🎯 **크롤링 스케줄러**: 자동화 및 재시도 로직
+- 🎯 **데이터 검증**: 수집된 데이터 품질 검증
+
+### 📋 **Phase 3 주요 구현 목록**
+
+#### Week 1: 크롤링 엔진 핵심 구현
+**1. HTML 파싱 엔진 (3일)**
+```rust
+// src/infrastructure/html_parser.rs - 신규 구현
+pub struct MatterSiteParser {
+    selector_config: SelectorConfig,
+}
+
+impl MatterSiteParser {
+    pub fn parse_product_list(&self, html: &str) -> Result<Vec<Product>> {
+        // CSA-IoT Matter 제품 목록 페이지 파싱
+    }
+    
+    pub fn parse_product_detail(&self, html: &str) -> Result<MatterProduct> {
+        // 개별 제품 상세 정보 파싱
+    }
+}
+
+pub struct SelectorConfig {
+    pub product_list_selector: String,
+    pub product_link_selector: String,
+    pub manufacturer_selector: String,
+    pub device_type_selector: String,
+    // ... 모든 Matter 인증 필드 셀렉터
+}
+```
+
+**2. HTTP 클라이언트 및 세션 관리 (2일)**
+```rust
+// src/infrastructure/http_client.rs - 확장 구현
+pub struct MatterHttpClient {
+    client: reqwest::Client,
+    rate_limiter: RateLimiter,
+    retry_config: RetryConfig,
+}
+
+impl MatterHttpClient {
+    pub async fn get_product_list_page(&self, page: u32) -> Result<String> {
+        // 제품 목록 페이지 요청 (페이지네이션 처리)
+    }
+    
+    pub async fn get_product_detail(&self, url: &str) -> Result<String> {
+        // 개별 제품 상세 페이지 요청
+    }
+    
+    pub async fn get_vendor_page(&self, vendor_id: &str) -> Result<String> {
+        // 벤더 정보 페이지 요청
+    }
+}
+```
+
+#### Week 2: 크롤링 워커 및 스케줄러
+**3. 크롤링 워커 (3일)**
+```rust
+// src/application/crawling_engine.rs - 신규 구현
+pub struct CrawlingEngine {
+    http_client: Arc<MatterHttpClient>,
+    parser: Arc<MatterSiteParser>,
+    product_repo: Arc<dyn ProductRepository>,
+    session_repo: Arc<dyn CrawlingSessionRepository>,
+}
+
+impl CrawlingEngine {
+    pub async fn crawl_products(&self, config: CrawlerConfig) -> Result<CrawlingSession> {
+        // 제품 목록 크롤링 (Stage 1)
+    }
+    
+    pub async fn crawl_matter_details(&self, config: CrawlerConfig) -> Result<CrawlingSession> {
+        // Matter 상세 정보 크롤링 (Stage 2)
+    }
+    
+    pub async fn crawl_vendors(&self, config: CrawlerConfig) -> Result<CrawlingSession> {
+        // 벤더 정보 크롤링 (Stage 3)
+    }
+}
+
+pub struct CrawlerConfig {
+    pub start_page: u32,
+    pub end_page: Option<u32>,
+    pub concurrent_requests: u32,
+    pub delay_between_requests: Duration,
+    pub retry_attempts: u32,
+}
+```
+
+**4. 크롤링 스케줄러 및 모니터링 (2일)**
+```rust
+// src/application/crawling_scheduler.rs - 신규 구현
+pub struct CrawlingScheduler {
+    engine: Arc<CrawlingEngine>,
+    schedule_config: ScheduleConfig,
+}
+
+impl CrawlingScheduler {
+    pub async fn schedule_daily_crawl(&self) -> Result<()> {
+        // 일일 자동 크롤링 스케줄링
+    }
+    
+    pub async fn resume_failed_session(&self, session_id: &str) -> Result<()> {
+        // 실패한 크롤링 세션 재시작
+    }
+}
+```
+
+### 📊 **Phase 3 성공 기준**
+
+#### 기능적 요구사항
+- [ ] **제품 목록 크롤링**: 페이지네이션 처리로 모든 제품 수집
+- [ ] **Matter 상세 크롤링**: VID, PID, 디바이스 타입 등 모든 필드 수집
+- [ ] **벤더 정보 크롤링**: 벤더 번호, 법인명 등 정확한 정보 수집
+- [ ] **진행 상황 추적**: 실시간 크롤링 진행률 및 상태 모니터링
+- [ ] **에러 복구**: 네트워크 오류, 파싱 오류 자동 재시도
+
+#### 비기능적 요구사항
+- [ ] **성능**: 시간당 1000개 제품 처리 가능
+- [ ] **안정성**: 24시간 연속 크롤링 안정성
+- [ ] **준수성**: robots.txt 및 rate limiting 준수
+- [ ] **모니터링**: 크롤링 상태 실시간 대시보드
+
+### 🔧 **Phase 3 기술 스택**
+
+| 기술 | 라이브러리 | 용도 |
+|------|-----------|------|
+| HTML 파싱 | scraper, select.rs | CSS 셀렉터 기반 파싱 |
+| HTTP 클라이언트 | reqwest | 비동기 웹 요청 |
+| 병렬 처리 | tokio, rayon | 비동기 및 병렬 크롤링 |
+| 스케줄링 | tokio-cron-scheduler | 자동화된 크롤링 |
+| 모니터링 | tracing, metrics | 로깅 및 성능 측정 |
+
+### 📈 **Phase 3 예상 성과**
+
+#### 데이터 수집 규모
+- **예상 제품 수**: 5,000~10,000개 Matter 인증 제품
+- **예상 벤더 수**: 200~500개 Matter 인증 벤더
+- **업데이트 주기**: 일일 자동 업데이트
+- **데이터 정확도**: 95% 이상 정확한 Matter 인증 정보
+
+#### 시스템 성능
+- **크롤링 속도**: 시간당 1,000개 제품 처리
+- **메모리 사용량**: 최대 500MB 이하
+- **CPU 사용률**: 평균 30% 이하
+- **디스크 사용량**: 일일 100MB 증가
+
+---
