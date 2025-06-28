@@ -1,0 +1,27 @@
+# Cargo 빌드 최적화 설정 (Stable 컴파일러용)
+[build]
+# 더 빠른 링커 사용 (macOS)
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# sccache를 사용한 컴파일 캐싱
+[env]
+RUSTC_WRAPPER = "sccache"
+# 더 적극적인 캐싱
+SCCACHE_CACHE_SIZE = "10G"
+
+# 병렬 컴파일 최적화
+[target.x86_64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-fuse-ld=lld",
+    "-C", "target-cpu=native",  # 현재 CPU에 최적화
+]
+
+[target.aarch64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-fuse-ld=lld", 
+    "-C", "target-cpu=native",  # Apple Silicon 최적화
+]
+
+# 빠른 빌드를 위한 추가 설정
+[net]
+git-fetch-with-cli = true

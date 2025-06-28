@@ -35,14 +35,14 @@ serde_json = "1.0"
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "fs", "time"] }
 reqwest = { version = "0.11", features = ["json", "cookies", "gzip"], optional = true }
 sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls", "chrono", "migrate"] }
-scraper = "0.18"
+scraper = { version = "0.18", optional = true }
 anyhow = "1.0"
 thiserror = "1.0"
 rayon = "1.7"
 futures = "0.3"
 config = "0.13"
-tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 async-trait = "0.1"
@@ -53,19 +53,27 @@ tokio-test = "0.4"
 
 # Optimize for faster compilation during development
 [profile.dev]
-# Faster compilation at the cost of runtime performance
+# Minimal compilation for maximum speed
 opt-level = 0
-debug = 1  # Reduced debug info for faster builds
-split-debuginfo = "unpacked"  # Faster on macOS
+debug = 0  # No debug info for fastest builds
+split-debuginfo = "off"  # Skip debug info splitting
 incremental = true
-codegen-units = 512  # Increased for better parallelization
+codegen-units = 256  # Balanced parallelization
+# Skip expensive checks
+overflow-checks = false
+debug-assertions = false
+panic = "abort"  # Faster panics without unwinding
 
-# Faster test compilation
+# Ultra-fast test compilation
 [profile.test]
 opt-level = 0
-debug = 1  # Reduced debug info for faster builds  
+debug = 0  # No debug info for fastest builds
+split-debuginfo = "off"
 incremental = true
-codegen-units = 512  # Increased for better parallelization
+codegen-units = 256
+overflow-checks = false
+debug-assertions = false
+panic = "abort"
 
 # Dependencies are still optimized even in dev mode
 [profile.dev.package."*"]
@@ -75,4 +83,10 @@ debug = false
 [profile.test.package."*"]
 opt-level = 3
 debug = false
+
+# 빠른 개발/테스트를 위한 feature 플래그
+[features]
+default = ["full"]
+full = ["reqwest", "scraper", "tracing", "tracing-subscriber"]
+minimal = []  # 최소 의존성으로 빠른 컴파일
 
