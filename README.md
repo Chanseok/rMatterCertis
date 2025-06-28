@@ -117,6 +117,18 @@ src/
 - [🏗️ Modern Module Structure](guide/rust-modern-module-structure.md) - Rust 2024 conventions
 - [📅 Phase 2 Plan](guide/phase2-implementation-plan.md) - Current phase details
 
+## 📋 Development Guides
+
+### 📊 Project Status & Planning
+- **[📋 PROJECT STATUS](./guide/PROJECT_STATUS.md)** - Current progress and architecture overview
+- **[🚀 Phase 3 Implementation Plan](./guide/phase3-implementation-plan.md)** - Detailed 4-week implementation roadmap
+- **[📋 Development Guide](./guide/matter-certis-v2-development-guide.md)** - Complete development documentation
+
+### 🏗️ Architecture & Design
+- **[🧠 Core Domain Knowledge](./guide/matter-certis-v2-core-domain-knowledge.md)** - Domain logic and database design
+- **[🔧 Memory-based State Management](./guide/memory-based-state-management.md)** - Session management architecture
+- **[🧪 Test Best Practices](./guide/test-best-practices.md)** - Testing strategies and utilities
+
 ## Development Scripts
 
 ```bash

@@ -268,3 +268,51 @@ impl From<DatabaseSummary> for DatabaseSummaryDto {
         }
     }
 }
+
+// ============================================================================
+// Crawling Engine DTOs (for Phase 3 implementation)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct StartCrawlingDto {
+    pub start_url: String,
+    pub target_domains: Vec<String>,
+    pub max_pages: Option<u32>,
+    pub concurrent_requests: Option<u32>,
+    pub delay_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CrawlingConfigDto {
+    pub max_concurrent_requests: u32,
+    pub request_delay_ms: u64,
+    pub timeout_seconds: u64,
+    pub retry_attempts: u32,
+    pub user_agent: String,
+    pub respect_robots_txt: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CrawlingResultDto {
+    pub session_id: String,
+    pub status: String,
+    pub total_pages_crawled: u32,
+    pub products_found: u32,
+    pub errors_count: u32,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+    pub execution_time_seconds: Option<u32>,
+    pub error_details: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CrawlingProgressDto {
+    pub session_id: String,
+    pub current_page: u32,
+    pub total_pages: u32,
+    pub progress_percentage: f32,
+    pub current_url: Option<String>,
+    pub products_found: u32,
+    pub last_updated: String,
+    pub estimated_completion: Option<String>,
+}
