@@ -11,4 +11,4 @@ pub mod http;
 
 // Re-export commonly used items
 pub use database_connection::DatabaseConnection;
-pub use repositories::{SqliteVendorRepository, SqliteProductRepository};
+pub use repositories::{SqliteVendorRepository, SqliteProductRepository, SqliteCrawlingSessionRepository};

@@ -1,18 +1,19 @@
-//! Repository implementations
+//! Repository implementations for Matter Certification domain
 //! 
-//! Contains concrete implementations of repository traits for data persistence.
+//! Contains concrete implementations of repository traits for Matter product data persistence.
 
 use async_trait::async_trait;
 use sqlx::{SqlitePool, Row};
 use chrono::{DateTime, Utc};
 use anyhow::{Result, anyhow};
+use std::collections::HashSet;
 use crate::domain::{
-    entities::{Vendor, Product}, 
-    repositories::{VendorRepository, ProductRepository}
+    entities::{Vendor, Product, MatterProduct, CrawlingSession, DatabaseSummary}, 
+    repositories::{VendorRepository, ProductRepository, CrawlingSessionRepository}
 };
 
 // ============================================================================
-// VendorRepository Implementation
+// VendorRepository Implementation for Matter Certification
 // ============================================================================
 
 pub struct SqliteVendorRepository {
@@ -26,41 +27,17 @@ impl SqliteVendorRepository {
 
     /// Helper method to convert database row to Vendor entity
     fn row_to_vendor(row: &sqlx::sqlite::SqliteRow) -> Result<Vendor> {
-        // Parse the crawling_config JSON
-        let config_json: String = row.try_get("crawling_config")?;
-        let crawling_config = serde_json::from_str(&config_json)
-            .map_err(|e| anyhow!("Failed to parse crawling_config: {}", e))?;
-
-        // Parse timestamps
         let created_at: String = row.try_get("created_at")?;
-        let updated_at: String = row.try_get("updated_at")?;
-        let last_crawled_at: Option<String> = row.try_get("last_crawled_at")?;
-
         let created_at = DateTime::parse_from_rfc3339(&created_at)
             .map_err(|e| anyhow!("Failed to parse created_at: {}", e))?
             .with_timezone(&Utc);
-        
-        let updated_at = DateTime::parse_from_rfc3339(&updated_at)
-            .map_err(|e| anyhow!("Failed to parse updated_at: {}", e))?
-            .with_timezone(&Utc);
-
-        let last_crawled_at = if let Some(timestamp) = last_crawled_at {
-            Some(DateTime::parse_from_rfc3339(&timestamp)
-                .map_err(|e| anyhow!("Failed to parse last_crawled_at: {}", e))?
-                .with_timezone(&Utc))
-        } else {
-            None
-        };
 
         Ok(Vendor {
-            id: row.try_get("id")?,
-            name: row.try_get("name")?,
-            base_url: row.try_get("base_url")?,
-            crawling_config,
-            is_active: row.try_get("is_active")?,
+            vendor_id: row.try_get("vendor_id")?,
+            vendor_number: row.try_get("vendor_number")?,
+            vendor_name: row.try_get("vendor_name")?,
+            company_legal_name: row.try_get("company_legal_name")?,
             created_at,
-            updated_at,
-            last_crawled_at,
         })
     }
 }
@@ -68,33 +45,42 @@ impl SqliteVendorRepository {
 #[async_trait]
 impl VendorRepository for SqliteVendorRepository {
     async fn create(&self, vendor: &Vendor) -> Result<()> {
-        let config_json = serde_json::to_string(&vendor.crawling_config)?;
-        
         sqlx::query(
             r#"
-            INSERT INTO vendors (id, name, base_url, crawling_config, is_active, created_at, updated_at, last_crawled_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO vendors (vendor_id, vendor_number, vendor_name, company_legal_name, created_at)
+            VALUES ($1, $2, $3, $4, $5)
             "#
         )
-        .bind(&vendor.id)
-        .bind(&vendor.name)
-        .bind(&vendor.base_url)
-        .bind(&config_json)
-        .bind(vendor.is_active)
+        .bind(&vendor.vendor_id)
+        .bind(vendor.vendor_number)
+        .bind(&vendor.vendor_name)
+        .bind(&vendor.company_legal_name)
         .bind(vendor.created_at.to_rfc3339())
-        .bind(vendor.updated_at.to_rfc3339())
-        .bind(vendor.last_crawled_at.map(|dt| dt.to_rfc3339()))
         .execute(&self.pool)
         .await?;
 
         Ok(())
     }
 
-    async fn find_by_id(&self, id: &str) -> Result<Option<Vendor>> {
+    async fn find_by_id(&self, vendor_id: &str) -> Result<Option<Vendor>> {
         let row = sqlx::query(
-            "SELECT id, name, base_url, crawling_config, is_active, created_at, updated_at, last_crawled_at FROM vendors WHERE id = $1"
+            "SELECT vendor_id, vendor_number, vendor_name, company_legal_name, created_at FROM vendors WHERE vendor_id = $1"
         )
-        .bind(id)
+        .bind(vendor_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => Ok(Some(Self::row_to_vendor(&row)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn find_by_number(&self, vendor_number: u32) -> Result<Option<Vendor>> {
+        let row = sqlx::query(
+            "SELECT vendor_id, vendor_number, vendor_name, company_legal_name, created_at FROM vendors WHERE vendor_number = $1"
+        )
+        .bind(vendor_number)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -106,82 +92,64 @@ impl VendorRepository for SqliteVendorRepository {
 
     async fn find_all(&self) -> Result<Vec<Vendor>> {
         let rows = sqlx::query(
-            "SELECT id, name, base_url, crawling_config, is_active, created_at, updated_at, last_crawled_at FROM vendors ORDER BY created_at DESC"
+            "SELECT vendor_id, vendor_number, vendor_name, company_legal_name, created_at FROM vendors ORDER BY vendor_name"
         )
         .fetch_all(&self.pool)
         .await?;
 
-        let mut vendors = Vec::new();
-        for row in rows {
-            vendors.push(Self::row_to_vendor(&row)?);
-        }
+        let vendors = rows.iter()
+            .map(Self::row_to_vendor)
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(vendors)
     }
 
-    async fn find_active(&self) -> Result<Vec<Vendor>> {
+    async fn search_by_name(&self, name: &str) -> Result<Vec<Vendor>> {
+        let search_pattern = format!("%{}%", name);
         let rows = sqlx::query(
-            "SELECT id, name, base_url, crawling_config, is_active, created_at, updated_at, last_crawled_at FROM vendors WHERE is_active = 1 ORDER BY created_at DESC"
+            "SELECT vendor_id, vendor_number, vendor_name, company_legal_name, created_at FROM vendors WHERE vendor_name LIKE $1 ORDER BY vendor_name"
         )
+        .bind(&search_pattern)
         .fetch_all(&self.pool)
         .await?;
 
-        let mut vendors = Vec::new();
-        for row in rows {
-            vendors.push(Self::row_to_vendor(&row)?);
-        }
+        let vendors = rows.iter()
+            .map(Self::row_to_vendor)
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(vendors)
     }
 
     async fn update(&self, vendor: &Vendor) -> Result<()> {
-        let config_json = serde_json::to_string(&vendor.crawling_config)?;
-        
         sqlx::query(
             r#"
             UPDATE vendors 
-            SET name = $2, base_url = $3, crawling_config = $4, is_active = $5, 
-                updated_at = $6, last_crawled_at = $7
-            WHERE id = $1
+            SET vendor_number = $2, vendor_name = $3, company_legal_name = $4
+            WHERE vendor_id = $1
             "#
         )
-        .bind(&vendor.id)
-        .bind(&vendor.name)
-        .bind(&vendor.base_url)
-        .bind(&config_json)
-        .bind(vendor.is_active)
-        .bind(vendor.updated_at.to_rfc3339())
-        .bind(vendor.last_crawled_at.map(|dt| dt.to_rfc3339()))
+        .bind(&vendor.vendor_id)
+        .bind(vendor.vendor_number)
+        .bind(&vendor.vendor_name)
+        .bind(&vendor.company_legal_name)
         .execute(&self.pool)
         .await?;
 
         Ok(())
     }
 
-    async fn delete(&self, id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM vendors WHERE id = $1")
-            .bind(id)
+    async fn delete(&self, vendor_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM vendors WHERE vendor_id = $1")
+            .bind(vendor_id)
             .execute(&self.pool)
             .await?;
-
-        Ok(())
-    }
-
-    async fn update_last_crawled(&self, id: &str, timestamp: DateTime<Utc>) -> Result<()> {
-        sqlx::query(
-            "UPDATE vendors SET last_crawled_at = $2 WHERE id = $1"
-        )
-        .bind(id)
-        .bind(timestamp.to_rfc3339())
-        .execute(&self.pool)
-        .await?;
 
         Ok(())
     }
 }
 
 // ============================================================================
-// ProductRepository Implementation
+// ProductRepository Implementation for Matter Certification
 // ============================================================================
 
 pub struct SqliteProductRepository {
@@ -195,30 +163,67 @@ impl SqliteProductRepository {
 
     /// Helper method to convert database row to Product entity
     fn row_to_product(row: &sqlx::sqlite::SqliteRow) -> Result<Product> {
-        // Parse timestamps
-        let collected_at: String = row.try_get("collected_at")?;
-        let updated_at: String = row.try_get("updated_at")?;
+        let created_at: String = row.try_get("created_at")?;
+        let created_at = DateTime::parse_from_rfc3339(&created_at)
+            .map_err(|e| anyhow!("Failed to parse created_at: {}", e))?
+            .with_timezone(&Utc);
 
-        let collected_at = DateTime::parse_from_rfc3339(&collected_at)
-            .map_err(|e| anyhow!("Failed to parse collected_at: {}", e))?
+        Ok(Product {
+            url: row.try_get("url")?,
+            manufacturer: row.try_get("manufacturer")?,
+            model: row.try_get("model")?,
+            certificate_id: row.try_get("certificate_id")?,
+            page_id: row.try_get("page_id")?,
+            index_in_page: row.try_get("index_in_page")?,
+            created_at,
+        })
+    }
+
+    /// Helper method to convert database row to MatterProduct entity
+    fn row_to_matter_product(row: &sqlx::sqlite::SqliteRow) -> Result<MatterProduct> {
+        let created_at: String = row.try_get("created_at")?;
+        let updated_at: String = row.try_get("updated_at")?;
+        
+        let created_at = DateTime::parse_from_rfc3339(&created_at)
+            .map_err(|e| anyhow!("Failed to parse created_at: {}", e))?
             .with_timezone(&Utc);
         
         let updated_at = DateTime::parse_from_rfc3339(&updated_at)
             .map_err(|e| anyhow!("Failed to parse updated_at: {}", e))?
             .with_timezone(&Utc);
 
-        Ok(Product {
+        // Parse application_categories JSON
+        let application_categories_json: Option<String> = row.try_get("application_categories")?;
+        let application_categories = if let Some(json) = application_categories_json {
+            serde_json::from_str(&json).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        Ok(MatterProduct {
+            url: row.try_get("url")?,
+            page_id: row.try_get("page_id")?,
+            index_in_page: row.try_get("index_in_page")?,
             id: row.try_get("id")?,
-            name: row.try_get("name")?,
-            price: row.try_get("price")?,
-            currency: row.try_get("currency")?,
-            description: row.try_get("description")?,
-            image_url: row.try_get("image_url")?,
-            product_url: row.try_get("product_url")?,
-            vendor_id: row.try_get("vendor_id")?,
-            category: row.try_get("category")?,
-            in_stock: row.try_get::<bool, _>("in_stock")?,
-            collected_at,
+            manufacturer: row.try_get("manufacturer")?,
+            model: row.try_get("model")?,
+            device_type: row.try_get("device_type")?,
+            certificate_id: row.try_get("certificate_id")?,
+            certification_date: row.try_get("certification_date")?,
+            software_version: row.try_get("software_version")?,
+            hardware_version: row.try_get("hardware_version")?,
+            vid: row.try_get("vid")?,
+            pid: row.try_get("pid")?,
+            family_sku: row.try_get("family_sku")?,
+            family_variant_sku: row.try_get("family_variant_sku")?,
+            firmware_version: row.try_get("firmware_version")?,
+            family_id: row.try_get("family_id")?,
+            tis_trp_tested: row.try_get("tis_trp_tested")?,
+            specification_version: row.try_get("specification_version")?,
+            transport_interface: row.try_get("transport_interface")?,
+            primary_device_type_id: row.try_get("primary_device_type_id")?,
+            application_categories,
+            created_at,
             updated_at,
         })
     }
@@ -226,41 +231,57 @@ impl SqliteProductRepository {
 
 #[async_trait]
 impl ProductRepository for SqliteProductRepository {
-    async fn create(&self, product: &Product) -> Result<()> {
+    // Basic product operations (Stage 1 collection)
+    async fn save_product(&self, product: &Product) -> Result<()> {
         sqlx::query(
             r#"
-            INSERT INTO products (id, name, price, currency, description, image_url, product_url, 
-                                vendor_id, category, in_stock, collected_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            INSERT OR REPLACE INTO products (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#
         )
-        .bind(&product.id)
-        .bind(&product.name)
-        .bind(product.price)
-        .bind(&product.currency)
-        .bind(&product.description)
-        .bind(&product.image_url)
-        .bind(&product.product_url)
-        .bind(&product.vendor_id)
-        .bind(&product.category)
-        .bind(product.in_stock)
-        .bind(product.collected_at.to_rfc3339())
-        .bind(product.updated_at.to_rfc3339())
+        .bind(&product.url)
+        .bind(&product.manufacturer)
+        .bind(&product.model)
+        .bind(&product.certificate_id)
+        .bind(product.page_id)
+        .bind(product.index_in_page)
+        .bind(product.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
 
         Ok(())
     }
 
-    async fn find_by_id(&self, id: &str) -> Result<Option<Product>> {
+    async fn save_products_batch(&self, products: &[Product]) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        
+        for product in products {
+            sqlx::query(
+                r#"
+                INSERT OR REPLACE INTO products (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                "#
+            )
+            .bind(&product.url)
+            .bind(&product.manufacturer)
+            .bind(&product.model)
+            .bind(&product.certificate_id)
+            .bind(product.page_id)
+            .bind(product.index_in_page)
+            .bind(product.created_at.to_rfc3339())
+            .execute(&mut *tx)
+            .await?;
+        }
+        
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn find_product_by_url(&self, url: &str) -> Result<Option<Product>> {
         let row = sqlx::query(
-            r#"
-            SELECT id, name, price, currency, description, image_url, product_url, 
-                   vendor_id, category, in_stock, collected_at, updated_at 
-            FROM products WHERE id = $1
-            "#
+            "SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at FROM products WHERE url = $1"
         )
-        .bind(id)
+        .bind(url)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -270,123 +291,86 @@ impl ProductRepository for SqliteProductRepository {
         }
     }
 
-    async fn find_by_vendor(&self, vendor_id: &str) -> Result<Vec<Product>> {
+    async fn get_existing_urls(&self) -> Result<HashSet<String>> {
+        let rows = sqlx::query("SELECT url FROM products")
+            .fetch_all(&self.pool)
+            .await?;
+
+        let urls = rows.into_iter()
+            .map(|row| row.try_get::<String, _>("url"))
+            .collect::<Result<HashSet<String>, _>>()?;
+
+        Ok(urls)
+    }
+
+    async fn get_products_paginated(&self, page: u32, limit: u32) -> Result<(Vec<Product>, u32)> {
+        let offset = page * limit;
+        
+        // Get total count
+        let count_row = sqlx::query("SELECT COUNT(*) as count FROM products")
+            .fetch_one(&self.pool)
+            .await?;
+        let total: i64 = count_row.try_get("count")?;
+        
+        // Get paginated results
         let rows = sqlx::query(
             r#"
-            SELECT id, name, price, currency, description, image_url, product_url, 
-                   vendor_id, category, in_stock, collected_at, updated_at 
-            FROM products WHERE vendor_id = $1 ORDER BY collected_at DESC
+            SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at
+            FROM products 
+            ORDER BY created_at DESC 
+            LIMIT $1 OFFSET $2
             "#
         )
-        .bind(vendor_id)
+        .bind(limit as i64)
+        .bind(offset as i64)
         .fetch_all(&self.pool)
         .await?;
 
-        let mut products = Vec::new();
-        for row in rows {
-            products.push(Self::row_to_product(&row)?);
-        }
+        let products = rows.iter()
+            .map(Self::row_to_product)
+            .collect::<Result<Vec<_>>>()?;
 
-        Ok(products)
+        Ok((products, total as u32))
     }
 
-    async fn find_all(&self) -> Result<Vec<Product>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, name, price, currency, description, image_url, product_url, 
-                   vendor_id, category, in_stock, collected_at, updated_at 
-            FROM products ORDER BY collected_at DESC
-            "#
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut products = Vec::new();
-        for row in rows {
-            products.push(Self::row_to_product(&row)?);
-        }
-
-        Ok(products)
-    }
-
-    async fn find_in_stock(&self) -> Result<Vec<Product>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, name, price, currency, description, image_url, product_url, 
-                   vendor_id, category, in_stock, collected_at, updated_at 
-            FROM products WHERE in_stock = 1 ORDER BY collected_at DESC
-            "#
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut products = Vec::new();
-        for row in rows {
-            products.push(Self::row_to_product(&row)?);
-        }
-
-        Ok(products)
-    }
-
-    async fn find_by_category(&self, category: &str) -> Result<Vec<Product>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, name, price, currency, description, image_url, product_url, 
-                   vendor_id, category, in_stock, collected_at, updated_at 
-            FROM products WHERE category = $1 ORDER BY collected_at DESC
-            "#
-        )
-        .bind(category)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut products = Vec::new();
-        for row in rows {
-            products.push(Self::row_to_product(&row)?);
-        }
-
-        Ok(products)
-    }
-
-    async fn search_by_name(&self, query: &str) -> Result<Vec<Product>> {
-        let search_query = format!("%{}%", query);
-        let rows = sqlx::query(
-            r#"
-            SELECT id, name, price, currency, description, image_url, product_url, 
-                   vendor_id, category, in_stock, collected_at, updated_at 
-            FROM products WHERE name LIKE $1 ORDER BY collected_at DESC
-            "#
-        )
-        .bind(&search_query)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut products = Vec::new();
-        for row in rows {
-            products.push(Self::row_to_product(&row)?);
-        }
-
-        Ok(products)
-    }
-
-    async fn update(&self, product: &Product) -> Result<()> {
+    // Matter product operations (Stage 2 collection)
+    async fn save_matter_product(&self, product: &MatterProduct) -> Result<()> {
+        let application_categories_json = serde_json::to_string(&product.application_categories)?;
+        
         sqlx::query(
             r#"
-            UPDATE products 
-            SET name = $2, price = $3, currency = $4, description = $5, image_url = $6, 
-                product_url = $7, category = $8, in_stock = $9, updated_at = $10
-            WHERE id = $1
+            INSERT OR REPLACE INTO matter_products (
+                url, page_id, index_in_page, id, manufacturer, model, device_type,
+                certificate_id, certification_date, software_version, hardware_version,
+                vid, pid, family_sku, family_variant_sku, firmware_version,
+                family_id, tis_trp_tested, specification_version, transport_interface,
+                primary_device_type_id, application_categories, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
             "#
         )
+        .bind(&product.url)
+        .bind(product.page_id)
+        .bind(product.index_in_page)
         .bind(&product.id)
-        .bind(&product.name)
-        .bind(product.price)
-        .bind(&product.currency)
-        .bind(&product.description)
-        .bind(&product.image_url)
-        .bind(&product.product_url)
-        .bind(&product.category)
-        .bind(product.in_stock)
+        .bind(&product.manufacturer)
+        .bind(&product.model)
+        .bind(&product.device_type)
+        .bind(&product.certificate_id)
+        .bind(&product.certification_date)
+        .bind(&product.software_version)
+        .bind(&product.hardware_version)
+        .bind(&product.vid)
+        .bind(&product.pid)
+        .bind(&product.family_sku)
+        .bind(&product.family_variant_sku)
+        .bind(&product.firmware_version)
+        .bind(&product.family_id)
+        .bind(&product.tis_trp_tested)
+        .bind(&product.specification_version)
+        .bind(&product.transport_interface)
+        .bind(&product.primary_device_type_id)
+        .bind(&application_categories_json)
+        .bind(product.created_at.to_rfc3339())
         .bind(product.updated_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
@@ -394,215 +378,640 @@ impl ProductRepository for SqliteProductRepository {
         Ok(())
     }
 
-    async fn delete(&self, id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM products WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
+    async fn save_matter_products_batch(&self, products: &[MatterProduct]) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        
+        for product in products {
+            let application_categories_json = serde_json::to_string(&product.application_categories)?;
+            
+            sqlx::query(
+                r#"
+                INSERT OR REPLACE INTO matter_products (
+                    url, page_id, index_in_page, id, manufacturer, model, device_type,
+                    certificate_id, certification_date, software_version, hardware_version,
+                    vid, pid, family_sku, family_variant_sku, firmware_version,
+                    family_id, tis_trp_tested, specification_version, transport_interface,
+                    primary_device_type_id, application_categories, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+                "#
+            )
+            .bind(&product.url)
+            .bind(product.page_id)
+            .bind(product.index_in_page)
+            .bind(&product.id)
+            .bind(&product.manufacturer)
+            .bind(&product.model)
+            .bind(&product.device_type)
+            .bind(&product.certificate_id)
+            .bind(&product.certification_date)
+            .bind(&product.software_version)
+            .bind(&product.hardware_version)
+            .bind(&product.vid)
+            .bind(&product.pid)
+            .bind(&product.family_sku)
+            .bind(&product.family_variant_sku)
+            .bind(&product.firmware_version)
+            .bind(&product.family_id)
+            .bind(&product.tis_trp_tested)
+            .bind(&product.specification_version)
+            .bind(&product.transport_interface)
+            .bind(&product.primary_device_type_id)
+            .bind(&application_categories_json)
+            .bind(product.created_at.to_rfc3339())
+            .bind(product.updated_at.to_rfc3339())
+            .execute(&mut *tx)
             .await?;
-
+        }
+        
+        tx.commit().await?;
         Ok(())
     }
 
-    async fn delete_by_vendor(&self, vendor_id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM products WHERE vendor_id = $1")
-            .bind(vendor_id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
-
-    async fn count_by_vendor(&self, vendor_id: &str) -> Result<i64> {
-        let row = sqlx::query("SELECT COUNT(*) as count FROM products WHERE vendor_id = $1")
-            .bind(vendor_id)
-            .fetch_one(&self.pool)
-            .await?;
-
-        Ok(row.try_get("count")?)
-    }
-
-    async fn get_latest_by_vendor(&self, vendor_id: &str, limit: i64) -> Result<Vec<Product>> {
-        let rows = sqlx::query(
+    async fn find_matter_product_by_url(&self, url: &str) -> Result<Option<MatterProduct>> {
+        let row = sqlx::query(
             r#"
-            SELECT id, name, price, currency, description, image_url, product_url, 
-                   vendor_id, category, in_stock, collected_at, updated_at 
-            FROM products WHERE vendor_id = $1 
-            ORDER BY collected_at DESC LIMIT $2
+            SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
+                   certificate_id, certification_date, software_version, hardware_version,
+                   vid, pid, family_sku, family_variant_sku, firmware_version,
+                   family_id, tis_trp_tested, specification_version, transport_interface,
+                   primary_device_type_id, application_categories, created_at, updated_at
+            FROM matter_products WHERE url = $1
             "#
         )
-        .bind(vendor_id)
-        .bind(limit)
+        .bind(url)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => Ok(Some(Self::row_to_matter_product(&row)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_matter_products_paginated(&self, page: u32, limit: u32) -> Result<(Vec<MatterProduct>, u32)> {
+        let offset = page * limit;
+        
+        // Get total count
+        let count_row = sqlx::query("SELECT COUNT(*) as count FROM matter_products")
+            .fetch_one(&self.pool)
+            .await?;
+        let total: i64 = count_row.try_get("count")?;
+        
+        // Get paginated results
+        let rows = sqlx::query(
+            r#"
+            SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
+                   certificate_id, certification_date, software_version, hardware_version,
+                   vid, pid, family_sku, family_variant_sku, firmware_version,
+                   family_id, tis_trp_tested, specification_version, transport_interface,
+                   primary_device_type_id, application_categories, created_at, updated_at
+            FROM matter_products 
+            ORDER BY created_at DESC 
+            LIMIT $1 OFFSET $2
+            "#
+        )
+        .bind(limit as i64)
+        .bind(offset as i64)
         .fetch_all(&self.pool)
         .await?;
 
-        let mut products = Vec::new();
-        for row in rows {
-            products.push(Self::row_to_product(&row)?);
-        }
+        let products = rows.iter()
+            .map(Self::row_to_matter_product)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok((products, total as u32))
+    }
+
+    // Search and filtering
+    async fn search_products(&self, query: &str) -> Result<Vec<MatterProduct>> {
+        let search_pattern = format!("%{}%", query);
+        
+        let rows = sqlx::query(
+            r#"
+            SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
+                   certificate_id, certification_date, software_version, hardware_version,
+                   vid, pid, family_sku, family_variant_sku, firmware_version,
+                   family_id, tis_trp_tested, specification_version, transport_interface,
+                   primary_device_type_id, application_categories, created_at, updated_at
+            FROM matter_products 
+            WHERE manufacturer LIKE $1 
+               OR model LIKE $1 
+               OR device_type LIKE $1 
+               OR certificate_id LIKE $1
+               OR vid LIKE $1
+               OR pid LIKE $1
+            ORDER BY created_at DESC
+            LIMIT 100
+            "#
+        )
+        .bind(&search_pattern)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let products = rows.iter()
+            .map(Self::row_to_matter_product)
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(products)
+    }
+
+    async fn find_by_manufacturer(&self, manufacturer: &str) -> Result<Vec<MatterProduct>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
+                   certificate_id, certification_date, software_version, hardware_version,
+                   vid, pid, family_sku, family_variant_sku, firmware_version,
+                   family_id, tis_trp_tested, specification_version, transport_interface,
+                   primary_device_type_id, application_categories, created_at, updated_at
+            FROM matter_products 
+            WHERE manufacturer = $1
+            ORDER BY created_at DESC
+            "#
+        )
+        .bind(manufacturer)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let products = rows.iter()
+            .map(Self::row_to_matter_product)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(products)
+    }
+
+    async fn find_by_device_type(&self, device_type: &str) -> Result<Vec<MatterProduct>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
+                   certificate_id, certification_date, software_version, hardware_version,
+                   vid, pid, family_sku, family_variant_sku, firmware_version,
+                   family_id, tis_trp_tested, specification_version, transport_interface,
+                   primary_device_type_id, application_categories, created_at, updated_at
+            FROM matter_products 
+            WHERE device_type = $1
+            ORDER BY created_at DESC
+            "#
+        )
+        .bind(device_type)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let products = rows.iter()
+            .map(Self::row_to_matter_product)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(products)
+    }
+
+    async fn find_by_vid(&self, vid: &str) -> Result<Vec<MatterProduct>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
+                   certificate_id, certification_date, software_version, hardware_version,
+                   vid, pid, family_sku, family_variant_sku, firmware_version,
+                   family_id, tis_trp_tested, specification_version, transport_interface,
+                   primary_device_type_id, application_categories, created_at, updated_at
+            FROM matter_products 
+            WHERE vid = $1
+            ORDER BY created_at DESC
+            "#
+        )
+        .bind(vid)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let products = rows.iter()
+            .map(Self::row_to_matter_product)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(products)
+    }
+
+    async fn find_by_certification_date_range(&self, start: &str, end: &str) -> Result<Vec<MatterProduct>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
+                   certificate_id, certification_date, software_version, hardware_version,
+                   vid, pid, family_sku, family_variant_sku, firmware_version,
+                   family_id, tis_trp_tested, specification_version, transport_interface,
+                   primary_device_type_id, application_categories, created_at, updated_at
+            FROM matter_products 
+            WHERE certification_date >= $1 AND certification_date <= $2
+            ORDER BY certification_date DESC
+            "#
+        )
+        .bind(start)
+        .bind(end)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let products = rows.iter()
+            .map(Self::row_to_matter_product)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(products)
+    }
+
+    // Statistics and summary
+    async fn get_database_summary(&self) -> Result<DatabaseSummary> {
+        // Get total products count
+        let products_row = sqlx::query("SELECT COUNT(*) as count FROM products")
+            .fetch_one(&self.pool)
+            .await?;
+        let total_products: i64 = products_row.try_get("count")?;
+
+        // Get total matter products count
+        let matter_products_row = sqlx::query("SELECT COUNT(*) as count FROM matter_products")
+            .fetch_one(&self.pool)
+            .await?;
+        let total_matter_products: i64 = matter_products_row.try_get("count")?;
+
+        // Get total vendors count
+        let vendors_row = sqlx::query("SELECT COUNT(*) as count FROM vendors")
+            .fetch_one(&self.pool)
+            .await?;
+        let total_vendors: i64 = vendors_row.try_get("count")?;
+
+        // Get last crawling date from crawling_sessions
+        let last_session_row = sqlx::query(
+            "SELECT started_at FROM crawling_sessions WHERE status = 'Completed' ORDER BY started_at DESC LIMIT 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let last_crawling_date = if let Some(row) = last_session_row {
+            let timestamp: String = row.try_get("started_at")?;
+            Some(DateTime::parse_from_rfc3339(&timestamp)?.with_timezone(&Utc))
+        } else {
+            None
+        };
+
+        // Estimate database size (simplified calculation)
+        let database_size_mb = (total_products + total_matter_products + total_vendors) as f64 * 0.001; // Rough estimate
+
+        Ok(DatabaseSummary {
+            total_products: total_products as u32,
+            total_matter_products: total_matter_products as u32,
+            total_vendors: total_vendors as u32,
+            last_crawling_date,
+            database_size_mb,
+        })
+    }
+
+    async fn count_products(&self) -> Result<u32> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM products")
+            .fetch_one(&self.pool)
+            .await?;
+        let count: i64 = row.try_get("count")?;
+        Ok(count as u32)
+    }
+
+    async fn count_matter_products(&self) -> Result<u32> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM matter_products")
+            .fetch_one(&self.pool)
+            .await?;
+        let count: i64 = row.try_get("count")?;
+        Ok(count as u32)
+    }
+
+    // Cleanup operations
+    async fn delete_product(&self, url: &str) -> Result<()> {
+        sqlx::query("DELETE FROM products WHERE url = $1")
+            .bind(url)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_matter_product(&self, url: &str) -> Result<()> {
+        sqlx::query("DELETE FROM matter_products WHERE url = $1")
+            .bind(url)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}
+
+// ============================================================================
+// CrawlingSessionRepository Implementation
+// ============================================================================
+
+pub struct SqliteCrawlingSessionRepository {
+    pool: SqlitePool,
+}
+
+impl SqliteCrawlingSessionRepository {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// Helper method to convert database row to CrawlingSession entity
+    fn row_to_session(row: &sqlx::sqlite::SqliteRow) -> Result<CrawlingSession> {
+        let started_at: String = row.try_get("started_at")?;
+        let completed_at: Option<String> = row.try_get("completed_at")?;
+        
+        let started_at = DateTime::parse_from_rfc3339(&started_at)
+            .map_err(|e| anyhow!("Failed to parse started_at: {}", e))?
+            .with_timezone(&Utc);
+        
+        let completed_at = if let Some(timestamp) = completed_at {
+            Some(DateTime::parse_from_rfc3339(&timestamp)
+                .map_err(|e| anyhow!("Failed to parse completed_at: {}", e))?
+                .with_timezone(&Utc))
+        } else {
+            None
+        };
+
+        // Parse status and stage from strings
+        let status_str: String = row.try_get("status")?;
+        let stage_str: String = row.try_get("current_stage")?;
+        
+        let status = serde_json::from_str(&format!("\"{}\"", status_str))?;
+        let current_stage = serde_json::from_str(&format!("\"{}\"", stage_str))?;
+
+        Ok(CrawlingSession {
+            id: row.try_get("id")?,
+            status,
+            current_stage,
+            total_pages: row.try_get("total_pages")?,
+            processed_pages: row.try_get("processed_pages")?,
+            products_found: row.try_get("products_found")?,
+            errors_count: row.try_get("errors_count")?,
+            started_at,
+            completed_at,
+            config_snapshot: row.try_get("config_snapshot")?,
+        })
+    }
+}
+
+#[async_trait]
+impl CrawlingSessionRepository for SqliteCrawlingSessionRepository {
+    async fn create(&self, session: &CrawlingSession) -> Result<()> {
+        let status_str = serde_json::to_string(&session.status)?.trim_matches('"').to_string();
+        let stage_str = serde_json::to_string(&session.current_stage)?.trim_matches('"').to_string();
+        
+        sqlx::query(
+            r#"
+            INSERT INTO crawling_sessions (id, status, currentStage, total_pages, processed_pages, 
+                                         products_found, errors_count, started_at, completed_at, config_snapshot)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "#
+        )
+        .bind(&session.id)
+        .bind(&status_str)
+        .bind(&stage_str)
+        .bind(session.total_pages)
+        .bind(session.processed_pages)
+        .bind(session.products_found)
+        .bind(session.errors_count)
+        .bind(session.started_at.to_rfc3339())
+        .bind(session.completed_at.map(|dt| dt.to_rfc3339()))
+        .bind(&session.config_snapshot)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn update(&self, session: &CrawlingSession) -> Result<()> {
+        let status_str = serde_json::to_string(&session.status)?.trim_matches('"').to_string();
+        let stage_str = serde_json::to_string(&session.current_stage)?.trim_matches('"').to_string();
+        
+        sqlx::query(
+            r#"
+            UPDATE crawling_sessions 
+            SET status = $2, currentStage = $3, total_pages = $4, processed_pages = $5,
+                products_found = $6, errors_count = $7, completed_at = $8
+            WHERE id = $1
+            "#
+        )
+        .bind(&session.id)
+        .bind(&status_str)
+        .bind(&stage_str)
+        .bind(session.total_pages)
+        .bind(session.processed_pages)
+        .bind(session.products_found)
+        .bind(session.errors_count)
+        .bind(session.completed_at.map(|dt| dt.to_rfc3339()))
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn find_by_id(&self, id: &str) -> Result<Option<CrawlingSession>> {
+        let row = sqlx::query(
+            "SELECT id, status, currentStage, total_pages, processed_pages, products_found, errors_count, started_at, completed_at, config_snapshot FROM crawling_sessions WHERE id = $1"
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => Ok(Some(Self::row_to_session(&row)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn find_recent(&self, limit: u32) -> Result<Vec<CrawlingSession>> {
+        let rows = sqlx::query(
+            "SELECT id, status, currentStage, total_pages, processed_pages, products_found, errors_count, started_at, completed_at, config_snapshot FROM crawling_sessions ORDER BY started_at DESC LIMIT $1"
+        )
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let sessions = rows.iter()
+            .map(Self::row_to_session)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(sessions)
+    }
+
+    async fn find_active(&self) -> Result<Vec<CrawlingSession>> {
+        let rows = sqlx::query(
+            "SELECT id, status, currentStage, total_pages, processed_pages, products_found, errors_count, started_at, completed_at, config_snapshot FROM crawling_sessions WHERE status IN ('Initializing', 'Running', 'Paused') ORDER BY started_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let sessions = rows.iter()
+            .map(Self::row_to_session)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(sessions)
+    }
+
+    async fn delete(&self, session_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM crawling_sessions WHERE id = $1")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn cleanup_old_sessions(&self, days: u32) -> Result<u32> {
+        // Calculate the cutoff date
+        let cutoff_date = chrono::Utc::now() - chrono::Duration::days(days as i64);
+        let cutoff_str = cutoff_date.to_rfc3339();
+
+        let result = sqlx::query(
+            "DELETE FROM crawling_sessions WHERE started_at < $1 AND status IN ('Completed', 'Error', 'Stopped')"
+        )
+        .bind(&cutoff_str)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() as u32)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::database_connection::DatabaseConnection;
-    use crate::domain::entities::{Vendor, Product, CrawlingConfig, ProductSelectors, PaginationConfig};
+    use crate::infrastructure::DatabaseConnection;
     use chrono::Utc;
 
     async fn setup_test_db() -> Result<SqlitePool> {
         // Use in-memory database for tests to avoid file permission issues
         let database_url = "sqlite::memory:";
-        
-        let db_connection = DatabaseConnection::new(database_url).await?;
-        db_connection.migrate().await?;
-        
-        Ok(db_connection.pool().clone())
+
+        let db = DatabaseConnection::new(database_url).await?;
+        db.migrate().await?;
+        Ok(db.pool().clone())
     }
 
     #[tokio::test]
-    async fn test_vendor_repository_crud() -> Result<()> {
+    async fn test_vendor_repository() -> Result<()> {
         let pool = setup_test_db().await?;
         let repo = SqliteVendorRepository::new(pool);
-        
-        // Create test vendor
+
         let vendor = Vendor {
-            id: "test-vendor-id".to_string(),
-            name: "Test Vendor".to_string(),
-            base_url: "https://example.com".to_string(),
-            crawling_config: CrawlingConfig {
-                max_concurrent_requests: 10,
-                delay_between_requests: 1000,
-                user_agent: "test-agent".to_string(),
-                selectors: ProductSelectors {
-                    name: "h2.title".to_string(),
-                    price: "span.price".to_string(),
-                    description: None,
-                    image_url: None,
-                    product_url: "a.product-link".to_string(),
-                    in_stock: None,
-                    category: None,
-                },
-                pagination: PaginationConfig {
-                    next_page_selector: Some(".next".to_string()),
-                    page_url_pattern: None,
-                    max_pages: Some(10),
-                },
-            },
-            is_active: true,
+            vendor_id: "0x1234".to_string(),
+            vendor_number: 4660,
+            vendor_name: "Test Vendor".to_string(),
+            company_legal_name: "Test Vendor Inc.".to_string(),
             created_at: Utc::now(),
-            updated_at: Utc::now(),
-            last_crawled_at: None,
         };
-        
+
         // Test create
         repo.create(&vendor).await?;
-        
-        // Test find_by_id
-        let found = repo.find_by_id(&vendor.id).await?;
+
+        // Test find by id
+        let found = repo.find_by_id("0x1234").await?;
         assert!(found.is_some());
-        let found_vendor = found.unwrap();
-        assert_eq!(found_vendor.name, vendor.name);
-        
-        // Test find_all
+        assert_eq!(found.unwrap().vendor_name, "Test Vendor");
+
+        // Test search by name
+        let found_by_name = repo.search_by_name("Test Vendor").await?;
+        assert_eq!(found_by_name.len(), 1);
+
+        // Test find all
         let all_vendors = repo.find_all().await?;
         assert_eq!(all_vendors.len(), 1);
-        
-        // Test update
-        let mut updated_vendor = vendor.clone();
-        updated_vendor.name = "Updated Vendor".to_string();
-        updated_vendor.updated_at = Utc::now();
-        
-        repo.update(&updated_vendor).await?;
-        
-        let found = repo.find_by_id(&vendor.id).await?;
-        assert_eq!(found.unwrap().name, "Updated Vendor");
-        
-        // Test delete
-        repo.delete(&vendor.id).await?;
-        let found = repo.find_by_id(&vendor.id).await?;
-        assert!(found.is_none());
-        
+
+        println!("✅ Vendor repository test passed!");
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_product_repository_crud() -> Result<()> {
+    async fn test_product_repository() -> Result<()> {
         let pool = setup_test_db().await?;
-        let product_repo = SqliteProductRepository::new(pool.clone());
-        let vendor_repo = SqliteVendorRepository::new(pool);
-        
-        // First create a vendor for foreign key constraint
-        let vendor = Vendor {
-            id: "test-vendor".to_string(),
-            name: "Test Vendor".to_string(),
-            base_url: "https://example.com".to_string(),
-            crawling_config: CrawlingConfig {
-                max_concurrent_requests: 10,
-                delay_between_requests: 1000,
-                user_agent: "test-agent".to_string(),
-                selectors: ProductSelectors {
-                    name: "h2.title".to_string(),
-                    price: "span.price".to_string(),
-                    description: None,
-                    image_url: None,
-                    product_url: "a.product-link".to_string(),
-                    in_stock: None,
-                    category: None,
-                },
-                pagination: PaginationConfig {
-                    next_page_selector: Some(".next".to_string()),
-                    page_url_pattern: None,
-                    max_pages: Some(10),
-                },
-            },
-            is_active: true,
+        let repo = SqliteProductRepository::new(pool);
+
+        let product = Product {
+            url: "https://example.com/product/1".to_string(),
+            manufacturer: Some("Test Manufacturer".to_string()),
+            model: Some("Test Model".to_string()),
+            certificate_id: Some("CERT-123".to_string()),
+            page_id: Some(1),
+            index_in_page: Some(0),
+            created_at: Utc::now(),
+        };
+
+        // Test save product
+        repo.save_product(&product).await?;
+
+        // Test get existing URLs
+        let existing_urls = repo.get_existing_urls().await?;
+        assert!(existing_urls.contains("https://example.com/product/1"));
+
+        // Test database summary
+        let summary = repo.get_database_summary().await?;
+        assert_eq!(summary.total_products, 1);
+
+        println!("✅ Product repository test passed!");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_matter_product_repository() -> Result<()> {
+        let pool = setup_test_db().await?;
+        let repo = SqliteProductRepository::new(pool);
+
+        // First create a basic product (required for foreign key)
+        let basic_product = Product {
+            url: "https://example.com/product/matter/1".to_string(),
+            manufacturer: Some("Matter Corp".to_string()),
+            model: Some("Smart Device".to_string()),
+            certificate_id: Some("CERT-MATTER-123".to_string()),
+            page_id: Some(1),
+            index_in_page: Some(0),
+            created_at: Utc::now(),
+        };
+
+        // Save the basic product first
+        repo.save_product(&basic_product).await?;
+
+        let matter_product = MatterProduct {
+            url: "https://example.com/product/matter/1".to_string(),
+            page_id: Some(1),
+            index_in_page: Some(0),
+            id: Some("MATTER-001".to_string()),
+            manufacturer: Some("Matter Corp".to_string()),
+            model: Some("Smart Device".to_string()),
+            device_type: Some("Light".to_string()),
+            certificate_id: Some("CERT-MATTER-123".to_string()),
+            certification_date: Some("2024-01-01".to_string()),
+            software_version: Some("1.0.0".to_string()),
+            hardware_version: Some("1.0".to_string()),
+            vid: Some("0x1234".to_string()),
+            pid: Some("0x5678".to_string()),
+            family_sku: Some("SKU-123".to_string()),
+            family_variant_sku: None,
+            firmware_version: Some("1.0.0".to_string()),
+            family_id: Some("FAM-123".to_string()),
+            tis_trp_tested: Some("Yes".to_string()),
+            specification_version: Some("1.0".to_string()),
+            transport_interface: Some("Wi-Fi".to_string()),
+            primary_device_type_id: Some("0x0100".to_string()),
+            application_categories: vec!["Lighting".to_string(), "Smart Home".to_string()],
             created_at: Utc::now(),
             updated_at: Utc::now(),
-            last_crawled_at: None,
         };
-        
-        vendor_repo.create(&vendor).await?;
-        
-        // Create test product
-        let product = Product {
-            id: "test-product-id".to_string(),
-            name: "Test Product".to_string(),
-            price: Some(99.99),
-            currency: "USD".to_string(),
-            description: Some("Test description".to_string()),
-            image_url: Some("https://example.com/image.jpg".to_string()),
-            product_url: "https://example.com/product".to_string(),
-            vendor_id: "test-vendor".to_string(),
-            category: Some("Electronics".to_string()),
-            in_stock: true,
-            collected_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        
-        // Test create
-        product_repo.create(&product).await?;
-        
-        // Test find_by_id
-        let found = product_repo.find_by_id(&product.id).await?;
-        assert!(found.is_some());
-        let found_product = found.unwrap();
-        assert_eq!(found_product.name, product.name);
-        
-        // Test find_by_vendor
-        let vendor_products = product_repo.find_by_vendor(&product.vendor_id).await?;
-        assert_eq!(vendor_products.len(), 1);
-        
-        // Test search_by_name
-        let search_results = product_repo.search_by_name("Test").await?;
+
+        // Test save matter product
+        repo.save_matter_product(&matter_product).await?;
+
+        // Test search products
+        let search_results = repo.search_products("Matter").await?;
         assert_eq!(search_results.len(), 1);
-        
-        // Test delete
-        product_repo.delete(&product.id).await?;
-        let found = product_repo.find_by_id(&product.id).await?;
-        assert!(found.is_none());
-        
+        assert_eq!(search_results[0].manufacturer, Some("Matter Corp".to_string()));
+
+        // Test get products by manufacturer
+        let manufacturer_products = repo.find_by_manufacturer("Matter Corp").await?;
+        assert_eq!(manufacturer_products.len(), 1);
+
+        // Test get products by device type
+        let device_type_products = repo.find_by_device_type("Light").await?;
+        assert_eq!(device_type_products.len(), 1);
+
+        // Test get products by VID
+        let vid_products = repo.find_by_vid("0x1234").await?;
+        assert_eq!(vid_products.len(), 1);
+
+        println!("✅ Matter product repository test passed!");
         Ok(())
     }
 }

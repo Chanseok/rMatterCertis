@@ -3,6 +3,7 @@ dist
 data
 .vscode
 .DS_Store
+*.rlib
 
 # Rust build artifacts
 target/
