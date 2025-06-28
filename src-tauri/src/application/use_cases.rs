@@ -2,7 +2,7 @@
 //! 
 //! Contains the application's use cases and business workflows specific to Matter domain.
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -13,11 +13,324 @@ use crate::domain::entities::{
     CrawlerConfig, ValidationResult, ValidationSummary, DatabaseSummary
 };
 use crate::domain::repositories::{VendorRepository, ProductRepository, CrawlingSessionRepository};
+use crate::application::dto::{
+    CreateVendorDto, UpdateVendorDto, VendorResponseDto,
+    CreateProductDto, ProductResponseDto,
+    CreateMatterProductDto, MatterProductResponseDto,
+    ProductSearchDto, MatterProductFilterDto, ProductSearchResultDto,
+    DatabaseSummaryDto
+};
+
+// ============================================================================
+// DTO-enabled Use Cases for Tauri Commands
+// ============================================================================
+
+/// DTO-enabled use cases for vendor management
+pub struct VendorUseCases {
+    vendor_repo: Arc<dyn VendorRepository>,
+}
+
+impl VendorUseCases {
+    pub fn new(vendor_repo: Arc<dyn VendorRepository>) -> Self {
+        Self { vendor_repo }
+    }
+
+    /// Create a new vendor with validation
+    pub async fn create_vendor(&self, dto: CreateVendorDto) -> Result<VendorResponseDto> {
+        // Input validation
+        if dto.vendor_number == 0 {
+            return Err(anyhow!("Vendor number must be greater than 0 for Matter certification"));
+        }
+        
+        if dto.vendor_name.trim().is_empty() {
+            return Err(anyhow!("Vendor name cannot be empty"));
+        }
+
+        if dto.company_legal_name.trim().is_empty() {
+            return Err(anyhow!("Company legal name is required for Matter certification"));
+        }
+
+        // Check for duplicate vendor number
+        if let Some(_) = self.vendor_repo.find_by_number(dto.vendor_number).await? {
+            return Err(anyhow!("Vendor number already exists: {}", dto.vendor_number));
+        }
+
+        // Create vendor entity
+        let vendor = Vendor {
+            vendor_id: Uuid::new_v4().to_string(),
+            vendor_number: dto.vendor_number,
+            vendor_name: dto.vendor_name.trim().to_string(),
+            company_legal_name: dto.company_legal_name.trim().to_string(),
+            created_at: Utc::now(),
+        };
+
+        // Save to repository
+        self.vendor_repo.create(&vendor).await?;
+
+        Ok(VendorResponseDto::from(vendor))
+    }
+
+    /// Get all vendors
+    pub async fn get_all_vendors(&self) -> Result<Vec<VendorResponseDto>> {
+        let vendors = self.vendor_repo.find_all().await?;
+        Ok(vendors.into_iter().map(VendorResponseDto::from).collect())
+    }
+
+    /// Get vendor by ID
+    pub async fn get_vendor_by_id(&self, vendor_id: &str) -> Result<Option<VendorResponseDto>> {
+        if let Some(vendor) = self.vendor_repo.find_by_id(vendor_id).await? {
+            Ok(Some(VendorResponseDto::from(vendor)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Search vendors by name
+    pub async fn search_vendors_by_name(&self, name: &str) -> Result<Vec<VendorResponseDto>> {
+        let vendors = self.vendor_repo.search_by_name(name).await?;
+        Ok(vendors.into_iter().map(VendorResponseDto::from).collect())
+    }
+
+    /// Update vendor
+    pub async fn update_vendor(&self, vendor_id: &str, dto: UpdateVendorDto) -> Result<VendorResponseDto> {
+        let mut vendor = self.vendor_repo.find_by_id(vendor_id).await?
+            .ok_or_else(|| anyhow!("Vendor not found: {}", vendor_id))?;
+
+        // Update fields if provided
+        if let Some(vendor_name) = dto.vendor_name {
+            if vendor_name.trim().is_empty() {
+                return Err(anyhow!("Vendor name cannot be empty"));
+            }
+            vendor.vendor_name = vendor_name.trim().to_string();
+        }
+
+        if let Some(company_legal_name) = dto.company_legal_name {
+            if company_legal_name.trim().is_empty() {
+                return Err(anyhow!("Company legal name cannot be empty"));
+            }
+            vendor.company_legal_name = company_legal_name.trim().to_string();
+        }
+
+        self.vendor_repo.update(&vendor).await?;
+        Ok(VendorResponseDto::from(vendor))
+    }
+
+    /// Delete vendor
+    pub async fn delete_vendor(&self, vendor_id: &str) -> Result<()> {
+        // Check if vendor exists
+        if self.vendor_repo.find_by_id(vendor_id).await?.is_none() {
+            return Err(anyhow!("Vendor not found: {}", vendor_id));
+        }
+
+        self.vendor_repo.delete(vendor_id).await?;
+        Ok(())
+    }
+}
+
+/// DTO-enabled use cases for Matter product management
+pub struct MatterProductUseCases {
+    product_repo: Arc<dyn ProductRepository>,
+}
+
+impl MatterProductUseCases {
+    pub fn new(product_repo: Arc<dyn ProductRepository>) -> Self {
+        Self { product_repo }
+    }
+
+    /// Create a basic product
+    pub async fn create_product(&self, dto: CreateProductDto) -> Result<ProductResponseDto> {
+        // URL validation
+        if dto.url.trim().is_empty() {
+            return Err(anyhow!("Product URL is required"));
+        }
+
+        if !dto.url.starts_with("http") {
+            return Err(anyhow!("Invalid URL format: must start with http"));
+        }
+
+        // Check for duplicate URL
+        if let Some(_) = self.product_repo.find_product_by_url(&dto.url).await? {
+            return Err(anyhow!("Product already exists: {}", dto.url));
+        }
+
+        // Create product entity
+        let product = Product {
+            url: dto.url.trim().to_string(),
+            manufacturer: dto.manufacturer,
+            model: dto.model,
+            certificate_id: dto.certificate_id,
+            page_id: dto.page_id,
+            index_in_page: dto.index_in_page,
+            created_at: Utc::now(),
+        };
+
+        self.product_repo.save_product(&product).await?;
+        Ok(ProductResponseDto::from(product))
+    }
+
+    /// Create a Matter product (with automatic Product creation if needed)
+    pub async fn create_matter_product(&self, dto: CreateMatterProductDto) -> Result<MatterProductResponseDto> {
+        // URL validation
+        if dto.url.trim().is_empty() {
+            return Err(anyhow!("Product URL is required"));
+        }
+
+        // Ensure basic Product exists first
+        if self.product_repo.find_product_by_url(&dto.url).await?.is_none() {
+            let basic_product = Product {
+                url: dto.url.clone(),
+                manufacturer: dto.manufacturer.clone(),
+                model: dto.model.clone(),
+                certificate_id: dto.certificate_id.clone(),
+                page_id: dto.page_id,
+                index_in_page: dto.index_in_page,
+                created_at: Utc::now(),
+            };
+            self.product_repo.save_product(&basic_product).await?;
+        }
+
+        // Create MatterProduct entity
+        let matter_product = MatterProduct {
+            url: dto.url.trim().to_string(),
+            page_id: dto.page_id,
+            index_in_page: dto.index_in_page,
+            id: dto.id,
+            manufacturer: dto.manufacturer,
+            model: dto.model,
+            device_type: dto.device_type,
+            certificate_id: dto.certificate_id,
+            certification_date: dto.certification_date,
+            software_version: dto.software_version,
+            hardware_version: dto.hardware_version,
+            vid: dto.vid,
+            pid: dto.pid,
+            family_sku: dto.family_sku,
+            family_variant_sku: dto.family_variant_sku,
+            firmware_version: dto.firmware_version,
+            family_id: dto.family_id,
+            tis_trp_tested: dto.tis_trp_tested,
+            specification_version: dto.specification_version,
+            transport_interface: dto.transport_interface,
+            primary_device_type_id: dto.primary_device_type_id,
+            application_categories: dto.application_categories,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        self.product_repo.save_matter_product(&matter_product).await?;
+        Ok(MatterProductResponseDto::from(matter_product))
+    }
+
+    /// Search Matter products with pagination
+    pub async fn search_matter_products(&self, dto: ProductSearchDto) -> Result<ProductSearchResultDto> {
+        let page = dto.page.unwrap_or(1);
+        let page_size = dto.page_size.unwrap_or(20);
+
+        if page == 0 {
+            return Err(anyhow!("Page number must be greater than 0"));
+        }
+
+        if page_size == 0 || page_size > 100 {
+            return Err(anyhow!("Page size must be between 1 and 100"));
+        }
+
+        let products = self.product_repo.search_products(&dto.query).await?;
+        let total_count = products.len() as u32;
+        let total_pages = (total_count + page_size - 1) / page_size;
+
+        // Simple pagination (could be optimized with repository-level pagination)
+        let start_idx = ((page - 1) * page_size) as usize;
+        let end_idx = (start_idx + page_size as usize).min(products.len());
+        
+        let paginated_products = if start_idx < products.len() {
+            products[start_idx..end_idx].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        Ok(ProductSearchResultDto {
+            products: paginated_products.into_iter().map(MatterProductResponseDto::from).collect(),
+            total_count,
+            page,
+            page_size,
+            total_pages,
+        })
+    }
+
+    /// Filter Matter products by criteria
+    pub async fn filter_matter_products(&self, filter: MatterProductFilterDto) -> Result<ProductSearchResultDto> {
+        let page = filter.page.unwrap_or(1);
+        let page_size = filter.page_size.unwrap_or(20);
+
+        if page == 0 {
+            return Err(anyhow!("Page number must be greater than 0"));
+        }
+
+        // Apply filters sequentially (could be optimized with compound queries)
+        let mut products = if let Some(manufacturer) = &filter.manufacturer {
+            self.product_repo.find_by_manufacturer(manufacturer).await?
+        } else if let Some(device_type) = &filter.device_type {
+            self.product_repo.find_by_device_type(device_type).await?
+        } else if let Some(vid) = &filter.vid {
+            self.product_repo.find_by_vid(vid).await?
+        } else {
+            // Get all matter products with pagination
+            let (all_products, _) = self.product_repo.get_matter_products_paginated(page, page_size).await?;
+            all_products
+        };
+
+        // Apply date range filter if provided
+        if let (Some(start_date), Some(end_date)) = (&filter.certification_date_start, &filter.certification_date_end) {
+            let date_filtered = self.product_repo.find_by_certification_date_range(start_date, end_date).await?;
+            
+            // Find intersection of date filter and other filters
+            let date_urls: HashSet<String> = date_filtered.into_iter().map(|p| p.url).collect();
+            products.retain(|p| date_urls.contains(&p.url));
+        }
+
+        let total_count = products.len() as u32;
+        let total_pages = (total_count + page_size - 1) / page_size;
+
+        // Apply pagination
+        let start_idx = ((page - 1) * page_size) as usize;
+        let end_idx = (start_idx + page_size as usize).min(products.len());
+        
+        let paginated_products = if start_idx < products.len() {
+            products[start_idx..end_idx].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        Ok(ProductSearchResultDto {
+            products: paginated_products.into_iter().map(MatterProductResponseDto::from).collect(),
+            total_count,
+            page,
+            page_size,
+            total_pages,
+        })
+    }
+
+    /// Get database summary
+    pub async fn get_database_summary(&self) -> Result<DatabaseSummaryDto> {
+        let summary = self.product_repo.get_database_summary().await?;
+        Ok(DatabaseSummaryDto::from(summary))
+    }
+
+    /// Delete product by URL
+    pub async fn delete_product(&self, url: &str) -> Result<()> {
+        // Delete both MatterProduct and basic Product
+        self.product_repo.delete_matter_product(url).await?;
+        self.product_repo.delete_product(url).await?;
+        Ok(())
+    }
+}
 
 /// Use cases for starting and managing crawling operations
 pub struct CrawlingUseCases {
     product_repo: Arc<dyn ProductRepository>,
+    #[allow(dead_code)]
     vendor_repo: Arc<dyn VendorRepository>,
+    #[allow(dead_code)]
     session_repo: Arc<dyn CrawlingSessionRepository>,
 }
 
@@ -197,88 +510,12 @@ impl ProductUseCases {
     }
 }
 
-/// Use cases for vendor management
-pub struct VendorUseCases {
-    vendor_repo: Arc<dyn VendorRepository>,
-}
-
-impl VendorUseCases {
-    pub fn new(vendor_repo: Arc<dyn VendorRepository>) -> Self {
-        Self { vendor_repo }
-    }
-
-    /// Create a new vendor
-    pub async fn create_vendor(&self, vendor: Vendor) -> Result<()> {
-        self.vendor_repo.create(&vendor).await
-    }
-
-    /// Get all vendors
-    pub async fn get_all_vendors(&self) -> Result<Vec<Vendor>> {
-        self.vendor_repo.find_all().await
-    }
-
-    /// Search vendors by name
-    pub async fn search_vendors(&self, name: &str) -> Result<Vec<Vendor>> {
-        self.vendor_repo.search_by_name(name).await
-    }
-
-    /// Find vendor by ID
-    pub async fn find_vendor_by_id(&self, vendor_id: &str) -> Result<Option<Vendor>> {
-        self.vendor_repo.find_by_id(vendor_id).await
-    }
-
-    /// Find vendor by number
-    pub async fn find_vendor_by_number(&self, vendor_number: u32) -> Result<Option<Vendor>> {
-        self.vendor_repo.find_by_number(vendor_number).await
-    }
-
-    /// Update vendor information
-    pub async fn update_vendor(&self, vendor: Vendor) -> Result<()> {
-        self.vendor_repo.update(&vendor).await
-    }
-
-    /// Delete vendor
-    pub async fn delete_vendor(&self, vendor_id: &str) -> Result<()> {
-        self.vendor_repo.delete(vendor_id).await
-    }
-}
-   
-
-pub struct ProductUseCases {
-    product_repo: Arc<dyn ProductRepository>,
-}
-
-impl ProductUseCases {
-    pub fn new(product_repo: Arc<dyn ProductRepository>) -> Self {
-        Self { product_repo }
-    }
-
-    pub async fn create_product(&self, product: Product) -> Result<()> {
-        self.product_repo.create(&product).await
-    }
-
-    pub async fn get_product(&self, id: &str) -> Result<Option<Product>> {
-        self.product_repo.find_by_id(id).await
-    }
-
-    pub async fn list_products(&self) -> Result<Vec<Product>> {
-        self.product_repo.find_all().await
-    }
-
-    pub async fn list_products_by_vendor(&self, vendor_id: &str) -> Result<Vec<Product>> {
-        self.product_repo.find_by_vendor(vendor_id).await
-    }
-
-    pub async fn update_product(&self, product: Product) -> Result<()> {
-        self.product_repo.update(&product).await
-    }
-
-    pub async fn delete_product(&self, id: &str) -> Result<()> {
-        self.product_repo.delete(id).await
-    }
-}
+// ============================================================================
+// CrawlingSession Use Cases (placeholder for future implementation)  
+// ============================================================================
 
 pub struct CrawlingSessionUseCases {
+    #[allow(dead_code)]
     session_repo: Arc<dyn CrawlingSessionRepository>,
 }
 
@@ -287,36 +524,6 @@ impl CrawlingSessionUseCases {
         Self { session_repo }
     }
 
-    pub async fn start_crawling_session(&self, vendor_id: String) -> Result<CrawlingSession> {
-        let session = CrawlingSession {
-            id: Uuid::new_v4().to_string(),
-            vendor_id,
-            status: CrawlingStatus::Pending,
-            total_pages: None,
-            processed_pages: 0,
-            products_found: 0,
-            errors_count: 0,
-            started_at: Utc::now(),
-            completed_at: None,
-        };
-
-        self.session_repo.create(&session).await?;
-        Ok(session)
-    }
-
-    pub async fn get_session(&self, id: &str) -> Result<Option<CrawlingSession>> {
-        self.session_repo.find_by_id(id).await
-    }
-
-    pub async fn list_sessions_by_vendor(&self, vendor_id: &str) -> Result<Vec<CrawlingSession>> {
-        self.session_repo.find_by_vendor(vendor_id).await
-    }
-
-    pub async fn list_active_sessions(&self) -> Result<Vec<CrawlingSession>> {
-        self.session_repo.find_active().await
-    }
-
-    pub async fn update_session(&self, session: CrawlingSession) -> Result<()> {
-        self.session_repo.update(&session).await
-    }
+    // TODO: Implement CrawlingSession-specific DTO-based methods
+    // For now, we'll focus on Vendor and Product management
 }

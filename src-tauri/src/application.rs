@@ -1,6 +1,11 @@
 //! Application layer module
 //! 
 //! This module contains use cases and data transfer objects
-//! that orchestrate the domain logic.
+//! that orchestrate the domain logic for Matter Certification.
 
-// TODO: Implement use cases and DTOs as needed
+pub mod dto;
+pub mod use_cases;
+
+// Re-export for easier access
+pub use dto::*;
+pub use use_cases::*;
