@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    temp_matter_certis_lib::run()
+    matter_certis_v2_lib::run()
 }
