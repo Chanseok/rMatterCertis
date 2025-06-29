@@ -1,4 +1,4 @@
-# rMatterCertis v2 - Professional E-commerce Crawling Platform
+# rMatterCertis v2 - Matter Certification Products Crawling Application 
 
 **🏆 이전 프로젝트 경험을 바탕으로 재구축하는 고도화된 크롤링 시스템**
 
