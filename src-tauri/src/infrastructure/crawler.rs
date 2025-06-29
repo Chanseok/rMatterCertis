@@ -10,7 +10,8 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::infrastructure::http_client::{HttpClient, HttpClientConfig};
-use crate::infrastructure::repositories::{SqliteProductRepository, SqliteVendorRepository};
+// use crate::infrastructure::repositories::{SqliteProductRepository, SqliteVendorRepository};  // Temporarily disabled
+use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::domain::session_manager::{SessionManager, SessionStatus, CrawlingStage};
 use crate::application::dto::StartCrawlingDto;
 

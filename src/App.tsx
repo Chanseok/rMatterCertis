@@ -8,15 +8,23 @@ type AppTab = "dashboard" | "crawling" | "results" | "database" | "vendors";
 
 // Main App Component with Store Provider
 function App() {
+  console.log("🚀 App component is rendering");
+  
+  // Simple test render without stores
   return (
-    <StoreProvider>
-      <AppContent />
-    </StoreProvider>
+    <div style="padding: 20px; background: white; color: black;">
+      <h1>Matter Certis v2 - TEST RENDER 🎉</h1>
+      <p>If you see this, the frontend is working!</p>
+      <StoreProvider>
+        <AppContent />
+      </StoreProvider>
+    </div>
   );
 }
 
 // App Content Component (inside StoreProvider)
 function AppContent() {
+  console.log("🎯 AppContent component is rendering");
   const { uiStore, vendorStore } = useStores();
   const [showCrawlingForm, setShowCrawlingForm] = createSignal(false);
   
@@ -75,7 +83,7 @@ function AppContent() {
   return (
     <div class="app">
       <div class="header">
-        <h1>Matter Certis v2</h1>
+        <h1>Matter Certis v2 - TEST RENDER 🎉</h1>
         <div class="tab-navigation">
           <button
             class={currentTab() === "dashboard" ? "tab active" : "tab"}

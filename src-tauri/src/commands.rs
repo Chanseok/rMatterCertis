@@ -8,13 +8,15 @@ use std::sync::Arc;
 use tauri::State;
 use crate::infrastructure::{
     database_connection::DatabaseConnection,
-    repositories::{SqliteVendorRepository, SqliteProductRepository},
+    // repositories::{SqliteVendorRepository, SqliteProductRepository},  // Temporarily disabled
+    IntegratedProductRepository,
     http_client::HttpClientConfig,
     crawler::WebCrawler,
 };
 use crate::domain::session_manager::SessionManager;
 use crate::application::{
     use_cases::{VendorUseCases, MatterProductUseCases, CrawlingUseCases},
+    integrated_use_cases::IntegratedProductUseCases,
     dto::{
         CreateVendorDto, UpdateVendorDto, VendorResponseDto,
         CreateMatterProductDto, ProductResponseDto, MatterProductResponseDto,
@@ -22,6 +24,7 @@ use crate::application::{
         DatabaseSummaryDto, StartCrawlingDto, SessionStatusDto
     }
 };
+use crate::domain::integrated_product::{ProductSearchCriteria, DatabaseStatistics};
 
 // ============================================================================
 // Database Management Commands
@@ -710,6 +713,195 @@ pub async fn get_recent_products(
         Err(e) => {
             println!("❌ Failed to get recent products: {e}");
             Err(format!("Failed to get recent products: {e}"))
+        }
+    }
+}
+
+// ============================================================================
+// INTEGRATED SCHEMA COMMANDS (New Unified Schema)
+// ============================================================================
+
+#[tauri::command]
+pub async fn integrated_get_database_statistics(
+    db: State<'_, DatabaseConnection>
+) -> Result<DatabaseStatistics, String> {
+    let repo = IntegratedProductRepository::new(db.pool().clone());
+    let use_cases = IntegratedProductUseCases::new(Arc::new(repo));
+    
+    match use_cases.get_database_statistics().await {
+        Ok(stats) => {
+            println!("✅ Retrieved database statistics");
+            Ok(stats)
+        },
+        Err(e) => {
+            println!("❌ Failed to get database statistics: {e}");
+            Err(format!("Failed to get database statistics: {e}"))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn integrated_search_products(
+    db: State<'_, DatabaseConnection>,
+    manufacturer: Option<String>,
+    device_type: Option<String>,
+    certificate_id: Option<String>,
+    specification_version: Option<String>,
+    program_type: Option<String>,
+    page: Option<i32>,
+    limit: Option<i32>
+) -> Result<crate::domain::integrated_product::ProductSearchResult, String> {
+    let repo = IntegratedProductRepository::new(db.pool().clone());
+    let use_cases = IntegratedProductUseCases::new(Arc::new(repo));
+    
+    let criteria = ProductSearchCriteria {
+        manufacturer,
+        device_type,
+        certificate_id,
+        specification_version,
+        program_type,
+        certification_date_from: None,
+        certification_date_to: None,
+        page,
+        limit,
+    };
+    
+    match use_cases.search_products(criteria).await {
+        Ok(result) => {
+            println!("✅ Found {} products", result.products.len());
+            Ok(result)
+        },
+        Err(e) => {
+            println!("❌ Failed to search products: {e}");
+            Err(format!("Failed to search products: {e}"))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn integrated_get_product_with_details(
+    db: State<'_, DatabaseConnection>,
+    url: String
+) -> Result<Option<crate::domain::integrated_product::ProductWithDetails>, String> {
+    let repo = Arc::new(IntegratedProductRepository::new(db.pool().clone()));
+    let use_cases = IntegratedProductUseCases::new(repo);
+    
+    match use_cases.get_product_with_details(&url).await {
+        Ok(product) => {
+            if product.is_some() {
+                println!("✅ Found product with details: {}", url);
+            }
+            Ok(product)
+        },
+        Err(e) => {
+            println!("❌ Failed to get product details: {e}");
+            Err(format!("Failed to get product details: {e}"))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn integrated_get_products_without_details(
+    db: State<'_, DatabaseConnection>,
+    limit: Option<i32>
+) -> Result<Vec<crate::domain::integrated_product::Product>, String> {
+    let repo = Arc::new(IntegratedProductRepository::new(db.pool().clone()));
+    let use_cases = IntegratedProductUseCases::new(repo);
+    
+    let limit = limit.unwrap_or(100);
+    
+    match use_cases.get_products_without_details(limit).await {
+        Ok(products) => {
+            println!("✅ Found {} products without details", products.len());
+            Ok(products)
+        },
+        Err(e) => {
+            println!("❌ Failed to get products without details: {e}");
+            Err(format!("Failed to get products without details: {e}"))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn integrated_get_vendors(
+    db: State<'_, DatabaseConnection>
+) -> Result<Vec<crate::domain::integrated_product::Vendor>, String> {
+    let repo = Arc::new(IntegratedProductRepository::new(db.pool().clone()));
+    let use_cases = IntegratedProductUseCases::new(repo);
+    
+    match use_cases.get_vendors().await {
+        Ok(vendors) => {
+            println!("✅ Retrieved {} vendors", vendors.len());
+            Ok(vendors)
+        },
+        Err(e) => {
+            println!("❌ Failed to get vendors: {e}");
+            Err(format!("Failed to get vendors: {e}"))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn integrated_create_vendor(
+    db: State<'_, DatabaseConnection>,
+    vendor_name: String,
+    company_legal_name: Option<String>,
+    vendor_number: Option<i32>
+) -> Result<i32, String> {
+    let repo = Arc::new(IntegratedProductRepository::new(db.pool().clone()));
+    let use_cases = IntegratedProductUseCases::new(repo);
+    
+    match use_cases.create_vendor(vendor_name.clone(), company_legal_name, vendor_number).await {
+        Ok(vendor_id) => {
+            println!("✅ Created vendor: {} (ID: {})", vendor_name, vendor_id);
+            Ok(vendor_id)
+        },
+        Err(e) => {
+            println!("❌ Failed to create vendor: {e}");
+            Err(format!("Failed to create vendor: {e}"))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn integrated_get_crawling_results(
+    db: State<'_, DatabaseConnection>,
+    page: Option<i32>,
+    limit: Option<i32>
+) -> Result<Vec<crate::domain::integrated_product::CrawlingResult>, String> {
+    let repo = Arc::new(IntegratedProductRepository::new(db.pool().clone()));
+    let use_cases = IntegratedProductUseCases::new(repo);
+    
+    let page = page.unwrap_or(1);
+    let limit = limit.unwrap_or(20);
+    
+    match use_cases.get_crawling_results(page, limit).await {
+        Ok(results) => {
+            println!("✅ Retrieved {} crawling results", results.len());
+            Ok(results)
+        },
+        Err(e) => {
+            println!("❌ Failed to get crawling results: {e}");
+            Err(format!("Failed to get crawling results: {e}"))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn integrated_validate_database_integrity(
+    db: State<'_, DatabaseConnection>
+) -> Result<DatabaseStatistics, String> {
+    let repo = Arc::new(IntegratedProductRepository::new(db.pool().clone()));
+    let use_cases = IntegratedProductUseCases::new(repo);
+    
+    match use_cases.validate_database_integrity().await {
+        Ok(stats) => {
+            println!("✅ Database integrity validation completed");
+            Ok(stats)
+        },
+        Err(e) => {
+            println!("❌ Failed to validate database integrity: {e}");
+            Err(format!("Failed to validate database integrity: {e}"))
         }
     }
 }

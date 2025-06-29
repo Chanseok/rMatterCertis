@@ -9,14 +9,22 @@ use crate::infrastructure::database_connection::DatabaseConnection;
 pub mod domain;
 pub mod application;
 pub mod infrastructure;
-pub mod commands;
+// pub mod commands; // Temporarily disabled due to import conflicts
+pub mod commands_simple;
+pub mod commands_integrated;
 
 // Test utilities (only available during testing)
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
-// Re-export commands for easier access
-pub use commands::*;
+// Import command functions
+use commands_simple::{greet, test_database_connection, get_database_info};
+use commands_integrated::{
+    get_integrated_database_statistics,
+    search_integrated_products_simple,
+    get_integrated_products_without_details,
+    validate_integrated_database_integrity
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -42,51 +50,20 @@ pub fn run() {
         db
     });
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(db)  // Add database as managed state
+        .manage(db)
         .invoke_handler(tauri::generate_handler![
-            // Legacy/Example commands
             greet,
-            
-            // Database management
             test_database_connection,
             get_database_info,
-            get_database_summary,
-            
-            // Vendor management
-            create_vendor,
-            get_all_vendors,
-            get_vendor_by_id,
-            search_vendors_by_name,
-            update_vendor,
-            delete_vendor,
-            
-            // Matter product management
-            create_product,
-            create_matter_product,
-            search_matter_products,
-            filter_matter_products,
-            delete_product,
-            
-            // Product results management
-            get_products,
-            get_matter_products,
-            search_products,
-            get_products_by_manufacturer,
-            get_recent_products,
-            
-            // Web crawling commands
-            start_crawling,
-            get_crawling_status,
-            stop_crawling,
-            pause_crawling,
-            resume_crawling,
-            get_crawling_stats,
-            get_active_crawling_sessions,
-            get_crawling_session_history,
-            get_enhanced_crawling_stats
-        ])
+            get_integrated_database_statistics,
+            search_integrated_products_simple,
+            get_integrated_products_without_details,
+            validate_integrated_database_integrity
+        ]);
+    
+    builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

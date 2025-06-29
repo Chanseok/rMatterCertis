@@ -6,5 +6,16 @@
   "permissions": [
     "core:default",
     "opener:default"
-  ]
+  ],
+  "commands": {
+    "allow": [
+      "greet",
+      "test_database_connection", 
+      "get_database_info",
+      "get_integrated_database_statistics",
+      "search_integrated_products_simple", 
+      "get_integrated_products_without_details",
+      "validate_integrated_database_integrity"
+    ]
+  }
 }

@@ -7,3 +7,6 @@ pub mod entities;
 pub mod repositories;
 pub mod services;
 pub mod session_manager;
+pub mod matter_product;
+pub mod product;
+pub mod integrated_product;

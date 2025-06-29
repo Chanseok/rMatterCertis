@@ -5,7 +5,9 @@
 
 pub mod dto;
 pub mod use_cases;
+pub mod integrated_use_cases;
 
 // Re-export for easier access
 pub use dto::*;
 pub use use_cases::*;
+pub use integrated_use_cases::*;
