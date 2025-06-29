@@ -1,12 +1,17 @@
-//! Infrastructure layer module
+//! Infrastructure layer for database connections, parsing, and external integrations
 //! 
-//! This module contains implementations for external concerns
-//! such as databases, HTTP clients, crawling engines, and configuration.
+//! This module provides database connections, session management, HTML parsing,
+//! web crawling, and external service integrations following the guide's architecture.
 
 pub mod database_connection;
-// pub mod config;
-// pub mod database;
 pub mod integrated_product_repository;
+pub mod html_parser;  // Legacy parser - keeping for backward compatibility
+pub mod simple_http_client;
+pub mod parsing_error;  // Enhanced error types
+pub mod parsing;  // Modern parsing architecture following the guide
+pub mod crawling;  // Web crawler implementation
+pub mod config;  // Configuration constants and helpers
+
 // Temporarily disabled - working on schema compatibility
 // pub mod product_repository;
 // pub mod matter_product_repository; 
@@ -19,6 +24,14 @@ pub mod integrated_product_repository;
 // Re-export commonly used items
 pub use database_connection::DatabaseConnection;
 pub use integrated_product_repository::IntegratedProductRepository;
+pub use html_parser::MatterDataExtractor;  // Legacy
+pub use simple_http_client::HttpClient;
+pub use config::csa_iot;  // CSA-IoT configuration constants
+
+// Modern parsing and crawling exports following the guide
+pub use parsing::{ParsingConfig, ParsingError, ParsingResult, ProductListParser, ProductDetailParser};
+pub use crawling::WebCrawler;
+
 // Legacy compatibility through adapters
 // pub use repositories_adapter::{SqliteVendorRepository, SqliteProductRepository};
 // pub use http_client::{HttpClient, HttpClientConfig};

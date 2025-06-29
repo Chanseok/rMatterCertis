@@ -152,9 +152,10 @@ pub struct MatterCrawlerConfig {
 
 impl Default for MatterCrawlerConfig {
     fn default() -> Self {
+        use crate::infrastructure::config::csa_iot;
         Self {
-            base_url: "https://csa-iot.org/csa-iot_products/".to_string(),
-            matter_filter_url: "https://csa-iot.org/csa-iot_products/?p_keywords=&p_type%5B%5D=14&p_program_type%5B%5D=1049&p_certificate=&p_family=&p_firmware_ver=".to_string(),
+            base_url: csa_iot::PRODUCTS_PAGE_GENERAL.to_string(),
+            matter_filter_url: csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string(),
             rate_limit_ms: 1000, // 1 second between requests
             max_concurrent_requests: 3, // Conservative default
             request_timeout_seconds: 30,

@@ -166,7 +166,10 @@ impl Default for CrawlerConfig {
             batch_size: Some(30),
             batch_delay_ms: Some(2000),
             batch_retry_limit: Some(3),
-            base_url: Some("https://csa-iot.org".to_string()),
+            base_url: Some({
+                use crate::infrastructure::config::csa_iot;
+                csa_iot::BASE_URL.to_string()
+            }),
             matter_filter_url: None,
         }
     }

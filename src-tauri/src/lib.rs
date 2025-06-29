@@ -5,13 +5,10 @@
 
 use crate::infrastructure::database_connection::DatabaseConnection;
 
-// Module declarations
 pub mod domain;
-pub mod application; // Restored - previously disabled due to import conflicts
-pub mod infrastructure; // Partially enabled for DatabaseConnection
-// pub mod commands; // Temporarily disabled due to import conflicts
-pub mod commands_simple;
-pub mod commands_integrated; // Restored - previously disabled due to import conflicts
+pub mod application;
+pub mod infrastructure;
+pub mod commands; // Modern commands following the guide
 
 // Test utilities (only available during testing)
 #[cfg(any(test, feature = "test-utils"))]
@@ -54,13 +51,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(db)
         .invoke_handler(tauri::generate_handler![
-            commands_simple::greet,
-            commands_simple::test_database_connection,
-            commands_simple::get_database_info,
-            commands_integrated::get_integrated_database_statistics,
-            commands_integrated::search_integrated_products_simple,
-            commands_integrated::get_integrated_products_without_details,
-            commands_integrated::validate_integrated_database_integrity
+            // Modern parsing commands following the guide
+            commands::crawl_product_list_page,
+            commands::crawl_product_detail_page,
+            commands::batch_crawl_product_lists,
+            commands::batch_crawl_product_details,
+            commands::check_has_next_page,
+            commands::get_crawler_config,
+            commands::crawler_health_check
         ]);
     
     builder
