@@ -56,6 +56,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # [[bin]]
 # name = "test_crawler"
 # path = "src/bin/test_crawler.rs"
+[[bin]]
+name = "test_core_functionality"
+path = "src/bin/test_core_functionality.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
