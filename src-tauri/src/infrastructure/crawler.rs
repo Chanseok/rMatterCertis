@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::infrastructure::http_client::{HttpClient, HttpClientConfig};
 use crate::infrastructure::repositories::{SqliteProductRepository, SqliteVendorRepository};
-use crate::domain::session_manager::{SessionManager, CrawlingSessionState, SessionStatus, CrawlingStage};
+use crate::domain::session_manager::{SessionManager, SessionStatus, CrawlingStage};
 use crate::application::dto::StartCrawlingDto;
 
 /// Configuration for crawling session
@@ -202,7 +202,7 @@ impl WebCrawler {
                     // Extract and save product data
                     if let Err(e) = self.extract_and_save_products(&page, &session_id, pages_crawled).await {
                         tracing::error!("Failed to extract/save products from {}: {}", current_url, e);
-                        self.session_manager.add_error(&session_id, format!("Product extraction failed for {}: {}", current_url, e)).await
+                        self.session_manager.add_error(&session_id, format!("Product extraction failed for {current_url}: {e}")).await
                             .map_err(|e| anyhow::anyhow!("Failed to add error: {}", e))?;
                     }
 
@@ -227,7 +227,7 @@ impl WebCrawler {
                     tracing::error!("Failed to crawl {}: {}", current_url, e);
                     
                     // Update error count
-                    self.session_manager.add_error(&session_id, format!("Failed to crawl {}: {}", current_url, e)).await
+                    self.session_manager.add_error(&session_id, format!("Failed to crawl {current_url}: {e}")).await
                         .map_err(|e| anyhow::anyhow!("Failed to add error: {}", e))?;
                 }
             }
@@ -253,7 +253,7 @@ impl WebCrawler {
         let response = self.http_client.get(url).await?;
         let status_code = response.status().as_u16();
         let content = response.text().await
-            .with_context(|| format!("Failed to read response body from: {}", url))?;
+            .with_context(|| format!("Failed to read response body from: {url}"))?;
 
         // Extract basic information
         let title = self.extract_title(&content);
@@ -354,17 +354,17 @@ impl WebCrawler {
         if href.starts_with("http") {
             Ok(href.to_string())
         } else if href.starts_with("//") {
-            Ok(format!("https:{}", href))
+            Ok(format!("https:{href}"))
         } else if href.starts_with('/') {
             // Need base URL context - simplified for now
-            Ok(format!("https://certification.csa-iot.org{}", href))
+            Ok(format!("https://certification.csa-iot.org{href}"))
         } else {
             Ok(href.to_string())
         }
     }
 
     /// Extract and save product data from a crawled page
-    async fn extract_and_save_products(&self, page: &CrawledPage, session_id: &str, page_id: u32) -> Result<()> {
+    async fn extract_and_save_products(&self, page: &CrawledPage, _session_id: &str, page_id: u32) -> Result<()> {
         // Try to extract Matter product data first (more detailed)
         if let Ok(matter_products) = self.extract_matter_products(&page.content, page_id) {
             if !matter_products.is_empty() {
@@ -486,7 +486,7 @@ impl WebCrawler {
         }
 
         // Basic heuristic parsing - this would need refinement for specific website structures
-        let manufacturer = cells.get(0).filter(|s| !s.is_empty()).cloned();
+        let manufacturer = cells.first().filter(|s| !s.is_empty()).cloned();
         let model = cells.get(1).filter(|s| !s.is_empty()).cloned();
         let device_type = cells.get(2).filter(|s| !s.is_empty()).cloned();
         let certificate_id = cells.iter().find(|cell| 
@@ -496,7 +496,7 @@ impl WebCrawler {
         // Only create product if we have meaningful data
         if manufacturer.is_some() || model.is_some() || certificate_id.is_some() {
             Some(ExtractedMatterProduct {
-                url: format!("page_{}", page_id), // Placeholder - would be actual product URL
+                url: format!("page_{page_id}"), // Placeholder - would be actual product URL
                 page_id,
                 index_in_page: index,
                 id: None,
@@ -544,7 +544,7 @@ impl WebCrawler {
             vec![text_content.trim().to_string()]
         };
 
-        let manufacturer = cells.get(0).filter(|s| !s.is_empty()).cloned();
+        let manufacturer = cells.first().filter(|s| !s.is_empty()).cloned();
         let model = cells.get(1).filter(|s| !s.is_empty()).cloned();
         let certificate_id = cells.iter().find(|cell| 
             cell.len() > 3 && cell.chars().any(|c| c.is_numeric())
@@ -552,7 +552,7 @@ impl WebCrawler {
 
         if manufacturer.is_some() || model.is_some() {
             Some(ExtractedProduct {
-                url: format!("page_{}_item_{}", page_id, index),
+                url: format!("page_{page_id}_item_{index}"),
                 manufacturer,
                 model,
                 certificate_id,
@@ -565,10 +565,10 @@ impl WebCrawler {
     }
 
     /// Parse Matter product from JSON-LD data
-    fn parse_matter_product_from_json(&self, json_text: &str, page_id: u32) -> Result<ExtractedMatterProduct> {
+    fn parse_matter_product_from_json(&self, _json_text: &str, page_id: u32) -> Result<ExtractedMatterProduct> {
         // Simplified JSON parsing - in production, use proper JSON parsing with serde
         let product = ExtractedMatterProduct {
-            url: format!("json_page_{}", page_id),
+            url: format!("json_page_{page_id}"),
             page_id,
             index_in_page: 0,
             id: None,
@@ -597,10 +597,6 @@ impl WebCrawler {
 
     /// Save Matter product to database
     async fn save_matter_product(&self, product: &ExtractedMatterProduct) -> Result<()> {
-        // Convert application_categories to JSON string if present
-        let app_categories_json = product.application_categories.as_ref()
-            .map(|cats| serde_json::to_string(cats).unwrap_or_default());
-
         // Create MatterProduct entity
         let matter_product = crate::domain::entities::MatterProduct {
             url: product.url.clone(),
@@ -711,7 +707,20 @@ mod tests {
     }
 
     fn create_test_crawler() -> WebCrawler {
+        use std::sync::Arc;
+        use crate::infrastructure::{SqliteProductRepository, SqliteVendorRepository, DatabaseConnection};
+        
+        // Create test database
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let (product_repo, vendor_repo) = rt.block_on(async {
+            let db = DatabaseConnection::new("sqlite::memory:").await.unwrap();
+            db.migrate().await.unwrap();
+            let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
+            let vendor_repo = Arc::new(SqliteVendorRepository::new(db.pool().clone()));
+            (product_repo, vendor_repo)
+        });
+        
         let session_manager = Arc::new(SessionManager::new());
-        WebCrawler::new(HttpClientConfig::default(), session_manager).unwrap()
+        WebCrawler::new(HttpClientConfig::default(), session_manager, product_repo, vendor_repo).unwrap()
     }
 }

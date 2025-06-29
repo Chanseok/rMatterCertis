@@ -79,14 +79,14 @@ impl TestContext {
 #[macro_export]
 macro_rules! test_context {
     () => {{
-        crate::test_utils::TestContext::new().await.expect("Failed to create test context")
+        $crate::test_utils::TestContext::new().await.expect("Failed to create test context")
     }};
 }
 
 #[macro_export]
 macro_rules! test_db {
     () => {{
-        crate::test_utils::TestDatabase::new().await.expect("Failed to create test database")
+        $crate::test_utils::TestDatabase::new().await.expect("Failed to create test database")
     }};
 }
 

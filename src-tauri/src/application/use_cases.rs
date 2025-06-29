@@ -9,14 +9,12 @@ use uuid::Uuid;
 use chrono::Utc;
 
 use crate::domain::entities::{
-    Vendor, Product, MatterProduct, 
-    CrawlerConfig, ValidationResult, ValidationSummary, DatabaseSummary
+    Vendor, Product, MatterProduct, ValidationResult, ValidationSummary, DatabaseSummary
 };
 use crate::domain::repositories::{VendorRepository, ProductRepository};
 use crate::domain::session_manager::{SessionManager, CrawlingSessionState};
 use crate::application::dto::{
-    CreateVendorDto, UpdateVendorDto, VendorResponseDto,
-    CreateProductDto, ProductResponseDto,
+    CreateVendorDto, UpdateVendorDto, VendorResponseDto, ProductResponseDto,
     CreateMatterProductDto, MatterProductResponseDto,
     ProductSearchDto, MatterProductFilterDto, ProductSearchResultDto,
     DatabaseSummaryDto
@@ -265,7 +263,7 @@ impl MatterProductUseCases {
         
         let total_count = product_dtos.len() as u32;
         let page_size = search_dto.page_size.unwrap_or(50);
-        let total_pages = (total_count + page_size - 1) / page_size; // Calculate ceiling division
+        let total_pages = total_count.div_ceil(page_size); // Calculate ceiling division
         
         Ok(ProductSearchResultDto {
             products: product_dtos,

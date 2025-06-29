@@ -84,7 +84,7 @@ async fn test_memory_session_lifecycle(session_manager: &SessionManager) -> Resu
         CrawlingStage::ProductList
     ).await;
     
-    println!("✅ Session started in memory: {}", session_id);
+    println!("✅ Session started in memory: {session_id}");
 
     // Simulate rapid progress updates (memory only, no DB I/O)
     for page in 1..=10 {
@@ -92,8 +92,8 @@ async fn test_memory_session_lifecycle(session_manager: &SessionManager) -> Resu
             &session_id,
             page,
             page * 5, // 5 products per page
-            Some(format!("https://example.com/page/{}", page))
-        ).await.map_err(|e| anyhow::Error::msg(e))?;
+            Some(format!("https://example.com/page/{page}"))
+        ).await.map_err(anyhow::Error::msg)?;
         
         // Get instant status from memory
         let session = session_manager.get_session(&session_id).await.unwrap();
@@ -105,8 +105,8 @@ async fn test_memory_session_lifecycle(session_manager: &SessionManager) -> Resu
     println!("✅ Rapid progress updates in memory (no DB I/O)");
 
     // Add some errors
-    session_manager.add_error(&session_id, "Network timeout".to_string()).await.map_err(|e| anyhow::Error::msg(e))?;
-    session_manager.add_error(&session_id, "Parse error".to_string()).await.map_err(|e| anyhow::Error::msg(e))?;
+    session_manager.add_error(&session_id, "Network timeout".to_string()).await.map_err(anyhow::Error::msg)?;
+    session_manager.add_error(&session_id, "Parse error".to_string()).await.map_err(anyhow::Error::msg)?;
     
     let session = session_manager.get_session(&session_id).await.unwrap();
     assert_eq!(session.errors_count, 2);
@@ -140,8 +140,8 @@ async fn test_final_result_persistence(
     let session_id = session_manager.start_session(config, 50, CrawlingStage::ProductDetails).await;
     
     // Simulate some progress
-    session_manager.update_progress(&session_id, 25, 125, None).await.map_err(|e| anyhow::Error::msg(e))?;
-    session_manager.add_error(&session_id, "Minor issue".to_string()).await.map_err(|e| anyhow::Error::msg(e))?;
+    session_manager.update_progress(&session_id, 25, 125, None).await.map_err(anyhow::Error::msg)?;
+    session_manager.add_error(&session_id, "Minor issue".to_string()).await.map_err(anyhow::Error::msg)?;
     
     // Complete and get final result
     let final_result = session_manager.complete_session(&session_id, SessionStatus::Completed).await.unwrap();
@@ -175,9 +175,9 @@ async fn test_concurrent_memory_sessions(session_manager: &SessionManager) -> Re
     println!("✅ Started 3 concurrent sessions in memory");
 
     // Update all sessions concurrently (no locking issues)
-    session_manager.update_progress(&session1, 5, 25, None).await.map_err(|e| anyhow::Error::msg(e))?;
-    session_manager.update_progress(&session2, 10, 100, None).await.map_err(|e| anyhow::Error::msg(e))?;
-    session_manager.update_progress(&session3, 15, 200, None).await.map_err(|e| anyhow::Error::msg(e))?;
+    session_manager.update_progress(&session1, 5, 25, None).await.map_err(anyhow::Error::msg)?;
+    session_manager.update_progress(&session2, 10, 100, None).await.map_err(anyhow::Error::msg)?;
+    session_manager.update_progress(&session3, 15, 200, None).await.map_err(anyhow::Error::msg)?;
     
     // Check all sessions are active
     let active_sessions = session_manager.get_active_sessions().await;
@@ -187,7 +187,7 @@ async fn test_concurrent_memory_sessions(session_manager: &SessionManager) -> Re
 
     // Complete sessions in different order
     session_manager.complete_session(&session2, SessionStatus::Completed).await;
-    session_manager.set_status(&session1, SessionStatus::Paused).await.map_err(|e| anyhow::Error::msg(e))?;
+    session_manager.set_status(&session1, SessionStatus::Paused).await.map_err(anyhow::Error::msg)?;
     session_manager.complete_session(&session3, SessionStatus::Failed).await;
     
     // Check remaining active sessions
@@ -211,11 +211,11 @@ async fn test_performance_comparison(session_manager: &SessionManager) -> Result
     let start = std::time::Instant::now();
     
     for page in 1..=1000 {
-        session_manager.update_progress(&session_id, page, page * 3, None).await.map_err(|e| anyhow::Error::msg(e))?;
+        session_manager.update_progress(&session_id, page, page * 3, None).await.map_err(anyhow::Error::msg)?;
     }
     
     let duration = start.elapsed();
-    println!("✅ 1000 memory updates completed in: {:?}", duration);
+    println!("✅ 1000 memory updates completed in: {duration:?}");
     println!("   🚀 Performance: {:.2} updates/ms", 1000.0 / duration.as_millis() as f64);
     
     // Verify final state

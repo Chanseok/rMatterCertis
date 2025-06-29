@@ -49,6 +49,8 @@ async fn run_light_tests() -> Result<()> {
         vendor_number: 4660,
         vendor_name: "Samsung".to_string(),
         company_legal_name: "Samsung Electronics Co., Ltd.".to_string(),
+        vendor_url: Some("https://www.samsung.com".to_string()),
+        csa_assigned_number: Some("CSA-4660".to_string()),
     };
 
     let created_vendor = vendor_use_cases.create_vendor(vendor_dto).await?;
@@ -58,27 +60,19 @@ async fn run_light_tests() -> Result<()> {
     println!("\n📦 Test 2: Quick Matter Product Test");
     let matter_dto = CreateMatterProductDto {
         url: "https://example.com/test".to_string(),
-        manufacturer: Some("Samsung".to_string()),
-        model: Some("Test Device".to_string()),
         page_id: Some(1),
-        index_in_page: Some(1),
-        id: Some("TEST-001".to_string()),
-        device_type: Some("Sensor".to_string()),
-        certificate_id: Some("CERT-TEST".to_string()),
-        certification_date: Some("2024-12-28".to_string()),
-        software_version: Some("1.0".to_string()),
-        hardware_version: Some("1.0".to_string()),
+        json_data: Some(r#"{"device_name": "Test Device", "manufacturer": "Samsung"}"#.to_string()),
         vid: Some("0x1234".to_string()),
         pid: Some("0x5678".to_string()),
-        family_sku: None,
-        family_variant_sku: None,
-        firmware_version: Some("1.0".to_string()),
-        family_id: None,
-        tis_trp_tested: Some("Yes".to_string()),
-        specification_version: Some("1.3".to_string()),
-        transport_interface: Some("Thread".to_string()),
-        primary_device_type_id: Some("0x0015".to_string()),
-        application_categories: vec!["Test".to_string()],
+        device_name: Some("Test Device".to_string()),
+        device_type: Some("Sensor".to_string()),
+        manufacturer: Some("Samsung".to_string()),
+        certification_date: Some("2024-12-28".to_string()),
+        commissioning_method: Some("Standard".to_string()),
+        transport_protocol: Some("Thread".to_string()),
+        application_categories: Some(r#"["Test"]"#.to_string()),
+        clusters_client: Some("[]".to_string()),
+        clusters_server: Some("[]".to_string()),
     };
 
     let created_product = matter_product_use_cases.create_matter_product(matter_dto).await?;
@@ -98,6 +92,8 @@ async fn run_light_tests() -> Result<()> {
         vendor_number: 0, // Invalid
         vendor_name: "Invalid".to_string(),
         company_legal_name: "Invalid Co.".to_string(),
+        vendor_url: None,
+        csa_assigned_number: None,
     };
 
     match vendor_use_cases.create_vendor(invalid_dto).await {

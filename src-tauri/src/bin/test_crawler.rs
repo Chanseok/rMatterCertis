@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use anyhow::Result;
 use matter_certis_v2_lib::{
-    infrastructure::{WebCrawler, HttpClientConfig, CrawlingConfig},
+    infrastructure::{WebCrawler, HttpClientConfig, CrawlingConfig, DatabaseConnection, SqliteProductRepository, SqliteVendorRepository},
     domain::session_manager::SessionManager,
     application::dto::StartCrawlingDto,
 };
@@ -18,6 +18,14 @@ async fn main() -> Result<()> {
 
     println!("🚀 Testing rMatterCertis Web Crawler");
     println!("=====================================");
+
+    // Initialize database
+    let db = DatabaseConnection::new("sqlite::memory:").await?;
+    db.migrate().await?;
+
+    // Create repositories
+    let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
+    let vendor_repo = Arc::new(SqliteVendorRepository::new(db.pool().clone()));
 
     // Create session manager
     let session_manager = Arc::new(SessionManager::new());
@@ -32,7 +40,7 @@ async fn main() -> Result<()> {
     };
 
     // Create crawler
-    let crawler = WebCrawler::new(http_config, session_manager.clone())?;
+    let crawler = WebCrawler::new(http_config, session_manager.clone(), product_repo, vendor_repo)?;
 
     // Test crawling configuration
     let test_dto = StartCrawlingDto {
@@ -55,11 +63,11 @@ async fn main() -> Result<()> {
     // Start crawling
     println!("🕷️  Starting crawler test...");
     let session_id = crawler.start_crawling(config).await?;
-    println!("✅ Crawling session started: {}", session_id);
+    println!("✅ Crawling session started: {session_id}");
 
     // Monitor progress
     println!("📊 Monitoring progress (for 60 seconds)...");
-    let mut last_status = None;
+    let mut _last_status = None;
     
     for i in 0..60 {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -73,7 +81,7 @@ async fn main() -> Result<()> {
                 status.total_pages,
                 status.current_url.as_deref().unwrap_or("N/A")
             );
-            last_status = Some(status.clone());
+            _last_status = Some(status.clone());
 
             // Check if completed
             match status.status {
@@ -120,7 +128,7 @@ async fn main() -> Result<()> {
             println!("  Links Found: {}", page.links.len());
         }
         Err(e) => {
-            println!("❌ Failed to crawl test page: {}", e);
+            println!("❌ Failed to crawl test page: {e}");
         }
     }
 

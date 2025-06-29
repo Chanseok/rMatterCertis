@@ -77,7 +77,6 @@ incremental = true
 codegen-units = 256
 overflow-checks = false
 debug-assertions = false
-panic = "abort"
 
 # Dependencies are still optimized even in dev mode
 [profile.dev.package."*"]

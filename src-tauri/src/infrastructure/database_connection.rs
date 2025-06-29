@@ -119,6 +119,23 @@ impl DatabaseConnection {
             )
         "#;
 
+        // Create crawling results table for final session outcomes
+        let create_crawling_results_sql = r#"
+            CREATE TABLE IF NOT EXISTS crawling_results (
+                session_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                total_pages INTEGER NOT NULL,
+                products_found INTEGER NOT NULL,
+                errors_count INTEGER NOT NULL,
+                started_at DATETIME NOT NULL,
+                completed_at DATETIME NOT NULL,
+                execution_time_seconds INTEGER NOT NULL,
+                config_snapshot TEXT,
+                error_details TEXT
+            )
+        "#;
+
         // Create indexes for performance
         let create_indexes_sql = r#"
             CREATE INDEX IF NOT EXISTS idx_products_page_id ON products (page_id);
@@ -137,6 +154,7 @@ impl DatabaseConnection {
         sqlx::query(create_products_sql).execute(&self.pool).await?;
         sqlx::query(create_matter_products_sql).execute(&self.pool).await?;
         sqlx::query(create_sessions_sql).execute(&self.pool).await?;
+        sqlx::query(create_crawling_results_sql).execute(&self.pool).await?;
         sqlx::query(create_indexes_sql).execute(&self.pool).await?;
 
         Ok(())
@@ -161,7 +179,7 @@ mod tests {
         
         // SQLite URL 형식으로 변환 (절대 경로 사용)
         let database_url = format!("sqlite:{}", db_path.to_string_lossy());
-        println!("🔗 Database URL: {}", database_url);
+        println!("🔗 Database URL: {database_url}");
 
         // 데이터베이스 연결 테스트
         let db = DatabaseConnection::new(&database_url).await?;

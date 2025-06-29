@@ -17,7 +17,7 @@ use crate::application::{
     use_cases::{VendorUseCases, MatterProductUseCases, CrawlingUseCases},
     dto::{
         CreateVendorDto, UpdateVendorDto, VendorResponseDto,
-        CreateProductDto, CreateMatterProductDto, ProductResponseDto, MatterProductResponseDto,
+        CreateMatterProductDto, ProductResponseDto, MatterProductResponseDto,
         ProductSearchDto, MatterProductFilterDto, ProductSearchResultDto,
         DatabaseSummaryDto, StartCrawlingDto, SessionStatusDto
     }
@@ -35,12 +35,12 @@ pub async fn test_database_connection() -> Result<String, String> {
     let data_dir = std::path::Path::new("./data");
     if !data_dir.exists() {
         std::fs::create_dir_all(data_dir)
-            .map_err(|e| format!("Failed to create data directory: {}", e))?;
+            .map_err(|e| format!("Failed to create data directory: {e}"))?;
     }
     
     // Use relative path for database
     let database_url = "sqlite:./data/matter_certis.db";
-    println!("📊 Database URL: {}", database_url);
+    println!("📊 Database URL: {database_url}");
     
     match DatabaseConnection::new(database_url).await {
         Ok(db) => {
@@ -51,14 +51,14 @@ pub async fn test_database_connection() -> Result<String, String> {
                     Ok("Database connection and migration successful!".to_string())
                 },
                 Err(e) => {
-                    println!("❌ Migration failed: {}", e);
-                    Err(format!("Migration failed: {}", e))
+                    println!("❌ Migration failed: {e}");
+                    Err(format!("Migration failed: {e}"))
                 }
             }
         },
         Err(e) => {
-            println!("❌ Database connection failed: {}", e);
-            Err(format!("Database connection failed: {}", e))
+            println!("❌ Database connection failed: {e}");
+            Err(format!("Database connection failed: {e}"))
         }
     }
 }
@@ -66,9 +66,7 @@ pub async fn test_database_connection() -> Result<String, String> {
 #[tauri::command]
 pub async fn get_database_info() -> Result<String, String> {
     // Static database info since we're not using the managed state here
-    let info = format!(
-        "Database: SQLite\nLocation: ./data/matter_certis.db\nStatus: Available"
-    );
+    let info = "Database: SQLite\nLocation: ./data/matter_certis.db\nStatus: Available".to_string();
     
     Ok(info)
 }
@@ -91,8 +89,8 @@ pub async fn create_vendor(
             Ok(vendor)
         },
         Err(e) => {
-            println!("❌ Failed to create vendor: {}", e);
-            Err(format!("Failed to create vendor: {}", e))
+            println!("❌ Failed to create vendor: {e}");
+            Err(format!("Failed to create vendor: {e}"))
         }
     }
 }
@@ -110,8 +108,8 @@ pub async fn get_all_vendors(
             Ok(vendors)
         },
         Err(e) => {
-            println!("❌ Failed to get vendors: {}", e);
-            Err(format!("Failed to get vendors: {}", e))
+            println!("❌ Failed to get vendors: {e}");
+            Err(format!("Failed to get vendors: {e}"))
         }
     }
 }
@@ -126,7 +124,7 @@ pub async fn get_vendor_by_id(
     
     match use_cases.get_vendor(&vendor_id).await {
         Ok(vendor) => Ok(vendor),
-        Err(e) => Err(format!("Failed to get vendor: {}", e)),
+        Err(e) => Err(format!("Failed to get vendor: {e}")),
     }
 }
 
@@ -143,7 +141,7 @@ pub async fn search_vendors_by_name(
             println!("✅ Found {} vendors for query: '{}'", vendors.len(), name);
             Ok(vendors)
         },
-        Err(e) => Err(format!("Failed to search vendors: {}", e)),
+        Err(e) => Err(format!("Failed to search vendors: {e}")),
     }
 }
 
@@ -162,8 +160,8 @@ pub async fn update_vendor(
             Ok(vendor)
         },
         Err(e) => {
-            println!("❌ Failed to update vendor: {}", e);
-            Err(format!("Failed to update vendor: {}", e))
+            println!("❌ Failed to update vendor: {e}");
+            Err(format!("Failed to update vendor: {e}"))
         }
     }
 }
@@ -178,12 +176,12 @@ pub async fn delete_vendor(
     
     match use_cases.delete_vendor(&vendor_id).await {
         Ok(_) => {
-            println!("✅ Vendor deleted: {}", vendor_id);
+            println!("✅ Vendor deleted: {vendor_id}");
             Ok(())
         },
         Err(e) => {
-            println!("❌ Failed to delete vendor: {}", e);
-            Err(format!("Failed to delete vendor: {}", e))
+            println!("❌ Failed to delete vendor: {e}");
+            Err(format!("Failed to delete vendor: {e}"))
         }
     }
 }
@@ -206,8 +204,8 @@ pub async fn create_product(
             Ok(product)
         },
         Err(e) => {
-            println!("❌ Failed to create product: {}", e);
-            Err(format!("Failed to create product: {}", e))
+            println!("❌ Failed to create product: {e}");
+            Err(format!("Failed to create product: {e}"))
         }
     }
 }
@@ -226,8 +224,8 @@ pub async fn create_matter_product(
             Ok(product)
         },
         Err(e) => {
-            println!("❌ Failed to create Matter product: {}", e);
-            Err(format!("Failed to create Matter product: {}", e))
+            println!("❌ Failed to create Matter product: {e}");
+            Err(format!("Failed to create Matter product: {e}"))
         }
     }
 }
@@ -246,8 +244,8 @@ pub async fn search_matter_products(
             Ok(result)
         },
         Err(e) => {
-            println!("❌ Failed to search Matter products: {}", e);
-            Err(format!("Failed to search Matter products: {}", e))
+            println!("❌ Failed to search Matter products: {e}");
+            Err(format!("Failed to search Matter products: {e}"))
         }
     }
 }
@@ -262,12 +260,12 @@ pub async fn delete_product(
     
     match use_cases.delete_product(&url).await {
         Ok(_) => {
-            println!("✅ Product deleted: {}", url);
+            println!("✅ Product deleted: {url}");
             Ok(())
         },
         Err(e) => {
-            println!("❌ Failed to delete product: {}", e);
-            Err(format!("Failed to delete product: {}", e))
+            println!("❌ Failed to delete product: {e}");
+            Err(format!("Failed to delete product: {e}"))
         }
     }
 }
@@ -288,10 +286,6 @@ pub async fn start_crawling(
     let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
     let vendor_repo = Arc::new(SqliteVendorRepository::new(db.pool().clone()));
     
-    // Initialize repositories
-    let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
-    let vendor_repo = Arc::new(SqliteVendorRepository::new(db.pool().clone()));
-    
     // Initialize session manager
     let session_manager = Arc::new(SessionManager::new());
     
@@ -302,17 +296,17 @@ pub async fn start_crawling(
     };
     
     let crawler = WebCrawler::new(http_config, session_manager.clone(), product_repo, vendor_repo)
-        .map_err(|e| format!("Failed to create crawler: {}", e))?;
+        .map_err(|e| format!("Failed to create crawler: {e}"))?;
     
     // Start crawling
     match crawler.start_crawling(dto.into()).await {
         Ok(session_id) => {
-            println!("✅ Crawling session started: {}", session_id);
+            println!("✅ Crawling session started: {session_id}");
             Ok(session_id)
         },
         Err(e) => {
-            println!("❌ Failed to start crawling: {}", e);
-            Err(format!("Failed to start crawling: {}", e))
+            println!("❌ Failed to start crawling: {e}");
+            Err(format!("Failed to start crawling: {e}"))
         }
     }
 }
@@ -323,7 +317,7 @@ pub async fn get_crawling_status(
     session_id: String,
     db: State<'_, DatabaseConnection>
 ) -> Result<Option<SessionStatusDto>, String> {
-    println!("📊 Getting status for session: {}", session_id);
+    println!("📊 Getting status for session: {session_id}");
     
     // Initialize repositories
     let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
@@ -349,12 +343,12 @@ pub async fn get_crawling_status(
             Ok(Some(dto))
         },
         Ok(None) => {
-            println!("⚠️  Session not found: {}", session_id);
+            println!("⚠️  Session not found: {session_id}");
             Ok(None)
         },
         Err(e) => {
-            println!("❌ Failed to get session status: {}", e);
-            Err(format!("Failed to get session status: {}", e))
+            println!("❌ Failed to get session status: {e}");
+            Err(format!("Failed to get session status: {e}"))
         }
     }
 }
@@ -365,7 +359,7 @@ pub async fn stop_crawling(
     session_id: String,
     db: State<'_, DatabaseConnection>
 ) -> Result<String, String> {
-    println!("⏹️  Stopping crawling session: {}", session_id);
+    println!("⏹️  Stopping crawling session: {session_id}");
     
     // Initialize repositories
     let product_repo = Arc::new(SqliteProductRepository::new(db.pool().clone()));
@@ -380,12 +374,12 @@ pub async fn stop_crawling(
     
     match crawling_use_cases.complete_crawling(&session_id).await {
         Ok(_) => {
-            println!("✅ Crawling session stopped: {}", session_id);
+            println!("✅ Crawling session stopped: {session_id}");
             Ok("Crawling session stopped successfully".to_string())
         },
         Err(e) => {
-            println!("❌ Failed to stop crawling: {}", e);
-            Err(format!("Failed to stop crawling: {}", e))
+            println!("❌ Failed to stop crawling: {e}");
+            Err(format!("Failed to stop crawling: {e}"))
         }
     }
 }
@@ -396,11 +390,11 @@ pub async fn pause_crawling(
     session_id: String,
     _db: State<'_, DatabaseConnection>
 ) -> Result<String, String> {
-    println!("⏸️  Pausing crawling session: {}", session_id);
+    println!("⏸️  Pausing crawling session: {session_id}");
     
     // Note: Session pausing would need to be implemented in SessionManager
     // For now, we'll return a placeholder response
-    Ok(format!("Pause functionality not yet implemented for session: {}", session_id))
+    Ok(format!("Pause functionality not yet implemented for session: {session_id}"))
 }
 
 /// Resume a paused crawling session
@@ -409,11 +403,11 @@ pub async fn resume_crawling(
     session_id: String,
     _db: State<'_, DatabaseConnection>
 ) -> Result<String, String> {
-    println!("▶️  Resuming crawling session: {}", session_id);
+    println!("▶️  Resuming crawling session: {session_id}");
     
     // Note: Session resuming would need to be implemented in SessionManager
     // For now, we'll return a placeholder response
-    Ok(format!("Resume functionality not yet implemented for session: {}", session_id))
+    Ok(format!("Resume functionality not yet implemented for session: {session_id}"))
 }
 
 /// Get crawling session statistics
@@ -552,8 +546,8 @@ pub async fn get_products(
             Ok(products)
         }
         Err(e) => {
-            println!("❌ Failed to get products: {}", e);
-            Err(format!("Failed to get products: {}", e))
+            println!("❌ Failed to get products: {e}");
+            Err(format!("Failed to get products: {e}"))
         }
     }
 }
@@ -575,8 +569,8 @@ pub async fn get_matter_products(
             Ok(products)
         }
         Err(e) => {
-            println!("❌ Failed to get Matter products: {}", e);
-            Err(format!("Failed to get Matter products: {}", e))
+            println!("❌ Failed to get Matter products: {e}");
+            Err(format!("Failed to get Matter products: {e}"))
         }
     }
 }
@@ -599,8 +593,8 @@ pub async fn search_products(
             Ok(results)
         }
         Err(e) => {
-            println!("❌ Failed to search products: {}", e);
-            Err(format!("Failed to search products: {}", e))
+            println!("❌ Failed to search products: {e}");
+            Err(format!("Failed to search products: {e}"))
         }
     }
 }
@@ -611,7 +605,7 @@ pub async fn get_products_by_manufacturer(
     manufacturer: String,
     db: State<'_, DatabaseConnection>
 ) -> Result<Vec<MatterProductResponseDto>, String> {
-    println!("🔍 Getting products by manufacturer: {}", manufacturer);
+    println!("🔍 Getting products by manufacturer: {manufacturer}");
     
     let pool = db.pool();
     let product_repo = Arc::new(SqliteProductRepository::new(pool.clone()));
@@ -623,8 +617,8 @@ pub async fn get_products_by_manufacturer(
             Ok(products)
         }
         Err(e) => {
-            println!("❌ Failed to get products by manufacturer: {}", e);
-            Err(format!("Failed to get products by manufacturer: {}", e))
+            println!("❌ Failed to get products by manufacturer: {e}");
+            Err(format!("Failed to get products by manufacturer: {e}"))
         }
     }
 }
@@ -635,7 +629,7 @@ pub async fn filter_matter_products(
     filter_dto: MatterProductFilterDto,
     db: State<'_, DatabaseConnection>
 ) -> Result<Vec<MatterProductResponseDto>, String> {
-    println!("🔍 Filtering Matter products: {:?}", filter_dto);
+    println!("🔍 Filtering Matter products: {filter_dto:?}");
     
     let pool = db.pool();
     let product_repo = Arc::new(SqliteProductRepository::new(pool.clone()));
@@ -649,11 +643,11 @@ pub async fn filter_matter_products(
                                      filter_dto.vid.is_some() {
                 products.into_iter().filter(|p| {
                     let manufacturer_match = filter_dto.manufacturer.as_ref()
-                        .map_or(true, |m| p.manufacturer.as_ref().map_or(false, |pm| pm.contains(m)));
+                        .is_none_or(|m| p.manufacturer.as_ref().is_some_and(|pm| pm.contains(m)));
                     let device_type_match = filter_dto.device_type.as_ref()
-                        .map_or(true, |d| p.device_type.as_ref().map_or(false, |pd| pd.contains(d)));
+                        .is_none_or(|d| p.device_type.as_ref().is_some_and(|pd| pd.contains(d)));
                     let vid_match = filter_dto.vid.as_ref()
-                        .map_or(true, |v| p.vid.as_ref().map_or(false, |pv| pv.contains(v)));
+                        .is_none_or(|v| p.vid.as_ref().is_some_and(|pv| pv.contains(v)));
                     
                     manufacturer_match && device_type_match && vid_match
                 }).collect()
@@ -665,8 +659,8 @@ pub async fn filter_matter_products(
             Ok(filtered_products)
         }
         Err(e) => {
-            println!("❌ Failed to filter Matter products: {}", e);
-            Err(format!("Failed to filter Matter products: {}", e))
+            println!("❌ Failed to filter Matter products: {e}");
+            Err(format!("Failed to filter Matter products: {e}"))
         }
     }
 }
@@ -689,8 +683,8 @@ pub async fn get_database_summary(
             Ok(summary)
         }
         Err(e) => {
-            println!("❌ Failed to get database summary: {}", e);
-            Err(format!("Failed to get database summary: {}", e))
+            println!("❌ Failed to get database summary: {e}");
+            Err(format!("Failed to get database summary: {e}"))
         }
     }
 }
@@ -702,7 +696,7 @@ pub async fn get_recent_products(
     db: State<'_, DatabaseConnection>
 ) -> Result<Vec<MatterProductResponseDto>, String> {
     let limit = limit.unwrap_or(10);
-    println!("📊 Getting {} recent products", limit);
+    println!("📊 Getting {limit} recent products");
     
     let pool = db.pool();
     let product_repo = Arc::new(SqliteProductRepository::new(pool.clone()));
@@ -714,8 +708,8 @@ pub async fn get_recent_products(
             Ok(products)
         }
         Err(e) => {
-            println!("❌ Failed to get recent products: {}", e);
-            Err(format!("Failed to get recent products: {}", e))
+            println!("❌ Failed to get recent products: {e}");
+            Err(format!("Failed to get recent products: {e}"))
         }
     }
 }
@@ -726,5 +720,5 @@ pub async fn get_recent_products(
 
 #[tauri::command]
 pub fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+    format!("Hello, {name}! You've been greeted from Rust!")
 }

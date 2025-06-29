@@ -86,7 +86,7 @@ impl HttpClient {
             .get(url)
             .send()
             .await
-            .with_context(|| format!("Failed to fetch URL: {}", url))?;
+            .with_context(|| format!("Failed to fetch URL: {url}"))?;
 
         if !response.status().is_success() {
             anyhow::bail!(
@@ -104,7 +104,7 @@ impl HttpClient {
     pub async fn get_text(&self, url: &str) -> Result<String> {
         let response = self.get(url).await?;
         let text = response.text().await
-            .with_context(|| format!("Failed to read response body from: {}", url))?;
+            .with_context(|| format!("Failed to read response body from: {url}"))?;
         
         Ok(text)
     }

@@ -108,7 +108,7 @@ impl VendorRepository for SqliteVendorRepository {
     }
 
     async fn search_by_name(&self, name: &str) -> Result<Vec<Vendor>> {
-        let search_pattern = format!("%{}%", name);
+        let search_pattern = format!("%{name}%");
         let rows = sqlx::query(
             "SELECT vendor_id, vendor_number, vendor_name, company_legal_name, created_at FROM vendors WHERE vendor_name LIKE $1 ORDER BY vendor_name"
         )
@@ -529,7 +529,7 @@ impl ProductRepository for SqliteProductRepository {
 
     // Search and filtering
     async fn search_products(&self, query: &str) -> Result<Vec<MatterProduct>> {
-        let search_pattern = format!("%{}%", query);
+        let search_pattern = format!("%{query}%");
         
         let rows = sqlx::query(
             r#"
@@ -745,7 +745,7 @@ impl ProductRepository for SqliteProductRepository {
         .await?;
 
         let products = rows.iter()
-            .map(|row| Self::row_to_product(row))
+            .map(Self::row_to_product)
             .collect::<Result<Vec<_>>>()?;
 
         Ok(products)
@@ -760,7 +760,7 @@ impl ProductRepository for SqliteProductRepository {
         .await?;
 
         let products = rows.iter()
-            .map(|row| Self::row_to_matter_product(row))
+            .map(Self::row_to_matter_product)
             .collect::<Result<Vec<_>>>()?;
 
         Ok(products)
@@ -776,7 +776,7 @@ impl ProductRepository for SqliteProductRepository {
         .await?;
 
         let products = rows.iter()
-            .map(|row| Self::row_to_product(row))
+            .map(Self::row_to_product)
             .collect::<Result<Vec<_>>>()?;
 
         Ok(products)
@@ -792,7 +792,7 @@ impl ProductRepository for SqliteProductRepository {
         .await?;
 
         let products = rows.iter()
-            .map(|row| Self::row_to_matter_product(row))
+            .map(Self::row_to_matter_product)
             .collect::<Result<Vec<_>>>()?;
 
         Ok(products)
@@ -812,23 +812,23 @@ impl ProductRepository for SqliteProductRepository {
 
         if manufacturer.is_some() {
             bind_count += 1;
-            query.push_str(&format!(" AND manufacturer = ${}", bind_count));
+            query.push_str(&format!(" AND manufacturer = ${bind_count}"));
         }
         if device_type.is_some() {
             bind_count += 1;
-            query.push_str(&format!(" AND device_type = ${}", bind_count));
+            query.push_str(&format!(" AND device_type = ${bind_count}"));
         }
         if vid.is_some() {
             bind_count += 1;
-            query.push_str(&format!(" AND vid = ${}", bind_count));
+            query.push_str(&format!(" AND vid = ${bind_count}"));
         }
         if certification_date_start.is_some() {
             bind_count += 1;
-            query.push_str(&format!(" AND certification_date >= ${}", bind_count));
+            query.push_str(&format!(" AND certification_date >= ${bind_count}"));
         }
         if certification_date_end.is_some() {
             bind_count += 1;
-            query.push_str(&format!(" AND certification_date <= ${}", bind_count));
+            query.push_str(&format!(" AND certification_date <= ${bind_count}"));
         }
 
         query.push_str(" ORDER BY created_at DESC");
@@ -854,7 +854,7 @@ impl ProductRepository for SqliteProductRepository {
         let rows = db_query.fetch_all(&self.pool).await?;
 
         let products = rows.iter()
-            .map(|row| Self::row_to_matter_product(row))
+            .map(Self::row_to_matter_product)
             .collect::<Result<Vec<_>>>()?;
 
         Ok(products)
@@ -911,11 +911,14 @@ mod tests {
         let repo = SqliteVendorRepository::new(pool);
 
         let vendor = Vendor {
-            vendor_id: "0x1234".to_string(),
+            id: "0x1234".to_string(),
             vendor_number: 4660,
             vendor_name: "Test Vendor".to_string(),
             company_legal_name: "Test Vendor Inc.".to_string(),
+            vendor_url: None,
+            csa_assigned_number: None,
             created_at: Utc::now(),
+            updated_at: Utc::now(),
         };
 
         // Test create
@@ -936,11 +939,14 @@ mod tests {
 
         // Test save (insert or replace)
         let updated_vendor = Vendor {
-            vendor_id: "0x1234".to_string(),
+            id: "0x1234".to_string(),
             vendor_number: 4660,
             vendor_name: "Updated Vendor".to_string(),
             company_legal_name: "Updated Vendor Inc.".to_string(),
+            vendor_url: None,
+            csa_assigned_number: None,
             created_at: Utc::now(),
+            updated_at: Utc::now(),
         };
         repo.save(&updated_vendor).await?;
 

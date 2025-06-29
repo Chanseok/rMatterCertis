@@ -24,6 +24,8 @@ async fn main() -> Result<()> {
         vendor_number: 12345,
         vendor_name: "Test Vendor Corp".to_string(),
         company_legal_name: "Test Vendor Corporation Ltd.".to_string(),
+        vendor_url: Some("https://testvendor.com".to_string()),
+        csa_assigned_number: Some("CSA-12345".to_string()),
     }).await?;
     
     println!("✅ Created vendor: {} (ID: {})", vendor.vendor_name, vendor.vendor_id);

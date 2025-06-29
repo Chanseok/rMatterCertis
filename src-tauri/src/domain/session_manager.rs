@@ -188,7 +188,7 @@ impl SessionManager {
             
             Ok(())
         } else {
-            Err(format!("Session not found: {}", session_id))
+            Err(format!("Session not found: {session_id}"))
         }
     }
 
@@ -219,7 +219,7 @@ impl SessionManager {
             session.last_updated_at = Utc::now();
             Ok(())
         } else {
-            Err(format!("Session not found: {}", session_id))
+            Err(format!("Session not found: {session_id}"))
         }
     }
 
@@ -232,7 +232,7 @@ impl SessionManager {
             session.last_updated_at = Utc::now();
             Ok(())
         } else {
-            Err(format!("Session not found: {}", session_id))
+            Err(format!("Session not found: {session_id}"))
         }
     }
 

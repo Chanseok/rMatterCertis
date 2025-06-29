@@ -1,4 +1,4 @@
-//! Minimal dependencies test runner for specific features
+//! Minimal dependency test runner for specific features
 //! 
 //! This binary uses a modular approach to test only the features you're working on.
 //! Compile time is optimized by excluding heavy dependencies.
@@ -23,9 +23,13 @@ async fn main() -> Result<()> {
     let vendor = vendor_use_cases.create_vendor(CreateVendorDto {
         vendor_number: 1234,
         vendor_name: "Test Vendor".to_string(),
-        company_legal_name: "Test Vendor Corp".to_string(),
+        company_legal_name: "Test Vendor Co., Ltd.".to_string(),
+        vendor_url: Some("https://test.com".to_string()),
+        csa_assigned_number: Some("CSA-1234".to_string()),
     }).await?;
     
-    println!("✅ Minimal test passed: Created vendor {}", vendor.vendor_name);
+    println!("✅ Created vendor: {} (ID: {})", vendor.vendor_name, vendor.vendor_id);
+    println!("⚡ Minimal test passed!");
+    
     Ok(())
 }

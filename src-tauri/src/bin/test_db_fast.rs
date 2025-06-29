@@ -16,7 +16,7 @@ use matter_certis_v2_lib::infrastructure::{
 use matter_certis_v2_lib::application::{
     VendorUseCases, MatterProductUseCases, ProductUseCases,
     CreateVendorDto, UpdateVendorDto,
-    CreateMatterProductDto, MatterProductFilterDto,
+    CreateMatterProductDto,
 };
 
 #[tokio::main(flavor = "current_thread")]
@@ -71,6 +71,8 @@ async fn fast_vendor_test(vendor_use_cases: &VendorUseCases) -> Result<()> {
         vendor_number: 1001,
         vendor_name: "FastTest Corp".to_string(),
         company_legal_name: "FastTest Corporation".to_string(),
+        vendor_url: Some("https://fasttest.com".to_string()),
+        csa_assigned_number: Some("CSA-1001".to_string()),
     };
     
     let vendor = vendor_use_cases.create_vendor(create_dto).await?;
@@ -80,13 +82,15 @@ async fn fast_vendor_test(vendor_use_cases: &VendorUseCases) -> Result<()> {
     let update_dto = UpdateVendorDto {
         vendor_name: Some("FastTest Corp Updated".to_string()),
         company_legal_name: None,
+        vendor_url: None,
+        csa_assigned_number: None,
     };
     
     let updated = vendor_use_cases.update_vendor(&vendor.vendor_id, update_dto).await?;
     println!("  ✅ Updated vendor: {}", updated.vendor_name);
     
     // Get vendor
-    let fetched = vendor_use_cases.get_vendor_by_id(&vendor.vendor_id).await?;
+    let fetched = vendor_use_cases.get_vendor(&vendor.vendor_id).await?;
     if let Some(fetched_vendor) = fetched {
         println!("  ✅ Fetched vendor: {}", fetched_vendor.vendor_name);
     }
@@ -106,26 +110,18 @@ async fn fast_product_test(matter_use_cases: &MatterProductUseCases, product_use
     let create_dto = CreateMatterProductDto {
         url: "https://example.com/test-product".to_string(),
         page_id: Some(1),
-        index_in_page: Some(0),
-        id: Some("TEST-001".to_string()),
-        manufacturer: Some("FastTest Corp".to_string()),
-        model: Some("Fast Test Product".to_string()),
+        json_data: Some(r#"{"device_name": "Fast Test Product", "manufacturer": "FastTest Corp"}"#.to_string()),
+        vid: Some("0x1002".to_string()),
+        pid: Some("0x0001".to_string()),
+        device_name: Some("Fast Test Product".to_string()),
         device_type: Some("electronics".to_string()),
-        certificate_id: Some("CERT-001".to_string()),
+        manufacturer: Some("FastTest Corp".to_string()),
         certification_date: None,
-        software_version: None,
-        hardware_version: None,
-        vid: None,
-        pid: None,
-        family_sku: None,
-        family_variant_sku: None,
-        firmware_version: None,
-        family_id: None,
-        tis_trp_tested: None,
-        specification_version: None,
-        transport_interface: None,
-        primary_device_type_id: None,
-        application_categories: vec!["test".to_string()],
+        commissioning_method: Some("Standard".to_string()),
+        transport_protocol: Some("WiFi".to_string()),
+        application_categories: Some(r#"["test"]"#.to_string()),
+        clusters_client: Some("[]".to_string()),
+        clusters_server: Some("[]".to_string()),
     };
     
     let product = matter_use_cases.create_matter_product(create_dto).await?;
@@ -153,10 +149,12 @@ async fn fast_validation_test(vendor_use_cases: &VendorUseCases) -> Result<()> {
         vendor_number: 0,
         vendor_name: "".to_string(),
         company_legal_name: "Test Company".to_string(),
+        vendor_url: None,
+        csa_assigned_number: None,
     };
     
     match vendor_use_cases.create_vendor(invalid_dto).await {
-        Err(e) => println!("  ✅ Validation error caught: {}", e),
+        Err(e) => println!("  ✅ Validation error caught: {e}"),
         Ok(_) => println!("  ❌ Validation should have failed"),
     }
     
@@ -165,10 +163,12 @@ async fn fast_validation_test(vendor_use_cases: &VendorUseCases) -> Result<()> {
         vendor_number: 0,
         vendor_name: "Test".to_string(),
         company_legal_name: "Test Company".to_string(),
+        vendor_url: None,
+        csa_assigned_number: None,
     };
     
     match vendor_use_cases.create_vendor(invalid_vendor_dto).await {
-        Err(e) => println!("  ✅ Vendor number validation error caught: {}", e),
+        Err(e) => println!("  ✅ Vendor number validation error caught: {e}"),
         Ok(_) => println!("  ❌ Vendor number validation should have failed"),
     }
     
