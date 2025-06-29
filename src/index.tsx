@@ -2,6 +2,7 @@
 console.log("🚀 Index.tsx is loading...");
 
 import { render } from "solid-js/web";
+import "./index.css";
 import App from "./App";
 
 console.log("✅ solid-js/web and App imported successfully");

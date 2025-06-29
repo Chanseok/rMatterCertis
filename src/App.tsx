@@ -7,44 +7,50 @@ import CrawlingResults from './components/CrawlingResults';
 // 알림 컴포넌트
 const NotificationToast: Component<{ notification: any; onRemove: () => void }> = (props) => {
   const getNotificationStyles = () => {
-    const baseStyles = "fixed top-4 right-4 max-w-sm w-full bg-white border rounded-lg shadow-lg p-4 z-50 transition-all duration-300";
+    const baseStyles = "glass-card backdrop-blur-2xl border shadow-2xl animate-slide-up hover-lift";
     switch (props.notification.type) {
-      case 'success': return `${baseStyles} border-green-500 bg-green-50`;
-      case 'error': return `${baseStyles} border-red-500 bg-red-50`;
-      case 'warning': return `${baseStyles} border-yellow-500 bg-yellow-50`;
-      default: return `${baseStyles} border-blue-500 bg-blue-50`;
+      case 'success': return `${baseStyles} bg-green-500/20 border-green-400/50 neon-glow-green`;
+      case 'error': return `${baseStyles} bg-red-500/20 border-red-400/50 neon-glow`;
+      case 'warning': return `${baseStyles} bg-yellow-500/20 border-yellow-400/50`;
+      default: return `${baseStyles} bg-blue-500/20 border-blue-400/50 neon-glow`;
     }
   };
 
   const getIconColor = () => {
     switch (props.notification.type) {
-      case 'success': return 'text-green-600';
-      case 'error': return 'text-red-600';
-      case 'warning': return 'text-yellow-600';
-      default: return 'text-blue-600';
+      case 'success': return 'text-green-400';
+      case 'error': return 'text-red-400';
+      case 'warning': return 'text-yellow-400';
+      default: return 'text-blue-400';
+    }
+  };
+
+  const getIcon = () => {
+    switch (props.notification.type) {
+      case 'success': return '✅';
+      case 'error': return '❌';
+      case 'warning': return '⚠️';
+      default: return 'ℹ️';
     }
   };
 
   return (
     <div class={getNotificationStyles()}>
-      <div class="flex items-start">
-        <div class={`flex-shrink-0 ${getIconColor()}`}>
-          <Show when={props.notification.type === 'success'}>✓</Show>
-          <Show when={props.notification.type === 'error'}>✕</Show>
-          <Show when={props.notification.type === 'warning'}>⚠</Show>
-          <Show when={props.notification.type === 'info'}>ℹ</Show>
+      <div class="flex items-start p-6">
+        <div class={`flex-shrink-0 text-2xl ${getIconColor()} floating`}>
+          {getIcon()}
         </div>
-        <div class="ml-3 flex-1">
-          <p class="text-sm font-medium text-gray-900">
+        <div class="ml-4 flex-1">
+          <p class="text-sm font-semibold text-white drop-shadow-lg">
             {props.notification.message}
           </p>
         </div>
         <div class="ml-4 flex-shrink-0">
           <button
             onClick={props.onRemove}
-            class="inline-flex text-gray-400 hover:text-gray-600 focus:outline-none"
+            class="inline-flex text-white/60 hover:text-white focus:outline-none transition-all duration-300 p-1 rounded-lg hover:bg-white/20"
           >
-            ✕
+            <span class="text-xl">×</span>
           </button>
         </div>
       </div>
@@ -82,103 +88,137 @@ const App: Component = () => {
   };
 
   return (
-    <div class="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
+    <div class="min-h-screen bg-aurora transition-all duration-1000">
       {/* 사이드바 */}
       <Show when={state.ui.sidebarOpen}>
-        <div class="fixed inset-y-0 left-0 z-50 w-64 bg-white dark:bg-gray-800 shadow-lg transform transition-transform">
-          <div class="flex items-center justify-between h-16 px-6 border-b border-gray-200 dark:border-gray-700">
-            <h1 class="text-xl font-bold text-gray-900 dark:text-white">
+        <div class="sidebar sidebar-open glass-card backdrop-blur-2xl border-r border-white/20 shadow-2xl">
+          <div class="flex items-center justify-between h-16 px-6 border-b border-white/20">
+            <h1 class="text-xl font-bold text-gradient floating flex items-center">
+              <span class="mr-2 text-2xl animate-rotate">🚀</span>
               Matter Certis v2
             </h1>
             <button
               onClick={toggleSidebar}
-              class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              class="text-white/70 hover:text-white transition-all duration-300 p-2 rounded-xl hover:bg-white/20 neon-glow"
             >
-              ✕
+              <span class="text-xl">×</span>
             </button>
           </div>
           
           {/* 네비게이션 메뉴 */}
-          <nav class="mt-6">
-            <div class="px-3 space-y-1">
+          <nav class="mt-8 px-4">
+            <div class="space-y-3">
               <button
                 onClick={() => setActiveTab('dashboard')}
-                class={`w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                class={`w-full text-left px-6 py-4 rounded-2xl text-sm font-semibold transition-all duration-300 flex items-center hover-lift ${
                   state.ui.activeTab === 'dashboard'
-                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
-                    : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
+                    ? 'bg-white/30 text-white shadow-xl backdrop-blur-xl border border-white/30 neon-glow'
+                    : 'text-white/70 hover:bg-white/20 hover:text-white glass'
                 }`}
               >
-                📊 대시보드
+                <span class="mr-4 text-xl floating">📊</span>
+                대시보드
               </button>
               <button
                 onClick={() => setActiveTab('form')}
-                class={`w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                class={`w-full text-left px-6 py-4 rounded-2xl text-sm font-semibold transition-all duration-300 flex items-center hover-lift ${
                   state.ui.activeTab === 'form'
-                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
-                    : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
+                    ? 'bg-white/30 text-white shadow-xl backdrop-blur-xl border border-white/30 neon-glow'
+                    : 'text-white/70 hover:bg-white/20 hover:text-white glass'
                 }`}
               >
-                🚀 크롤링 시작
+                <span class="mr-4 text-xl floating">🚀</span>
+                크롤링 시작
               </button>
               <button
                 onClick={() => setActiveTab('results')}
-                class={`w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                class={`w-full text-left px-6 py-4 rounded-2xl text-sm font-semibold transition-all duration-300 flex items-center hover-lift ${
                   state.ui.activeTab === 'results'
-                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
-                    : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
+                    ? 'bg-white/30 text-white shadow-xl backdrop-blur-xl border border-white/30 neon-glow'
+                    : 'text-white/70 hover:bg-white/20 hover:text-white glass'
                 }`}
               >
-                📋 결과
+                <span class="mr-4 text-xl floating">📋</span>
+                결과
               </button>
               <button
                 onClick={() => setActiveTab('settings')}
-                class={`w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                class={`w-full text-left px-6 py-4 rounded-2xl text-sm font-semibold transition-all duration-300 flex items-center hover-lift ${
                   state.ui.activeTab === 'settings'
-                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
-                    : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
+                    ? 'bg-white/30 text-white shadow-xl backdrop-blur-xl border border-white/30 neon-glow'
+                    : 'text-white/70 hover:bg-white/20 hover:text-white glass'
                 }`}
               >
-                ⚙️ 설정
+                <span class="mr-4 text-xl floating">⚙️</span>
+                설정
               </button>
             </div>
           </nav>
 
-          {/* 하단 설정 */}
+          {/* 상태 표시 */}
+          <div class="absolute bottom-24 left-4 right-4">
+            <div class="glass-card backdrop-blur-xl rounded-2xl p-6 border border-white/30 shadow-xl hover-lift">
+              <div class="flex items-center space-x-4">
+                <div class={`w-4 h-4 rounded-full ${
+                  state.crawling.status === 'running' ? 'bg-green-400 animate-pulse neon-glow-green' :
+                  state.crawling.status === 'error' ? 'bg-red-400 neon-glow' :
+                  'bg-gray-400'
+                }`} />
+                <span class="text-sm text-white font-semibold">
+                  {state.crawling.status === 'running' ? '크롤링 중' :
+                   state.crawling.status === 'error' ? '오류' :
+                   '대기'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* 하단 테마 설정 */}
           <div class="absolute bottom-4 left-4 right-4">
             <button
               onClick={toggleTheme}
-              class="w-full px-3 py-2 text-sm text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 text-center"
+              class="w-full px-6 py-4 text-sm text-white/80 hover:text-white hover:bg-white/20 transition-all duration-300 rounded-2xl flex items-center justify-center glass hover-lift"
             >
-              {state.ui.theme === 'light' ? '🌙 다크 모드' : '☀️ 라이트 모드'}
+              <span class="mr-3 text-xl floating">
+                {state.ui.theme === 'light' ? '🌙' : '☀️'}
+              </span>
+              {state.ui.theme === 'light' ? '다크 모드' : '라이트 모드'}
             </button>
           </div>
         </div>
       </Show>
 
       {/* 메인 콘텐츠 */}
-      <div class={`transition-all duration-300 ${state.ui.sidebarOpen ? 'ml-64' : 'ml-0'}`}>
+      <div class={`transition-all duration-500 ${state.ui.sidebarOpen ? 'ml-64' : 'ml-0'}`}>
         {/* 헤더 */}
-        <header class="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
+        <header class="glass-card backdrop-blur-2xl shadow-xl border-b border-white/20 sticky top-0 z-40">
           <div class="flex items-center justify-between h-16 px-6">
             <Show when={!state.ui.sidebarOpen}>
               <button
                 onClick={toggleSidebar}
-                class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                class="p-3 text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-white/20 rounded-xl transition-all duration-300 hover-lift"
               >
-                ☰
+                <span class="text-xl">☰</span>
               </button>
+            </Show>
+            
+            {/* 브랜드 로고 (사이드바가 닫혔을 때) */}
+            <Show when={!state.ui.sidebarOpen}>
+              <div class="text-xl font-bold text-gradient floating flex items-center">
+                <span class="mr-2 text-2xl animate-rotate">🚀</span>
+                Matter Certis v2
+              </div>
             </Show>
             
             {/* 상태 표시 */}
             <div class="flex items-center space-x-4">
-              <div class="flex items-center space-x-2">
+              <div class="flex items-center space-x-4 glass backdrop-blur-xl rounded-full px-6 py-3 border border-white/30 shadow-xl hover-lift">
                 <div class={`w-3 h-3 rounded-full ${
-                  state.crawling.status === 'running' ? 'bg-green-500 animate-pulse' :
-                  state.crawling.status === 'error' ? 'bg-red-500' :
+                  state.crawling.status === 'running' ? 'bg-green-500 animate-pulse neon-glow-green' :
+                  state.crawling.status === 'error' ? 'bg-red-500 neon-glow' :
                   'bg-gray-400'
                 }`} />
-                <span class="text-sm text-gray-600 dark:text-gray-400">
+                <span class="text-sm text-gray-700 dark:text-gray-300 font-semibold">
                   {state.crawling.status === 'running' ? '크롤링 중' :
                    state.crawling.status === 'error' ? '오류' :
                    '대기'}
@@ -189,19 +229,23 @@ const App: Component = () => {
         </header>
 
         {/* 페이지 내용 */}
-        <main class="flex-1">
-          {renderActiveTab()}
+        <main class="flex-1 relative overflow-hidden">
+          <div class="animate-fade-in">
+            {renderActiveTab()}
+          </div>
         </main>
       </div>
 
-      {/* 알림 토스트 */}
-      <div class="fixed top-4 right-4 z-50 space-y-2">
+      {/* 알림 토스트 컨테이너 */}
+      <div class="fixed top-6 right-6 z-50 space-y-4 max-w-sm w-full">
         <For each={state.notifications}>
           {(notification) => (
-            <NotificationToast
-              notification={notification}
-              onRemove={() => removeNotification(notification.id)}
-            />
+            <div class="animate-scale-in">
+              <NotificationToast
+                notification={notification}
+                onRemove={() => removeNotification(notification.id)}
+              />
+            </div>
           )}
         </For>
       </div>

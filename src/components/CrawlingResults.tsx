@@ -115,7 +115,7 @@ const CrawlingResults = () => {
       <div class="results-header">
         <h2>Crawling Results</h2>
         <div class="results-actions">
-          <button class="btn btn-primary" onClick={refreshData} disabled={loading()}>
+          <button class="btn-primary" onClick={refreshData} disabled={loading()}>
             {loading() ? "Loading..." : "Refresh"}
           </button>
         </div>
@@ -197,7 +197,7 @@ const CrawlingResults = () => {
                 onInput={(e) => setSearchQuery(e.target.value)}
                 class="search-input"
               />
-              <button class="btn btn-primary" onClick={searchProducts}>
+              <button class="btn-primary" onClick={searchProducts}>
                 Search
               </button>
             </div>
