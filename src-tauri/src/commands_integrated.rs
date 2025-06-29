@@ -5,7 +5,8 @@ use crate::infrastructure::{
     integrated_product_repository::IntegratedProductRepository,
 };
 use crate::application::integrated_use_cases::IntegratedProductUseCases;
-use crate::domain::integrated_product::{ProductSearchCriteria, DatabaseStatistics};
+use crate::domain::product::ProductSearchCriteria;
+use crate::domain::integrated_product::DatabaseStatistics;
 
 /// Get comprehensive database statistics from the integrated schema
 #[tauri::command(async)]
@@ -33,18 +34,16 @@ pub async fn search_integrated_products_simple(
     db: State<'_, DatabaseConnection>,
     manufacturer: Option<String>,
     limit: Option<i32>
-) -> Result<crate::domain::integrated_product::ProductSearchResult, String> {
+) -> Result<crate::domain::product::ProductSearchResult, String> {
     let repo = IntegratedProductRepository::new(db.pool().clone());
     let use_cases = IntegratedProductUseCases::new(Arc::new(repo));
     
     let criteria = ProductSearchCriteria {
         manufacturer,
         device_type: None,
-        certificate_id: None,
+        certification_id: None,
         specification_version: None,
         program_type: None,
-        certification_date_from: None,
-        certification_date_to: None,
         page: Some(1),
         limit,
     };
@@ -66,7 +65,7 @@ pub async fn search_integrated_products_simple(
 pub async fn get_integrated_products_without_details(
     db: State<'_, DatabaseConnection>,
     limit: Option<i32>
-) -> Result<Vec<crate::domain::integrated_product::Product>, String> {
+) -> Result<Vec<crate::domain::product::Product>, String> {
     let repo = IntegratedProductRepository::new(db.pool().clone());
     let use_cases = IntegratedProductUseCases::new(Arc::new(repo));
     

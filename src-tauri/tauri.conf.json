@@ -33,8 +33,6 @@
     ]
   },
   "plugins": {
-    "opener": {
-      "version": "2"
-    }
+    "opener": {}
   }
 }

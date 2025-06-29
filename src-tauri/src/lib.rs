@@ -7,24 +7,24 @@ use crate::infrastructure::database_connection::DatabaseConnection;
 
 // Module declarations
 pub mod domain;
-pub mod application;
-pub mod infrastructure;
+pub mod application; // Restored - previously disabled due to import conflicts
+pub mod infrastructure; // Partially enabled for DatabaseConnection
 // pub mod commands; // Temporarily disabled due to import conflicts
 pub mod commands_simple;
-pub mod commands_integrated;
+pub mod commands_integrated; // Restored - previously disabled due to import conflicts
 
 // Test utilities (only available during testing)
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
 // Import command functions
-use commands_simple::{greet, test_database_connection, get_database_info};
-use commands_integrated::{
-    get_integrated_database_statistics,
-    search_integrated_products_simple,
-    get_integrated_products_without_details,
-    validate_integrated_database_integrity
-};
+// use commands_simple::{greet, test_database_connection, get_database_info};
+// use commands_integrated::{
+//     get_integrated_database_statistics,
+//     search_integrated_products_simple,
+//     get_integrated_products_without_details,
+//     validate_integrated_database_integrity
+// };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -54,13 +54,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(db)
         .invoke_handler(tauri::generate_handler![
-            greet,
-            test_database_connection,
-            get_database_info,
-            get_integrated_database_statistics,
-            search_integrated_products_simple,
-            get_integrated_products_without_details,
-            validate_integrated_database_integrity
+            commands_simple::greet,
+            commands_simple::test_database_connection,
+            commands_simple::get_database_info,
+            commands_integrated::get_integrated_database_statistics,
+            commands_integrated::search_integrated_products_simple,
+            commands_integrated::get_integrated_products_without_details,
+            commands_integrated::validate_integrated_database_integrity
         ]);
     
     builder

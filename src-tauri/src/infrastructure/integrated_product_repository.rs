@@ -1,10 +1,13 @@
-use crate::domain::integrated_product::{
+use crate::domain::product::{
     Product, ProductDetail, ProductWithDetails, ProductSearchCriteria, 
-    ProductSearchResult, Vendor, CrawlingResult, DatabaseStatistics
+    ProductSearchResult, Vendor
 };
+use crate::domain::session_manager::CrawlingResult;
+use crate::domain::integrated_product::DatabaseStatistics;
 use anyhow::Result;
 use sqlx::{SqlitePool, Row};
 use std::sync::Arc;
+use chrono::{DateTime, Utc};
 
 /// Repository for the integrated schema (products + product_details + vendors + crawling_results)
 #[derive(Clone)]
@@ -64,7 +67,7 @@ impl IntegratedProductRepository {
         .bind(&detail.manufacturer)
         .bind(&detail.model)
         .bind(&detail.device_type)
-        .bind(&detail.certificate_id)
+        .bind(&detail.certification_id)
         .bind(&detail.certification_date)
         .bind(&detail.software_version)
         .bind(&detail.hardware_version)
@@ -187,7 +190,7 @@ impl IntegratedProductRepository {
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
                 device_type: row.get("device_type"),
-                certificate_id: row.get("certificate_id"),
+                certification_id: row.get("certificate_id"),
                 certification_date: row.get("certification_date"),
                 software_version: row.get("software_version"),
                 hardware_version: row.get("hardware_version"),
@@ -228,7 +231,7 @@ impl IntegratedProductRepository {
             bind_values.push(format!("%{}%", device_type));
         }
 
-        if let Some(certificate_id) = &criteria.certificate_id {
+        if let Some(certificate_id) = &criteria.certification_id {
             conditions.push("p.certificate_id LIKE ?");
             bind_values.push(format!("%{}%", certificate_id));
         }
@@ -320,7 +323,7 @@ impl IntegratedProductRepository {
                         manufacturer: row.get("manufacturer"),
                         model: row.get("model"),
                         device_type: row.get("device_type"),
-                        certificate_id: row.get("certificate_id"),
+                        certification_id: row.get("certificate_id"),
                         certification_date: row.get("certification_date"),
                         software_version: row.get("software_version"),
                         hardware_version: row.get("hardware_version"),
@@ -514,13 +517,19 @@ impl IntegratedProductRepository {
         };
 
         Ok(DatabaseStatistics {
-            total_products,
-            total_details,
-            unique_manufacturers,
-            unique_device_types,
-            latest_crawl_date,
-            matter_products_count,
-            completion_rate,
+            total_products: total_products.into(),
+            active_products: total_products.into(), // TODO: Add proper active_products query
+            unique_vendors: unique_manufacturers.into(),
+            unique_categories: unique_device_types.into(),
+            avg_rating: None, // TODO: Add rating calculation
+            total_reviews: 0, // TODO: Add review count
+            last_crawled: latest_crawl_date.as_ref().and_then(|s| DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc))),
+            total_details: total_details.into(),
+            unique_manufacturers: unique_manufacturers.into(),
+            unique_device_types: unique_device_types.into(),
+            latest_crawl_date: latest_crawl_date.as_ref().and_then(|s| DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc))),
+            matter_products_count: matter_products_count.into(),
+            completion_rate: completion_rate as f64,
         })
     }
 

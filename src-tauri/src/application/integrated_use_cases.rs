@@ -2,10 +2,12 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use chrono::Utc;
 
-use crate::domain::integrated_product::{
+use crate::domain::product::{
     Product, ProductDetail, ProductWithDetails, ProductSearchCriteria, 
-    ProductSearchResult, Vendor, CrawlingResult, DatabaseStatistics
+    ProductSearchResult, Vendor
 };
+use crate::domain::session_manager::CrawlingResult;
+use crate::domain::integrated_product::DatabaseStatistics;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 
 /// Integrated use cases for the new unified schema
@@ -88,19 +90,19 @@ impl IntegratedProductUseCases {
     // ===============================
 
     /// Create a new vendor
-    pub async fn create_vendor(&self, vendor_name: String, company_legal_name: Option<String>, vendor_number: Option<i32>) -> Result<i32> {
+    pub async fn create_vendor(&self, vendor_name: String, company_legal_name: Option<String>, _vendor_number: Option<i32>) -> Result<i32> {
         if vendor_name.trim().is_empty() {
             return Err(anyhow!("Vendor name cannot be empty"));
         }
 
-        let now = Utc::now();
+        let _now = Utc::now();
         let vendor = Vendor {
             vendor_id: 0, // Will be auto-generated
-            vendor_number,
-            vendor_name,
+            vendor_name: Some(vendor_name),
             company_legal_name,
-            created_at: now,
-            updated_at: now,
+            vendor_number: _vendor_number,
+            created_at: _now,
+            updated_at: _now,
         };
 
         self.repo.create_vendor(&vendor).await
@@ -151,12 +153,16 @@ impl IntegratedProductUseCases {
 
     /// Convert hex string to integer for vid/pid fields
     pub fn convert_hex_to_int(hex_str: &str) -> Option<i32> {
-        ProductDetail::parse_hex_id(hex_str)
+        if hex_str.starts_with("0x") || hex_str.starts_with("0X") {
+            i32::from_str_radix(&hex_str[2..], 16).ok()
+        } else {
+            hex_str.parse::<i32>().ok()
+        }
     }
 
     /// Convert integer back to hex string for display
     pub fn convert_int_to_hex(value: i32) -> String {
-        ProductDetail::format_hex_id(value)
+        format!("0x{:X}", value)
     }
 
     /// Batch create products from crawling data
@@ -223,12 +229,49 @@ impl IntegratedProductUseCases {
         page_id: Option<i32>,
         index_in_page: Option<i32>,
     ) -> Product {
-        Product::new(url, manufacturer, model, certificate_id, page_id, index_in_page)
+        Product {
+            url,
+            manufacturer,
+            model,
+            certificate_id,
+            page_id,
+            index_in_page,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
     }
 
     /// Create product detail from detailed crawling data
     pub fn create_product_detail_from_crawl_data(url: String) -> ProductDetail {
-        ProductDetail::new(url)
+        ProductDetail {
+            url,
+            page_id: None,
+            index_in_page: None,
+            id: None,
+            manufacturer: None,
+            model: None,
+            device_type: None,
+            certification_id: None,
+            certification_date: None,
+            software_version: None,
+            hardware_version: None,
+            vid: None,
+            pid: None,
+            family_sku: None,
+            family_variant_sku: None,
+            firmware_version: None,
+            family_id: None,
+            tis_trp_tested: None,
+            specification_version: None,
+            transport_interface: None,
+            primary_device_type_id: None,
+            application_categories: None,
+            description: None,
+            compliance_document_url: None,
+            program_type: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
     }
 
     /// Validate product URL format

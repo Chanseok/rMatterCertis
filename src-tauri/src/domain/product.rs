@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
 
 /// Product basic information from listing pages
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9,6 +10,8 @@ pub struct Product {
     pub certificate_id: Option<String>,
     pub page_id: Option<i32>,
     pub index_in_page: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Detailed product specifications from detail pages
@@ -36,6 +39,11 @@ pub struct ProductDetail {
     pub transport_interface: Option<String>,
     pub primary_device_type_id: Option<String>,
     pub application_categories: Option<String>,
+    pub description: Option<String>,
+    pub compliance_document_url: Option<String>,
+    pub program_type: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Combined product with details for API responses
@@ -51,6 +59,9 @@ pub struct Vendor {
     pub vendor_id: i32,
     pub vendor_name: Option<String>,
     pub company_legal_name: Option<String>,
+    pub vendor_number: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Search and filter criteria
@@ -59,6 +70,8 @@ pub struct ProductSearchCriteria {
     pub manufacturer: Option<String>,
     pub device_type: Option<String>,
     pub certification_id: Option<String>,
+    pub specification_version: Option<String>,
+    pub program_type: Option<String>,
     pub page: Option<i32>,
     pub limit: Option<i32>,
 }

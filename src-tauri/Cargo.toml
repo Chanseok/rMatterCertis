@@ -24,6 +24,39 @@ resolver = "2"
 name = "matter_certis_v2_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# 임시로 테스트 바이너리들 비활성화 (통합 스키마 기반 코드 완성 후 재활성화 예정)
+# [[bin]]
+# name = "test_minimal"
+# path = "src/bin/test_minimal.rs"
+# 
+# [[bin]]
+# name = "test_existing_database"
+# path = "src/bin/test_existing_database.rs"
+# 
+# [[bin]]
+# name = "test_with_utils"
+# path = "src/bin/test_with_utils.rs"
+# 
+# [[bin]]
+# name = "test_db_light"
+# path = "src/bin/test_db_light.rs"
+# 
+# [[bin]]
+# name = "test_db"
+# path = "src/bin/test_db.rs"
+# 
+# [[bin]]
+# name = "test_db_fast"
+# path = "src/bin/test_db_fast.rs"
+# 
+# [[bin]]
+# name = "test_session_management"
+# path = "src/bin/test_session_management.rs"
+# 
+# [[bin]]
+# name = "test_crawler"
+# path = "src/bin/test_crawler.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -62,11 +95,20 @@ opt-level = 0
 debug = 0  # No debug info for fastest builds
 split-debuginfo = "off"  # Skip debug info splitting
 incremental = true
-codegen-units = 256  # Balanced parallelization
+codegen-units = 512  # Maximum parallelization for faster builds
 # Skip expensive checks
 overflow-checks = false
+panic = "abort"  # Skip unwinding tables
+
+# Fast build profile for development
+[profile.fast-dev]
+inherits = "dev"
+opt-level = 1
+debug = false
+incremental = true
+codegen-units = 512
+panic = "abort"
 debug-assertions = false
-panic = "abort"  # Faster panics without unwinding
 
 # Ultra-fast test compilation
 [profile.test]

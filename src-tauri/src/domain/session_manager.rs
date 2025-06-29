@@ -9,6 +9,7 @@ use tokio::sync::{Mutex, RwLock};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use sqlx::{Encode, Decode, Type};
 
 /// Current status of a crawling session
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -21,12 +22,76 @@ pub enum SessionStatus {
     Stopped,
 }
 
+impl Type<sqlx::Sqlite> for SessionStatus {
+    fn type_info() -> sqlx::sqlite::SqliteTypeInfo {
+        <String as Type<sqlx::Sqlite>>::type_info()
+    }
+}
+
+impl<'q> Encode<'q, sqlx::Sqlite> for SessionStatus {
+    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+        let s = match self {
+            SessionStatus::Initializing => "Initializing",
+            SessionStatus::Running => "Running",
+            SessionStatus::Paused => "Paused",
+            SessionStatus::Completed => "Completed",
+            SessionStatus::Failed => "Failed",
+            SessionStatus::Stopped => "Stopped",
+        };
+        <String as Encode<sqlx::Sqlite>>::encode(s.to_string(), buf)
+    }
+}
+
+impl<'r> Decode<'r, sqlx::Sqlite> for SessionStatus {
+    fn decode(value: sqlx::sqlite::SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <String as Decode<sqlx::Sqlite>>::decode(value)?;
+        match s.as_str() {
+            "Initializing" => Ok(SessionStatus::Initializing),
+            "Running" => Ok(SessionStatus::Running),
+            "Paused" => Ok(SessionStatus::Paused),
+            "Completed" => Ok(SessionStatus::Completed),
+            "Failed" => Ok(SessionStatus::Failed),
+            "Stopped" => Ok(SessionStatus::Stopped),
+            _ => Err(format!("Invalid SessionStatus: {}", s).into()),
+        }
+    }
+}
+
 /// Current stage of crawling process
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CrawlingStage {
     ProductList,      // Stage 1: Collecting product URLs
     ProductDetails,   // Stage 2: Collecting detailed product information
     MatterDetails,    // Stage 3: Collecting Matter-specific details
+}
+
+impl Type<sqlx::Sqlite> for CrawlingStage {
+    fn type_info() -> sqlx::sqlite::SqliteTypeInfo {
+        <String as Type<sqlx::Sqlite>>::type_info()
+    }
+}
+
+impl<'q> Encode<'q, sqlx::Sqlite> for CrawlingStage {
+    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+        let s = match self {
+            CrawlingStage::ProductList => "ProductList",
+            CrawlingStage::ProductDetails => "ProductDetails",
+            CrawlingStage::MatterDetails => "MatterDetails",
+        };
+        <String as Encode<sqlx::Sqlite>>::encode(s.to_string(), buf)
+    }
+}
+
+impl<'r> Decode<'r, sqlx::Sqlite> for CrawlingStage {
+    fn decode(value: sqlx::sqlite::SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <String as Decode<sqlx::Sqlite>>::decode(value)?;
+        match s.as_str() {
+            "ProductList" => Ok(CrawlingStage::ProductList),
+            "ProductDetails" => Ok(CrawlingStage::ProductDetails),
+            "MatterDetails" => Ok(CrawlingStage::MatterDetails),
+            _ => Err(format!("Invalid CrawlingStage: {}", s).into()),
+        }
+    }
 }
 
 /// Real-time crawling session state (kept in memory)
@@ -64,6 +129,8 @@ pub struct CrawlingResult {
     pub execution_time_seconds: u32,
     pub config_snapshot: serde_json::Value,
     pub error_details: Option<String>,
+    pub details_fetched: u32,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Thread-safe session manager for in-memory state management
@@ -279,6 +346,8 @@ impl SessionManager {
                 } else {
                     Some(session.error_details.join("\n"))
                 },
+                details_fetched: session.products_processed,
+                created_at: Utc::now(),
             })
         } else {
             None

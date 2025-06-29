@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 use anyhow::Result;
-use crate::infrastructure::{DatabaseConnection, SqliteVendorRepository, SqliteProductRepository, SqliteCrawlingResultRepository};
-use crate::application::{VendorUseCases, MatterProductUseCases, ProductUseCases};
+use crate::infrastructure::{DatabaseConnection, IntegratedProductRepository};
+use crate::application::IntegratedProductUseCases;
 use crate::domain::session_manager::SessionManager;
 
 /// Test database configuration
@@ -34,13 +34,9 @@ impl TestDatabase {
 /// Complete test context with all repositories and use cases
 pub struct TestContext {
     pub database: TestDatabase,
-    pub vendor_repo: Arc<SqliteVendorRepository>,
-    pub product_repo: Arc<SqliteProductRepository>,
-    pub result_repo: Arc<SqliteCrawlingResultRepository>,
+    pub integrated_repo: Arc<IntegratedProductRepository>,
     pub session_manager: Arc<SessionManager>,
-    pub vendor_use_cases: VendorUseCases,
-    pub matter_product_use_cases: MatterProductUseCases,
-    pub product_use_cases: ProductUseCases,
+    pub integrated_use_cases: IntegratedProductUseCases,
 }
 
 impl TestContext {
@@ -50,27 +46,19 @@ impl TestContext {
         let pool = database.pool();
 
         // Create repositories
-        let vendor_repo = Arc::new(SqliteVendorRepository::new(pool.clone()));
-        let product_repo = Arc::new(SqliteProductRepository::new(pool.clone()));
-        let result_repo = Arc::new(SqliteCrawlingResultRepository::new(pool.clone()));
+        let integrated_repo = Arc::new(IntegratedProductRepository::new(pool.clone()));
         
         // Create session manager (in-memory only)
         let session_manager = Arc::new(SessionManager::new());
 
         // Create use cases
-        let vendor_use_cases = VendorUseCases::new(vendor_repo.clone());
-        let matter_product_use_cases = MatterProductUseCases::new(product_repo.clone());
-        let product_use_cases = ProductUseCases::new(product_repo.clone());
+        let integrated_use_cases = IntegratedProductUseCases::new(integrated_repo.clone());
 
         Ok(Self {
             database,
-            vendor_repo,
-            product_repo,
-            result_repo,
+            integrated_repo,
             session_manager,
-            vendor_use_cases,
-            matter_product_use_cases,
-            product_use_cases,
+            integrated_use_cases,
         })
     }
 }
