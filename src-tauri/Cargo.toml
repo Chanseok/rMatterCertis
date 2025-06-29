@@ -80,7 +80,8 @@ rayon = "1.7"
 futures = "0.3"
 config = "0.13"
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 async-trait = "0.1"

@@ -40,6 +40,31 @@ pub struct UserConfig {
     
     /// Enable verbose logging
     pub verbose_logging: bool,
+    
+    /// Logging configuration
+    pub logging: LoggingConfig,
+}
+
+/// Logging configuration settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggingConfig {
+    /// Log level: "error", "warn", "info", "debug", "trace"
+    pub level: String,
+    
+    /// Enable JSON formatted logs
+    pub json_format: bool,
+    
+    /// Enable console output
+    pub console_output: bool,
+    
+    /// Enable file output
+    pub file_output: bool,
+    
+    /// Maximum log file size in MB (for rotation)
+    pub max_file_size_mb: u64,
+    
+    /// Number of log files to keep
+    pub max_files: u32,
 }
 
 /// Hidden/Advanced settings that are in config file but not exposed in UI
@@ -100,6 +125,20 @@ impl Default for UserConfig {
             request_delay_ms: defaults::REQUEST_DELAY_MS,
             max_concurrent_requests: defaults::MAX_CONCURRENT_REQUESTS,
             verbose_logging: false,
+            logging: LoggingConfig::default(),
+        }
+    }
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: defaults::LOG_LEVEL.to_string(),
+            json_format: defaults::LOG_JSON_FORMAT,
+            console_output: defaults::LOG_CONSOLE_OUTPUT,
+            file_output: defaults::LOG_FILE_OUTPUT,
+            max_file_size_mb: defaults::LOG_MAX_FILE_SIZE_MB,
+            max_files: defaults::LOG_MAX_FILES,
         }
     }
 }
@@ -286,6 +325,25 @@ pub mod defaults {
         "article.product",
         "[class*='product-']:not([class*='pagination']):not([class*='search'])",
     ];
+    
+    // Logging defaults
+    /// Default log level
+    pub const LOG_LEVEL: &str = "info";
+    
+    /// Default JSON format setting
+    pub const LOG_JSON_FORMAT: bool = false;
+    
+    /// Default console output setting
+    pub const LOG_CONSOLE_OUTPUT: bool = true;
+    
+    /// Default file output setting
+    pub const LOG_FILE_OUTPUT: bool = true;
+    
+    /// Default maximum log file size in MB
+    pub const LOG_MAX_FILE_SIZE_MB: u64 = 10;
+    
+    /// Default number of log files to keep
+    pub const LOG_MAX_FILES: u32 = 5;
 }
 
 /// URL building helper functions
