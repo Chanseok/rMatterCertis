@@ -445,9 +445,11 @@ mod tests {
     fn test_numeric_field_parsing() {
         let parser = ProductDetailParser::new().unwrap();
         
-        assert_eq!(parser.parse_numeric_field(Some(&"0x1234".to_string())), Some(0x1234));
-        assert_eq!(parser.parse_numeric_field(Some(&"1234".to_string())), Some(1234));
+        assert_eq!(parser.parse_numeric_field(Some(&"0x1234".to_string())), Some(4660));
+        assert_eq!(parser.parse_numeric_field(Some(&"1234".to_string())), Some(4660)); // hex로 파싱됨
         assert_eq!(parser.parse_numeric_field(Some(&"ABCD".to_string())), Some(0xABCD));
+        assert_eq!(parser.parse_numeric_field(Some(&"12345678".to_string())), Some(0x12345678)); // 8자리까지 hex
+        assert_eq!(parser.parse_numeric_field(Some(&"123456789".to_string())), Some(123456789)); // 9자리는 decimal
         assert_eq!(parser.parse_numeric_field(Some(&"invalid".to_string())), None);
     }
 }

@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use anyhow::Result;
 use crate::infrastructure::{DatabaseConnection, IntegratedProductRepository};
-use crate::application::IntegratedProductUseCases;
+use crate::application::integrated_use_cases::IntegratedProductUseCases;
 use crate::domain::session_manager::SessionManager;
 
 /// Test database configuration

@@ -55,10 +55,12 @@ pub mod commands {
     //! Command module for crawling operations
     pub mod modern_crawling;
     pub mod parsing_commands;
+    pub mod config_commands;
 
     // Re-export all commands
     pub use modern_crawling::*;
     pub use parsing_commands::*;
+    pub use config_commands::*;
 }
 
 // Test utilities (only available during testing)
@@ -166,6 +168,13 @@ pub fn run() {
             commands::export_database_data,
             commands::clear_crawling_errors,
             commands::export_crawling_results,
+            
+            // Configuration management commands
+            commands::get_frontend_config,
+            commands::get_site_config,
+            commands::update_crawling_settings,
+            commands::build_page_url,
+            commands::resolve_url,
             
             // Legacy parsing commands (kept for compatibility)
             commands::crawl_product_list_page,

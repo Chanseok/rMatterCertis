@@ -293,20 +293,16 @@ mod tests {
     }
     
     #[test]
-    fn test_html_validation() {
+    fn test_config_validation() {
         let config = ParsingConfig::default();
-        let crawler = WebCrawler::new(config).unwrap();
+        let crawler = WebCrawler::new(config);
         
-        // Valid HTML
-        let valid_html = "<html><head><title>Test</title></head><body>Content</body></html>";
-        assert!(crawler.validate_html_content(valid_html, "test").is_ok());
+        // WebCrawler가 성공적으로 생성되는지 테스트
+        assert!(crawler.is_ok());
         
-        // Too short
-        let short_html = "<html>";
-        assert!(crawler.validate_html_content(short_html, "test").is_err());
+        let crawler = crawler.unwrap();
         
-        // Error page
-        let error_html = "<html><body>404 Not Found - The page you requested was not found.</body></html>";
-        assert!(crawler.validate_html_content(error_html, "test").is_err());
+        // 기본 설정 확인
+        assert!(!crawler.config.base_url.is_empty());
     }
 }

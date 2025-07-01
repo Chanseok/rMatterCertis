@@ -160,14 +160,14 @@ pub fn log_system_info() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    
 
     #[test]
     fn test_logging_config_default() {
         let config = LoggingConfig::default();
         assert!(!config.level.is_empty());
-        assert_eq!(config.console_output, true);
-        assert_eq!(config.file_output, true);
+        assert!(config.console_output);
+        assert!(config.file_output);
     }
 
     #[test]
