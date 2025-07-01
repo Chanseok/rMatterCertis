@@ -1,3 +1,11 @@
+//! Repository implementation for integrated product operations
+//!
+//! This module provides database operations that combine product and product_detail
+//! tables to provide comprehensive product information with advanced search and
+//! filtering capabilities.
+
+#![allow(clippy::uninlined_format_args)]
+
 use crate::domain::product::{
     Product, ProductDetail, ProductWithDetails, ProductSearchCriteria, 
     ProductSearchResult, Vendor

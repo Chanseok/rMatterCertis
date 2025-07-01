@@ -1,53 +1,57 @@
 import { createSignal, For } from "solid-js";
-import { CrawlingService } from "../services/crawlingService";
-import type { StartCrawlingRequest } from "../types/crawling";
+import { crawlerStore } from '../stores/crawlerStore';
+import { uiStore } from '../stores/uiStore';
+import type { CrawlingConfig } from "../types/crawling";
 
 interface CrawlingFormProps {
-  onSuccess: (sessionId: string) => void;
+  onSuccess: () => void;
   onCancel: () => void;
 }
 
 export function CrawlingForm(props: CrawlingFormProps) {
-  const [startUrl, setStartUrl] = createSignal("https://certification.csa-iot.org");
-  const [targetDomains, setTargetDomains] = createSignal("certification.csa-iot.org");
-  const [maxPages, setMaxPages] = createSignal(100);
-  const [concurrentRequests, setConcurrentRequests] = createSignal(3);
+  const [startPage, setStartPage] = createSignal(1);
+  const [endPage, setEndPage] = createSignal(100);
+  const [concurrency, setConcurrency] = createSignal(3);
   const [delayMs, setDelayMs] = createSignal(1000);
+  // 아래 변수들은 현재 미사용되지만 향후 기능 확장을 위해 유지합니다
+  const [autoAddToDb] = createSignal(true);
+  const [retryMax] = createSignal(3);
+  const [pageTimeout] = createSignal(30000);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
   const presetConfigs = [
     {
       name: "CSA-IoT 인증 사이트 (기본)",
-      startUrl: "https://certification.csa-iot.org",
-      domains: "certification.csa-iot.org",
-      maxPages: 100,
+      startPage: 1,
+      endPage: 100,
+      concurrency: 3,
     },
     {
       name: "CSA-IoT 인증 사이트 (전체)",
-      startUrl: "https://certification.csa-iot.org",
-      domains: "certification.csa-iot.org",
-      maxPages: 500,
+      startPage: 1,
+      endPage: 500,
+      concurrency: 5,
     },
     {
-      name: "CSA-IoT 제품 목록",
-      startUrl: "https://certification.csa-iot.org/products",
-      domains: "certification.csa-iot.org",
-      maxPages: 200,
+      name: "CSA-IoT 제품 목록 (빠른 수집)",
+      startPage: 1,
+      endPage: 200,
+      concurrency: 8,
     },
   ];
 
   const applyPreset = (preset: typeof presetConfigs[0]) => {
-    setStartUrl(preset.startUrl);
-    setTargetDomains(preset.domains);
-    setMaxPages(preset.maxPages);
+    setStartPage(preset.startPage);
+    setEndPage(preset.endPage);
+    setConcurrency(preset.concurrency);
   };
 
   const handleSubmit = async (e: Event) => {
     e.preventDefault();
     
-    if (!startUrl().trim()) {
-      setError("시작 URL을 입력해주세요.");
+    if (startPage() <= 0 || endPage() <= 0 || startPage() > endPage()) {
+      setError("페이지 범위를 올바르게 설정해주세요.");
       return;
     }
 
@@ -55,22 +59,24 @@ export function CrawlingForm(props: CrawlingFormProps) {
       setLoading(true);
       setError(null);
 
-      const request: StartCrawlingRequest = {
-        start_url: startUrl().trim(),
-        target_domains: targetDomains()
-          .split(",")
-          .map(domain => domain.trim())
-          .filter(domain => domain.length > 0),
-        max_pages: maxPages(),
-        concurrent_requests: concurrentRequests(),
+      const config: CrawlingConfig = {
+        start_page: startPage(),
+        end_page: endPage(),
+        concurrency: concurrency(),
         delay_ms: delayMs(),
+        auto_add_to_local_db: autoAddToDb(),
+        retry_max: retryMax(),
+        page_timeout_ms: pageTimeout(),
       };
 
-      const sessionId = await CrawlingService.startCrawling(request);
-      props.onSuccess(sessionId);
+      await crawlerStore.startCrawling(config);
+      uiStore.showSuccess('크롤링이 시작되었습니다', '시작 성공');
+      props.onSuccess();
     } catch (err) {
       console.error("Failed to start crawling:", err);
-      setError(err instanceof Error ? err.message : "크롤링 시작에 실패했습니다.");
+      const errorMessage = err instanceof Error ? err.message : "크롤링 시작에 실패했습니다.";
+      setError(errorMessage);
+      uiStore.showError(errorMessage, '크롤링 시작 실패');
     } finally {
       setLoading(false);
     }
@@ -103,46 +109,48 @@ export function CrawlingForm(props: CrawlingFormProps) {
             </div>
           </div>
 
-          {/* Start URL */}
+          {/* Start Page */}
           <div class="form-group">
-            <label for="startUrl">시작 URL *</label>
+            <label for="startPage">시작 페이지 *</label>
             <input
-              id="startUrl"
-              type="url"
-              value={startUrl()}
-              onInput={(e) => setStartUrl(e.currentTarget.value)}
-              placeholder="https://example.com"
+              id="startPage"
+              type="number"
+              min="1"
+              value={startPage()}
+              onInput={(e) => setStartPage(parseInt(e.currentTarget.value) || 1)}
+              placeholder="1"
               required
             />
           </div>
 
-          {/* Target Domains */}
+          {/* End Page */}
           <div class="form-group">
-            <label for="targetDomains">대상 도메인</label>
+            <label for="endPage">종료 페이지 *</label>
             <input
-              id="targetDomains"
-              type="text"
-              value={targetDomains()}
-              onInput={(e) => setTargetDomains(e.currentTarget.value)}
-              placeholder="example.com, subdomain.example.com"
-            />
-            <small>여러 도메인은 쉼표로 구분하세요. 비워두면 모든 도메인을 허용합니다.</small>
-          </div>
-
-          {/* Max Pages */}
-          <div class="form-group">
-            <label for="maxPages">최대 페이지 수</label>
-            <input
-              id="maxPages"
+              id="endPage"
               type="number"
               min="1"
               max="10000"
-              value={maxPages()}
-              onInput={(e) => setMaxPages(parseInt(e.currentTarget.value) || 100)}
+              value={endPage()}
+              onInput={(e) => setEndPage(parseInt(e.currentTarget.value) || 100)}
+              placeholder="100"
+              required
             />
+            <small>수집할 페이지의 범위를 지정하세요.</small>
           </div>
 
-          {/* Concurrent Requests */}
+          {/* Concurrency */}
+          <div class="form-group">
+            <label for="concurrency">동시 처리 수</label>
+            <input
+              id="concurrency"
+              type="number"
+              min="1"
+              max="20"
+              value={concurrency()}
+              onInput={(e) => setConcurrency(parseInt(e.currentTarget.value) || 3)}
+            />
+          </div>
           <div class="form-group">
             <label for="concurrentRequests">동시 요청 수</label>
             <input
@@ -150,8 +158,8 @@ export function CrawlingForm(props: CrawlingFormProps) {
               type="number"
               min="1"
               max="10"
-              value={concurrentRequests()}
-              onInput={(e) => setConcurrentRequests(parseInt(e.currentTarget.value) || 3)}
+              value={concurrency()}
+              onInput={(e) => setConcurrency(parseInt(e.currentTarget.value) || 3)}
             />
             <small>너무 높게 설정하면 서버에 부하를 줄 수 있습니다.</small>
           </div>

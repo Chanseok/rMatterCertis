@@ -3,6 +3,8 @@
 //! Advanced HTML parsing for product detail pages with multiple extraction strategies,
 //! regex fallbacks, and comprehensive Matter certification data extraction.
 
+#![allow(clippy::uninlined_format_args)]
+
 use super::{ContextualParser, ParsingError, ParsingResult};
 use super::context::DetailParseContext;
 use crate::domain::product::ProductDetail;

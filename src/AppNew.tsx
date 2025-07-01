@@ -1,5 +1,6 @@
 import { Component, Show, createEffect, For } from 'solid-js';
 import { appStore } from './stores/appStore';
+import { crawlerStore } from './stores/crawlerStore';
 import CrawlingDashboard from './components/CrawlingDashboard';
 import { CrawlingForm } from './components/CrawlingForm';
 import CrawlingResults from './components/CrawlingResults';
@@ -174,13 +175,13 @@ const App: Component = () => {
             <div class="flex items-center space-x-4">
               <div class="flex items-center space-x-2">
                 <div class={`w-3 h-3 rounded-full ${
-                  state.crawling.status === 'running' ? 'bg-green-500 animate-pulse' :
-                  state.crawling.status === 'error' ? 'bg-red-500' :
+                  crawlerStore.status() === 'Running' ? 'bg-green-500 animate-pulse' :
+                  crawlerStore.status() === 'Error' ? 'bg-red-500' :
                   'bg-gray-400'
                 }`} />
                 <span class="text-sm text-gray-600 dark:text-gray-400">
-                  {state.crawling.status === 'running' ? '크롤링 중' :
-                   state.crawling.status === 'error' ? '오류' :
+                  {crawlerStore.status() === 'Running' ? '크롤링 중' :
+                   crawlerStore.status() === 'Error' ? '오류' :
                    '대기'}
                 </span>
               </div>

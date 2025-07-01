@@ -78,7 +78,7 @@ impl PageDiscoveryService {
             }
             
             max_attempts -= 1;
-            if max_attempts <= 0 {
+            if max_attempts == 0 {
                 warn!("🛑 Reached maximum attempts, using current page: {}", current_page);
                 break;
             }

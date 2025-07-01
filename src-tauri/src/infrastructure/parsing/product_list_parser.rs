@@ -3,6 +3,9 @@
 //! Robust HTML parsing for product listing pages with fallback strategies
 //! and comprehensive error handling.
 
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::unnecessary_map_or)]
+
 use super::{ContextualParser, ParsingError, ParsingResult, ParseContext};
 use crate::domain::product::Product;
 use scraper::{Html, Selector, ElementRef};

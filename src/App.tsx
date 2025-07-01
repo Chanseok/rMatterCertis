@@ -1,5 +1,7 @@
-import { Component, Show, createEffect, For } from 'solid-js';
-import { appStore } from './stores/appStore';
+import { Component, Show, createEffect, For, onMount } from 'solid-js';
+import { uiStore } from './stores/uiStore';
+import { crawlerStore } from './stores/crawlerStore';
+import { realtimeManager } from './services/realtime-manager';
 import CrawlingDashboard from './components/CrawlingDashboard';
 import { CrawlingForm } from './components/CrawlingForm';
 import CrawlingResults from './components/CrawlingResults';
@@ -59,23 +61,37 @@ const NotificationToast: Component<{ notification: any; onRemove: () => void }> 
 };
 
 const App: Component = () => {
-  const { state, setActiveTab, removeNotification, toggleSidebar, toggleTheme } = appStore;
+  // 새로운 스토어들 사용
+  const ui = uiStore;
+  const crawler = crawlerStore;
 
-  // 테마 적용 (가이드의 createEffect 활용)
+  // 앱 초기화
+  onMount(async () => {
+    try {
+      console.log('🚀 앱 초기화 시작...');
+      await realtimeManager.initialize();
+      console.log('✅ 앱 초기화 완료');
+    } catch (error) {
+      console.error('❌ 앱 초기화 실패:', error);
+      ui.showError('앱 초기화에 실패했습니다. 페이지를 새로고침해주세요.', '초기화 오류');
+    }
+  });
+
+  // 테마 적용
   createEffect(() => {
-    document.documentElement.classList.toggle('dark', state.ui.theme === 'dark');
+    document.documentElement.classList.toggle('dark', ui.theme === 'dark');
   });
 
   // 활성 탭에 따른 컴포넌트 렌더링
   const renderActiveTab = () => {
-    switch (state.ui.activeTab) {
+    switch (ui.activeTab) {
       case 'dashboard':
         return <CrawlingDashboard />;
       case 'form':
         return (
           <CrawlingForm 
-            onSuccess={() => setActiveTab('dashboard')}
-            onCancel={() => setActiveTab('dashboard')}
+            onSuccess={() => ui.setActiveTab('dashboard')}
+            onCancel={() => ui.setActiveTab('dashboard')}
           />
         );
       case 'results':
@@ -90,7 +106,7 @@ const App: Component = () => {
   return (
     <div class="min-h-screen bg-aurora transition-all duration-1000">
       {/* 사이드바 */}
-      <Show when={state.ui.sidebarOpen}>
+      <Show when={ui.sidebarOpen}>
         <div class="sidebar sidebar-open glass-card backdrop-blur-2xl border-r border-white/20 shadow-2xl">
           <div class="flex items-center justify-between h-16 px-6 border-b border-white/20">
             <h1 class="text-xl font-bold text-gradient floating flex items-center">
@@ -98,7 +114,7 @@ const App: Component = () => {
               Matter Certis v2
             </h1>
             <button
-              onClick={toggleSidebar}
+              onClick={ui.toggleSidebar}
               class="text-white/70 hover:text-white transition-all duration-300 p-2 rounded-xl hover:bg-white/20 neon-glow"
             >
               <span class="text-xl">×</span>
@@ -109,9 +125,9 @@ const App: Component = () => {
           <nav class="mt-8 px-4">
             <div class="space-y-3">
               <button
-                onClick={() => setActiveTab('dashboard')}
+                onClick={() => ui.setActiveTab('dashboard')}
                 class={`w-full text-left px-6 py-4 rounded-2xl text-sm font-semibold transition-all duration-300 flex items-center hover-lift ${
-                  state.ui.activeTab === 'dashboard'
+                  ui.activeTab === 'dashboard'
                     ? 'bg-white/30 text-white shadow-xl backdrop-blur-xl border border-white/30 neon-glow'
                     : 'text-white/70 hover:bg-white/20 hover:text-white glass'
                 }`}
@@ -120,9 +136,9 @@ const App: Component = () => {
                 대시보드
               </button>
               <button
-                onClick={() => setActiveTab('form')}
+                onClick={() => ui.setActiveTab('form')}
                 class={`w-full text-left px-6 py-4 rounded-2xl text-sm font-semibold transition-all duration-300 flex items-center hover-lift ${
-                  state.ui.activeTab === 'form'
+                  ui.activeTab === 'form'
                     ? 'bg-white/30 text-white shadow-xl backdrop-blur-xl border border-white/30 neon-glow'
                     : 'text-white/70 hover:bg-white/20 hover:text-white glass'
                 }`}
@@ -131,9 +147,9 @@ const App: Component = () => {
                 크롤링 시작
               </button>
               <button
-                onClick={() => setActiveTab('results')}
+                onClick={() => ui.setActiveTab('results')}
                 class={`w-full text-left px-6 py-4 rounded-2xl text-sm font-semibold transition-all duration-300 flex items-center hover-lift ${
-                  state.ui.activeTab === 'results'
+                  ui.activeTab === 'results'
                     ? 'bg-white/30 text-white shadow-xl backdrop-blur-xl border border-white/30 neon-glow'
                     : 'text-white/70 hover:bg-white/20 hover:text-white glass'
                 }`}
@@ -142,9 +158,9 @@ const App: Component = () => {
                 결과
               </button>
               <button
-                onClick={() => setActiveTab('settings')}
+                onClick={() => ui.setActiveTab('settings')}
                 class={`w-full text-left px-6 py-4 rounded-2xl text-sm font-semibold transition-all duration-300 flex items-center hover-lift ${
-                  state.ui.activeTab === 'settings'
+                  ui.activeTab === 'settings'
                     ? 'bg-white/30 text-white shadow-xl backdrop-blur-xl border border-white/30 neon-glow'
                     : 'text-white/70 hover:bg-white/20 hover:text-white glass'
                 }`}
@@ -160,13 +176,13 @@ const App: Component = () => {
             <div class="glass-card backdrop-blur-xl rounded-2xl p-6 border border-white/30 shadow-xl hover-lift">
               <div class="flex items-center space-x-4">
                 <div class={`w-4 h-4 rounded-full ${
-                  state.crawling.status === 'running' ? 'bg-green-400 animate-pulse neon-glow-green' :
-                  state.crawling.status === 'error' ? 'bg-red-400 neon-glow' :
+                  crawler.status() === 'Running' ? 'bg-green-400 animate-pulse neon-glow-green' :
+                  crawler.status() === 'Error' ? 'bg-red-400 neon-glow' :
                   'bg-gray-400'
                 }`} />
                 <span class="text-sm text-white font-semibold">
-                  {state.crawling.status === 'running' ? '크롤링 중' :
-                   state.crawling.status === 'error' ? '오류' :
+                  {crawler.status() === 'Running' ? '크롤링 중' :
+                   crawler.status() === 'Error' ? '오류' :
                    '대기'}
                 </span>
               </div>
@@ -176,26 +192,26 @@ const App: Component = () => {
           {/* 하단 테마 설정 */}
           <div class="absolute bottom-4 left-4 right-4">
             <button
-              onClick={toggleTheme}
+              onClick={ui.toggleTheme}
               class="w-full px-6 py-4 text-sm text-white/80 hover:text-white hover:bg-white/20 transition-all duration-300 rounded-2xl flex items-center justify-center glass hover-lift"
             >
               <span class="mr-3 text-xl floating">
-                {state.ui.theme === 'light' ? '🌙' : '☀️'}
+                {ui.theme === 'light' ? '🌙' : '☀️'}
               </span>
-              {state.ui.theme === 'light' ? '다크 모드' : '라이트 모드'}
+              {ui.theme === 'light' ? '다크 모드' : '라이트 모드'}
             </button>
           </div>
         </div>
       </Show>
 
       {/* 메인 콘텐츠 */}
-      <div class={`transition-all duration-500 ${state.ui.sidebarOpen ? 'ml-64' : 'ml-0'}`}>
+      <div class={`transition-all duration-500 ${ui.sidebarOpen ? 'ml-64' : 'ml-0'}`}>
         {/* 헤더 */}
         <header class="glass-card backdrop-blur-2xl shadow-xl border-b border-white/20 sticky top-0 z-40">
           <div class="flex items-center justify-between h-16 px-6">
-            <Show when={!state.ui.sidebarOpen}>
+            <Show when={!ui.sidebarOpen}>
               <button
-                onClick={toggleSidebar}
+                onClick={ui.toggleSidebar}
                 class="p-3 text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-white/20 rounded-xl transition-all duration-300 hover-lift"
               >
                 <span class="text-xl">☰</span>
@@ -203,7 +219,7 @@ const App: Component = () => {
             </Show>
             
             {/* 브랜드 로고 (사이드바가 닫혔을 때) */}
-            <Show when={!state.ui.sidebarOpen}>
+            <Show when={!ui.sidebarOpen}>
               <div class="text-xl font-bold text-gradient floating flex items-center">
                 <span class="mr-2 text-2xl animate-rotate">🚀</span>
                 Matter Certis v2
@@ -214,13 +230,13 @@ const App: Component = () => {
             <div class="flex items-center space-x-4">
               <div class="flex items-center space-x-4 glass backdrop-blur-xl rounded-full px-6 py-3 border border-white/30 shadow-xl hover-lift">
                 <div class={`w-3 h-3 rounded-full ${
-                  state.crawling.status === 'running' ? 'bg-green-500 animate-pulse neon-glow-green' :
-                  state.crawling.status === 'error' ? 'bg-red-500 neon-glow' :
+                  crawler.status() === 'Running' ? 'bg-green-500 animate-pulse neon-glow-green' :
+                  crawler.status() === 'Error' ? 'bg-red-500 neon-glow' :
                   'bg-gray-400'
                 }`} />
                 <span class="text-sm text-gray-700 dark:text-gray-300 font-semibold">
-                  {state.crawling.status === 'running' ? '크롤링 중' :
-                   state.crawling.status === 'error' ? '오류' :
+                  {crawler.status() === 'Running' ? '크롤링 중' :
+                   crawler.status() === 'Error' ? '오류' :
                    '대기'}
                 </span>
               </div>
@@ -238,12 +254,12 @@ const App: Component = () => {
 
       {/* 알림 토스트 컨테이너 */}
       <div class="fixed top-6 right-6 z-50 space-y-4 max-w-sm w-full">
-        <For each={state.notifications}>
+        <For each={ui.notifications}>
           {(notification) => (
             <div class="animate-scale-in">
               <NotificationToast
                 notification={notification}
-                onRemove={() => removeNotification(notification.id)}
+                onRemove={() => ui.removeNotification(notification.id)}
               />
             </div>
           )}

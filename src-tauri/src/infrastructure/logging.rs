@@ -7,6 +7,9 @@
 //! - Console and file output support
 //! - Log files stored relative to executable location
 
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::needless_borrows_for_generic_args)]
+
 use anyhow::{Result, anyhow};
 use std::path::PathBuf;
 use tracing::info;

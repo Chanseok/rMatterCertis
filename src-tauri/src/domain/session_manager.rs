@@ -52,7 +52,7 @@ impl<'r> Decode<'r, sqlx::Sqlite> for SessionStatus {
             "Completed" => Ok(SessionStatus::Completed),
             "Failed" => Ok(SessionStatus::Failed),
             "Stopped" => Ok(SessionStatus::Stopped),
-            _ => Err(format!("Invalid SessionStatus: {}", s).into()),
+            _ => Err(format!("Invalid SessionStatus: {s}").into()),
         }
     }
 }
@@ -89,7 +89,7 @@ impl<'r> Decode<'r, sqlx::Sqlite> for CrawlingStage {
             "ProductList" => Ok(CrawlingStage::ProductList),
             "ProductDetails" => Ok(CrawlingStage::ProductDetails),
             "MatterDetails" => Ok(CrawlingStage::MatterDetails),
-            _ => Err(format!("Invalid CrawlingStage: {}", s).into()),
+            _ => Err(format!("Invalid CrawlingStage: {s}").into()),
         }
     }
 }

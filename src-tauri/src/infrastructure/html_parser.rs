@@ -3,6 +3,8 @@
 //! This module provides specialized extractors for parsing HTML content
 //! from certification websites and extracting product information.
 
+#![allow(clippy::uninlined_format_args)]
+
 use anyhow::{anyhow, Result};
 use scraper::{Html, Selector, ElementRef};
 use tracing::debug;

@@ -92,6 +92,7 @@ impl MatterProduct {
     }
     
     /// Update technical specifications from detail page
+    #[allow(clippy::too_many_arguments)]
     pub fn update_technical_specs(
         &mut self,
         firmware_version: Option<String>,

@@ -1,72 +1,71 @@
-// SolidJS 전역 상태 관리 스토어
+/**
+ * UI Store - UI 전용 상태 관리 (리팩토링)
+ * 
+ * 크롤링 관련 상태는 crawlerStore로 분리하고,
+ * 순수 UI 상태와 알림 관리만 담당합니다.
+ */
+
 import { createStore } from 'solid-js/store';
 import { createSignal } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
 
-// 크롤링 상태 타입 정의
-export interface CrawlingState {
-  status: 'idle' | 'running' | 'paused' | 'completed' | 'error';
-  progress: {
-    percentage: number;
-    processedPages: number;
-    totalPages: number;
-    currentUrl: string;
-  };
-  results: {
-    totalProducts: number;
-    extractedData: any[];
-    errors: string[];
-  };
-  config: {
-    startUrl: string;
-    maxPages: number;
-    concurrentRequests: number;
-    delayMs: number;
+// UI 전용 상태 타입 정의
+export interface UIState {
+  // 탭 및 네비게이션
+  activeTab: 'dashboard' | 'form' | 'results' | 'settings' | 'database';
+  sidebarOpen: boolean;
+  
+  // 테마
+  theme: 'light' | 'dark' | 'system';
+  
+  // 레이아웃
+  showDetails: boolean;
+  compactMode: boolean;
+  
+  // 모달 상태
+  modals: {
+    settings: boolean;
+    about: boolean;
+    help: boolean;
+    export: boolean;
+    backup: boolean;
   };
 }
 
-// 앱 전체 상태 타입 정의
-export interface AppState {
-  crawling: CrawlingState;
-  ui: {
-    activeTab: 'dashboard' | 'form' | 'results' | 'settings';
-    sidebarOpen: boolean;
-    theme: 'light' | 'dark';
+// 알림 타입 정의
+export interface Notification {
+  id: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  title?: string;
+  message: string;
+  timestamp: number;
+  duration?: number; // ms, undefined면 수동 닫기
+  action?: {
+    label: string;
+    callback: () => void;
   };
-  notifications: Array<{
-    id: string;
-    type: 'info' | 'success' | 'warning' | 'error';
-    message: string;
-    timestamp: number;
-  }>;
+}
+
+// 앱 전체 상태 타입 정의 (UI만)
+export interface AppState {
+  ui: UIState;
+  notifications: Notification[];
 }
 
 // 초기 상태 정의
 const initialState: AppState = {
-  crawling: {
-    status: 'idle',
-    progress: {
-      percentage: 0,
-      processedPages: 0,
-      totalPages: 0,
-      currentUrl: '',
-    },
-    results: {
-      totalProducts: 0,
-      extractedData: [],
-      errors: [],
-    },
-    config: {
-      startUrl: 'https://csa-iot.org/csa-iot_products/?p_keywords=&p_type%5B%5D=14&p_program_type%5B%5D=1049&p_certificate=&p_family=&p_firmware_ver=',
-      maxPages: 100,
-      concurrentRequests: 3,
-      delayMs: 1000,
-    },
-  },
   ui: {
     activeTab: 'dashboard',
     sidebarOpen: true,
-    theme: 'light',
+    theme: 'system',
+    showDetails: false,
+    compactMode: false,
+    modals: {
+      settings: false,
+      about: false,
+      help: false,
+      export: false,
+      backup: false,
+    },
   },
   notifications: [],
 };
@@ -76,21 +75,12 @@ function createAppStore() {
   const [state, setState] = createStore<AppState>(initialState);
   const [sessionId, setSessionId] = createSignal<string | null>(null);
 
-  // 크롤링 관련 액션들
+  // 크롤링 관련 액션들 - 이 부분은 나중에 crawlerStore로 완전히 이동
   const startCrawling = async () => {
     try {
-      setState('crawling', 'status', 'running');
-      setState('crawling', 'progress', 'percentage', 0);
-      
-      // TODO: Tauri 백엔드 호출
-      const response = await invoke('start_crawling', {
-        config: state.crawling.config
-      }) as { sessionId: string };
-      
-      setSessionId(response.sessionId);
+      // 이 함수는 crawlerStore로 이동되었습니다.
       addNotification('success', '크롤링이 시작되었습니다.');
     } catch (error) {
-      setState('crawling', 'status', 'error');
       addNotification('error', `크롤링 시작 실패: ${error}`);
     }
   };
@@ -98,18 +88,13 @@ function createAppStore() {
   const stopCrawling = async () => {
     try {
       if (sessionId()) {
-        await invoke('stop_crawling', { sessionId: sessionId() });
+        // 이 함수는 crawlerStore로 이동되었습니다.
       }
-      setState('crawling', 'status', 'idle');
       setSessionId(null);
       addNotification('info', '크롤링이 중지되었습니다.');
     } catch (error) {
       addNotification('error', `크롤링 중지 실패: ${error}`);
     }
-  };
-
-  const updateProgress = (progress: Partial<CrawlingState['progress']>) => {
-    setState('crawling', 'progress', progress);
   };
 
   // UI 관련 액션들
@@ -145,9 +130,9 @@ function createAppStore() {
     setState('notifications', (prev) => prev.filter(n => n.id !== id));
   };
 
-  // 설정 업데이트
-  const updateConfig = (config: Partial<CrawlingState['config']>) => {
-    setState('crawling', 'config', config);
+  // 설정 업데이트 - crawlerStore로 이동
+  const updateConfig = (_: Partial<Record<string, unknown>>) => {
+    // 빈 함수: 이 기능은 crawlerStore로 이동되었습니다.
   };
 
   return {
@@ -156,7 +141,6 @@ function createAppStore() {
     // 크롤링 액션들
     startCrawling,
     stopCrawling,
-    updateProgress,
     // UI 액션들
     setActiveTab,
     toggleSidebar,

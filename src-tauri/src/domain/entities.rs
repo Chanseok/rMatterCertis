@@ -141,7 +141,7 @@ pub enum CrawlerType {
 /// Progress tracking for crawling operations (UI display only)
 /// Note: Actual session state is managed in memory by SessionManager
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CrawlingProgress {
+pub struct CrawlingProgressData {
     pub current: u32,
     pub total: u32,
     pub percentage: f32,

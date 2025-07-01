@@ -3,6 +3,8 @@
 //! Modern command interface following the guide's architecture with
 //! comprehensive error handling and type safety.
 
+#![allow(clippy::uninlined_format_args)]
+
 use crate::application::parsing_service::CrawlerService;
 use crate::infrastructure::parsing::ParsingConfig;
 use crate::domain::product::{Product, ProductDetail};

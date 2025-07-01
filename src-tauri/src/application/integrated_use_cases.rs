@@ -1,3 +1,11 @@
+//! Integrated use cases combining products and product details
+//!
+//! This module provides high-level business operations that work with both
+//! products and their details, implementing complex queries and operations
+//! across multiple data sources.
+
+#![allow(clippy::uninlined_format_args)]
+
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use chrono::Utc;
@@ -55,7 +63,7 @@ impl IntegratedProductUseCases {
         if page < 1 {
             return Err(anyhow!("Page must be >= 1"));
         }
-        if limit < 1 || limit > 100 {
+        if !(1..=100).contains(&limit) {
             return Err(anyhow!("Limit must be between 1 and 100"));
         }
 
@@ -78,7 +86,7 @@ impl IntegratedProductUseCases {
 
     /// Get products without details (for crawling prioritization)
     pub async fn get_products_without_details(&self, limit: i32) -> Result<Vec<Product>> {
-        if limit < 1 || limit > 1000 {
+        if !(1..=1000).contains(&limit) {
             return Err(anyhow!("Limit must be between 1 and 1000"));
         }
 
@@ -131,7 +139,7 @@ impl IntegratedProductUseCases {
         if page < 1 {
             return Err(anyhow!("Page must be >= 1"));
         }
-        if limit < 1 || limit > 100 {
+        if !(1..=100).contains(&limit) {
             return Err(anyhow!("Limit must be between 1 and 100"));
         }
 

@@ -7,6 +7,10 @@
 //! 2. Hidden/Advanced settings (in config file only)
 //! 3. Application-managed settings (auto-updated by app)
 
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::derivable_impls)]
+#![allow(clippy::useless_format)]
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use anyhow::{Result, Context};

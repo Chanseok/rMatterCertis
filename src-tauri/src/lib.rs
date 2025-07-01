@@ -3,20 +3,63 @@
 //! This application provides web crawling capabilities for e-commerce sites
 //! with a modern desktop interface built with Tauri and SolidJS.
 //! 
-//! Modern Rust module organization (Rust 2018+ style):
-//! - Each module is defined in its own .rs file
-//! - No mod.rs files needed - just declare modules here
+//! Modern Rust module organization (Rust 2024+ style):
+//! - Each module is defined in its own .rs file or directory
+//! - No mod.rs files - clean, modern structure
+//! - Direct module declarations following Rust 2024 conventions
+
+#![allow(clippy::uninlined_format_args)]
 
 use crate::infrastructure::{DatabaseConnection, init_logging_with_config};
 use crate::infrastructure::config::{ConfigManager, AppConfig};
 use tracing::{info, error, warn};
 use tauri::Manager;
 
-// Core modules following modern Rust conventions
-pub mod domain;
-pub mod application;
+// Modern Rust 2024 module declarations - no mod.rs files needed
+pub mod domain {
+    //! Domain module - Core business logic and entities
+    pub mod entities;
+    pub mod events;
+    pub mod repositories;
+    pub mod services;
+    pub mod session_manager;
+    pub mod product;
+    pub mod matter_product;
+    pub mod integrated_product;
+
+    // Re-export commonly used items
+    pub use entities::*;
+    pub use events::*;
+}
+
+pub mod application {
+    //! Application layer - Use cases and application services
+    pub mod use_cases;
+    pub mod crawling_use_cases;
+    pub mod integrated_use_cases;
+    pub mod dto;
+    pub mod events;
+    pub mod state;
+    pub mod page_discovery_service;
+    pub mod parsing_service;
+
+    // Re-export commonly used items
+    pub use events::EventEmitter;
+    pub use state::AppState;
+    pub use page_discovery_service::PageDiscoveryService;
+}
+
 pub mod infrastructure;
-pub mod commands;
+
+pub mod commands {
+    //! Command module for crawling operations
+    pub mod modern_crawling;
+    pub mod parsing_commands;
+
+    // Re-export all commands
+    pub use modern_crawling::*;
+    pub use parsing_commands::*;
+}
 
 // Test utilities (only available during testing)
 #[cfg(any(test, feature = "test-utils"))]

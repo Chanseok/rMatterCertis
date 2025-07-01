@@ -197,7 +197,7 @@ impl IntegratedProduct {
         if self.size.is_some() { score += 2.0; }
         if self.material.is_some() { score += 2.0; }
 
-        ((score / max_score * 100.0) as f64).round()
+        (score / max_score * 100.0_f64).round()
     }
 
     /// 제품 정보 업데이트

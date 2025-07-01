@@ -2,6 +2,8 @@
 //! 
 //! This test goes to the last page to calculate exact product count
 
+#![allow(clippy::single_component_path_imports)]
+
 use anyhow::Result;
 use matter_certis_v2_lib::infrastructure::{HttpClient, config::{csa_iot, utils, ConfigManager}};
 use matter_certis_v2_lib::infrastructure::simple_http_client::HttpClientConfig;

@@ -1,12 +1,13 @@
 import { Component, createEffect, For, Show } from 'solid-js';
-import { appStore } from '../stores/appStore';
+import { crawlerStore } from '../stores/crawlerStore';
+import { uiStore } from '../stores/uiStore';
 
 const CrawlingDashboard: Component = () => {
-  const { state, stopCrawling, setActiveTab } = appStore;
+  const crawler = crawlerStore;
 
   // 진행률에 따른 색상 결정
   const getProgressColor = () => {
-    const percentage = state.crawling.progress.percentage;
+    const percentage = crawler.progressPercentage();
     if (percentage < 30) return 'bg-gradient-to-r from-red-500 to-red-600';
     if (percentage < 70) return 'bg-gradient-to-r from-yellow-500 to-orange-500';
     return 'bg-gradient-to-r from-green-500 to-emerald-600';
@@ -14,41 +15,43 @@ const CrawlingDashboard: Component = () => {
 
   // 상태에 따른 상태 표시 스타일
   const getStatusStyle = () => {
-    switch (state.crawling.status) {
-      case 'running': return 'status-running animate-pulse';
-      case 'completed': return 'status-completed';
-      case 'error': return 'status-error';
-      case 'paused': return 'status-paused';
+    switch (crawler.status()) {
+      case 'Running': return 'status-running animate-pulse';
+      case 'Completed': return 'status-completed';
+      case 'Error': return 'status-error';
+      case 'Paused': return 'status-paused';
       default: return 'status-idle';
     }
   };
 
-  // 상태 변경 로깅 (가이드의 createEffect 예시)
+  // 상태 변경 로깅
   createEffect(() => {
-    console.log('크롤링 상태 변경:', state.crawling.status);
-    console.log('진행률:', state.crawling.progress.percentage + '%');
+    console.log('크롤링 상태 변경:', crawler.status());
+    console.log('진행률:', crawler.progressPercentage() + '%');
   });
 
   // 상태에 따른 한글 표시
   const getStatusText = () => {
-    switch (state.crawling.status) {
-      case 'idle': return '대기 중';
-      case 'running': return '실행 중';
-      case 'paused': return '일시 정지';
-      case 'completed': return '완료';
-      case 'error': return '오류';
+    switch (crawler.status()) {
+      case 'Idle': return '대기 중';
+      case 'Running': return '실행 중';
+      case 'Paused': return '일시 정지';
+      case 'Completed': return '완료';
+      case 'Error': return '오류';
+      case 'Cancelled': return '취소됨';
       default: return '알 수 없음';
     }
   };
 
   // 상태 아이콘
   const getStatusIcon = () => {
-    switch (state.crawling.status) {
-      case 'idle': return '⏸️';
-      case 'running': return '🚀';
-      case 'paused': return '⏸️';
-      case 'completed': return '✅';
-      case 'error': return '❌';
+    switch (crawler.status()) {
+      case 'Idle': return '⏸️';
+      case 'Running': return '🚀';
+      case 'Paused': return '⏸️';
+      case 'Completed': return '✅';
+      case 'Error': return '❌';
+      case 'Cancelled': return '🛑';
       default: return '❓';
     }
   };
@@ -70,18 +73,18 @@ const CrawlingDashboard: Component = () => {
               <p class="text-xl text-white/80 backdrop-blur-sm">CSA-IoT Matter 제품 크롤링 현황을 실시간으로 모니터링합니다</p>
             </div>
             <div class="flex flex-wrap gap-4">
-              <Show when={state.crawling.status === 'idle' || state.crawling.status === 'completed' || state.crawling.status === 'error'}>
+              <Show when={crawler.canStart()}>
                 <button
-                  onClick={() => setActiveTab('form')}
+                  onClick={() => uiStore.setActiveTab('form')}
                   class="btn-primary shadow-2xl neon-glow hover-lift"
                 >
                   <span class="mr-3 text-xl floating">🚀</span>
                   새 크롤링 시작
                 </button>
               </Show>
-              <Show when={state.crawling.status === 'running'}>
+              <Show when={crawler.canStop()}>
                 <button
-                  onClick={stopCrawling}
+                  onClick={() => crawler.stopCrawling()}
                   class="btn-danger shadow-2xl neon-glow hover-lift"
                 >
                   <span class="mr-3 text-xl animate-pulse">⏹️</span>
@@ -117,13 +120,13 @@ const CrawlingDashboard: Component = () => {
               <div class="space-y-4">
                 <div class="flex justify-between items-center">
                   <span class="text-3xl font-bold text-white drop-shadow-lg">
-                    {state.crawling.progress.percentage.toFixed(1)}%
+                    {crawler.progressPercentage().toFixed(1)}%
                   </span>
                 </div>
                 <div class="progress-bar">
                   <div 
                     class={`progress-fill ${getProgressColor()} shadow-lg`}
-                    style={`width: ${state.crawling.progress.percentage}%`}
+                    style={`width: ${crawler.progressPercentage()}%`}
                   />
                 </div>
               </div>
@@ -138,9 +141,9 @@ const CrawlingDashboard: Component = () => {
                 <span class="text-3xl floating">📄</span>
               </div>
               <div class="text-3xl font-bold text-white drop-shadow-lg">
-                {state.crawling.progress.processedPages}
+                {crawler.progress()?.current || 0}
                 <span class="text-lg font-normal text-white/60 ml-2">
-                  / {state.crawling.progress.totalPages}
+                  / {crawler.progress()?.total || 0}
                 </span>
               </div>
             </div>
@@ -154,14 +157,14 @@ const CrawlingDashboard: Component = () => {
                 <span class="text-3xl floating">🛍️</span>
               </div>
               <div class="text-3xl font-bold text-green-400 drop-shadow-lg neon-glow-green">
-                {state.crawling.results.totalProducts}
+                {crawler.lastResult()?.new_items || 0}
               </div>
             </div>
           </div>
         </div>
 
         {/* 현재 작업 정보 */}
-        <Show when={state.crawling.status === 'running' && state.crawling.progress.currentUrl}>
+        <Show when={crawler.isRunning() && crawler.progress()?.current_step}>
           <div class="card-neon mb-12 animate-bounce-in hover-lift">
             <div class="card-header">
               <h3 class="text-xl font-bold text-white flex items-center drop-shadow-lg">
@@ -173,7 +176,7 @@ const CrawlingDashboard: Component = () => {
               <div class="glass backdrop-blur-xl rounded-2xl p-6 border border-white/30">
                 <p class="text-sm font-bold text-white/90 mb-3 uppercase tracking-wider">현재 URL:</p>
                 <p class="text-sm font-mono text-blue-300 break-all glass p-4 rounded-xl border border-blue-400/30 shadow-xl">
-                  {state.crawling.progress.currentUrl}
+                  {crawler.progress()?.current_step || '처리 중...'}
                 </p>
               </div>
             </div>
@@ -193,25 +196,30 @@ const CrawlingDashboard: Component = () => {
               <div class="space-y-3">
                 <p class="text-sm font-bold text-white/80 uppercase tracking-wider">시작 URL</p>
                 <p class="text-sm text-white/90 font-mono glass p-4 rounded-xl truncate backdrop-blur-xl border border-white/20">
-                  {state.crawling.config.startUrl}
+                  페이지 {crawler.currentConfig()?.start_page || 1} - {crawler.currentConfig()?.end_page || 10}
                 </p>
               </div>
               <div class="space-y-3">
                 <p class="text-sm font-bold text-white/80 uppercase tracking-wider">최대 페이지</p>
                 <p class="text-lg font-bold text-white glass p-4 rounded-xl backdrop-blur-xl border border-white/20 text-center">
-                  {state.crawling.config.maxPages}
+                  {(() => {
+                    const config = crawler.currentConfig();
+                    return config?.end_page && config?.start_page 
+                      ? config.end_page - config.start_page + 1 
+                      : 0;
+                  })()}
                 </p>
               </div>
               <div class="space-y-3">
                 <p class="text-sm font-bold text-white/80 uppercase tracking-wider">동시 요청</p>
                 <p class="text-lg font-bold text-white glass p-4 rounded-xl backdrop-blur-xl border border-white/20 text-center">
-                  {state.crawling.config.concurrentRequests}
+                  {crawler.currentConfig()?.concurrency || 1}
                 </p>
               </div>
               <div class="space-y-3">
                 <p class="text-sm font-bold text-white/80 uppercase tracking-wider">요청 간격</p>
                 <p class="text-lg font-bold text-white glass p-4 rounded-xl backdrop-blur-xl border border-white/20 text-center">
-                  {state.crawling.config.delayMs}ms
+                  {crawler.currentConfig()?.delay_ms || 0}ms
                 </p>
               </div>
             </div>
@@ -219,21 +227,21 @@ const CrawlingDashboard: Component = () => {
         </div>
 
         {/* 오류 목록 */}
-        <Show when={state.crawling.results.errors.length > 0}>
+        <Show when={crawler.errorHistory().length > 0}>
           <div class="card-glass mb-12 hover-lift">
             <div class="card-header">
               <h3 class="text-xl font-bold text-red-400 flex items-center drop-shadow-lg neon-glow">
                 <span class="mr-3 text-3xl animate-bounce">⚠️</span>
-                오류 목록 ({state.crawling.results.errors.length})
+                오류 목록 ({crawler.errorHistory().length})
               </h3>
             </div>
             <div class="card-body">
               <div class="space-y-4 max-h-60 overflow-y-auto custom-scrollbar">
-                <For each={state.crawling.results.errors}>
+                <For each={crawler.errorHistory()}>
                   {(error, index) => (
                     <div class="glass border-l-4 border-red-400 p-4 rounded-r-xl backdrop-blur-xl hover-lift animate-scale-in" style={`animation-delay: ${index() * 0.1}s`}>
                       <p class="text-sm text-white drop-shadow-sm">
-                        <span class="font-bold text-red-300">#{index() + 1}:</span> {error}
+                        <span class="font-bold text-red-300">#{index() + 1}:</span> {error.message}
                       </p>
                     </div>
                   )}
@@ -246,14 +254,14 @@ const CrawlingDashboard: Component = () => {
         {/* 빠른 액션 버튼들 */}
         <div class="flex flex-wrap gap-6 justify-center">
           <button
-            onClick={() => setActiveTab('results')}
+            onClick={() => uiStore.setActiveTab('results')}
             class="btn-success shadow-2xl neon-glow-green hover-lift"
           >
             <span class="mr-3 text-xl floating">📋</span>
             결과 보기
           </button>
           <button
-            onClick={() => setActiveTab('settings')}
+            onClick={() => uiStore.setActiveTab('settings')}
             class="btn-secondary shadow-2xl hover-lift"
           >
             <span class="mr-3 text-xl floating">⚙️</span>
