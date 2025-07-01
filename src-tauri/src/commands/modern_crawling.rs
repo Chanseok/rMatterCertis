@@ -6,11 +6,13 @@
 use crate::application::{AppState, EventEmitter};
 use crate::domain::events::{CrawlingProgress, CrawlingStatus, CrawlingStage, DatabaseStats, DatabaseHealth};
 use crate::domain::entities::CrawlingSession;
+use crate::commands::config_commands::ComprehensiveCrawlerConfig;
 use tauri::{State, AppHandle};
 use tracing::info;
 use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use crate::infrastructure::config::ConfigManager;
 
 /// Configuration for starting a crawling session
 #[derive(Debug, serde::Deserialize)]
@@ -128,7 +130,16 @@ pub async fn start_crawling(
         };
         
         // 통합 제품 리포지토리 생성
-        let db_pool = match sqlx::SqlitePool::connect("sqlite:app.db").await {
+        let database_url = match get_database_url() {
+            Ok(url) => url,
+            Err(e) => {
+                tracing::error!("Failed to get database URL: {}", e);
+                update_error_state(&app_state_for_update, &format!("데이터베이스 경로 설정 실패: {}", e)).await;
+                return;
+            }
+        };
+        
+        let db_pool = match sqlx::SqlitePool::connect(&database_url).await {
             Ok(pool) => pool,
             Err(e) => {
                 tracing::error!("Failed to connect to database: {}", e);
@@ -162,6 +173,149 @@ pub async fn start_crawling(
     });
     
     info!("Crawling session started with ID: {}", session_id);
+    Ok(session_id)
+}
+
+/// Start a new crawling session with comprehensive configuration
+#[tauri::command]
+pub async fn start_crawling_with_comprehensive_config(
+    config: ComprehensiveCrawlerConfig,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    info!("Starting crawling session with comprehensive config: batch_size={}, concurrency={}", 
+          config.batch_size, config.concurrency);
+    
+    // Initialize event emitter if not already done
+    {
+        let emitter_guard = state.event_emitter.read().await;
+        if emitter_guard.is_none() {
+            drop(emitter_guard);
+            let emitter = EventEmitter::new(app_handle.clone());
+            state.initialize_event_emitter(emitter).await?;
+        }
+    }
+    
+    // Create new crawling session
+    let session = CrawlingSession {
+        id: uuid::Uuid::new_v4().to_string(),
+        url: config.base_url.clone(),
+        start_page: config.start_page,
+        end_page: config.end_page,
+        status: "running".to_string(),
+        created_at: Utc::now(),
+        ..Default::default()
+    };
+    
+    let session_id = session.id.clone();
+    
+    // Start the session
+    state.start_session(session).await?;
+    
+    // Emit initial progress
+    let initial_progress = CrawlingProgress {
+        current: 0,
+        total: config.end_page - config.start_page + 1,
+        percentage: 0.0,
+        current_stage: CrawlingStage::TotalPages,
+        current_step: "종합 설정으로 크롤링 세션을 초기화하는 중...".to_string(),
+        status: CrawlingStatus::Running,
+        message: format!("배치 크기: {}, 동시성: {}", config.batch_size, config.concurrency),
+        remaining_time: None,
+        elapsed_time: 0,
+        new_items: 0,
+        updated_items: 0,
+        current_batch: Some(1),
+        total_batches: Some((config.end_page - config.start_page + 1) / config.batch_size + 1),
+        errors: 0,
+        timestamp: Utc::now(),
+    };
+    
+    state.update_progress(initial_progress).await?;
+    
+    // Convert comprehensive config to BatchCrawlingConfig
+    let session_id_for_task = session_id.clone();
+    let _app_handle_for_task = app_handle.clone();
+    let crawling_config = crate::infrastructure::BatchCrawlingConfig {
+        start_page: config.start_page,
+        end_page: config.end_page,
+        concurrency: config.concurrency,
+        delay_ms: config.delay_ms,
+        batch_size: config.batch_size,
+        retry_max: config.retry_max,
+        timeout_ms: config.page_timeout_ms,
+    };
+    
+    // 이벤트 이미터 참조 복제 
+    let event_emitter_for_task = {
+        let emitter_guard = state.event_emitter.read().await;
+        emitter_guard.clone()
+    };
+    
+    // AppState 복제하여 백그라운드 작업에 전달
+    let app_state_for_update = Arc::clone(&state.current_progress);
+    
+    // 실제 배치 크롤링 엔진 백그라운드로 실행
+    tokio::spawn(async move {
+        // HTTP 클라이언트 및 파서 초기화
+        let http_client = match crate::infrastructure::HttpClient::new() {
+            Ok(client) => client,
+            Err(e) => {
+                tracing::error!("Failed to create HTTP client: {}", e);
+                update_error_state(&app_state_for_update, &format!("HTTP 클라이언트 생성 실패: {}", e)).await;
+                return;
+            }
+        };
+        
+        let data_extractor = match crate::infrastructure::MatterDataExtractor::new() {
+            Ok(extractor) => extractor,
+            Err(e) => {
+                tracing::error!("Failed to create data extractor: {}", e);
+                update_error_state(&app_state_for_update, &format!("데이터 추출기 생성 실패: {}", e)).await;
+                return;
+            }
+        };
+        
+        // 통합 제품 리포지토리 생성
+        let database_url = match get_database_url() {
+            Ok(url) => url,
+            Err(e) => {
+                tracing::error!("Failed to get database URL: {}", e);
+                update_error_state(&app_state_for_update, &format!("데이터베이스 경로 설정 실패: {}", e)).await;
+                return;
+            }
+        };
+        
+        let db_pool = match sqlx::SqlitePool::connect(&database_url).await {
+            Ok(pool) => pool,
+            Err(e) => {
+                tracing::error!("Failed to connect to database: {}", e);
+                update_error_state(&app_state_for_update, &format!("데이터베이스 연결 실패: {}", e)).await;
+                return;
+            }
+        };
+        
+        let product_repo = std::sync::Arc::new(
+            crate::infrastructure::IntegratedProductRepository::new(db_pool)
+        );
+
+        // 배치 크롤링 엔진 생성 및 실행
+        let engine = crate::infrastructure::BatchCrawlingEngine::new(
+            http_client,
+            data_extractor,
+            product_repo,
+            std::sync::Arc::new(event_emitter_for_task),
+            crawling_config,
+            session_id_for_task,
+        );
+
+        if let Err(e) = engine.execute().await {
+            tracing::error!("Comprehensive batch crawling failed: {}", e);
+            update_error_state(&app_state_for_update, &format!("종합 설정 크롤링 실행 실패: {}", e)).await;
+        }
+    });
+    
+    info!("Comprehensive crawling session started with ID: {}", session_id);
     Ok(session_id)
 }
 
@@ -325,4 +479,15 @@ pub async fn export_crawling_results(_state: State<'_, AppState>) -> Result<Stri
     
     info!("Crawling results exported: {}", export_path);
     Ok(export_path)
+}
+
+/// Get the correct database URL for the application
+fn get_database_url() -> Result<String, String> {
+    let data_dir = ConfigManager::get_app_data_dir()
+        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+    
+    let db_path = data_dir.join("database").join("matter_certis.db");
+    let database_url = format!("sqlite:{}", db_path.to_string_lossy());
+    
+    Ok(database_url)
 }

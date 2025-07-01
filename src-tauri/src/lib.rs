@@ -72,14 +72,17 @@ pub fn run() {
     // Initialize runtime for async operations first
     let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
     
-    // Load configuration (with fallback to defaults)
+    // Load configuration with automatic initialization on first run
     let config = rt.block_on(async {
         match ConfigManager::new() {
             Ok(manager) => {
-                match manager.load_config().await {
-                    Ok(config) => config,
+                match manager.initialize_on_first_run().await {
+                    Ok(config) => {
+                        info!("✅ Configuration initialized successfully");
+                        config
+                    },
                     Err(e) => {
-                        eprintln!("⚠️ Failed to load configuration, using defaults: {}", e);
+                        eprintln!("⚠️ Failed to initialize configuration, using defaults: {}", e);
                         AppConfig::default()
                     }
                 }
@@ -103,23 +106,30 @@ pub fn run() {
     // Initialize runtime for async operations (already created above)
     info!("✅ Tokio runtime initialized successfully");
     
-    // Initialize database connection
+    // Initialize database connection with proper data directory
     let db = rt.block_on(async {
         info!("🔧 Initializing database connection...");
         
-        // Create data directory if it doesn't exist
-        let data_dir = std::path::Path::new("./data");
+        // Use the same data directory structure as config
+        let data_dir = match crate::infrastructure::config::ConfigManager::get_app_data_dir() {
+            Ok(dir) => dir.join("database"),
+            Err(_) => {
+                warn!("📁 Using fallback data directory");
+                std::path::PathBuf::from("./data")
+            }
+        };
+        
         if !data_dir.exists() {
-            warn!("📁 Data directory does not exist, creating...");
-            std::fs::create_dir_all(data_dir).expect("Failed to create data directory");
-            info!("✅ Data directory created successfully");
+            warn!("📁 Database directory does not exist, creating...");
+            std::fs::create_dir_all(&data_dir).expect("Failed to create database directory");
+            info!("✅ Database directory created successfully");
         }
 
-        // Initialize database with migrations
-        let database_url = "sqlite:./data/matter_certis.db";
+        // Initialize database with proper path
+        let database_url = format!("sqlite:{}/matter_certis.db", data_dir.to_string_lossy());
         info!("🗄️ Connecting to database: {}", database_url);
         
-        let db = DatabaseConnection::new(database_url).await
+        let db = DatabaseConnection::new(&database_url).await
             .expect("Failed to initialize database connection");
         
         info!("🔄 Running database migrations...");
@@ -158,6 +168,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Modern real-time commands
             commands::start_crawling,
+            commands::start_crawling_with_comprehensive_config,
             commands::pause_crawling,
             commands::resume_crawling,
             commands::stop_crawling,
@@ -173,6 +184,12 @@ pub fn run() {
             commands::get_frontend_config,
             commands::get_site_config,
             commands::get_default_crawling_config,
+            commands::get_comprehensive_crawler_config,
+            commands::convert_to_comprehensive_config,
+            commands::initialize_app_config,
+            commands::reset_config_to_defaults,
+            commands::get_app_directories,
+            commands::is_first_run,
             commands::update_crawling_settings,
             commands::build_page_url,
             commands::resolve_url,

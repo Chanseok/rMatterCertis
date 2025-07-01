@@ -313,16 +313,52 @@ export class TauriApiService {
     await Promise.all(subscriptions);
   }
 
-  // === Configuration Management ===
+  // =========================================================================
+  // Configuration Management Commands
+  // =========================================================================
+
+  /**
+   * Get comprehensive crawler configuration from backend
+   */
+  async getComprehensiveCrawlerConfig(): Promise<any> {
+    try {
+      return await invoke<any>('get_comprehensive_crawler_config');
+    } catch (error) {
+      throw new Error(`Failed to get comprehensive crawler config: ${error}`);
+    }
+  }
+
+  /**
+   * Start crawling with comprehensive configuration
+   */
+  async startCrawlingWithComprehensiveConfig(config: any): Promise<string> {
+    try {
+      const sessionId = await invoke<string>('start_crawling_with_comprehensive_config', { config });
+      return sessionId;
+    } catch (error) {
+      throw new Error(`Failed to start crawling with comprehensive config: ${error}`);
+    }
+  }
 
   /**
    * Get site configuration (URLs and domains)
    */
   async getSiteConfig(): Promise<any> {
     try {
-      return await invoke('get_site_config');
+      return await invoke<any>('get_site_config');
     } catch (error) {
       throw new Error(`Failed to get site config: ${error}`);
+    }
+  }
+
+  /**
+   * Get frontend configuration (complete config)
+   */
+  async getFrontendConfig(): Promise<any> {
+    try {
+      return await invoke<any>('get_frontend_config');
+    } catch (error) {
+      throw new Error(`Failed to get frontend config: ${error}`);
     }
   }
 
@@ -331,20 +367,57 @@ export class TauriApiService {
    */
   async getDefaultCrawlingConfig(): Promise<any> {
     try {
-      return await invoke('get_default_crawling_config');
+      return await invoke<any>('get_default_crawling_config');
     } catch (error) {
       throw new Error(`Failed to get default crawling config: ${error}`);
     }
   }
 
+  // =========================================================================
+  // Application Configuration Commands
+  // =========================================================================
+
   /**
-   * Get complete frontend configuration
+   * Initialize app configuration on first run
    */
-  async getFrontendConfig(): Promise<any> {
+  async initializeAppConfig(): Promise<any> {
     try {
-      return await invoke('get_frontend_config');
+      return await invoke<any>('initialize_app_config');
     } catch (error) {
-      throw new Error(`Failed to get frontend config: ${error}`);
+      throw new Error(`Failed to initialize app config: ${error}`);
+    }
+  }
+
+  /**
+   * Check if this is the first run of the application
+   */
+  async isFirstRun(): Promise<boolean> {
+    try {
+      return await invoke<boolean>('is_first_run');
+    } catch (error) {
+      throw new Error(`Failed to check first run: ${error}`);
+    }
+  }
+
+  /**
+   * Reset configuration to defaults
+   */
+  async resetConfigToDefaults(): Promise<any> {
+    try {
+      return await invoke<any>('reset_config_to_defaults');
+    } catch (error) {
+      throw new Error(`Failed to reset config: ${error}`);
+    }
+  }
+
+  /**
+   * Get application directories information
+   */
+  async getAppDirectories(): Promise<any> {
+    try {
+      return await invoke<any>('get_app_directories');
+    } catch (error) {
+      throw new Error(`Failed to get app directories: ${error}`);
     }
   }
 }

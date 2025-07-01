@@ -108,6 +108,69 @@ impl Default for CrawlingProgress {
     }
 }
 
+impl CrawlingProgress {
+    /// Calculate and update derived fields based on current progress
+    pub fn calculate_derived_fields(&mut self, start_time: DateTime<Utc>) {
+        // Calculate percentage
+        if self.total > 0 {
+            self.percentage = (self.current as f64 / self.total as f64) * 100.0;
+        } else {
+            self.percentage = 0.0;
+        }
+        
+        // Calculate elapsed time
+        let now = Utc::now();
+        self.elapsed_time = (now - start_time).num_seconds().max(0) as u64;
+        
+        // Estimate remaining time based on current progress
+        if self.current > 0 && self.elapsed_time > 0 {
+            let items_per_second = self.current as f64 / self.elapsed_time as f64;
+            if items_per_second > 0.0 {
+                let remaining_items = self.total.saturating_sub(self.current) as f64;
+                self.remaining_time = Some((remaining_items / items_per_second) as u64);
+            }
+        }
+        
+        // Update timestamp
+        self.timestamp = now;
+    }
+    
+    /// Create a new progress instance with calculated fields
+    pub fn new_with_calculation(
+        current: u32,
+        total: u32,
+        stage: CrawlingStage,
+        step: String,
+        status: CrawlingStatus,
+        message: String,
+        start_time: DateTime<Utc>,
+        new_items: u32,
+        updated_items: u32,
+        errors: u32,
+    ) -> Self {
+        let mut progress = Self {
+            current,
+            total,
+            percentage: 0.0,
+            current_stage: stage,
+            current_step: step,
+            status,
+            message,
+            remaining_time: None,
+            elapsed_time: 0,
+            new_items,
+            updated_items,
+            current_batch: None,
+            total_batches: None,
+            errors,
+            timestamp: Utc::now(),
+        };
+        
+        progress.calculate_derived_fields(start_time);
+        progress
+    }
+}
+
 /// Individual task status within a parallel crawling operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlingTaskStatus {

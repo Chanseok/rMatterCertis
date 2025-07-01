@@ -28,6 +28,9 @@ pub struct AppState {
     
     /// Application configuration
     pub config: Arc<RwLock<crate::infrastructure::config::AppConfig>>,
+    
+    /// Session start time for calculating elapsed time
+    pub session_start_time: Arc<RwLock<Option<chrono::DateTime<Utc>>>>,
 }
 
 impl AppState {
@@ -39,6 +42,7 @@ impl AppState {
             current_progress: Arc::new(RwLock::new(CrawlingProgress::default())),
             database_stats: Arc::new(RwLock::new(None)),
             config: Arc::new(RwLock::new(config)),
+            session_start_time: Arc::new(RwLock::new(None)),
         }
     }
     
@@ -55,8 +59,17 @@ impl AppState {
         self.event_emitter.read().await.clone()
     }
     
-    /// Update the current crawling progress
-    pub async fn update_progress(&self, progress: CrawlingProgress) -> Result<(), String> {
+    /// Update the current crawling progress with calculated fields
+    pub async fn update_progress(&self, mut progress: CrawlingProgress) -> Result<(), String> {
+        // Get start time for calculations
+        let start_time = {
+            let start_time_guard = self.session_start_time.read().await;
+            start_time_guard.unwrap_or_else(|| Utc::now())
+        };
+        
+        // Calculate derived fields
+        progress.calculate_derived_fields(start_time);
+        
         // Update stored progress
         {
             let mut progress_guard = self.current_progress.write().await;
@@ -78,18 +91,32 @@ impl AppState {
     
     /// Start a new crawling session
     pub async fn start_session(&self, session: CrawlingSession) -> Result<(), String> {
+        let now = Utc::now();
+        
+        // Set session start time
+        {
+            let mut start_time_guard = self.session_start_time.write().await;
+            *start_time_guard = Some(now);
+        }
+        
         {
             let mut session_guard = self.current_session.write().await;
             *session_guard = Some(session);
         }
         
-        // Reset progress for new session
-        let initial_progress = CrawlingProgress {
-            status: CrawlingStatus::Running,
-            message: "크롤링 세션을 시작합니다".to_string(),
-            timestamp: Utc::now(),
-            ..Default::default()
-        };
+        // Reset progress for new session with calculated fields
+        let initial_progress = CrawlingProgress::new_with_calculation(
+            0,
+            0,
+            crate::domain::events::CrawlingStage::Idle,
+            "크롤링 세션을 시작합니다".to_string(),
+            CrawlingStatus::Running,
+            "크롤링 세션을 시작합니다".to_string(),
+            now,
+            0,
+            0,
+            0,
+        );
         
         self.update_progress(initial_progress).await?;
         info!("Crawling session started");
@@ -103,13 +130,17 @@ impl AppState {
             *session_guard = None;
         }
         
+        // Clear session start time
+        {
+            let mut start_time_guard = self.session_start_time.write().await;
+            *start_time_guard = None;
+        }
+        
         // Update progress to stopped state
-        let stopped_progress = CrawlingProgress {
-            status: CrawlingStatus::Cancelled,
-            message: "크롤링이 중단되었습니다".to_string(),
-            timestamp: Utc::now(),
-            ..self.get_progress().await
-        };
+        let mut stopped_progress = self.get_progress().await;
+        stopped_progress.status = CrawlingStatus::Cancelled;
+        stopped_progress.message = "크롤링이 중단되었습니다".to_string();
+        stopped_progress.timestamp = Utc::now();
         
         self.update_progress(stopped_progress).await?;
         info!("Crawling session stopped");

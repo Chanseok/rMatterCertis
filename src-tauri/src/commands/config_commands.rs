@@ -130,6 +130,129 @@ pub struct AppMetadata {
     pub config_version: u32,
 }
 
+/// Comprehensive Crawler Configuration - Single Source of Truth
+/// This structure includes all configuration options from both simple and advanced crawling
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComprehensiveCrawlerConfig {
+    // === Core Crawling Settings ===
+    pub start_page: u32,
+    pub end_page: u32,
+    pub concurrency: u32,
+    pub delay_ms: u64,
+    
+    // === Advanced Settings (from Frontend CrawlerConfig) ===
+    pub page_range_limit: u32,              // 기본값: 10
+    pub product_list_retry_count: u32,       // 기본값: 9
+    pub product_detail_retry_count: u32,     // 기본값: 9
+    pub products_per_page: u32,              // 기본값: 12
+    pub auto_add_to_local_db: bool,          // 기본값: true
+    pub auto_status_check: bool,             // 기본값: true
+    pub crawler_type: String,                // 'axios' | 'playwright'
+
+    // === Batch Processing Settings ===
+    pub batch_size: u32,                     // 기본값: 30
+    pub batch_delay_ms: u64,                 // 기본값: 2000
+    pub enable_batch_processing: bool,       // 기본값: true
+    pub batch_retry_limit: u32,              // 기본값: 3
+
+    // === URL Settings ===
+    pub base_url: String,                    // CSA-IoT 기본 URL
+    pub matter_filter_url: String,           // Matter 필터 적용된 URL
+    
+    // === Timeout Settings ===
+    pub page_timeout_ms: u64,                // 기본값: 90000
+    pub product_detail_timeout_ms: u64,      // 기본값: 90000
+    
+    // === Concurrency & Performance Settings ===
+    pub initial_concurrency: u32,            // 기본값: 16
+    pub detail_concurrency: u32,             // 기본값: 16
+    pub retry_concurrency: u32,              // 기본값: 9
+    pub min_request_delay_ms: u64,           // 기본값: 100
+    pub max_request_delay_ms: u64,           // 기본값: 2200
+    pub retry_start: u32,                    // 기본값: 2
+    pub retry_max: u32,                      // 기본값: 10
+    pub cache_ttl_ms: u64,                   // 기본값: 300000
+
+    // === Browser Settings ===
+    pub headless_browser: bool,              // 기본값: true
+    pub max_concurrent_tasks: u32,           // 기본값: 16
+    pub request_delay: u64,                  // 기본값: 100
+    pub custom_user_agent: Option<String>,   // 선택적
+    
+    // === Logging Settings ===
+    pub logging: CrawlerLoggingConfig,
+}
+
+/// Logging configuration for the crawler
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlerLoggingConfig {
+    pub level: String,                       // 'ERROR' | 'WARN' | 'INFO' | 'DEBUG'
+    pub enable_stack_trace: bool,
+    pub enable_timestamp: bool,
+    pub components: std::collections::HashMap<String, String>,
+}
+
+impl Default for ComprehensiveCrawlerConfig {
+    fn default() -> Self {
+        use crate::infrastructure::config::csa_iot;
+        
+        Self {
+            // Core settings
+            start_page: 1,
+            end_page: 10,
+            concurrency: 16,
+            delay_ms: 100,
+            
+            // Advanced settings
+            page_range_limit: 10,
+            product_list_retry_count: 9,
+            product_detail_retry_count: 9,
+            products_per_page: 12,
+            auto_add_to_local_db: true,
+            auto_status_check: true,
+            crawler_type: "axios".to_string(),
+
+            // Batch processing
+            batch_size: 30,
+            batch_delay_ms: 2000,
+            enable_batch_processing: true,
+            batch_retry_limit: 3,
+
+            // URLs (from backend config)
+            base_url: csa_iot::BASE_URL.to_string(),
+            matter_filter_url: csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string(),
+            
+            // Timeouts
+            page_timeout_ms: 90000,
+            product_detail_timeout_ms: 90000,
+            
+            // Concurrency & Performance
+            initial_concurrency: 16,
+            detail_concurrency: 16,
+            retry_concurrency: 9,
+            min_request_delay_ms: 100,
+            max_request_delay_ms: 2200,
+            retry_start: 2,
+            retry_max: 10,
+            cache_ttl_ms: 300000,
+
+            // Browser settings
+            headless_browser: true,
+            max_concurrent_tasks: 16,
+            request_delay: 100,
+            custom_user_agent: None,
+            
+            // Logging
+            logging: CrawlerLoggingConfig {
+                level: "INFO".to_string(),
+                enable_stack_trace: false,
+                enable_timestamp: true,
+                components: std::collections::HashMap::new(),
+            },
+        }
+    }
+}
+
 /// Get the complete frontend configuration
 #[tauri::command]
 pub async fn get_frontend_config(
@@ -242,6 +365,42 @@ pub async fn get_default_crawling_config() -> Result<CrawlingSettings, String> {
     Ok(crawling_settings)
 }
 
+/// Get comprehensive crawler configuration including all advanced settings
+#[tauri::command]
+pub async fn get_comprehensive_crawler_config() -> Result<ComprehensiveCrawlerConfig, String> {
+    info!("Frontend requesting comprehensive crawler configuration");
+    
+    let config = ComprehensiveCrawlerConfig::default();
+    
+    info!("Providing comprehensive crawler config with {} fields", 
+          format!("batch_size={}, concurrency={}, page_range_limit={}", 
+                  config.batch_size, config.concurrency, config.page_range_limit));
+    
+    Ok(config)
+}
+
+/// Convert simple CrawlingConfig to comprehensive config
+/// This allows start_crawling to accept either simple or comprehensive config
+#[tauri::command]
+pub async fn convert_to_comprehensive_config(
+    simple_config: crate::commands::modern_crawling::CrawlingConfig
+) -> Result<ComprehensiveCrawlerConfig, String> {
+    info!("Converting simple config to comprehensive config");
+    
+    let mut comprehensive = ComprehensiveCrawlerConfig::default();
+    
+    // Map simple config fields to comprehensive config
+    comprehensive.start_page = simple_config.start_page;
+    comprehensive.end_page = simple_config.end_page;
+    comprehensive.concurrency = simple_config.concurrency;
+    comprehensive.delay_ms = simple_config.delay_ms;
+    comprehensive.auto_add_to_local_db = simple_config.auto_add_to_local_db;
+    comprehensive.retry_max = simple_config.retry_max;
+    comprehensive.page_timeout_ms = simple_config.page_timeout_ms;
+    
+    Ok(comprehensive)
+}
+
 /// Convert internal AppConfig to frontend-friendly FrontendConfig
 fn convert_to_frontend_config(app_config: &AppConfig) -> FrontendConfig {
     FrontendConfig {
@@ -289,6 +448,93 @@ fn convert_to_frontend_config(app_config: &AppConfig) -> FrontendConfig {
             config_version: app_config.app_managed.config_version,
         },
     }
+}
+
+/// Initialize configuration system on first run
+#[tauri::command]
+pub async fn initialize_app_config() -> Result<FrontendConfig, String> {
+    info!("Frontend requesting app config initialization");
+    
+    let config_manager = ConfigManager::new()
+        .map_err(|e| format!("Failed to create config manager: {}", e))?;
+    
+    let app_config = config_manager.initialize_on_first_run().await
+        .map_err(|e| format!("Failed to initialize config: {}", e))?;
+    
+    let frontend_config = convert_to_frontend_config(&app_config);
+    
+    info!("✅ App configuration initialized successfully");
+    Ok(frontend_config)
+}
+
+/// Reset configuration to defaults
+#[tauri::command]
+pub async fn reset_config_to_defaults() -> Result<FrontendConfig, String> {
+    info!("Frontend requesting config reset to defaults");
+    
+    let config_manager = ConfigManager::new()
+        .map_err(|e| format!("Failed to create config manager: {}", e))?;
+    
+    let app_config = config_manager.reset_to_defaults().await
+        .map_err(|e| format!("Failed to reset config: {}", e))?;
+    
+    let frontend_config = convert_to_frontend_config(&app_config);
+    
+    info!("✅ Configuration reset to defaults");
+    Ok(frontend_config)
+}
+
+/// Get application data directories info
+#[tauri::command]
+pub async fn get_app_directories() -> Result<AppDirectoriesInfo, String> {
+    info!("Frontend requesting app directories info");
+    
+    let _config_manager = ConfigManager::new()
+        .map_err(|e| format!("Failed to create config manager: {}", e))?;
+    
+    let config_dir = ConfigManager::get_config_dir()
+        .map_err(|e| format!("Failed to get config dir: {}", e))?;
+    
+    let data_dir = ConfigManager::get_app_data_dir()
+        .map_err(|e| format!("Failed to get data dir: {}", e))?;
+    
+    let directories = AppDirectoriesInfo {
+        config_dir: config_dir.to_string_lossy().to_string(),
+        data_dir: data_dir.to_string_lossy().to_string(),
+        database_dir: data_dir.join("database").to_string_lossy().to_string(),
+        logs_dir: data_dir.join("logs").to_string_lossy().to_string(),
+        exports_dir: data_dir.join("exports").to_string_lossy().to_string(),
+        backups_dir: data_dir.join("backups").to_string_lossy().to_string(),
+        cache_dir: data_dir.join("cache").to_string_lossy().to_string(),
+    };
+    
+    Ok(directories)
+}
+
+/// Application directories information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppDirectoriesInfo {
+    pub config_dir: String,
+    pub data_dir: String,
+    pub database_dir: String,
+    pub logs_dir: String,
+    pub exports_dir: String,
+    pub backups_dir: String,
+    pub cache_dir: String,
+}
+
+/// Check if this is the first run of the application
+#[tauri::command]
+pub async fn is_first_run() -> Result<bool, String> {
+    let config_manager = ConfigManager::new()
+        .map_err(|e| format!("Failed to create config manager: {}", e))?;
+    
+    // Check if config file exists
+    let config_path = &config_manager.config_path;
+    let is_first = !config_path.exists();
+    
+    info!("First run check: {}", is_first);
+    Ok(is_first)
 }
 
 #[cfg(test)]

@@ -333,32 +333,30 @@ impl BatchCrawlingEngine {
         Ok((saved_count, new_items, updated_items, error_count))
     }
 
-    /// 진행상황 이벤트 발송
+    /// 진행상황 이벤트 발송 (계산된 필드 포함)
     async fn emit_progress(
         &self, 
         stage: CrawlingStage, 
         current: u32, 
         total: u32, 
-        percentage: f64,
+        _percentage: f64, // 계산된 필드이므로 무시
         message: &str
     ) -> Result<()> {
-        let progress = CrawlingProgress {
+        // Start time을 현재 시간으로 가정 (실제로는 BatchCrawlingEngine에서 관리해야 함)
+        let start_time = chrono::Utc::now() - chrono::Duration::seconds(60); // 임시값
+        
+        let progress = CrawlingProgress::new_with_calculation(
             current,
             total,
-            percentage,
-            current_stage: stage,
-            current_step: message.to_string(),
-            status: CrawlingStatus::Running,
-            message: message.to_string(),
-            remaining_time: None,
-            elapsed_time: 0, // TODO: 실제 경과 시간 계산
-            new_items: 0,
-            updated_items: 0,
-            current_batch: None,
-            total_batches: None,
-            errors: 0,
-            timestamp: chrono::Utc::now(),
-        };
+            stage,
+            message.to_string(),
+            CrawlingStatus::Running,
+            message.to_string(),
+            start_time,
+            0, // new_items - TODO: 실제 값으로 업데이트
+            0, // updated_items - TODO: 실제 값으로 업데이트
+            0, // errors - TODO: 실제 값으로 업데이트
+        );
 
         if let Some(ref emitter) = *self.event_emitter {
             if let Err(e) = emitter.emit_progress(progress).await {

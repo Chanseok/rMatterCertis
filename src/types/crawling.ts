@@ -239,7 +239,66 @@ export interface DatabaseSummary {
   last_updated: string;
 }
 
-// Crawler Configuration Types (based on guide documents)
+// Backend-provided configuration types (loaded via IPC)
+export interface BackendCrawlerConfig {
+  // Core settings
+  start_page: number;
+  end_page: number;
+  concurrency: number;
+  delay_ms: number;
+  
+  // Advanced settings
+  page_range_limit: number;
+  product_list_retry_count: number;
+  product_detail_retry_count: number;
+  products_per_page: number;
+  auto_add_to_local_db: boolean;
+  auto_status_check: boolean;
+  crawler_type: string;
+
+  // Batch processing
+  batch_size: number;
+  batch_delay_ms: number;
+  enable_batch_processing: boolean;
+  batch_retry_limit: number;
+
+  // URLs
+  base_url: string;
+  matter_filter_url: string;
+  
+  // Timeouts
+  page_timeout_ms: number;
+  product_detail_timeout_ms: number;
+  
+  // Concurrency & Performance
+  initial_concurrency: number;
+  detail_concurrency: number;
+  retry_concurrency: number;
+  min_request_delay_ms: number;
+  max_request_delay_ms: number;
+  retry_start: number;
+  retry_max: number;
+  cache_ttl_ms: number;
+
+  // Browser settings
+  headless_browser: boolean;
+  max_concurrent_tasks: number;
+  request_delay: number;
+  custom_user_agent?: string;
+  
+  // Logging
+  logging: BackendLoggingConfig;
+}
+
+export interface BackendLoggingConfig {
+  level: string;
+  enable_stack_trace: boolean;
+  enable_timestamp: boolean;
+  components: Record<string, string>;
+}
+
+// Legacy CrawlerConfig (deprecated - use BackendCrawlerConfig instead)
+// TODO: Remove this once all components use backend-provided config
 export interface CrawlerConfig {
   // === 핵심 크롤링 설정 ===
   pageRangeLimit: number;              // 기본값: 10

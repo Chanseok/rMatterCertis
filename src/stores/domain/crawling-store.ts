@@ -6,7 +6,9 @@ import type {
   StartCrawlingDto,
   CrawlingStatus
 } from '../../types/domain';
+import type { CrawlingProgress as EventCrawlingProgress } from '../../types/crawling';
 import { apiAdapter, safeApiCall } from '../../platform/tauri';
+import { tauriApi } from '../../services/tauri-api';
 
 // ============================================================================
 // Crawling Store State
@@ -119,7 +121,10 @@ export function createCrawlingStore() {
         updateCurrentSession(result.data);
         
         // Start auto-refresh for active session
-        startAutoRefresh();
+        // Start real-time updates (async, non-blocking)
+        startRealTimeUpdates().catch((error) => {
+          console.error('Failed to start real-time updates:', error);
+        });
         
         return true;
       }
@@ -287,10 +292,51 @@ export function createCrawlingStore() {
   };
 
   // ========================================================================
-  // Auto-refresh Management
+  // Real-time Event Management (replaces polling)
   // ========================================================================
 
-  const startAutoRefresh = () => {
+  const startRealTimeUpdates = async () => {
+    // Stop any existing intervals
+    stopAutoRefresh();
+    
+    try {
+      console.log('🎧 Starting real-time event listeners...');
+      
+      // Subscribe to progress updates
+      await tauriApi.subscribeToProgress((progress: EventCrawlingProgress) => {
+        console.log('📈 Progress update received:', progress);
+        // Update the current session progress
+        setState('currentSession', (current) => current ? {
+          ...current,
+          progress: progress.percentage,
+          currentStep: progress.current_step,
+          lastUpdated: progress.timestamp,
+          status: progress.status as unknown as CrawlingStatus
+        } : null);
+      });
+      
+      // Subscribe to stage changes
+      await tauriApi.subscribeToStageChange((stageChange) => {
+        console.log('🔄 Stage change received:', stageChange);
+        // Update UI to show stage change
+      });
+      
+      // Subscribe to task status updates
+      await tauriApi.subscribeToTaskStatus((taskStatus) => {
+        console.log('📋 Task status update received:', taskStatus);
+        // Update task-specific status
+      });
+      
+      console.log('✅ Real-time event listeners started successfully');
+    } catch (error) {
+      console.error('❌ Failed to start real-time updates:', error);
+      // Fallback to polling if event listeners fail
+      startAutoRefreshFallback();
+    }
+  };
+
+  const startAutoRefreshFallback = () => {
+    console.warn('⚠️ Falling back to polling mode');
     // Clear existing interval
     stopAutoRefresh();
     
@@ -359,7 +405,7 @@ export function createCrawlingStore() {
     ...actions,
     
     // Auto-refresh control
-    startAutoRefresh,
+    startRealTimeUpdates,
     stopAutoRefresh,
     
     // Computed getters

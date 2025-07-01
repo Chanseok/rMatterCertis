@@ -174,11 +174,20 @@ impl Default for AppManagedConfig {
 
 /// Configuration manager for loading and saving settings
 pub struct ConfigManager {
-    config_path: PathBuf,
+    pub config_path: PathBuf,
 }
 
 impl ConfigManager {
-    /// Create a new configuration manager
+    /// Get the application configuration directory
+    pub fn get_config_dir() -> Result<PathBuf> {
+        let config_dir = dirs::config_dir()
+            .context("Failed to get user config directory")?
+            .join("matter-certis-v2");
+        
+        Ok(config_dir)
+    }
+    
+    /// Create a new configuration manager with automatic setup
     pub fn new() -> Result<Self> {
         let config_dir = Self::get_config_dir()?;
         let config_path = config_dir.join("matter_certis_config.json");
@@ -186,13 +195,72 @@ impl ConfigManager {
         Ok(Self { config_path })
     }
     
-    /// Get the application configuration directory
-    fn get_config_dir() -> Result<PathBuf> {
-        let config_dir = dirs::config_dir()
-            .context("Failed to get user config directory")?
+    /// Initialize configuration system on first run
+    pub async fn initialize_on_first_run(&self) -> Result<AppConfig> {
+        let config_dir = self.config_path.parent()
+            .context("Failed to get config directory")?;
+        
+        // Create config directory if it doesn't exist
+        if !config_dir.exists() {
+            fs::create_dir_all(config_dir).await
+                .context("Failed to create config directory")?;
+            info!("✅ Created configuration directory: {:?}", config_dir);
+        }
+        
+        // Check if this is a first run
+        let is_first_run = !self.config_path.exists();
+        
+        if is_first_run {
+            info!("🎉 First run detected - initializing default configuration");
+            
+            // Create default configuration
+            let default_config = AppConfig::default();
+            
+            // Save initial configuration
+            self.save_config(&default_config).await?;
+            
+            // Create additional directories
+            self.create_data_directories().await?;
+            
+            info!("✅ Initial configuration setup completed");
+            Ok(default_config)
+        } else {
+            // Load existing configuration
+            self.load_config().await
+        }
+    }
+    
+    /// Create necessary data directories
+    async fn create_data_directories(&self) -> Result<()> {
+        let app_data_dir = Self::get_app_data_dir()?;
+        
+        // Create subdirectories
+        let directories = [
+            app_data_dir.join("database"),
+            app_data_dir.join("logs"),
+            app_data_dir.join("exports"),
+            app_data_dir.join("backups"),
+            app_data_dir.join("cache"),
+        ];
+        
+        for dir in &directories {
+            if !dir.exists() {
+                fs::create_dir_all(dir).await
+                    .with_context(|| format!("Failed to create directory: {:?}", dir))?;
+                info!("📁 Created directory: {:?}", dir);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Get application data directory
+    pub fn get_app_data_dir() -> Result<PathBuf> {
+        let data_dir = dirs::data_local_dir()
+            .context("Failed to get user data directory")?
             .join("matter-certis-v2");
         
-        Ok(config_dir)
+        Ok(data_dir)
     }
     
     /// Load configuration from file, creating default if it doesn't exist
@@ -240,6 +308,45 @@ impl ConfigManager {
         let mut config = self.load_config().await?;
         updater(&mut config.app_managed);
         self.save_config(&config).await
+    }
+    
+    /// Reset configuration to defaults (useful for troubleshooting)
+    pub async fn reset_to_defaults(&self) -> Result<AppConfig> {
+        info!("🔄 Resetting configuration to defaults");
+        
+        let default_config = AppConfig::default();
+        self.save_config(&default_config).await?;
+        
+        info!("✅ Configuration reset to defaults");
+        Ok(default_config)
+    }
+    
+    /// Migrate configuration from older versions
+    pub async fn migrate_config_if_needed(&self, config: &mut AppConfig) -> Result<bool> {
+        const CURRENT_VERSION: u32 = 1;
+        
+        if config.app_managed.config_version < CURRENT_VERSION {
+            info!("🔄 Migrating configuration from version {} to {}", 
+                  config.app_managed.config_version, CURRENT_VERSION);
+            
+            // Add migration logic here as needed
+            match config.app_managed.config_version {
+                0 => {
+                    // Migrate from version 0 to 1
+                    config.app_managed.config_version = 1;
+                    info!("✅ Migrated to version 1");
+                }
+                _ => {
+                    // No migration needed
+                }
+            }
+            
+            // Save migrated configuration
+            self.save_config(config).await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
     
     /// Get the configuration file path

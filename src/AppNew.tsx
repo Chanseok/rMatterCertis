@@ -57,24 +57,62 @@ const NotificationToast: Component<{ notification: any; onRemove: () => void }> 
 const App: Component = () => {
   const { state, setActiveTab, removeNotification, toggleSidebar, toggleTheme } = appStore;
 
-  // 앱 시작 시 백엔드 설정 로드
+  // 앱 시작 시 백엔드 설정 로드 및 초기화
   onMount(async () => {
+    console.log('🔧 App started, initializing configuration...');
+    
     try {
-      console.log('🔧 Loading backend configuration...');
+      // 첫 실행인지 확인
+      console.log('🔍 Checking if this is first run...');
+      try {
+        const isFirstRun = await tauriApi.isFirstRun();
+        console.log(`First run: ${isFirstRun}`);
+        
+        if (isFirstRun) {
+          console.log('🎉 First run detected - initializing configuration...');
+          
+          // 앱 설정 초기화
+          const initializedConfig = await tauriApi.initializeAppConfig();
+          console.log('✅ Configuration initialized:', initializedConfig);
+          
+          // 앱 디렉토리 정보 가져오기
+          const directories = await tauriApi.getAppDirectories();
+          console.log('📁 App directories created:', directories);
+        }
+      } catch (firstRunError) {
+        console.error('❌ Failed to check/initialize first run:', firstRunError);
+      }
       
-      // 사이트 설정 로드 (URL들)
-      const siteConfig = await tauriApi.getSiteConfig();
-      console.log('✅ Site config loaded:', siteConfig);
+      // 각 설정을 개별적으로 로드해서 어느 부분에서 에러가 나는지 확인
+      console.log('📡 Loading site configuration...');
+      try {
+        const siteConfig = await tauriApi.getSiteConfig();
+        console.log('✅ Site config loaded:', siteConfig);
+      } catch (siteError) {
+        console.error('❌ Failed to load site config:', siteError);
+      }
       
-      // 기본 크롤링 설정 로드
-      const defaultCrawlingConfig = await tauriApi.getDefaultCrawlingConfig();
-      console.log('✅ Default crawling config loaded:', defaultCrawlingConfig);
+      console.log('📡 Loading comprehensive crawler configuration...');
+      try {
+        const comprehensiveConfig = await tauriApi.getComprehensiveCrawlerConfig();
+        console.log('✅ Comprehensive crawler config loaded:', comprehensiveConfig);
+      } catch (comprehensiveError) {
+        console.error('❌ Failed to load comprehensive config:', comprehensiveError);
+      }
       
-      // TODO: crawlerStore나 앱 상태에 이 설정들을 적용
+      console.log('📡 Loading frontend configuration...');
+      try {
+        const frontendConfig = await tauriApi.getFrontendConfig();
+        console.log('✅ Frontend config loaded:', frontendConfig);
+      } catch (frontendError) {
+        console.error('❌ Failed to load frontend config:', frontendError);
+      }
+      
+      console.log('✅ Configuration loading completed');
       
     } catch (error) {
-      console.error('❌ Failed to load backend configuration:', error);
-      // 설정 로드 실패 시에도 앱은 계속 동작하도록 함
+      console.error('❌ Critical error during configuration loading:', error);
+      // 설정 로드 실패 시에도 앱이 계속 동작하도록 함
     }
   });
 
