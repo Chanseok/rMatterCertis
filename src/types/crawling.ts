@@ -1,5 +1,154 @@
-// Crawling related types for frontend
+// Crawling related types for frontend - Modern Real-time Event System
+// TypeScript types matching the Rust backend event types
+// This ensures type safety between Rust backend and SolidJS frontend
 
+// Modern real-time event system types
+export enum CrawlingStage {
+  Idle = "Idle",
+  TotalPages = "TotalPages",
+  ProductList = "ProductList", 
+  ProductDetail = "ProductDetail",
+  Database = "Database",
+}
+
+export enum CrawlingStatus {
+  Idle = "Idle",
+  Running = "Running",
+  Paused = "Paused",
+  Completed = "Completed",
+  Error = "Error",
+  Cancelled = "Cancelled",
+}
+
+export enum TaskStatus {
+  Pending = "Pending",
+  Running = "Running",
+  Completed = "Completed",
+  Failed = "Failed",
+  Cancelled = "Cancelled",
+}
+
+export enum DatabaseHealth {
+  Healthy = "Healthy",
+  Warning = "Warning",
+  Critical = "Critical",
+}
+
+export interface CrawlingProgress {
+  current: number;
+  total: number;
+  percentage: number;
+  current_stage: CrawlingStage;
+  current_step: string;
+  status: CrawlingStatus;
+  message: string;
+  remaining_time?: number;
+  elapsed_time: number;
+  new_items: number;
+  updated_items: number;
+  current_batch?: number;
+  total_batches?: number;
+  errors: number;
+  timestamp: string; // ISO string format
+}
+
+export interface CrawlingTaskStatus {
+  task_id: string;
+  url: string;
+  status: TaskStatus;
+  message: string;
+  timestamp: string;
+  stage: CrawlingStage;
+  details?: Record<string, any>;
+}
+
+export interface DatabaseStats {
+  total_products: number;
+  total_devices: number;
+  last_updated: string;
+  storage_size: string;
+  incomplete_records: number;
+  health_status: DatabaseHealth;
+}
+
+export interface PerformanceMetrics {
+  avg_processing_time_ms: number;
+  items_per_second: number;
+  memory_usage_mb: number;
+  network_requests: number;
+  cache_hit_rate: number;
+}
+
+export interface CrawlingResult {
+  total_processed: number;
+  new_items: number;
+  updated_items: number;
+  errors: number;
+  duration_ms: number;
+  stages_completed: CrawlingStage[];
+  start_time: string;
+  end_time: string;
+  performance_metrics: PerformanceMetrics;
+}
+
+export type CrawlingEvent =
+  | { type: "ProgressUpdate"; data: CrawlingProgress }
+  | { type: "TaskUpdate"; data: CrawlingTaskStatus }
+  | { type: "StageChange"; data: { from: CrawlingStage; to: CrawlingStage; message: string } }
+  | { type: "Error"; data: { error_id: string; message: string; stage: CrawlingStage; recoverable: boolean } }
+  | { type: "DatabaseUpdate"; data: DatabaseStats }
+  | { type: "Completed"; data: CrawlingResult };
+
+export interface CrawlingConfig {
+  start_page: number;
+  end_page: number;
+  concurrency: number;
+  delay_ms: number;
+  auto_add_to_local_db: boolean;
+  retry_max: number;
+  page_timeout_ms: number;
+}
+
+// Legacy types for backward compatibility
+export namespace Legacy {
+  export type LegacySessionStatus = 
+    | "NotStarted"
+    | "Running" 
+    | "Paused"
+    | "Stopped"
+    | "Completed"
+    | "Failed";
+
+  export type LegacyCrawlingStage = 
+    | "ProductList"
+    | "ProductDetails" 
+    | "Certification"
+    | "Completed";
+
+  export interface CrawlingSessionState {
+    session_id: string;
+    start_time: string;
+    status: LegacySessionStatus;
+    stage: LegacyCrawlingStage;
+    pages_crawled: number;
+    max_pages: number;
+    current_url?: string;
+    errors: string[];
+    config: any; // JSON value
+  }
+
+  export interface CrawlingStatusResponse {
+    session_id: string;
+    status: LegacySessionStatus;
+    stage: LegacyCrawlingStage;
+    pages_crawled: number;
+    max_pages: number;
+    current_url?: string;
+    error_count: number;
+  }
+}
+
+// Export legacy types for backward compatibility
 export interface StartCrawlingRequest {
   start_url: string;
   target_domains: string[];
@@ -7,32 +156,6 @@ export interface StartCrawlingRequest {
   concurrent_requests?: number;
   delay_ms?: number;
 }
-
-export interface CrawlingSessionState {
-  session_id: string;
-  start_time: string;
-  status: SessionStatus;
-  stage: CrawlingStage;
-  pages_crawled: number;
-  max_pages: number;
-  current_url?: string;
-  errors: string[];
-  config: any; // JSON value
-}
-
-export type SessionStatus = 
-  | "NotStarted"
-  | "Running" 
-  | "Paused"
-  | "Stopped"
-  | "Completed"
-  | "Failed";
-
-export type CrawlingStage = 
-  | "ProductList"
-  | "ProductDetails" 
-  | "Certification"
-  | "Completed";
 
 export interface CrawlingStats {
   total_sessions: number;
@@ -42,15 +165,9 @@ export interface CrawlingStats {
   average_success_rate: number;
 }
 
-export interface CrawlingStatusResponse {
-  session_id: string;
-  status: SessionStatus;
-  stage: CrawlingStage;
-  pages_crawled: number;
-  max_pages: number;
-  current_url?: string;
-  error_count: number;
-}
+// Re-export legacy types with original names
+export type CrawlingSessionState = Legacy.CrawlingSessionState;
+export type CrawlingStatusResponse = Legacy.CrawlingStatusResponse;
 
 // Product-related types for crawling results
 export interface Product {
@@ -287,3 +404,117 @@ export const CONFIG_PRESETS: ConfigPreset[] = [
     }
   }
 ];
+
+// Helper functions for stage and status display
+export const getCrawlingStageDisplayName = (stage: CrawlingStage): string => {
+  const stageNames: Record<CrawlingStage, string> = {
+    [CrawlingStage.Idle]: "대기",
+    [CrawlingStage.TotalPages]: "총 페이지 수 확인",
+    [CrawlingStage.ProductList]: "제품 목록 수집",
+    [CrawlingStage.ProductDetail]: "제품 상세정보 수집",
+    [CrawlingStage.Database]: "데이터베이스 저장",
+  };
+  return stageNames[stage] || stage;
+};
+
+export const getCrawlingStatusDisplayName = (status: CrawlingStatus): string => {
+  const statusNames: Record<CrawlingStatus, string> = {
+    [CrawlingStatus.Idle]: "대기",
+    [CrawlingStatus.Running]: "실행 중",
+    [CrawlingStatus.Paused]: "일시정지",
+    [CrawlingStatus.Completed]: "완료",
+    [CrawlingStatus.Error]: "오류",
+    [CrawlingStatus.Cancelled]: "중단됨",
+  };
+  return statusNames[status] || status;
+};
+
+export const getTaskStatusDisplayName = (status: TaskStatus): string => {
+  const statusNames: Record<TaskStatus, string> = {
+    [TaskStatus.Pending]: "대기",
+    [TaskStatus.Running]: "진행 중",
+    [TaskStatus.Completed]: "완료",
+    [TaskStatus.Failed]: "실패",
+    [TaskStatus.Cancelled]: "취소",
+  };
+  return statusNames[status] || status;
+};
+
+export const getDatabaseHealthDisplayName = (health: DatabaseHealth): string => {
+  const healthNames: Record<DatabaseHealth, string> = {
+    [DatabaseHealth.Healthy]: "정상",
+    [DatabaseHealth.Warning]: "주의",
+    [DatabaseHealth.Critical]: "위험",
+  };
+  return healthNames[health] || health;
+};
+
+// Color utilities for UI components
+export const getCrawlingStatusColor = (status: CrawlingStatus): string => {
+  switch (status) {
+    case CrawlingStatus.Idle: return "text-gray-500";
+    case CrawlingStatus.Running: return "text-blue-500";
+    case CrawlingStatus.Paused: return "text-yellow-500";
+    case CrawlingStatus.Completed: return "text-green-500";
+    case CrawlingStatus.Error: return "text-red-500";
+    case CrawlingStatus.Cancelled: return "text-orange-500";
+    default: return "text-gray-500";
+  }
+};
+
+export const getDatabaseHealthColor = (health: DatabaseHealth): string => {
+  switch (health) {
+    case DatabaseHealth.Healthy: return "text-green-500";
+    case DatabaseHealth.Warning: return "text-yellow-500";
+    case DatabaseHealth.Critical: return "text-red-500";
+    default: return "text-gray-500";
+  }
+};
+
+export const getTaskStatusColor = (status: TaskStatus): string => {
+  switch (status) {
+    case TaskStatus.Pending: return "text-gray-500";
+    case TaskStatus.Running: return "text-blue-500";
+    case TaskStatus.Completed: return "text-green-500";
+    case TaskStatus.Failed: return "text-red-500";
+    case TaskStatus.Cancelled: return "text-orange-500";
+    default: return "text-gray-500";
+  }
+};
+
+// Time formatting utilities
+export const formatElapsedTime = (seconds: number): string => {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  
+  if (hours > 0) {
+    return `${hours}시간 ${minutes}분 ${secs}초`;
+  } else if (minutes > 0) {
+    return `${minutes}분 ${secs}초`;
+  } else {
+    return `${secs}초`;
+  }
+};
+
+export const formatRemainingTime = (seconds?: number): string => {
+  if (!seconds) return "계산 중...";
+  return `약 ${formatElapsedTime(seconds)} 남음`;
+};
+
+// Progress calculation utilities
+export const calculateProgressPercentage = (current: number, total: number): number => {
+  if (total === 0) return 0;
+  return Math.min(Math.max((current / total) * 100, 0), 100);
+};
+
+export const getProgressBarColor = (percentage: number, status: CrawlingStatus): string => {
+  if (status === CrawlingStatus.Error) return "bg-red-500";
+  if (status === CrawlingStatus.Completed) return "bg-green-500";
+  if (status === CrawlingStatus.Paused) return "bg-yellow-500";
+  
+  if (percentage >= 80) return "bg-green-500";
+  if (percentage >= 60) return "bg-blue-500";
+  if (percentage >= 40) return "bg-yellow-500";
+  return "bg-gray-500";
+};

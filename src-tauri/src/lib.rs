@@ -2,28 +2,25 @@
 //! 
 //! This application provides web crawling capabilities for e-commerce sites
 //! with a modern desktop interface built with Tauri and SolidJS.
+//! 
+//! Modern Rust module organization (Rust 2018+ style):
+//! - Each module is defined in its own .rs file
+//! - No mod.rs files needed - just declare modules here
 
 use crate::infrastructure::{DatabaseConnection, init_logging_with_config};
 use crate::infrastructure::config::{ConfigManager, AppConfig};
 use tracing::{info, error, warn};
+use tauri::Manager;
 
+// Core modules following modern Rust conventions
 pub mod domain;
 pub mod application;
 pub mod infrastructure;
-pub mod commands; // Modern commands following the guide
+pub mod commands;
 
 // Test utilities (only available during testing)
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
-
-// Import command functions
-// use commands_simple::{greet, test_database_connection, get_database_info};
-// use commands_integrated::{
-//     get_integrated_database_statistics,
-//     search_integrated_products_simple,
-//     get_integrated_products_without_details,
-//     validate_integrated_database_integrity
-// };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -87,13 +84,47 @@ pub fn run() {
         db
     });
 
+    // Create application state
+    let app_state = application::AppState::new(config);
+    
     info!("🔧 Building Tauri application...");
     
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(db)
+        .manage(app_state)
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            
+            // Initialize event emitter in background
+            tauri::async_runtime::spawn(async move {
+                let state: tauri::State<application::AppState> = app_handle.state();
+                let emitter = application::EventEmitter::new(app_handle.clone());
+                
+                if let Err(e) = state.initialize_event_emitter(emitter).await {
+                    error!("Failed to initialize event emitter: {}", e);
+                } else {
+                    info!("✅ Event emitter initialized successfully");
+                }
+            });
+            
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
-            // Modern parsing commands following the guide
+            // Modern real-time commands
+            commands::start_crawling,
+            commands::pause_crawling,
+            commands::resume_crawling,
+            commands::stop_crawling,
+            commands::get_crawling_status,
+            commands::get_database_stats,
+            commands::backup_database,
+            commands::optimize_database,
+            commands::export_database_data,
+            commands::clear_crawling_errors,
+            commands::export_crawling_results,
+            
+            // Legacy parsing commands (kept for compatibility)
             commands::crawl_product_list_page,
             commands::crawl_product_detail_page,
             commands::batch_crawl_product_lists,

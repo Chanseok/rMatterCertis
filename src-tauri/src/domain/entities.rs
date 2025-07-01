@@ -5,6 +5,44 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 
+/// Crawling session entity for tracking crawling operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlingSession {
+    pub id: String,
+    pub url: String,
+    pub start_page: u32,
+    pub end_page: u32,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub total_pages: Option<u32>,
+    pub processed_pages: u32,
+    pub success_count: u32,
+    pub error_count: u32,
+    pub error_messages: Vec<String>,
+}
+
+impl Default for CrawlingSession {
+    fn default() -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            url: String::new(),
+            start_page: 1,
+            end_page: 1,
+            status: "created".to_string(),
+            created_at: Utc::now(),
+            updated_at: None,
+            completed_at: None,
+            total_pages: None,
+            processed_pages: 0,
+            success_count: 0,
+            error_count: 0,
+            error_messages: Vec::new(),
+        }
+    }
+}
+
 /// Basic product information (Stage 1 collection result)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Product {
