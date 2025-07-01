@@ -312,6 +312,41 @@ export class TauriApiService {
 
     await Promise.all(subscriptions);
   }
+
+  // === Configuration Management ===
+
+  /**
+   * Get site configuration (URLs and domains)
+   */
+  async getSiteConfig(): Promise<any> {
+    try {
+      return await invoke('get_site_config');
+    } catch (error) {
+      throw new Error(`Failed to get site config: ${error}`);
+    }
+  }
+
+  /**
+   * Get default crawling configuration
+   */
+  async getDefaultCrawlingConfig(): Promise<any> {
+    try {
+      return await invoke('get_default_crawling_config');
+    } catch (error) {
+      throw new Error(`Failed to get default crawling config: ${error}`);
+    }
+  }
+
+  /**
+   * Get complete frontend configuration
+   */
+  async getFrontendConfig(): Promise<any> {
+    try {
+      return await invoke('get_frontend_config');
+    } catch (error) {
+      throw new Error(`Failed to get frontend config: ${error}`);
+    }
+  }
 }
 
 // Create a singleton instance for use throughout the application

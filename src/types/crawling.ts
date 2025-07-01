@@ -293,9 +293,9 @@ export interface LoggingConfig {
 
 // 기본 설정값
 export const DEFAULT_CRAWLER_CONFIG: CrawlerConfig = {
-  // URL Configuration
-  baseUrl: 'https://csa-iot.org/csa-iot_products/',
-  matterFilterUrl: 'https://csa-iot.org/csa-iot_products/?p_keywords=&p_type%5B%5D=14&p_program_type%5B%5D=1049&p_certificate=&p_family=&p_firmware_ver=',
+  // URL Configuration - 런타임에 백엔드에서 설정됨
+  baseUrl: '', // 백엔드 get_site_config()에서 설정
+  matterFilterUrl: '', // 백엔드 get_site_config()에서 설정
   
   // Performance & Timing
   pageTimeoutMs: 90000,

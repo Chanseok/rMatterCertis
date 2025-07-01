@@ -172,6 +172,7 @@ pub fn run() {
             // Configuration management commands
             commands::get_frontend_config,
             commands::get_site_config,
+            commands::get_default_crawling_config,
             commands::update_crawling_settings,
             commands::build_page_url,
             commands::resolve_url,

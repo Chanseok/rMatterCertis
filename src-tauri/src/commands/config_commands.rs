@@ -217,6 +217,31 @@ pub async fn resolve_url(relative_url: String) -> Result<String, String> {
     Ok(absolute_url)
 }
 
+/// Get default crawling configuration
+#[tauri::command]
+pub async fn get_default_crawling_config() -> Result<CrawlingSettings, String> {
+    info!("Frontend requesting default crawling configuration");
+    
+    // Use the same defaults as in AppConfig
+    let app_config = crate::infrastructure::config::AppConfig::default();
+    let crawling_settings = CrawlingSettings {
+        max_pages: app_config.user.max_pages,
+        request_delay_ms: app_config.user.request_delay_ms,
+        max_concurrent_requests: app_config.user.max_concurrent_requests,
+        verbose_logging: app_config.user.verbose_logging,
+        advanced: AdvancedSettings {
+            last_page_search_start: app_config.advanced.last_page_search_start,
+            max_search_attempts: app_config.advanced.max_search_attempts,
+            retry_attempts: app_config.advanced.retry_attempts,
+            retry_delay_ms: app_config.advanced.retry_delay_ms,
+            request_timeout_seconds: app_config.advanced.request_timeout_seconds,
+            product_selectors: app_config.advanced.product_selectors.clone(),
+        },
+    };
+    
+    Ok(crawling_settings)
+}
+
 /// Convert internal AppConfig to frontend-friendly FrontendConfig
 fn convert_to_frontend_config(app_config: &AppConfig) -> FrontendConfig {
     FrontendConfig {

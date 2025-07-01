@@ -1,6 +1,7 @@
-import { Component, Show, createEffect, For } from 'solid-js';
+import { Component, Show, createEffect, For, onMount } from 'solid-js';
 import { appStore } from './stores/appStore';
 import { crawlerStore } from './stores/crawlerStore';
+import { tauriApi } from './services/tauri-api';
 import CrawlingDashboard from './components/CrawlingDashboard';
 import { CrawlingForm } from './components/CrawlingForm';
 import CrawlingResults from './components/CrawlingResults';
@@ -55,6 +56,27 @@ const NotificationToast: Component<{ notification: any; onRemove: () => void }> 
 
 const App: Component = () => {
   const { state, setActiveTab, removeNotification, toggleSidebar, toggleTheme } = appStore;
+
+  // 앱 시작 시 백엔드 설정 로드
+  onMount(async () => {
+    try {
+      console.log('🔧 Loading backend configuration...');
+      
+      // 사이트 설정 로드 (URL들)
+      const siteConfig = await tauriApi.getSiteConfig();
+      console.log('✅ Site config loaded:', siteConfig);
+      
+      // 기본 크롤링 설정 로드
+      const defaultCrawlingConfig = await tauriApi.getDefaultCrawlingConfig();
+      console.log('✅ Default crawling config loaded:', defaultCrawlingConfig);
+      
+      // TODO: crawlerStore나 앱 상태에 이 설정들을 적용
+      
+    } catch (error) {
+      console.error('❌ Failed to load backend configuration:', error);
+      // 설정 로드 실패 시에도 앱은 계속 동작하도록 함
+    }
+  });
 
   // 테마 적용 (가이드의 createEffect 활용)
   createEffect(() => {
