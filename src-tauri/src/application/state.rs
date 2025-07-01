@@ -65,7 +65,7 @@ impl AppState {
         
         // Emit progress update event
         if let Some(emitter) = self.get_event_emitter().await {
-            emitter.emit_progress(progress).await;
+            let _ = emitter.emit_progress(progress).await;
         }
         
         Ok(())
@@ -130,7 +130,7 @@ impl AppState {
         
         // Emit database update event
         if let Some(emitter) = self.get_event_emitter().await {
-            emitter.emit_database_update(stats).await;
+            let _ = emitter.emit_database_update(stats).await;
         }
         
         Ok(())
@@ -163,7 +163,7 @@ impl AppState {
     pub async fn emit_error(&self, error_id: String, message: String, recoverable: bool) {
         if let Some(emitter) = self.get_event_emitter().await {
             let current_progress = self.get_progress().await;
-            emitter.emit_error(error_id, message, current_progress.current_stage, recoverable).await;
+            let _ = emitter.emit_error(error_id, message, current_progress.current_stage, recoverable).await;
         }
     }
     
@@ -175,7 +175,7 @@ impl AppState {
         message: String,
     ) {
         if let Some(emitter) = self.get_event_emitter().await {
-            emitter.emit_stage_change(from, to, message).await;
+            let _ = emitter.emit_stage_change(from, to, message).await;
         }
     }
 }

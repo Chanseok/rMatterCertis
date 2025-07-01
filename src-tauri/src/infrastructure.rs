@@ -10,6 +10,7 @@ pub mod simple_http_client;
 pub mod parsing_error;  // Enhanced error types
 pub mod parsing;  // Modern parsing architecture following the guide
 pub mod crawling;  // Web crawler implementation
+pub mod crawling_engine;  // 4-stage batch crawling engine
 pub mod config;  // Configuration constants and helpers
 pub mod logging;  // Logging infrastructure
 
@@ -32,6 +33,7 @@ pub use config::csa_iot;  // CSA-IoT configuration constants
 // Modern parsing and crawling exports following the guide
 pub use parsing::{ParsingConfig, ParsingError, ParsingResult, ProductListParser, ProductDetailParser};
 pub use crawling::WebCrawler;
+pub use crawling_engine::{BatchCrawlingEngine, BatchCrawlingConfig};
 pub use logging::{init_logging, init_logging_with_config, get_log_directory};
 
 // Legacy compatibility through adapters

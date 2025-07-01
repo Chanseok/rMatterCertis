@@ -82,7 +82,7 @@ pub async fn start_crawling(
     
     // 비동기 태스크에서 사용할 변수들 복제
     let session_id_for_task = session_id.clone();
-    let _app_handle_for_task = app_handle.clone();
+    let app_handle_for_task = app_handle.clone();
     let crawling_config = crate::infrastructure::BatchCrawlingConfig {
         start_page: config.start_page,
         end_page: config.end_page,

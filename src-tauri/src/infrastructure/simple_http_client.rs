@@ -155,6 +155,58 @@ impl HttpClient {
         Ok(Html::parse_document(&html_content))
     }
 
+    /// Fetch HTML content and return it as a string (Send-compatible)
+    pub async fn fetch_html_string(&mut self, url: &str) -> Result<String> {
+        info!("Fetching HTML as string from: {}", url);
+        
+        let mut last_error = None;
+        
+        for attempt in 1..=self.config.max_retries {
+            // Apply rate limiting
+            self.apply_rate_limit().await;
+            
+            match self.fetch_html_string_once(url).await {
+                Ok(html) => {
+                    debug!("Successfully fetched HTML from {} on attempt {}", url, attempt);
+                    return Ok(html);
+                }
+                Err(e) => {
+                    warn!("Attempt {} failed for {}: {}", attempt, url, e);
+                    last_error = Some(e);
+                    
+                    if attempt < self.config.max_retries {
+                        // Exponential backoff
+                        let delay_seconds = 2_u64.pow(attempt - 1);
+                        sleep(Duration::from_secs(delay_seconds)).await;
+                    }
+                }
+            }
+        }
+        
+        Err(last_error.unwrap_or_else(|| anyhow!("Unknown error while fetching {}", url)))
+    }
+    
+    /// Single attempt to fetch HTML content as string (Send-compatible)
+    async fn fetch_html_string_once(&mut self, url: &str) -> Result<String> {
+        let response = self.fetch_response(url).await?;
+        
+        let html_content = response
+            .text()
+            .await
+            .map_err(|e| anyhow!("Failed to read response body: {}", e))?;
+
+        if html_content.is_empty() {
+            return Err(anyhow!("Empty response from {}", url));
+        }
+
+        Ok(html_content)
+    }
+    
+    /// Parse HTML from string (non-async, can be called after fetch)
+    pub fn parse_html(&self, html_content: &str) -> Html {
+        Html::parse_document(html_content)
+    }
+
     /// Apply rate limiting based on configuration
     async fn apply_rate_limit(&mut self) {
         if let Some(last_request) = self.last_request_time {

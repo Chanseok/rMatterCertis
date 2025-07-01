@@ -131,6 +131,92 @@ impl MatterDataExtractor {
         Ok(urls)
     }
 
+    /// Extract product URLs from a product listing page (string input version)
+    pub fn extract_product_urls_from_content(&self, html_content: &str) -> Result<Vec<String>> {
+        let html = Html::parse_document(html_content);
+        self.extract_product_urls(&html, &self.config.base_url)
+    }
+
+    /// Extract total number of pages from pagination
+    pub fn extract_total_pages(&self, html_content: &str) -> Result<u32> {
+        let html = Html::parse_document(html_content);
+        
+        // CSA-IoT 사이트의 페이지네이션에서 마지막 페이지 번호 추출
+        // 예: "Page 1 of 23" 또는 페이지 링크에서 최대값 찾기
+        let pagination_selectors = vec![
+            "a[href*='page=']",  // 페이지 링크
+            ".pagination a",     // 페이지네이션 링크
+            ".page-numbers a",   // 워드프레스 스타일
+        ];
+
+        let mut max_page = 1u32;
+
+        for selector_str in pagination_selectors {
+            if let Ok(selector) = Selector::parse(selector_str) {
+                for element in html.select(&selector) {
+                    // href에서 page= 파라미터 추출
+                    if let Some(href) = element.value().attr("href") {
+                        if let Some(page_param) = href.split("page=").nth(1) {
+                            let page_num_str = page_param.split('&').next().unwrap_or("");
+                            if let Ok(page_num) = page_num_str.parse::<u32>() {
+                                max_page = max_page.max(page_num);
+                            }
+                        }
+                    }
+                    
+                    // 텍스트에서 페이지 번호 추출
+                    let text = element.text().collect::<String>();
+                    if let Ok(page_num) = text.trim().parse::<u32>() {
+                        max_page = max_page.max(page_num);
+                    }
+                }
+            }
+        }
+
+        // "Page X of Y" 형태의 텍스트에서  총 페이지 수 추출
+        let page_info_selectors = vec![
+            ".pagination-info",
+            ".page-info", 
+            ".showing-info",
+        ];
+
+        // 모든 루프 외부로 정규식 컴파일 이동
+        let re = regex::Regex::new(r"(?i)page\s+\d+\s+of\s+(\d+)").unwrap();
+
+        for selector_str in page_info_selectors {
+            if let Ok(selector) = Selector::parse(selector_str) {
+                for element in html.select(&selector) {
+                    let text = element.text().collect::<String>();
+                    // "Page 1 of 23" 형태에서 23 추출
+                    if let Some(captures) = re.captures(&text) {
+                        if let Some(total_str) = captures.get(1) {
+                            if let Ok(total) = total_str.as_str().parse::<u32>() {
+                                max_page = max_page.max(total);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        debug!("Extracted total pages: {}", max_page);
+        Ok(max_page)
+    }
+
+    /// Extract product data from a detail page (returns JSON for flexibility)
+    pub fn extract_product_data(&self, html_content: &str) -> Result<serde_json::Value> {
+        let html = Html::parse_document(html_content);
+        
+        // URL이 필요하지만 여기서는 알 수 없으므로 기본값 사용
+        let product_detail = self.extract_product_detail(&html, "".to_string())?;
+        
+        // ProductDetail을 JSON으로 변환
+        let json_value = serde_json::to_value(product_detail)
+            .map_err(|e| anyhow!("Failed to serialize product detail: {}", e))?;
+        
+        Ok(json_value)
+    }
+
     /// Extract basic product information from listing page
     pub fn extract_products_from_list(&self, html: &Html, page_id: i32) -> Result<Vec<Product>> {
         debug!("Extracting products from listing page {}", page_id);

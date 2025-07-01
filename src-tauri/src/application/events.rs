@@ -6,8 +6,25 @@
 use crate::domain::events::{CrawlingEvent, CrawlingProgress, CrawlingTaskStatus, DatabaseStats};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
-use tracing::{debug, error};
-use tokio::sync::RwLock;
+use tracing::{debug, error, warn};
+use tokio::sync::{RwLock, mpsc};
+use thiserror::Error;
+use std::time::Duration;
+use futures::future::join_all;
+
+/// 이벤트 발신 관련 오류 타입
+#[derive(Debug, Error)]
+pub enum EventEmissionError {
+    #[error("이벤트 발신 비활성화됨")]
+    Disabled,
+    #[error("Tauri 이벤트 발신 오류: {0}")]
+    TauriError(#[from] tauri::Error),
+    #[error("이벤트 큐가 가득참")]
+    QueueFull,
+}
+
+/// 이벤트 발신 결과 타입
+pub type EventResult = Result<(), EventEmissionError>;
 
 /// Event emitter for sending real-time updates to the frontend
 #[derive(Clone)]
@@ -15,6 +32,8 @@ pub struct EventEmitter {
     app_handle: AppHandle,
     /// Whether event emission is enabled
     enabled: Arc<RwLock<bool>>,
+    /// Event queue for batched emissions
+    event_sender: Option<mpsc::Sender<CrawlingEvent>>,
 }
 
 impl EventEmitter {
@@ -23,7 +42,59 @@ impl EventEmitter {
         Self {
             app_handle,
             enabled: Arc::new(RwLock::new(true)),
+            event_sender: None,
         }
+    }
+
+    /// Create a new event emitter with batching enabled
+    pub fn with_batching(app_handle: AppHandle, batch_size: usize, interval_ms: u64) -> Self {
+        let (tx, mut rx) = mpsc::channel::<CrawlingEvent>(batch_size * 2);
+        
+        let emitter = Self {
+            app_handle: app_handle.clone(),
+            enabled: Arc::new(RwLock::new(true)),
+            event_sender: Some(tx),
+        };
+        
+        // 백그라운드 태스크로 이벤트 배치 처리
+        let app_handle_clone = app_handle.clone();
+        tokio::spawn(async move {
+            let mut batch: Vec<CrawlingEvent> = Vec::with_capacity(batch_size);
+            let mut interval = tokio::time::interval(Duration::from_millis(interval_ms));
+            
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if !batch.is_empty() {
+                            for event in batch.drain(..) {
+                                let event_name = event.event_name();
+                                if let Err(e) = app_handle_clone.emit(event_name, &event) {
+                                    warn!("Failed to emit batched event {}: {}", event_name, e);
+                                }
+                            }
+                        }
+                    }
+                    event = rx.recv() => {
+                        match event {
+                            Some(event) => {
+                                batch.push(event);
+                                if batch.len() >= batch_size {
+                                    for event in batch.drain(..) {
+                                        let event_name = event.event_name();
+                                        if let Err(e) = app_handle_clone.emit(event_name, &event) {
+                                            warn!("Failed to emit batched event {}: {}", event_name, e);
+                                        }
+                                    }
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                }
+            }
+        });
+        
+        emitter
     }
 
     /// Enable or disable event emission
@@ -39,9 +110,16 @@ impl EventEmitter {
     }
 
     /// Emit a crawling event to the frontend
-    pub async fn emit_event(&self, event: CrawlingEvent) {
+    pub async fn emit_event(&self, event: CrawlingEvent) -> EventResult {
+        // 빠른 경로: 비활성화 검사 (읽기 락만 필요)
         if !self.is_enabled().await {
-            return;
+            return Err(EventEmissionError::Disabled);
+        }
+
+        // 배치 모드인 경우 이벤트 큐에 추가
+        if let Some(sender) = &self.event_sender {
+            return sender.send(event).await
+                .map_err(|_| EventEmissionError::QueueFull);
         }
 
         let event_name = event.event_name();
@@ -49,23 +127,25 @@ impl EventEmitter {
         match self.app_handle.emit(event_name, &event) {
             Ok(_) => {
                 debug!("Successfully emitted event: {}", event_name);
+                Ok(())
             }
             Err(e) => {
                 error!("Failed to emit event {}: {}", event_name, e);
+                Err(EventEmissionError::TauriError(e))
             }
         }
     }
 
     /// Emit a progress update
-    pub async fn emit_progress(&self, progress: CrawlingProgress) {
+    pub async fn emit_progress(&self, progress: CrawlingProgress) -> EventResult {
         let event = CrawlingEvent::ProgressUpdate(progress);
-        self.emit_event(event).await;
+        self.emit_event(event).await
     }
 
     /// Emit a task status update
-    pub async fn emit_task_update(&self, task_status: CrawlingTaskStatus) {
+    pub async fn emit_task_update(&self, task_status: CrawlingTaskStatus) -> EventResult {
         let event = CrawlingEvent::TaskUpdate(task_status);
-        self.emit_event(event).await;
+        self.emit_event(event).await
     }
 
     /// Emit a stage change notification
@@ -74,9 +154,9 @@ impl EventEmitter {
         from: crate::domain::events::CrawlingStage,
         to: crate::domain::events::CrawlingStage,
         message: String,
-    ) {
+    ) -> EventResult {
         let event = CrawlingEvent::StageChange { from, to, message };
-        self.emit_event(event).await;
+        self.emit_event(event).await
     }
 
     /// Emit an error notification
@@ -86,44 +166,53 @@ impl EventEmitter {
         message: String,
         stage: crate::domain::events::CrawlingStage,
         recoverable: bool,
-    ) {
+    ) -> EventResult {
         let event = CrawlingEvent::Error {
             error_id,
             message,
             stage,
             recoverable,
         };
-        self.emit_event(event).await;
+        self.emit_event(event).await
     }
 
     /// Emit database statistics update
-    pub async fn emit_database_update(&self, stats: DatabaseStats) {
+    pub async fn emit_database_update(&self, stats: DatabaseStats) -> EventResult {
         let event = CrawlingEvent::DatabaseUpdate(stats);
-        self.emit_event(event).await;
+        self.emit_event(event).await
     }
 
     /// Emit crawling completion notification
-    pub async fn emit_completed(&self, result: crate::domain::events::CrawlingResult) {
+    pub async fn emit_completed(&self, result: crate::domain::events::CrawlingResult) -> EventResult {
         let event = CrawlingEvent::Completed(result);
-        self.emit_event(event).await;
+        self.emit_event(event).await
     }
 
     /// Emit multiple events in batch (useful for reducing frontend update frequency)
-    pub async fn emit_batch(&self, events: Vec<CrawlingEvent>) {
+    pub async fn emit_batch(&self, events: Vec<CrawlingEvent>) -> Vec<EventResult> {
+        // 최적화: 비활성화된 경우 빠르게 리턴
         if !self.is_enabled().await {
-            return;
+            return events.into_iter()
+                .map(|_| Err(EventEmissionError::Disabled))
+                .collect();
         }
 
-        for event in events {
-            self.emit_event(event).await;
-        }
+        // 병렬 이벤트 전송
+        let futures = events.into_iter()
+            .map(|event| self.emit_event(event));
+        
+        join_all(futures).await
     }
 }
 
 /// Builder for creating event emitters with specific configurations
+#[derive(Default)]
 pub struct EventEmitterBuilder {
     app_handle: Option<AppHandle>,
     enabled: bool,
+    enable_batching: bool,
+    batch_size: usize,
+    batch_interval_ms: u64,
 }
 
 impl EventEmitterBuilder {
@@ -132,6 +221,9 @@ impl EventEmitterBuilder {
         Self {
             app_handle: None,
             enabled: true,
+            enable_batching: false,
+            batch_size: 10,
+            batch_interval_ms: 100,
         }
     }
 
@@ -146,41 +238,132 @@ impl EventEmitterBuilder {
         self.enabled = enabled;
         self
     }
+    
+    /// Enable batched event emission
+    pub fn with_batching(mut self, batch_size: usize, interval_ms: u64) -> Self {
+        self.enable_batching = true;
+        self.batch_size = batch_size;
+        self.batch_interval_ms = interval_ms;
+        self
+    }
 
     /// Build the event emitter
     pub async fn build(self) -> Result<EventEmitter, String> {
         let app_handle = self.app_handle.ok_or("App handle is required")?;
         
-        let emitter = EventEmitter::new(app_handle);
+        let emitter = if self.enable_batching {
+            EventEmitter::with_batching(app_handle, self.batch_size, self.batch_interval_ms)
+        } else {
+            EventEmitter::new(app_handle)
+        };
+        
         emitter.set_enabled(self.enabled).await;
         
         Ok(emitter)
     }
 }
 
-impl Default for EventEmitterBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::Mutex;
+    use std::collections::HashMap;
     
-    // Note: These tests would require a Tauri app instance to run properly
-    // They serve as documentation for the expected behavior
+    // AppHandle 목(Mock) 구현
+    #[derive(Clone)]
+    struct MockAppHandle {
+        events: Arc<Mutex<HashMap<String, Vec<CrawlingEvent>>>>,
+    }
+    
+    impl MockAppHandle {
+        fn new() -> Self {
+            Self {
+                events: Arc::new(Mutex::new(HashMap::new())),
+            }
+        }
+        
+        async fn get_events(&self, event_name: &str) -> Vec<CrawlingEvent> {
+            let events = self.events.lock().await;
+            events.get(event_name)
+                .cloned()
+                .unwrap_or_default()
+        }
+    }
+    
+    impl Emitter for MockAppHandle {
+        fn emit<S>(&self, event: S, payload: impl serde::Serialize + Clone + Send + 'static) -> tauri::Result<()>
+        where
+            S: AsRef<str>,
+        {
+            let event_name = event.as_ref().to_string();
+            let event_cloned = serde_json::from_value::<CrawlingEvent>(
+                serde_json::to_value(payload).map_err(|e| tauri::Error::from(Box::new(e) as Box<dyn std::error::Error>))?
+            ).map_err(|e| tauri::Error::from(Box::new(e) as Box<dyn std::error::Error>))?;
+            
+            tokio::spawn({
+                let events = self.events.clone();
+                let event_name = event_name.clone();
+                async move {
+                    let mut events = events.lock().await;
+                    events.entry(event_name)
+                        .or_insert_with(Vec::new)
+                        .push(event_cloned);
+                }
+            });
+            
+            Ok(())
+        }
+    }
     
     #[tokio::test]
     async fn test_event_emitter_creation() {
-        // This test demonstrates how to create an event emitter
-        // In a real test, you would need to mock the AppHandle
-        assert!(true);
+        let mock_handle = MockAppHandle::new();
+        let emitter = EventEmitter::new(mock_handle.clone());
+        assert!(emitter.is_enabled().await);
     }
     
     #[tokio::test]
     async fn test_event_emission_when_disabled() {
-        // This test would verify that events are not emitted when disabled
-        assert!(true);
+        let mock_handle = MockAppHandle::new();
+        let emitter = EventEmitter::new(mock_handle.clone());
+        
+        // 비활성화
+        emitter.set_enabled(false).await;
+        
+        // 이벤트 발신 시도
+        let progress = CrawlingProgress::default();
+        let result = emitter.emit_progress(progress).await;
+        
+        // 비활성화된 경우 오류 반환
+        assert!(matches!(result, Err(EventEmissionError::Disabled)));
+        
+        // 이벤트가 실제로 발신되지 않았는지 확인
+        let events = mock_handle.get_events("crawling-progress").await;
+        assert!(events.is_empty());
+    }
+    
+    #[tokio::test]
+    async fn test_batch_emission() {
+        let mock_handle = MockAppHandle::new();
+        let emitter = EventEmitter::new(mock_handle.clone());
+        
+        // 여러 이벤트 배치 발신
+        let mut events = Vec::new();
+        for i in 0..5 {
+            let mut progress = CrawlingProgress::default();
+            progress.current = i;
+            events.push(CrawlingEvent::ProgressUpdate(progress));
+        }
+        
+        let results = emitter.emit_batch(events).await;
+        
+        // 모든 이벤트가 성공적으로 발신되었는지 확인
+        for result in &results {
+            assert!(result.is_ok());
+        }
+        
+        // 발신된 이벤트 수 확인
+        let emitted_events = mock_handle.get_events("crawling-progress").await;
+        assert_eq!(emitted_events.len(), 5);
     }
 }

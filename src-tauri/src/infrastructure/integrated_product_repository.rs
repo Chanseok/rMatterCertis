@@ -371,27 +371,77 @@ impl IntegratedProductRepository {
         })
     }
 
-    // ===============================
-    // VENDOR OPERATIONS
-    // ===============================
-
-    /// Create a new vendor
-    pub async fn create_vendor(&self, vendor: &Vendor) -> Result<i32> {
-        let result = sqlx::query(
-            r#"
-            INSERT INTO vendors (vendor_number, vendor_name, company_legal_name, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(vendor.vendor_number)
-        .bind(&vendor.vendor_name)
-        .bind(&vendor.company_legal_name)
-        .bind(vendor.created_at)
-        .bind(vendor.updated_at)
-        .execute(&*self.pool)
-        .await?;
-
-        Ok(result.last_insert_rowid() as i32)
+    /// JSON 형식의 제품 데이터를 DB에 추가 또는 업데이트
+    /// 
+    /// 새로운 제품인 경우 true, 기존 제품 업데이트인 경우 false 반환
+    pub async fn upsert_product(&self, product_json: serde_json::Value) -> Result<bool> {
+        let url = product_json["url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Product JSON must contain a url field"))?
+            .to_string();
+        
+        // 기존 제품 확인
+        let existing_product = self.get_product_by_url(&url).await?;
+        let is_new = existing_product.is_none();
+        
+        // 기본 제품 정보 추출
+        let basic_product = Product {
+            url: url.clone(),
+            manufacturer: product_json["manufacturer"].as_str().map(|s| s.to_string()),
+            model: product_json["model"].as_str().map(|s| s.to_string()),
+            certificate_id: product_json["certification_id"].as_str().map(|s| s.to_string()),
+            page_id: product_json["page_id"].as_i64().map(|i| i as i32),
+            index_in_page: product_json["index_in_page"].as_i64().map(|i| i as i32),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        
+        // 기본 제품 정보 저장
+        self.create_or_update_product(&basic_product).await?;
+        
+        // 상세 정보가 있는 경우 저장
+        if product_json.get("device_type").is_some() || product_json.get("hardware_version").is_some() {
+            let vid = product_json["vid"].as_i64().map(|i| i as i32);
+            let pid = product_json["pid"].as_i64().map(|i| i as i32);
+            
+            let detail = ProductDetail {
+                url: url.clone(),
+                page_id: basic_product.page_id,
+                index_in_page: basic_product.index_in_page,
+                id: product_json["id"].as_str().map(|s| s.to_string()),
+                manufacturer: basic_product.manufacturer.clone(),
+                model: basic_product.model.clone(),
+                device_type: product_json["device_type"].as_str().map(|s| s.to_string()),
+                certification_id: basic_product.certificate_id.clone(),
+                certification_date: product_json["certification_date"].as_str().map(|s| s.to_string()),
+                software_version: product_json["software_version"].as_str().map(|s| s.to_string()),
+                hardware_version: product_json["hardware_version"].as_str().map(|s| s.to_string()),
+                vid,
+                pid,
+                family_sku: product_json["family_sku"].as_str().map(|s| s.to_string()),
+                family_variant_sku: product_json["family_variant_sku"].as_str().map(|s| s.to_string()),
+                firmware_version: product_json["firmware_version"].as_str().map(|s| s.to_string()),
+                family_id: product_json["family_id"].as_str().map(|s| s.to_string()),
+                tis_trp_tested: product_json["tis_trp_tested"].as_str().map(|s| s.to_string()),
+                specification_version: product_json["specification_version"].as_str().map(|s| s.to_string()),
+                transport_interface: product_json["transport_interface"].as_str().map(|s| s.to_string()),
+                primary_device_type_id: product_json["primary_device_type_id"].as_str().map(|s| s.to_string()),
+                application_categories: product_json["application_categories"].as_array().map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                }),
+                description: product_json["description"].as_str().map(|s| s.to_string()),
+                compliance_document_url: product_json["compliance_document_url"].as_str().map(|s| s.to_string()),
+                program_type: product_json["program_type"].as_str().map(|s| s.to_string()),
+                created_at: basic_product.created_at,
+                updated_at: basic_product.updated_at,
+            };
+            
+            self.create_or_update_product_detail(&detail).await?;
+        }
+        
+        Ok(is_new)
     }
 
     /// Get all vendors
@@ -415,6 +465,39 @@ impl IntegratedProductRepository {
             .collect();
 
         Ok(vendors)
+    }
+
+    /// Create a new vendor
+    pub async fn create_vendor(&self, vendor: &crate::domain::product::Vendor) -> Result<i32> {
+        let vendor_id = vendor.vendor_id.max(0); // 새 ID인 경우 자동 생성
+        
+        sqlx::query(
+            r#"
+            INSERT INTO vendors 
+            (vendor_id, vendor_number, vendor_name, company_legal_name, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(vendor_id)
+        .bind(vendor.vendor_number)
+        .bind(&vendor.vendor_name)
+        .bind(&vendor.company_legal_name)
+        .bind(vendor.created_at)
+        .bind(vendor.updated_at)
+        .execute(&*self.pool)
+        .await?;
+        
+        // 새 벤더 ID 반환 (자동 생성된 경우 조회)
+        if vendor_id <= 0 {
+            let row = sqlx::query("SELECT last_insert_rowid() as id")
+                .fetch_one(&*self.pool)
+                .await?;
+            
+            let new_id: i32 = row.get("id");
+            Ok(new_id)
+        } else {
+            Ok(vendor_id)
+        }
     }
 
     // ===============================
