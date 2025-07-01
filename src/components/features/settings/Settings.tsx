@@ -1,12 +1,73 @@
 import { createSignal, Show, For } from 'solid-js';
-import { CrawlerConfig, ConfigPreset, CONFIG_PRESETS, DEFAULT_CRAWLER_CONFIG } from '../../../types/crawling';
+import { BackendCrawlerConfig, ConfigPreset, CONFIG_PRESETS } from '../../../types/crawling';
 import { Button, Modal, Toast } from '../../ui';
 
+// Default configuration for BackendCrawlerConfig
+const DEFAULT_BACKEND_CONFIG: BackendCrawlerConfig = {
+  // Core settings
+  start_page: 1,
+  end_page: 10,
+  concurrency: 5,
+  delay_ms: 500,
+  
+  // Advanced settings
+  page_range_limit: 50,
+  product_list_retry_count: 3,
+  product_detail_retry_count: 3,
+  products_per_page: 20,
+  auto_add_to_local_db: true,
+  auto_status_check: true,
+  crawler_type: 'full',
+
+  // Batch processing
+  batch_size: 10,
+  batch_delay_ms: 1000,
+  enable_batch_processing: true,
+  batch_retry_limit: 3,
+
+  // URLs
+  base_url: '',
+  matter_filter_url: '',
+  
+  // Timeouts
+  page_timeout_ms: 30000,
+  product_detail_timeout_ms: 30000,
+  
+  // Concurrency & Performance
+  initial_concurrency: 5,
+  detail_concurrency: 5,
+  retry_concurrency: 2,
+  min_request_delay_ms: 500,
+  max_request_delay_ms: 1000,
+  retry_start: 1000,
+  retry_max: 3,
+  cache_ttl_ms: 3600000,
+  
+  // Browser settings
+  headless_browser: true,
+  max_concurrent_tasks: 5,
+  request_delay: 500,
+  custom_user_agent: undefined,
+  
+  // Logging
+  logging: {
+    level: 'info',
+    enable_stack_trace: true,
+    enable_timestamp: true,
+    components: {
+      crawler: 'info',
+      parser: 'info',
+      network: 'info',
+      database: 'info'
+    }
+  }
+};
+
 // 임시: 실제 구현에서는 store/actions로 분리
-const getDefaultConfig = () => ({ ...DEFAULT_CRAWLER_CONFIG });
+const getDefaultConfig = () => ({ ...DEFAULT_BACKEND_CONFIG });
 
 const Settings = () => {
-  const [form, setForm] = createSignal<CrawlerConfig>(getDefaultConfig());
+  const [form, setForm] = createSignal<BackendCrawlerConfig>(getDefaultConfig());
   const [showModal, setShowModal] = createSignal(false);
   const [toast, setToast] = createSignal<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -29,7 +90,7 @@ const Settings = () => {
   };
 
   // 입력 핸들러
-  const handleChange = (key: keyof CrawlerConfig, value: any) => {
+  const handleChange = (key: keyof BackendCrawlerConfig, value: any) => {
     setForm({ ...form(), [key]: value });
   };
 
@@ -45,32 +106,32 @@ const Settings = () => {
       <form class="settings-form" onSubmit={e => { e.preventDefault(); handleSave(); }}>
         <div class="form-row">
           <label>페이지 범위 제한
-            <input type="number" value={form().pageRangeLimit} min={1} max={1000} onInput={e => handleChange('pageRangeLimit', +e.currentTarget.value)} />
+            <input type="number" value={form().page_range_limit} min={1} max={1000} onInput={e => handleChange('page_range_limit', +e.currentTarget.value)} />
           </label>
           <label>페이지당 제품 수
-            <input type="number" value={form().productsPerPage} min={1} max={100} onInput={e => handleChange('productsPerPage', +e.currentTarget.value)} />
+            <input type="number" value={form().products_per_page} min={1} max={100} onInput={e => handleChange('products_per_page', +e.currentTarget.value)} />
           </label>
           <label>동시 요청 수
-            <input type="number" value={form().initialConcurrency} min={1} max={64} onInput={e => handleChange('initialConcurrency', +e.currentTarget.value)} />
+            <input type="number" value={form().initial_concurrency} min={1} max={64} onInput={e => handleChange('initial_concurrency', +e.currentTarget.value)} />
           </label>
         </div>
         <div class="form-row">
           <label>기본 URL
-            <input type="url" value={form().baseUrl} onInput={e => handleChange('baseUrl', e.currentTarget.value)} />
+            <input type="url" value={form().base_url} onInput={e => handleChange('base_url', e.currentTarget.value)} />
           </label>
           <label>Matter 필터 URL
-            <input type="url" value={form().matterFilterUrl} onInput={e => handleChange('matterFilterUrl', e.currentTarget.value)} />
+            <input type="url" value={form().matter_filter_url} onInput={e => handleChange('matter_filter_url', e.currentTarget.value)} />
           </label>
         </div>
         <div class="form-row">
           <label>크롤러 타입
-            <select value={form().crawlerType} onChange={e => handleChange('crawlerType', e.currentTarget.value)}>
-              <option value="axios">axios</option>
-              <option value="playwright">playwright</option>
+            <select value={form().crawler_type} onChange={e => handleChange('crawler_type', e.currentTarget.value)}>
+              <option value="full">full</option>
+              <option value="quick">quick</option>
             </select>
           </label>
           <label>헤드리스 브라우저
-            <input type="checkbox" checked={form().headlessBrowser} onChange={e => handleChange('headlessBrowser', e.currentTarget.checked)} />
+            <input type="checkbox" checked={form().headless_browser} onChange={e => handleChange('headless_browser', e.currentTarget.checked)} />
           </label>
         </div>
         <div class="form-actions">

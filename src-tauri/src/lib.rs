@@ -168,11 +168,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Modern real-time commands
             commands::start_crawling,
-            commands::start_crawling_with_comprehensive_config,
             commands::pause_crawling,
             commands::resume_crawling,
             commands::stop_crawling,
             commands::get_crawling_status,
+            commands::get_active_sessions,
             commands::get_database_stats,
             commands::backup_database,
             commands::optimize_database,
@@ -185,7 +185,6 @@ pub fn run() {
             commands::get_site_config,
             commands::get_default_crawling_config,
             commands::get_comprehensive_crawler_config,
-            commands::convert_to_comprehensive_config,
             commands::initialize_app_config,
             commands::reset_config_to_defaults,
             commands::get_app_directories,

@@ -8,32 +8,21 @@ use crate::domain::events::{CrawlingProgress, CrawlingStatus, CrawlingStage, Dat
 use crate::domain::entities::CrawlingSession;
 use crate::commands::config_commands::ComprehensiveCrawlerConfig;
 use tauri::{State, AppHandle};
-use tracing::info;
+use tracing::{info, warn};
 use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::infrastructure::config::ConfigManager;
 
-/// Configuration for starting a crawling session
-#[derive(Debug, serde::Deserialize)]
-pub struct CrawlingConfig {
-    pub start_page: u32,
-    pub end_page: u32,
-    pub concurrency: u32,
-    pub delay_ms: u64,
-    pub auto_add_to_local_db: bool,
-    pub retry_max: u32,
-    pub page_timeout_ms: u64,
-}
-
-/// Start a new crawling session with real-time event emission
+/// Start a new crawling session with comprehensive configuration
 #[tauri::command]
 pub async fn start_crawling(
-    config: CrawlingConfig,
+    config: ComprehensiveCrawlerConfig,
     state: State<'_, AppState>,
     app_handle: AppHandle,
 ) -> Result<String, String> {
-    info!("Starting crawling session with config: {:?}", config);
+    info!("Starting crawling session with comprehensive config: batch_size={}, concurrency={}, delay_ms={}", 
+          config.batch_size, config.concurrency, config.delay_ms);
     
     // Initialize event emitter if not already done
     {
@@ -176,149 +165,6 @@ pub async fn start_crawling(
     Ok(session_id)
 }
 
-/// Start a new crawling session with comprehensive configuration
-#[tauri::command]
-pub async fn start_crawling_with_comprehensive_config(
-    config: ComprehensiveCrawlerConfig,
-    state: State<'_, AppState>,
-    app_handle: AppHandle,
-) -> Result<String, String> {
-    info!("Starting crawling session with comprehensive config: batch_size={}, concurrency={}", 
-          config.batch_size, config.concurrency);
-    
-    // Initialize event emitter if not already done
-    {
-        let emitter_guard = state.event_emitter.read().await;
-        if emitter_guard.is_none() {
-            drop(emitter_guard);
-            let emitter = EventEmitter::new(app_handle.clone());
-            state.initialize_event_emitter(emitter).await?;
-        }
-    }
-    
-    // Create new crawling session
-    let session = CrawlingSession {
-        id: uuid::Uuid::new_v4().to_string(),
-        url: config.base_url.clone(),
-        start_page: config.start_page,
-        end_page: config.end_page,
-        status: "running".to_string(),
-        created_at: Utc::now(),
-        ..Default::default()
-    };
-    
-    let session_id = session.id.clone();
-    
-    // Start the session
-    state.start_session(session).await?;
-    
-    // Emit initial progress
-    let initial_progress = CrawlingProgress {
-        current: 0,
-        total: config.end_page - config.start_page + 1,
-        percentage: 0.0,
-        current_stage: CrawlingStage::TotalPages,
-        current_step: "종합 설정으로 크롤링 세션을 초기화하는 중...".to_string(),
-        status: CrawlingStatus::Running,
-        message: format!("배치 크기: {}, 동시성: {}", config.batch_size, config.concurrency),
-        remaining_time: None,
-        elapsed_time: 0,
-        new_items: 0,
-        updated_items: 0,
-        current_batch: Some(1),
-        total_batches: Some((config.end_page - config.start_page + 1) / config.batch_size + 1),
-        errors: 0,
-        timestamp: Utc::now(),
-    };
-    
-    state.update_progress(initial_progress).await?;
-    
-    // Convert comprehensive config to BatchCrawlingConfig
-    let session_id_for_task = session_id.clone();
-    let _app_handle_for_task = app_handle.clone();
-    let crawling_config = crate::infrastructure::BatchCrawlingConfig {
-        start_page: config.start_page,
-        end_page: config.end_page,
-        concurrency: config.concurrency,
-        delay_ms: config.delay_ms,
-        batch_size: config.batch_size,
-        retry_max: config.retry_max,
-        timeout_ms: config.page_timeout_ms,
-    };
-    
-    // 이벤트 이미터 참조 복제 
-    let event_emitter_for_task = {
-        let emitter_guard = state.event_emitter.read().await;
-        emitter_guard.clone()
-    };
-    
-    // AppState 복제하여 백그라운드 작업에 전달
-    let app_state_for_update = Arc::clone(&state.current_progress);
-    
-    // 실제 배치 크롤링 엔진 백그라운드로 실행
-    tokio::spawn(async move {
-        // HTTP 클라이언트 및 파서 초기화
-        let http_client = match crate::infrastructure::HttpClient::new() {
-            Ok(client) => client,
-            Err(e) => {
-                tracing::error!("Failed to create HTTP client: {}", e);
-                update_error_state(&app_state_for_update, &format!("HTTP 클라이언트 생성 실패: {}", e)).await;
-                return;
-            }
-        };
-        
-        let data_extractor = match crate::infrastructure::MatterDataExtractor::new() {
-            Ok(extractor) => extractor,
-            Err(e) => {
-                tracing::error!("Failed to create data extractor: {}", e);
-                update_error_state(&app_state_for_update, &format!("데이터 추출기 생성 실패: {}", e)).await;
-                return;
-            }
-        };
-        
-        // 통합 제품 리포지토리 생성
-        let database_url = match get_database_url() {
-            Ok(url) => url,
-            Err(e) => {
-                tracing::error!("Failed to get database URL: {}", e);
-                update_error_state(&app_state_for_update, &format!("데이터베이스 경로 설정 실패: {}", e)).await;
-                return;
-            }
-        };
-        
-        let db_pool = match sqlx::SqlitePool::connect(&database_url).await {
-            Ok(pool) => pool,
-            Err(e) => {
-                tracing::error!("Failed to connect to database: {}", e);
-                update_error_state(&app_state_for_update, &format!("데이터베이스 연결 실패: {}", e)).await;
-                return;
-            }
-        };
-        
-        let product_repo = std::sync::Arc::new(
-            crate::infrastructure::IntegratedProductRepository::new(db_pool)
-        );
-
-        // 배치 크롤링 엔진 생성 및 실행
-        let engine = crate::infrastructure::BatchCrawlingEngine::new(
-            http_client,
-            data_extractor,
-            product_repo,
-            std::sync::Arc::new(event_emitter_for_task),
-            crawling_config,
-            session_id_for_task,
-        );
-
-        if let Err(e) = engine.execute().await {
-            tracing::error!("Comprehensive batch crawling failed: {}", e);
-            update_error_state(&app_state_for_update, &format!("종합 설정 크롤링 실행 실패: {}", e)).await;
-        }
-    });
-    
-    info!("Comprehensive crawling session started with ID: {}", session_id);
-    Ok(session_id)
-}
-
 // 에러 상태 업데이트 헬퍼 함수 
 async fn update_error_state(progress_state: &Arc<RwLock<CrawlingProgress>>, error_message: &str) {
     let mut progress = progress_state.write().await;
@@ -335,14 +181,28 @@ async fn update_error_state(progress_state: &Arc<RwLock<CrawlingProgress>>, erro
 pub async fn pause_crawling(state: State<'_, AppState>) -> Result<(), String> {
     info!("Pausing crawling session");
     
-    let mut current_progress = state.get_progress().await;
-    current_progress.status = CrawlingStatus::Paused;
-    current_progress.message = "크롤링이 일시정지되었습니다".to_string();
-    current_progress.timestamp = Utc::now();
+    // Update state to paused
+    {
+        let mut progress = state.current_progress.write().await;
+        if progress.status == CrawlingStatus::Running {
+            progress.status = CrawlingStatus::Paused;
+            progress.current_step = "크롤링이 일시 정지되었습니다".to_string();
+            progress.message = "사용자가 크롤링을 일시 정지했습니다".to_string();
+            progress.timestamp = Utc::now();
+        } else {
+            return Err("크롤링이 실행 중이 아닙니다".to_string());
+        }
+    }
     
-    state.update_progress(current_progress).await?;
+    // Emit pause event
+    if let Some(emitter) = state.event_emitter.read().await.as_ref() {
+        let progress = state.current_progress.read().await.clone();
+        if let Err(e) = emitter.emit_progress(progress).await {
+            warn!("Failed to emit pause event: {}", e);
+        }
+    }
     
-    info!("Crawling session paused");
+    info!("Crawling session paused successfully");
     Ok(())
 }
 
@@ -351,14 +211,28 @@ pub async fn pause_crawling(state: State<'_, AppState>) -> Result<(), String> {
 pub async fn resume_crawling(state: State<'_, AppState>) -> Result<(), String> {
     info!("Resuming crawling session");
     
-    let mut current_progress = state.get_progress().await;
-    current_progress.status = CrawlingStatus::Running;
-    current_progress.message = "크롤링을 재개합니다".to_string();
-    current_progress.timestamp = Utc::now();
+    // Update state to running
+    {
+        let mut progress = state.current_progress.write().await;
+        if progress.status == CrawlingStatus::Paused {
+            progress.status = CrawlingStatus::Running;
+            progress.current_step = "크롤링이 재개되었습니다".to_string();
+            progress.message = "사용자가 크롤링을 재개했습니다".to_string();
+            progress.timestamp = Utc::now();
+        } else {
+            return Err("크롤링이 일시 정지 상태가 아닙니다".to_string());
+        }
+    }
     
-    state.update_progress(current_progress).await?;
+    // Emit resume event
+    if let Some(emitter) = state.event_emitter.read().await.as_ref() {
+        let progress = state.current_progress.read().await.clone();
+        if let Err(e) = emitter.emit_progress(progress).await {
+            warn!("Failed to emit resume event: {}", e);
+        }
+    }
     
-    info!("Crawling session resumed");
+    info!("Crawling session resumed successfully");
     Ok(())
 }
 
@@ -367,17 +241,55 @@ pub async fn resume_crawling(state: State<'_, AppState>) -> Result<(), String> {
 pub async fn stop_crawling(state: State<'_, AppState>) -> Result<(), String> {
     info!("Stopping crawling session");
     
+    // Update state to cancelled
+    {
+        let mut progress = state.current_progress.write().await;
+        if progress.status == CrawlingStatus::Running || progress.status == CrawlingStatus::Paused {
+            progress.status = CrawlingStatus::Cancelled;
+            progress.current_step = "크롤링이 중지되었습니다".to_string();
+            progress.message = "사용자가 크롤링을 중지했습니다".to_string();
+            progress.timestamp = Utc::now();
+        } else {
+            return Err("중지할 수 있는 크롤링 세션이 없습니다".to_string());
+        }
+    }
+    
+    // Stop the session
     state.stop_session().await?;
     
-    info!("Crawling session stopped");
+    // Emit stop event
+    if let Some(emitter) = state.event_emitter.read().await.as_ref() {
+        let progress = state.current_progress.read().await.clone();
+        if let Err(e) = emitter.emit_progress(progress).await {
+            warn!("Failed to emit stop event: {}", e);
+        }
+    }
+    
+    info!("Crawling session stopped successfully");
     Ok(())
 }
 
-/// Get the current crawling progress
+/// Get the current crawling status and progress
 #[tauri::command]
 pub async fn get_crawling_status(state: State<'_, AppState>) -> Result<CrawlingProgress, String> {
-    let progress = state.get_progress().await;
+    info!("Getting current crawling status");
+    
+    let progress = state.current_progress.read().await.clone();
     Ok(progress)
+}
+
+/// Get active crawling sessions
+#[tauri::command]
+pub async fn get_active_sessions(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    info!("Getting active crawling sessions");
+    
+    // For now, return current session if it exists
+    let current_session = state.current_session.read().await;
+    if let Some(session) = current_session.as_ref() {
+        Ok(vec![session.id.clone()])
+    } else {
+        Ok(vec![])
+    }
 }
 
 /// Get database statistics

@@ -1,7 +1,7 @@
 import { createSignal, For } from "solid-js";
 import { crawlerStore } from '../stores/crawlerStore';
 import { uiStore } from '../stores/uiStore';
-import type { CrawlingConfig } from "../types/crawling";
+import type { BackendCrawlerConfig } from "../types/crawling";
 
 interface CrawlingFormProps {
   onSuccess: () => void;
@@ -59,14 +59,64 @@ export function CrawlingForm(props: CrawlingFormProps) {
       setLoading(true);
       setError(null);
 
-      const config: CrawlingConfig = {
+      const config: BackendCrawlerConfig = {
+        // Core settings
         start_page: startPage(),
         end_page: endPage(),
         concurrency: concurrency(),
         delay_ms: delayMs(),
+        
+        // Advanced settings
+        page_range_limit: 50,
+        product_list_retry_count: retryMax(),
+        product_detail_retry_count: retryMax(),
+        products_per_page: 20,
         auto_add_to_local_db: autoAddToDb(),
-        retry_max: retryMax(),
+        auto_status_check: true,
+        crawler_type: 'full',
+
+        // Batch processing
+        batch_size: 10,
+        batch_delay_ms: 1000,
+        enable_batch_processing: true,
+        batch_retry_limit: 3,
+
+        // URLs (will be loaded from backend config)
+        base_url: '',
+        matter_filter_url: '',
+        
+        // Timeouts
         page_timeout_ms: pageTimeout(),
+        product_detail_timeout_ms: pageTimeout(),
+        
+        // Concurrency & Performance
+        initial_concurrency: concurrency(),
+        detail_concurrency: concurrency(),
+        retry_concurrency: Math.max(1, Math.floor(concurrency() / 2)),
+        min_request_delay_ms: delayMs(),
+        max_request_delay_ms: delayMs() * 2,
+        retry_start: 1000,
+        retry_max: retryMax(),
+        cache_ttl_ms: 3600000, // 1 hour
+        
+        // Browser settings
+        headless_browser: true,
+        max_concurrent_tasks: concurrency(),
+        request_delay: delayMs(),
+        custom_user_agent: undefined,
+        
+        // Logging
+        logging: {
+          level: 'info',
+          enable_stack_trace: true,
+          enable_timestamp: true,
+          components: {
+            crawler: 'info',
+            parser: 'info',
+            network: 'info',
+            database: 'info'
+          }
+        }
       };
 
       await crawlerStore.startCrawling(config);

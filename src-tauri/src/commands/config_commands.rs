@@ -379,28 +379,6 @@ pub async fn get_comprehensive_crawler_config() -> Result<ComprehensiveCrawlerCo
     Ok(config)
 }
 
-/// Convert simple CrawlingConfig to comprehensive config
-/// This allows start_crawling to accept either simple or comprehensive config
-#[tauri::command]
-pub async fn convert_to_comprehensive_config(
-    simple_config: crate::commands::modern_crawling::CrawlingConfig
-) -> Result<ComprehensiveCrawlerConfig, String> {
-    info!("Converting simple config to comprehensive config");
-    
-    let mut comprehensive = ComprehensiveCrawlerConfig::default();
-    
-    // Map simple config fields to comprehensive config
-    comprehensive.start_page = simple_config.start_page;
-    comprehensive.end_page = simple_config.end_page;
-    comprehensive.concurrency = simple_config.concurrency;
-    comprehensive.delay_ms = simple_config.delay_ms;
-    comprehensive.auto_add_to_local_db = simple_config.auto_add_to_local_db;
-    comprehensive.retry_max = simple_config.retry_max;
-    comprehensive.page_timeout_ms = simple_config.page_timeout_ms;
-    
-    Ok(comprehensive)
-}
-
 /// Convert internal AppConfig to frontend-friendly FrontendConfig
 fn convert_to_frontend_config(app_config: &AppConfig) -> FrontendConfig {
     FrontendConfig {

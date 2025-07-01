@@ -9,7 +9,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
-  CrawlingConfig,
+  BackendCrawlerConfig,
   CrawlingProgress,
   CrawlingResult,
   CrawlingTaskStatus,
@@ -27,9 +27,9 @@ export class TauriApiService {
   // =========================================================================
 
   /**
-   * Start a new crawling session with the provided configuration
+   * Start a new crawling session with the provided comprehensive configuration
    */
-  async startCrawling(config: CrawlingConfig): Promise<string> {
+  async startCrawling(config: BackendCrawlerConfig): Promise<string> {
     try {
       const sessionId = await invoke<string>('start_crawling', { config });
       return sessionId;
@@ -94,6 +94,17 @@ export class TauriApiService {
       return await invoke<DatabaseStats>('get_database_stats');
     } catch (error) {
       throw new Error(`Failed to get database stats: ${error}`);
+    }
+  }
+
+  /**
+   * Get active crawling sessions
+   */
+  async getActiveSessions(): Promise<string[]> {
+    try {
+      return await invoke<string[]>('get_active_sessions');
+    } catch (error) {
+      throw new Error(`Failed to get active sessions: ${error}`);
     }
   }
 
@@ -320,23 +331,11 @@ export class TauriApiService {
   /**
    * Get comprehensive crawler configuration from backend
    */
-  async getComprehensiveCrawlerConfig(): Promise<any> {
+  async getComprehensiveCrawlerConfig(): Promise<BackendCrawlerConfig> {
     try {
-      return await invoke<any>('get_comprehensive_crawler_config');
+      return await invoke<BackendCrawlerConfig>('get_comprehensive_crawler_config');
     } catch (error) {
       throw new Error(`Failed to get comprehensive crawler config: ${error}`);
-    }
-  }
-
-  /**
-   * Start crawling with comprehensive configuration
-   */
-  async startCrawlingWithComprehensiveConfig(config: any): Promise<string> {
-    try {
-      const sessionId = await invoke<string>('start_crawling_with_comprehensive_config', { config });
-      return sessionId;
-    } catch (error) {
-      throw new Error(`Failed to start crawling with comprehensive config: ${error}`);
     }
   }
 

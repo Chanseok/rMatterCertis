@@ -12,7 +12,7 @@ import type {
   CrawlingProgress,
   CrawlingTaskStatus,
   CrawlingResult,
-  CrawlingConfig
+  BackendCrawlerConfig
 } from '../types/crawling';
 
 // 크롤러 상태 인터페이스
@@ -40,7 +40,7 @@ interface CrawlerState {
   lastResult: CrawlingResult | null;
   
   // 설정
-  currentConfig: CrawlingConfig | null;
+  currentConfig: BackendCrawlerConfig | null;
 }
 
 // 초기 상태
@@ -206,7 +206,7 @@ class CrawlerStore {
     setCrawlerState('lastResult', result);
   }
 
-  setConfig(config: CrawlingConfig) {
+  setConfig(config: BackendCrawlerConfig) {
     setCrawlerState('currentConfig', config);
   }
 
@@ -223,7 +223,7 @@ class CrawlerStore {
   // 크롤링 제어 메서드
   // =========================================================================
 
-  async startCrawling(config: CrawlingConfig): Promise<string> {
+  async startCrawling(config: BackendCrawlerConfig): Promise<string> {
     try {
       this.setConfig(config);
       this.clearErrors();
@@ -287,6 +287,9 @@ class CrawlerStore {
       
       // 초기 상태 로드
       await this.refreshStatus();
+      
+      // 기본 설정 로드
+      await this.loadDefaultConfig();
       
       // 실시간 이벤트 구독
       await this.subscribeToEvents();
@@ -374,6 +377,157 @@ class CrawlerStore {
     this.reset();
     
     console.log('✅ 크롤러 스토어 정리 완료');
+  }
+
+  // =========================================================================
+  // 설정 관련 메서드
+  // =========================================================================
+
+  /**
+   * 백엔드에서 기본 크롤링 설정을 로드합니다.
+   * 이 메서드는 초기화 단계에서 호출되어 기본 설정값을 가져옵니다.
+   */
+  async loadDefaultConfig(): Promise<BackendCrawlerConfig> {
+    try {
+      console.log('🔄 기본 크롤링 설정 로드 중...');
+      const defaultConfig = await tauriApi.getDefaultCrawlingConfig();
+      
+      // 백엔드에서 받은 설정을 프론트엔드 설정 타입으로 변환
+      // 필요한 경우 이곳에서 형식 변환을 수행
+      
+      // 기본 로깅 설정 추가 (백엔드에서 제공되지 않는 경우)
+      if (!defaultConfig.logging) {
+        defaultConfig.logging = {
+          level: 'info',
+          enable_stack_trace: true,
+          enable_timestamp: true,
+          components: {
+            crawler: 'info',
+            parser: 'info',
+            network: 'info',
+            database: 'info'
+          }
+        };
+      }
+      
+      const backendConfig: BackendCrawlerConfig = {
+        // Core settings
+        start_page: 1,
+        end_page: defaultConfig.max_pages || 10,
+        concurrency: defaultConfig.max_concurrent_requests || 5,
+        delay_ms: defaultConfig.request_delay_ms || 500,
+        
+        // Advanced settings
+        page_range_limit: defaultConfig.advanced?.max_search_attempts || 10,
+        product_list_retry_count: defaultConfig.advanced?.retry_attempts || 3,
+        product_detail_retry_count: defaultConfig.advanced?.retry_attempts || 3,
+        products_per_page: 20,
+        auto_add_to_local_db: true,
+        auto_status_check: true,
+        crawler_type: 'full',
+
+        // Batch processing
+        batch_size: 10,
+        batch_delay_ms: 1000,
+        enable_batch_processing: true,
+        batch_retry_limit: 3,
+
+        // URLs
+        base_url: defaultConfig.base_url || '',
+        matter_filter_url: defaultConfig.matter_filter_url || '',
+        
+        // Timeouts
+        page_timeout_ms: (defaultConfig.advanced?.request_timeout_seconds || 30) * 1000,
+        product_detail_timeout_ms: (defaultConfig.advanced?.request_timeout_seconds || 30) * 1000,
+        
+        // Concurrency & Performance
+        initial_concurrency: defaultConfig.max_concurrent_requests || 5,
+        detail_concurrency: defaultConfig.max_concurrent_requests || 5,
+        retry_concurrency: Math.max(1, (defaultConfig.max_concurrent_requests || 5) / 2),
+        min_request_delay_ms: defaultConfig.request_delay_ms || 500,
+        max_request_delay_ms: (defaultConfig.request_delay_ms || 500) * 2,
+        retry_start: defaultConfig.advanced?.retry_delay_ms || 1000,
+        retry_max: defaultConfig.advanced?.retry_attempts || 3,
+        cache_ttl_ms: 3600000, // 1시간
+        
+        // Browser settings
+        headless_browser: true,
+        max_concurrent_tasks: defaultConfig.max_concurrent_requests || 5,
+        request_delay: defaultConfig.request_delay_ms || 500,
+        custom_user_agent: undefined,
+        
+        // Logging
+        logging: {
+          level: defaultConfig.verbose_logging ? 'debug' : 'info',
+          enable_stack_trace: true,
+          enable_timestamp: true,
+          components: {
+            crawler: defaultConfig.verbose_logging ? 'debug' : 'info',
+            parser: defaultConfig.verbose_logging ? 'debug' : 'info',
+            network: defaultConfig.verbose_logging ? 'debug' : 'info',
+            database: defaultConfig.verbose_logging ? 'debug' : 'info'
+          }
+        }
+      };
+      
+      // 현재 설정으로 설정
+      this.setConfig(backendConfig);
+      
+      console.log('✅ 기본 크롤링 설정 로드 완료:', backendConfig);
+      return backendConfig;
+    } catch (error) {
+      const errorMessage = `기본 설정 로드 실패: ${error}`;
+      this.setError(errorMessage);
+      console.error('❌', errorMessage);
+      
+      // 기본 설정 실패시 하드코딩된 기본값 사용
+      const fallbackConfig: BackendCrawlerConfig = {
+        start_page: 1,
+        end_page: 10,
+        concurrency: 5,
+        delay_ms: 500,
+        page_range_limit: 10,
+        product_list_retry_count: 3,
+        product_detail_retry_count: 3,
+        products_per_page: 20,
+        auto_add_to_local_db: true,
+        auto_status_check: true,
+        crawler_type: 'full',
+        batch_size: 10,
+        batch_delay_ms: 1000,
+        enable_batch_processing: true,
+        batch_retry_limit: 3,
+        base_url: '',
+        matter_filter_url: '',
+        page_timeout_ms: 30000,
+        product_detail_timeout_ms: 30000,
+        initial_concurrency: 5,
+        detail_concurrency: 5,
+        retry_concurrency: 2,
+        min_request_delay_ms: 500,
+        max_request_delay_ms: 1000,
+        retry_start: 1000,
+        retry_max: 3,
+        cache_ttl_ms: 3600000,
+        headless_browser: true,
+        max_concurrent_tasks: 5,
+        request_delay: 500,
+        logging: {
+          level: 'info',
+          enable_stack_trace: true,
+          enable_timestamp: true,
+          components: {
+            crawler: 'info',
+            parser: 'info',
+            network: 'info',
+            database: 'info'
+          }
+        }
+      };
+      
+      this.setConfig(fallbackConfig);
+      return fallbackConfig;
+    }
   }
 }
 
