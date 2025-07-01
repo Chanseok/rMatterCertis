@@ -38,6 +38,7 @@ impl Default for HttpClientConfig {
 }
 
 /// HTTP client with built-in rate limiting and error handling
+#[derive(Clone)]
 pub struct HttpClient {
     client: Client,
     config: HttpClientConfig,

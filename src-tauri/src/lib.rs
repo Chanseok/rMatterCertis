@@ -21,7 +21,19 @@ pub mod domain {
     pub mod entities;
     pub mod events;
     pub mod repositories;
-    pub mod services;
+    pub mod services {
+        //! Domain services for business logic
+        pub mod product_service;
+        pub mod crawling_services;
+        
+        // Re-export commonly used items
+        pub use product_service::ProductService;
+        pub use crawling_services::{
+            StatusChecker, DatabaseAnalyzer, ProductListCollector, ProductDetailCollector,
+            SiteStatus, DatabaseAnalysis, FieldAnalysis, DuplicateAnalysis, DuplicateGroup,
+            DuplicateType, ProcessingStrategy
+        };
+    }
     pub mod session_manager;
     pub mod product;
     pub mod matter_product;

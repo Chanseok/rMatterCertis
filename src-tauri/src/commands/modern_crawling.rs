@@ -74,7 +74,7 @@ pub async fn start_crawling(
     // 비동기 태스크에서 사용할 변수들 복제
     let session_id_for_task = session_id.clone();
     let _app_handle_for_task = app_handle.clone();
-    let crawling_config = crate::infrastructure::BatchCrawlingConfig {
+    let crawling_config = crate::infrastructure::service_based_crawling_engine::BatchCrawlingConfig {
         start_page: config.start_page,
         end_page: config.end_page,
         concurrency: config.concurrency,
@@ -143,8 +143,8 @@ pub async fn start_crawling(
             crate::infrastructure::IntegratedProductRepository::new(db_pool)
         );
 
-        // 배치 크롤링 엔진 생성 및 실행
-        let engine = crate::infrastructure::BatchCrawlingEngine::new(
+        // 배치 크롤링 엔진 생성 및 실행 (새로운 서비스 기반 엔진 사용)
+        let engine = crate::infrastructure::service_based_crawling_engine::ServiceBasedBatchCrawlingEngine::new(
             http_client,
             data_extractor,
             product_repo,

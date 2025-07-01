@@ -12,13 +12,19 @@ use chrono::{DateTime, Utc};
 pub enum CrawlingStage {
     /// System is idle, no crawling in progress
     Idle,
+    /// Checking site status and accessibility
+    StatusCheck,
+    /// Analyzing current database state
+    DatabaseAnalysis,
     /// Discovering total number of pages to crawl
     TotalPages,
     /// Collecting product list from pages
     ProductList,
     /// Collecting detailed product information
-    ProductDetail,
+    ProductDetails,
     /// Saving data to database
+    DatabaseSave,
+    /// Legacy database stage (keeping for backward compatibility)
     Database,
 }
 
@@ -26,10 +32,13 @@ impl std::fmt::Display for CrawlingStage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CrawlingStage::Idle => write!(f, "대기"),
+            CrawlingStage::StatusCheck => write!(f, "사이트 상태 확인"),
+            CrawlingStage::DatabaseAnalysis => write!(f, "데이터베이스 분석"),
             CrawlingStage::TotalPages => write!(f, "총 페이지 수 확인"),
             CrawlingStage::ProductList => write!(f, "제품 목록 수집"),
-            CrawlingStage::ProductDetail => write!(f, "제품 상세정보 수집"),
-            CrawlingStage::Database => write!(f, "데이터베이스 저장"),
+            CrawlingStage::ProductDetails => write!(f, "제품 상세정보 수집"),
+            CrawlingStage::DatabaseSave => write!(f, "데이터베이스 저장"),
+            CrawlingStage::Database => write!(f, "데이터베이스 저장"), // 레거시 호환성
         }
     }
 }

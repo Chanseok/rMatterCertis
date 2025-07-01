@@ -207,7 +207,7 @@ impl BatchCrawlingEngine {
         info!("Stage 3: Collecting product details from {} URLs", product_urls.len());
         
         let total_products = product_urls.len() as u32;
-        self.emit_progress(CrawlingStage::ProductDetail, 0, total_products, 0.0,
+        self.emit_progress(CrawlingStage::ProductDetails, 0, total_products, 0.0,
             "제품 상세정보를 수집하는 중...").await?;
 
         let semaphore = Arc::new(Semaphore::new(self.config.concurrency as usize));
@@ -267,7 +267,7 @@ impl BatchCrawlingEngine {
             completed_products += batch.len() as u32;
             let progress = (completed_products as f64 / total_products as f64) * 100.0;
             
-            self.emit_progress(CrawlingStage::ProductDetail, completed_products, total_products, 
+            self.emit_progress(CrawlingStage::ProductDetails, completed_products, total_products, 
                 progress, &format!("{}/{} 제품 상세정보 수집 완료", completed_products, total_products)).await?;
         }
 
@@ -380,7 +380,7 @@ impl BatchCrawlingEngine {
                 stages_completed: vec![
                     CrawlingStage::TotalPages,
                     CrawlingStage::ProductList,
-                    CrawlingStage::ProductDetail,
+                    CrawlingStage::ProductDetails,
                     CrawlingStage::Database,
                 ],
                 start_time: chrono::Utc::now() - chrono::Duration::milliseconds(duration.as_millis() as i64),

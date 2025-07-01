@@ -96,6 +96,7 @@ impl Default for MatterExtractorConfig {
 }
 
 /// Specialized data extractor for Matter certification websites
+#[derive(Clone)]
 pub struct MatterDataExtractor {
     config: MatterExtractorConfig,
 }
