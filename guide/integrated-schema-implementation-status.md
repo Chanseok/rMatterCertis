@@ -1,6 +1,6 @@
 # Matter Certis v2 - Integrated Database Schema Implementation
 
-## 📋 프로젝트 상태 (2025년 6월 29일)
+## 📋 프로젝트 상태 (2025년 7월 2일)
 
 ### ✅ 완료된 작업
 
@@ -29,7 +29,14 @@
 - [x] 페이징 및 필터링 지원
 - [x] 통계 및 분석 기능 구현
 
-#### 5. 애플리케이션 계층 준비
+#### 5. 마이그레이션 코드 업데이트
+- [x] `DatabaseConnection.migrate()` 메소드 리팩토링
+- [x] 003_integrated_schema.sql 파일 기반 마이그레이션 구현
+- [x] 레거시 데이터 마이그레이션 자동 적용 (004_migrate_legacy_data.sql)
+- [x] 오래된 마이그레이션 파일 아카이브 처리 (001_initial.sql, 002_matter_products.sql)
+- [x] 개선된 로깅 및 오류 처리 추가
+
+#### 6. 애플리케이션 계층 준비
 - [x] 통합 스키마용 Tauri 명령어 생성 (commands_integrated.rs)
 - [x] 모듈 등록 및 구조 정리
 - [x] 프로덕션 데이터베이스 연결 설정
