@@ -131,6 +131,19 @@ impl AdvancedBatchCrawlingEngine {
         let start_time = Instant::now();
         info!("Starting advanced batch crawling with data processing pipeline for session: {}", self.session_id);
 
+        // 배치 진행 추적 시작
+        let batch_id = format!("batch_{}", self.session_id);
+        self.progress_tracker.update_progress(&batch_id, crate::domain::services::data_processing_services::BatchProgress {
+            batch_id: batch_id.clone(),
+            total_items: 100,
+            processed_items: 0,
+            successful_items: 0,
+            failed_items: 0,
+            progress_percentage: 0.0,
+            estimated_remaining_time: Some(360), // 6분 예상
+            current_stage: "초기화".to_string(),
+        }).await?;
+
         // 세션 시작 이벤트
         self.emit_detailed_event(DetailedCrawlingEvent::SessionStarted {
             session_id: self.session_id.clone(),
@@ -140,31 +153,50 @@ impl AdvancedBatchCrawlingEngine {
         let mut total_products = 0;
         let mut success_rate = 0.0;
 
-        // Stage 0: 사이트 상태 확인
-        let site_status = self.stage0_check_site_status().await?;
-        
-        // Stage 1: 데이터베이스 분석
-        let _db_analysis = self.stage1_analyze_database().await?;
-        
-        // Stage 2: 제품 목록 수집
-        let product_urls = self.stage2_collect_product_list(site_status.total_pages).await?;
-        
-        // Stage 3: 제품 상세정보 수집
-        let raw_products = self.stage3_collect_product_details(&product_urls).await?;
-        
-        // Stage 4: 고급 데이터 처리 파이프라인
-        let processed_products = self.stage4_process_data_pipeline(raw_products).await?;
-        total_products = processed_products.len() as u32;
-        
-        // Stage 5: 데이터베이스 저장
-        let (processed_count, _new_items, _updated_items, errors) = self.stage5_save_to_database(processed_products).await?;
-        
-        // 성공률 계산
-        success_rate = if processed_count > 0 {
-            (processed_count - errors) as f64 / processed_count as f64
-        } else {
-            0.0
-        };
+        // 에러 처리 및 복구를 위한 변수들
+        let mut execution_result = Ok(());
+
+        // 전체 실행을 try-catch로 감싸서 오류 처리
+        match self.execute_with_error_handling(&batch_id).await {
+            Ok((products_count, calculated_success_rate)) => {
+                total_products = products_count;
+                success_rate = calculated_success_rate;
+                
+                // 배치 완료
+                let batch_result = crate::domain::services::data_processing_services::BatchResult {
+                    batch_id: batch_id.clone(),
+                    total_processed: total_products,
+                    successful: (total_products as f64 * success_rate) as u32,
+                    failed: total_products - (total_products as f64 * success_rate) as u32,
+                    duration_ms: start_time.elapsed().as_millis() as u64,
+                    errors: vec![],
+                };
+                self.progress_tracker.complete_batch(&batch_id, batch_result).await?;
+            }
+            Err(e) => {
+                warn!("Batch execution failed: {}", e);
+                
+                // 에러 분류 및 복구 시도
+                let _error_type = self.error_classifier.classify(&e.to_string()).await?;
+                let _severity = self.error_classifier.assess_severity(&e.to_string()).await?;
+                let is_recoverable = self.error_classifier.assess_recoverability(&e.to_string()).await?;
+                
+                if is_recoverable {
+                    info!("Attempting error recovery for batch {}", batch_id);
+                    match self.recovery_service.recover_parsing_error(&e.to_string()).await {
+                        Ok(recovery_action) => {
+                            info!("Recovery action determined: {:?}", recovery_action);
+                            // 복구 액션에 따른 처리는 향후 확장
+                        }
+                        Err(recovery_err) => {
+                            warn!("Recovery failed: {}", recovery_err);
+                        }
+                    }
+                }
+                
+                execution_result = Err(e);
+            }
+        }
 
         let duration = start_time.elapsed();
         info!("Advanced batch crawling completed in {:?}", duration);
@@ -177,7 +209,111 @@ impl AdvancedBatchCrawlingEngine {
             success_rate,
         }).await?;
         
-        Ok(())
+        execution_result
+    }
+
+    /// 에러 처리가 포함된 실제 실행 로직
+    async fn execute_with_error_handling(&self, batch_id: &str) -> Result<(u32, f64)> {
+
+        // Stage 0: 사이트 상태 확인
+        let site_status = self.stage0_check_site_status().await?;
+        
+        // 진행률 업데이트
+        self.progress_tracker.update_progress(batch_id, crate::domain::services::data_processing_services::BatchProgress {
+            batch_id: batch_id.to_string(),
+            total_items: 100, // 예상 총 작업 수
+            processed_items: 10,
+            successful_items: 10,
+            failed_items: 0,
+            progress_percentage: 10.0,
+            estimated_remaining_time: Some(300), // 5분 예상
+            current_stage: "사이트 상태 확인".to_string(),
+        }).await?;
+        
+        // Stage 1: 데이터베이스 분석
+        let _db_analysis = self.stage1_analyze_database().await?;
+        
+        // 진행률 업데이트
+        self.progress_tracker.update_progress(batch_id, crate::domain::services::data_processing_services::BatchProgress {
+            batch_id: batch_id.to_string(),
+            total_items: 100,
+            processed_items: 20,
+            successful_items: 20,
+            failed_items: 0,
+            progress_percentage: 20.0,
+            estimated_remaining_time: Some(240),
+            current_stage: "데이터베이스 분석".to_string(),
+        }).await?;
+        
+        // Stage 2: 제품 목록 수집
+        let product_urls = self.stage2_collect_product_list(site_status.total_pages).await?;
+        
+        // 진행률 업데이트
+        self.progress_tracker.update_progress(batch_id, crate::domain::services::data_processing_services::BatchProgress {
+            batch_id: batch_id.to_string(),
+            total_items: 100,
+            processed_items: 40,
+            successful_items: 40,
+            failed_items: 0,
+            progress_percentage: 40.0,
+            estimated_remaining_time: Some(180),
+            current_stage: "제품 목록 수집".to_string(),
+        }).await?;
+        
+        // Stage 3: 제품 상세정보 수집
+        let raw_products = self.stage3_collect_product_details(&product_urls).await?;
+        
+        // 진행률 업데이트
+        self.progress_tracker.update_progress(batch_id, crate::domain::services::data_processing_services::BatchProgress {
+            batch_id: batch_id.to_string(),
+            total_items: 100,
+            processed_items: 70,
+            successful_items: 70,
+            failed_items: 0,
+            progress_percentage: 70.0,
+            estimated_remaining_time: Some(90),
+            current_stage: "제품 상세정보 수집".to_string(),
+        }).await?;
+        
+        // Stage 4: 고급 데이터 처리 파이프라인
+        let processed_products = self.stage4_process_data_pipeline(raw_products).await?;
+        let total_products = processed_products.len() as u32;
+        
+        // 진행률 업데이트
+        self.progress_tracker.update_progress(batch_id, crate::domain::services::data_processing_services::BatchProgress {
+            batch_id: batch_id.to_string(),
+            total_items: 100,
+            processed_items: 90,
+            successful_items: 90,
+            failed_items: 0,
+            progress_percentage: 90.0,
+            estimated_remaining_time: Some(30),
+            current_stage: "고급 데이터 처리".to_string(),
+        }).await?;
+        
+        // Stage 5: 데이터베이스 저장
+        let (processed_count, _new_items, _updated_items, errors) = self.stage5_save_to_database(processed_products).await?;
+        
+        // 성공률 계산
+        let success_rate = if processed_count > 0 {
+            (processed_count - errors) as f64 / processed_count as f64
+        } else {
+            0.0
+        };
+
+        // 최종 진행률 업데이트
+        self.progress_tracker.update_progress(batch_id, crate::domain::services::data_processing_services::BatchProgress {
+            batch_id: batch_id.to_string(),
+            total_items: 100,
+            processed_items: 100,
+            successful_items: (processed_count - errors) as u32,
+            failed_items: errors as u32,
+            progress_percentage: 100.0,
+            estimated_remaining_time: Some(0),
+            current_stage: "완료".to_string(),
+        }).await?;
+
+        Ok((total_products, success_rate))
     }
 
     /// Stage 0: 사이트 상태 확인

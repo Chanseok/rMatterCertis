@@ -143,8 +143,8 @@ pub async fn start_crawling(
             crate::infrastructure::IntegratedProductRepository::new(db_pool)
         );
 
-        // 배치 크롤링 엔진 생성 및 실행 (새로운 서비스 기반 엔진 사용)
-        let engine = crate::infrastructure::service_based_crawling_engine::ServiceBasedBatchCrawlingEngine::new(
+        // 고급 배치 크롤링 엔진 생성 및 실행 (고급 데이터 처리 파이프라인 포함)
+        let engine = crate::infrastructure::advanced_crawling_engine::AdvancedBatchCrawlingEngine::new(
             http_client,
             data_extractor,
             product_repo,
