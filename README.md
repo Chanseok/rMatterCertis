@@ -473,3 +473,14 @@ npm run tauri build  # Build complete application
 - **목적**: 개발 히스토리 보존하면서 프로젝트 구조 정리
 
 필요시 복원: `cd src-tauri/src/application/archive/ && unzip use_cases_archive_*.zip`
+
+## 🧹 Code Cleanup & Modernization
+
+As part of the ongoing modernization effort:
+- Legacy UI components have been moved to `src/legacy/` directory and excluded from TypeScript checking
+- The application now uses a modern tab-based UI structure based on SolidJS
+- Entry point has been updated to use `AppTabBased.tsx`
+- All TypeScript errors have been resolved for active codebase
+- Project structure follows clean architecture principles outlined in the guides
+
+For more information on the UI implementation, see [SolidJS-UI-Implementation-Guide.md](./guide/SolidJS-UI-Implementation-Guide.md).
