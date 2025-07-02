@@ -45,118 +45,80 @@ impl DatabaseConnection {
     }
 
     pub async fn migrate(&self) -> Result<()> {
+        use std::fs;
+        use tracing::{info, warn};
+        
         // Enable foreign key constraints
         sqlx::query("PRAGMA foreign_keys = ON").execute(&self.pool).await?;
         
-        // Create Matter certification vendors table
-        let create_vendors_sql = r#"
-            CREATE TABLE IF NOT EXISTS vendors (
-                vendor_id TEXT PRIMARY KEY,
-                vendor_number INTEGER NOT NULL,
-                vendor_name TEXT NOT NULL,
-                company_legal_name TEXT NOT NULL,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        // Load and run the integrated schema SQL (003_integrated_schema.sql)
+        info!("📦 Applying integrated schema migration...");
+        let schema_path = std::path::Path::new("migrations/003_integrated_schema.sql");
+        
+        if schema_path.exists() {
+            let schema_sql = fs::read_to_string(schema_path)?;
+            sqlx::query(&schema_sql).execute(&self.pool).await?;
+            info!("✅ Applied integrated schema successfully");
+        } else {
+            // Fallback to embedded schema if file doesn't exist
+            warn!("⚠️ Schema file not found, using embedded schema");
+            
+            // Read schema from embedded file or resources
+            let schema_sql = include_str!("../../migrations/003_integrated_schema.sql");
+            sqlx::query(schema_sql).execute(&self.pool).await?;
+            info!("✅ Applied embedded integrated schema");
+        }
+        
+        // Check if we need to migrate legacy data
+        let has_legacy_data = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='matter_products'"
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        
+        if has_legacy_data > 0 {
+            // Check if there's data to migrate
+            let legacy_count = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM matter_products"
             )
-        "#;
-
-        // Create basic products table (Stage 1 collection result)
-        let create_products_sql = r#"
-            CREATE TABLE IF NOT EXISTS products (
-                url TEXT PRIMARY KEY,
-                manufacturer TEXT,
-                model TEXT,
-                certificate_id TEXT,
-                page_id INTEGER,
-                index_in_page INTEGER,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        "#;
-
-        // Create detailed Matter products table (Stage 2 collection result)
-        let create_matter_products_sql = r#"
-            CREATE TABLE IF NOT EXISTS matter_products (
-                url TEXT PRIMARY KEY,
-                page_id INTEGER,
-                index_in_page INTEGER,
-                id TEXT,
-                manufacturer TEXT,
-                model TEXT,
-                device_type TEXT,
-                certificate_id TEXT,
-                certification_date TEXT,
-                software_version TEXT,
-                hardware_version TEXT,
-                vid TEXT,
-                pid TEXT,
-                family_sku TEXT,
-                family_variant_sku TEXT,
-                firmware_version TEXT,
-                family_id TEXT,
-                tis_trp_tested TEXT,
-                specification_version TEXT,
-                transport_interface TEXT,
-                primary_device_type_id TEXT,
-                application_categories TEXT, -- JSON array as string
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (url) REFERENCES products (url) ON DELETE CASCADE
-            )
-        "#;
-
-        // Create crawling sessions table
-        let create_sessions_sql = r#"
-            CREATE TABLE IF NOT EXISTS crawling_sessions (
-                id TEXT PRIMARY KEY,
-                status TEXT NOT NULL DEFAULT 'Idle',
-                current_stage TEXT NOT NULL DEFAULT 'Idle',
-                total_pages INTEGER,
-                processed_pages INTEGER NOT NULL DEFAULT 0,
-                products_found INTEGER NOT NULL DEFAULT 0,
-                errors_count INTEGER NOT NULL DEFAULT 0,
-                started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                completed_at DATETIME,
-                config_snapshot TEXT -- JSON snapshot of crawler config
-            )
-        "#;
-
-        // Create crawling results table for final session outcomes
-        let create_crawling_results_sql = r#"
-            CREATE TABLE IF NOT EXISTS crawling_results (
-                session_id TEXT PRIMARY KEY,
-                status TEXT NOT NULL,
-                stage TEXT NOT NULL,
-                total_pages INTEGER NOT NULL,
-                products_found INTEGER NOT NULL,
-                errors_count INTEGER NOT NULL,
-                started_at DATETIME NOT NULL,
-                completed_at DATETIME NOT NULL,
-                execution_time_seconds INTEGER NOT NULL,
-                config_snapshot TEXT,
-                error_details TEXT
-            )
-        "#;
-
-        // Create indexes for performance
-        let create_indexes_sql = r#"
-            CREATE INDEX IF NOT EXISTS idx_products_page_id ON products (page_id);
-            CREATE INDEX IF NOT EXISTS idx_products_manufacturer ON products (manufacturer);
-            CREATE INDEX IF NOT EXISTS idx_matter_products_vid ON matter_products (vid);
-            CREATE INDEX IF NOT EXISTS idx_matter_products_pid ON matter_products (pid);
-            CREATE INDEX IF NOT EXISTS idx_matter_products_device_type ON matter_products (device_type);
-            CREATE INDEX IF NOT EXISTS idx_matter_products_created_at ON matter_products (created_at);
-            CREATE INDEX IF NOT EXISTS idx_sessions_status ON crawling_sessions (status);
-            CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON crawling_sessions (started_at);
-            CREATE INDEX IF NOT EXISTS idx_vendors_vendor_name ON vendors (vendor_name);
-        "#;
-
-        // Execute all table creation and index creation
-        sqlx::query(create_vendors_sql).execute(&self.pool).await?;
-        sqlx::query(create_products_sql).execute(&self.pool).await?;
-        sqlx::query(create_matter_products_sql).execute(&self.pool).await?;
-        sqlx::query(create_sessions_sql).execute(&self.pool).await?;
-        sqlx::query(create_crawling_results_sql).execute(&self.pool).await?;
-        sqlx::query(create_indexes_sql).execute(&self.pool).await?;
-
+            .fetch_one(&self.pool)
+            .await?;
+            
+            if legacy_count > 0 {
+                info!("🔄 Found {} legacy records to migrate", legacy_count);
+                
+                // Apply data migration script
+                let migration_path = std::path::Path::new("migrations/004_migrate_legacy_data.sql");
+                
+                if migration_path.exists() {
+                    let migration_sql = fs::read_to_string(migration_path)?;
+                    sqlx::query(&migration_sql).execute(&self.pool).await?;
+                    info!("✅ Migrated legacy data successfully");
+                } else {
+                    // Fallback to embedded migration script
+                    let migration_sql = include_str!("../../migrations/004_migrate_legacy_data.sql");
+                    sqlx::query(migration_sql).execute(&self.pool).await?;
+                    info!("✅ Migrated legacy data using embedded script");
+                }
+            } else {
+                info!("ℹ️ No legacy data to migrate");
+            }
+        } else {
+            info!("ℹ️ No legacy tables found, fresh installation");
+        }
+        
+        // Report on database status
+        let product_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products")
+            .fetch_one(&self.pool)
+            .await?;
+            
+        let details_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM product_details")
+            .fetch_one(&self.pool)
+            .await?;
+            
+        info!("📊 Database initialized with {} products and {} detailed records", 
+            product_count, details_count);
+            
         Ok(())
     }
 }
