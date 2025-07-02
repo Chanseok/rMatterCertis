@@ -17,6 +17,7 @@ use crate::domain::services::{
 };
 use crate::domain::product::Product;
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository, csa_iot};
+use crate::infrastructure::config::AppConfig;
 
 /// 사이트 상태 체크 서비스 구현체
 pub struct StatusCheckerImpl {
@@ -28,6 +29,7 @@ impl StatusCheckerImpl {
     pub fn new(
         http_client: HttpClient,
         data_extractor: MatterDataExtractor,
+        _config: AppConfig,  // 현재는 사용하지 않지만 나중을 위해 남겨둠
     ) -> Self {
         Self {
             http_client: Arc::new(tokio::sync::Mutex::new(http_client)),
@@ -42,8 +44,8 @@ impl StatusChecker for StatusCheckerImpl {
         let start_time = Instant::now();
         info!("Checking site status...");
 
+        // 기존 방식으로 페이지 수 추출
         let url = format!("{}?page=1", csa_iot::PRODUCTS_PAGE_MATTER_ONLY);
-        
         let mut client = self.http_client.lock().await;
         let html = match client.fetch_html_string(&url).await {
             Ok(html) => html,
@@ -60,16 +62,37 @@ impl StatusChecker for StatusCheckerImpl {
             }
         };
 
-        let response_time = start_time.elapsed().as_millis() as u64;
-        
-        // 총 페이지 수 추출
+        // 기존 방식을 개선하여 페이지 수 추출 로직을 강화
         let total_pages = match self.data_extractor.extract_total_pages(&html) {
-            Ok(pages) => pages,
+            Ok(pages) => {
+                info!("Successfully extracted total pages: {}", pages);
+                pages
+            },
             Err(_) => {
-                warn!("Could not extract total pages from site");
-                50 // 기본값
+                // 페이지네이션 링크에서 최대 페이지 번호 찾기 (PageDiscoveryService 로직 일부 통합)
+                let doc = scraper::Html::parse_document(&html);
+                let link_selector = scraper::Selector::parse("a[href*='page']").unwrap();
+                let mut max_page = 1;
+                
+                for element in doc.select(&link_selector) {
+                    if let Some(href) = element.value().attr("href") {
+                        if let Some(page_num) = extract_page_number(href) {
+                            max_page = max_page.max(page_num);
+                        }
+                    }
+                }
+                
+                if max_page > 1 {
+                    info!("Found max page {} from pagination links", max_page);
+                    max_page as u32
+                } else {
+                    warn!("Could not extract total pages from site, using default");
+                    50 // 기본값
+                }
             }
         };
+
+        let response_time = start_time.elapsed().as_millis() as u64;
 
         // 건강도 점수 계산 (응답시간, 접근성 기반)
         let health_score = if response_time < 3000 { 1.0 }
@@ -430,4 +453,27 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
 
         Ok(products)
     }
+}
+
+/// URL에서 페이지 번호 추출 (PageDiscoveryService에서 가져온 기능)
+fn extract_page_number(url: &str) -> Option<u32> {
+    if let Some(captures) = regex::Regex::new(r"[?&]page[d]?=(\d+)")
+        .ok()
+        .and_then(|re| re.captures(url)) 
+    {
+        if let Some(num_match) = captures.get(1) {
+            return num_match.as_str().parse().ok();
+        }
+    }
+    
+    if let Some(captures) = regex::Regex::new(r"/page/(\d+)")
+        .ok()
+        .and_then(|re| re.captures(url))
+    {
+        if let Some(num_match) = captures.get(1) {
+            return num_match.as_str().parse().ok();
+        }
+    }
+    
+    None
 }

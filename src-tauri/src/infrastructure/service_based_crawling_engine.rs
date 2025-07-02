@@ -17,6 +17,7 @@ use crate::domain::product::Product;
 use crate::application::EventEmitter;
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
 use crate::infrastructure::crawling_service_impls::*;
+use crate::infrastructure::config::AppConfig;
 
 /// 배치 크롤링 설정
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -117,11 +118,15 @@ impl ServiceBasedBatchCrawlingEngine {
             batch_size: config.batch_size,
             retry_max: config.retry_max,
         };
+        
+        // 기본 앱 설정 로드
+        let app_config = AppConfig::default();
 
         // 서비스 인스턴스 생성
         let status_checker = Arc::new(StatusCheckerImpl::new(
             http_client.clone(),
             data_extractor.clone(),
+            app_config,
         )) as Arc<dyn StatusChecker>;
 
         let database_analyzer = Arc::new(DatabaseAnalyzerImpl::new(
@@ -163,9 +168,6 @@ impl ServiceBasedBatchCrawlingEngine {
             config: self.config.clone(),
         }).await?;
 
-        let mut total_products = 0;
-        let mut success_rate = 0.0;
-
         // Stage 0: 사이트 상태 확인
         let site_status = self.stage0_check_site_status().await?;
         
@@ -177,20 +179,21 @@ impl ServiceBasedBatchCrawlingEngine {
         
         // Stage 3: 제품 상세정보 수집
         let products = self.stage3_collect_product_details(&product_urls).await?;
-        total_products = products.len() as u32;
+        let total_products = products.len() as u32;
         
         // Stage 4: 데이터베이스 저장
         let (processed_count, _new_items, _updated_items, errors) = self.stage4_save_to_database(products).await?;
         
         // 성공률 계산
-        success_rate = if processed_count > 0 {
+        let success_rate = if processed_count > 0 {
             (processed_count - errors) as f64 / processed_count as f64
         } else {
             0.0
         };
 
         let duration = start_time.elapsed();
-        info!("Service-based batch crawling completed in {:?}", duration);
+        info!("Service-based batch crawling completed in {:?}: {} products collected, {:.2}% success rate", 
+            duration, total_products, success_rate * 100.0);
         
         // 세션 완료 이벤트
         self.emit_detailed_event(DetailedCrawlingEvent::SessionCompleted {

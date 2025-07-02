@@ -20,7 +20,8 @@ use crate::infrastructure::{
     HttpClient, MatterDataExtractor, IntegratedProductRepository,
     StatusCheckerImpl, DatabaseAnalyzerImpl, ProductListCollectorImpl, 
     ProductDetailCollectorImpl, CollectorConfig,
-    DeduplicationServiceImpl, ValidationServiceImpl, ConflictResolverImpl
+    DeduplicationServiceImpl, ValidationServiceImpl, ConflictResolverImpl,
+    config::AppConfig
 };
 use crate::infrastructure::data_processing_service_impls::{
     BatchProgressTrackerImpl, BatchRecoveryServiceImpl, RetryManagerImpl, ErrorClassifierImpl
@@ -74,10 +75,14 @@ impl AdvancedBatchCrawlingEngine {
             retry_max: config.retry_max,
         };
 
+        // 기본 앱 설정 로드
+        let app_config = AppConfig::default();
+
         // 기존 서비스 인스턴스 생성
         let status_checker = Arc::new(StatusCheckerImpl::new(
             http_client.clone(),
             data_extractor.clone(),
+            app_config,
         )) as Arc<dyn StatusChecker>;
 
         let database_analyzer = Arc::new(DatabaseAnalyzerImpl::new(
