@@ -12,7 +12,9 @@ pub mod parsing;  // Modern parsing architecture following the guide
 pub mod crawling;  // Web crawler implementation
 pub mod crawling_engine;  // 4-stage batch crawling engine
 pub mod service_based_crawling_engine;  // New service-based crawling engine
+pub mod advanced_crawling_engine;  // Phase 2 advanced crawling engine with data pipeline
 pub mod crawling_service_impls;  // Service implementations
+pub mod data_processing_service_impls;  // Data processing service implementations
 pub mod config;  // Configuration constants and helpers
 pub mod logging;  // Logging infrastructure
 
@@ -37,7 +39,9 @@ pub use parsing::{ParsingConfig, ParsingError, ParsingResult, ProductListParser,
 pub use crawling::WebCrawler;
 pub use crawling_engine::{BatchCrawlingEngine, BatchCrawlingConfig};
 pub use service_based_crawling_engine::ServiceBasedBatchCrawlingEngine;
+pub use advanced_crawling_engine::AdvancedBatchCrawlingEngine;
 pub use crawling_service_impls::{StatusCheckerImpl, DatabaseAnalyzerImpl, ProductListCollectorImpl, ProductDetailCollectorImpl, CollectorConfig};
+pub use data_processing_service_impls::{DeduplicationServiceImpl, ValidationServiceImpl, ConflictResolverImpl};
 pub use logging::{init_logging, init_logging_with_config, get_log_directory};
 
 // Legacy compatibility through adapters

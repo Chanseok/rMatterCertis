@@ -8,6 +8,8 @@ pub struct Product {
     pub manufacturer: Option<String>,
     pub model: Option<String>,
     pub certificate_id: Option<String>,
+    pub device_type: Option<String>,
+    pub certification_date: Option<String>,
     pub page_id: Option<i32>,
     pub index_in_page: Option<i32>,
     pub created_at: DateTime<Utc>,

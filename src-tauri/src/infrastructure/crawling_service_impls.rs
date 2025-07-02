@@ -15,7 +15,7 @@ use crate::domain::services::{
     StatusChecker, DatabaseAnalyzer, ProductListCollector, ProductDetailCollector,
     SiteStatus, DatabaseAnalysis, FieldAnalysis, DuplicateAnalysis, ProcessingStrategy
 };
-use crate::domain::product::{Product, ProductDetail};
+use crate::domain::product::Product;
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository, csa_iot};
 
 /// 사이트 상태 체크 서비스 구현체
@@ -219,7 +219,7 @@ impl ProductListCollector for ProductListCollectorImpl {
     async fn collect_all_pages(&self, total_pages: u32) -> Result<Vec<String>> {
         info!("Collecting product URLs from {} pages", total_pages);
 
-        let semaphore = Arc::new(Semaphore::new(self.config.concurrency as usize));
+        let _semaphore = Arc::new(Semaphore::new(self.config.concurrency as usize));
         let mut all_product_urls = Vec::new();
 
         // 배치별로 페이지 처리

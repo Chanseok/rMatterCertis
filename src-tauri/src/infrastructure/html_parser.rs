@@ -291,6 +291,8 @@ impl MatterDataExtractor {
             manufacturer: self.extract_text_from_element(&container, &self.config.product_list_selectors.manufacturer),
             model: self.extract_text_from_element(&container, &self.config.product_list_selectors.model),
             certificate_id: self.extract_text_from_element(&container, &self.config.product_list_selectors.certificate_id),
+            device_type: None, // Not available in product list parsing
+            certification_date: None, // Not available in product list parsing
             page_id: Some(page_id),
             index_in_page: Some(index),
             created_at: now,

@@ -176,6 +176,8 @@ impl ProductListParser {
             manufacturer: Some(brand.trim().to_string()).filter(|s| s != "Unknown" && !s.is_empty()),
             model: Some(model_name.trim().to_string()).filter(|s| !s.is_empty()),
             certificate_id: Some(category.trim().to_string()).filter(|s| s != "Unknown" && !s.is_empty()),
+            device_type: None, // Not available in product list parsing
+            certification_date: None, // Not available in product list parsing
             page_id: Some(context.page_id as i32),
             index_in_page: Some(index as i32),
             created_at: now,

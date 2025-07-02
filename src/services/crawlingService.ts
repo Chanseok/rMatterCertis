@@ -1,31 +1,51 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { 
-  StartCrawlingRequest, 
-  CrawlingSessionState, 
-  CrawlingStats,
-  CrawlingStatusResponse,
   Product,
   MatterProduct,
   ProductSearchRequest,
   ProductSearchResult,
   MatterProductFilter,
-  DatabaseSummary
+  DatabaseSummary,
+  BackendCrawlerConfig
 } from "../types/crawling";
+
+// 현대적인 타입 정의 (레거시 코드 제거)
+export interface ModernStartCrawlingRequest {
+  config: BackendCrawlerConfig;
+}
+
+export interface SessionStatusDto {
+  session_id: string;
+  status: string;
+  progress: number;
+  current_step: string;
+  started_at: string;
+  last_updated: string;
+}
+
+export interface ModernCrawlingStats {
+  total_sessions: number;
+  active_sessions: number;
+  completed_sessions: number;
+  total_pages_crawled: number;
+  average_success_rate: number;
+  database_stats: DatabaseSummary;
+}
 
 export class CrawlingService {
   
   /**
-   * Start a new crawling session
+   * Start a new crawling session with modern configuration
    */
-  static async startCrawling(request: StartCrawlingRequest): Promise<string> {
-    return await invoke<string>("start_crawling", { request });
+  static async startCrawling(config: BackendCrawlerConfig): Promise<string> {
+    return await invoke<string>("start_crawling", { config });
   }
 
   /**
-   * Get status of a crawling session
+   * Get status of a crawling session (modern)
    */
-  static async getCrawlingStatus(sessionId: string): Promise<CrawlingStatusResponse> {
-    return await invoke<CrawlingStatusResponse>("get_crawling_status", { sessionId });
+  static async getCrawlingStatus(sessionId: string): Promise<SessionStatusDto> {
+    return await invoke<SessionStatusDto>("get_crawling_status", { sessionId });
   }
 
   /**
@@ -50,24 +70,24 @@ export class CrawlingService {
   }
 
   /**
-   * Get overall crawling statistics
+   * Get overall crawling statistics (modern)
    */
-  static async getCrawlingStats(): Promise<CrawlingStats> {
-    return await invoke<CrawlingStats>("get_enhanced_crawling_stats");
+  static async getCrawlingStats(): Promise<ModernCrawlingStats> {
+    return await invoke<ModernCrawlingStats>("get_enhanced_crawling_stats");
   }
 
   /**
-   * Get all active crawling sessions
+   * Get all active crawling sessions (modern)
    */
-  static async getActiveSessions(): Promise<CrawlingSessionState[]> {
-    return await invoke<CrawlingSessionState[]>("get_active_crawling_sessions");
+  static async getActiveSessions(): Promise<SessionStatusDto[]> {
+    return await invoke<SessionStatusDto[]>("get_active_crawling_sessions");
   }
 
   /**
-   * Get crawling session history
+   * Get crawling session history (modern)
    */
-  static async getSessionHistory(): Promise<CrawlingSessionState[]> {
-    return await invoke<CrawlingSessionState[]>("get_crawling_session_history");
+  static async getSessionHistory(): Promise<SessionStatusDto[]> {
+    return await invoke<SessionStatusDto[]>("get_crawling_session_history");
   }
 
   /**

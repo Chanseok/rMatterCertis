@@ -25,6 +25,7 @@ pub mod domain {
         //! Domain services for business logic
         pub mod product_service;
         pub mod crawling_services;
+        pub mod data_processing_services;
         
         // Re-export commonly used items
         pub use product_service::ProductService;
@@ -32,6 +33,11 @@ pub mod domain {
             StatusChecker, DatabaseAnalyzer, ProductListCollector, ProductDetailCollector,
             SiteStatus, DatabaseAnalysis, FieldAnalysis, DuplicateAnalysis, DuplicateGroup,
             DuplicateType, ProcessingStrategy
+        };
+        pub use data_processing_services::{
+            DeduplicationService, ValidationService, ConflictResolver, BatchProgressTracker,
+            BatchRecoveryService, RetryManager, ErrorClassifier, DuplicationAnalysis,
+            ValidationResult, ConflictGroup, BatchProgress, RecoveryResult, ErrorClassification
         };
     }
     pub mod session_manager;

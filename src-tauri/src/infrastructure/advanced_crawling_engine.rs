@@ -1,96 +1,52 @@
-//! 개선된 배치 크롤링 엔진 - 서비스 레이어 분리 버전
+//! 고급 데이터 처리 파이프라인을 포함한 크롤링 엔진
 //! 
-//! 이 모듈은 guide/crawling 문서의 요구사항에 따라 각 단계를 
-//! 독립적인 서비스로 분리하여 구현한 엔터프라이즈급 크롤링 엔진입니다.
+//! 이 모듈은 Phase 2의 목표인 고급 데이터 처리 기능을 포함한
+//! 엔터프라이즈급 크롤링 엔진을 구현합니다.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use anyhow::{Result, anyhow};
 use tracing::{info, warn, debug};
 
 use crate::domain::services::{
     StatusChecker, DatabaseAnalyzer, ProductListCollector, ProductDetailCollector,
-    SiteStatus, DatabaseAnalysis
+    DeduplicationService, ValidationService, ConflictResolver,
+    BatchProgressTracker, BatchRecoveryService, ErrorClassifier
 };
 use crate::domain::events::{CrawlingProgress, CrawlingStage, CrawlingStatus};
 use crate::domain::product::Product;
 use crate::application::EventEmitter;
-use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
-use crate::infrastructure::crawling_service_impls::*;
+use crate::infrastructure::{
+    HttpClient, MatterDataExtractor, IntegratedProductRepository,
+    StatusCheckerImpl, DatabaseAnalyzerImpl, ProductListCollectorImpl, 
+    ProductDetailCollectorImpl, CollectorConfig,
+    DeduplicationServiceImpl, ValidationServiceImpl, ConflictResolverImpl
+};
+use crate::infrastructure::data_processing_service_impls::{
+    BatchProgressTrackerImpl, BatchRecoveryServiceImpl, RetryManagerImpl, ErrorClassifierImpl
+};
+use crate::infrastructure::service_based_crawling_engine::{BatchCrawlingConfig, DetailedCrawlingEvent};
+use crate::domain::services::data_processing_services::ResolutionStrategy;
 
-/// 배치 크롤링 설정
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BatchCrawlingConfig {
-    pub start_page: u32,
-    pub end_page: u32,
-    pub concurrency: u32,
-    pub delay_ms: u64,
-    pub batch_size: u32,
-    pub retry_max: u32,
-    pub timeout_ms: u64,
-}
-
-impl Default for BatchCrawlingConfig {
-    fn default() -> Self {
-        Self {
-            start_page: 1,
-            end_page: 100,
-            concurrency: 3,
-            delay_ms: 1000,
-            batch_size: 10,
-            retry_max: 3,
-            timeout_ms: 30000,
-        }
-    }
-}
-
-/// 세분화된 크롤링 이벤트 타입
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum DetailedCrawlingEvent {
-    SessionStarted { 
-        session_id: String, 
-        config: BatchCrawlingConfig 
-    },
-    StageStarted { 
-        stage: String, 
-        message: String 
-    },
-    StageCompleted { 
-        stage: String, 
-        items_processed: usize 
-    },
-    PageCompleted { 
-        page: u32, 
-        products_found: u32 
-    },
-    ProductProcessed { 
-        url: String, 
-        success: bool 
-    },
-    BatchCompleted { 
-        batch: u32, 
-        total: u32 
-    },
-    ErrorOccurred { 
-        stage: String, 
-        error: String, 
-        recoverable: bool 
-    },
-    SessionCompleted {
-        session_id: String,
-        duration: Duration,
-        total_products: u32,
-        success_rate: f64,
-    },
-}
-
-/// 서비스 기반 배치 크롤링 엔진
-pub struct ServiceBasedBatchCrawlingEngine {
-    // 서비스 레이어들
+/// Phase 2 고급 크롤링 엔진 - 데이터 처리 파이프라인 포함
+#[allow(dead_code)] // Phase 2.2에서 모든 필드가 사용될 예정
+pub struct AdvancedBatchCrawlingEngine {
+    // 기존 서비스 레이어들
     status_checker: Arc<dyn StatusChecker>,
     database_analyzer: Arc<dyn DatabaseAnalyzer>,
     product_list_collector: Arc<dyn ProductListCollector>,
     product_detail_collector: Arc<dyn ProductDetailCollector>,
+    
+    // 새로운 데이터 처리 서비스들
+    deduplication_service: Arc<dyn DeduplicationService>,
+    validation_service: Arc<dyn ValidationService>,
+    conflict_resolver: Arc<dyn ConflictResolver>,
+    
+    // 고급 관리 서비스들
+    progress_tracker: Arc<dyn BatchProgressTracker>,
+    recovery_service: Arc<dyn BatchRecoveryService>,
+    retry_manager: Arc<RetryManagerImpl>, // 구체적인 타입 사용 (dyn-compatibility 문제 해결)
+    error_classifier: Arc<dyn ErrorClassifier>,
     
     // 기존 컴포넌트들
     product_repo: Arc<IntegratedProductRepository>,
@@ -101,7 +57,7 @@ pub struct ServiceBasedBatchCrawlingEngine {
     session_id: String,
 }
 
-impl ServiceBasedBatchCrawlingEngine {
+impl AdvancedBatchCrawlingEngine {
     pub fn new(
         http_client: HttpClient,
         data_extractor: MatterDataExtractor,
@@ -118,7 +74,7 @@ impl ServiceBasedBatchCrawlingEngine {
             retry_max: config.retry_max,
         };
 
-        // 서비스 인스턴스 생성
+        // 기존 서비스 인스턴스 생성
         let status_checker = Arc::new(StatusCheckerImpl::new(
             http_client.clone(),
             data_extractor.clone(),
@@ -140,11 +96,29 @@ impl ServiceBasedBatchCrawlingEngine {
             collector_config,
         )) as Arc<dyn ProductDetailCollector>;
 
+        // 새로운 데이터 처리 서비스 인스턴스 생성
+        let deduplication_service = Arc::new(DeduplicationServiceImpl::new(0.85)) as Arc<dyn DeduplicationService>;
+        let validation_service = Arc::new(ValidationServiceImpl::new()) as Arc<dyn ValidationService>;
+        let conflict_resolver = Arc::new(ConflictResolverImpl::new(ResolutionStrategy::KeepMostComplete)) as Arc<dyn ConflictResolver>;
+
+        // 고급 관리 서비스 인스턴스 생성
+        let progress_tracker = Arc::new(BatchProgressTrackerImpl::new()) as Arc<dyn BatchProgressTracker>;
+        let recovery_service = Arc::new(BatchRecoveryServiceImpl::new()) as Arc<dyn BatchRecoveryService>;
+        let retry_manager = Arc::new(RetryManagerImpl::new(3, 1000)); // 구체적인 타입
+        let error_classifier = Arc::new(ErrorClassifierImpl::new()) as Arc<dyn ErrorClassifier>;
+
         Self {
             status_checker,
             database_analyzer,
             product_list_collector,
             product_detail_collector,
+            deduplication_service,
+            validation_service,
+            conflict_resolver,
+            progress_tracker,
+            recovery_service,
+            retry_manager,
+            error_classifier,
             product_repo,
             event_emitter,
             config,
@@ -152,10 +126,10 @@ impl ServiceBasedBatchCrawlingEngine {
         }
     }
 
-    /// 4단계 서비스 기반 크롤링 실행
+    /// 고급 데이터 처리 파이프라인을 포함한 크롤링 실행
     pub async fn execute(&self) -> Result<()> {
         let start_time = Instant::now();
-        info!("Starting service-based 4-stage batch crawling for session: {}", self.session_id);
+        info!("Starting advanced batch crawling with data processing pipeline for session: {}", self.session_id);
 
         // 세션 시작 이벤트
         self.emit_detailed_event(DetailedCrawlingEvent::SessionStarted {
@@ -176,11 +150,14 @@ impl ServiceBasedBatchCrawlingEngine {
         let product_urls = self.stage2_collect_product_list(site_status.total_pages).await?;
         
         // Stage 3: 제품 상세정보 수집
-        let products = self.stage3_collect_product_details(&product_urls).await?;
-        total_products = products.len() as u32;
+        let raw_products = self.stage3_collect_product_details(&product_urls).await?;
         
-        // Stage 4: 데이터베이스 저장
-        let (processed_count, _new_items, _updated_items, errors) = self.stage4_save_to_database(products).await?;
+        // Stage 4: 고급 데이터 처리 파이프라인
+        let processed_products = self.stage4_process_data_pipeline(raw_products).await?;
+        total_products = processed_products.len() as u32;
+        
+        // Stage 5: 데이터베이스 저장
+        let (processed_count, _new_items, _updated_items, errors) = self.stage5_save_to_database(processed_products).await?;
         
         // 성공률 계산
         success_rate = if processed_count > 0 {
@@ -190,7 +167,7 @@ impl ServiceBasedBatchCrawlingEngine {
         };
 
         let duration = start_time.elapsed();
-        info!("Service-based batch crawling completed in {:?}", duration);
+        info!("Advanced batch crawling completed in {:?}", duration);
         
         // 세션 완료 이벤트
         self.emit_detailed_event(DetailedCrawlingEvent::SessionCompleted {
@@ -203,8 +180,8 @@ impl ServiceBasedBatchCrawlingEngine {
         Ok(())
     }
 
-    /// Stage 0: 사이트 상태 확인 (새로운 단계)
-    async fn stage0_check_site_status(&self) -> Result<SiteStatus> {
+    /// Stage 0: 사이트 상태 확인
+    async fn stage0_check_site_status(&self) -> Result<crate::domain::services::SiteStatus> {
         info!("Stage 0: Checking site status");
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
@@ -233,8 +210,8 @@ impl ServiceBasedBatchCrawlingEngine {
         Ok(site_status)
     }
 
-    /// Stage 1: 데이터베이스 분석 (새로운 단계)
-    async fn stage1_analyze_database(&self) -> Result<DatabaseAnalysis> {
+    /// Stage 1: 데이터베이스 분석
+    async fn stage1_analyze_database(&self) -> Result<crate::domain::services::DatabaseAnalysis> {
         info!("Stage 1: Analyzing database state");
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
@@ -254,9 +231,9 @@ impl ServiceBasedBatchCrawlingEngine {
         Ok(analysis)
     }
 
-    /// Stage 2: 제품 목록 수집 (서비스 기반)
+    /// Stage 2: 제품 목록 수집
     async fn stage2_collect_product_list(&self, total_pages: u32) -> Result<Vec<String>> {
-        info!("Stage 2: Collecting product list using ProductListCollector service");
+        info!("Stage 2: Collecting product list");
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
             stage: "ProductList".to_string(),
@@ -275,9 +252,9 @@ impl ServiceBasedBatchCrawlingEngine {
         Ok(product_urls)
     }
 
-    /// Stage 3: 제품 상세정보 수집 (서비스 기반)
+    /// Stage 3: 제품 상세정보 수집
     async fn stage3_collect_product_details(&self, product_urls: &[String]) -> Result<Vec<Product>> {
-        info!("Stage 3: Collecting product details using ProductDetailCollector service");
+        info!("Stage 3: Collecting product details");
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
             stage: "ProductDetails".to_string(),
@@ -295,9 +272,50 @@ impl ServiceBasedBatchCrawlingEngine {
         Ok(products)
     }
 
-    /// Stage 4: 데이터베이스 저장
-    async fn stage4_save_to_database(&self, products: Vec<Product>) -> Result<(usize, usize, usize, usize)> {
-        info!("Stage 4: Saving {} products to database", products.len());
+    /// Stage 4: 고급 데이터 처리 파이프라인 (새로운 단계)
+    async fn stage4_process_data_pipeline(&self, raw_products: Vec<Product>) -> Result<Vec<Product>> {
+        info!("Stage 4: Processing data through advanced pipeline");
+        
+        self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
+            stage: "DataProcessing".to_string(),
+            message: format!("{}개 제품에 대한 고급 데이터 처리 진행 중...", raw_products.len()),
+        }).await?;
+
+        // 4.1: 중복 제거
+        info!("Step 4.1: Removing duplicates");
+        let deduplication_analysis = self.deduplication_service.analyze_duplicates(&raw_products).await?;
+        info!("Duplicate analysis: {:.2}% duplicates found", deduplication_analysis.duplicate_rate * 100.0);
+        
+        let deduplicated_products = self.deduplication_service.remove_duplicates(raw_products).await?;
+        info!("Deduplication completed: {} products remaining", deduplicated_products.len());
+
+        // 4.2: 유효성 검사
+        info!("Step 4.2: Validating products");
+        let validation_result = self.validation_service.validate_all(deduplicated_products).await?;
+        info!("Validation completed: {} valid, {} invalid products", 
+              validation_result.valid_products.len(), validation_result.invalid_products.len());
+        
+        if !validation_result.validation_summary.common_errors.is_empty() {
+            info!("Common validation errors: {:?}", validation_result.validation_summary.common_errors);
+        }
+
+        // 4.3: 충돌 해결
+        info!("Step 4.3: Resolving conflicts");
+        let resolved_products = self.conflict_resolver.resolve_conflicts(validation_result.valid_products).await?;
+        info!("Conflict resolution completed: {} final products", resolved_products.len());
+
+        self.emit_detailed_event(DetailedCrawlingEvent::StageCompleted {
+            stage: "DataProcessing".to_string(),
+            items_processed: resolved_products.len(),
+        }).await?;
+
+        info!("Stage 4 completed: Data processing pipeline finished with {} high-quality products", resolved_products.len());
+        Ok(resolved_products)
+    }
+
+    /// Stage 5: 데이터베이스 저장
+    async fn stage5_save_to_database(&self, products: Vec<Product>) -> Result<(usize, usize, usize, usize)> {
+        info!("Stage 5: Saving {} processed products to database", products.len());
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
             stage: "DatabaseSave".to_string(),
@@ -305,17 +323,20 @@ impl ServiceBasedBatchCrawlingEngine {
         }).await?;
 
         let mut new_items = 0;
-        let mut updated_items = 0;
+        let updated_items = 0;
         let mut errors = 0;
 
-        for product in products {
-            match self.product_repo.create_or_update_product(&product).await {
+        for (index, product) in products.iter().enumerate() {
+            match self.product_repo.create_or_update_product(product).await {
                 Ok(_) => {
-                    // 제품이 새로 추가되었는지 업데이트되었는지 확인하기 위해
-                    // 기존 제품을 조회해보겠습니다
-                    match self.product_repo.get_product_by_url(&product.url).await? {
-                        Some(_existing) => updated_items += 1,
-                        None => new_items += 1,
+                    // 임시로 모든 제품을 new_items로 계산
+                    new_items += 1;
+                    
+                    if (index + 1) % 50 == 0 {
+                        self.emit_detailed_event(DetailedCrawlingEvent::BatchCompleted {
+                            batch: (index + 1) as u32 / 50,
+                            total: ((products.len() + 49) / 50) as u32,
+                        }).await?;
                     }
                     
                     self.emit_detailed_event(DetailedCrawlingEvent::ProductProcessed {
@@ -325,7 +346,7 @@ impl ServiceBasedBatchCrawlingEngine {
                 },
                 Err(e) => {
                     errors += 1;
-                    warn!("Failed to save product {:?}: {}", product.model, e);
+                    warn!("Failed to save product from {}: {}", product.url, e);
                     
                     self.emit_detailed_event(DetailedCrawlingEvent::ProductProcessed {
                         url: product.url.clone(),
@@ -342,7 +363,7 @@ impl ServiceBasedBatchCrawlingEngine {
             items_processed: total_processed,
         }).await?;
 
-        info!("Stage 4 completed: {} new, {} updated, {} errors", new_items, updated_items, errors);
+        info!("Stage 5 completed: {} new, {} updated, {} errors", new_items, updated_items, errors);
         Ok((total_processed, new_items, updated_items, errors))
     }
 
@@ -361,6 +382,7 @@ impl ServiceBasedBatchCrawlingEngine {
                             "DatabaseAnalysis" => CrawlingStage::DatabaseAnalysis,
                             "ProductList" => CrawlingStage::ProductList,
                             "ProductDetails" => CrawlingStage::ProductDetails,
+                            "DataProcessing" => CrawlingStage::ProductDetails, // 데이터 처리도 ProductDetails로 분류
                             "DatabaseSave" => CrawlingStage::DatabaseSave,
                             _ => CrawlingStage::TotalPages,
                         },
@@ -373,6 +395,25 @@ impl ServiceBasedBatchCrawlingEngine {
                         updated_items: 0,
                         current_batch: Some(1),
                         total_batches: Some(self.config.end_page - self.config.start_page + 1),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::BatchCompleted { batch, total } => {
+                    CrawlingProgress {
+                        current: *batch,
+                        total: *total,
+                        percentage: (*batch as f64 / *total as f64) * 100.0,
+                        current_stage: CrawlingStage::DatabaseSave,
+                        current_step: format!("배치 {}/{} 완료", batch, total),
+                        status: CrawlingStatus::Running,
+                        message: format!("Batch {} of {} completed", batch, total),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: 0,
+                        updated_items: 0,
+                        current_batch: Some(*batch),
+                        total_batches: Some(*total),
                         errors: 0,
                         timestamp: chrono::Utc::now(),
                     }

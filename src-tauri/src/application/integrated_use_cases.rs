@@ -228,12 +228,14 @@ impl IntegratedProductUseCases {
 
 /// Helper functions for data conversion and validation
 impl IntegratedProductUseCases {
-    /// Create product from basic crawling data
+        /// Create product from basic crawling data
     pub fn create_product_from_crawl_data(
         url: String,
         manufacturer: Option<String>,
         model: Option<String>,
         certificate_id: Option<String>,
+        device_type: Option<String>,
+        certification_date: Option<String>,
         page_id: Option<i32>,
         index_in_page: Option<i32>,
     ) -> Product {
@@ -242,6 +244,8 @@ impl IntegratedProductUseCases {
             manufacturer,
             model,
             certificate_id,
+            device_type,
+            certification_date,
             page_id,
             index_in_page,
             created_at: Utc::now(),

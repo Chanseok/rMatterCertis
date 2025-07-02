@@ -5,10 +5,13 @@
 // Modern real-time event system types
 export enum CrawlingStage {
   Idle = "Idle",
+  StatusCheck = "StatusCheck",
+  DatabaseAnalysis = "DatabaseAnalysis", 
   TotalPages = "TotalPages",
   ProductList = "ProductList", 
-  ProductDetail = "ProductDetail",
-  Database = "Database",
+  ProductDetails = "ProductDetails",
+  DatabaseSave = "DatabaseSave",
+  Database = "Database", // Legacy compatibility
 }
 
 export enum CrawlingStatus {
@@ -108,66 +111,6 @@ export interface CrawlingConfig {
   retry_max: number;
   page_timeout_ms: number;
 }
-
-// Legacy types for backward compatibility
-export namespace Legacy {
-  export type LegacySessionStatus = 
-    | "NotStarted"
-    | "Running" 
-    | "Paused"
-    | "Stopped"
-    | "Completed"
-    | "Failed";
-
-  export type LegacyCrawlingStage = 
-    | "ProductList"
-    | "ProductDetails" 
-    | "Certification"
-    | "Completed";
-
-  export interface CrawlingSessionState {
-    session_id: string;
-    start_time: string;
-    status: LegacySessionStatus;
-    stage: LegacyCrawlingStage;
-    pages_crawled: number;
-    max_pages: number;
-    current_url?: string;
-    errors: string[];
-    config: any; // JSON value
-  }
-
-  export interface CrawlingStatusResponse {
-    session_id: string;
-    status: LegacySessionStatus;
-    stage: LegacyCrawlingStage;
-    pages_crawled: number;
-    max_pages: number;
-    current_url?: string;
-    error_count: number;
-  }
-}
-
-// Export legacy types for backward compatibility
-export interface StartCrawlingRequest {
-  start_url: string;
-  target_domains: string[];
-  max_pages?: number;
-  concurrent_requests?: number;
-  delay_ms?: number;
-}
-
-export interface CrawlingStats {
-  total_sessions: number;
-  active_sessions: number;
-  completed_sessions: number;
-  total_pages_crawled: number;
-  average_success_rate: number;
-}
-
-// Re-export legacy types with original names
-export type CrawlingSessionState = Legacy.CrawlingSessionState;
-export type CrawlingStatusResponse = Legacy.CrawlingStatusResponse;
 
 // Product-related types for crawling results
 export interface Product {
@@ -363,10 +306,13 @@ export const CONFIG_PRESETS: ConfigPreset[] = [
 export const getCrawlingStageDisplayName = (stage: CrawlingStage): string => {
   const stageNames: Record<CrawlingStage, string> = {
     [CrawlingStage.Idle]: "대기",
+    [CrawlingStage.StatusCheck]: "사이트 상태 확인",
+    [CrawlingStage.DatabaseAnalysis]: "데이터베이스 분석",
     [CrawlingStage.TotalPages]: "총 페이지 수 확인",
     [CrawlingStage.ProductList]: "제품 목록 수집",
-    [CrawlingStage.ProductDetail]: "제품 상세정보 수집",
-    [CrawlingStage.Database]: "데이터베이스 저장",
+    [CrawlingStage.ProductDetails]: "제품 상세정보 수집",
+    [CrawlingStage.DatabaseSave]: "데이터베이스 저장",
+    [CrawlingStage.Database]: "데이터베이스 저장", // Legacy
   };
   return stageNames[stage] || stage;
 };
