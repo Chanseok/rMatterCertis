@@ -197,6 +197,7 @@ pub fn run() {
             commands::export_database_data,
             commands::clear_crawling_errors,
             commands::export_crawling_results,
+            commands::check_site_status,
             
             // Configuration management commands
             commands::get_frontend_config,

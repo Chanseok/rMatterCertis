@@ -6,6 +6,7 @@
 import { Component, createSignal, createMemo, Show } from 'solid-js';
 import { ExpandableSection } from '../common/ExpandableSection';
 import { crawlerStore } from '../../stores/crawlerStore';
+import { CrawlingService } from '../../services/crawlingService';
 
 export const StatusTab: Component = () => {
   const [isControlExpanded, setIsControlExpanded] = createSignal(true);
@@ -79,9 +80,18 @@ export const StatusTab: Component = () => {
 
   const handleStatusCheck = async () => {
     try {
+      console.log('Starting backend site status check...');
+      const result = await CrawlingService.checkSiteStatus();
+      console.log('Backend site status check result:', result);
+      
+      // Also refresh the frontend store state
       await crawlerStore.refreshStatus();
+      
+      // Show success message or handle result as needed
+      // You could also emit a toast notification here
     } catch (error) {
-      console.error('Failed to check status:', error);
+      console.error('Failed to check site status:', error);
+      // Show error message to user
     }
   };
 

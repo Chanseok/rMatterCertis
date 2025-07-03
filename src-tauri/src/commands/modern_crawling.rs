@@ -7,6 +7,7 @@ use crate::application::{AppState, EventEmitter};
 use crate::domain::events::{CrawlingProgress, CrawlingStatus, CrawlingStage, DatabaseStats, DatabaseHealth};
 use crate::domain::entities::CrawlingSession;
 use crate::commands::config_commands::ComprehensiveCrawlerConfig;
+use crate::domain::services::crawling_services::StatusChecker;
 use tauri::{State, AppHandle};
 use tracing::{info, warn};
 use chrono::Utc;
@@ -391,6 +392,53 @@ pub async fn export_crawling_results(_state: State<'_, AppState>) -> Result<Stri
     
     info!("Crawling results exported: {}", export_path);
     Ok(export_path)
+}
+
+/// Check site status with detailed page discovery
+#[tauri::command]
+pub async fn check_site_status(
+    state: State<'_, AppState>,
+    _app_handle: AppHandle,
+) -> Result<String, String> {
+    info!("Starting site status check with detailed page discovery");
+    
+    // Get the advanced crawling engine from the state
+    let config = state.config.read().await.clone();
+    
+    // Create a simple HTTP client and necessary components
+    let http_client = crate::infrastructure::HttpClient::new()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let data_extractor = crate::infrastructure::MatterDataExtractor::new()
+        .map_err(|e| format!("Failed to create data extractor: {}", e))?;
+    
+    // Create status checker
+    let status_checker = crate::infrastructure::StatusCheckerImpl::new(
+        http_client,
+        data_extractor,
+        config.clone(),
+    );
+    
+    // Perform the site status check
+    match status_checker.check_site_status().await {
+        Ok(site_status) => {
+            info!("Site status check completed successfully");
+            info!("Site status: accessible={}, total_pages={}, response_time={}ms, health_score={:.2}", 
+                  site_status.is_accessible, 
+                  site_status.total_pages, 
+                  site_status.response_time_ms,
+                  site_status.health_score);
+            
+            Ok(format!("Site status check completed. Accessible: {}, Total pages: {}, Response time: {}ms, Health score: {:.2}", 
+                       site_status.is_accessible, 
+                       site_status.total_pages, 
+                       site_status.response_time_ms,
+                       site_status.health_score))
+        }
+        Err(e) => {
+            warn!("Site status check failed: {}", e);
+            Err(format!("Site status check failed: {}", e))
+        }
+    }
 }
 
 /// Get the correct database URL for the application

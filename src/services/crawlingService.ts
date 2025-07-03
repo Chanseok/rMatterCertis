@@ -133,6 +133,13 @@ export class CrawlingService {
   }
 
   /**
+   * Check site status with detailed page discovery
+   */
+  static async checkSiteStatus(): Promise<string> {
+    return await invoke<string>("check_site_status");
+  }
+
+  /**
    * Get recently added products
    */
   static async getRecentProducts(limit?: number): Promise<Product[]> {

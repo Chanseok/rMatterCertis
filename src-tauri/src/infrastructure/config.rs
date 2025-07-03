@@ -420,7 +420,8 @@ pub mod defaults {
     pub const RETRY_DELAY_MS: u64 = 2000;
     
     /// Default starting page number for last page search
-    pub const LAST_PAGE_SEARCH_START: u32 = 470;
+    /// This is an initial guess - the app will learn and update this value
+    pub const LAST_PAGE_SEARCH_START: u32 = 100;
     
     /// Default maximum search attempts
     pub const MAX_SEARCH_ATTEMPTS: u32 = 10;
@@ -466,7 +467,18 @@ pub mod utils {
         if page <= 1 {
             PRODUCTS_PAGE_MATTER_ONLY.to_string()
         } else {
+            // Use the paginated URL pattern for pages > 1
             format!("{}", PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &page.to_string()))
+        }
+    }
+    
+    /// Build a Matter products URL by adding page parameter to the base URL
+    pub fn matter_products_page_url_simple(page: u32) -> String {
+        if page <= 1 {
+            PRODUCTS_PAGE_MATTER_ONLY.to_string()
+        } else {
+            // Add page parameter to existing query string
+            format!("{}&page={}", PRODUCTS_PAGE_MATTER_ONLY, page)
         }
     }
     

@@ -321,8 +321,8 @@ impl AdvancedBatchCrawlingEngine {
         Ok((total_products, success_rate))
     }
 
-    /// Stage 0: 사이트 상태 확인
-    async fn stage0_check_site_status(&self) -> Result<crate::domain::services::SiteStatus> {
+    /// Stage 0: 사이트 상태 확인 (Public method for direct access)
+    pub async fn stage0_check_site_status(&self) -> Result<crate::domain::services::SiteStatus> {
         info!("Stage 0: Checking site status");
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
