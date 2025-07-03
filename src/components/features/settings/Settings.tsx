@@ -14,7 +14,7 @@ const DEFAULT_BACKEND_CONFIG: BackendCrawlerConfig = {
   page_range_limit: 50,
   product_list_retry_count: 3,
   product_detail_retry_count: 3,
-  products_per_page: 20,
+  products_per_page: 12,
   auto_add_to_local_db: true,
   auto_status_check: true,
   crawler_type: 'full',

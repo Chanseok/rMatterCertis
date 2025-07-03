@@ -429,8 +429,12 @@ pub mod defaults {
     /// Default request timeout in seconds
     pub const REQUEST_TIMEOUT_SECONDS: u64 = 30;
     
+    /// Default number of products per page (based on actual site analysis)
+    pub const DEFAULT_PRODUCTS_PER_PAGE: u32 = 12;
+    
     /// Default CSS selectors for finding products
     pub const PRODUCT_SELECTORS: &[&str] = &[
+        "div > article.product.type-product",
         ".product",
         ".product-item", 
         ".product-card",

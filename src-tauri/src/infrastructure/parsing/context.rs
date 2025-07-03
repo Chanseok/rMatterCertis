@@ -21,10 +21,12 @@ pub struct ParseContext {
 impl ParseContext {
     /// Create new parse context
     pub fn new(page_id: u32, base_url: String) -> Self {
+        use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
+        
         Self {
             page_id,
             base_url,
-            expected_products_per_page: 20, // Default assumption
+            expected_products_per_page: DEFAULT_PRODUCTS_PER_PAGE,
             metadata: std::collections::HashMap::new(),
         }
     }

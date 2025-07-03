@@ -70,7 +70,7 @@ export function CrawlingForm(props: CrawlingFormProps) {
         page_range_limit: 50,
         product_list_retry_count: retryMax(),
         product_detail_retry_count: retryMax(),
-        products_per_page: 20,
+        products_per_page: 12,
         auto_add_to_local_db: autoAddToDb(),
         auto_status_check: true,
         crawler_type: 'full',

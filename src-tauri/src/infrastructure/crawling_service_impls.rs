@@ -10,6 +10,7 @@ use tracing::{info, warn, error, debug};
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
 use futures::future::try_join_all;
+use scraper::Html;
 
 use crate::domain::services::{
     StatusChecker, DatabaseAnalyzer, ProductListCollector, ProductDetailCollector,
@@ -88,11 +89,24 @@ impl StatusChecker for StatusCheckerImpl {
         info!("Site status check completed: {} pages found, {}ms total time, health score: {:.2}", 
               total_pages, response_time, health_score);
 
+        // 실제 사이트에서는 페이지당 제품 수가 정해져 있으며, 마지막 페이지는 그보다 적을 수 있음
+        use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
+        let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
+        
+        // 총 제품 수 계산 (실제로는 마지막 페이지에 12개보다 적은 제품이 있을 수 있음)
+        let estimated_products = total_pages * products_per_page;
+        
+        info!("Estimated products: {} pages * {} products per page = {} total products", 
+              total_pages, products_per_page, estimated_products);
+              
+        // 참고: 실제 정확한 제품 수는 마지막 페이지 제품 수를 확인해야 함
+        // TODO: 마지막 페이지의 제품 수를 별도로 계산하여 더 정확한 예상치 제공
+              
         Ok(SiteStatus {
             is_accessible: true,
             response_time_ms: response_time,
             total_pages,
-            estimated_products: total_pages * 20, // 페이지당 약 20개 제품 추정
+            estimated_products,
             last_check_time: chrono::Utc::now(),
             health_score,
         })
@@ -532,11 +546,12 @@ impl StatusCheckerImpl {
             // 마지막 성공한 크롤링 시간 업데이트
             app_managed.last_successful_crawl = Some(chrono::Utc::now().to_rfc3339());
             
-            // 추정 제품 수 업데이트 (페이지당 20개 제품 추정)
-            app_managed.last_crawl_product_count = Some(last_page * 20);
+            // 추정 제품 수 업데이트 (페이지당 12개 제품 - 실제 사이트 구조 기반)
+            app_managed.last_crawl_product_count = Some(last_page * 12);
             
             // 페이지당 평균 제품 수 업데이트
-            app_managed.avg_products_per_page = Some(20.0);
+            use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
+            app_managed.avg_products_per_page = Some(DEFAULT_PRODUCTS_PER_PAGE as f64);
             
             info!("📝 Updated config: last_page={}, timestamp={}", 
                   last_page, 
@@ -547,8 +562,8 @@ impl StatusCheckerImpl {
         Ok(())
     }
 
-    /// 페이지에 제품이 있는지 확인 (PageDiscoveryService 로직 활용)
-    fn has_products_on_page(&self, doc: &scraper::Html) -> bool {
+    /// 페이지에서 제품 개수 카운트 (모든 선택자를 시도하고 가장 많은 결과 반환)
+    fn count_products(&self, doc: &scraper::Html) -> u32 {
         let mut max_count = 0;
         
         for selector_str in &self.config.advanced.product_selectors {
@@ -556,6 +571,7 @@ impl StatusCheckerImpl {
                 let count = doc.select(&selector).count() as u32;
                 if count > max_count {
                     max_count = count;
+                    debug!("Found {} products using selector: {}", count, selector_str);
                 }
             }
         }
@@ -563,11 +579,20 @@ impl StatusCheckerImpl {
         // 기본 선택자들도 시도
         if max_count == 0 {
             if let Ok(article_selector) = scraper::Selector::parse("article") {
-                max_count = doc.select(&article_selector).count() as u32;
+                let count = doc.select(&article_selector).count() as u32;
+                max_count = count;
+                debug!("Fallback: Found {} products using generic article selector", count);
             }
         }
         
-        max_count > 0
+        info!("Total products found on page: {}", max_count);
+        max_count
+    }
+
+    /// 페이지에 제품이 있는지 확인 (PageDiscoveryService 로직 활용)
+    fn has_products_on_page(&self, doc: &scraper::Html) -> bool {
+        let product_count = self.count_products(doc);
+        product_count > 0
     }
 
     /// 페이지네이션에서 최대 페이지 번호 찾기 (더 정확한 파싱)
