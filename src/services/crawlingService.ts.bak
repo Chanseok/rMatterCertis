@@ -32,7 +32,9 @@ export interface ModernCrawlingStats {
   database_stats: DatabaseSummary;
 }
 
-// 사이트 상태 정보 인터페이스
+/**
+ * 사이트 상태 정보 인터페이스
+ */
 export interface SiteStatusDetail {
   accessible: boolean;
   response_time_ms: number;
@@ -43,7 +45,9 @@ export interface SiteStatusDetail {
   error?: string;
 }
 
-// 데이터베이스 분석 정보 인터페이스
+/**
+ * 데이터베이스 분석 정보 인터페이스
+ */
 export interface DatabaseAnalysisDetail {
   total_products: number;
   unique_products: number;
@@ -59,14 +63,18 @@ export interface DatabaseAnalysisDetail {
   error?: string;
 }
 
-// 비교 및 권장 작업 정보 인터페이스
+/**
+ * 비교 및 권장 작업 정보 인터페이스
+ */
 export interface ComparisonDetail {
   difference: number;
   sync_percentage: number;
   recommended_action: 'crawling_needed' | 'cleanup_needed' | 'up_to_date';
 }
 
-// 통합 상태 체크 응답 인터페이스
+/**
+ * 통합 상태 체크 응답 인터페이스
+ */
 export interface ComprehensiveStatusResponse {
   site_status: SiteStatusDetail;
   database_analysis: DatabaseAnalysisDetail;
@@ -74,6 +82,7 @@ export interface ComprehensiveStatusResponse {
 }
 
 export class CrawlingService {
+  
   /**
    * Start a new crawling session with modern configuration
    */
@@ -170,6 +179,55 @@ export class CrawlingService {
    */
   static async getDatabaseSummary(): Promise<DatabaseSummary> {
     return await invoke<DatabaseSummary>("get_database_summary");
+  }
+
+  /**
+   * 사이트 상태 정보 인터페이스
+   */
+  export interface SiteStatusDetail {
+    accessible: boolean;
+    response_time_ms: number;
+    total_pages: number;
+    estimated_products: number;
+    health_score: number;
+    last_check: string;
+    error?: string;
+  }
+  
+  /**
+   * 데이터베이스 분석 정보 인터페이스
+   */
+  export interface DatabaseAnalysisDetail {
+    total_products: number;
+    unique_products: number;
+    duplicate_count: number;
+    data_quality_score: number;
+    missing_fields?: {
+      company: number;
+      model: number;
+      matter_version: number;
+      connectivity: number;
+      certification_date: number;
+    };
+    error?: string;
+  }
+  
+  /**
+   * 비교 및 권장 작업 정보 인터페이스
+   */
+  export interface ComparisonDetail {
+    difference: number;
+    sync_percentage: number;
+    recommended_action: 'crawling_needed' | 'cleanup_needed' | 'up_to_date';
+  }
+  
+  /**
+   * 통합 상태 체크 응답 인터페이스
+   */
+  export interface ComprehensiveStatusResponse {
+    site_status: SiteStatusDetail;
+    database_analysis: DatabaseAnalysisDetail;
+    comparison?: ComparisonDetail;
   }
 
   /**

@@ -7,9 +7,9 @@ use crate::application::{AppState, EventEmitter};
 use crate::domain::events::{CrawlingProgress, CrawlingStatus, CrawlingStage, DatabaseStats, DatabaseHealth};
 use crate::domain::entities::CrawlingSession;
 use crate::commands::config_commands::ComprehensiveCrawlerConfig;
-use crate::domain::services::crawling_services::StatusChecker;
+use crate::domain::services::crawling_services::{StatusChecker, DatabaseAnalyzer};
 use tauri::{State, AppHandle};
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -399,8 +399,8 @@ pub async fn export_crawling_results(_state: State<'_, AppState>) -> Result<Stri
 pub async fn check_site_status(
     state: State<'_, AppState>,
     _app_handle: AppHandle,
-) -> Result<String, String> {
-    info!("Starting site status check with detailed page discovery");
+) -> Result<serde_json::Value, String> {
+    info!("Starting comprehensive site status check with detailed page discovery");
     
     // Get the advanced crawling engine from the state
     let config = state.config.read().await.clone();
@@ -418,25 +418,129 @@ pub async fn check_site_status(
         config.clone(),
     );
     
-    // Perform the site status check
-    match status_checker.check_site_status().await {
-        Ok(site_status) => {
-            info!("Site status check completed successfully");
-            info!("Site status: accessible={}, total_pages={}, response_time={}ms, health_score={:.2}", 
-                  site_status.is_accessible, 
-                  site_status.total_pages, 
-                  site_status.response_time_ms,
-                  site_status.health_score);
-            
-            Ok(format!("Site status check completed. Accessible: {}, Total pages: {}, Response time: {}ms, Health score: {:.2}", 
-                       site_status.is_accessible, 
-                       site_status.total_pages, 
-                       site_status.response_time_ms,
-                       site_status.health_score))
+    // Create database analyzer for local DB stats
+    let database_url = get_database_url()?;
+    let db_analyzer = match sqlx::SqlitePool::connect(&database_url).await {
+        Ok(pool) => {
+            let repo = crate::infrastructure::IntegratedProductRepository::new(pool);
+            let repo_arc = std::sync::Arc::new(repo);
+            Some(crate::infrastructure::DatabaseAnalyzerImpl::new(repo_arc))
         }
         Err(e) => {
-            warn!("Site status check failed: {}", e);
-            Err(format!("Site status check failed: {}", e))
+            warn!("Failed to create database connection: {}", e);
+            None
+        }
+    };
+    
+    // Perform the site status check
+    let site_check_result = status_checker.check_site_status().await;
+    let db_analysis_result = if let Some(ref analyzer) = db_analyzer {
+        analyzer.analyze_current_state().await
+    } else {
+        Err(anyhow::anyhow!("Database analyzer not available"))
+    };
+    
+    match (site_check_result, db_analysis_result) {
+        (Ok(site_status), Ok(db_analysis)) => {
+            info!("Site status check completed successfully");
+            info!("Site: accessible={}, total_pages={}, estimated_products={}", 
+                  site_status.is_accessible, site_status.total_pages, site_status.estimated_products);
+            info!("Database: total_products={}, unique_products={}, duplicates={}", 
+                  db_analysis.total_products, db_analysis.unique_products, db_analysis.duplicate_count);
+            
+            // Create comprehensive status object
+            let comprehensive_status = serde_json::json!({
+                "site_status": {
+                    "accessible": site_status.is_accessible,
+                    "response_time_ms": site_status.response_time_ms,
+                    "total_pages": site_status.total_pages,
+                    "estimated_products": site_status.estimated_products,
+                    "health_score": site_status.health_score,
+                    "last_check": site_status.last_check_time.to_rfc3339()
+                },
+                "database_analysis": {
+                    "total_products": db_analysis.total_products,
+                    "unique_products": db_analysis.unique_products,
+                    "duplicate_count": db_analysis.duplicate_count,
+                    "data_quality_score": db_analysis.data_quality_score,
+                    "missing_fields": {
+                        "company": db_analysis.missing_fields_analysis.missing_company,
+                        "model": db_analysis.missing_fields_analysis.missing_model,
+                        "matter_version": db_analysis.missing_fields_analysis.missing_matter_version,
+                        "connectivity": db_analysis.missing_fields_analysis.missing_connectivity,
+                        "certification_date": db_analysis.missing_fields_analysis.missing_certification_date
+                    }
+                },
+                "comparison": {
+                    "difference": site_status.estimated_products as i32 - db_analysis.total_products as i32,
+                    "sync_percentage": if site_status.estimated_products > 0 { 
+                        (db_analysis.total_products as f64 / site_status.estimated_products as f64) * 100.0 
+                    } else { 0.0 },
+                    "recommended_action": if site_status.estimated_products > db_analysis.total_products {
+                        "crawling_needed"
+                    } else if db_analysis.duplicate_count > 0 {
+                        "cleanup_needed"
+                    } else {
+                        "up_to_date"
+                    }
+                }
+            });
+            
+            Ok(comprehensive_status)
+        }
+        (Ok(site_status), Err(db_error)) => {
+            warn!("Database analysis failed: {}", db_error);
+            
+            // Return site status with DB error
+            let partial_response = serde_json::json!({
+                "site_status": {
+                    "accessible": site_status.is_accessible,
+                    "response_time_ms": site_status.response_time_ms,
+                    "total_pages": site_status.total_pages,
+                    "estimated_products": site_status.estimated_products,
+                    "health_score": site_status.health_score,
+                    "last_check": site_status.last_check_time.to_rfc3339()
+                },
+                "database_analysis": {
+                    "error": db_error.to_string()
+                }
+            });
+            
+            Ok(partial_response)
+        }
+        (Err(site_error), Ok(db_analysis)) => {
+            warn!("Site status check failed: {}", site_error);
+            
+            // Still return DB analysis with site error
+            let error_response = serde_json::json!({
+                "site_status": {
+                    "accessible": false,
+                    "error": site_error.to_string()
+                },
+                "database_analysis": {
+                    "total_products": db_analysis.total_products,
+                    "unique_products": db_analysis.unique_products,
+                    "duplicate_count": db_analysis.duplicate_count,
+                    "data_quality_score": db_analysis.data_quality_score
+                }
+            });
+            
+            Ok(error_response)
+        }
+        (Err(site_error), Err(db_error)) => {
+            error!("Both site and database checks failed: site={}, db={}", site_error, db_error);
+            
+            let error_response = serde_json::json!({
+                "site_status": {
+                    "accessible": false,
+                    "error": site_error.to_string()
+                },
+                "database_analysis": {
+                    "error": db_error.to_string()
+                }
+            });
+            
+            Ok(error_response)
         }
     }
 }

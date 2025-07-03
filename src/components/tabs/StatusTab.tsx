@@ -6,11 +6,15 @@
 import { Component, createSignal, createMemo, Show } from 'solid-js';
 import { ExpandableSection } from '../common/ExpandableSection';
 import { crawlerStore } from '../../stores/crawlerStore';
-import { CrawlingService } from '../../services/crawlingService';
+import { CrawlingService, ComprehensiveStatusResponse } from '../../services/crawlingService';
 
 export const StatusTab: Component = () => {
   const [isControlExpanded, setIsControlExpanded] = createSignal(true);
+  const [isStatusExpanded, setIsStatusExpanded] = createSignal(true);
   const [isCompareExpanded, setIsCompareExpanded] = createSignal(true);
+  const [isLoading, setIsLoading] = createSignal(false);
+  const [statusCheckResult, setStatusCheckResult] = createSignal<ComprehensiveStatusResponse | null>(null);
+  const [statusError, setStatusError] = createSignal<string | null>(null);
 
   const stageInfo = createMemo(() => {
     const stage = crawlerStore.currentStage();
@@ -22,6 +26,27 @@ export const StatusTab: Component = () => {
     };
     return stages[stage as keyof typeof stages] || stages['Idle'];
   });
+
+  // 상태 체크 실행 함수
+  const handleStatusCheck = async () => {
+    try {
+      setIsLoading(true);
+      setStatusError(null);
+      console.log('Starting backend site status check...');
+      
+      const result = await CrawlingService.checkSiteStatus();
+      console.log('Backend site status check result:', result);
+      setStatusCheckResult(result);
+      
+      // 프론트엔드 스토어 상태도 업데이트
+      await crawlerStore.refreshStatus();
+    } catch (error) {
+      console.error('Failed to check site status:', error);
+      setStatusError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleStart = async () => {
     try {
@@ -78,23 +103,6 @@ export const StatusTab: Component = () => {
     }
   };
 
-  const handleStatusCheck = async () => {
-    try {
-      console.log('Starting backend site status check...');
-      const result = await CrawlingService.checkSiteStatus();
-      console.log('Backend site status check result:', result);
-      
-      // Also refresh the frontend store state
-      await crawlerStore.refreshStatus();
-      
-      // Show success message or handle result as needed
-      // You could also emit a toast notification here
-    } catch (error) {
-      console.error('Failed to check site status:', error);
-      // Show error message to user
-    }
-  };
-
   const isRunning = createMemo(() => {
     const status = crawlerStore.status();
     return status === 'Running';
@@ -108,160 +116,222 @@ export const StatusTab: Component = () => {
     return Math.round((progress.current / progress.total) * 100);
   });
 
+  // 상태 체크 결과에서 값을 계산하는 함수들
+  const getRecommendedAction = (result: ComprehensiveStatusResponse | null) => {
+    if (!result || !result.comparison) return null;
+    
+    const { recommended_action } = result.comparison;
+    switch (recommended_action) {
+      case 'crawling_needed':
+        return { text: '크롤링 필요', color: 'text-blue-600' };
+      case 'cleanup_needed':
+        return { text: '정리 필요', color: 'text-yellow-600' };
+      case 'up_to_date':
+        return { text: '최신 상태', color: 'text-green-600' };
+      default:
+        return { text: '정보 없음', color: 'text-gray-600' };
+    }
+  };
+  
+  const getHealthStatusText = (result: ComprehensiveStatusResponse | null) => {
+    if (!result || !result.site_status) return { text: '정보 없음', color: 'text-gray-600' };
+    
+    const score = result.site_status.health_score;
+    if (score >= 0.8) return { text: '좋음', color: 'text-green-600' };
+    if (score >= 0.5) return { text: '보통', color: 'text-yellow-600' };
+    return { text: '나쁨', color: 'text-red-600' };
+  };
+
   return (
-    <div class="space-y-6">
-      {/* 현재 상태 표시 */}
-      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 border border-gray-200 dark:border-gray-700">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">크롤링 상태</h3>
-          <span class={`px-3 py-1 rounded-full text-sm font-medium ${stageInfo().color}`}>
-            {stageInfo().text}
-          </span>
-        </div>
-        
-        {/* 진행률 표시 */}
-        <div class="space-y-4">
-          <div class="flex justify-between text-sm text-gray-600 dark:text-gray-400">
-            <span>진행률</span>
-            <span>{progressPercent()}%</span>
+    <div class="flex flex-col space-y-4 p-4">
+      {/* 현재 상태 및 제어 섹션 */}
+      <ExpandableSection 
+        title="크롤링 상태 및 제어" 
+        isExpanded={isControlExpanded()} 
+        onToggle={() => setIsControlExpanded(!isControlExpanded())}
+      >
+        <div class="space-y-4 p-2">
+          <div class="grid grid-cols-2 gap-4">
+            <div class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+              <h3 class="text-lg font-medium mb-2">현재 상태</h3>
+              <div class={`inline-block px-3 py-1 rounded-full text-sm font-medium ${stageInfo().color}`}>
+                {stageInfo().text}
+              </div>
+              
+              <Show when={isRunning()}>
+                <div class="mt-4">
+                  <div class="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                    <div class="bg-blue-600 h-2.5 rounded-full" style={{ width: `${progressPercent()}%` }}></div>
+                  </div>
+                  <p class="text-sm mt-1">{progressPercent()}% 완료</p>
+                </div>
+              </Show>
+            </div>
+            
+            <div class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+              <h3 class="text-lg font-medium mb-2">제어</h3>
+              <div class="flex space-x-2">
+                <button 
+                  class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+                  onClick={handleStart}
+                  disabled={isRunning()}
+                >
+                  크롤링 시작
+                </button>
+                <button 
+                  class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50"
+                  onClick={handleStop}
+                  disabled={!isRunning()}
+                >
+                  중지
+                </button>
+              </div>
+            </div>
           </div>
-          <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
-            <div 
-              class="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-500"
-              style={{ width: `${progressPercent()}%` }}
-            />
+        </div>
+      </ExpandableSection>
+
+      {/* 사이트 상태 확인 섹션 */}
+      <ExpandableSection 
+        title="사이트 상태 체크" 
+        isExpanded={isStatusExpanded()} 
+        onToggle={() => setIsStatusExpanded(!isStatusExpanded())}
+      >
+        <div class="space-y-4 p-2">
+          <div class="flex justify-between items-center">
+            <button 
+              class="px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600 disabled:opacity-50"
+              onClick={handleStatusCheck}
+              disabled={isLoading()}
+            >
+              {isLoading() ? '확인 중...' : '상태 체크'}
+            </button>
+            
+            <Show when={statusCheckResult()}>
+              <div class="text-sm text-gray-500">
+                마지막 확인: {statusCheckResult()?.site_status.last_check 
+                  ? new Date(statusCheckResult()!.site_status.last_check).toLocaleString() 
+                  : '없음'}
+              </div>
+            </Show>
           </div>
           
-          <Show when={crawlerStore.progress()}>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-              <div class="text-center">
-                <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                  {crawlerStore.progress()?.current || 0}
-                </div>
-                <div class="text-sm text-gray-600 dark:text-gray-400">처리됨</div>
+          <Show when={statusError()}>
+            <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+              <p class="font-bold">오류 발생</p>
+              <p>{statusError()}</p>
+            </div>
+          </Show>
+          
+          <Show when={statusCheckResult()}>
+            <div class="grid grid-cols-2 gap-4">
+              <div class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+                <h3 class="text-lg font-medium mb-2">사이트 정보</h3>
+                <ul class="space-y-2">
+                  <li class="flex justify-between">
+                    <span class="text-gray-600 dark:text-gray-400">접근 가능:</span> 
+                    <span class={statusCheckResult()?.site_status.accessible ? 'text-green-600' : 'text-red-600'}>
+                      {statusCheckResult()?.site_status.accessible ? '예' : '아니오'}
+                    </span>
+                  </li>
+                  <li class="flex justify-between">
+                    <span class="text-gray-600 dark:text-gray-400">총 페이지 수:</span> 
+                    <span class="font-medium">{statusCheckResult()?.site_status.total_pages || 0}</span>
+                  </li>
+                  <li class="flex justify-between">
+                    <span class="text-gray-600 dark:text-gray-400">예상 제품 수:</span> 
+                    <span class="font-medium">{statusCheckResult()?.site_status.estimated_products || 0}</span>
+                  </li>
+                  <li class="flex justify-between">
+                    <span class="text-gray-600 dark:text-gray-400">응답 시간:</span> 
+                    <span class="font-medium">{statusCheckResult()?.site_status.response_time_ms || 0}ms</span>
+                  </li>
+                  <li class="flex justify-between">
+                    <span class="text-gray-600 dark:text-gray-400">건강 상태:</span> 
+                    <span class={getHealthStatusText(statusCheckResult()).color}>
+                      {getHealthStatusText(statusCheckResult()).text} 
+                      ({(statusCheckResult()?.site_status.health_score || 0).toFixed(2)})
+                    </span>
+                  </li>
+                </ul>
               </div>
-              <div class="text-center">
-                <div class="text-2xl font-bold text-gray-600 dark:text-gray-400">
-                  {crawlerStore.progress()?.total || 0}
-                </div>
-                <div class="text-sm text-gray-600 dark:text-gray-400">전체</div>
-              </div>
-              <div class="text-center">
-                <div class="text-2xl font-bold text-green-600 dark:text-green-400">
-                  {crawlerStore.progress()?.new_items || 0}
-                </div>
-                <div class="text-sm text-gray-600 dark:text-gray-400">신규</div>
-              </div>
-              <div class="text-center">
-                <div class="text-2xl font-bold text-red-600 dark:text-red-400">
-                  {crawlerStore.progress()?.errors || 0}
-                </div>
-                <div class="text-sm text-gray-600 dark:text-gray-400">실패</div>
+              
+              <div class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+                <h3 class="text-lg font-medium mb-2">데이터베이스 정보</h3>
+                <ul class="space-y-2">
+                  <li class="flex justify-between">
+                    <span class="text-gray-600 dark:text-gray-400">총 제품 수:</span> 
+                    <span class="font-medium">{statusCheckResult()?.database_analysis.total_products || 0}</span>
+                  </li>
+                  <li class="flex justify-between">
+                    <span class="text-gray-600 dark:text-gray-400">고유 제품 수:</span> 
+                    <span class="font-medium">{statusCheckResult()?.database_analysis.unique_products || 0}</span>
+                  </li>
+                  <li class="flex justify-between">
+                    <span class="text-gray-600 dark:text-gray-400">중복 수:</span> 
+                    <span class="font-medium">{statusCheckResult()?.database_analysis.duplicate_count || 0}</span>
+                  </li>
+                  <li class="flex justify-between">
+                    <span class="text-gray-600 dark:text-gray-400">데이터 품질 점수:</span> 
+                    <span class="font-medium">
+                      {(statusCheckResult()?.database_analysis.data_quality_score || 0).toFixed(2)}
+                    </span>
+                  </li>
+                </ul>
               </div>
             </div>
           </Show>
         </div>
-      </div>
-
-      {/* 제어 버튼 */}
-      <ExpandableSection
-        title="크롤링 제어"
-        isExpanded={isControlExpanded()}
-        onToggle={setIsControlExpanded}
-        icon="🎮"
-      >
-        <div class="flex flex-wrap gap-4">
-          <button
-            onClick={handleStart}
-            disabled={isRunning()}
-            class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            {isRunning() ? '실행 중...' : '크롤링 시작'}
-          </button>
-          
-          <button
-            onClick={handleStop}
-            disabled={!isRunning()}
-            class="px-6 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
-          >
-            중지
-          </button>
-          
-          <button 
-            onClick={handleStatusCheck}
-            class="px-6 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
-          >
-            상태 체크
-          </button>
-        </div>
       </ExpandableSection>
-
-      {/* 사이트-로컬 비교 */}
-      <ExpandableSection
-        title="사이트-로컬 비교"
-        isExpanded={isCompareExpanded()}
-        onToggle={setIsCompareExpanded}
-        icon="📊"
-      >
-        <div class="grid grid-cols-2 gap-4">
-          <div class="text-center p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-            <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">
-              {crawlerStore.progress()?.total || 0}
-            </div>
-            <div class="text-sm text-gray-600 dark:text-gray-400">사이트 제품 수</div>
-          </div>
-          <div class="text-center p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
-            <div class="text-2xl font-bold text-purple-600 dark:text-purple-400">
-              {crawlerStore.progress()?.current || 0}
-            </div>
-            <div class="text-sm text-gray-600 dark:text-gray-400">로컬 DB 제품 수</div>
-          </div>
-        </div>
-        
-        {/* 진행률 바 */}
-        <div class="mt-4">
-          <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
-            <div 
-              class="h-full bg-gradient-to-r from-blue-500 to-purple-600 rounded-full transition-all duration-500"
-              style={{ width: `${progressPercent()}%` }}
-            />
-          </div>
-          <div class="text-center text-sm text-gray-600 dark:text-gray-400 mt-2">
-            동기화율: {progressPercent()}%
-          </div>
-        </div>
-      </ExpandableSection>
-
-      {/* 동시 작업 시각화 */}
-      <Show when={isRunning()}>
-        <div class="bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-700">
-          <h4 class="text-md font-semibold text-blue-700 dark:text-blue-300 mb-3">동시 진행 작업</h4>
-          <div class="grid grid-cols-6 md:grid-cols-12 gap-2">
-            {Array.from({ length: 12 }, (_, i) => (
-              <div 
-                class={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300
-                  ${i < (crawlerStore.state.currentConfig?.concurrency || 6) 
-                    ? 'bg-blue-400 text-white animate-pulse shadow-lg' 
-                    : 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400'}`}
-              >
-                {i < (crawlerStore.state.currentConfig?.concurrency || 6) ? '▶' : '⏸'}
+      
+      {/* 비교 및 권장 작업 */}
+      <Show when={statusCheckResult()?.comparison}>
+        <ExpandableSection 
+          title="비교 및 권장 작업" 
+          isExpanded={isCompareExpanded()} 
+          onToggle={() => setIsCompareExpanded(!isCompareExpanded())}
+        >
+          <div class="space-y-4 p-2">
+            <div class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <h3 class="text-lg font-medium mb-2">데이터 비교</h3>
+                  <ul class="space-y-2">
+                    <li class="flex justify-between">
+                      <span class="text-gray-600 dark:text-gray-400">웹사이트 제품 수:</span> 
+                      <span class="font-medium">{statusCheckResult()?.site_status.estimated_products || 0}</span>
+                    </li>
+                    <li class="flex justify-between">
+                      <span class="text-gray-600 dark:text-gray-400">데이터베이스 제품 수:</span> 
+                      <span class="font-medium">{statusCheckResult()?.database_analysis.total_products || 0}</span>
+                    </li>
+                    <li class="flex justify-between">
+                      <span class="text-gray-600 dark:text-gray-400">차이:</span> 
+                      <span class={statusCheckResult()?.comparison?.difference || 0 > 0 ? 'text-blue-600' : 'text-green-600'}>
+                        {statusCheckResult()?.comparison?.difference || 0} 제품
+                      </span>
+                    </li>
+                    <li class="flex justify-between">
+                      <span class="text-gray-600 dark:text-gray-400">동기화 비율:</span> 
+                      <span class="font-medium">
+                        {(statusCheckResult()?.comparison?.sync_percentage || 0).toFixed(1)}%
+                      </span>
+                    </li>
+                  </ul>
+                </div>
+                
+                <div>
+                  <h3 class="text-lg font-medium mb-2">권장 작업</h3>
+                  <div class="flex items-center justify-center h-full">
+                    <div class={`text-xl font-bold ${getRecommendedAction(statusCheckResult())?.color}`}>
+                      {getRecommendedAction(statusCheckResult())?.text}
+                    </div>
+                  </div>
+                </div>
               </div>
-            ))}
+            </div>
           </div>
-          <div class="text-center text-sm text-gray-600 dark:text-gray-400 mt-3">
-            {crawlerStore.state.currentConfig?.concurrency || 6}개 작업이 동시에 실행 중입니다
-          </div>
-        </div>
-      </Show>
-
-      {/* 에러 로그 */}
-      <Show when={crawlerStore.lastError()}>
-        <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg p-4">
-          <h4 class="text-md font-semibold text-red-700 dark:text-red-300 mb-2">최근 오류</h4>
-          <p class="text-sm text-red-600 dark:text-red-400">
-            {crawlerStore.lastError()}
-          </p>
-        </div>
+        </ExpandableSection>
       </Show>
     </div>
   );

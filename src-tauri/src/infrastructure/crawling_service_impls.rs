@@ -430,7 +430,7 @@ impl StatusCheckerImpl {
         Ok(current_page)
     }
 
-    /// 특정 페이지에 제품이 있는지 확인
+    /// 특정 페이지에 제품이 있는지 확인 - 활성 페이지네이션 값도 함께 확인
     async fn check_page_has_products(&self, page: u32) -> Result<bool> {
         let test_url = config_utils::matter_products_page_url_simple(page);
         
@@ -438,10 +438,84 @@ impl StatusCheckerImpl {
         match client.fetch_html_string(&test_url).await {
             Ok(html) => {
                 let doc = scraper::Html::parse_document(&html);
-                Ok(self.has_products_on_page(&doc))
+                
+                // 1. 제품 존재 여부 확인
+                let has_products = self.has_products_on_page(&doc);
+                
+                // 2. 활성 페이지네이션 값 확인 (더 중요한 체크)
+                let active_page = self.get_active_page_number(&doc);
+                
+                // 실제 페이지 번호와 활성 페이지네이션 값이 일치하는지 확인
+                let is_correct_page = active_page == page;
+                
+                if !is_correct_page {
+                    info!("⚠️  Page {} was redirected to page {} (pagination mismatch)", page, active_page);
+                    return Ok(false);
+                }
+                
+                info!("✅ Page {} verification: has_products={}, active_page={}, is_correct_page={}", 
+                      page, has_products, active_page, is_correct_page);
+                
+                Ok(has_products && is_correct_page)
             },
             Err(_) => Ok(false),
         }
+    }
+
+    /// 활성 페이지네이션 값 추출 - 현재 페이지가 실제로 로드되었는지 확인
+    fn get_active_page_number(&self, doc: &scraper::Html) -> u32 {
+        // 활성 페이지네이션 요소를 찾기 위한 다양한 선택자 시도
+        // 사이트 구조에 맞게 우선순위 조정 (페이지네이션 우선 클래스: page-numbers.current)
+        let active_selectors = [
+            ".page-numbers.current", // 우선순위 가장 높음 (사이트 구조에 맞게 조정)
+            "span.page-numbers.current", // 정확한 요소 지정
+            "a.page-numbers.current",
+            ".current",
+            ".active",
+            ".pagination .current",
+            ".pagination .active",
+            "a.current",
+            "span.current",
+            "[aria-current='page']",
+            ".wp-pagenavi .current",
+            ".page-item.active a",
+            ".page-link.active",
+        ];
+        
+        for selector_str in &active_selectors {
+            if let Ok(selector) = scraper::Selector::parse(selector_str) {
+                if let Some(element) = doc.select(&selector).next() {
+                    // 텍스트 내용에서 페이지 번호 추출
+                    let text = element.text().collect::<String>().trim().to_string();
+                    if let Ok(page_num) = text.parse::<u32>() {
+                        info!("🎯 Found active page number {} using selector '{}'", page_num, selector_str);
+                        return page_num;
+                    }
+                }
+            }
+        }
+        
+        // 활성 페이지네이션을 찾지 못한 경우 URL에서 추출 시도
+        if let Some(canonical_url) = self.get_canonical_url(doc) {
+            if let Some(page_num) = self.extract_page_number(&canonical_url) {
+                info!("🎯 Found page number {} from canonical URL", page_num);
+                return page_num;
+            }
+        }
+        
+        // 모든 방법이 실패한 경우 1 반환 (첫 번째 페이지로 추정)
+        warn!("⚠️  Could not determine active page number, assuming page 1");
+        1
+    }
+
+    /// 페이지의 canonical URL 추출
+    fn get_canonical_url(&self, doc: &scraper::Html) -> Option<String> {
+        if let Ok(selector) = scraper::Selector::parse("link[rel='canonical']") {
+            if let Some(element) = doc.select(&selector).next() {
+                return element.value().attr("href").map(|s| s.to_string());
+            }
+        }
+        None
     }
 
     /// 설정 파일에 마지막 페이지 및 메타데이터 업데이트
@@ -496,19 +570,81 @@ impl StatusCheckerImpl {
         max_count > 0
     }
 
-    /// 페이지네이션에서 최대 페이지 번호 찾기 (PageDiscoveryService 로직 활용)
+    /// 페이지네이션에서 최대 페이지 번호 찾기 (더 정확한 파싱)
     fn find_max_page_in_pagination(&self, doc: &scraper::Html) -> u32 {
-        let link_selector = scraper::Selector::parse("a[href*='page']").unwrap();
         let mut max_page = 1;
         
-        for element in doc.select(&link_selector) {
-            if let Some(href) = element.value().attr("href") {
-                if let Some(page_num) = self.extract_page_number(href) {
-                    max_page = max_page.max(page_num);
+        // 1. 페이지네이션 링크에서 찾기
+        let link_selectors = vec![
+            "a[href*='page']",
+            ".pagination a",
+            ".page-numbers", // 모든 페이지 번호 요소 (a와 span 모두 포함)
+            ".page-numbers a", 
+            ".pager a",
+            "a[href*='paged']",
+            ".page-numbers:not(.current):not(.dots)" // 현재 페이지와 줄임표를 제외한 페이지 번호
+        ];
+        
+        for selector_str in &link_selectors {
+            if let Ok(selector) = scraper::Selector::parse(selector_str) {
+                for element in doc.select(&selector) {
+                    if let Some(href) = element.value().attr("href") {
+                        if let Some(page_num) = self.extract_page_number(href) {
+                            max_page = max_page.max(page_num);
+                        }
+                    }
+                    
+                    // 링크 텍스트에서도 숫자 추출
+                    let text = element.text().collect::<String>();
+                    if let Ok(num) = text.trim().parse::<u32>() {
+                        max_page = max_page.max(num);
+                    }
                 }
             }
         }
         
+        // 2. 페이지네이션 텍스트에서 "1 of 479" 같은 패턴 찾기
+        let text_selectors = vec![
+            ".pagination",
+            ".page-info", 
+            ".pager",
+            ".page-numbers",
+            ".wp-pagenavi"
+        ];
+        
+        for selector_str in &text_selectors {
+            if let Ok(selector) = scraper::Selector::parse(selector_str) {
+                for element in doc.select(&selector) {
+                    let text = element.text().collect::<String>();
+                    
+                    // "1 of 479", "Page 1 of 479" 등의 패턴 찾기
+                    if let Some(captures) = regex::Regex::new(r"(?i)(?:of|total|전체)\s+(\d+)")
+                        .ok()
+                        .and_then(|re| re.captures(&text)) 
+                    {
+                        if let Some(num_match) = captures.get(1) {
+                            if let Ok(num) = num_match.as_str().parse::<u32>() {
+                                max_page = max_page.max(num);
+                            }
+                        }
+                    }
+                    
+                    // "1 / 479" 패턴 찾기
+                    if let Some(captures) = regex::Regex::new(r"(\d+)\s*/\s*(\d+)")
+                        .ok()
+                        .and_then(|re| re.captures(&text)) 
+                    {
+                        if let Some(num_match) = captures.get(2) {
+                            if let Ok(num) = num_match.as_str().parse::<u32>() {
+                                max_page = max_page.max(num);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        debug!("Found max page {} in pagination", max_page);
         max_page
     }
 
