@@ -64,11 +64,23 @@ pub struct LoggingConfig {
     /// Enable file output
     pub file_output: bool,
     
+    /// Use separate log files for frontend and backend (true) or unified log file (false)
+    pub separate_frontend_backend: bool,
+    
+    /// Log file naming strategy: "unified", "separated", "timestamped"
+    pub file_naming_strategy: String,
+    
     /// Maximum log file size in MB (for rotation)
     pub max_file_size_mb: u64,
     
-    /// Number of log files to keep
+    /// Number of log files to keep (older files will be deleted)
     pub max_files: u32,
+    
+    /// Enable automatic log cleanup on startup
+    pub auto_cleanup_logs: bool,
+    
+    /// Keep only the most recent log file (delete all others)
+    pub keep_only_latest: bool,
 }
 
 /// Hidden/Advanced settings that are in config file but not exposed in UI
@@ -141,8 +153,12 @@ impl Default for LoggingConfig {
             json_format: defaults::LOG_JSON_FORMAT,
             console_output: defaults::LOG_CONSOLE_OUTPUT,
             file_output: defaults::LOG_FILE_OUTPUT,
+            separate_frontend_backend: defaults::LOG_SEPARATE_FRONTEND_BACKEND,
+            file_naming_strategy: defaults::LOG_FILE_NAMING_STRATEGY.to_string(),
             max_file_size_mb: defaults::LOG_MAX_FILE_SIZE_MB,
             max_files: defaults::LOG_MAX_FILES,
+            auto_cleanup_logs: defaults::LOG_AUTO_CLEANUP,
+            keep_only_latest: defaults::LOG_KEEP_ONLY_LATEST,
         }
     }
 }
@@ -360,18 +376,24 @@ pub mod csa_iot {
     /// Base URL for CSA-IoT website
     pub const BASE_URL: &str = "https://csa-iot.org";
     
+    /// Base products URL (without query parameters)
+    pub const PRODUCTS_BASE: &str = "https://csa-iot.org/csa-iot_products";
+    
+    /// Fixed query parameters for Matter products filtering
+    pub const MATTER_QUERY_PARAMS: &str = "/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver";
+    
     /// General products page (includes all product types - Matter, Zigbee, etc.)
     pub const PRODUCTS_PAGE_GENERAL: &str = "https://csa-iot.org/csa-iot_products/";
     
     /// Matter products only - filtered URL with specific parameters
     /// Parameters explanation:
-    /// - p_type[]=14: Matter product type filter
-    /// - p_program_type[]=1049: Matter program type filter
+    /// - p_type[0]=14: Matter product type filter
+    /// - p_program_type[0]=1049: Matter program type filter
     /// - Other parameters are left empty for maximum coverage
-    pub const PRODUCTS_PAGE_MATTER_ONLY: &str = "https://csa-iot.org/csa-iot_products/?p_keywords=&p_type%5B%5D=14&p_program_type%5B%5D=1049&p_certificate=&p_family=&p_firmware_ver=";
+    pub const PRODUCTS_PAGE_MATTER_ONLY: &str = "https://csa-iot.org/csa-iot_products/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver";
     
     /// URL pattern for Matter products with page pagination
-    /// Use with format!() macro: format!(PRODUCTS_PAGE_MATTER_PAGINATED, page_number)
+    /// Format: https://csa-iot.org/csa-iot_products/page/{page_number}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver
     pub const PRODUCTS_PAGE_MATTER_PAGINATED: &str = "https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver";
     
     /// Filter parameters for Matter products
@@ -434,12 +456,14 @@ pub mod defaults {
     
     /// Default CSS selectors for finding products
     pub const PRODUCT_SELECTORS: &[&str] = &[
-        "div > article.product.type-product",
-        ".product",
-        ".product-item", 
-        ".product-card",
-        "article.product",
-        "[class*='product-']:not([class*='pagination']):not([class*='search'])",
+        "div.post-feed article.type-product",  // 사용자 제공 구체적 selector (최우선)
+        // "div > article.product.type-product",  // 기존 selector
+        // "article.type-product",                // 더 간단한 버전
+        // ".product",
+        // ".product-item", 
+        // ".product-card",
+        // "article.product",
+        // "[class*='product-']:not([class*='pagination']):not([class*='search'])",
     ];
     
     // Logging defaults
@@ -455,11 +479,23 @@ pub mod defaults {
     /// Default file output setting
     pub const LOG_FILE_OUTPUT: bool = true;
     
+    /// Default separate frontend/backend logs setting
+    pub const LOG_SEPARATE_FRONTEND_BACKEND: bool = false;
+    
+    /// Default log file naming strategy
+    pub const LOG_FILE_NAMING_STRATEGY: &str = "unified";
+    
     /// Default maximum log file size in MB
     pub const LOG_MAX_FILE_SIZE_MB: u64 = 10;
     
     /// Default number of log files to keep
     pub const LOG_MAX_FILES: u32 = 5;
+    
+    /// Default auto cleanup logs setting
+    pub const LOG_AUTO_CLEANUP: bool = true;
+    
+    /// Default keep only latest log file setting
+    pub const LOG_KEEP_ONLY_LATEST: bool = false;
 }
 
 /// URL building helper functions
@@ -467,23 +503,21 @@ pub mod utils {
     use super::csa_iot::*;
     
     /// Build a Matter products URL for a specific page number
+    /// Uses the new URL structure: https://csa-iot.org/csa-iot_products/page/{page}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver
     pub fn matter_products_page_url(page: u32) -> String {
         if page <= 1 {
-            PRODUCTS_PAGE_MATTER_ONLY.to_string()
+            // First page uses base URL without /page/ path
+            format!("{}{}", PRODUCTS_BASE, MATTER_QUERY_PARAMS)
         } else {
-            // Use the paginated URL pattern for pages > 1
-            format!("{}", PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &page.to_string()))
+            // Pages 2+ use /page/{number}/ path
+            format!("{}/page/{}{}", PRODUCTS_BASE, page, MATTER_QUERY_PARAMS)
         }
     }
     
-    /// Build a Matter products URL by adding page parameter to the base URL
+    /// Build a Matter products URL by using the same structure as matter_products_page_url
+    /// This function is kept for compatibility but now uses the same logic
     pub fn matter_products_page_url_simple(page: u32) -> String {
-        if page <= 1 {
-            PRODUCTS_PAGE_MATTER_ONLY.to_string()
-        } else {
-            // Add page parameter to existing query string
-            format!("{}&page={}", PRODUCTS_PAGE_MATTER_ONLY, page)
-        }
+        matter_products_page_url(page)
     }
     
     /// Resolve a relative URL to an absolute URL using the base URL

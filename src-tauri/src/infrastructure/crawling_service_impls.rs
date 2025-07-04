@@ -1,25 +1,45 @@
-//! 크롤링 서비스 구현체들
+//! 크롤링 서비스 구현체
 //! 
 //! domain/services/crawling_services.rs의 트레이트들에 대한 실제 구현체
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 use async_trait::async_trait;
 use anyhow::{Result, anyhow};
 use tracing::{info, warn, error, debug};
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
 use futures::future::try_join_all;
-use scraper::Html;
+use scraper;
+use regex;
 
 use crate::domain::services::{
     StatusChecker, DatabaseAnalyzer, ProductListCollector, ProductDetailCollector,
     SiteStatus, DatabaseAnalysis, FieldAnalysis, DuplicateAnalysis, ProcessingStrategy
 };
+use crate::domain::services::crawling_services::{
+    SiteDataChangeStatus, DataDecreaseRecommendation, RecommendedAction, SeverityLevel
+};
 use crate::domain::product::Product;
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::config::utils as config_utils;
+
+/// 페이지 분석 결과를 캐싱하기 위한 구조체
+#[derive(Debug, Clone)]
+struct PageAnalysisCache {
+    /// 페이지의 제품 수
+    product_count: u32,
+    /// 페이지네이션에서 발견된 최대 페이지 번호
+    max_pagination_page: u32,
+    /// 현재 활성화된 페이지 번호 (페이지네이션에서 확인)
+    active_page: u32,
+    /// 제품이 있는지 여부
+    has_products: bool,
+    /// 분석 완료 시각
+    analyzed_at: std::time::Instant,
+}
 
 /// 사이트 상태 체크 서비스 구현체
 /// PageDiscoveryService와 협력하여 사이트 상태를 종합적으로 분석
@@ -27,6 +47,8 @@ pub struct StatusCheckerImpl {
     http_client: Arc<tokio::sync::Mutex<HttpClient>>,
     data_extractor: Arc<MatterDataExtractor>,
     config: AppConfig,
+    /// 페이지 분석 결과 캐시 (페이지 번호 -> 분석 결과)
+    page_cache: Arc<tokio::sync::Mutex<HashMap<u32, PageAnalysisCache>>>,
 }
 
 impl StatusCheckerImpl {
@@ -44,6 +66,7 @@ impl StatusCheckerImpl {
             http_client: Arc::new(tokio::sync::Mutex::new(http_client)),
             data_extractor: Arc::new(data_extractor),
             config,
+            page_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 }
@@ -52,6 +75,11 @@ impl StatusCheckerImpl {
 impl StatusChecker for StatusCheckerImpl {
     async fn check_site_status(&self) -> Result<SiteStatus> {
         let start_time = Instant::now();
+        info!("Starting comprehensive site status check with detailed page discovery");
+        
+        // 캐시 초기화
+        self.clear_page_cache().await;
+        
         info!("Checking site status and discovering pages...");
 
         // Step 1: 기본 사이트 접근성 확인
@@ -74,12 +102,14 @@ impl StatusChecker for StatusCheckerImpl {
                     estimated_products: 0,
                     last_check_time: chrono::Utc::now(),
                     health_score: 0.0,
+                    data_change_status: SiteDataChangeStatus::Inaccessible,
+                    decrease_recommendation: None,
                 });
             }
         }
 
-        // Step 2: 페이지 수 탐지 (PageDiscoveryService의 로직을 안전하게 활용)
-        let total_pages = self.discover_total_pages().await?;
+        // Step 2: 페이지 수 탐지 및 마지막 페이지 제품 수 확인
+        let (total_pages, products_on_last_page) = self.discover_total_pages().await?;
 
         let response_time = start_time.elapsed().as_millis() as u64;
 
@@ -89,18 +119,21 @@ impl StatusChecker for StatusCheckerImpl {
         info!("Site status check completed: {} pages found, {}ms total time, health score: {:.2}", 
               total_pages, response_time, health_score);
 
-        // 실제 사이트에서는 페이지당 제품 수가 정해져 있으며, 마지막 페이지는 그보다 적을 수 있음
+        // 정확한 제품 수 계산: (마지막 페이지 - 1) * 페이지당 제품 수 + 마지막 페이지 제품 수
         use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
         let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
         
-        // 총 제품 수 계산 (실제로는 마지막 페이지에 12개보다 적은 제품이 있을 수 있음)
-        let estimated_products = total_pages * products_per_page;
+        let estimated_products = if total_pages > 1 {
+            ((total_pages - 1) * products_per_page) + products_on_last_page
+        } else {
+            products_on_last_page
+        };
         
-        info!("Estimated products: {} pages * {} products per page = {} total products", 
-              total_pages, products_per_page, estimated_products);
-              
-        // 참고: 실제 정확한 제품 수는 마지막 페이지 제품 수를 확인해야 함
-        // TODO: 마지막 페이지의 제품 수를 별도로 계산하여 더 정확한 예상치 제공
+        info!("Accurate product estimation: ({} full pages * {} products) + {} products on last page = {} total products", 
+              total_pages - 1, products_per_page, products_on_last_page, estimated_products);
+
+        // Step 4: 데이터 변화 상태 분석
+        let (data_change_status, decrease_recommendation) = self.analyze_data_changes(estimated_products).await;
               
         Ok(SiteStatus {
             is_accessible: true,
@@ -109,6 +142,8 @@ impl StatusChecker for StatusCheckerImpl {
             estimated_products,
             last_check_time: chrono::Utc::now(),
             health_score,
+            data_change_status,
+            decrease_recommendation,
         })
     }
 
@@ -128,9 +163,9 @@ impl StatusChecker for StatusCheckerImpl {
 }
 
 impl StatusCheckerImpl {
-    /// 향상된 페이지 탐지 로직 - 페이지네이션을 반복적으로 확인하여 정확한 마지막 페이지 찾기
-    async fn discover_total_pages(&self) -> Result<u32> {
-        info!("🔍 Starting enhanced page discovery algorithm");
+    /// 향상된 페이지 탐지 로직 - 사이트 정보 변화 감지 포함
+    async fn discover_total_pages(&self) -> Result<(u32, u32)> {
+        info!("🔍 Starting enhanced page discovery algorithm with site change detection");
         
         // 1. 시작 페이지 결정
         let start_page = self.config.app_managed.last_known_max_page
@@ -141,10 +176,26 @@ impl StatusCheckerImpl {
               self.config.app_managed.last_known_max_page,
               self.config.advanced.last_page_search_start);
         
-        // 2. 첫 번째 단계: 시작 페이지가 유효한지 확인
+        // 2. 시작 페이지 분석 (캐시 사용)
+        let start_analysis = self.get_or_analyze_page(start_page).await?;
         let mut current_page = start_page;
-        if !self.check_page_has_products(current_page).await? {
-            info!("⚠️  Starting page {} has no products, searching downward", current_page);
+        
+        if !start_analysis.has_products {
+            warn!("⚠️  Starting page {} has no products - checking site status", current_page);
+            
+            // 첫 페이지 확인으로 사이트 접근성 검증
+            let first_page_analysis = self.get_or_analyze_page(1).await?;
+            if !first_page_analysis.has_products {
+                error!("❌ First page also has no products - site may be temporarily unavailable");
+                return Err(anyhow::anyhow!(
+                    "Site appears to be temporarily unavailable or experiencing issues. Please try again later."
+                ));
+            }
+            
+            info!("✅ First page has products - site is accessible, cached page info may be outdated");
+            warn!("🔄 Site content may have decreased - will perform full discovery");
+            
+            // 하향 탐색으로 유효한 페이지 찾기
             current_page = self.find_last_valid_page_downward(current_page).await?;
             info!("✅ Found valid starting page: {}", current_page);
         }
@@ -162,33 +213,18 @@ impl StatusCheckerImpl {
             
             info!("🔍 Iteration {}/{}: Checking page {}", attempts, max_attempts, current_page);
             
-            // 현재 페이지를 로드하고 분석
-            let test_url = config_utils::matter_products_page_url_simple(current_page);
-            debug!("📄 Loading page: {}", test_url);
-            
-            let (has_products, max_page_in_pagination) = {
-                let mut client = self.http_client.lock().await;
-                match client.fetch_html_string(&test_url).await {
-                    Ok(html) => {
-                        let doc = scraper::Html::parse_document(&html);
-                        let has_products = self.has_products_on_page(&doc);
-                        let max_page = self.find_max_page_in_pagination(&doc);
-                        
-                        info!("📊 Page {} analysis: has_products={}, max_pagination={}", 
-                              current_page, has_products, max_page);
-                        
-                        (has_products, max_page)
-                    },
-                    Err(e) => {
-                        warn!("❌ Failed to fetch page {}: {}", current_page, e);
-                        // 네트워크 오류 시 하향 탐색
-                        current_page = self.find_last_valid_page_downward(current_page).await?;
-                        break;
-                    }
+            // 현재 페이지를 분석 (캐시 사용)
+            let analysis = match self.get_or_analyze_page(current_page).await {
+                Ok(analysis) => analysis,
+                Err(e) => {
+                    warn!("❌ Failed to analyze page {}: {}", current_page, e);
+                    // 네트워크 오류 시 하향 탐색
+                    current_page = self.find_last_valid_page_downward(current_page).await?;
+                    break;
                 }
             };
             
-            if !has_products {
+            if !analysis.has_products {
                 // 제품이 없는 경우 안전성 검사가 포함된 하향 탐색
                 info!("🔻 Page {} has no products, performing safe downward search", current_page);
                 current_page = self.find_last_valid_page_with_safety_check(current_page).await?;
@@ -196,9 +232,9 @@ impl StatusCheckerImpl {
             }
             
             // 페이지네이션에서 더 큰 페이지를 찾았는지 확인
-            if max_page_in_pagination > current_page {
-                info!("🔺 Found higher page {} in pagination, jumping there", max_page_in_pagination);
-                current_page = max_page_in_pagination;
+            if analysis.max_pagination_page > current_page {
+                info!("🔺 Found higher page {} in pagination, jumping there", analysis.max_pagination_page);
+                current_page = analysis.max_pagination_page;
                 // 새 페이지로 이동하여 다시 탐색
                 continue;
             } else {
@@ -207,16 +243,16 @@ impl StatusCheckerImpl {
             }
         }
         
-        // 4. 최종 검증: 마지막 페이지 확인
-        let verified_last_page = self.verify_last_page(current_page).await?;
+        // 4. 최종 검증: 마지막 페이지 확인 및 제품 수 계산
+        let (verified_last_page, products_on_last_page) = self.verify_last_page(current_page).await?;
         
         // 5. 설정 파일에 결과 저장
         if let Err(e) = self.update_last_known_page(verified_last_page).await {
             warn!("⚠️  Failed to update last known page in config: {}", e);
         }
         
-        info!("🎉 Final verified last page: {}", verified_last_page);
-        Ok(verified_last_page)
+        info!("🎉 Final verified last page: {} with {} products", verified_last_page, products_on_last_page);
+        Ok((verified_last_page, products_on_last_page))
     }
 
     /// 하향 탐색으로 마지막 유효한 페이지 찾기
@@ -346,46 +382,132 @@ impl StatusCheckerImpl {
     }
 
     /// 마지막 페이지 최종 검증 - 더 철저한 검증 로직
-    async fn verify_last_page(&self, candidate_page: u32) -> Result<u32> {
+    /// 마지막 페이지 검증 및 제품 수 확인
+    async fn verify_last_page(&self, candidate_page: u32) -> Result<(u32, u32)> {
         info!("🔍 Verifying candidate last page: {}", candidate_page);
 
-        // 1. 후보 페이지에 제품이 있는지 확인
-        let has_products = self.check_page_has_products(candidate_page).await?;
+        // 1. 후보 페이지 분석 (캐시에서 가져오거나 새로 분석)
+        let analysis = self.get_or_analyze_page(candidate_page).await?;
+        let products_on_last_page = analysis.product_count;
+        let has_products = analysis.has_products;
+        
+        info!("📊 Last page {} has {} products", candidate_page, products_on_last_page);
+        
         if !has_products {
             warn!("⚠️  Candidate page {} has no products, performing downward search with safety check", candidate_page);
-            return self.find_last_valid_page_with_safety_check(candidate_page).await;
+            let actual_last_page = self.find_last_valid_page_with_safety_check(candidate_page).await?;
+            // 실제 마지막 페이지의 제품 수 다시 확인
+            let actual_analysis = self.get_or_analyze_page(actual_last_page).await?;
+            return Ok((actual_last_page, actual_analysis.product_count));
         }
 
-        // 2. 다음 페이지들을 확인하여 정말 마지막인지 검증
-        let verification_range = 5; // 최대 5페이지까지 확인
+        // 2. 페이지네이션 분석에서 이미 마지막 페이지임을 확신할 수 있다면 추가 확인 생략
+        // 현재 페이지가 페이지네이션에서 발견된 최대 페이지와 같다면 검증 완료
+        if analysis.max_pagination_page == candidate_page {
+            info!("✅ Page {} confirmed as last page via pagination analysis (max_pagination={})", 
+                  candidate_page, analysis.max_pagination_page);
+            info!("🚀 Skipping additional verification - pagination analysis is reliable");
+            return Ok((candidate_page, products_on_last_page));
+        }
         
-        for offset in 1..=verification_range {
-            let next_page = candidate_page + offset;
-            
-            match self.check_page_has_products(next_page).await {
-                Ok(true) => {
-                    warn!("🔍 Found products on page {} after candidate {}, re-discovering", 
-                          next_page, candidate_page);
-                    
-                    // 더 높은 페이지에서 제품을 발견했으므로 그 페이지부터 다시 탐색
-                    return self.discover_from_page(next_page).await;
-                },
-                Ok(false) => {
-                    debug!("✅ Page {} confirmed empty", next_page);
-                },
-                Err(e) => {
-                    debug!("❌ Failed to check page {}: {}", next_page, e);
-                    // 네트워크 오류는 무시하고 계속 진행
-                }
+        // 3. 페이지네이션 분석이 불확실한 경우에만 최소한의 추가 검증 수행
+        info!("🔍 Pagination analysis inconclusive (current={}, max_pagination={}), performing minimal verification", 
+              candidate_page, analysis.max_pagination_page);
+        
+        // 바로 다음 페이지 1개만 확인 (과도한 검증 방지)
+        let next_page = candidate_page + 1;
+        match self.check_page_has_products(next_page).await {
+            Ok(true) => {
+                warn!("🔍 Found products on page {} after candidate {}, re-discovering", 
+                      next_page, candidate_page);
+                // 더 높은 페이지에서 제품을 발견했으므로 그 페이지부터 다시 탐색
+                return self.discover_from_page_with_count(next_page).await;
+            },
+            Ok(false) => {
+                info!("✅ Verified page {} as the last page with {} products (checked {} page ahead)", 
+                      candidate_page, products_on_last_page, 1);
+            },
+            Err(e) => {
+                debug!("❌ Failed to check page {}: {}, assuming {} is last", next_page, e, candidate_page);
             }
+        }
+        
+        Ok((candidate_page, products_on_last_page))
+    }
+
+    /// 특정 페이지부터 다시 탐색 시작 (제품 수도 반환)
+    async fn discover_from_page_with_count(&self, start_page: u32) -> Result<(u32, u32)> {
+        info!("🔄 Re-discovering from page {} with product count", start_page);
+        
+        let mut current_page = start_page;
+        let max_attempts = self.config.advanced.max_search_attempts;
+        let mut attempts = 0;
+
+        loop {
+            attempts += 1;
+            if attempts > max_attempts {
+                warn!("🔄 Reached maximum attempts, stopping at page {}", current_page);
+                break;
+            }
+
+            let test_url = config_utils::matter_products_page_url_simple(current_page);
             
-            // 각 확인 사이에 지연
-            tokio::time::sleep(tokio::time::Duration::from_millis(self.config.user.request_delay_ms)).await;
+            let (has_products, max_page_in_pagination) = {
+                let mut client = self.http_client.lock().await;
+                match client.fetch_html_string(&test_url).await {
+                    Ok(html) => {
+                        let doc = scraper::Html::parse_document(&html);
+                        let has_products = self.has_products_on_page(&doc);
+                        let max_page = self.find_max_page_in_pagination(&doc);
+                        
+                        info!("📊 Page {} analysis: has_products={}, max_pagination={}", 
+                              current_page, has_products, max_page);
+                        
+                        (has_products, max_page)
+                    },
+                    Err(e) => {
+                        warn!("❌ Failed to fetch page {}: {}", current_page, e);
+                        break;
+                    }
+                }
+            };
+
+            if !has_products {
+                // 제품이 없으면 안전성 검사가 포함된 하향 탐색 후 제품 수 확인
+                let last_page = self.find_last_valid_page_with_safety_check(current_page).await?;
+                let test_url = config_utils::matter_products_page_url_simple(last_page);
+                let mut client = self.http_client.lock().await;
+                let html = client.fetch_html_string(&test_url).await?;
+                drop(client); // 락 해제
+                let doc = scraper::Html::parse_document(&html);
+                let products_count = self.count_products(&doc);
+                return Ok((last_page, products_count));
+            }
+
+            if max_page_in_pagination > current_page {
+                // 더 큰 페이지가 있으면 이동
+                current_page = max_page_in_pagination;
+                continue;
+            } else {
+                // 마지막 페이지 도달, 제품 수 확인
+                let test_url = config_utils::matter_products_page_url_simple(current_page);
+                let mut client = self.http_client.lock().await;
+                let html = client.fetch_html_string(&test_url).await?;
+                drop(client); // 락 해제
+                let doc = scraper::Html::parse_document(&html);
+                let products_count = self.count_products(&doc);
+                return Ok((current_page, products_count));
+            }
         }
 
-        info!("✅ Verified page {} as the last page (checked {} pages ahead)", 
-              candidate_page, verification_range);
-        Ok(candidate_page)
+        // 최대 시도 횟수 도달 시 현재 페이지의 제품 수 확인
+        let test_url = config_utils::matter_products_page_url_simple(current_page);
+        let mut client = self.http_client.lock().await;
+        let html = client.fetch_html_string(&test_url).await?;
+        drop(client); // 락 해제
+        let doc = scraper::Html::parse_document(&html);
+        let products_count = self.count_products(&doc);
+        Ok((current_page, products_count))
     }
 
     /// 특정 페이지부터 다시 탐색 시작
@@ -562,40 +684,118 @@ impl StatusCheckerImpl {
         Ok(())
     }
 
-    /// 페이지에서 제품 개수 카운트 (모든 선택자를 시도하고 가장 많은 결과 반환)
-    fn count_products(&self, doc: &scraper::Html) -> u32 {
-        let mut max_count = 0;
+    /// 데이터 변화 상태 분석 및 권장사항 생성
+    async fn analyze_data_changes(&self, current_estimated_products: u32) -> (SiteDataChangeStatus, Option<DataDecreaseRecommendation>) {
+        // 이전 크롤링 정보 가져오기
+        let previous_count = self.config.app_managed.last_crawl_product_count;
         
-        for selector_str in &self.config.advanced.product_selectors {
-            if let Ok(selector) = scraper::Selector::parse(selector_str) {
-                let count = doc.select(&selector).count() as u32;
-                if count > max_count {
-                    max_count = count;
-                    debug!("Found {} products using selector: {}", count, selector_str);
+        match previous_count {
+            None => {
+                info!("🆕 Initial site check - no previous data available");
+                (SiteDataChangeStatus::Initial { count: current_estimated_products }, None)
+            },
+            Some(prev_count) => {
+                let change_percentage = if prev_count > 0 {
+                    ((current_estimated_products as f64 - prev_count as f64) / prev_count as f64) * 100.0
+                } else {
+                    0.0
+                };
+                
+                if current_estimated_products > prev_count {
+                    let increase = current_estimated_products - prev_count;
+                    info!("📈 Site data increased: {} -> {} (+{}, +{:.1}%)", 
+                          prev_count, current_estimated_products, increase, change_percentage);
+                    (SiteDataChangeStatus::Increased { 
+                        new_count: current_estimated_products, 
+                        previous_count: prev_count 
+                    }, None)
+                } else if current_estimated_products == prev_count {
+                    info!("📊 Site data stable: {} products", current_estimated_products);
+                    (SiteDataChangeStatus::Stable { count: current_estimated_products }, None)
+                } else {
+                    let decrease = prev_count - current_estimated_products;
+                    let decrease_percentage = (decrease as f64 / prev_count as f64) * 100.0;
+                    
+                    warn!("📉 Site data decreased: {} -> {} (-{}, -{:.1}%)", 
+                          prev_count, current_estimated_products, decrease, decrease_percentage);
+                    
+                    let severity = if decrease_percentage < 10.0 {
+                        SeverityLevel::Low
+                    } else if decrease_percentage < 30.0 {
+                        SeverityLevel::Medium
+                    } else if decrease_percentage < 50.0 {
+                        SeverityLevel::High
+                    } else {
+                        SeverityLevel::Critical
+                    };
+                    
+                    let recommendation = self.generate_decrease_recommendation(decrease_percentage, &severity);
+                    
+                    (SiteDataChangeStatus::Decreased { 
+                        current_count: current_estimated_products,
+                        previous_count: prev_count,
+                        decrease_amount: decrease
+                    }, Some(recommendation))
                 }
             }
         }
-        
-        // 기본 선택자들도 시도
-        if max_count == 0 {
-            if let Ok(article_selector) = scraper::Selector::parse("article") {
-                let count = doc.select(&article_selector).count() as u32;
-                max_count = count;
-                debug!("Fallback: Found {} products using generic article selector", count);
-            }
+    }
+    
+    /// 데이터 감소 시 권장사항 생성
+    fn generate_decrease_recommendation(&self, decrease_percentage: f64, severity: &SeverityLevel) -> DataDecreaseRecommendation {
+        match severity {
+            SeverityLevel::Low => DataDecreaseRecommendation {
+                action_type: RecommendedAction::WaitAndRetry,
+                description: format!("사이트 데이터가 {:.1}% 감소했습니다. 일시적인 변화일 수 있습니다.", decrease_percentage),
+                severity: severity.clone(),
+                action_steps: vec![
+                    "잠시 후(5-10분) 다시 상태를 확인해보세요".to_string(),
+                    "문제가 지속되면 수동으로 사이트를 확인해보세요".to_string(),
+                ],
+            },
+            SeverityLevel::Medium => DataDecreaseRecommendation {
+                action_type: RecommendedAction::ManualVerification,
+                description: format!("사이트 데이터가 {:.1}% 감소했습니다. 수동 확인이 필요합니다.", decrease_percentage),
+                severity: severity.clone(),
+                action_steps: vec![
+                    "CSA-IoT 사이트에서 직접 제품 수를 확인해보세요".to_string(),
+                    "사이트에서 필터 설정이 변경되었는지 확인하세요".to_string(),
+                    "데이터베이스를 백업하고 부분 재크롤링을 고려하세요".to_string(),
+                ],
+            },
+            SeverityLevel::High => DataDecreaseRecommendation {
+                action_type: RecommendedAction::BackupAndRecrawl,
+                description: format!("사이트 데이터가 {:.1}% 크게 감소했습니다. 데이터베이스 백업 후 재크롤링을 권장합니다.", decrease_percentage),
+                severity: severity.clone(),
+                action_steps: vec![
+                    "현재 데이터베이스를 즉시 백업하세요".to_string(),
+                    "CSA-IoT 사이트를 수동으로 확인하여 실제 상황을 파악하세요".to_string(),
+                    "데이터베이스를 비우고 전체 재크롤링을 수행하세요".to_string(),
+                    "크롤링 완료 후 이전 데이터와 비교 분석하세요".to_string(),
+                ],
+            },
+            SeverityLevel::Critical => DataDecreaseRecommendation {
+                action_type: RecommendedAction::BackupAndRecrawl,
+                description: format!("사이트 데이터가 {:.1}% 심각하게 감소했습니다. 즉시 조치가 필요합니다.", decrease_percentage),
+                severity: severity.clone(),
+                action_steps: vec![
+                    "🚨 즉시 현재 데이터베이스를 백업하세요".to_string(),
+                    "CSA-IoT 사이트에 접속하여 실제 상태를 확인하세요".to_string(),
+                    "사이트 구조나 필터 조건이 변경되었는지 확인하세요".to_string(),
+                    "백업 확인 후 데이터베이스를 초기화하고 전체 재크롤링하세요".to_string(),
+                    "크롤링 설정(selector, URL 등)을 재검토하세요".to_string(),
+                ],
+            },
         }
-        
-        info!("Total products found on page: {}", max_count);
-        max_count
     }
 
-    /// 페이지에 제품이 있는지 확인 (PageDiscoveryService 로직 활용)
+    /// 페이지에 제품이 있는지 확인
     fn has_products_on_page(&self, doc: &scraper::Html) -> bool {
         let product_count = self.count_products(doc);
         product_count > 0
     }
 
-    /// 페이지네이션에서 최대 페이지 번호 찾기 (더 정확한 파싱)
+    /// 페이지네이션에서 최대 페이지 번호 찾기
     fn find_max_page_in_pagination(&self, doc: &scraper::Html) -> u32 {
         let mut max_page = 1;
         
@@ -613,87 +813,145 @@ impl StatusCheckerImpl {
         for selector_str in &link_selectors {
             if let Ok(selector) = scraper::Selector::parse(selector_str) {
                 for element in doc.select(&selector) {
+                    // href 속성에서 페이지 번호 추출
                     if let Some(href) = element.value().attr("href") {
                         if let Some(page_num) = self.extract_page_number(href) {
-                            max_page = max_page.max(page_num);
-                        }
-                    }
-                    
-                    // 링크 텍스트에서도 숫자 추출
-                    let text = element.text().collect::<String>();
-                    if let Ok(num) = text.trim().parse::<u32>() {
-                        max_page = max_page.max(num);
-                    }
-                }
-            }
-        }
-        
-        // 2. 페이지네이션 텍스트에서 "1 of 479" 같은 패턴 찾기
-        let text_selectors = vec![
-            ".pagination",
-            ".page-info", 
-            ".pager",
-            ".page-numbers",
-            ".wp-pagenavi"
-        ];
-        
-        for selector_str in &text_selectors {
-            if let Ok(selector) = scraper::Selector::parse(selector_str) {
-                for element in doc.select(&selector) {
-                    let text = element.text().collect::<String>();
-                    
-                    // "1 of 479", "Page 1 of 479" 등의 패턴 찾기
-                    if let Some(captures) = regex::Regex::new(r"(?i)(?:of|total|전체)\s+(\d+)")
-                        .ok()
-                        .and_then(|re| re.captures(&text)) 
-                    {
-                        if let Some(num_match) = captures.get(1) {
-                            if let Ok(num) = num_match.as_str().parse::<u32>() {
-                                max_page = max_page.max(num);
+                            if page_num > max_page {
+                                max_page = page_num;
+                                debug!("Found higher page {} in href: {}", page_num, href);
                             }
                         }
                     }
                     
-                    // "1 / 479" 패턴 찾기
-                    if let Some(captures) = regex::Regex::new(r"(\d+)\s*/\s*(\d+)")
-                        .ok()
-                        .and_then(|re| re.captures(&text)) 
-                    {
-                        if let Some(num_match) = captures.get(2) {
-                            if let Ok(num) = num_match.as_str().parse::<u32>() {
-                                max_page = max_page.max(num);
-                            }
+                    // 텍스트에서도 페이지 번호 추출
+                    let text = element.text().collect::<String>().trim().to_string();
+                    if let Ok(page_num) = text.parse::<u32>() {
+                        if page_num > max_page && page_num < 10000 { // 합리적인 상한선
+                            max_page = page_num;
+                            debug!("Found higher page {} in text: {}", page_num, text);
                         }
                     }
                 }
             }
         }
         
-        debug!("Found max page {} in pagination", max_page);
+        debug!("Max page found in pagination: {}", max_page);
         max_page
     }
 
-    /// URL에서 페이지 번호 추출 (PageDiscoveryService 로직 활용)
+    /// URL에서 페이지 번호 추출
     fn extract_page_number(&self, url: &str) -> Option<u32> {
-        if let Some(captures) = regex::Regex::new(r"[?&]page[d]?=(\d+)")
-            .ok()
-            .and_then(|re| re.captures(url)) 
-        {
-            if let Some(num_match) = captures.get(1) {
-                return num_match.as_str().parse().ok();
-            }
-        }
+        // URL 패턴: /page/123/ 또는 paged=123
+        let patterns = [
+            r"/page/(\d+)",
+            r"paged=(\d+)",
+            r"page=(\d+)",
+            r"/(\d+)/$",  // 끝에 숫자가 있는 경우
+        ];
         
-        if let Some(captures) = regex::Regex::new(r"/page/(\d+)")
-            .ok()
-            .and_then(|re| re.captures(url))
-        {
-            if let Some(num_match) = captures.get(1) {
-                return num_match.as_str().parse().ok();
+        for pattern in &patterns {
+            if let Ok(re) = regex::Regex::new(pattern) {
+                if let Some(caps) = re.captures(url) {
+                    if let Some(num_str) = caps.get(1) {
+                        if let Ok(num) = num_str.as_str().parse::<u32>() {
+                            return Some(num);
+                        }
+                    }
+                }
             }
         }
         
         None
+    }
+
+    /// 페이지에서 제품 개수 카운트 (모든 선택자를 시도하고 가장 많은 결과 반환)
+    fn count_products(&self, doc: &scraper::Html) -> u32 {
+        let mut max_count = 0;
+        let mut best_selector = "none";
+        
+        for selector_str in &self.config.advanced.product_selectors {
+            if let Ok(selector) = scraper::Selector::parse(selector_str) {
+                let count = doc.select(&selector).count() as u32;
+                debug!("Selector '{}' found {} products", selector_str, count);
+                if count > max_count {
+                    max_count = count;
+                    best_selector = selector_str;
+                }
+            } else {
+                debug!("Failed to parse selector: {}", selector_str);
+            }
+        }
+        
+        // 기본 선택자들도 시도
+        if max_count == 0 {
+            if let Ok(article_selector) = scraper::Selector::parse("article") {
+                let count = doc.select(&article_selector).count() as u32;
+                if count > 0 {
+                    max_count = count;
+                    best_selector = "article (fallback)";
+                    debug!("Fallback: Found {} products using generic article selector", count);
+                }
+            }
+        }
+        
+        info!("Total products found on page: {} (using selector: {})", max_count, best_selector);
+        max_count
+    }
+
+    /// 페이지 분석 결과를 캐시에서 가져오거나 새로 분석
+    async fn get_or_analyze_page(&self, page_number: u32) -> Result<PageAnalysisCache> {
+        // 캐시에서 먼저 확인
+        {
+            let cache = self.page_cache.lock().await;
+            if let Some(cached) = cache.get(&page_number) {
+                debug!("📋 Using cached analysis for page {}", page_number);
+                return Ok(cached.clone());
+            }
+        }
+        
+        // 캐시에 없으면 새로 분석
+        debug!("🔍 Analyzing page {} (not in cache)", page_number);
+        let url = config_utils::matter_products_page_url_simple(page_number);
+        
+        let (product_count, max_pagination_page, active_page, has_products) = {
+            let mut client = self.http_client.lock().await;
+            let html = client.fetch_html_string(&url).await?;
+            drop(client); // 락 해제
+            
+            let doc = scraper::Html::parse_document(&html);
+            let product_count = self.count_products(&doc);
+            let max_pagination_page = self.find_max_page_in_pagination(&doc);
+            let active_page = self.get_active_page_number(&doc);
+            let has_products = product_count > 0;
+            
+            (product_count, max_pagination_page, active_page, has_products)
+        };
+        
+        let analysis = PageAnalysisCache {
+            product_count,
+            max_pagination_page,
+            active_page,
+            has_products,
+            analyzed_at: std::time::Instant::now(),
+        };
+        
+        // 캐시에 저장
+        {
+            let mut cache = self.page_cache.lock().await;
+            cache.insert(page_number, analysis.clone());
+        }
+        
+        info!("📊 Page {} analysis: has_products={}, product_count={}, max_pagination={}", 
+              page_number, has_products, product_count, max_pagination_page);
+        
+        Ok(analysis)
+    }
+    
+    /// 캐시를 초기화 (새로운 상태 체크 시작 시 호출)
+    async fn clear_page_cache(&self) {
+        let mut cache = self.page_cache.lock().await;
+        cache.clear();
+        debug!("🗑️  Page cache cleared");
     }
 }
 

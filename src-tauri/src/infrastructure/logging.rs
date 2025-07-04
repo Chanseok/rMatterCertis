@@ -6,24 +6,39 @@
 //! - Structured JSON logging (optional)
 //! - Console and file output support
 //! - Log files stored relative to executable location
+//! - KST (Korea Standard Time) timezone support
+//! - Separate backend and frontend log files
 
 #![allow(clippy::uninlined_format_args)]
 #![allow(clippy::needless_borrows_for_generic_args)]
 
 use anyhow::{Result, anyhow};
 use std::path::PathBuf;
-use tracing::info;
+use tracing::{info, warn};
 use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::{
     layer::SubscriberExt,
     util::SubscriberInitExt,
-    fmt,
+    fmt::{self, time::FormatTime},
     EnvFilter,
     Registry,
 };
+use chrono::{Utc, FixedOffset};
 
 // Re-export LoggingConfig from config module
 pub use crate::infrastructure::config::LoggingConfig;
+
+/// Custom time formatter for KST (Korea Standard Time, UTC+9)
+struct KstTimeFormatter;
+
+impl FormatTime for KstTimeFormatter {
+    fn format_time(&self, w: &mut fmt::format::Writer<'_>) -> std::fmt::Result {
+        let now = Utc::now();
+        let kst_offset = FixedOffset::east_opt(9 * 3600).unwrap(); // UTC+9
+        let kst_time = now.with_timezone(&kst_offset);
+        write!(w, "{}", kst_time.format("%Y-%m-%d %H:%M:%S%.3f %Z"))
+    }
+}
 
 /// Get the log directory relative to the executable location
 pub fn get_log_directory() -> PathBuf {
@@ -50,6 +65,11 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
     std::fs::create_dir_all(&log_dir)
         .map_err(|e| anyhow!("Failed to create log directory {:?}: {}", log_dir, e))?;
 
+    // Perform log cleanup if enabled
+    if config.auto_cleanup_logs {
+        cleanup_old_logs(&log_dir, &config)?;
+    }
+
     // Set up environment filter
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(&config.level));
@@ -57,36 +77,55 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
     // Build the subscriber registry
     let registry = Registry::default().with(env_filter);
 
+    // Determine log file name based on configuration
+    let log_file_name = match config.file_naming_strategy.as_str() {
+        "separated" => {
+            if config.separate_frontend_backend {
+                "backend.log" // Frontend will have its own file
+            } else {
+                "matter-certis-v2.log" // Unified log
+            }
+        },
+        "timestamped" => {
+            let now = chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
+            &format!("matter-certis-v2-{}.log", now.format("%Y%m%d"))
+        },
+        _ => "matter-certis-v2.log", // Default unified log
+    };
+
     // Handle different combinations of output types
     match (config.file_output, config.console_output) {
         (true, true) => {
             // Both file and console output
-            let app_name = "matter-certis-v2";
-            let file_appender = rolling::daily(&log_dir, &format!("{}.log", app_name));
-            let (file_writer, _guard) = non_blocking(file_appender);
+            let file_appender = rolling::daily(&log_dir, log_file_name);
+            let (file_writer, _file_guard) = non_blocking(file_appender);
             
             if config.json_format {
                 let file_layer = fmt::Layer::new()
                     .json()
                     .with_writer(file_writer)
+                    .with_timer(KstTimeFormatter)
                     .with_target(true)
                     .with_thread_ids(true)
                     .with_file(true)
                     .with_line_number(true);
                 let console_layer = fmt::Layer::new()
                     .with_writer(std::io::stdout)
+                    .with_timer(KstTimeFormatter)
                     .with_target(false);
                 
                 registry.with(file_layer).with(console_layer).init();
             } else {
                 let file_layer = fmt::Layer::new()
                     .with_writer(file_writer)
+                    .with_timer(KstTimeFormatter)
                     .with_target(true)
                     .with_thread_ids(true)
                     .with_file(true)
                     .with_line_number(true);
                 let console_layer = fmt::Layer::new()
                     .with_writer(std::io::stdout)
+                    .with_timer(KstTimeFormatter)
                     .with_target(false);
                 
                 registry.with(file_layer).with(console_layer).init();
@@ -94,14 +133,14 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
         },
         (true, false) => {
             // File output only
-            let app_name = "matter-certis-v2";
-            let file_appender = rolling::daily(&log_dir, &format!("{}.log", app_name));
-            let (file_writer, _guard) = non_blocking(file_appender);
+            let file_appender = rolling::daily(&log_dir, log_file_name);
+            let (file_writer, _file_guard) = non_blocking(file_appender);
             
             if config.json_format {
                 let file_layer = fmt::Layer::new()
                     .json()
                     .with_writer(file_writer)
+                    .with_timer(KstTimeFormatter)
                     .with_target(true)
                     .with_thread_ids(true)
                     .with_file(true)
@@ -111,6 +150,7 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
             } else {
                 let file_layer = fmt::Layer::new()
                     .with_writer(file_writer)
+                    .with_timer(KstTimeFormatter)
                     .with_target(true)
                     .with_thread_ids(true)
                     .with_file(true)
@@ -120,9 +160,10 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
             }
         },
         (false, true) => {
-            // Console output only
+            // Console output only with KST time
             let console_layer = fmt::Layer::new()
                 .with_writer(std::io::stdout)
+                .with_timer(KstTimeFormatter)
                 .with_target(false);
             
             registry.with(console_layer).init();
@@ -138,6 +179,15 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
     info!("JSON format: {}", config.json_format);
     info!("Console output: {}", config.console_output);
     info!("File output: {}", config.file_output);
+    info!("Separate frontend/backend logs: {}", config.separate_frontend_backend);
+    info!("File naming strategy: {}", config.file_naming_strategy);
+    info!("Auto cleanup: {}", config.auto_cleanup_logs);
+    info!("Keep only latest: {}", config.keep_only_latest);
+
+    // Handle frontend logging setup
+    if config.file_output {
+        setup_frontend_logging(&log_dir, &config)?;
+    }
 
     Ok(())
 }
@@ -177,4 +227,149 @@ mod tests {
         // The log directory should be deterministic
         assert!(log_dir.to_string_lossy().ends_with("logs"));
     }
+}
+
+/// Setup frontend logging based on configuration
+fn setup_frontend_logging(log_dir: &PathBuf, config: &LoggingConfig) -> Result<()> {
+    let frontend_log_path = if config.separate_frontend_backend {
+        log_dir.join("frontend.log")
+    } else {
+        // Use the same unified log file as backend
+        match config.file_naming_strategy.as_str() {
+            "timestamped" => {
+                let now = chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
+                log_dir.join(format!("matter-certis-v2-{}.log", now.format("%Y%m%d")))
+            },
+            _ => log_dir.join("matter-certis-v2.log"),
+        }
+    };
+    
+    if !frontend_log_path.exists() {
+        let now = chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
+        let log_type = if config.separate_frontend_backend { "Frontend" } else { "Application" };
+        let initial_content = format!(
+            "{} [INFO] {} log file initialized - Matter Certis v2\n",
+            now.format("%Y-%m-%d %H:%M:%S%.3f %Z"),
+            log_type
+        );
+        std::fs::write(&frontend_log_path, initial_content)
+            .map_err(|e| anyhow!("Failed to create log file: {}", e))?;
+    }
+    
+    info!("Frontend logging configured: {:?}", frontend_log_path);
+    Ok(())
+}
+
+/// Clean up old log files based on configuration
+fn cleanup_old_logs(log_dir: &PathBuf, config: &LoggingConfig) -> Result<()> {
+    if !log_dir.exists() {
+        return Ok(());
+    }
+    
+    let mut log_files = Vec::new();
+    
+    // Read all log files in the directory
+    for entry in std::fs::read_dir(log_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.is_file() {
+            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                if filename.ends_with(".log") {
+                    if let Ok(metadata) = entry.metadata() {
+                        if let Ok(modified) = metadata.modified() {
+                            log_files.push((path, modified));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Sort by modification time (newest first)
+    log_files.sort_by(|a, b| b.1.cmp(&a.1));
+    
+    info!("Found {} log files", log_files.len());
+    
+    // Handle keep_only_latest option
+    if config.keep_only_latest && log_files.len() > 1 {
+        info!("Keeping only the latest log file");
+        for (path, _) in log_files.iter().skip(1) {
+            if let Err(e) = std::fs::remove_file(path) {
+                warn!("Failed to remove old log file {:?}: {}", path, e);
+            } else {
+                info!("Removed old log file: {:?}", path);
+            }
+        }
+        return Ok(());
+    }
+    
+    // Handle max_files limit
+    if log_files.len() > config.max_files as usize {
+        let files_to_remove = log_files.len() - config.max_files as usize;
+        info!("Removing {} old log files (keeping {})", files_to_remove, config.max_files);
+        
+        for (path, _) in log_files.iter().skip(config.max_files as usize) {
+            if let Err(e) = std::fs::remove_file(path) {
+                warn!("Failed to remove old log file {:?}: {}", path, e);
+            } else {
+                info!("Removed old log file: {:?}", path);
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Manually clean up all log files except the latest one
+pub fn cleanup_logs_keep_latest() -> Result<String> {
+    let log_dir = get_log_directory();
+    
+    if !log_dir.exists() {
+        return Ok("Log directory does not exist".to_string());
+    }
+    
+    let mut log_files = Vec::new();
+    let mut removed_count = 0;
+    
+    // Read all log files in the directory
+    for entry in std::fs::read_dir(&log_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.is_file() {
+            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                if filename.ends_with(".log") {
+                    if let Ok(metadata) = entry.metadata() {
+                        if let Ok(modified) = metadata.modified() {
+                            log_files.push((path, modified));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if log_files.is_empty() {
+        return Ok("No log files found".to_string());
+    }
+    
+    // Sort by modification time (newest first)
+    log_files.sort_by(|a, b| b.1.cmp(&a.1));
+    
+    // Remove all but the newest file
+    for (path, _) in log_files.iter().skip(1) {
+        if let Err(e) = std::fs::remove_file(path) {
+            warn!("Failed to remove log file {:?}: {}", path, e);
+        } else {
+            info!("Removed log file: {:?}", path);
+            removed_count += 1;
+        }
+    }
+    
+    Ok(format!(
+        "Cleanup completed. Removed {} log files, kept 1 latest file: {:?}", 
+        removed_count, 
+        log_files.first().map(|(p, _)| p.file_name().unwrap_or_default()).unwrap_or_default()
+    ))
 }

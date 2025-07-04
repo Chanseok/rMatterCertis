@@ -456,7 +456,9 @@ pub async fn check_site_status(
                     "total_pages": site_status.total_pages,
                     "estimated_products": site_status.estimated_products,
                     "health_score": site_status.health_score,
-                    "last_check": site_status.last_check_time.to_rfc3339()
+                    "last_check": site_status.last_check_time.to_rfc3339(),
+                    "data_change_status": site_status.data_change_status,
+                    "decrease_recommendation": site_status.decrease_recommendation
                 },
                 "database_analysis": {
                     "total_products": db_analysis.total_products,
@@ -499,7 +501,9 @@ pub async fn check_site_status(
                     "total_pages": site_status.total_pages,
                     "estimated_products": site_status.estimated_products,
                     "health_score": site_status.health_score,
-                    "last_check": site_status.last_check_time.to_rfc3339()
+                    "last_check": site_status.last_check_time.to_rfc3339(),
+                    "data_change_status": site_status.data_change_status,
+                    "decrease_recommendation": site_status.decrease_recommendation
                 },
                 "database_analysis": {
                     "error": db_error.to_string()

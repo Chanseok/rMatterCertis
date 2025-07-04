@@ -212,6 +212,11 @@ pub fn run() {
             commands::build_page_url,
             commands::resolve_url,
             
+            // Frontend logging commands
+            commands::write_frontend_log,
+            commands::get_log_directory_path,
+            commands::cleanup_logs,
+            
             // Legacy parsing commands (kept for compatibility)
             commands::crawl_product_list_page,
             commands::crawl_product_detail_page,

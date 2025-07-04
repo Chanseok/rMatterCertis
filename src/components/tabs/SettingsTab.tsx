@@ -125,6 +125,123 @@ export const SettingsTab: Component = () => {
         </div>
       </ExpandableSection>
 
+      {/* 로깅 설정 */}
+      <ExpandableSection
+        title="로깅 설정"
+        isExpanded={false}
+        onToggle={() => {}}
+        icon="📋"
+      >
+        <div class="space-y-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                로그 레벨
+              </label>
+              <select 
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
+                value="info"
+                onChange={(e) => console.log('Log level changed:', e.currentTarget.value)}
+              >
+                <option value="error">Error</option>
+                <option value="warn">Warning</option>
+                <option value="info">Info</option>
+                <option value="debug">Debug</option>
+                <option value="trace">Trace</option>
+              </select>
+            </div>
+            
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                최대 로그 파일 크기 (MB)
+              </label>
+              <input 
+                type="number" 
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
+                placeholder="10"
+                value={10}
+                onInput={(e) => console.log('Max file size changed:', e.currentTarget.value)}
+              />
+            </div>
+          </div>
+          
+          <div class="space-y-3">
+            <div class="flex items-center space-x-2">
+              <input 
+                type="checkbox" 
+                id="separateLogs"
+                class="rounded border-gray-300 text-emerald-600 shadow-sm focus:border-emerald-300 focus:ring focus:ring-emerald-200 focus:ring-opacity-50"
+                checked={false}
+                onChange={(e) => console.log('Separate logs changed:', e.currentTarget.checked)}
+              />
+              <label for="separateLogs" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                프론트엔드/백엔드 로그 분리
+              </label>
+            </div>
+            
+            <div class="flex items-center space-x-2">
+              <input 
+                type="checkbox" 
+                id="keepOnlyLatest"
+                class="rounded border-gray-300 text-emerald-600 shadow-sm focus:border-emerald-300 focus:ring focus:ring-emerald-200 focus:ring-opacity-50"
+                checked={false}
+                onChange={(e) => console.log('Keep only latest changed:', e.currentTarget.checked)}
+              />
+              <label for="keepOnlyLatest" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                최신 로그 파일만 유지
+              </label>
+            </div>
+            
+            <div class="flex items-center space-x-2">
+              <input 
+                type="checkbox" 
+                id="autoCleanup"
+                class="rounded border-gray-300 text-emerald-600 shadow-sm focus:border-emerald-300 focus:ring focus:ring-emerald-200 focus:ring-opacity-50"
+                checked={true}
+                onChange={(e) => console.log('Auto cleanup changed:', e.currentTarget.checked)}
+              />
+              <label for="autoCleanup" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                시작 시 자동 로그 정리
+              </label>
+            </div>
+            
+            <div class="flex items-center space-x-2">
+              <input 
+                type="checkbox" 
+                id="consoleOutput"
+                class="rounded border-gray-300 text-emerald-600 shadow-sm focus:border-emerald-300 focus:ring focus:ring-emerald-200 focus:ring-opacity-50"
+                checked={true}
+                onChange={(e) => console.log('Console output changed:', e.currentTarget.checked)}
+              />
+              <label for="consoleOutput" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                콘솔 출력 활성화
+              </label>
+            </div>
+            
+            <div class="flex items-center space-x-2">
+              <input 
+                type="checkbox" 
+                id="fileOutput"
+                class="rounded border-gray-300 text-emerald-600 shadow-sm focus:border-emerald-300 focus:ring focus:ring-emerald-200 focus:ring-opacity-50"
+                checked={true}
+                onChange={(e) => console.log('File output changed:', e.currentTarget.checked)}
+              />
+              <label for="fileOutput" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                파일 출력 활성화
+              </label>
+            </div>
+          </div>
+          
+          <div class="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <p class="text-sm text-yellow-700">
+              <strong>참고:</strong> 로깅 설정 변경은 앱 재시작 후 적용됩니다. 
+              통합 로그는 하나의 파일에 프론트엔드와 백엔드 로그를 모두 기록하며, 
+              분리 로그는 각각 별도 파일에 기록합니다.
+            </p>
+          </div>
+        </div>
+      </ExpandableSection>
+
       {/* 저장 버튼 */}
       <div class="flex justify-end">
         <button 

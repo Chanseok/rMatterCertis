@@ -74,6 +74,46 @@ export interface DatabaseStats {
   health_status: DatabaseHealth;
 }
 
+// Site data change detection types - matching Rust enum structure
+export type SiteDataChangeStatus = 
+  | { Increased: { new_count: number; previous_count: number } }
+  | { Stable: { count: number } }
+  | { Decreased: { current_count: number; previous_count: number; decrease_amount: number } }
+  | { Initial: { count: number } }
+  | "Inaccessible";
+
+export enum RecommendedAction {
+  WaitAndRetry = "WaitAndRetry",
+  BackupAndRecrawl = "BackupAndRecrawl", 
+  ManualVerification = "ManualVerification",
+  PartialRecrawl = "PartialRecrawl",
+}
+
+export enum SeverityLevel {
+  Low = "Low",
+  Medium = "Medium",
+  High = "High", 
+  Critical = "Critical",
+}
+
+export interface DataDecreaseRecommendation {
+  action_type: RecommendedAction;
+  description: string;
+  severity: SeverityLevel;
+  action_steps: string[];
+}
+
+export interface SiteStatus {
+  is_accessible: boolean;
+  response_time_ms: number;
+  total_pages: number;
+  estimated_products: number;
+  last_check_time: string;
+  health_score: number; // 0.0 ~ 1.0
+  data_change_status: SiteDataChangeStatus;
+  decrease_recommendation?: DataDecreaseRecommendation;
+}
+
 export interface PerformanceMetrics {
   avg_processing_time_ms: number;
   items_per_second: number;
@@ -369,6 +409,84 @@ export const getDatabaseHealthColor = (health: DatabaseHealth): string => {
     case DatabaseHealth.Critical: return "text-red-500";
     default: return "text-gray-500";
   }
+};
+
+export const getSeverityLevelColor = (severity: SeverityLevel): string => {
+  switch (severity) {
+    case SeverityLevel.Low: return "text-green-500";
+    case SeverityLevel.Medium: return "text-yellow-500";
+    case SeverityLevel.High: return "text-orange-500";
+    case SeverityLevel.Critical: return "text-red-500";
+    default: return "text-gray-500";
+  }
+};
+
+export const getSeverityLevelDisplayName = (severity: SeverityLevel): string => {
+  const severityNames: Record<SeverityLevel, string> = {
+    [SeverityLevel.Low]: "낮음",
+    [SeverityLevel.Medium]: "보통",
+    [SeverityLevel.High]: "높음",
+    [SeverityLevel.Critical]: "심각",
+  };
+  return severityNames[severity] || severity;
+};
+
+export const getRecommendedActionDisplayName = (action: RecommendedAction): string => {
+  const actionNames: Record<RecommendedAction, string> = {
+    [RecommendedAction.WaitAndRetry]: "잠시 대기 후 재시도",
+    [RecommendedAction.BackupAndRecrawl]: "백업 후 전체 재크롤링",
+    [RecommendedAction.ManualVerification]: "수동 확인 필요",
+    [RecommendedAction.PartialRecrawl]: "부분적 재크롤링",
+  };
+  return actionNames[action] || action;
+};
+
+export const getDataChangeStatusDisplayName = (status: SiteDataChangeStatus | any): string => {
+  if (!status) return "정보 없음";
+  
+  if (typeof status === 'string') {
+    switch (status) {
+      case 'Inaccessible': return "사이트 접근 불가";
+      default: return status;
+    }
+  }
+  
+  // Handle Rust enum variants with proper checks
+  if (status && typeof status === 'object') {
+    if ('Increased' in status && status.Increased) {
+      const { new_count, previous_count } = status.Increased;
+      return `데이터 증가 (${previous_count} → ${new_count})`;
+    }
+    if ('Stable' in status && status.Stable) {
+      return `데이터 안정 (${status.Stable.count}개)`;
+    }
+    if ('Decreased' in status && status.Decreased) {
+      const { current_count, previous_count, decrease_amount } = status.Decreased;
+      return `데이터 감소 (${previous_count} → ${current_count}, -${decrease_amount})`;
+    }
+    if ('Initial' in status && status.Initial) {
+      return `초기 상태 (${status.Initial.count}개)`;
+    }
+  }
+  
+  return "알 수 없음";
+};
+
+export const getDataChangeStatusColor = (status: SiteDataChangeStatus | any): string => {
+  if (!status) return "text-gray-500";
+  
+  if (typeof status === 'string') {
+    if (status === 'Inaccessible') return "text-red-500";
+  }
+  
+  if (status && typeof status === 'object') {
+    if ('Increased' in status) return "text-green-500";
+    if ('Stable' in status) return "text-blue-500";
+    if ('Decreased' in status) return "text-red-500";
+    if ('Initial' in status) return "text-gray-500";
+  }
+  
+  return "text-gray-500";
 };
 
 export const getTaskStatusColor = (status: TaskStatus): string => {

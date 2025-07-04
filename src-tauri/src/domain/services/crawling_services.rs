@@ -71,6 +71,8 @@ pub struct SiteStatus {
     pub estimated_products: u32,
     pub last_check_time: chrono::DateTime<chrono::Utc>,
     pub health_score: f64, // 0.0 ~ 1.0
+    pub data_change_status: SiteDataChangeStatus,
+    pub decrease_recommendation: Option<DataDecreaseRecommendation>,
 }
 
 /// 데이터베이스 분석 결과
@@ -127,4 +129,54 @@ pub struct ProcessingStrategy {
     pub should_skip_duplicates: bool,
     pub should_update_existing: bool,
     pub priority_urls: Vec<String>,
+}
+
+/// 사이트 데이터 변화 상태
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum SiteDataChangeStatus {
+    /// 데이터 증가 - 새로운 제품이 추가됨
+    Increased { new_count: u32, previous_count: u32 },
+    /// 데이터 안정 - 변화 없음
+    Stable { count: u32 },
+    /// 데이터 감소 - 제품이 삭제됨 (주의 필요)
+    Decreased { current_count: u32, previous_count: u32, decrease_amount: u32 },
+    /// 초기 상태 - 처음 체크
+    Initial { count: u32 },
+    /// 사이트 접근 불가
+    Inaccessible,
+}
+
+/// 데이터 감소 시 권장 조치사항
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataDecreaseRecommendation {
+    /// 권장 조치 유형
+    pub action_type: RecommendedAction,
+    /// 상세 설명
+    pub description: String,
+    /// 영향도 수준
+    pub severity: SeverityLevel,
+    /// 구체적인 단계별 안내
+    pub action_steps: Vec<String>,
+}
+
+/// 권장 조치 유형
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RecommendedAction {
+    /// 잠시 대기 후 재시도
+    WaitAndRetry,
+    /// 데이터베이스 백업 후 전체 재크롤링
+    BackupAndRecrawl,
+    /// 수동 확인 필요
+    ManualVerification,
+    /// 부분적 재크롤링
+    PartialRecrawl,
+}
+
+/// 심각도 수준
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SeverityLevel {
+    Low,     // 10% 미만 감소
+    Medium,  // 10-30% 감소
+    High,    // 30-50% 감소
+    Critical, // 50% 이상 감소
 }

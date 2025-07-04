@@ -515,6 +515,104 @@ pub async fn is_first_run() -> Result<bool, String> {
     Ok(is_first)
 }
 
+/// Logging-related commands for frontend
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub level: String,
+    pub message: String,
+    pub timestamp: String,
+    pub component: Option<String>,
+}
+
+/// Write frontend log entry to the appropriate log file based on configuration
+#[tauri::command]
+pub async fn write_frontend_log(entry: LogEntry, state: State<'_, AppState>) -> Result<(), String> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use chrono::{Utc, FixedOffset};
+    use crate::infrastructure::logging::get_log_directory;
+    
+    let log_dir = get_log_directory();
+    
+    // Ensure log directory exists
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        return Err(format!("Failed to create log directory: {}", e));
+    }
+    
+    // Get current configuration to determine log file strategy
+    let config = state.get_config().await;
+    let logging_config = &config.user.logging;
+    
+    // Determine which log file to write to
+    let log_file_path = if logging_config.separate_frontend_backend {
+        log_dir.join("frontend.log")
+    } else {
+        // Use unified log file
+        match logging_config.file_naming_strategy.as_str() {
+            "timestamped" => {
+                let now = Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
+                log_dir.join(format!("matter-certis-v2-{}.log", now.format("%Y%m%d")))
+            },
+            _ => log_dir.join("matter-certis-v2.log"), // Default unified log
+        }
+    };
+    
+    // Format timestamp in KST
+    let kst_offset = FixedOffset::east_opt(9 * 3600).unwrap();
+    let kst_time = Utc::now().with_timezone(&kst_offset);
+    let formatted_time = kst_time.format("%Y-%m-%d %H:%M:%S%.3f %Z");
+    
+    // Format log entry
+    let component_str = entry.component
+        .map(|c| format!(" [{}]", c))
+        .unwrap_or_default();
+    
+    let log_line = format!(
+        "{} [{}]{} {}\n",
+        formatted_time,
+        entry.level.to_uppercase(),
+        component_str,
+        entry.message
+    );
+    
+    // Append to log file
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file_path)
+    {
+        Ok(mut file) => {
+            if let Err(e) = file.write_all(log_line.as_bytes()) {
+                return Err(format!("Failed to write to log file: {}", e));
+            }
+            if let Err(e) = file.flush() {
+                return Err(format!("Failed to flush log file: {}", e));
+            }
+            Ok(())
+        },
+        Err(e) => Err(format!("Failed to open log file: {}", e)),
+    }
+}
+
+/// Clean up old log files and keep only the latest
+#[tauri::command]
+pub async fn cleanup_logs() -> Result<String, String> {
+    use crate::infrastructure::logging::cleanup_logs_keep_latest;
+    
+    match cleanup_logs_keep_latest() {
+        Ok(message) => Ok(message),
+        Err(e) => Err(format!("Failed to cleanup logs: {}", e)),
+    }
+}
+
+/// Get the current log directory path for frontend reference
+#[tauri::command]
+pub async fn get_log_directory_path() -> Result<String, String> {
+    use crate::infrastructure::logging::get_log_directory;
+    let log_dir = get_log_directory();
+    Ok(log_dir.to_string_lossy().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,5 +654,21 @@ mod tests {
         assert!(site_config.products_page_matter_only.contains("p_type"));
         assert_eq!(site_config.matter_filters.product_type, "14");
         assert_eq!(site_config.matter_filters.program_type, "1049");
+    }
+    
+    #[tokio::test]
+    async fn test_frontend_log_writing() {
+        let entry = LogEntry {
+            level: "info".to_string(),
+            message: "Test log message".to_string(),
+            timestamp: "2025-07-04T14:30:00.000Z".to_string(),
+            component: Some("StatusTab".to_string()),
+        };
+        
+        // This would normally write to the actual log directory
+        // In a real test, we'd want to use a temporary directory and mock AppState
+        // For now, just test that the function signature is correct
+        // let result = write_frontend_log(entry, mock_state).await;
+        // Note: This test is incomplete due to the need for AppState dependency
     }
 }
