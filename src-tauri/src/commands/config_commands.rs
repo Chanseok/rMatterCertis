@@ -545,15 +545,15 @@ pub async fn write_frontend_log(entry: LogEntry, state: State<'_, AppState>) -> 
     
     // Determine which log file to write to
     let log_file_path = if logging_config.separate_frontend_backend {
-        log_dir.join("frontend.log")
+        log_dir.join("front.log")
     } else {
         // Use unified log file
         match logging_config.file_naming_strategy.as_str() {
             "timestamped" => {
                 let now = Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
-                log_dir.join(format!("matter-certis-v2-{}.log", now.format("%Y%m%d")))
+                log_dir.join(format!("back_front-{}.log", now.format("%Y%m%d")))
             },
-            _ => log_dir.join("matter-certis-v2.log"), // Default unified log
+            _ => log_dir.join("back_front.log"), // Default unified log
         }
     };
     

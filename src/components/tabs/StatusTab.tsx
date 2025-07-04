@@ -54,12 +54,27 @@ export const StatusTab: Component = () => {
       const duration = Date.now() - startTime;
       
       console.log('Backend site status check result:', result);
-      console.log('Data change status structure:', JSON.stringify(result.data_change_status, null, 2));
+      console.log('Data change status structure:', JSON.stringify((result as any).data_change_status, null, 2));
+      
+      // Extract site status from the nested response
+      const siteStatus = (result as any).site_status || result;
       
       await loggingService.logApiCall('POST', 'check_site_status', duration);
-      await loggingService.info(`Site status check completed: ${result.total_pages} pages, ${result.estimated_products} products`);
+      await loggingService.info(`Site status check completed: ${siteStatus.total_pages || 'unknown'} pages, ${siteStatus.estimated_products || 'unknown'} products`);
       
-      setStatusCheckResult(result);
+      // Convert the backend response to the expected SiteStatus format
+      const convertedResult: SiteStatus = {
+        is_accessible: siteStatus.accessible || siteStatus.is_accessible,
+        response_time_ms: siteStatus.response_time_ms,
+        total_pages: siteStatus.total_pages,
+        estimated_products: siteStatus.estimated_products,
+        last_check_time: siteStatus.last_check || siteStatus.last_check_time,
+        health_score: siteStatus.health_score,
+        data_change_status: siteStatus.data_change_status,
+        decrease_recommendation: siteStatus.decrease_recommendation
+      };
+      
+      setStatusCheckResult(convertedResult);
       
       // 프론트엔드 스토어 상태도 업데이트
       await crawlerStore.refreshStatus();

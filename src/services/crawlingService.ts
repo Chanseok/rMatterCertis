@@ -6,8 +6,7 @@ import type {
   ProductSearchResult,
   MatterProductFilter,
   DatabaseSummary,
-  BackendCrawlerConfig,
-  SiteStatus
+  BackendCrawlerConfig
 } from "../types/crawling";
 
 // 현대적인 타입 정의 (레거시 코드 제거)
@@ -176,8 +175,8 @@ export class CrawlingService {
   /**
    * Check site status with detailed page discovery and data change detection
    */
-  static async checkSiteStatus(): Promise<SiteStatus> {
-    return await invoke<SiteStatus>("check_site_status");
+  static async checkSiteStatus(): Promise<any> {
+    return await invoke<any>("check_site_status");
   }
 
   /**

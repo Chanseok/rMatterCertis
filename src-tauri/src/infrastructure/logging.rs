@@ -24,9 +24,16 @@ use tracing_subscriber::{
     Registry,
 };
 use chrono::{Utc, FixedOffset};
+use lazy_static::lazy_static;
+use std::sync::Mutex;
 
 // Re-export LoggingConfig from config module
 pub use crate::infrastructure::config::LoggingConfig;
+
+// Global guard to keep the log file writer alive
+lazy_static! {
+    static ref LOG_GUARDS: Mutex<Vec<tracing_appender::non_blocking::WorkerGuard>> = Mutex::new(Vec::new());
+}
 
 /// Custom time formatter for KST (Korea Standard Time, UTC+9)
 struct KstTimeFormatter;
@@ -57,6 +64,66 @@ pub fn init_logging() -> Result<()> {
     init_logging_with_config(config)
 }
 
+/// Rotate existing log file by renaming it with timestamp
+fn rotate_existing_log_file(log_dir: &PathBuf, log_file_name: &str) -> Result<()> {
+    let log_file_path = log_dir.join(log_file_name);
+    
+    // Check if the log file exists
+    if log_file_path.exists() {
+        // Get the creation time or modification time of the existing log file
+        let metadata = std::fs::metadata(&log_file_path)
+            .map_err(|e| anyhow!("Failed to get log file metadata: {}", e))?;
+        
+        let file_time = metadata.created()
+            .or_else(|_| metadata.modified())
+            .unwrap_or_else(|_| std::time::SystemTime::now());
+        
+        // Convert to KST datetime
+        let datetime: chrono::DateTime<chrono::Utc> = file_time.into();
+        let kst_datetime = datetime.with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
+        
+        // Create new filename with timestamp (Seoul time format: YYYY-MMDDTHH:MM:SS)
+        let file_stem = log_file_name.trim_end_matches(".log");
+        let timestamped_name = format!("{}.{}.log", file_stem, kst_datetime.format("%Y%m%dT%H:%M:%S"));
+        let timestamped_path = log_dir.join(&timestamped_name);
+        
+        // Rename the existing log file
+        std::fs::rename(&log_file_path, &timestamped_path)
+            .map_err(|e| anyhow!("Failed to rotate log file {} to {}: {}", 
+                log_file_path.display(), timestamped_path.display(), e))?;
+        
+        info!("Rotated existing log file to: {}", timestamped_name);
+    }
+    
+    Ok(())
+}
+
+/// Rotate all existing log files (including legacy ones) by renaming them with timestamp
+fn rotate_all_existing_log_files(log_dir: &PathBuf) -> Result<()> {
+    if !log_dir.exists() {
+        return Ok(());
+    }
+
+    // List of possible log files to rotate
+    let potential_log_files = vec![
+        "matter-certis-v2.log",
+        "back_front.log",
+        "back.log",
+        "front.log",
+        "frontend.log",
+        "backend.log"
+    ];
+
+    for log_file_name in potential_log_files {
+        let log_file_path = log_dir.join(log_file_name);
+        if log_file_path.exists() {
+            rotate_existing_log_file(log_dir, log_file_name)?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Initialize logging with custom configuration
 pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
     let log_dir = get_log_directory();
@@ -64,6 +131,35 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
     // Create log directory if it doesn't exist
     std::fs::create_dir_all(&log_dir)
         .map_err(|e| anyhow!("Failed to create log directory {:?}: {}", log_dir, e))?;
+
+    // Determine log file name based on configuration
+    let log_file_name = match config.file_naming_strategy.as_str() {
+        "separated" => {
+            if config.separate_frontend_backend {
+                "back.log" // Backend log file, frontend will have its own file
+            } else {
+                "back_front.log" // Unified backend + frontend log
+            }
+        },
+        "timestamped" => {
+            let now = chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
+            if config.separate_frontend_backend {
+                &format!("back-{}.log", now.format("%Y%m%d"))
+            } else {
+                &format!("back_front-{}.log", now.format("%Y%m%d"))
+            }
+        },
+        _ => {
+            if config.separate_frontend_backend {
+                "back.log" // Backend log file
+            } else {
+                "back_front.log" // Default unified log
+            }
+        }
+    };
+
+    // Rotate all existing log files before creating new ones
+    rotate_all_existing_log_files(&log_dir)?;
 
     // Perform log cleanup if enabled
     if config.auto_cleanup_logs {
@@ -81,24 +177,37 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
     let log_file_name = match config.file_naming_strategy.as_str() {
         "separated" => {
             if config.separate_frontend_backend {
-                "backend.log" // Frontend will have its own file
+                "back.log" // Backend log file, frontend will have its own file
             } else {
-                "matter-certis-v2.log" // Unified log
+                "back_front.log" // Unified backend + frontend log
             }
         },
         "timestamped" => {
             let now = chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
-            &format!("matter-certis-v2-{}.log", now.format("%Y%m%d"))
+            if config.separate_frontend_backend {
+                &format!("back-{}.log", now.format("%Y%m%d"))
+            } else {
+                &format!("back_front-{}.log", now.format("%Y%m%d"))
+            }
         },
-        _ => "matter-certis-v2.log", // Default unified log
+        _ => {
+            if config.separate_frontend_backend {
+                "back.log" // Backend log file
+            } else {
+                "back_front.log" // Default unified log
+            }
+        }
     };
 
     // Handle different combinations of output types
     match (config.file_output, config.console_output) {
         (true, true) => {
             // Both file and console output
-            let file_appender = rolling::daily(&log_dir, log_file_name);
-            let (file_writer, _file_guard) = non_blocking(file_appender);
+            let file_appender = rolling::never(&log_dir, log_file_name);
+            let (file_writer, file_guard) = non_blocking(file_appender);
+            
+            // Store the guard globally to prevent it from being dropped
+            LOG_GUARDS.lock().unwrap().push(file_guard);
             
             if config.json_format {
                 let file_layer = fmt::Layer::new()
@@ -108,7 +217,8 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
                     .with_target(true)
                     .with_thread_ids(true)
                     .with_file(true)
-                    .with_line_number(true);
+                    .with_line_number(true)
+                    .with_ansi(false);       // No ANSI color codes for file output
                 let console_layer = fmt::Layer::new()
                     .with_writer(std::io::stdout)
                     .with_timer(KstTimeFormatter)
@@ -116,13 +226,16 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
                 
                 registry.with(file_layer).with(console_layer).init();
             } else {
+                // File layer with minimal formatting (time + level + message only)
                 let file_layer = fmt::Layer::new()
                     .with_writer(file_writer)
                     .with_timer(KstTimeFormatter)
-                    .with_target(true)
-                    .with_thread_ids(true)
-                    .with_file(true)
-                    .with_line_number(true);
+                    .with_target(false)      // No target module info
+                    .with_thread_ids(false) // No thread IDs
+                    .with_file(false)       // No file names
+                    .with_line_number(false) // No line numbers
+                    .with_ansi(false);       // No ANSI color codes for file output
+                // Console layer with detailed info for development
                 let console_layer = fmt::Layer::new()
                     .with_writer(std::io::stdout)
                     .with_timer(KstTimeFormatter)
@@ -133,8 +246,11 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
         },
         (true, false) => {
             // File output only
-            let file_appender = rolling::daily(&log_dir, log_file_name);
-            let (file_writer, _file_guard) = non_blocking(file_appender);
+            let file_appender = rolling::never(&log_dir, log_file_name);
+            let (file_writer, file_guard) = non_blocking(file_appender);
+            
+            // Store the guard globally to prevent it from being dropped
+            LOG_GUARDS.lock().unwrap().push(file_guard);
             
             if config.json_format {
                 let file_layer = fmt::Layer::new()
@@ -144,17 +260,20 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
                     .with_target(true)
                     .with_thread_ids(true)
                     .with_file(true)
-                    .with_line_number(true);
+                    .with_line_number(true)
+                    .with_ansi(false);       // No ANSI color codes for file output
                 
                 registry.with(file_layer).init();
             } else {
+                // File-only layer with minimal formatting (time + level + message only)
                 let file_layer = fmt::Layer::new()
                     .with_writer(file_writer)
                     .with_timer(KstTimeFormatter)
-                    .with_target(true)
-                    .with_thread_ids(true)
-                    .with_file(true)
-                    .with_line_number(true);
+                    .with_target(false)      // No target module info
+                    .with_thread_ids(false) // No thread IDs
+                    .with_file(false)       // No file names
+                    .with_line_number(false) // No line numbers
+                    .with_ansi(false);       // No ANSI color codes for file output
                 
                 registry.with(file_layer).init();
             }
@@ -231,32 +350,34 @@ mod tests {
 
 /// Setup frontend logging based on configuration
 fn setup_frontend_logging(log_dir: &PathBuf, config: &LoggingConfig) -> Result<()> {
-    let frontend_log_path = if config.separate_frontend_backend {
-        log_dir.join("frontend.log")
+    if config.separate_frontend_backend {
+        // Only create separate frontend log file if we're using separate logs
+        let frontend_log_path = log_dir.join("front.log");
+        
+        if !frontend_log_path.exists() {
+            let now = chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
+            let initial_content = format!(
+                "{} [INFO] Frontend log file initialized - Matter Certis v2\n",
+                now.format("%Y-%m-%d %H:%M:%S%.3f %Z")
+            );
+            std::fs::write(&frontend_log_path, initial_content)
+                .map_err(|e| anyhow!("Failed to create frontend log file: {}", e))?;
+        }
+        
+        info!("Frontend logging configured: {:?}", frontend_log_path);
     } else {
-        // Use the same unified log file as backend
-        match config.file_naming_strategy.as_str() {
+        // For unified logs, frontend writes to the same file as backend
+        let unified_log_path = match config.file_naming_strategy.as_str() {
             "timestamped" => {
                 let now = chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
-                log_dir.join(format!("matter-certis-v2-{}.log", now.format("%Y%m%d")))
+                log_dir.join(format!("back_front-{}.log", now.format("%Y%m%d")))
             },
-            _ => log_dir.join("matter-certis-v2.log"),
-        }
-    };
-    
-    if !frontend_log_path.exists() {
-        let now = chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
-        let log_type = if config.separate_frontend_backend { "Frontend" } else { "Application" };
-        let initial_content = format!(
-            "{} [INFO] {} log file initialized - Matter Certis v2\n",
-            now.format("%Y-%m-%d %H:%M:%S%.3f %Z"),
-            log_type
-        );
-        std::fs::write(&frontend_log_path, initial_content)
-            .map_err(|e| anyhow!("Failed to create log file: {}", e))?;
+            _ => log_dir.join("back_front.log"),
+        };
+        
+        info!("Frontend logging configured (unified): {:?}", unified_log_path);
     }
     
-    info!("Frontend logging configured: {:?}", frontend_log_path);
     Ok(())
 }
 
