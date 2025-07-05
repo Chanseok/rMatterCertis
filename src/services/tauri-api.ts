@@ -434,6 +434,7 @@ export class TauriApiService {
     max_files: number;
     auto_cleanup_logs: boolean;
     keep_only_latest: boolean;
+    module_filters: Record<string, string>;
   }): Promise<void> {
     try {
       await invoke<void>('update_logging_settings', {
@@ -442,7 +443,8 @@ export class TauriApiService {
         maxFileSizeMb: settings.max_file_size_mb,
         maxFiles: settings.max_files,
         autoCleanupLogs: settings.auto_cleanup_logs,
-        keepOnlyLatest: settings.keep_only_latest
+        keepOnlyLatest: settings.keep_only_latest,
+        moduleFilters: settings.module_filters
       });
     } catch (error) {
       throw new Error(`Failed to update logging settings: ${error}`);

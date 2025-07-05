@@ -192,31 +192,42 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
         cleanup_old_logs(&log_dir, &config)?;
     }
 
-    // Set up environment filter with optimized SQL log filtering
+    // Set up environment filter with configurable module filtering
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| {
             // Create base filter with application log level
             let mut filter = EnvFilter::new(&config.level);
             
-            // Suppress verbose SQL and database logs unless TRACE level is specifically requested
-            if !config.level.to_lowercase().contains("trace") {
+            // Apply module-specific filters from configuration
+            for (module, level) in &config.module_filters {
+                let directive = format!("{}={}", module, level);
+                if let Ok(parsed_directive) = directive.parse() {
+                    filter = filter.add_directive(parsed_directive);
+                } else {
+                    warn!("Invalid log directive: {}", directive);
+                }
+            }
+            
+            // Fallback for backwards compatibility - apply default suppression if no module_filters
+            if config.module_filters.is_empty() && !config.level.to_lowercase().contains("trace") {
                 filter = filter
-                    // SQLx query logs (migrations, prepared statements) - only show on TRACE
-                    .add_directive("sqlx::query=warn".parse().unwrap())
-                    .add_directive("sqlx::migrate=info".parse().unwrap())
-                    .add_directive("sqlx::postgres=warn".parse().unwrap())
-                    .add_directive("sqlx::sqlite=warn".parse().unwrap())
+                    // SQLx query logs (migrations, prepared statements) - strongly suppress
+                    .add_directive("sqlx::query=error".parse().unwrap())
+                    .add_directive("sqlx::migrate=warn".parse().unwrap())
+                    .add_directive("sqlx::postgres=error".parse().unwrap())
+                    .add_directive("sqlx::sqlite=error".parse().unwrap())
+                    .add_directive("sqlx=warn".parse().unwrap())  // General sqlx suppression
                     
-                    // HTTP client detailed logs - only show on TRACE
+                    // HTTP client logs - allow info level for HTTP debugging
                     .add_directive("reqwest=info".parse().unwrap())
-                    .add_directive("hyper=warn".parse().unwrap())
+                    .add_directive("hyper=info".parse().unwrap())
                     .add_directive("h2=warn".parse().unwrap())
                     
                     // Tokio runtime details - only show on TRACE
                     .add_directive("tokio=info".parse().unwrap())
                     .add_directive("runtime=warn".parse().unwrap())
                     
-                    // Tauri internals - only show on TRACE
+                    // Tauri internals - only show on TRACE  
                     .add_directive("tauri=info".parse().unwrap())
                     .add_directive("wry=warn".parse().unwrap())
                     

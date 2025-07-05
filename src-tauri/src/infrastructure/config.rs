@@ -12,6 +12,7 @@
 #![allow(clippy::useless_format)]
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use anyhow::{Result, Context};
 use tokio::fs;
@@ -81,6 +82,9 @@ pub struct LoggingConfig {
     
     /// Keep only the most recent log file (delete all others)
     pub keep_only_latest: bool,
+    
+    /// Module-specific log level filters (e.g., "sqlx": "warn", "reqwest": "info")
+    pub module_filters: std::collections::HashMap<String, String>,
 }
 
 /// Hidden/Advanced settings that are in config file but not exposed in UI
@@ -159,6 +163,17 @@ impl Default for LoggingConfig {
             max_files: defaults::LOG_MAX_FILES,
             auto_cleanup_logs: defaults::LOG_AUTO_CLEANUP,
             keep_only_latest: defaults::LOG_KEEP_ONLY_LATEST,
+            module_filters: {
+                let mut filters = HashMap::new();
+                filters.insert("sqlx".to_string(), "warn".to_string());
+                filters.insert("reqwest".to_string(), "info".to_string());
+                filters.insert("hyper".to_string(), "warn".to_string());
+                filters.insert("tokio".to_string(), "info".to_string());
+                filters.insert("tauri".to_string(), "info".to_string());
+                filters.insert("wry".to_string(), "warn".to_string());
+                filters.insert("matter_certis_v2".to_string(), "info".to_string());
+                filters
+            },
         }
     }
 }

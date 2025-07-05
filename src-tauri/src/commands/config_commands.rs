@@ -5,6 +5,7 @@
 //! backend through these commands to ensure a single source of truth.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tauri::State;
 use tracing::{info, warn};
 
@@ -357,9 +358,11 @@ pub async fn update_logging_settings(
     max_files: u32,
     auto_cleanup_logs: bool,
     keep_only_latest: bool,
+    module_filters: HashMap<String, String>,
     state: State<'_, AppState>
 ) -> Result<(), String> {
-    info!("Frontend updating logging settings: level={}, separate={}", level, separate_frontend_backend);
+    info!("Frontend updating logging settings: level={}, separate={}, modules={:?}", 
+          level, separate_frontend_backend, module_filters);
     
     let config_manager = ConfigManager::new()
         .map_err(|e| format!("Failed to create config manager: {}", e))?;
@@ -371,6 +374,7 @@ pub async fn update_logging_settings(
         user_config.logging.max_files = max_files;
         user_config.logging.auto_cleanup_logs = auto_cleanup_logs;
         user_config.logging.keep_only_latest = keep_only_latest;
+        user_config.logging.module_filters = module_filters;
     }).await
     .map_err(|e| format!("Failed to update logging settings: {}", e))?;
     
