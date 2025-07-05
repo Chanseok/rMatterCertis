@@ -159,7 +159,7 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
         .map_err(|e| anyhow!("Failed to create log directory {:?}: {}", log_dir, e))?;
 
     // Determine log file name based on configuration
-    let log_file_name = match config.file_naming_strategy.as_str() {
+    let _log_file_name = match config.file_naming_strategy.as_str() {
         "separated" => {
             if config.separate_frontend_backend {
                 "back.log" // Backend log file, frontend will have its own file

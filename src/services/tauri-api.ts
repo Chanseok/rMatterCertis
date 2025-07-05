@@ -472,6 +472,27 @@ export class TauriApiService {
       throw new Error(`Failed to cleanup logs: ${error}`);
     }
   }
+
+  /**
+   * Update batch processing settings
+   */
+  async updateBatchSettings(settings: {
+    batch_size: number;
+    batch_delay_ms: number;
+    enable_batch_processing: boolean;
+    batch_retry_limit: number;
+  }): Promise<void> {
+    try {
+      await invoke<void>('update_batch_settings', {
+        batchSize: settings.batch_size,
+        batchDelayMs: settings.batch_delay_ms,
+        enableBatchProcessing: settings.enable_batch_processing,
+        batchRetryLimit: settings.batch_retry_limit
+      });
+    } catch (error) {
+      throw new Error(`Failed to update batch settings: ${error}`);
+    }
+  }
 }
 
 // Create a singleton instance for use throughout the application

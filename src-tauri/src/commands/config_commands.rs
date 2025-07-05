@@ -381,9 +381,41 @@ pub async fn update_logging_settings(
     // Update the app state with new configuration
     let updated_config = config_manager.load_config().await
         .map_err(|e| format!("Failed to reload config: {}", e))?;
-    state.update_config(updated_config).await;
+    let _ = state.update_config(updated_config).await;
     
     info!("Logging settings updated successfully");
+    Ok(())
+}
+
+/// Update batch processing configuration settings
+#[tauri::command]
+pub async fn update_batch_settings(
+    batch_size: u32,
+    batch_delay_ms: u64,
+    enable_batch_processing: bool,
+    batch_retry_limit: u32,
+    state: State<'_, AppState>
+) -> Result<(), String> {
+    info!("Frontend updating batch settings: size={}, delay={}ms, enabled={}, retry_limit={}", 
+          batch_size, batch_delay_ms, enable_batch_processing, batch_retry_limit);
+    
+    let config_manager = ConfigManager::new()
+        .map_err(|e| format!("Failed to create config manager: {}", e))?;
+    
+    config_manager.update_user_config(|user_config| {
+        user_config.batch.batch_size = batch_size;
+        user_config.batch.batch_delay_ms = batch_delay_ms;
+        user_config.batch.enable_batch_processing = enable_batch_processing;
+        user_config.batch.batch_retry_limit = batch_retry_limit;
+    }).await
+    .map_err(|e| format!("Failed to update batch settings: {}", e))?;
+    
+    // Update the app state with new configuration
+    let updated_config = config_manager.load_config().await
+        .map_err(|e| format!("Failed to reload config: {}", e))?;
+    let _ = state.update_config(updated_config).await;
+    
+    info!("Batch settings updated successfully");
     Ok(())
 }
 

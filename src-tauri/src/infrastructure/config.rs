@@ -48,6 +48,44 @@ pub struct UserConfig {
     
     /// Logging configuration
     pub logging: LoggingConfig,
+    
+    /// Batch processing configuration
+    pub batch: BatchConfig,
+    
+    /// Crawling specific configuration
+    pub crawling: CrawlingConfig,
+}
+
+/// Crawling specific configuration settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlingConfig {
+    /// Maximum pages to process (페이지 범위 제한)
+    pub page_range_limit: u32,
+    
+    /// Retry count for product list pages (제품 목록 재시도 횟수)
+    pub product_list_retry_count: u32,
+    
+    /// Retry count for product detail pages (제품 상세 재시도 횟수)
+    pub product_detail_retry_count: u32,
+    
+    /// Automatically add crawled products to local database (자동으로 로컬 DB에 추가)
+    pub auto_add_to_local_db: bool,
+}
+
+/// Batch processing configuration settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchConfig {
+    /// Number of items to process in each batch
+    pub batch_size: u32,
+    
+    /// Delay between batches in milliseconds
+    pub batch_delay_ms: u64,
+    
+    /// Enable batch processing
+    pub enable_batch_processing: bool,
+    
+    /// Maximum retry attempts for failed batches
+    pub batch_retry_limit: u32,
 }
 
 /// Logging configuration settings
@@ -146,6 +184,8 @@ impl Default for UserConfig {
             max_concurrent_requests: defaults::MAX_CONCURRENT_REQUESTS,
             verbose_logging: false,
             logging: LoggingConfig::default(),
+            batch: BatchConfig::default(),
+            crawling: CrawlingConfig::default(),
         }
     }
 }
@@ -199,6 +239,28 @@ impl Default for AppManagedConfig {
             last_crawl_product_count: None,
             avg_products_per_page: None,
             config_version: 1,
+        }
+    }
+}
+
+impl Default for BatchConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: defaults::BATCH_SIZE,
+            batch_delay_ms: defaults::BATCH_DELAY_MS,
+            enable_batch_processing: defaults::ENABLE_BATCH_PROCESSING,
+            batch_retry_limit: defaults::BATCH_RETRY_LIMIT,
+        }
+    }
+}
+
+impl Default for CrawlingConfig {
+    fn default() -> Self {
+        Self {
+            page_range_limit: defaults::PAGE_RANGE_LIMIT,
+            product_list_retry_count: defaults::PRODUCT_LIST_RETRY_COUNT,
+            product_detail_retry_count: defaults::PRODUCT_DETAIL_RETRY_COUNT,
+            auto_add_to_local_db: defaults::AUTO_ADD_TO_LOCAL_DB,
         }
     }
 }
@@ -521,6 +583,32 @@ pub mod defaults {
     
     /// Default keep only latest log file setting
     pub const LOG_KEEP_ONLY_LATEST: bool = false;
+    
+    // Batch processing defaults
+    /// Default batch size for processing
+    pub const BATCH_SIZE: u32 = 30;
+    
+    /// Default delay between batches in milliseconds
+    pub const BATCH_DELAY_MS: u64 = 2000;
+    
+    /// Default enable batch processing setting
+    pub const ENABLE_BATCH_PROCESSING: bool = true;
+    
+    /// Default batch retry limit
+    pub const BATCH_RETRY_LIMIT: u32 = 3;
+    
+    // Crawling specific defaults
+    /// Default page range limit for crawling
+    pub const PAGE_RANGE_LIMIT: u32 = 20;
+    
+    /// Default retry count for product list pages
+    pub const PRODUCT_LIST_RETRY_COUNT: u32 = 3;
+    
+    /// Default retry count for product detail pages
+    pub const PRODUCT_DETAIL_RETRY_COUNT: u32 = 3;
+    
+    /// Default auto add to local database setting
+    pub const AUTO_ADD_TO_LOCAL_DB: bool = true;
 }
 
 /// URL building helper functions

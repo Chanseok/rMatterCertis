@@ -19,6 +19,13 @@ interface LoggingSettings {
   module_filters: Record<string, string>;
 }
 
+interface BatchSettings {
+  batch_size: number;
+  batch_delay_ms: number;
+  enable_batch_processing: boolean;
+  batch_retry_limit: number;
+}
+
 interface SaveStatus {
   type: 'success' | 'error' | 'info' | null;
   message: string;
@@ -66,6 +73,22 @@ export const SettingsTab: Component = () => {
       'wry': 'warn',
       'matter_certis_v2': 'info'
     }
+  });
+  
+  // 현재 저장된 배치 설정
+  const [savedBatchSettings, setSavedBatchSettings] = createSignal<BatchSettings>({
+    batch_size: 30,
+    batch_delay_ms: 2000,
+    enable_batch_processing: true,
+    batch_retry_limit: 3
+  });
+  
+  // 현재 UI에서 편집 중인 배치 설정
+  const [batchSettings, setBatchSettings] = createSignal<BatchSettings>({
+    batch_size: 30,
+    batch_delay_ms: 2000,
+    enable_batch_processing: true,
+    batch_retry_limit: 3
   });
   
   const [logCleanupResult, setLogCleanupResult] = createSignal<string>('');
@@ -185,10 +208,15 @@ export const SettingsTab: Component = () => {
 
   // 변경사항 감지
   createEffect(() => {
-    const current = loggingSettings();
-    const saved = savedLoggingSettings();
-    const changed = JSON.stringify(current) !== JSON.stringify(saved);
-    setHasUnsavedChanges(changed);
+    const currentLogging = loggingSettings();
+    const savedLogging = savedLoggingSettings();
+    const currentBatch = batchSettings();
+    const savedBatch = savedBatchSettings();
+    
+    const loggingChanged = JSON.stringify(currentLogging) !== JSON.stringify(savedLogging);
+    const batchChanged = JSON.stringify(currentBatch) !== JSON.stringify(savedBatch);
+    
+    setHasUnsavedChanges(loggingChanged || batchChanged);
   });
 
   // 설정 로드 함수
@@ -200,6 +228,12 @@ export const SettingsTab: Component = () => {
         const settings = frontendConfig.user.logging;
         setSavedLoggingSettings(settings);
         setLoggingSettings(settings);
+      }
+      
+      if (frontendConfig?.user?.batch) {
+        const batchConfig = frontendConfig.user.batch;
+        setSavedBatchSettings(batchConfig);
+        setBatchSettings(batchConfig);
       }
       
       await loggingService.info('설정을 성공적으로 로드했습니다', 'SettingsTab');
@@ -226,8 +260,12 @@ export const SettingsTab: Component = () => {
       // 로깅 설정 저장
       await tauriApi.updateLoggingSettings(loggingSettings());
       
+      // 배치 설정 저장
+      await tauriApi.updateBatchSettings(batchSettings());
+      
       // 저장된 설정으로 업데이트
       setSavedLoggingSettings(loggingSettings());
+      setSavedBatchSettings(batchSettings());
       
       setSaveStatus({ 
         type: 'success', 
@@ -370,27 +408,51 @@ export const SettingsTab: Component = () => {
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              시작 페이지
+              페이지 범위 제한
             </label>
             <input 
               type="number" 
               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
-              placeholder="1"
-              value={crawlerStore.state.currentConfig?.start_page || 1}
-              onInput={(e) => console.log('Start page changed:', e.currentTarget.value)}
+              placeholder="20"
+              value={crawlerStore.state.currentConfig?.page_range_limit || 20}
+              onInput={(e) => console.log('Page range limit changed:', e.currentTarget.value)}
             />
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              종료 페이지
+              제품 목록 재시도 횟수
             </label>
             <input 
               type="number" 
               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
-              placeholder="100"
-              value={crawlerStore.state.currentConfig?.end_page || 100}
-              onInput={(e) => console.log('End page changed:', e.currentTarget.value)}
+              placeholder="20"
+              value={crawlerStore.state.currentConfig?.product_list_retry_count || 20}
+              onInput={(e) => console.log('Product list retry count changed:', e.currentTarget.value)}
             />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              제품 상세 재시도 횟수
+            </label>
+            <input 
+              type="number" 
+              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
+              placeholder="20"
+              value={crawlerStore.state.currentConfig?.product_detail_retry_count || 20}
+              onInput={(e) => console.log('Product detail retry count changed:', e.currentTarget.value)}
+            />
+          </div>
+          <div class="flex items-center space-x-3">
+            <input
+              type="checkbox"
+              id="auto-add-local-db"
+              class="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
+              checked={crawlerStore.state.currentConfig?.auto_add_to_local_db || true}
+              onChange={(e) => console.log('Auto add to DB changed:', e.currentTarget.checked)}
+            />
+            <label for="auto-add-local-db" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              자동으로 로컬 DB에 추가
+            </label>
           </div>
         </div>
       </ExpandableSection>
@@ -402,32 +464,100 @@ export const SettingsTab: Component = () => {
         onToggle={setIsBatchExpanded}
         icon="📦"
       >
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              동시 실행 수
-            </label>
-            <select 
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
-              value={crawlerStore.state.currentConfig?.concurrency || 6}
-              onChange={(e) => console.log('Concurrency changed:', e.currentTarget.value)}
-            >
-              <option value="6">6개 (기본값)</option>
-              <option value="12">12개</option>
-              <option value="24">24개</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              재시도 횟수
-            </label>
-            <input 
-              type="number" 
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
-              placeholder="3"
-              value={crawlerStore.state.currentConfig?.product_detail_retry_count || 3}
-              onInput={(e) => console.log('Retry count changed:', e.currentTarget.value)}
+        <div class="space-y-6">
+          {/* 배치 처리 사용 체크박스 */}
+          <div class="flex items-center space-x-3">
+            <input
+              type="checkbox"
+              id="enable-batch-processing"
+              class="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
+              checked={batchSettings().enable_batch_processing}
+              onChange={(e) => setBatchSettings(prev => ({
+                ...prev,
+                enable_batch_processing: e.currentTarget.checked
+              }))}
             />
+            <label for="enable-batch-processing" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              배치 처리 사용
+            </label>
+          </div>
+
+          {/* 배치 크기 슬라이더 (5-100) */}
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              배치 크기 ({batchSettings().batch_size})
+            </label>
+            <div class="flex items-center space-x-4">
+              <span class="text-sm text-gray-500">5</span>
+              <input
+                type="range"
+                min="5"
+                max="100"
+                step="5"
+                class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                value={batchSettings().batch_size}
+                onInput={(e) => setBatchSettings(prev => ({
+                  ...prev,
+                  batch_size: parseInt(e.currentTarget.value)
+                }))}
+              />
+              <span class="text-sm text-gray-500">100</span>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">
+              한 번에 처리할 배치의 수량을 결정합니다.
+            </p>
+          </div>
+
+          {/* 배치 간 지연시간 슬라이더 (1000-10000ms) */}
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              배치 간 지연시간 ({batchSettings().batch_delay_ms}ms)
+            </label>
+            <div class="flex items-center space-x-4">
+              <span class="text-sm text-gray-500">1000</span>
+              <input
+                type="range"
+                min="1000"
+                max="10000"
+                step="100"
+                class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                value={batchSettings().batch_delay_ms}
+                onInput={(e) => setBatchSettings(prev => ({
+                  ...prev,
+                  batch_delay_ms: parseInt(e.currentTarget.value)
+                }))}
+              />
+              <span class="text-sm text-gray-500">10000</span>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">
+              다음 배치를 처리하기 시작하는 시간입니다. 장기 업적수 리스크를 사용화시간으로 중재합니다.
+            </p>
+          </div>
+
+          {/* 배치 재시도 횟수 슬라이더 (1-10) */}
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              배치 재시도 횟수 ({batchSettings().batch_retry_limit})
+            </label>
+            <div class="flex items-center space-x-4">
+              <span class="text-sm text-gray-500">1</span>
+              <input
+                type="range"
+                min="1"
+                max="10"
+                step="1"
+                class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                value={batchSettings().batch_retry_limit}
+                onInput={(e) => setBatchSettings(prev => ({
+                  ...prev,
+                  batch_retry_limit: parseInt(e.currentTarget.value)
+                }))}
+              />
+              <span class="text-sm text-gray-500">10</span>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">
+              배치 처리 실패 시 최대 재시도 횟수입니다. 네트워크 불안정 등의 상황을 대비합니다.
+            </p>
           </div>
         </div>
       </ExpandableSection>
