@@ -101,31 +101,38 @@ tokio-test = "0.4"
 opt-level = 0
 debug = 0  # No debug info for fastest builds
 split-debuginfo = "off"  # Skip debug info splitting
-incremental = true
+incremental = false  # sccache와 호환을 위해 비활성화
 codegen-units = 512  # Maximum parallelization for faster builds
 # Skip expensive checks
 overflow-checks = false
 panic = "abort"  # Skip unwinding tables
+# Additional speed optimizations
+lto = "off"  # No link-time optimization in dev mode
+rpath = false  # Disable rpath for faster linking
+# 스트립 최적화 (바이너리 크기 축소로 링킹 속도 향상)
+strip = "symbols"
 
 # Fast build profile for development
 [profile.fast-dev]
 inherits = "dev"
 opt-level = 1
 debug = false
-incremental = true
+incremental = false  # sccache 호환
 codegen-units = 512
 panic = "abort"
 debug-assertions = false
+strip = "symbols"
 
 # Ultra-fast test compilation
 [profile.test]
 opt-level = 0
 debug = 0  # No debug info for fastest builds
 split-debuginfo = "off"
-incremental = true
+incremental = false  # sccache 호환
 codegen-units = 256
 overflow-checks = false
 debug-assertions = false
+strip = "symbols"
 
 # Dependencies are still optimized even in dev mode
 [profile.dev.package."*"]

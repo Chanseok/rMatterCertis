@@ -2,8 +2,8 @@
 [build]
 # lld 링커 사용 (macOS에서 가장 빠른 링커)
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-# 병렬 빌드 최적화 (10 코어 시스템)
-jobs = 10
+# 병렬 빌드 최적화
+jobs = 8  # CPU 코어 수에 맞게 조정 (Apple Silicon M-series는 보통 8코어+)
 
 # sccache를 사용한 컴파일 캐싱
 [env]
@@ -11,10 +11,10 @@ RUSTC_WRAPPER = "sccache"
 # 더 적극적인 캐싱
 SCCACHE_CACHE_SIZE = "10G"
 # 추가 성능 최적화
-CARGO_INCREMENTAL = "0"  # sccache와 incremental compilation 충돌 방지
+CARGO_INCREMENTAL = "1"
 RUST_BACKTRACE = "0"  # 개발 중 백트레이스 비활성화로 속도 향상
-# 컴파일 병렬화 최적화 (10 코어 시스템)
-CARGO_BUILD_JOBS = "10"
+# 컴파일 병렬화 최적화
+CARGO_BUILD_JOBS = "8"
 # Cargo의 내부 작업들 병렬화
 CARGO_NET_RETRY = "3"
 # 의존성 빌드 최적화

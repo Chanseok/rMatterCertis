@@ -419,6 +419,57 @@ export class TauriApiService {
       throw new Error(`Failed to get app directories: ${error}`);
     }
   }
+
+  // =========================================================================
+  // Logging Configuration Commands
+  // =========================================================================
+
+  /**
+   * Update logging settings
+   */
+  async updateLoggingSettings(settings: {
+    level: string;
+    separate_frontend_backend: boolean;
+    max_file_size_mb: number;
+    max_files: number;
+    auto_cleanup_logs: boolean;
+    keep_only_latest: boolean;
+  }): Promise<void> {
+    try {
+      await invoke<void>('update_logging_settings', {
+        level: settings.level,
+        separateFrontendBackend: settings.separate_frontend_backend,
+        maxFileSizeMb: settings.max_file_size_mb,
+        maxFiles: settings.max_files,
+        autoCleanupLogs: settings.auto_cleanup_logs,
+        keepOnlyLatest: settings.keep_only_latest
+      });
+    } catch (error) {
+      throw new Error(`Failed to update logging settings: ${error}`);
+    }
+  }
+
+  /**
+   * Get log directory path
+   */
+  async getLogDirectoryPath(): Promise<string> {
+    try {
+      return await invoke<string>('get_log_directory_path');
+    } catch (error) {
+      throw new Error(`Failed to get log directory path: ${error}`);
+    }
+  }
+
+  /**
+   * Clean up old log files
+   */
+  async cleanupLogs(): Promise<string> {
+    try {
+      return await invoke<string>('cleanup_logs');
+    } catch (error) {
+      throw new Error(`Failed to cleanup logs: ${error}`);
+    }
+  }
 }
 
 // Create a singleton instance for use throughout the application

@@ -10,7 +10,7 @@ use tracing::{info, warn};
 
 use crate::{
     application::state::AppState,
-    infrastructure::config::{AppConfig, ConfigManager, csa_iot, utils},
+    infrastructure::config::{AppConfig, ConfigManager, LoggingConfig, csa_iot, utils},
 };
 
 /// Frontend-friendly configuration structure
@@ -22,6 +22,9 @@ pub struct FrontendConfig {
     
     /// User-configurable crawling settings
     pub crawling: CrawlingSettings,
+    
+    /// User-configurable settings (including logging)
+    pub user: UserSettings,
     
     /// Application metadata
     pub app: AppMetadata,
@@ -90,6 +93,25 @@ pub struct CrawlingSettings {
     
     /// Advanced settings
     pub advanced: AdvancedSettings,
+}
+
+/// User settings (including logging configuration)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSettings {
+    /// Maximum pages to crawl
+    pub max_pages: u32,
+    
+    /// Delay between requests in milliseconds
+    pub request_delay_ms: u64,
+    
+    /// Maximum concurrent requests
+    pub max_concurrent_requests: u32,
+    
+    /// Enable verbose logging
+    pub verbose_logging: bool,
+    
+    /// Logging configuration
+    pub logging: LoggingConfig,
 }
 
 /// Advanced crawling settings
@@ -326,6 +348,41 @@ pub async fn update_crawling_settings(
     Ok(())
 }
 
+/// Update logging configuration settings
+#[tauri::command]
+pub async fn update_logging_settings(
+    level: String,
+    separate_frontend_backend: bool,
+    max_file_size_mb: u64,
+    max_files: u32,
+    auto_cleanup_logs: bool,
+    keep_only_latest: bool,
+    state: State<'_, AppState>
+) -> Result<(), String> {
+    info!("Frontend updating logging settings: level={}, separate={}", level, separate_frontend_backend);
+    
+    let config_manager = ConfigManager::new()
+        .map_err(|e| format!("Failed to create config manager: {}", e))?;
+    
+    config_manager.update_user_config(|user_config| {
+        user_config.logging.level = level;
+        user_config.logging.separate_frontend_backend = separate_frontend_backend;
+        user_config.logging.max_file_size_mb = max_file_size_mb;
+        user_config.logging.max_files = max_files;
+        user_config.logging.auto_cleanup_logs = auto_cleanup_logs;
+        user_config.logging.keep_only_latest = keep_only_latest;
+    }).await
+    .map_err(|e| format!("Failed to update logging settings: {}", e))?;
+    
+    // Update the app state with new configuration
+    let updated_config = config_manager.load_config().await
+        .map_err(|e| format!("Failed to reload config: {}", e))?;
+    state.update_config(updated_config).await;
+    
+    info!("Logging settings updated successfully");
+    Ok(())
+}
+
 /// Build a URL for a specific page number using the site configuration
 #[tauri::command]
 pub async fn build_page_url(page: u32) -> Result<String, String> {
@@ -418,6 +475,13 @@ fn convert_to_frontend_config(app_config: &AppConfig) -> FrontendConfig {
                 request_timeout_seconds: app_config.advanced.request_timeout_seconds,
                 product_selectors: app_config.advanced.product_selectors.clone(),
             },
+        },
+        user: UserSettings {
+            max_pages: app_config.user.max_pages,
+            request_delay_ms: app_config.user.request_delay_ms,
+            max_concurrent_requests: app_config.user.max_concurrent_requests,
+            verbose_logging: app_config.user.verbose_logging,
+            logging: app_config.user.logging.clone(),
         },
         app: AppMetadata {
             name: "rMatterCertis".to_string(),

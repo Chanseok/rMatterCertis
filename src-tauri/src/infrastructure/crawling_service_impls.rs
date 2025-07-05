@@ -148,6 +148,7 @@ impl StatusChecker for StatusCheckerImpl {
     }
 
     async fn estimate_crawling_time(&self, pages: u32) -> Duration {
+        // ...
         // 페이지당 평균 2초 + 제품 상세페이지당 1초 추정
         let page_collection_time = pages * 2;
         let product_detail_time = pages * 20; // 페이지당 20개 제품 * 1초

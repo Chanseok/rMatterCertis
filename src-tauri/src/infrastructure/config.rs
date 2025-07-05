@@ -326,6 +326,16 @@ impl ConfigManager {
         self.save_config(&config).await
     }
     
+    /// Update user configuration settings
+    pub async fn update_user_config<F>(&self, updater: F) -> Result<()>
+    where
+        F: FnOnce(&mut UserConfig),
+    {
+        let mut config = self.load_config().await?;
+        updater(&mut config.user);
+        self.save_config(&config).await
+    }
+
     /// Reset configuration to defaults (useful for troubleshooting)
     pub async fn reset_to_defaults(&self) -> Result<AppConfig> {
         info!("🔄 Resetting configuration to defaults");
