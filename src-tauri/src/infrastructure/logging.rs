@@ -125,6 +125,32 @@ fn rotate_all_existing_log_files(log_dir: &PathBuf) -> Result<()> {
 }
 
 /// Initialize logging with custom configuration
+/// 
+/// This function sets up optimized logging filters to reduce verbose output from dependencies.
+/// 
+/// # Log Level Optimization
+/// - When level != "trace": SQL queries, HTTP details, and framework internals are suppressed
+/// - When level == "trace": All logs including verbose dependencies are shown
+/// 
+/// # Environment Variable Override
+/// You can override the filtering using RUST_LOG environment variable:
+/// ```bash
+/// # Show all SQL queries even on DEBUG level
+/// RUST_LOG="debug,sqlx::query=debug" cargo run
+/// 
+/// # Show only errors from all dependencies
+/// RUST_LOG="info,sqlx=error,reqwest=error,tokio=error" cargo run
+/// 
+/// # Show detailed HTTP logs
+/// RUST_LOG="debug,reqwest=debug,hyper=debug" cargo run
+/// ```
+/// 
+/// # Optimized Targets (suppressed unless TRACE):
+/// - `sqlx::query`: Database query execution details
+/// - `sqlx::migrate`: Database migration logs  
+/// - `reqwest`: HTTP client request/response details
+/// - `tokio`: Async runtime task scheduling
+/// - `tauri`: Desktop framework internals
 pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
     let log_dir = get_log_directory();
     
@@ -166,9 +192,40 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
         cleanup_old_logs(&log_dir, &config)?;
     }
 
-    // Set up environment filter
+    // Set up environment filter with optimized SQL log filtering
     let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.level));
+        .unwrap_or_else(|_| {
+            // Create base filter with application log level
+            let mut filter = EnvFilter::new(&config.level);
+            
+            // Suppress verbose SQL and database logs unless TRACE level is specifically requested
+            if !config.level.to_lowercase().contains("trace") {
+                filter = filter
+                    // SQLx query logs (migrations, prepared statements) - only show on TRACE
+                    .add_directive("sqlx::query=warn".parse().unwrap())
+                    .add_directive("sqlx::migrate=info".parse().unwrap())
+                    .add_directive("sqlx::postgres=warn".parse().unwrap())
+                    .add_directive("sqlx::sqlite=warn".parse().unwrap())
+                    
+                    // HTTP client detailed logs - only show on TRACE
+                    .add_directive("reqwest=info".parse().unwrap())
+                    .add_directive("hyper=warn".parse().unwrap())
+                    .add_directive("h2=warn".parse().unwrap())
+                    
+                    // Tokio runtime details - only show on TRACE
+                    .add_directive("tokio=info".parse().unwrap())
+                    .add_directive("runtime=warn".parse().unwrap())
+                    
+                    // Tauri internals - only show on TRACE
+                    .add_directive("tauri=info".parse().unwrap())
+                    .add_directive("wry=warn".parse().unwrap())
+                    
+                    // Keep our application logs at the requested level
+                    .add_directive(format!("matter_certis_v2={}", config.level).parse().unwrap());
+            }
+            
+            filter
+        });
 
     // Build the subscriber registry
     let registry = Registry::default().with(env_filter);
@@ -297,6 +354,14 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
     info!("Log level: {}", config.level);
     info!("JSON format: {}", config.json_format);
     info!("Console output: {}", config.console_output);
+    
+    // Log filter optimization info
+    if !config.level.to_lowercase().contains("trace") {
+        info!("SQL and verbose logs suppressed (use TRACE level to see all logs)");
+        info!("Optimized filters: sqlx=warn, reqwest=info, tokio=info, tauri=info");
+    } else {
+        info!("TRACE level active - all logs including SQL queries will be shown");
+    }
     info!("File output: {}", config.file_output);
     info!("Separate frontend/backend logs: {}", config.separate_frontend_backend);
     info!("File naming strategy: {}", config.file_naming_strategy);
