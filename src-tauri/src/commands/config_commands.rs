@@ -7,11 +7,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::{
     application::state::AppState,
     infrastructure::config::{AppConfig, ConfigManager, LoggingConfig, csa_iot, utils},
+    commands::modern_crawling::get_database_stats,
 };
 
 /// Frontend-friendly configuration structure
@@ -325,30 +326,6 @@ pub async fn get_site_config() -> Result<SiteConfig, String> {
     Ok(site_config)
 }
 
-/// Update user-configurable settings
-#[tauri::command]
-pub async fn update_crawling_settings(
-    settings: CrawlingSettings,
-    _state: State<'_, AppState>
-) -> Result<(), String> {
-    info!("Frontend updating crawling settings: max_pages={}, delay={}ms", 
-          settings.max_pages, settings.request_delay_ms);
-    
-    let config_manager = ConfigManager::new()
-        .map_err(|e| format!("Failed to create config manager: {}", e))?;
-    
-    config_manager.update_app_managed(|_app_managed| {
-        // Update any app-managed settings that are relevant
-        // For now, we don't update app-managed settings from user input
-    }).await
-        .map_err(|e| format!("Failed to update config: {}", e))?;
-    
-    // TODO: Implement user config update
-    warn!("User config update not yet implemented - settings received but not persisted");
-    
-    Ok(())
-}
-
 /// Update logging configuration settings
 #[tauri::command]
 pub async fn update_logging_settings(
@@ -416,6 +393,38 @@ pub async fn update_batch_settings(
     let _ = state.update_config(updated_config).await;
     
     info!("Batch settings updated successfully");
+    Ok(())
+}
+
+/// Update crawling configuration settings
+#[tauri::command]
+pub async fn update_crawling_settings(
+    page_range_limit: u32,
+    product_list_retry_count: u32,
+    product_detail_retry_count: u32,
+    auto_add_to_local_db: bool,
+    state: State<'_, AppState>
+) -> Result<(), String> {
+    info!("Frontend updating crawling settings: page_limit={}, list_retry={}, detail_retry={}, auto_add={}", 
+          page_range_limit, product_list_retry_count, product_detail_retry_count, auto_add_to_local_db);
+    
+    let config_manager = ConfigManager::new()
+        .map_err(|e| format!("Failed to create config manager: {}", e))?;
+    
+    config_manager.update_user_config(|user_config| {
+        user_config.crawling.page_range_limit = page_range_limit;
+        user_config.crawling.product_list_retry_count = product_list_retry_count;
+        user_config.crawling.product_detail_retry_count = product_detail_retry_count;
+        user_config.crawling.auto_add_to_local_db = auto_add_to_local_db;
+    }).await
+    .map_err(|e| format!("Failed to update crawling settings: {}", e))?;
+    
+    // Update the app state with new configuration
+    let updated_config = config_manager.load_config().await
+        .map_err(|e| format!("Failed to reload config: {}", e))?;
+    let _ = state.update_config(updated_config).await;
+    
+    info!("Crawling settings updated successfully");
     Ok(())
 }
 
@@ -711,6 +720,125 @@ pub async fn get_log_directory_path() -> Result<String, String> {
     use crate::infrastructure::logging::get_log_directory;
     let log_dir = get_log_directory();
     Ok(log_dir.to_string_lossy().to_string())
+}
+
+/// Crawling status check result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlingStatusCheck {
+    // Database status
+    pub local_db_product_count: u32,
+    pub last_crawl_time: Option<String>,
+    pub local_db_page_range: (u32, u32), // (min_page, max_page)
+    
+    // Site status
+    pub estimated_total_products: Option<u32>,
+    pub detected_max_page: Option<u32>,
+    pub site_accessible: bool,
+    pub last_page_check_time: String,
+    
+    // Recommendations
+    pub recommended_start_page: u32,
+    pub recommended_end_page: u32,
+    pub estimated_new_products: u32,
+    pub crawling_efficiency_score: f32, // 0.0 - 1.0
+    pub recommendation_reason: String,
+}
+
+/// Get current crawling status and recommendations
+#[tauri::command]
+pub async fn get_crawling_status_check(
+    state: State<'_, AppState>
+) -> Result<CrawlingStatusCheck, String> {
+    info!("Frontend requesting crawling status check");
+    
+    // Get database stats
+    let db_stats = get_database_stats(state.clone()).await
+        .map_err(|e| format!("Failed to get database stats: {}", e))?;
+    
+    // Get current configuration
+    let config = state.get_config().await;
+    let current_time = chrono::Utc::now().to_rfc3339();
+    
+    // Analyze local database
+    let local_product_count = db_stats.total_products as u32;
+    
+    // Get last crawl info from app_managed config
+    let last_crawl_time = config.app_managed.last_successful_crawl.clone();
+    let last_known_max_page = config.app_managed.last_known_max_page;
+    
+    // Calculate local DB page range (estimate)
+    let avg_products_per_page = config.app_managed.avg_products_per_page.unwrap_or(12.0);
+    let estimated_max_local_page = if avg_products_per_page > 0.0 {
+        (local_product_count as f32 / avg_products_per_page as f32).ceil() as u32
+    } else {
+        0
+    };
+    
+    // Site status check (simplified for now)
+    let site_accessible = true; // TODO: Implement actual site check
+    let detected_max_page = last_known_max_page;
+    let estimated_total_products = if let Some(max_page) = detected_max_page {
+        Some((max_page as f32 * avg_products_per_page as f32) as u32)
+    } else {
+        None
+    };
+    
+    // Calculate recommendations
+    let recommended_start_page = if estimated_max_local_page > 0 {
+        // Start from where we might have gaps or new content
+        std::cmp::max(1, estimated_max_local_page.saturating_sub(10))
+    } else {
+        1
+    };
+    
+    let recommended_end_page = detected_max_page.unwrap_or(50);
+    let estimated_new_products = if let Some(total) = estimated_total_products {
+        total.saturating_sub(local_product_count)
+    } else {
+        0
+    };
+    
+    // Calculate efficiency score
+    let efficiency_score = if estimated_new_products > 0 {
+        let pages_to_crawl = recommended_end_page.saturating_sub(recommended_start_page) + 1;
+        let efficiency = estimated_new_products as f32 / (pages_to_crawl as f32 * avg_products_per_page as f32);
+        efficiency.min(1.0)
+    } else {
+        0.0
+    };
+    
+    // Generate recommendation reason
+    let recommendation_reason = if local_product_count == 0 {
+        "로컬 DB가 비어있습니다. 전체 크롤링을 권장합니다.".to_string()
+    } else if estimated_new_products > 100 {
+        format!("약 {}개의 새로운 제품이 예상됩니다. 효율적인 업데이트 크롤링을 권장합니다.", estimated_new_products)
+    } else if estimated_new_products > 0 {
+        format!("약 {}개의 새로운 제품이 있을 수 있습니다.", estimated_new_products)
+    } else {
+        "현재 데이터가 최신 상태로 보입니다.".to_string()
+    };
+    
+    let status_check = CrawlingStatusCheck {
+        local_db_product_count: local_product_count,
+        last_crawl_time,
+        local_db_page_range: (1, estimated_max_local_page),
+        
+        estimated_total_products,
+        detected_max_page: Some(detected_max_page.unwrap_or(50)),
+        site_accessible,
+        last_page_check_time: current_time,
+        
+        recommended_start_page,
+        recommended_end_page,
+        estimated_new_products,
+        crawling_efficiency_score: efficiency_score,
+        recommendation_reason,
+    };
+    
+    info!("Status check completed: local_products={}, recommended_range=({}-{}), efficiency={:.2}", 
+          local_product_count, recommended_start_page, recommended_end_page, efficiency_score);
+    
+    Ok(status_check)
 }
 
 #[cfg(test)]

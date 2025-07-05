@@ -368,11 +368,55 @@ impl ConfigManager {
         let content = fs::read_to_string(&self.config_path).await
             .context("Failed to read configuration file")?;
         
-        let config: AppConfig = serde_json::from_str(&content)
-            .context("Failed to parse configuration file")?;
+        // Try to parse as current format first
+        match serde_json::from_str::<AppConfig>(&content) {
+            Ok(config) => {
+                info!("Loaded configuration from: {:?}", self.config_path);
+                Ok(config)
+            }
+            Err(_) => {
+                // If parsing fails, try to migrate from old format
+                info!("Configuration file format outdated, attempting migration...");
+                self.migrate_config_format(&content).await
+            }
+        }
+    }
+    
+    /// Migrate configuration from older format to current format
+    async fn migrate_config_format(&self, content: &str) -> Result<AppConfig> {
+        // Try to parse as a generic JSON value first to check structure
+        let mut json_value: serde_json::Value = serde_json::from_str(content)
+            .context("Configuration file contains invalid JSON")?;
         
-        info!("Loaded configuration from: {:?}", self.config_path);
-        Ok(config)
+        // Check if we need to add missing fields to user config
+        if let Some(user_obj) = json_value.get_mut("user").and_then(|v| v.as_object_mut()) {
+            // Add missing crawling config if not present
+            if !user_obj.contains_key("crawling") {
+                let crawling_config = serde_json::to_value(CrawlingConfig::default())
+                    .context("Failed to serialize default crawling config")?;
+                user_obj.insert("crawling".to_string(), crawling_config);
+                info!("Added missing 'crawling' configuration section");
+            }
+            
+            // Ensure batch config exists (should already be there from previous migration)
+            if !user_obj.contains_key("batch") {
+                let batch_config = serde_json::to_value(BatchConfig::default())
+                    .context("Failed to serialize default batch config")?;
+                user_obj.insert("batch".to_string(), batch_config);
+                info!("Added missing 'batch' configuration section");
+            }
+        }
+        
+        // Try to parse the migrated JSON as AppConfig
+        let migrated_config: AppConfig = serde_json::from_value(json_value)
+            .context("Failed to parse migrated configuration")?;
+        
+        // Save the migrated configuration
+        self.save_config(&migrated_config).await
+            .context("Failed to save migrated configuration")?;
+        
+        info!("✅ Successfully migrated configuration to new format");
+        Ok(migrated_config)
     }
     
     /// Save configuration to file

@@ -13,6 +13,7 @@ import type {
   CrawlingProgress,
   CrawlingResult,
   CrawlingTaskStatus,
+  CrawlingStatusCheck,
   DatabaseStats
 } from '../types/crawling';
 
@@ -491,6 +492,38 @@ export class TauriApiService {
       });
     } catch (error) {
       throw new Error(`Failed to update batch settings: ${error}`);
+    }
+  }
+
+  /**
+   * Update crawling configuration settings
+   */
+  async updateCrawlingSettings(settings: {
+    page_range_limit: number;
+    product_list_retry_count: number;
+    product_detail_retry_count: number;
+    auto_add_to_local_db: boolean;
+  }): Promise<void> {
+    try {
+      await invoke<void>('update_crawling_settings', {
+        pageRangeLimit: settings.page_range_limit,
+        productListRetryCount: settings.product_list_retry_count,
+        productDetailRetryCount: settings.product_detail_retry_count,
+        autoAddToLocalDb: settings.auto_add_to_local_db
+      });
+    } catch (error) {
+      throw new Error(`Failed to update crawling settings: ${error}`);
+    }
+  }
+
+  /**
+   * Get crawling status check with recommendations
+   */
+  async getCrawlingStatusCheck(): Promise<CrawlingStatusCheck> {
+    try {
+      return await invoke<CrawlingStatusCheck>('get_crawling_status_check');
+    } catch (error) {
+      throw new Error(`Failed to get crawling status check: ${error}`);
     }
   }
 }

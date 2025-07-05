@@ -5,8 +5,8 @@
 
 import { JSX, createMemo, Component } from 'solid-js';
 import { tabState } from '../../stores/tabStore';
-import { Header } from './Header.tsx';
-import { TabNavigation } from './TabNavigation.tsx';
+import { Header } from './Header';
+import { TabNavigation } from './TabNavigation';
 
 interface AppLayoutProps {
   children: JSX.Element;

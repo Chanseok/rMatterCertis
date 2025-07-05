@@ -5,10 +5,10 @@
 
 import { Component, createMemo } from 'solid-js';
 import { AppLayout } from './layout/AppLayout';
-import { SettingsTab } from './tabs/SettingsTab';
-import { StatusTab } from './tabs/StatusTab';
-import { LocalDBTab } from './tabs/LocalDBTab';
-import { AnalysisTab } from './tabs/AnalysisTab';
+import { SettingsTab } from './tabs/SettingsTabSimple';
+import { StatusTab } from './tabs/StatusTabSimple';
+import { LocalDBTab } from './tabs/LocalDBTabSimple';
+import { AnalysisTab } from './tabs/AnalysisTabSimple';
 import { tabState } from '../stores/tabStore';
 
 export const AppWithTabs: Component = () => {

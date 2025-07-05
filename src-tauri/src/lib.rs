@@ -209,6 +209,7 @@ pub fn run() {
             commands::get_app_directories,
             commands::is_first_run,
             commands::update_crawling_settings,
+            commands::get_crawling_status_check,
             commands::build_page_url,
             commands::resolve_url,
             

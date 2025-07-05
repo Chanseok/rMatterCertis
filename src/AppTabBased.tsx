@@ -62,8 +62,13 @@ const App: Component = () => {
   const crawler = crawlerStore;
 
   // 백엔드 연결 초기화
-  onMount(() => {
-    crawler.initialize();
+  onMount(async () => {
+    try {
+      await crawler.initialize();
+      console.log("✅ Crawler initialized successfully");
+    } catch (error) {
+      console.error("❌ Failed to initialize crawler:", error);
+    }
   });
 
   // 전역 키보드 단축키

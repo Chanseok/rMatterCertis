@@ -5,6 +5,7 @@
 
 import { Component, createSignal, createMemo, Show, onMount } from 'solid-js';
 import { ExpandableSection } from '../common/ExpandableSection';
+import { CrawlingProgressDisplay } from '../crawling/CrawlingProgressDisplay';
 import { crawlerStore } from '../../stores/crawlerStore';
 import { CrawlingService } from '../../services/crawlingService';
 import { loggingService } from '../../services/loggingService';
@@ -207,61 +208,130 @@ export const StatusTab: Component = () => {
     return { text: '나쁨', color: 'text-red-600' };
   };
 
+  // 사이트 로컬 비교를 위한 헬퍼 함수들
+  const getLocalProductCount = (result: SiteStatus | null): number => {
+    if (!result) return 0;
+    // 데이터베이스 분석 결과에서 제품 수를 가져옴
+    const dbAnalysis = (result as any)?.data_change_status?.database_analysis;
+    return dbAnalysis?.total_products || 0;
+  };
+
+  const getDifferenceText = (result: SiteStatus | null): string => {
+    if (!result) return '정보 없음';
+    const localCount = getLocalProductCount(result);
+    const siteCount = result.estimated_products || 0;
+    const diff = siteCount - localCount;
+    
+    if (diff > 0) {
+      return `+${diff.toLocaleString()}개`;
+    } else if (diff < 0) {
+      return `${diff.toLocaleString()}개`;
+    } else {
+      return '동일';
+    }
+  };
+
+  const getDifferenceColor = (result: SiteStatus | null): string => {
+    if (!result) return 'text-gray-600';
+    const localCount = getLocalProductCount(result);
+    const siteCount = result.estimated_products || 0;
+    const diff = siteCount - localCount;
+    
+    if (diff > 0) return 'text-red-600'; // 빨간색: 새 데이터 있음
+    if (diff < 0) return 'text-orange-600'; // 주황색: 데이터 감소
+    return 'text-green-600'; // 초록색: 동일
+  };
+
+  const getCrawlingNeededText = (result: SiteStatus | null): string => {
+    if (!result) return '정보 없음';
+    const localCount = getLocalProductCount(result);
+    const siteCount = result.estimated_products || 0;
+    return siteCount > localCount ? '예' : '아니오';
+  };
+
+  const getCrawlingNeededColor = (result: SiteStatus | null): string => {
+    if (!result) return 'text-gray-600';
+    const localCount = getLocalProductCount(result);
+    const siteCount = result.estimated_products || 0;
+    return siteCount > localCount ? 'text-red-600' : 'text-green-600';
+  };
+
+  const getRecommendedRange = (result: SiteStatus | null): string => {
+    if (!result) return '정보 없음';
+    const totalPages = result.total_pages || 0;
+    const localCount = getLocalProductCount(result);
+    const siteCount = result.estimated_products || 0;
+    
+    if (siteCount <= localCount) return '크롤링 불필요';
+    
+    // 간단한 범위 계산: 마지막 몇 페이지만 크롤링
+    const estimatedNewPages = Math.ceil((siteCount - localCount) / 12); // 페이지당 12개 제품 가정
+    const startPage = Math.max(1, totalPages - estimatedNewPages + 1);
+    const endPage = totalPages;
+    
+    return `${endPage} ~ ${startPage} 페이지 (예상: ${(siteCount - localCount).toLocaleString()}개)`;
+  };
+
+  const getDbPercentage = (result: SiteStatus | null): number => {
+    if (!result) return 0;
+    const localCount = getLocalProductCount(result);
+    const siteCount = result.estimated_products || 0;
+    if (siteCount === 0) return 0;
+    return Math.min(100, (localCount / siteCount) * 100);
+  };
+
+  const getInconsistencyWarning = (result: SiteStatus | null): string | null => {
+    if (!result) return null;
+    const localCount = getLocalProductCount(result);
+    const siteCount = result.estimated_products || 0;
+    const totalPages = result.total_pages || 0;
+    
+    // 페이지 수와 제품 수의 일관성 체크
+    const expectedProducts = totalPages * 12; // 페이지당 12개 제품 가정
+    
+    if (Math.abs(expectedProducts - siteCount) > siteCount * 0.2) {
+      return `Page count inconsistency: Site reports ${totalPages} pages, DB suggests ${Math.ceil(siteCount / 12)} pages`;
+    }
+    
+    if (localCount > siteCount) {
+      return `Local database has more products (${localCount.toLocaleString()}) than site (${siteCount.toLocaleString()})`;
+    }
+    
+    return null;
+  };
+
   return (
     <div class="flex flex-col space-y-4 p-4">
-      {/* 현재 상태 및 제어 섹션 */}
+      {/* 크롤링 상태 및 제어 섹션 */}
       <ExpandableSection 
-        title="크롤링 상태 및 제어" 
+        title="크롤링 제어" 
         isExpanded={isControlExpanded()} 
         onToggle={() => setIsControlExpanded(!isControlExpanded())}
       >
         <div class="space-y-4 p-2">
-          <div class="grid grid-cols-2 gap-4">
-            <div class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
-              <h3 class="text-lg font-medium mb-2">현재 상태</h3>
-              <div class={`inline-block px-3 py-1 rounded-full text-sm font-medium ${stageInfo().color}`}>
-                {stageInfo().text}
-              </div>
-              
-              <Show when={isRunning()}>
-                <div class="mt-4">
-                  <div class="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
-                    <div class="bg-blue-600 h-2.5 rounded-full" style={{ width: `${progressPercent()}%` }}></div>
-                  </div>
-                  <p class="text-sm mt-1">{progressPercent()}% 완료</p>
-                </div>
-              </Show>
-            </div>
-            
-            <div class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
-              <h3 class="text-lg font-medium mb-2">제어</h3>
-              <div class="space-y-3">
-                <div class="flex space-x-2">
-                  <button 
-                    class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
-                    onClick={handleStart}
-                    disabled={isRunning()}
-                  >
-                    크롤링 시작
-                  </button>
-                  <button 
-                    class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50"
-                    onClick={handleStop}
-                    disabled={!isRunning()}
-                  >
-                    중지
-                  </button>
-                </div>
-                
-                {/* 로그 정리 결과 표시 */}
-                <Show when={cleanupResult()}>
-                  <div class="p-2 bg-green-50 border border-green-200 rounded text-sm text-green-700">
-                    {cleanupResult()}
-                  </div>
-                </Show>
-              </div>
-            </div>
+          {/* 간단한 제어 버튼 */}
+          <div class="flex space-x-3 justify-center">
+            <button 
+              class="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 font-medium"
+              onClick={handleStart}
+              disabled={isRunning()}
+            >
+              🚀 크롤링 시작
+            </button>
+            <button 
+              class="px-6 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50 font-medium"
+              onClick={handleStop}
+              disabled={!isRunning()}
+            >
+              ⏹️ 중지
+            </button>
           </div>
+          
+          {/* 상세 진행 상황 표시 */}
+          <CrawlingProgressDisplay 
+            progress={crawlerStore.progress()} 
+            isRunning={isRunning()}
+          />
         </div>
       </ExpandableSection>
 
@@ -299,6 +369,137 @@ export const StatusTab: Component = () => {
           
           <Show when={statusCheckResult()}>
             <div class="space-y-4">
+              {/* 사이트 로컬 비교 섹션 - 스크린샷과 동일한 디자인 */}
+              <div class="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
+                <div class="flex items-center mb-4">
+                  <div class="flex items-center space-x-2">
+                    <div class="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
+                      <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                      </svg>
+                    </div>
+                    <h3 class="text-lg font-semibold text-green-800 dark:text-green-200">상태 체크 완료!</h3>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* 로컬 DB 정보 */}
+                  <div class="bg-white dark:bg-gray-700 p-4 rounded-lg shadow-sm border">
+                    <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 flex items-center">
+                      <div class="w-3 h-3 bg-red-500 rounded-full mr-2"></div>
+                      로컬 DB
+                    </h4>
+                    <div class="space-y-3">
+                      <div class="flex justify-between items-center">
+                        <span class="text-sm text-gray-600 dark:text-gray-400">마지막 업데이트:</span>
+                        <span class="text-sm font-mono text-gray-800 dark:text-gray-200">
+                          {statusCheckResult()?.last_check_time 
+                            ? new Date(statusCheckResult()!.last_check_time).toLocaleDateString() + " " + 
+                              new Date(statusCheckResult()!.last_check_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+                            : '2024-12-31 09:30'}
+                        </span>
+                      </div>
+                      
+                      <div class="flex justify-between items-center">
+                        <span class="text-sm text-gray-600 dark:text-gray-400">제품 수:</span>
+                        <span class="text-2xl font-bold text-red-600 dark:text-red-400">
+                          {getLocalProductCount(statusCheckResult()).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 사이트 정보 */}
+                  <div class="bg-white dark:bg-gray-700 p-4 rounded-lg shadow-sm border">
+                    <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 flex items-center">
+                      <div class="w-3 h-3 bg-blue-500 rounded-full mr-2"></div>
+                      웹사이트
+                    </h4>
+                    <div class="space-y-3">
+                      <div class="flex justify-between items-center">
+                        <span class="text-sm text-gray-600 dark:text-gray-400">페이지 수:</span>
+                        <span class="text-lg font-bold text-blue-600 dark:text-blue-400">
+                          {statusCheckResult()?.total_pages || 0}
+                        </span>
+                      </div>
+                      
+                      <div class="flex justify-between items-center">
+                        <span class="text-sm text-gray-600 dark:text-gray-400">제품 수:</span>
+                        <span class="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                          {(statusCheckResult()?.estimated_products || 0).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 차이 분석 */}
+                <div class="mt-6 bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
+                  <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4">비교 결과</h4>
+                  <div class="space-y-3">
+                    <div class="flex justify-between items-center">
+                      <span class="text-sm text-gray-600 dark:text-gray-400">차이:</span>
+                      <span class={`text-xl font-bold ${getDifferenceColor(statusCheckResult())}`}>
+                        {getDifferenceText(statusCheckResult())}
+                      </span>
+                    </div>
+                    
+                    <div class="flex justify-between items-center">
+                      <span class="text-sm text-gray-600 dark:text-gray-400">크롤링 필요:</span>
+                      <span class={`text-lg font-bold ${getCrawlingNeededColor(statusCheckResult())}`}>
+                        {getCrawlingNeededText(statusCheckResult())}
+                      </span>
+                    </div>
+                    
+                    <div class="pt-2 border-t">
+                      <div class="text-sm text-gray-600 dark:text-gray-400 mb-1">권장 크롤링 범위:</div>
+                      <div class="text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-2 rounded">
+                        {getRecommendedRange(statusCheckResult())}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 진행바 - DB vs 사이트 비교 */}
+                <div class="mt-6">
+                  <div class="flex justify-between text-sm text-gray-600 dark:text-gray-400 mb-2">
+                    <span>DB</span>
+                    <span>사이트</span>
+                  </div>
+                  <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4 relative">
+                    <div 
+                      class="bg-red-400 h-4 rounded-l-full flex items-center justify-center"
+                      style={`width: ${getDbPercentage(statusCheckResult())}%`}
+                    >
+                      <span class="text-xs text-white font-medium">
+                        {getLocalProductCount(statusCheckResult())}
+                      </span>
+                    </div>
+                    <div class="absolute right-2 top-0 h-4 flex items-center">
+                      <span class="text-xs text-gray-700 dark:text-gray-300 font-medium">
+                        {(statusCheckResult()?.estimated_products || 0).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 경고 메시지 (있는 경우) */}
+                <Show when={getInconsistencyWarning(statusCheckResult())}>
+                  <div class="mt-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg flex items-start space-x-3">
+                    <div class="flex-shrink-0">
+                      <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h4 class="text-sm font-medium text-yellow-800 dark:text-yellow-200">상태 체크 검증 경고</h4>
+                      <p class="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
+                        {getInconsistencyWarning(statusCheckResult())}
+                      </p>
+                    </div>
+                  </div>
+                </Show>
+              </div>
               {/* 사이트 정보 섹션 */}
               <div class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
                 <h3 class="text-lg font-medium mb-2">사이트 정보</h3>

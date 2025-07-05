@@ -5,9 +5,9 @@
 
 import { Component, createSignal, onMount, createEffect, For } from 'solid-js';
 import { ExpandableSection } from '../common/ExpandableSection';
-import { crawlerStore } from '../../stores/crawlerStore';
 import { tauriApi } from '../../services/tauri-api';
 import { loggingService } from '../../services/loggingService';
+import { CrawlingStatusCheck } from '../../types/crawling';
 
 interface LoggingSettings {
   level: string;
@@ -24,6 +24,13 @@ interface BatchSettings {
   batch_delay_ms: number;
   enable_batch_processing: boolean;
   batch_retry_limit: number;
+}
+
+interface CrawlingSettings {
+  page_range_limit: number;
+  product_list_retry_count: number;
+  product_detail_retry_count: number;
+  auto_add_to_local_db: boolean;
 }
 
 interface SaveStatus {
@@ -90,6 +97,27 @@ export const SettingsTab: Component = () => {
     enable_batch_processing: true,
     batch_retry_limit: 3
   });
+  
+  // 현재 저장된 크롤링 설정
+  const [savedCrawlingSettings, setSavedCrawlingSettings] = createSignal<CrawlingSettings>({
+    page_range_limit: 20,
+    product_list_retry_count: 3,
+    product_detail_retry_count: 3,
+    auto_add_to_local_db: true
+  });
+  
+  // 현재 UI에서 편집 중인 크롤링 설정
+  const [crawlingSettings, setCrawlingSettings] = createSignal<CrawlingSettings>({
+    page_range_limit: 20,
+    product_list_retry_count: 3,
+    product_detail_retry_count: 3,
+    auto_add_to_local_db: true
+  });
+  
+  // 상태 체크 관련 signals
+  const [statusCheck, setStatusCheck] = createSignal<CrawlingStatusCheck | null>(null);
+  const [isCheckingStatus, setIsCheckingStatus] = createSignal(false);
+  const [statusCheckError, setStatusCheckError] = createSignal<string>('');
   
   const [logCleanupResult, setLogCleanupResult] = createSignal<string>('');
   const [isCleaningLogs, setIsCleaningLogs] = createSignal(false);
@@ -212,11 +240,14 @@ export const SettingsTab: Component = () => {
     const savedLogging = savedLoggingSettings();
     const currentBatch = batchSettings();
     const savedBatch = savedBatchSettings();
+    const currentCrawling = crawlingSettings();
+    const savedCrawling = savedCrawlingSettings();
     
     const loggingChanged = JSON.stringify(currentLogging) !== JSON.stringify(savedLogging);
     const batchChanged = JSON.stringify(currentBatch) !== JSON.stringify(savedBatch);
+    const crawlingChanged = JSON.stringify(currentCrawling) !== JSON.stringify(savedCrawling);
     
-    setHasUnsavedChanges(loggingChanged || batchChanged);
+    setHasUnsavedChanges(loggingChanged || batchChanged || crawlingChanged);
   });
 
   // 설정 로드 함수
@@ -234,6 +265,12 @@ export const SettingsTab: Component = () => {
         const batchConfig = frontendConfig.user.batch;
         setSavedBatchSettings(batchConfig);
         setBatchSettings(batchConfig);
+      }
+      
+      if (frontendConfig?.user?.crawling) {
+        const crawlingConfig = frontendConfig.user.crawling;
+        setSavedCrawlingSettings(crawlingConfig);
+        setCrawlingSettings(crawlingConfig);
       }
       
       await loggingService.info('설정을 성공적으로 로드했습니다', 'SettingsTab');
@@ -263,9 +300,13 @@ export const SettingsTab: Component = () => {
       // 배치 설정 저장
       await tauriApi.updateBatchSettings(batchSettings());
       
+      // 크롤링 설정 저장
+      await tauriApi.updateCrawlingSettings(crawlingSettings());
+      
       // 저장된 설정으로 업데이트
       setSavedLoggingSettings(loggingSettings());
       setSavedBatchSettings(batchSettings());
+      setSavedCrawlingSettings(crawlingSettings());
       
       setSaveStatus({ 
         type: 'success', 
@@ -313,6 +354,46 @@ export const SettingsTab: Component = () => {
     setTimeout(() => {
       setSaveStatus({ type: null, message: '' });
     }, 2000);
+  };
+
+  // 상태 체크 함수
+  const handleStatusCheck = async () => {
+    setIsCheckingStatus(true);
+    setStatusCheckError('');
+    setStatusCheck(null);
+    
+    try {
+      await loggingService.info('크롤링 상태 체크 시작', 'SettingsTab');
+      const result = await tauriApi.getCrawlingStatusCheck();
+      setStatusCheck(result);
+      await loggingService.info(`상태 체크 완료: ${result.recommendation_reason}`, 'SettingsTab');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '알 수 없는 오류';
+      setStatusCheckError(`상태 체크 실패: ${errorMessage}`);
+      await loggingService.error(`상태 체크 실패: ${errorMessage}`, 'SettingsTab');
+    } finally {
+      setIsCheckingStatus(false);
+    }
+  };
+
+  // 추천 설정 적용 함수
+  const applyRecommendedSettings = () => {
+    const check = statusCheck();
+    if (check) {
+      setCrawlingSettings(prev => ({
+        ...prev,
+        page_range_limit: check.recommended_end_page - check.recommended_start_page + 1
+      }));
+      
+      setSaveStatus({ 
+        type: 'info', 
+        message: `추천 설정이 적용되었습니다 (페이지 ${check.recommended_start_page}-${check.recommended_end_page})` 
+      });
+      
+      setTimeout(() => {
+        setSaveStatus({ type: null, message: '' });
+      }, 3000);
+    }
   };
 
   // 프리셋 적용 함수
@@ -414,8 +495,11 @@ export const SettingsTab: Component = () => {
               type="number" 
               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
               placeholder="20"
-              value={crawlerStore.state.currentConfig?.page_range_limit || 20}
-              onInput={(e) => console.log('Page range limit changed:', e.currentTarget.value)}
+              value={crawlingSettings().page_range_limit}
+              onInput={(e) => setCrawlingSettings(prev => ({
+                ...prev,
+                page_range_limit: parseInt(e.currentTarget.value) || 20
+              }))}
             />
           </div>
           <div>
@@ -425,9 +509,12 @@ export const SettingsTab: Component = () => {
             <input 
               type="number" 
               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
-              placeholder="20"
-              value={crawlerStore.state.currentConfig?.product_list_retry_count || 20}
-              onInput={(e) => console.log('Product list retry count changed:', e.currentTarget.value)}
+              placeholder="3"
+              value={crawlingSettings().product_list_retry_count}
+              onInput={(e) => setCrawlingSettings(prev => ({
+                ...prev,
+                product_list_retry_count: parseInt(e.currentTarget.value) || 3
+              }))}
             />
           </div>
           <div>
@@ -437,9 +524,12 @@ export const SettingsTab: Component = () => {
             <input 
               type="number" 
               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
-              placeholder="20"
-              value={crawlerStore.state.currentConfig?.product_detail_retry_count || 20}
-              onInput={(e) => console.log('Product detail retry count changed:', e.currentTarget.value)}
+              placeholder="3"
+              value={crawlingSettings().product_detail_retry_count}
+              onInput={(e) => setCrawlingSettings(prev => ({
+                ...prev,
+                product_detail_retry_count: parseInt(e.currentTarget.value) || 3
+              }))}
             />
           </div>
           <div class="flex items-center space-x-3">
@@ -447,13 +537,120 @@ export const SettingsTab: Component = () => {
               type="checkbox"
               id="auto-add-local-db"
               class="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
-              checked={crawlerStore.state.currentConfig?.auto_add_to_local_db || true}
-              onChange={(e) => console.log('Auto add to DB changed:', e.currentTarget.checked)}
+              checked={crawlingSettings().auto_add_to_local_db}
+              onChange={(e) => setCrawlingSettings(prev => ({
+                ...prev,
+                auto_add_to_local_db: e.currentTarget.checked
+              }))}
             />
             <label for="auto-add-local-db" class="text-sm font-medium text-gray-700 dark:text-gray-300">
               자동으로 로컬 DB에 추가
             </label>
           </div>
+        </div>
+        
+        {/* 상태 체크 섹션 */}
+        <div class="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+          <div class="flex items-center justify-between mb-4">
+            <h4 class="text-lg font-medium text-blue-900 dark:text-blue-100">
+              🔍 크롤링 상태 체크
+            </h4>
+            <button
+              onClick={handleStatusCheck}
+              disabled={isCheckingStatus()}
+              class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-md transition-colors duration-200 flex items-center space-x-2"
+            >
+              {isCheckingStatus() ? (
+                <>
+                  <div class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></div>
+                  <span>분석 중...</span>
+                </>
+              ) : (
+                <>
+                  <span>🔍</span>
+                  <span>상태 분석</span>
+                </>
+              )}
+            </button>
+          </div>
+          
+          <p class="text-sm text-blue-700 dark:text-blue-300 mb-4">
+            로컬 데이터베이스와 사이트 상태를 분석하여 최적의 크롤링 범위를 추천합니다.
+          </p>
+          
+          {statusCheckError() && (
+            <div class="mb-4 p-3 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-md">
+              <p class="text-sm text-red-700 dark:text-red-300">{statusCheckError()}</p>
+            </div>
+          )}
+          
+          {statusCheck() && (
+            <div class="space-y-4">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-white dark:bg-gray-800 p-3 rounded-md border">
+                  <h5 class="font-medium text-gray-900 dark:text-gray-100 mb-2">📊 로컬 DB 상태</h5>
+                  <p class="text-sm text-gray-600 dark:text-gray-400">
+                    제품 수: <span class="font-mono">{statusCheck()?.local_db_product_count.toLocaleString()}</span>개
+                  </p>
+                  <p class="text-sm text-gray-600 dark:text-gray-400">
+                    페이지 범위: <span class="font-mono">{statusCheck()?.local_db_page_range[0]}-{statusCheck()?.local_db_page_range[1]}</span>
+                  </p>
+                  {statusCheck()?.last_crawl_time && (
+                    <p class="text-sm text-gray-600 dark:text-gray-400">
+                      마지막 크롤링: <span class="font-mono">{new Date(statusCheck()!.last_crawl_time!).toLocaleDateString()}</span>
+                    </p>
+                  )}
+                </div>
+                
+                <div class="bg-white dark:bg-gray-800 p-3 rounded-md border">
+                  <h5 class="font-medium text-gray-900 dark:text-gray-100 mb-2">🌐 사이트 상태</h5>
+                  <p class="text-sm text-gray-600 dark:text-gray-400">
+                    접근 가능: <span class={`font-mono ${statusCheck()?.site_accessible ? 'text-green-600' : 'text-red-600'}`}>
+                      {statusCheck()?.site_accessible ? '✅ 정상' : '❌ 불가'}
+                    </span>
+                  </p>
+                  {statusCheck()?.detected_max_page && (
+                    <p class="text-sm text-gray-600 dark:text-gray-400">
+                      최대 페이지: <span class="font-mono">{statusCheck()?.detected_max_page}</span>
+                    </p>
+                  )}
+                  {statusCheck()?.estimated_total_products && (
+                    <p class="text-sm text-gray-600 dark:text-gray-400">
+                      예상 제품 수: <span class="font-mono">{statusCheck()!.estimated_total_products!.toLocaleString()}</span>개
+                    </p>
+                  )}
+                </div>
+              </div>
+              
+              <div class="bg-green-50 dark:bg-green-900/20 p-4 rounded-md border border-green-200 dark:border-green-800">
+                <div class="flex items-start justify-between">
+                  <div class="flex-1">
+                    <h5 class="font-medium text-green-900 dark:text-green-100 mb-2">💡 추천 설정</h5>
+                    <p class="text-sm text-green-700 dark:text-green-300 mb-2">
+                      추천 페이지 범위: <span class="font-mono font-bold">
+                        {statusCheck()?.recommended_start_page}-{statusCheck()?.recommended_end_page}
+                      </span>
+                    </p>
+                    <p class="text-sm text-green-700 dark:text-green-300 mb-2">
+                      예상 신규 제품: <span class="font-mono font-bold">{statusCheck()?.estimated_new_products.toLocaleString()}</span>개
+                    </p>
+                    <p class="text-sm text-green-700 dark:text-green-300 mb-2">
+                      효율성 점수: <span class="font-mono font-bold">{(statusCheck()?.crawling_efficiency_score! * 100).toFixed(1)}%</span>
+                    </p>
+                    <p class="text-sm text-green-600 dark:text-green-400 italic">
+                      {statusCheck()?.recommendation_reason}
+                    </p>
+                  </div>
+                  <button
+                    onClick={applyRecommendedSettings}
+                    class="ml-4 px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded-md transition-colors duration-200"
+                  >
+                    적용
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </ExpandableSection>
 

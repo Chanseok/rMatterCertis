@@ -536,3 +536,27 @@ export const getProgressBarColor = (percentage: number, status: CrawlingStatus):
   if (percentage >= 40) return "bg-yellow-500";
   return "bg-gray-500";
 };
+
+// =========================================================================
+// Crawling Status Check Types
+// =========================================================================
+
+export interface CrawlingStatusCheck {
+  // Database status
+  local_db_product_count: number;
+  last_crawl_time?: string;
+  local_db_page_range: [number, number]; // [min_page, max_page]
+  
+  // Site status
+  estimated_total_products?: number;
+  detected_max_page?: number;
+  site_accessible: boolean;
+  last_page_check_time: string;
+  
+  // Recommendations
+  recommended_start_page: number;
+  recommended_end_page: number;
+  estimated_new_products: number;
+  crawling_efficiency_score: number; // 0.0 - 1.0
+  recommendation_reason: string;
+}
