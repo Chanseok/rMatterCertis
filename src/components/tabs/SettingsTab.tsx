@@ -286,7 +286,13 @@ export const SettingsTab: Component = () => {
 
   // 설정 로드
   onMount(async () => {
-    await loadSettings();
+    console.log('SettingsTab: onMount 시작');
+    try {
+      await loadSettings();
+      console.log('SettingsTab: 설정 로드 완료');
+    } catch (error) {
+      console.error('SettingsTab: onMount 에러:', error);
+    }
   });
 
   const handleSaveSettings = async () => {
@@ -1007,55 +1013,71 @@ export const SettingsTab: Component = () => {
               );
             })()}
           </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <For each={loggingPresets}>
               {(preset) => (
-                <div class={`p-4 rounded-lg shadow-sm border transition-colors ${
-                  isPresetActive(preset) 
-                    ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-700' 
-                    : 'bg-white dark:bg-gray-700 border-gray-200 dark:border-gray-600'
-                }`}>
-                  <div class="flex flex-col space-y-2">
-                    <div class="flex items-center justify-between">
-                      <h5 class={`font-medium ${
-                        isPresetActive(preset) 
-                          ? 'text-emerald-900 dark:text-emerald-100' 
-                          : 'text-gray-900 dark:text-white'
-                      }`}>
-                        {preset.name}
-                      </h5>
-                      {isPresetActive(preset) && (
-                        <div class="flex items-center space-x-1">
-                          <svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
-                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-                          </svg>
-                          <span class="text-xs font-medium text-emerald-600 dark:text-emerald-400">활성</span>
-                        </div>
-                      )}
+                <div 
+                  onClick={() => !isPresetActive(preset) && applyLoggingPreset(preset)}
+                  class={`relative p-3 rounded-lg border-2 transition-all cursor-pointer hover:shadow-md ${
+                    isPresetActive(preset) 
+                      ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-400 dark:border-emerald-500 shadow-sm' 
+                      : 'bg-white dark:bg-gray-700 border-gray-200 dark:border-gray-600 hover:border-emerald-300 dark:hover:border-emerald-600'
+                  } ${isPresetActive(preset) ? 'cursor-default' : 'hover:scale-105'}`}
+                >
+                  {/* 활성 상태 표시 */}
+                  {isPresetActive(preset) && (
+                    <div class="absolute -top-1 -right-1 w-6 h-6 bg-emerald-500 rounded-full flex items-center justify-center">
+                      <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                      </svg>
                     </div>
-                    <p class={`text-sm ${
+                  )}
+                  
+                  <div class="flex flex-col space-y-2">
+                    {/* 프리셋 이름 */}
+                    <h5 class={`font-semibold text-sm leading-tight ${
+                      isPresetActive(preset) 
+                        ? 'text-emerald-900 dark:text-emerald-100' 
+                        : 'text-gray-900 dark:text-white'
+                    }`}>
+                      {preset.name}
+                    </h5>
+                    
+                    {/* 설명 */}
+                    <p class={`text-xs leading-snug ${
                       isPresetActive(preset) 
                         ? 'text-emerald-700 dark:text-emerald-300' 
                         : 'text-gray-600 dark:text-gray-300'
                     }`}>
                       {preset.description}
                     </p>
-                    <div class="flex flex-col text-xs text-gray-500 dark:text-gray-400 space-y-1">
-                      <span>레벨: {preset.config.level.toUpperCase()}</span>
-                      <span>파일 크기: {preset.config.max_file_size_mb}MB</span>
-                      <span>분리: {preset.config.separate_frontend_backend ? '예' : '아니오'}</span>
-                    </div>
-                    <button 
-                      onClick={() => applyLoggingPreset(preset)}
-                      disabled={isPresetActive(preset)}
-                      class={`mt-2 px-3 py-2 text-sm rounded-md transition-colors focus:outline-none focus:ring-2 ${
+                    
+                    {/* 핵심 정보 */}
+                    <div class="flex flex-wrap gap-1">
+                      <span class={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
                         isPresetActive(preset)
-                          ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                          : 'bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-500'
-                      }`}
-                    >
-                      {isPresetActive(preset) ? '현재 활성' : '적용'}
-                    </button>
+                          ? 'bg-emerald-100 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-200'
+                          : 'bg-gray-100 dark:bg-gray-600 text-gray-800 dark:text-gray-200'
+                      }`}>
+                        {preset.config.level.toUpperCase()}
+                      </span>
+                      <span class={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                        isPresetActive(preset)
+                          ? 'bg-emerald-100 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-200'
+                          : 'bg-gray-100 dark:bg-gray-600 text-gray-800 dark:text-gray-200'
+                      }`}>
+                        {preset.config.max_file_size_mb}MB
+                      </span>
+                    </div>
+                    
+                    {/* 선택 상태 */}
+                    <div class={`text-center text-xs font-medium mt-1 ${
+                      isPresetActive(preset)
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-gray-500 dark:text-gray-400'
+                    }`}>
+                      {isPresetActive(preset) ? '✓ 현재 활성' : '클릭하여 적용'}
+                    </div>
                   </div>
                 </div>
               )}

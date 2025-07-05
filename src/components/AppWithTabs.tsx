@@ -5,7 +5,7 @@
 
 import { Component, createMemo } from 'solid-js';
 import { AppLayout } from './layout/AppLayout';
-import { SettingsTab } from './tabs/SettingsTabSimple';
+import { SettingsTab } from './tabs/SettingsTab';
 import { StatusTab } from './tabs/StatusTabSimple';
 import { LocalDBTab } from './tabs/LocalDBTabSimple';
 import { AnalysisTab } from './tabs/AnalysisTabSimple';

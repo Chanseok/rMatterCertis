@@ -2,7 +2,9 @@
  * StatusTab - 크롤링 상태 및 제어 탭 컴포넌트
  */
 
-import { Component, createSignal } from 'solid-js';
+import { Component, createSignal, Show } from 'solid-js';
+import { tauriApi } from '../../services/tauri-api';
+import type { CrawlingStatusCheck } from '../../types/crawling';
 
 export const StatusTab: Component = () => {
   // 크롤링 상태
@@ -15,7 +17,9 @@ export const StatusTab: Component = () => {
   const [estimatedTime, setEstimatedTime] = createSignal('계산 중...');
 
   // 상태 체크 결과
-  const [statusCheckResult, setStatusCheckResult] = createSignal<any>(null);
+  const [statusCheckResult, setStatusCheckResult] = createSignal<CrawlingStatusCheck | null>(null);
+  const [isCheckingStatus, setIsCheckingStatus] = createSignal(false);
+  const [statusCheckError, setStatusCheckError] = createSignal<string>('');
 
   const getStatusColor = () => {
     switch (crawlingStatus()) {
@@ -35,8 +39,91 @@ export const StatusTab: Component = () => {
     }
   };
 
-  const startCrawling = () => {
-    setCrawlingStatus('running');
+  const startCrawling = async () => {
+    if (statusCheckResult()) {
+      // 상태 체크 결과가 있으면 추천 범위로 크롤링 시작
+      const config = {
+        // 기본 설정
+        start_page: statusCheckResult()!.recommended_start_page,
+        end_page: statusCheckResult()!.recommended_end_page,
+        concurrency: 3,
+        delay_ms: 1000,
+        
+        // 고급 설정
+        page_range_limit: 500,
+        product_list_retry_count: 3,
+        product_detail_retry_count: 3,
+        products_per_page: 12,
+        auto_add_to_local_db: true,
+        auto_status_check: true,
+        crawler_type: "smart",
+        
+        // 배치 처리
+        batch_size: 50,
+        batch_delay_ms: 2000,
+        enable_batch_processing: true,
+        batch_retry_limit: 3,
+        
+        // URL
+        base_url: "https://csa-iot.org",
+        matter_filter_url: "https://csa-iot.org/csa_product/?p_type%5B%5D=14&f_program_type%5B%5D=1049",
+        
+        // 타임아웃
+        page_timeout_ms: 30000,
+        product_detail_timeout_ms: 20000,
+        
+        // 동시성 및 성능
+        initial_concurrency: 3,
+        detail_concurrency: 5,
+        retry_concurrency: 2,
+        min_request_delay_ms: 500,
+        max_request_delay_ms: 2000,
+        retry_start: 1,
+        retry_max: 3,
+        cache_ttl_ms: 300000,
+        
+        // 브라우저 설정
+        headless_browser: true,
+        max_concurrent_tasks: 10,
+        request_delay: 1000,
+        custom_user_agent: "rMatterCertis/2.0",
+        
+        // 로깅
+        logging: {
+          level: "info",
+          enable_stack_trace: false,
+          enable_timestamp: true,
+          components: {
+            "crawler": "info",
+            "http": "warn",
+            "database": "info"
+          }
+        }
+      };
+      
+      try {
+        setCrawlingStatus('running');
+        console.log('🚀 스마트 크롤링 시작:', config);
+        
+        // 실제 크롤링 시작
+        const sessionId = await tauriApi.startCrawling(config);
+        console.log('✅ 크롤링 세션 시작됨:', sessionId);
+        
+        // TODO: 실시간 진행률 업데이트 구현
+        // 임시로 시뮬레이션 유지
+        simulateProgress();
+      } catch (error) {
+        console.error('❌ 크롤링 시작 실패:', error);
+        setCrawlingStatus('idle');
+        alert(`크롤링 시작에 실패했습니다: ${error}`);
+      }
+    } else {
+      // 상태 체크 결과가 없으면 먼저 상태 체크 실행 권장
+      alert('먼저 "상태 체크"를 실행하여 최적의 크롤링 범위를 확인해주세요.');
+    }
+  };
+
+  const simulateProgress = () => {
     // 진행률 시뮬레이션
     const interval = setInterval(() => {
       setProgress(prev => {
@@ -52,24 +139,46 @@ export const StatusTab: Component = () => {
     }, 200);
   };
 
-  const pauseCrawling = () => {
-    setCrawlingStatus('paused');
+  const pauseCrawling = async () => {
+    try {
+      await tauriApi.pauseCrawling();
+      setCrawlingStatus('paused');
+      console.log('⏸️ 크롤링 일시정지됨');
+    } catch (error) {
+      console.error('❌ 크롤링 일시정지 실패:', error);
+    }
   };
 
-  const stopCrawling = () => {
-    setCrawlingStatus('idle');
-    setProgress(0);
-    setCurrentPage(0);
+  const stopCrawling = async () => {
+    try {
+      await tauriApi.stopCrawling();
+      setCrawlingStatus('idle');
+      setProgress(0);
+      setCurrentPage(0);
+      console.log('⏹️ 크롤링 중지됨');
+    } catch (error) {
+      console.error('❌ 크롤링 중지 실패:', error);
+    }
   };
 
-  const runStatusCheck = () => {
-    setStatusCheckResult({
-      localDbCount: 1248,
-      lastCrawlTime: '2025-07-05 14:30:00',
-      recommendedRange: '페이지 1249-1500',
-      estimatedNewItems: 252,
-      duplicateRisk: 'Low'
-    });
+  const runStatusCheck = async () => {
+    try {
+      setIsCheckingStatus(true);
+      setStatusCheckError('');
+      setStatusCheckResult(null);
+      
+      console.log('🔍 상태 체크 시작...');
+      const result = await tauriApi.getCrawlingStatusCheck();
+      console.log('✅ 상태 체크 완료:', result);
+      
+      setStatusCheckResult(result);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '알 수 없는 오류';
+      setStatusCheckError(`상태 체크 실패: ${errorMessage}`);
+      console.error('❌ 상태 체크 실패:', error);
+    } finally {
+      setIsCheckingStatus(false);
+    }
   };
 
   return (
@@ -120,17 +229,24 @@ export const StatusTab: Component = () => {
         </div>
       </div>
 
-      {/* 제어 버튼 */}
+      {/* 스마트 크롤링 제어 */}
       <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fefefe;">
-        <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 500; color: #374151;">크롤링 제어</h3>
+        <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 500; color: #374151;">🤖 스마트 크롤링 제어</h3>
+        
+        {statusCheckResult() && (
+          <div style="margin-bottom: 16px; padding: 12px; background: #f0f9ff; border-radius: 6px; border-left: 4px solid #3b82f6; font-size: 14px;">
+            <strong>🎯 추천 크롤링:</strong> 페이지 {statusCheckResult()!.recommended_start_page}-{statusCheckResult()!.recommended_end_page} 
+            (약 {statusCheckResult()!.estimated_new_products}개 신규 제품 예상)
+          </div>
+        )}
         
         <div style="display: flex; gap: 12px; flex-wrap: wrap;">
           <button
             onClick={startCrawling}
             disabled={crawlingStatus() === 'running'}
-            style={`padding: 12px 24px; background: ${crawlingStatus() === 'running' ? '#9ca3af' : '#22c55e'}; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: ${crawlingStatus() === 'running' ? 'not-allowed' : 'pointer'}; transition: background-color 0.2s;`}
+            style={`padding: 12px 24px; background: ${crawlingStatus() === 'running' ? '#9ca3af' : statusCheckResult() ? '#10b981' : '#22c55e'}; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: ${crawlingStatus() === 'running' ? 'not-allowed' : 'pointer'}; transition: background-color 0.2s;`}
           >
-            ▶️ 시작
+            {statusCheckResult() ? '🤖 스마트 크롤링 시작' : '▶️ 기본 크롤링 시작'}
           </button>
           
           <button
@@ -149,6 +265,12 @@ export const StatusTab: Component = () => {
             ⏹️ 중지
           </button>
         </div>
+
+        {!statusCheckResult() && (
+          <div style="margin-top: 12px; padding: 8px; background: #fef3c7; border-radius: 4px; font-size: 13px; color: #92400e;">
+            💡 최적의 크롤링을 위해 먼저 "상태 체크"를 실행해주세요.
+          </div>
+        )}
       </div>
 
       {/* 상태 체크 */}
@@ -157,23 +279,93 @@ export const StatusTab: Component = () => {
         
         <button
           onClick={runStatusCheck}
-          style="padding: 12px 24px; background: #3b82f6; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; transition: background-color 0.2s; margin-bottom: 16px;"
-          onMouseOver={(e) => e.currentTarget.style.background = '#2563eb'}
-          onMouseOut={(e) => e.currentTarget.style.background = '#3b82f6'}
+          disabled={isCheckingStatus()}
+          style={`padding: 12px 24px; background: ${isCheckingStatus() ? '#9ca3af' : '#3b82f6'}; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: ${isCheckingStatus() ? 'not-allowed' : 'pointer'}; transition: background-color 0.2s; margin-bottom: 16px;`}
+          onMouseOver={(e) => !isCheckingStatus() && (e.currentTarget.style.background = '#2563eb')}
+          onMouseOut={(e) => !isCheckingStatus() && (e.currentTarget.style.background = '#3b82f6')}
         >
-          🔍 로컬DB 상태 체크 실행
+          {isCheckingStatus() ? '🔄 상태 확인 중...' : '🔍 로컬DB 상태 체크 실행'}
         </button>
+
+        {statusCheckError() && (
+          <div style="padding: 16px; background: #fef2f2; border-radius: 6px; border: 1px solid #fecaca; margin-bottom: 16px;">
+            <div style="color: #dc2626; font-weight: 500;">❌ {statusCheckError()}</div>
+          </div>
+        )}
 
         {statusCheckResult() && (
           <div style="padding: 16px; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
-            <h4 style="margin: 0 0 12px 0; font-size: 16px; font-weight: 500; color: #1f2937;">상태 체크 결과</h4>
+            <h4 style="margin: 0 0 12px 0; font-size: 16px; font-weight: 500; color: #1f2937;">📊 실시간 상태 체크 결과</h4>
             <div style="display: grid; gap: 8px; font-size: 14px;">
-              <div><strong>로컬DB 데이터 수:</strong> {statusCheckResult()?.localDbCount}개</div>
-              <div><strong>마지막 크롤링:</strong> {statusCheckResult()?.lastCrawlTime}</div>
-              <div style="color: #059669;"><strong>추천 크롤링 범위:</strong> {statusCheckResult()?.recommendedRange}</div>
-              <div><strong>예상 신규 아이템:</strong> {statusCheckResult()?.estimatedNewItems}개</div>
-              <div style={`color: ${statusCheckResult()?.duplicateRisk === 'Low' ? '#059669' : '#dc2626'};`}>
-                <strong>중복 위험도:</strong> {statusCheckResult()?.duplicateRisk}
+              
+              {/* 사이트 상태 */}
+              <div style="padding: 8px; background: #f8fafc; border-radius: 4px; border-left: 4px solid #3b82f6;">
+                <strong>🌐 사이트 상태:</strong> 
+                <span style={`color: ${statusCheckResult()?.site_accessible ? '#059669' : '#dc2626'}; margin-left: 8px;`}>
+                  {statusCheckResult()?.site_accessible ? '✅ 접근 가능' : '❌ 접근 불가'}
+                </span>
+              </div>
+
+              {/* 데이터베이스 정보 */}
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">
+                <div style="padding: 8px; background: #f0f9ff; border-radius: 4px;">
+                  <strong>📦 로컬DB 제품 수:</strong><br/>
+                  <span style="font-size: 18px; font-weight: 600; color: #1e40af;">
+                    {statusCheckResult()?.local_db_product_count?.toLocaleString() || '0'}개
+                  </span>
+                </div>
+                <div style="padding: 8px; background: #f0fdf4; border-radius: 4px;">
+                  <strong>🌍 사이트 전체 제품:</strong><br/>
+                  <span style="font-size: 18px; font-weight: 600; color: #166534;">
+                    {statusCheckResult()?.estimated_total_products?.toLocaleString() || '확인 중'}개
+                  </span>
+                </div>
+              </div>
+
+              {/* 페이지 정보 */}
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">
+                <div style="padding: 8px; background: #fefce8; border-radius: 4px;">
+                  <strong>📄 로컬DB 페이지 범위:</strong><br/>
+                  <span style="color: #a16207;">
+                    {statusCheckResult()?.local_db_page_range?.[0]}-{statusCheckResult()?.local_db_page_range?.[1]} 페이지
+                  </span>
+                </div>
+                <div style="padding: 8px; background: #fff7ed; border-radius: 4px;">
+                  <strong>🎯 사이트 최대 페이지:</strong><br/>
+                  <span style="color: #c2410c;">
+                    {statusCheckResult()?.detected_max_page || '확인 중'} 페이지
+                  </span>
+                </div>
+              </div>
+
+              {/* 크롤링 정보 */}
+              <div style="margin-top: 12px; padding: 12px; background: #f0f9ff; border-radius: 6px; border: 2px solid #3b82f6;">
+                <strong style="color: #1e40af;">📈 스마트 크롤링 추천:</strong>
+                <div style="margin-top: 8px; display: grid; gap: 6px;">
+                  <div><strong>추천 범위:</strong> 페이지 {statusCheckResult()?.recommended_start_page}-{statusCheckResult()?.recommended_end_page}</div>
+                  <div><strong>예상 신규 제품:</strong> <span style="color: #dc2626; font-weight: bold;">{statusCheckResult()?.estimated_new_products?.toLocaleString() || '0'}개</span></div>
+                  <div><strong>크롤링 효율성:</strong> 
+                    <span style={`color: ${(statusCheckResult()?.crawling_efficiency_score || 0) > 0.7 ? '#059669' : (statusCheckResult()?.crawling_efficiency_score || 0) > 0.3 ? '#f59e0b' : '#dc2626'}; margin-left: 4px;`}>
+                      {((statusCheckResult()?.crawling_efficiency_score || 0) * 100).toFixed(1)}%
+                      {(statusCheckResult()?.crawling_efficiency_score || 0) > 0.7 ? ' 🟢 매우 효율적' : 
+                       (statusCheckResult()?.crawling_efficiency_score || 0) > 0.3 ? ' 🟡 보통' : ' 🔴 비효율적'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 추천 이유 */}
+              <div style="margin-top: 8px; padding: 12px; background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-radius: 6px; border-left: 4px solid #0ea5e9;">
+                <strong>💡 추천 이유:</strong>
+                <div style="margin-top: 4px; color: #0369a1; line-height: 1.4;">
+                  {statusCheckResult()?.recommendation_reason}
+                </div>
+              </div>
+
+              {/* 마지막 정보 */}
+              <div style="margin-top: 8px; font-size: 12px; color: #6b7280;">
+                <div><strong>마지막 크롤링:</strong> {statusCheckResult()?.last_crawl_time || '없음'}</div>
+                <div><strong>상태 체크 시간:</strong> {new Date().toLocaleString('ko-KR')}</div>
               </div>
             </div>
           </div>

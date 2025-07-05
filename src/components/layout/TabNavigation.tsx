@@ -5,10 +5,13 @@
 
 import { For, Component } from 'solid-js';
 import { tabState, setActiveTab } from '../../stores/tabStore';
+import { windowState } from '../../stores/windowStore';
 
 export const TabNavigation: Component = () => {
   const handleTabClick = (tabId: string) => {
     setActiveTab(tabId);
+    // 마지막 활성 탭을 windowState에 저장
+    windowState.setLastActiveTab(tabId);
   };
 
   return (

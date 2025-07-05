@@ -5,6 +5,7 @@
 
 import { Component } from 'solid-js';
 import { uiStore } from '../../stores/uiStore';
+import { ZoomControls } from '../common/ZoomControls';
 
 export const Header: Component = () => {
   const handleToggleTheme = () => {
@@ -33,35 +34,40 @@ export const Header: Component = () => {
           </div>
 
           {/* 헤더 액션 버튼들 */}
-          <div class="flex items-center space-x-2">
-            {/* 테마 토글 버튼 */}
-            <button
-              onClick={handleToggleTheme}
-              class="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-              title="테마 전환"
-            >
-              <span class="text-lg">
-                {uiStore.state.ui.theme === 'dark' ? '☀️' : '🌙'}
-              </span>
-            </button>
+          <div class="flex items-center space-x-4">
+            {/* 줌 컨트롤 */}
+            <ZoomControls />
+            
+            <div class="flex items-center space-x-2">
+              {/* 테마 토글 버튼 */}
+              <button
+                onClick={handleToggleTheme}
+                class="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                title="테마 전환"
+              >
+                <span class="text-lg">
+                  {uiStore.state.ui.theme === 'dark' ? '☀️' : '🌙'}
+                </span>
+              </button>
 
-            {/* 설정 버튼 */}
-            <button
-              onClick={() => uiStore.openModal('settings')}
-              class="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-              title="설정"
-            >
-              <span class="text-lg">⚙️</span>
-            </button>
+              {/* 설정 버튼 */}
+              <button
+                onClick={() => uiStore.openModal('settings')}
+                class="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                title="설정"
+              >
+                <span class="text-lg">⚙️</span>
+              </button>
 
-            {/* 도움말 버튼 */}
-            <button
-              onClick={() => uiStore.openModal('help')}
-              class="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-              title="도움말"
-            >
-              <span class="text-lg">❓</span>
-            </button>
+              {/* 도움말 버튼 */}
+              <button
+                onClick={() => uiStore.openModal('help')}
+                class="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                title="도움말"
+              >
+                <span class="text-lg">❓</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

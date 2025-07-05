@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
-use tracing::info;
+use tracing::{info, warn, error};
 
 use crate::{
     application::state::AppState,
@@ -774,31 +774,83 @@ pub async fn get_crawling_status_check(
         0
     };
     
-    // Site status check (simplified for now)
-    let site_accessible = true; // TODO: Implement actual site check
-    let detected_max_page = last_known_max_page;
-    let estimated_total_products = if let Some(max_page) = detected_max_page {
-        Some((max_page as f32 * avg_products_per_page as f32) as u32)
-    } else {
-        None
-    };
+    // Site status check - 간단한 접근성 테스트
+    info!("🌐 Starting site accessibility check...");
+    let site_accessible;
+    let detected_max_page;
+    let estimated_total_products;
     
-    // Calculate recommendations
+    // 간단한 사이트 접근성 테스트
+    let site_url = format!("{}/?p_type%5B%5D=14&f_program_type%5B%5D=1049", csa_iot::BASE_URL);
+    match reqwest::get(&site_url).await {
+        Ok(response) if response.status().is_success() => {
+            site_accessible = true;
+            detected_max_page = last_known_max_page.or(Some(50)); // 기본값 50
+            estimated_total_products = if let Some(max_page) = detected_max_page {
+                Some((max_page as f32 * avg_products_per_page as f32) as u32)
+            } else {
+                None
+            };
+            info!("✅ Site is accessible, using cached page info: max_page={:?}", detected_max_page);
+        },
+        Ok(response) => {
+            warn!("⚠️ Site responded with status: {}", response.status());
+            site_accessible = false;
+            detected_max_page = last_known_max_page;
+            estimated_total_products = if let Some(max_page) = detected_max_page {
+                Some((max_page as f32 * avg_products_per_page as f32) as u32)
+            } else {
+                None
+            };
+        },
+        Err(e) => {
+            error!("❌ Site accessibility check failed: {}", e);
+            site_accessible = false;
+            detected_max_page = last_known_max_page;
+            estimated_total_products = if let Some(max_page) = detected_max_page {
+                Some((max_page as f32 * avg_products_per_page as f32) as u32)
+            } else {
+                None
+            };
+        }
+    }
+    
+    // Calculate smart recommendations based on all available data
+    let user_max_pages = config.user.max_pages;
+    let actual_max_page = detected_max_page.unwrap_or(50);
+    
+    // 사용자가 설정한 페이지 제한과 실제 최대 페이지 중 작은 값을 사용
+    let effective_max_page = std::cmp::min(user_max_pages, actual_max_page);
+    
     let recommended_start_page = if estimated_max_local_page > 0 {
-        // Start from where we might have gaps or new content
-        std::cmp::max(1, estimated_max_local_page.saturating_sub(10))
+        // 로컬 DB에 데이터가 있으면 효율적인 증분 업데이트
+        if estimated_max_local_page >= effective_max_page {
+            // 로컬 DB가 최신이면 최근 몇 페이지만 다시 확인
+            std::cmp::max(1, effective_max_page.saturating_sub(5))
+        } else {
+            // 로컬 DB가 뒤처져 있으면 마지막 로컬 페이지 근처부터
+            std::cmp::max(1, estimated_max_local_page.saturating_sub(3))
+        }
     } else {
+        // 로컬 DB가 비어있으면 처음부터
         1
     };
     
-    let recommended_end_page = detected_max_page.unwrap_or(50);
-    let estimated_new_products = if let Some(total) = estimated_total_products {
-        total.saturating_sub(local_product_count)
-    } else {
-        0
-    };
+    let recommended_end_page = effective_max_page;
     
-    // Calculate efficiency score
+    // 예상 신규 제품 수 계산 (설정 제한 고려)
+    let estimated_new_products = if let Some(total) = estimated_total_products {
+        let limited_total = std::cmp::min(
+            total,
+            (effective_max_page as f32 * avg_products_per_page as f32) as u32
+        );
+        limited_total.saturating_sub(local_product_count)
+    } else {
+        let pages_to_crawl = recommended_end_page.saturating_sub(recommended_start_page) + 1;
+        (pages_to_crawl as f32 * avg_products_per_page as f32) as u32
+    };
+
+    // Calculate efficiency score considering user settings
     let efficiency_score = if estimated_new_products > 0 {
         let pages_to_crawl = recommended_end_page.saturating_sub(recommended_start_page) + 1;
         let efficiency = estimated_new_products as f32 / (pages_to_crawl as f32 * avg_products_per_page as f32);
@@ -806,16 +858,25 @@ pub async fn get_crawling_status_check(
     } else {
         0.0
     };
-    
-    // Generate recommendation reason
+
+    // Generate comprehensive recommendation reason
     let recommendation_reason = if local_product_count == 0 {
-        "로컬 DB가 비어있습니다. 전체 크롤링을 권장합니다.".to_string()
+        if user_max_pages < actual_max_page {
+            format!("로컬 DB가 비어있습니다. 사용자 설정에 따라 {}페이지까지 크롤링을 권장합니다. (실제 최대: {}페이지)", 
+                    user_max_pages, actual_max_page)
+        } else {
+            "로컬 DB가 비어있습니다. 전체 크롤링을 권장합니다.".to_string()
+        }
     } else if estimated_new_products > 100 {
-        format!("약 {}개의 새로운 제품이 예상됩니다. 효율적인 업데이트 크롤링을 권장합니다.", estimated_new_products)
+        format!("약 {}개의 새로운 제품이 예상됩니다. 효율적인 업데이트 크롤링을 권장합니다. ({}~{}페이지)", 
+                estimated_new_products, recommended_start_page, recommended_end_page)
     } else if estimated_new_products > 0 {
-        format!("약 {}개의 새로운 제품이 있을 수 있습니다.", estimated_new_products)
+        format!("약 {}개의 새로운 제품이 있을 수 있습니다. ({}~{}페이지 확인 권장)", 
+                estimated_new_products, recommended_start_page, recommended_end_page)
+    } else if user_max_pages < actual_max_page {
+        format!("현재 데이터가 비교적 최신 상태입니다. 사용자 설정 범위({} 페이지)에서 최신 확인을 권장합니다.", user_max_pages)
     } else {
-        "현재 데이터가 최신 상태로 보입니다.".to_string()
+        "현재 데이터가 최신 상태로 보입니다. 필요시 최근 몇 페이지만 확인해보세요.".to_string()
     };
     
     let status_check = CrawlingStatusCheck {
@@ -839,6 +900,98 @@ pub async fn get_crawling_status_check(
           local_product_count, recommended_start_page, recommended_end_page, efficiency_score);
     
     Ok(status_check)
+}
+
+/// Window state structure for saving/restoring UI state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowState {
+    pub position: WindowPosition,
+    pub size: WindowSize,
+    pub zoom_level: f32,
+    pub last_active_tab: String,
+    pub is_maximized: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPosition {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowSize {
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Save window state to config file
+#[tauri::command]
+pub async fn save_window_state(state: WindowState, app_state: State<'_, AppState>) -> Result<(), String> {
+    info!("💾 Saving window state: {:?}", state);
+    
+    let config_manager = ConfigManager::new()
+        .map_err(|e| format!("Failed to create config manager: {}", e))?;
+    let mut config = config_manager.load_config().await
+        .map_err(|e| format!("Failed to load config: {}", e))?;
+    
+    // Store window state in the app_managed section of config
+    let window_state_json = serde_json::to_string(&state)
+        .map_err(|e| format!("Failed to serialize window state: {}", e))?;
+    
+    config.app_managed.window_state = Some(window_state_json);
+    
+    config_manager.save_config(&config).await
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+    info!("✅ Window state saved successfully");
+    
+    // Also update the app state
+    app_state.update_config(config).await
+        .map_err(|e| format!("Failed to update app state: {}", e))?;
+    
+    Ok(())
+}
+
+/// Load window state from config file
+#[tauri::command]
+pub async fn load_window_state(app_state: State<'_, AppState>) -> Result<Option<WindowState>, String> {
+    info!("📁 Loading window state");
+    
+    let config = app_state.get_config().await;
+    
+    if let Some(window_state_str) = &config.app_managed.window_state {
+        let window_state: WindowState = serde_json::from_str(window_state_str)
+            .map_err(|e| format!("Failed to deserialize window state: {}", e))?;
+        
+        info!("✅ Window state loaded successfully: {:?}", window_state);
+        return Ok(Some(window_state));
+    }
+    
+    info!("ℹ️ No window state found in config");
+    Ok(None)
+}
+
+/// Set window position (Tauri command)
+#[tauri::command]
+pub async fn set_window_position(window: tauri::Window, x: i32, y: i32) -> Result<(), String> {
+    window.set_position(tauri::LogicalPosition::new(x, y))
+        .map_err(|e| format!("Failed to set window position: {}", e))?;
+    Ok(())
+}
+
+/// Set window size (Tauri command)
+#[tauri::command]
+pub async fn set_window_size(window: tauri::Window, width: i32, height: i32) -> Result<(), String> {
+    window.set_size(tauri::LogicalSize::new(width, height))
+        .map_err(|e| format!("Failed to set window size: {}", e))?;
+    Ok(())
+}
+
+/// Maximize window (Tauri command)
+#[tauri::command]
+pub async fn maximize_window(window: tauri::Window) -> Result<(), String> {
+    window.maximize()
+        .map_err(|e| format!("Failed to maximize window: {}", e))?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -220,6 +220,13 @@ pub fn run() {
             commands::update_logging_settings,
             commands::update_batch_settings,
             
+            // Window state management commands
+            commands::save_window_state,
+            commands::load_window_state,
+            commands::set_window_position,
+            commands::set_window_size,
+            commands::maximize_window,
+            
             // Legacy parsing commands (kept for compatibility)
             commands::crawl_product_list_page,
             commands::crawl_product_detail_page,

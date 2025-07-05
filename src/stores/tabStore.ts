@@ -24,7 +24,7 @@ export interface TabState {
 }
 
 const [tabState, setTabState] = createStore<TabState>({
-  activeTab: 'status',
+  activeTab: 'settings',
   tabs: [
     {
       id: 'settings',
@@ -78,6 +78,11 @@ const [tabState, setTabState] = createStore<TabState>({
 export const setActiveTab = (tabId: string) => {
   setTabState('activeTab', tabId);
   
+  // windowStore에 마지막 활성 탭 저장
+  import('../stores/windowStore').then(({ windowState }) => {
+    windowState.setLastActiveTab(tabId);
+  });
+  
   // 탭 전환 애니메이션 효과
   const tabElement = document.querySelector(`[data-tab="${tabId}"]`);
   if (tabElement) {
@@ -85,6 +90,14 @@ export const setActiveTab = (tabId: string) => {
     setTimeout(() => {
       tabElement.classList.remove('tab-focus-animation');
     }, 2000);
+  }
+};
+
+// 저장된 탭으로 복원
+export const restoreLastActiveTab = (lastActiveTab: string) => {
+  const validTab = tabState.tabs.find(tab => tab.id === lastActiveTab);
+  if (validTab) {
+    setTabState('activeTab', lastActiveTab);
   }
 };
 

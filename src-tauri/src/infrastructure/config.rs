@@ -164,6 +164,9 @@ pub struct AppManagedConfig {
     
     /// Configuration version for migration purposes
     pub config_version: u32,
+    
+    /// Window state for UI restoration
+    pub window_state: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -239,6 +242,7 @@ impl Default for AppManagedConfig {
             last_crawl_product_count: None,
             avg_products_per_page: None,
             config_version: 1,
+            window_state: None,
         }
     }
 }
