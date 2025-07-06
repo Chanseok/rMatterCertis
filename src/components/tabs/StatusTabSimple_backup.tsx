@@ -49,33 +49,42 @@ export const StatusTab: Component = () => {
     }
   };
 
-  const getHealthColor = (health: string) => {
-    switch (health) {
-      case 'Critical': return 'text-red-600';
-      case 'Warning': return 'text-yellow-600';
-      default: return 'text-green-600';
-    }
-  };
-
-  // 결과 표시용 헬퍼 함수들
-  const getActiveResult = () => statusCheckResult() || null;
-  const getSuggestedRange = () => statusCheckResult()?.recommendation?.suggested_range || null;
   const getRecommendationReason = () => {
+    // 실시간 상태 체크 결과 우선 사용
     if (statusCheckResult()) {
       return statusCheckResult()!.recommendation?.reason || '권장 사항이 없습니다.';
     }
+    
+    // 사전조사 결과도 확인 (구조가 다를 수 있음)
     if (siteAnalysisResult()) {
       const result = siteAnalysisResult()!;
       if (result.comparison?.recommended_action) {
         switch (result.comparison.recommended_action) {
-          case 'crawling_needed': return '사이트에 새로운 데이터가 있어 크롤링이 필요합니다.';
-          case 'cleanup_needed': return '중복 데이터가 발견되어 정리가 필요합니다.';
-          case 'up_to_date': return '현재 데이터가 최신 상태입니다.';
-          default: return '분석 결과를 확인해주세요.';
+          case 'crawling_needed':
+            return '사이트에 새로운 데이터가 있어 크롤링이 필요합니다.';
+          case 'cleanup_needed':
+            return '중복 데이터가 발견되어 정리가 필요합니다.';
+          case 'up_to_date':
+            return '현재 데이터가 최신 상태입니다.';
+          default:
+            return '분석 결과를 확인해주세요.';
         }
       }
     }
+    
     return '상태 체크를 먼저 실행해주세요.';
+  };
+
+  const getActiveResult = () => {
+    // 실시간 상태 체크 결과가 있으면 그것을 우선 사용
+    return statusCheckResult() || null;
+  };
+
+  const getSuggestedRange = () => {
+    if (statusCheckResult()) {
+      return statusCheckResult()!.recommendation?.suggested_range;
+    }
+    return null;
   };
 
   const startCrawling = async () => {
@@ -105,21 +114,7 @@ export const StatusTab: Component = () => {
         enable_batch_processing: true,
         batch_retry_limit: 3,
         
-        // URL 설정
-        base_url: "https://csa-iot.org",
-        matter_filter_url: "https://csa-iot.org/csa_product/?p_type%5B%5D=14&f_program_type%5B%5D=1049",
-        
-        // 타임아웃 설정
-        page_timeout_ms: 30000,
-        product_detail_timeout_ms: 20000,
-        
-        // 동시성 및 성능
-        initial_concurrency: 3,
-        detail_concurrency: 5,
-        retry_concurrency: 2,
-        min_request_delay_ms: 500,
-        max_request_delay_ms: 2000,
-        retry_start: 1,
+        // 재시도 설정
         retry_max: 3,
         cache_ttl_ms: 300000,
         
@@ -251,7 +246,6 @@ export const StatusTab: Component = () => {
     }
   };
 
-  // 사전조사 결과 렌더링 함수
   const renderSiteAnalysisResults = () => {
     const result = siteAnalysisResult();
     if (!result) return null;
@@ -365,100 +359,114 @@ export const StatusTab: Component = () => {
 
         {/* 진행률 바 */}
         <div style="margin-bottom: 16px;">
-          <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-            <span style="font-weight: 500;">전체 진행률</span>
-            <span style="font-weight: 500;">{progress()}%</span>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px;">
+            <span>전체 진행률</span>
+            <span>{progress()}%</span>
           </div>
-          <div style="width: 100%; height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden;">
+          <div style="width: 100%; background: #e5e7eb; border-radius: 4px; height: 8px; overflow: hidden;">
             <div 
-              style={`height: 100%; background: linear-gradient(90deg, #3b82f6, #1d4ed8); transition: width 0.3s ease; width: ${progress()}%;`}
+              style={`height: 100%; background: ${getStatusColor()}; transition: width 0.3s ease; width: ${progress()}%;`}
             ></div>
           </div>
         </div>
 
         {/* 상세 정보 */}
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
-          <div style="padding: 12px; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
-            <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">현재 페이지</div>
-            <div style="font-size: 18px; font-weight: 600; color: #1f2937;">{currentPage()}/{totalPages()}</div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; font-size: 14px;">
+          <div>
+            <span style="color: #6b7280;">현재 페이지:</span>
+            <span style="margin-left: 8px; font-weight: 500;">{currentPage()}/{totalPages()}</span>
           </div>
-          <div style="padding: 12px; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
-            <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">현재 배치</div>
-            <div style="font-size: 18px; font-weight: 600; color: #1f2937;">{currentBatch()}/{totalBatches()}</div>
+          <div>
+            <span style="color: #6b7280;">현재 배치:</span>
+            <span style="margin-left: 8px; font-weight: 500;">{currentBatch()}/{totalBatches()}</span>
           </div>
-        </div>
-
-        <div style="padding: 12px; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
-          <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">예상 완료 시간</div>
-          <div style="font-size: 16px; font-weight: 500; color: #1f2937;">{estimatedTime()}</div>
+          <div>
+            <span style="color: #6b7280;">예상 완료 시간:</span>
+            <span style="margin-left: 8px; font-weight: 500;">{estimatedTime()}</span>
+          </div>
         </div>
       </div>
 
       {/* 스마트 크롤링 제어 */}
-      <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fefefe;">
+      <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
         <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 500; color: #374151;">🤖 스마트 크롤링 제어</h3>
         
-        {statusCheckResult() && (
-          <div style="margin-bottom: 16px; padding: 12px; background: #f0f9ff; border-radius: 6px; border-left: 4px solid #3b82f6; font-size: 14px;">
-            <strong>🎯 추천 크롤링:</strong> 페이지 {statusCheckResult()!.recommendation?.suggested_range?.[0] || 1}-{statusCheckResult()!.recommendation?.suggested_range?.[1] || 50} 
-            (약 {statusCheckResult()!.recommendation?.estimated_new_items || 0}개 신규 제품 예상)
-          </div>
-        )}
-        
-        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+        <div style="display: flex; gap: 12px; margin-bottom: 16px;">
           <button
             onClick={startCrawling}
             disabled={crawlingStatus() === 'running'}
-            style={`padding: 12px 24px; background: ${crawlingStatus() === 'running' ? '#9ca3af' : statusCheckResult() ? '#10b981' : '#22c55e'}; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: ${crawlingStatus() === 'running' ? 'not-allowed' : 'pointer'}; transition: background-color 0.2s;`}
+            style={`padding: 10px 20px; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; 
+                   transition: all 0.2s; ${
+              crawlingStatus() === 'running' 
+                ? 'background: #9ca3af; color: white; cursor: not-allowed;' 
+                : 'background: #22c55e; color: white;'
+            }`}
           >
-            {statusCheckResult() ? '🤖 스마트 크롤링 시작' : '▶️ 기본 크롤링 시작'}
+            ▶️ 기본 크롤링 시작
           </button>
-          
+
           <button
             onClick={pauseCrawling}
             disabled={crawlingStatus() !== 'running'}
-            style={`padding: 12px 24px; background: ${crawlingStatus() !== 'running' ? '#9ca3af' : '#f59e0b'}; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: ${crawlingStatus() !== 'running' ? 'not-allowed' : 'pointer'}; transition: background-color 0.2s;`}
+            style={`padding: 10px 20px; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; 
+                   transition: all 0.2s; ${
+              crawlingStatus() !== 'running' 
+                ? 'background: #9ca3af; color: white; cursor: not-allowed;' 
+                : 'background: #f59e0b; color: white;'
+            }`}
           >
             ⏸️ 일시정지
           </button>
-          
+
           <button
             onClick={stopCrawling}
             disabled={crawlingStatus() === 'idle'}
-            style={`padding: 12px 24px; background: ${crawlingStatus() === 'idle' ? '#9ca3af' : '#ef4444'}; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: ${crawlingStatus() === 'idle' ? 'not-allowed' : 'pointer'}; transition: background-color 0.2s;`}
+            style={`padding: 10px 20px; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; 
+                   transition: all 0.2s; ${
+              crawlingStatus() === 'idle' 
+                ? 'background: #9ca3af; color: white; cursor: not-allowed;' 
+                : 'background: #ef4444; color: white;'
+            }`}
           >
             ⏹️ 중지
           </button>
         </div>
-
-        {!statusCheckResult() && (
-          <div style="margin-top: 12px; padding: 8px; background: #fef3c7; border-radius: 4px; font-size: 13px; color: #92400e;">
-            💡 최적의 크롤링을 위해 먼저 "상태 체크"를 실행해주세요. {getRecommendationReason()}
-          </div>
-        )}
+        
+        <div style="margin-bottom: 16px; padding: 12px; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">
+          💡 최적의 크롤링을 위해 먼저 "상태 체크"를 실행해주세요. 
+          <strong>{getRecommendationReason()}</strong>
+        </div>
       </div>
 
-      {/* 상태 체크 */}
-      <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f0f9ff;">
+      {/* 상태 체크 & 분석 */}
+      <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
         <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 500; color: #374151;">상태 체크 & 분석</h3>
         
-        <div style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;">
-          {/* 사전 조사용 - 사이트 종합 분석 */}
+        <div style="display: flex; gap: 12px; margin-bottom: 16px;">
           <button
             onClick={runSiteAnalysis}
             disabled={isCheckingStatus()}
-            style={`padding: 12px 20px; background: ${isCheckingStatus() ? '#9ca3af' : '#10b981'}; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: ${isCheckingStatus() ? 'not-allowed' : 'pointer'}; transition: background-color 0.2s; flex: 1; min-width: 200px;`}
+            style={`padding: 12px 20px; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; 
+                   transition: all 0.2s; flex: 1; ${
+              isCheckingStatus() 
+                ? 'background: #9ca3af; color: white; cursor: not-allowed;' 
+                : 'background: #6b7280; color: white;'
+            }`}
           >
-            {isCheckingStatus() ? '🔄 분석 중...' : '🔍 사이트 종합 분석 (사전 조사)'}
+            🔍 사이트 종합 분석 (사전조사)
           </button>
-          
-          {/* 실시간 모니터링용 - 크롤링 상태 조회 */}
+
           <button
             onClick={runStatusCheck}
             disabled={isCheckingStatus()}
-            style={`padding: 12px 20px; background: ${isCheckingStatus() ? '#9ca3af' : '#3b82f6'}; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: ${isCheckingStatus() ? 'not-allowed' : 'pointer'}; transition: background-color 0.2s; flex: 1; min-width: 200px;`}
+            style={`padding: 12px 20px; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; 
+                   transition: all 0.2s; flex: 1; ${
+              isCheckingStatus() 
+                ? 'background: #9ca3af; color: white; cursor: not-allowed;' 
+                : 'background: #3b82f6; color: white;'
+            }`}
           >
-            {isCheckingStatus() ? '🔄 조회 중...' : '📊 크롤링 상태 조회 (실시간)'}
+            📊 크롤링 상태 조회 (실시간)
           </button>
         </div>
         
@@ -473,7 +481,6 @@ export const StatusTab: Component = () => {
           </div>
         )}
 
-        {/* 실시간 상태 체크 결과 */}
         {statusCheckResult() && (
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; margin-top: 24px;">
             {/* 사이트 상태 카드 */}
@@ -511,20 +518,24 @@ export const StatusTab: Component = () => {
                 </div>
                 <div style="display: flex; justify-content: space-between;">
                   <span style="color: #6b7280;">건강도:</span>
-                  <span style="font-weight: 500; color: #111827;">
-                    {(statusCheckResult()!.site_status.health_score * 100).toFixed(1)}%
+                  <span style="font-weight: 500; color: #059669;">
+                    {Math.round(statusCheckResult()!.site_status.health_score * 100)}%
                   </span>
                 </div>
               </div>
+              <div style="margin-top: 16px; padding: 12px; background: #f8fafc; border-radius: 6px; font-size: 13px; color: #6b7280;">
+                <strong>🎯 추천 크롤링:</strong> 페이지 {statusCheckResult()!.recommendation?.suggested_range?.[0] || 1}-{statusCheckResult()!.recommendation?.suggested_range?.[1] || 50} 
+                ({statusCheckResult()!.recommendation?.estimated_new_items || 0}개 예상)
+              </div>
             </div>
 
-            {/* 로컬 DB 상태 카드 */}
+            {/* DB 상태 카드 */}
             <div style="background: white; border-radius: 12px; padding: 24px; border: 1px solid #e5e7eb; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
               <div style="display: flex; align-items: center; margin-bottom: 16px;">
-                <div style="width: 48px; height: 48px; background: #dcfce7; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-right: 16px;">
-                  <span style="font-size: 24px;">🗃️</span>
+                <div style="width: 48px; height: 48px; background: #f3e8ff; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-right: 16px;">
+                  <span style="font-size: 24px;">💾</span>
                 </div>
-                <h3 style="margin: 0; font-size: 18px; font-weight: 600; color: #111827;">로컬 데이터베이스</h3>
+                <h3 style="margin: 0; font-size: 18px; font-weight: 600; color: #111827;">DB 상태</h3>
               </div>
               <div style="display: flex; flex-direction: column; gap: 12px; font-size: 14px;">
                 <div style="display: flex; justify-content: space-between;">
@@ -536,123 +547,94 @@ export const StatusTab: Component = () => {
                 <div style="display: flex; justify-content: space-between;">
                   <span style="color: #6b7280;">페이지 범위:</span>
                   <span style="font-weight: 500; color: #111827;">
-                    {statusCheckResult()!.database_status.page_range[0]}-{statusCheckResult()!.database_status.page_range[1]} 페이지
+                    {statusCheckResult()!.database_status.page_range[0]}-{statusCheckResult()!.database_status.page_range[1]}
                   </span>
                 </div>
                 <div style="display: flex; justify-content: space-between;">
                   <span style="color: #6b7280;">DB 크기:</span>
                   <span style="font-weight: 500; color: #111827;">
-                    {statusCheckResult()!.database_status.size_mb.toFixed(1)} MB
+                    {statusCheckResult()!.database_status.size_mb.toFixed(1)}MB
                   </span>
                 </div>
                 <div style="display: flex; justify-content: space-between;">
-                  <span style="color: #6b7280;">상태:</span>
-                  <span style={`font-weight: 500; ${getHealthColor(statusCheckResult()!.database_status.health)}`}>
-                    {statusCheckResult()!.database_status.health}
-                  </span>
-                </div>
-                <div style="display: flex; justify-content: space-between;">
-                  <span style="color: #6b7280;">마지막 크롤링:</span>
-                  <span style="font-weight: 500; color: #111827; font-size: 12px;">
-                    {statusCheckResult()!.database_status.last_crawl_time || '없음'}
+                  <span style="color: #6b7280;">건강도:</span>
+                  <span style={`font-weight: 500; ${
+                    statusCheckResult()!.database_status.health === 'Healthy' ? 'color: #059669;' :
+                    statusCheckResult()!.database_status.health === 'Warning' ? 'color: #f59e0b;' : 'color: #dc2626;'
+                  }`}>
+                    {statusCheckResult()!.database_status.health === 'Healthy' ? '✅ 양호' :
+                     statusCheckResult()!.database_status.health === 'Warning' ? '⚠️ 주의' : '❌ 위험'}
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* 스마트 추천 카드 */}
-            <div style="background: linear-gradient(135deg, #3b82f6, #8b5cf6); border-radius: 12px; padding: 24px; color: white; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+            {/* 추천 행동 카드 */}
+            <div style="background: white; border-radius: 12px; padding: 24px; border: 1px solid #e5e7eb; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
               <div style="display: flex; align-items: center; margin-bottom: 16px;">
-                <div style="width: 48px; height: 48px; background: rgba(255, 255, 255, 0.2); border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-right: 16px;">
+                <div style="width: 48px; height: 48px; background: #fef3c7; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-right: 16px;">
                   <span style="font-size: 24px;">💡</span>
                 </div>
-                <h3 style="margin: 0; font-size: 18px; font-weight: 600;">스마트 추천</h3>
+                <h3 style="margin: 0; font-size: 18px; font-weight: 600; color: #111827;">스마트 추천</h3>
               </div>
-              <div style="display: flex; flex-direction: column; gap: 12px; font-size: 14px;">
+              <div style="margin-bottom: 16px;">
+                <div style={`padding: 8px 12px; border-radius: 6px; display: inline-block; font-size: 12px; font-weight: 500; border: 1px solid; ${
+                  getPriorityColor(statusCheckResult()!.recommendation?.priority || 'low')
+                }`}>
+                  {statusCheckResult()!.recommendation?.priority === 'critical' ? '🔴 긴급' :
+                   statusCheckResult()!.recommendation?.priority === 'high' ? '🟠 높음' :
+                   statusCheckResult()!.recommendation?.priority === 'medium' ? '🟡 보통' : '🟢 낮음'}
+                </div>
+              </div>
+              <div style="font-size: 14px; line-height: 1.6; color: #374151; margin-bottom: 16px;">
+                {statusCheckResult()!.recommendation?.reason}
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 8px; font-size: 13px;">
                 <div style="display: flex; justify-content: space-between;">
-                  <span style="color: rgba(255, 255, 255, 0.8);">추천 액션:</span>
-                  <span style={`font-weight: 500; padding: 2px 8px; border-radius: 4px; font-size: 12px; ${getPriorityColor(statusCheckResult()!.recommendation?.priority || 'low')}`}>
-                    {statusCheckResult()!.recommendation?.action} ({statusCheckResult()!.recommendation?.priority})
+                  <span style="color: #6b7280;">권장 행동:</span>
+                  <span style="font-weight: 500; color: #111827;">
+                    {statusCheckResult()!.recommendation?.action === 'crawl' ? '🚀 크롤링' :
+                     statusCheckResult()!.recommendation?.action === 'cleanup' ? '🧹 정리' :
+                     statusCheckResult()!.recommendation?.action === 'wait' ? '⏳ 대기' : '🔍 수동 확인'}
                   </span>
                 </div>
                 <div style="display: flex; justify-content: space-between;">
-                  <span style="color: rgba(255, 255, 255, 0.8);">추천 범위:</span>
-                  <span style="font-weight: 500;">
+                  <span style="color: #6b7280;">추천 범위:</span>
+                  <span style="font-weight: 500; color: #111827;">
                     {statusCheckResult()!.recommendation?.suggested_range?.[0] || 1}-{statusCheckResult()!.recommendation?.suggested_range?.[1] || 50} 페이지
                   </span>
                 </div>
                 <div style="display: flex; justify-content: space-between;">
-                  <span style="color: rgba(255, 255, 255, 0.8);">예상 신규:</span>
-                  <span style="font-weight: 500; color: #fde047;">
-                    {statusCheckResult()!.recommendation?.estimated_new_items?.toLocaleString() || 0}개
+                  <span style="color: #6b7280;">예상 신규:</span>
+                  <span style="font-weight: 500; color: #111827;">
+                    {statusCheckResult()!.recommendation?.estimated_new_items || 0}개
                   </span>
                 </div>
                 <div style="display: flex; justify-content: space-between;">
-                  <span style="color: rgba(255, 255, 255, 0.8);">효율성:</span>
-                  <span style={`font-weight: 500; ${
-                    (statusCheckResult()!.recommendation?.efficiency_score || 0) > 0.7 ? 'color: #10b981;' : 
-                    (statusCheckResult()!.recommendation?.efficiency_score || 0) > 0.3 ? 'color: #fbbf24;' : 'color: #f87171;'
-                  }`}>
-                    {((statusCheckResult()!.recommendation?.efficiency_score || 0) * 100).toFixed(1)}%
-                  </span>
-                </div>
-                <div style="display: flex; justify-content: space-between;">
-                  <span style="color: rgba(255, 255, 255, 0.8);">동기화율:</span>
-                  <span style="font-weight: 500; color: #10b981;">
-                    {statusCheckResult()!.sync_comparison.sync_percentage.toFixed(1)}%
+                  <span style="color: #6b7280;">효율성:</span>
+                  <span style="font-weight: 500; color: #059669;">
+                    {Math.round((statusCheckResult()!.recommendation?.efficiency_score || 0) * 100)}%
                   </span>
                 </div>
               </div>
-              <div style="margin-top: 16px; padding: 12px; background: rgba(255, 255, 255, 0.1); border-radius: 8px;">
-                <p style="margin: 0; font-size: 12px; line-height: 1.5; color: rgba(255, 255, 255, 0.9);">
-                  {statusCheckResult()!.recommendation?.reason}
-                </p>
-              </div>
+              
               {statusCheckResult()!.recommendation?.next_steps && statusCheckResult()!.recommendation!.next_steps.length > 0 && (
-                <div style="margin-top: 16px; display: flex; flex-direction: column; gap: 8px;">
-                  <span style="font-size: 12px; color: rgba(255, 255, 255, 0.8); font-weight: 500;">📋 다음 단계:</span>
+                <div style="margin-top: 16px; padding: 12px; background: #f8fafc; border-radius: 6px;">
+                  <div style="font-size: 13px; font-weight: 500; color: #374151; margin-bottom: 8px;">📋 다음 단계:</div>
                   <For each={statusCheckResult()!.recommendation!.next_steps}>
                     {(step, index) => (
-                      <div style="font-size: 11px; color: rgba(255, 255, 255, 0.9); padding-left: 8px;">
+                      <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
                         {index() + 1}. {step}
                       </div>
                     )}
                   </For>
                 </div>
               )}
-              <div style="margin-top: 16px;">
-                <button 
-                  onClick={startCrawling}
-                  disabled={crawlingStatus() === 'running'}
-                  style={`width: 100%; background: white; color: #3b82f6; padding: 12px; border-radius: 8px; font-weight: 500; font-size: 14px; border: none; cursor: ${crawlingStatus() === 'running' ? 'not-allowed' : 'pointer'}; opacity: ${crawlingStatus() === 'running' ? '0.5' : '1'}; transition: all 0.2s;`}
-                >
-                  🚀 스마트 크롤링 시작
-                </button>
-              </div>
             </div>
           </div>
         )}
 
-        {/* 사전조사 결과 표시 */}
         {siteAnalysisResult() && renderSiteAnalysisResults()}
-      </div>
-
-      {/* 실시간 로그 */}
-      <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #1f2937;">
-        <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 500; color: white;">실시간 로그</h3>
-        
-        <div style="height: 200px; background: #111827; border-radius: 6px; padding: 12px; font-family: 'Monaco', 'Menlo', monospace; font-size: 12px; color: #10b981; overflow-y: auto;">
-          <div>[2025-07-05 14:35:12] INFO: 크롤링 엔진 초기화 완료</div>
-          <div>[2025-07-05 14:35:13] INFO: 설정 로드 완료</div>
-          <div>[2025-07-05 14:35:14] INFO: 대기 중...</div>
-          {crawlingStatus() === 'running' && (
-            <>
-              <div>[2025-07-05 14:35:15] INFO: 크롤링 시작</div>
-              <div>[2025-07-05 14:35:16] INFO: 페이지 {currentPage()} 처리 중...</div>
-              <div>[2025-07-05 14:35:17] INFO: 배치 {currentBatch()} 진행 중...</div>
-            </>
-          )}
-        </div>
       </div>
     </div>
   );
