@@ -7,7 +7,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
-use tracing::{info, warn, error};
+use crate::domain::services::crawling_services::StatusChecker;
+use crate::infrastructure::MatterDataExtractor;
+use tracing::info;
 
 use crate::{
     application::state::AppState,
@@ -722,26 +724,57 @@ pub async fn get_log_directory_path() -> Result<String, String> {
     Ok(log_dir.to_string_lossy().to_string())
 }
 
-/// Crawling status check result
+/// Database status information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabaseStatus {
+    pub total_products: u32,
+    pub last_crawl_time: Option<String>,
+    pub page_range: (u32, u32), // (min_page, max_page)
+    pub health: String, // "Healthy", "Warning", "Critical"
+    pub size_mb: f32,
+    pub last_updated: String,
+}
+
+/// Site status information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteStatus {
+    pub is_accessible: bool,
+    pub response_time_ms: u32,
+    pub total_pages: u32,
+    pub estimated_products: u32,
+    pub last_check_time: String,
+    pub health_score: f32, // 0.0 ~ 1.0
+    pub data_change_status: String, // Simplified for now
+}
+
+/// Smart recommendation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmartRecommendation {
+    pub action: String, // 'crawl', 'cleanup', 'wait', 'manual_check'
+    pub priority: String, // 'low', 'medium', 'high', 'critical'
+    pub reason: String,
+    pub suggested_range: Option<(u32, u32)>, // (start_page, end_page)
+    pub estimated_new_items: u32,
+    pub efficiency_score: f32, // 0.0 - 1.0
+    pub next_steps: Vec<String>,
+}
+
+/// Sync comparison information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncComparison {
+    pub database_count: u32,
+    pub site_estimated_count: u32,
+    pub sync_percentage: f32,
+    pub last_sync_time: Option<String>,
+}
+
+/// Crawling status check result - Improved Structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlingStatusCheck {
-    // Database status
-    pub local_db_product_count: u32,
-    pub last_crawl_time: Option<String>,
-    pub local_db_page_range: (u32, u32), // (min_page, max_page)
-    
-    // Site status
-    pub estimated_total_products: Option<u32>,
-    pub detected_max_page: Option<u32>,
-    pub site_accessible: bool,
-    pub last_page_check_time: String,
-    
-    // Recommendations
-    pub recommended_start_page: u32,
-    pub recommended_end_page: u32,
-    pub estimated_new_products: u32,
-    pub crawling_efficiency_score: f32, // 0.0 - 1.0
-    pub recommendation_reason: String,
+    pub database_status: DatabaseStatus,
+    pub site_status: SiteStatus,
+    pub recommendation: SmartRecommendation,
+    pub sync_comparison: SyncComparison,
 }
 
 /// Get current crawling status and recommendations
@@ -764,60 +797,75 @@ pub async fn get_crawling_status_check(
     
     // Get last crawl info from app_managed config
     let last_crawl_time = config.app_managed.last_successful_crawl.clone();
-    let last_known_max_page = config.app_managed.last_known_max_page;
     
     // Calculate local DB page range (estimate)
-    let avg_products_per_page = config.app_managed.avg_products_per_page.unwrap_or(12.0);
+    let avg_products_per_page = config.app_managed.avg_products_per_page.unwrap_or(12.0) as f32;
     let estimated_max_local_page = if avg_products_per_page > 0.0 {
-        (local_product_count as f32 / avg_products_per_page as f32).ceil() as u32
+        (local_product_count as f32 / avg_products_per_page).ceil() as u32
     } else {
         0
     };
     
-    // Site status check - 간단한 접근성 테스트
-    info!("🌐 Starting site accessibility check...");
-    let site_accessible;
-    let detected_max_page;
-    let estimated_total_products;
+    // Initialize StatusChecker for real site analysis
+    info!("🔍 Initializing real-time site analysis...");
     
-    // 간단한 사이트 접근성 테스트
-    let site_url = format!("{}/?p_type%5B%5D=14&f_program_type%5B%5D=1049", csa_iot::BASE_URL);
-    match reqwest::get(&site_url).await {
-        Ok(response) if response.status().is_success() => {
-            site_accessible = true;
-            detected_max_page = last_known_max_page.or(Some(50)); // 기본값 50
-            estimated_total_products = if let Some(max_page) = detected_max_page {
-                Some((max_page as f32 * avg_products_per_page as f32) as u32)
-            } else {
-                None
-            };
-            info!("✅ Site is accessible, using cached page info: max_page={:?}", detected_max_page);
-        },
-        Ok(response) => {
-            warn!("⚠️ Site responded with status: {}", response.status());
-            site_accessible = false;
-            detected_max_page = last_known_max_page;
-            estimated_total_products = if let Some(max_page) = detected_max_page {
-                Some((max_page as f32 * avg_products_per_page as f32) as u32)
-            } else {
-                None
-            };
-        },
-        Err(e) => {
-            error!("❌ Site accessibility check failed: {}", e);
-            site_accessible = false;
-            detected_max_page = last_known_max_page;
-            estimated_total_products = if let Some(max_page) = detected_max_page {
-                Some((max_page as f32 * avg_products_per_page as f32) as u32)
-            } else {
-                None
-            };
-        }
-    }
+    // Create HTTP client and data extractor
+    let http_client = crate::infrastructure::simple_http_client::HttpClient::new()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let data_extractor = MatterDataExtractor::new()
+        .map_err(|e| format!("Failed to create data extractor: {}", e))?;
     
-    // Calculate smart recommendations based on all available data
+    let status_checker = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
+        http_client,
+        data_extractor,
+        config.clone(),
+    );
+    
+    // Perform comprehensive site analysis
+    let site_status = status_checker.check_site_status().await
+        .map_err(|e| format!("Site analysis failed: {}", e))?;
+    
+    info!("✅ Real-time site analysis completed: accessible={}, max_page={:?}", 
+          site_status.is_accessible, site_status.total_pages);
+    
+    // Calculate estimated total products from real site data
+    let estimated_total_products = if site_status.total_pages > 0 {
+        Some((site_status.total_pages as f32 * avg_products_per_page) as u32)
+    } else {
+        None
+    };
+    
+    // Get real DB page range analysis using the same database connection pattern
+    let database_url = {
+        let app_data_dir = std::env::var("APPDATA")
+            .or_else(|_| std::env::var("HOME").map(|h| format!("{}/.local/share", h)))
+            .unwrap_or_else(|_| "./data".to_string());
+        let data_dir = format!("{}/matter-certis-v2/database", app_data_dir);
+        format!("sqlite:{}/matter_certis.db", data_dir)
+    };
+    
+    let db_pool = sqlx::SqlitePool::connect(&database_url).await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    
+    let (min_page, max_page) = sqlx::query_as::<_, (Option<i64>, Option<i64>)>(
+        "SELECT MIN(CAST(SUBSTR(url, INSTR(url, 'page=') + 5) AS INTEGER)) as min_page,
+                MAX(CAST(SUBSTR(url, INSTR(url, 'page=') + 5) AS INTEGER)) as max_page 
+         FROM products 
+         WHERE url LIKE '%page=%'"
+    )
+    .fetch_one(&db_pool)
+    .await
+    .unwrap_or((None, None));
+    
+    let local_db_page_range = if let (Some(min), Some(max)) = (min_page, max_page) {
+        [min as u32, max as u32]
+    } else {
+        [0, estimated_max_local_page]
+    };
+    
+    // Generate smart recommendations based on all available data
     let user_max_pages = config.user.max_pages;
-    let actual_max_page = detected_max_page.unwrap_or(50);
+    let actual_max_page = site_status.total_pages.max(50);
     
     // 사용자가 설정한 페이지 제한과 실제 최대 페이지 중 작은 값을 사용
     let effective_max_page = std::cmp::min(user_max_pages, actual_max_page);
@@ -842,21 +890,27 @@ pub async fn get_crawling_status_check(
     let estimated_new_products = if let Some(total) = estimated_total_products {
         let limited_total = std::cmp::min(
             total,
-            (effective_max_page as f32 * avg_products_per_page as f32) as u32
+            (effective_max_page as f32 * avg_products_per_page) as u32
         );
         limited_total.saturating_sub(local_product_count)
     } else {
         let pages_to_crawl = recommended_end_page.saturating_sub(recommended_start_page) + 1;
-        (pages_to_crawl as f32 * avg_products_per_page as f32) as u32
+        (pages_to_crawl as f32 * avg_products_per_page) as u32
     };
 
     // Calculate efficiency score considering user settings
     let efficiency_score = if estimated_new_products > 0 {
         let pages_to_crawl = recommended_end_page.saturating_sub(recommended_start_page) + 1;
-        let efficiency = estimated_new_products as f32 / (pages_to_crawl as f32 * avg_products_per_page as f32);
+        let efficiency = estimated_new_products as f32 / (pages_to_crawl as f32 * avg_products_per_page);
         efficiency.min(1.0)
     } else {
-        0.0
+        // 신규 제품이 없어도 데이터 신선도에 따라 점수 부여
+        if estimated_max_local_page > 0 && local_product_count > 0 {
+            let freshness = (local_product_count as f32 / estimated_total_products.unwrap_or(1) as f32).min(1.0);
+            freshness * 0.5 // 최대 50% 효율성
+        } else {
+            0.0
+        }
     };
 
     // Generate comprehensive recommendation reason
@@ -878,26 +932,96 @@ pub async fn get_crawling_status_check(
     } else {
         "현재 데이터가 최신 상태로 보입니다. 필요시 최근 몇 페이지만 확인해보세요.".to_string()
     };
-    
-    let status_check = CrawlingStatusCheck {
-        local_db_product_count: local_product_count,
-        last_crawl_time,
-        local_db_page_range: (1, estimated_max_local_page),
-        
-        estimated_total_products,
-        detected_max_page: Some(detected_max_page.unwrap_or(50)),
-        site_accessible,
-        last_page_check_time: current_time,
-        
-        recommended_start_page,
-        recommended_end_page,
-        estimated_new_products,
-        crawling_efficiency_score: efficiency_score,
-        recommendation_reason,
+
+    // Determine recommended action and priority
+    let (action, priority) = if local_product_count == 0 {
+        ("crawl".to_string(), "high".to_string())
+    } else if estimated_new_products > 100 {
+        ("crawl".to_string(), "medium".to_string())
+    } else if estimated_new_products > 10 {
+        ("crawl".to_string(), "low".to_string())
+    } else if local_product_count > 0 && efficiency_score < 0.3 {
+        ("cleanup".to_string(), "low".to_string())
+    } else {
+        ("wait".to_string(), "low".to_string())
+    };
+
+    // Generate next steps
+    let next_steps = match action.as_str() {
+        "crawl" => vec![
+            format!("크롤링 범위를 {}~{}페이지로 설정", recommended_start_page, recommended_end_page),
+            "크롤링 시작 버튼 클릭".to_string(),
+            "진행 상황 모니터링".to_string(),
+        ],
+        "cleanup" => vec![
+            "중복 데이터 정리 고려".to_string(),
+            "데이터베이스 최적화 실행".to_string(),
+            "필요시 부분 재크롤링".to_string(),
+        ],
+        _ => vec![
+            "현재 상태가 양호합니다".to_string(),
+            "정기적으로 상태를 확인하세요".to_string(),
+        ],
+    };
+
+    // Calculate database health
+    let db_health = if local_product_count == 0 {
+        "Critical".to_string()
+    } else if local_product_count < 100 {
+        "Warning".to_string()
+    } else {
+        "Healthy".to_string()
+    };
+
+    // Calculate database size (estimate)
+    let avg_record_size_kb = 2.0; // Estimate 2KB per product record
+    let db_size_mb = (local_product_count as f32 * avg_record_size_kb) / 1024.0;
+
+    // Calculate sync percentage
+    let site_estimated_total = estimated_total_products.unwrap_or(0);
+    let sync_percentage = if site_estimated_total > 0 {
+        (local_product_count as f32 / site_estimated_total as f32 * 100.0).min(100.0)
+    } else {
+        0.0
     };
     
-    info!("Status check completed: local_products={}, recommended_range=({}-{}), efficiency={:.2}", 
-          local_product_count, recommended_start_page, recommended_end_page, efficiency_score);
+    let status_check = CrawlingStatusCheck {
+        database_status: DatabaseStatus {
+            total_products: local_product_count,
+            last_crawl_time: last_crawl_time.clone(),
+            page_range: (local_db_page_range[0], local_db_page_range[1]),
+            health: db_health,
+            size_mb: db_size_mb,
+            last_updated: current_time.clone(),
+        },
+        site_status: SiteStatus {
+            is_accessible: site_status.is_accessible,
+            response_time_ms: site_status.response_time_ms as u32,
+            total_pages: site_status.total_pages,
+            estimated_products: estimated_total_products.unwrap_or(0),
+            last_check_time: current_time.clone(),
+            health_score: site_status.health_score as f32,
+            data_change_status: "Stable".to_string(), // Simplified for now
+        },
+        recommendation: SmartRecommendation {
+            action,
+            priority,
+            reason: recommendation_reason,
+            suggested_range: Some((recommended_start_page, recommended_end_page)),
+            estimated_new_items: estimated_new_products,
+            efficiency_score,
+            next_steps,
+        },
+        sync_comparison: SyncComparison {
+            database_count: local_product_count,
+            site_estimated_count: site_estimated_total,
+            sync_percentage,
+            last_sync_time: last_crawl_time,
+        },
+    };
+    
+    info!("Status check completed: local_products={}, site_products={}, action={}, efficiency={:.2}", 
+          local_product_count, site_estimated_total, status_check.recommendation.action, efficiency_score);
     
     Ok(status_check)
 }

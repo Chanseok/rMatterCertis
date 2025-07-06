@@ -538,25 +538,47 @@ export const getProgressBarColor = (percentage: number, status: CrawlingStatus):
 };
 
 // =========================================================================
-// Crawling Status Check Types
+// Crawling Status Check Types - Improved Structure
 // =========================================================================
 
-export interface CrawlingStatusCheck {
-  // Database status
-  local_db_product_count: number;
+export interface DatabaseStatus {
+  total_products: number;
   last_crawl_time?: string;
-  local_db_page_range: [number, number]; // [min_page, max_page]
-  
-  // Site status
-  estimated_total_products?: number;
-  detected_max_page?: number;
-  site_accessible: boolean;
-  last_page_check_time: string;
-  
-  // Recommendations
-  recommended_start_page: number;
-  recommended_end_page: number;
-  estimated_new_products: number;
-  crawling_efficiency_score: number; // 0.0 - 1.0
-  recommendation_reason: string;
+  page_range: [number, number]; // [min_page, max_page]
+  health: DatabaseHealth;
+  size_mb: number;
+  last_updated: string;
+}
+
+export interface SiteStatus {
+  is_accessible: boolean;
+  response_time_ms: number;
+  total_pages: number;
+  estimated_products: number;
+  last_check_time: string;
+  health_score: number; // 0.0 ~ 1.0
+  data_change_status: SiteDataChangeStatus;
+  decrease_recommendation?: DataDecreaseRecommendation;
+}
+
+export interface SmartRecommendation {
+  action: 'crawl' | 'cleanup' | 'wait' | 'manual_check';
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  reason: string;
+  suggested_range?: [number, number]; // [start_page, end_page]
+  estimated_new_items: number;
+  efficiency_score: number; // 0.0 - 1.0
+  next_steps: string[];
+}
+
+export interface CrawlingStatusCheck {
+  database_status: DatabaseStatus;
+  site_status: SiteStatus;
+  recommendation: SmartRecommendation;
+  sync_comparison: {
+    database_count: number;
+    site_estimated_count: number;
+    sync_percentage: number;
+    last_sync_time?: string;
+  };
 }

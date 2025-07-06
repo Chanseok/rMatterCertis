@@ -296,16 +296,75 @@ pub async fn get_active_sessions(state: State<'_, AppState>) -> Result<Vec<Strin
 /// Get database statistics
 #[tauri::command]
 pub async fn get_database_stats(state: State<'_, AppState>) -> Result<DatabaseStats, String> {
-    // For now, return mock statistics
-    // TODO: Implement actual database statistics collection
-    let stats = DatabaseStats {
-        total_products: 1250,
-        total_devices: 850,
-        last_updated: Utc::now(),
-        storage_size: "15.3 MB".to_string(),
-        incomplete_records: 23,
-        health_status: DatabaseHealth::Healthy,
+    info!("🔍 Getting real database statistics...");
+    
+    // Get database URL
+    let database_url = {
+        let app_data_dir = std::env::var("APPDATA")
+            .or_else(|_| std::env::var("HOME").map(|h| format!("{}/.local/share", h)))
+            .unwrap_or_else(|_| "./data".to_string());
+        let data_dir = format!("{}/matter-certis-v2/database", app_data_dir);
+        format!("sqlite:{}/matter_certis.db", data_dir)
     };
+    
+    // Connect to database
+    let db_pool = sqlx::SqlitePool::connect(&database_url).await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    
+    // Get actual product count
+    let total_products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+        .fetch_one(&db_pool)
+        .await
+        .unwrap_or(0);
+    
+    // Get device count (assuming devices are stored in products table with device info)
+    let total_devices: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT name) FROM products WHERE name IS NOT NULL")
+        .fetch_one(&db_pool)
+        .await
+        .unwrap_or(0);
+    
+    // Get last updated time
+    let last_updated = sqlx::query_scalar::<_, Option<String>>("SELECT MAX(created_at) FROM products")
+        .fetch_one(&db_pool)
+        .await
+        .unwrap_or(None);
+    
+    let last_updated_time = if let Some(time_str) = last_updated {
+        chrono::DateTime::parse_from_rfc3339(&time_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now())
+    } else {
+        Utc::now()
+    };
+    
+    // Get incomplete records count (records with missing required fields)
+    let incomplete_records: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM products WHERE name IS NULL OR url IS NULL OR certification_date IS NULL"
+    )
+    .fetch_one(&db_pool)
+    .await
+    .unwrap_or(0);
+    
+    // Calculate storage size (approximation)
+    let storage_size = format!("{:.1} MB", (total_products * 2) as f64 / 1000.0); // Rough estimate
+    
+    let health_status = if incomplete_records as f64 / total_products.max(1) as f64 > 0.1 {
+        DatabaseHealth::Warning
+    } else {
+        DatabaseHealth::Healthy
+    };
+    
+    let stats = DatabaseStats {
+        total_products: total_products as u64,
+        total_devices: total_devices as u64,
+        last_updated: last_updated_time,
+        storage_size,
+        incomplete_records: incomplete_records as u64,
+        health_status,
+    };
+    
+    info!("✅ Real database stats: products={}, devices={}, incomplete={}", 
+          stats.total_products, stats.total_devices, stats.incomplete_records);
     
     state.update_database_stats(stats.clone()).await?;
     

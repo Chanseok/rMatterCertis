@@ -517,13 +517,25 @@ export class TauriApiService {
   }
 
   /**
-   * Get crawling status check with recommendations
+   * Get crawling status check with recommendations (for real-time monitoring during crawling)
    */
   async getCrawlingStatusCheck(): Promise<CrawlingStatusCheck> {
     try {
       return await invoke<CrawlingStatusCheck>('get_crawling_status_check');
     } catch (error) {
       throw new Error(`Failed to get crawling status check: ${error}`);
+    }
+  }
+
+  /**
+   * Check site status comprehensively (for pre-crawling analysis)
+   * This performs active site analysis including page discovery and DB comparison
+   */
+  async checkSiteStatus(): Promise<any> {
+    try {
+      return await invoke<any>('check_site_status');
+    } catch (error) {
+      throw new Error(`Failed to check site status: ${error}`);
     }
   }
 }

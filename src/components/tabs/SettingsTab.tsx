@@ -372,7 +372,7 @@ export const SettingsTab: Component = () => {
       await loggingService.info('크롤링 상태 체크 시작', 'SettingsTab');
       const result = await tauriApi.getCrawlingStatusCheck();
       setStatusCheck(result);
-      await loggingService.info(`상태 체크 완료: ${result.recommendation_reason}`, 'SettingsTab');
+      await loggingService.info(`상태 체크 완료: ${result.recommendation.reason}`, 'SettingsTab');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '알 수 없는 오류';
       setStatusCheckError(`상태 체크 실패: ${errorMessage}`);
@@ -385,15 +385,16 @@ export const SettingsTab: Component = () => {
   // 추천 설정 적용 함수
   const applyRecommendedSettings = () => {
     const check = statusCheck();
-    if (check) {
+    if (check && check.recommendation.suggested_range) {
+      const [startPage, endPage] = check.recommendation.suggested_range;
       setCrawlingSettings(prev => ({
         ...prev,
-        page_range_limit: check.recommended_end_page - check.recommended_start_page + 1
+        page_range_limit: endPage - startPage + 1
       }));
       
       setSaveStatus({ 
         type: 'info', 
-        message: `추천 설정이 적용되었습니다 (페이지 ${check.recommended_start_page}-${check.recommended_end_page})` 
+        message: `추천 설정이 적용되었습니다 (페이지 ${startPage}-${endPage})` 
       });
       
       setTimeout(() => {
@@ -596,14 +597,17 @@ export const SettingsTab: Component = () => {
                 <div class="bg-white dark:bg-gray-800 p-3 rounded-md border">
                   <h5 class="font-medium text-gray-900 dark:text-gray-100 mb-2">📊 로컬 DB 상태</h5>
                   <p class="text-sm text-gray-600 dark:text-gray-400">
-                    제품 수: <span class="font-mono">{statusCheck()?.local_db_product_count.toLocaleString()}</span>개
+                    제품 수: <span class="font-mono">{statusCheck()!.database_status.total_products.toLocaleString()}</span>개
                   </p>
                   <p class="text-sm text-gray-600 dark:text-gray-400">
-                    페이지 범위: <span class="font-mono">{statusCheck()?.local_db_page_range[0]}-{statusCheck()?.local_db_page_range[1]}</span>
+                    페이지 범위: <span class="font-mono">{statusCheck()!.database_status.page_range[0]}-{statusCheck()!.database_status.page_range[1]}</span>
                   </p>
-                  {statusCheck()?.last_crawl_time && (
+                  <p class="text-sm text-gray-600 dark:text-gray-400">
+                    상태: <span class="font-mono">{statusCheck()!.database_status.health}</span>
+                  </p>
+                  {statusCheck()!.database_status.last_crawl_time && (
                     <p class="text-sm text-gray-600 dark:text-gray-400">
-                      마지막 크롤링: <span class="font-mono">{new Date(statusCheck()!.last_crawl_time!).toLocaleDateString()}</span>
+                      마지막 크롤링: <span class="font-mono">{new Date(statusCheck()!.database_status.last_crawl_time!).toLocaleDateString()}</span>
                     </p>
                   )}
                 </div>
@@ -611,20 +615,19 @@ export const SettingsTab: Component = () => {
                 <div class="bg-white dark:bg-gray-800 p-3 rounded-md border">
                   <h5 class="font-medium text-gray-900 dark:text-gray-100 mb-2">🌐 사이트 상태</h5>
                   <p class="text-sm text-gray-600 dark:text-gray-400">
-                    접근 가능: <span class={`font-mono ${statusCheck()?.site_accessible ? 'text-green-600' : 'text-red-600'}`}>
-                      {statusCheck()?.site_accessible ? '✅ 정상' : '❌ 불가'}
+                    접근 가능: <span class={`font-mono ${statusCheck()!.site_status.is_accessible ? 'text-green-600' : 'text-red-600'}`}>
+                      {statusCheck()!.site_status.is_accessible ? '✅ 정상' : '❌ 불가'}
                     </span>
                   </p>
-                  {statusCheck()?.detected_max_page && (
-                    <p class="text-sm text-gray-600 dark:text-gray-400">
-                      최대 페이지: <span class="font-mono">{statusCheck()?.detected_max_page}</span>
-                    </p>
-                  )}
-                  {statusCheck()?.estimated_total_products && (
-                    <p class="text-sm text-gray-600 dark:text-gray-400">
-                      예상 제품 수: <span class="font-mono">{statusCheck()!.estimated_total_products!.toLocaleString()}</span>개
-                    </p>
-                  )}
+                  <p class="text-sm text-gray-600 dark:text-gray-400">
+                    최대 페이지: <span class="font-mono">{statusCheck()!.site_status.total_pages}</span>
+                  </p>
+                  <p class="text-sm text-gray-600 dark:text-gray-400">
+                    예상 제품 수: <span class="font-mono">{statusCheck()!.site_status.estimated_products.toLocaleString()}</span>개
+                  </p>
+                  <p class="text-sm text-gray-600 dark:text-gray-400">
+                    건강도: <span class="font-mono">{(statusCheck()!.site_status.health_score * 100).toFixed(1)}%</span>
+                  </p>
                 </div>
               </div>
               
@@ -634,17 +637,20 @@ export const SettingsTab: Component = () => {
                     <h5 class="font-medium text-green-900 dark:text-green-100 mb-2">💡 추천 설정</h5>
                     <p class="text-sm text-green-700 dark:text-green-300 mb-2">
                       추천 페이지 범위: <span class="font-mono font-bold">
-                        {statusCheck()?.recommended_start_page}-{statusCheck()?.recommended_end_page}
+                        {statusCheck()!.recommendation.suggested_range?.[0] || 1}-{statusCheck()!.recommendation.suggested_range?.[1] || 50}
                       </span>
                     </p>
                     <p class="text-sm text-green-700 dark:text-green-300 mb-2">
-                      예상 신규 제품: <span class="font-mono font-bold">{statusCheck()?.estimated_new_products.toLocaleString()}</span>개
+                      예상 신규 제품: <span class="font-mono font-bold">{statusCheck()!.recommendation.estimated_new_items.toLocaleString()}</span>개
                     </p>
                     <p class="text-sm text-green-700 dark:text-green-300 mb-2">
-                      효율성 점수: <span class="font-mono font-bold">{(statusCheck()?.crawling_efficiency_score! * 100).toFixed(1)}%</span>
+                      효율성 점수: <span class="font-mono font-bold">{(statusCheck()!.recommendation.efficiency_score * 100).toFixed(1)}%</span>
+                    </p>
+                    <p class="text-sm text-green-700 dark:text-green-300 mb-2">
+                      동기화율: <span class="font-mono font-bold">{statusCheck()!.sync_comparison.sync_percentage.toFixed(1)}%</span>
                     </p>
                     <p class="text-sm text-green-600 dark:text-green-400 italic">
-                      {statusCheck()?.recommendation_reason}
+                      {statusCheck()!.recommendation.reason}
                     </p>
                   </div>
                   <button
