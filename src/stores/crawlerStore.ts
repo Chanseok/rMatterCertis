@@ -12,7 +12,8 @@ import type {
   CrawlingProgress,
   CrawlingTaskStatus,
   CrawlingResult,
-  BackendCrawlerConfig
+  BackendCrawlerConfig,
+  CrawlingStatusCheck
 } from '../types/crawling';
 
 // 크롤러 상태 인터페이스
@@ -39,6 +40,11 @@ interface CrawlerState {
   // 크롤링 결과
   lastResult: CrawlingResult | null;
   
+  // 사이트 분석 결과 (탭 전환 시에도 유지)
+  siteAnalysisResult: CrawlingStatusCheck | null;
+  siteAnalysisTimestamp: Date | null;
+  isAnalyzing: boolean;
+  
   // 설정
   currentConfig: BackendCrawlerConfig | null;
 }
@@ -52,6 +58,9 @@ const initialState: CrawlerState = {
   errorHistory: [],
   activeTasks: new Map(),
   lastResult: null,
+  siteAnalysisResult: null,
+  siteAnalysisTimestamp: null,
+  isAnalyzing: false,
   currentConfig: null,
 };
 
@@ -107,6 +116,18 @@ class CrawlerStore {
 
   get lastResult() {
     return () => crawlerState.lastResult;
+  }
+
+  get siteAnalysisResult() {
+    return () => crawlerState.siteAnalysisResult;
+  }
+
+  get siteAnalysisTimestamp() {
+    return () => crawlerState.siteAnalysisTimestamp;
+  }
+
+  get isAnalyzing() {
+    return () => crawlerState.isAnalyzing;
   }
 
   get currentConfig() {
@@ -361,6 +382,63 @@ class CrawlerStore {
       console.warn('⚠️ 상태 새로고침 실패:', error);
       // 초기화 시에는 에러로 처리하지 않음
     }
+  }
+
+  // =========================================================================
+  // 사이트 분석 관리
+  // =========================================================================
+
+  /**
+   * 사이트 종합 분석 실행
+   */
+  async performSiteAnalysis(): Promise<CrawlingStatusCheck | null> {
+    try {
+      console.log('🔍 사이트 종합 분석 시작...');
+      
+      setCrawlerState('isAnalyzing', true);
+      setCrawlerState('lastError', null);
+      
+      const result = await tauriApi.checkSiteStatus();
+      
+      setCrawlerState('siteAnalysisResult', result);
+      setCrawlerState('siteAnalysisTimestamp', new Date());
+      
+      console.log('✅ 사이트 분석 완료:', result);
+      return result;
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('❌ 사이트 분석 실패:', errorMessage);
+      
+      setCrawlerState('lastError', `사이트 분석 실패: ${errorMessage}`);
+      return null;
+      
+    } finally {
+      setCrawlerState('isAnalyzing', false);
+    }
+  }
+
+  /**
+   * 저장된 사이트 분석 결과 지우기
+   */
+  clearSiteAnalysis(): void {
+    setCrawlerState('siteAnalysisResult', null);
+    setCrawlerState('siteAnalysisTimestamp', null);
+    console.log('🗑️ 사이트 분석 결과 삭제됨');
+  }
+
+  /**
+   * 사이트 분석 결과가 유효한지 확인 (예: 1시간 이내)
+   */
+  isSiteAnalysisValid(maxAgeMinutes: number = 60): boolean {
+    const timestamp = crawlerState.siteAnalysisTimestamp;
+    if (!timestamp || !crawlerState.siteAnalysisResult) {
+      return false;
+    }
+    
+    const now = new Date();
+    const ageMinutes = (now.getTime() - timestamp.getTime()) / (1000 * 60);
+    return ageMinutes <= maxAgeMinutes;
   }
 
   cleanup(): void {

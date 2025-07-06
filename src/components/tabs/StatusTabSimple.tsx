@@ -4,10 +4,11 @@
 
 import { Component, createSignal, For } from 'solid-js';
 import { tauriApi } from '../../services/tauri-api';
+import { crawlerStore } from '../../stores/crawlerStore';
 import type { CrawlingStatusCheck } from '../../types/crawling';
 
 export const StatusTab: Component = () => {
-  // 크롤링 상태
+  // 크롤링 상태 (기본 UI 상태들)
   const [crawlingStatus, setCrawlingStatus] = createSignal<'idle' | 'running' | 'paused' | 'completed'>('idle');
   const [progress, setProgress] = createSignal(0);
   const [currentPage, setCurrentPage] = createSignal(0);
@@ -16,11 +17,14 @@ export const StatusTab: Component = () => {
   const [totalBatches] = createSignal(10);
   const [estimatedTime] = createSignal('계산 중...');
 
-  // 상태 체크 결과 (두 가지 타입 모두 지원)
+  // 실시간 상태 체크 결과 (로컬 상태)
   const [statusCheckResult, setStatusCheckResult] = createSignal<CrawlingStatusCheck | null>(null);
-  const [siteAnalysisResult, setSiteAnalysisResult] = createSignal<any>(null);
   const [isCheckingStatus, setIsCheckingStatus] = createSignal(false);
   const [statusCheckError, setStatusCheckError] = createSignal<string>('');
+
+  // 사이트 분석 결과는 이제 글로벌 store에서 가져옴
+  // const siteAnalysisResult = crawlerStore.siteAnalysisResult;
+  // const isAnalyzing = crawlerStore.isAnalyzing;
 
   const getStatusColor = () => {
     switch (crawlingStatus()) {
@@ -64,17 +68,12 @@ export const StatusTab: Component = () => {
     if (statusCheckResult()) {
       return statusCheckResult()!.recommendation?.reason || '권장 사항이 없습니다.';
     }
-    if (siteAnalysisResult()) {
-      const result = siteAnalysisResult()!;
-      if (result.comparison?.recommended_action) {
-        switch (result.comparison.recommended_action) {
-          case 'crawling_needed': return '사이트에 새로운 데이터가 있어 크롤링이 필요합니다.';
-          case 'cleanup_needed': return '중복 데이터가 발견되어 정리가 필요합니다.';
-          case 'up_to_date': return '현재 데이터가 최신 상태입니다.';
-          default: return '분석 결과를 확인해주세요.';
-        }
-      }
+    
+    const siteResult = crawlerStore.siteAnalysisResult();
+    if (siteResult) {
+      return siteResult.recommendation?.reason || '사이트 분석이 완료되었습니다.';
     }
+    
     return '상태 체크를 먼저 실행해주세요.';
   };
 
@@ -203,21 +202,22 @@ export const StatusTab: Component = () => {
   };
 
   // 사전 조사용 상태 체크 (check_site_status)
+  // 사이트 종합 분석 (사전 조사용)
   const runSiteAnalysis = async () => {
     try {
       setIsCheckingStatus(true);
       setStatusCheckError('');
       setStatusCheckResult(null);
-      setSiteAnalysisResult(null);
       
       console.log('🔍 사이트 종합 분석 시작...');
       console.log('📡 실제 웹사이트에 접속하여 페이지 구조를 분석하고 DB와 비교합니다...');
       
-      const result = await tauriApi.checkSiteStatus();
-      console.log('✅ 사이트 분석 완료:', result);
+      // 글로벌 store의 메서드 사용
+      const result = await crawlerStore.performSiteAnalysis();
       
-      // 사전조사 결과는 별도 signal에 저장 (구조가 다름)
-      setSiteAnalysisResult(result);
+      if (result) {
+        console.log('✅ 사이트 분석 완료:', result);
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '알 수 없는 오류';
       setStatusCheckError(`사이트 분석 실패: ${errorMessage}`);
@@ -233,7 +233,6 @@ export const StatusTab: Component = () => {
       setIsCheckingStatus(true);
       setStatusCheckError('');
       setStatusCheckResult(null);
-      setSiteAnalysisResult(null);
       
       console.log('📊 크롤링 상태 체크 시작...');
       console.log('💾 메모리에서 현재 크롤링 진행 상황을 조회합니다...');
@@ -253,7 +252,7 @@ export const StatusTab: Component = () => {
 
   // 사전조사 결과 렌더링 함수
   const renderSiteAnalysisResults = () => {
-    const result = siteAnalysisResult();
+    const result = crawlerStore.siteAnalysisResult();
     if (!result) return null;
 
     return (
@@ -269,8 +268,8 @@ export const StatusTab: Component = () => {
           <div style="display: flex; flex-direction: column; gap: 12px; font-size: 14px;">
             <div style="display: flex; justify-content: space-between;">
               <span style="color: #6b7280;">접근성:</span>
-              <span style={`font-weight: 500; ${result.site_status?.accessible ? 'color: #059669;' : 'color: #dc2626;'}`}>
-                {result.site_status?.accessible ? '✅ 정상' : '❌ 불가'}
+              <span style={`font-weight: 500; ${result.site_status?.is_accessible ? 'color: #059669;' : 'color: #dc2626;'}`}>
+                {result.site_status?.is_accessible ? '✅ 정상' : '❌ 불가'}
               </span>
             </div>
             <div style="display: flex; justify-content: space-between;">
@@ -306,25 +305,25 @@ export const StatusTab: Component = () => {
             <div style="display: flex; justify-content: space-between;">
               <span style="color: #6b7280;">전체 제품:</span>
               <span style="font-weight: 500; color: #111827;">
-                {result.database_analysis?.total_products?.toLocaleString() || 0}개
+                {result.database_status?.total_products?.toLocaleString() || 0}개
               </span>
             </div>
             <div style="display: flex; justify-content: space-between;">
-              <span style="color: #6b7280;">고유 제품:</span>
+              <span style="color: #6b7280;">DB 상태:</span>
               <span style="font-weight: 500; color: #111827;">
-                {result.database_analysis?.unique_products?.toLocaleString() || 0}개
+                {result.database_status?.health || 'Unknown'}
               </span>
             </div>
             <div style="display: flex; justify-content: space-between;">
-              <span style="color: #6b7280;">중복 제품:</span>
+              <span style="color: #6b7280;">사이트 예상 제품:</span>
               <span style="font-weight: 500; color: #111827;">
-                {result.database_analysis?.duplicate_count?.toLocaleString() || 0}개
+                {result.sync_comparison?.site_estimated_count?.toLocaleString() || 0}개
               </span>
             </div>
             <div style="display: flex; justify-content: space-between;">
               <span style="color: #6b7280;">동기화율:</span>
               <span style="font-weight: 500; color: #111827;">
-                {Math.round(result.comparison?.sync_percentage || 0)}%
+                {Math.round(result.sync_comparison?.sync_percentage || 0)}%
               </span>
             </div>
           </div>
@@ -634,7 +633,7 @@ export const StatusTab: Component = () => {
         )}
 
         {/* 사전조사 결과 표시 */}
-        {siteAnalysisResult() && renderSiteAnalysisResults()}
+        {crawlerStore.siteAnalysisResult() && renderSiteAnalysisResults()}
       </div>
 
       {/* 실시간 로그 */}

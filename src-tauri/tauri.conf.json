@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "rMatterCertis",
-        "width": 1200,
-        "height": 800,
+        "width": 720,
+        "height": 2200,
         "center": true,
         "resizable": true,
         "decorations": true
