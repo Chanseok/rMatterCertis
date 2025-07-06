@@ -79,10 +79,51 @@ export interface MethodReturnMapping {
   stop_crawling: SessionStatusDto;
   pause_crawling: SessionStatusDto;
   resume_crawling: SessionStatusDto;
-  get_crawling_stats: any; // TODO: Define specific type
+  get_crawling_stats: CrawlingStats;
   get_active_crawling_sessions: SessionStatusDto[];
   get_crawling_session_history: SessionStatusDto[];
-  get_enhanced_crawling_stats: any; // TODO: Define specific type
+  get_enhanced_crawling_stats: EnhancedCrawlingStats;
+}
+
+// ============================================================================
+// Crawling Statistics Types
+// ============================================================================
+
+interface ErrorInfo {
+  id: string;
+  message: string;
+  timestamp: string;
+  recoverable: boolean;
+  count: number;
+}
+
+interface CrawlingStats {
+  totalItems: number;
+  processedItems: number;
+  successRate: number;
+  errors: ErrorInfo[];
+  startTime: string;
+  elapsedTime: number;
+  estimatedTimeRemaining: number;
+}
+
+interface EnhancedCrawlingStats extends CrawlingStats {
+  performanceMetrics: {
+    averageRequestTime: number;
+    requestsPerSecond: number;
+    memoryUsage: number;
+    cpuUsage: number;
+  };
+  detailedProgress: {
+    stageBreakdown: Record<string, number>;
+    categoryStats: Record<string, number>;
+    vendorStats: Record<string, number>;
+  };
+  qualityMetrics: {
+    dataCompleteness: number;
+    validationErrors: number;
+    duplicateCount: number;
+  };
 }
 
 // ============================================================================

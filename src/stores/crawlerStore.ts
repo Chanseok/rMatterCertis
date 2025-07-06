@@ -8,6 +8,7 @@
 import { createStore } from 'solid-js/store';
 import { createSignal, onCleanup } from 'solid-js';
 import { tauriApi } from '../services/tauri-api';
+import { apiAdapter, safeApiCall } from '../platform/tauri';
 import type {
   CrawlingProgress,
   CrawlingTaskStatus,
@@ -15,6 +16,10 @@ import type {
   BackendCrawlerConfig,
   CrawlingStatusCheck
 } from '../types/crawling';
+import type { 
+  SessionStatusDto, 
+  StartCrawlingDto
+} from '../types/domain';
 
 // 크롤러 상태 인터페이스
 interface CrawlerState {
@@ -47,6 +52,15 @@ interface CrawlerState {
   
   // 설정
   currentConfig: BackendCrawlerConfig | null;
+  
+  // 세션 관리 (domain/crawling-store.ts에서 통합)
+  currentSessionId: string | null;
+  activeSessions: SessionStatusDto[];
+  sessionHistory: SessionStatusDto[];
+  isStarting: boolean;
+  isStopping: boolean;
+  isPausing: boolean;
+  isResuming: boolean;
 }
 
 // 초기 상태
@@ -62,6 +76,13 @@ const initialState: CrawlerState = {
   siteAnalysisTimestamp: null,
   isAnalyzing: false,
   currentConfig: null,
+  currentSessionId: null,
+  activeSessions: [],
+  sessionHistory: [],
+  isStarting: false,
+  isStopping: false,
+  isPausing: false,
+  isResuming: false,
 };
 
 // 반응형 상태 생성
@@ -241,57 +262,8 @@ class CrawlerStore {
   }
 
   // =========================================================================
-  // 크롤링 제어 메서드
+  // 크롤링 제어 메서드 (통합된 세션 관리)
   // =========================================================================
-
-  async startCrawling(config: BackendCrawlerConfig): Promise<string> {
-    try {
-      this.setConfig(config);
-      this.clearErrors();
-      
-      const sessionId = await tauriApi.startCrawling(config);
-      
-      console.log('✅ 크롤링 세션 시작:', sessionId);
-      return sessionId;
-    } catch (error) {
-      const errorMessage = `크롤링 시작 실패: ${error}`;
-      this.setError(errorMessage);
-      throw new Error(errorMessage);
-    }
-  }
-
-  async pauseCrawling(): Promise<void> {
-    try {
-      await tauriApi.pauseCrawling();
-      console.log('⏸️ 크롤링 일시정지됨');
-    } catch (error) {
-      const errorMessage = `크롤링 일시정지 실패: ${error}`;
-      this.setError(errorMessage);
-      throw new Error(errorMessage);
-    }
-  }
-
-  async resumeCrawling(): Promise<void> {
-    try {
-      await tauriApi.resumeCrawling();
-      console.log('▶️ 크롤링 재개됨');
-    } catch (error) {
-      const errorMessage = `크롤링 재개 실패: ${error}`;
-      this.setError(errorMessage);
-      throw new Error(errorMessage);
-    }
-  }
-
-  async stopCrawling(): Promise<void> {
-    try {
-      await tauriApi.stopCrawling();
-      console.log('⏹️ 크롤링 중단됨');
-    } catch (error) {
-      const errorMessage = `크롤링 중단 실패: ${error}`;
-      this.setError(errorMessage);
-      throw new Error(errorMessage);
-    }
-  }
 
   // =========================================================================
   // 초기화 및 정리
@@ -374,13 +346,58 @@ class CrawlerStore {
     }
   }
 
-  async refreshStatus(): Promise<void> {
+  // =========================================================================
+  // 실시간 업데이트 및 자동 갱신 메서드
+  // =========================================================================
+
+  async startRealTimeUpdates(): Promise<void> {
     try {
-      const status = await tauriApi.getCrawlingStatus();
-      this.setProgress(status);
+      console.log('🎧 Starting real-time event listeners...');
+      
+      // Subscribe to progress updates
+      await tauriApi.subscribeToProgress((progress: CrawlingProgress) => {
+        console.log('📈 Progress update received:', progress);
+        this.setProgress(progress);
+      });
+      
+      // Subscribe to stage changes (if available)
+      if (tauriApi.subscribeToStageChange) {
+        await tauriApi.subscribeToStageChange((stageChange: any) => {
+          console.log('🔄 Stage change received:', stageChange);
+        });
+      }
+      
+      console.log('✅ Real-time event listeners started successfully');
     } catch (error) {
-      console.warn('⚠️ 상태 새로고침 실패:', error);
-      // 초기화 시에는 에러로 처리하지 않음
+      console.error('❌ Failed to start real-time updates:', error);
+      // Fallback to basic progress monitoring
+    }
+  }
+
+  stopAutoRefresh(): void {
+    // 기존 구독 정리 로직
+    console.log('🛑 Stopping auto refresh');
+  }
+
+  async refreshStatus(sessionId?: string): Promise<void> {
+    if (!sessionId && !crawlerState.currentSessionId) return;
+    
+    const targetSessionId = sessionId || crawlerState.currentSessionId!;
+    
+    try {
+      const result = await safeApiCall(() => apiAdapter.getCrawlingStatus(targetSessionId));
+      
+      if (result.error) {
+        this.setError(result.error.message);
+        return;
+      }
+
+      if (result.data) {
+        // 세션 상태 업데이트
+        setCrawlerState('currentSessionId', result.data.session_id);
+      }
+    } catch (error) {
+      this.setError('Failed to refresh status');
     }
   }
 
@@ -606,6 +623,218 @@ class CrawlerStore {
       this.setConfig(fallbackConfig);
       return fallbackConfig;
     }
+  }
+
+  // =========================================================================
+  // 세션 관리 메서드 (domain/crawling-store.ts에서 통합)
+  // =========================================================================
+
+  async startCrawling(dto: StartCrawlingDto): Promise<boolean> {
+    setCrawlerState('isStarting', true);
+    this.setError(null);
+
+    try {
+      const result = await safeApiCall(() => apiAdapter.startCrawling(dto));
+      
+      if (result.error) {
+        this.setError(result.error.message);
+        return false;
+      }
+
+      if (result.data) {
+        setCrawlerState('currentSessionId', result.data.session_id);
+        // 기존 progress 업데이트 로직 활용
+        if (result.data.progress !== undefined) {
+          this.setProgress({
+            current: Math.floor(result.data.progress * 100),
+            total: 100,
+            percentage: result.data.progress,
+            current_stage: 'Processing' as any, // 타입 캐스팅으로 해결
+            status: result.data.status as any,
+            new_items: 0,
+            updated_items: 0,
+            errors: 0,
+            timestamp: result.data.last_updated || new Date().toISOString(),
+            current_step: result.data.current_step,
+            message: '',
+            elapsed_time: 0,
+          });
+        }
+        
+        // 실시간 업데이트 시작
+        this.startRealTimeUpdates().catch((error) => {
+          console.error('Failed to start real-time updates:', error);
+        });
+        
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      this.setError('Failed to start crawling');
+      return false;
+    } finally {
+      setCrawlerState('isStarting', false);
+    }
+  }
+
+  async stopCrawling(sessionId?: string): Promise<boolean> {
+    const targetSessionId = sessionId || crawlerState.currentSessionId;
+    if (!targetSessionId) return false;
+
+    setCrawlerState('isStopping', true);
+    this.setError(null);
+
+    try {
+      const result = await safeApiCall(() => apiAdapter.stopCrawling(targetSessionId));
+      
+      if (result.error) {
+        this.setError(result.error.message);
+        return false;
+      }
+
+      if (result.data) {
+        setCrawlerState('currentSessionId', null);
+        this.stopAutoRefresh();
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      this.setError('Failed to stop crawling');
+      return false;
+    } finally {
+      setCrawlerState('isStopping', false);
+    }
+  }
+
+  async pauseCrawling(sessionId?: string): Promise<boolean> {
+    const targetSessionId = sessionId || crawlerState.currentSessionId;
+    if (!targetSessionId) return false;
+
+    setCrawlerState('isPausing', true);
+    this.setError(null);
+
+    try {
+      const result = await safeApiCall(() => apiAdapter.pauseCrawling(targetSessionId));
+      
+      if (result.error) {
+        this.setError(result.error.message);
+        return false;
+      }
+
+      return !!result.data;
+    } catch (error) {
+      this.setError('Failed to pause crawling');
+      return false;
+    } finally {
+      setCrawlerState('isPausing', false);
+    }
+  }
+
+  async resumeCrawling(sessionId?: string): Promise<boolean> {
+    const targetSessionId = sessionId || crawlerState.currentSessionId;
+    if (!targetSessionId) return false;
+
+    setCrawlerState('isResuming', true);
+    this.setError(null);
+
+    try {
+      const result = await safeApiCall(() => apiAdapter.resumeCrawling(targetSessionId));
+      
+      if (result.error) {
+        this.setError(result.error.message);
+        return false;
+      }
+
+      return !!result.data;
+    } catch (error) {
+      this.setError('Failed to resume crawling');
+      return false;
+    } finally {
+      setCrawlerState('isResuming', false);
+    }
+  }
+
+  async loadActiveSessions(): Promise<void> {
+    this.setError(null);
+
+    try {
+      const result = await safeApiCall(() => apiAdapter.getActiveCrawlingSessions());
+      
+      if (result.error) {
+        this.setError(result.error.message);
+        return;
+      }
+
+      if (result.data) {
+        setCrawlerState('activeSessions', result.data);
+      }
+    } catch (error) {
+      this.setError('Failed to load active sessions');
+    }
+  }
+
+  async loadSessionHistory(limit = 50): Promise<void> {
+    this.setError(null);
+
+    try {
+      const result = await safeApiCall(() => apiAdapter.getCrawlingSessionHistory(limit));
+      
+      if (result.error) {
+        this.setError(result.error.message);
+        return;
+      }
+
+      if (result.data) {
+        setCrawlerState('sessionHistory', result.data);
+      }
+    } catch (error) {
+      this.setError('Failed to load session history');
+    }
+  }
+
+  setCurrentSession(sessionId: string | null): void {
+    setCrawlerState('currentSessionId', sessionId);
+    if (sessionId) {
+      this.refreshStatus(sessionId);
+    } else {
+      this.stopAutoRefresh();
+    }
+  }
+
+  // 추가 getter 메서드들
+  get currentSessionId() {
+    return () => crawlerState.currentSessionId;
+  }
+
+  get activeSessions() {
+    return () => crawlerState.activeSessions;
+  }
+
+  get sessionHistory() {
+    return () => crawlerState.sessionHistory;
+  }
+
+  get isStarting() {
+    return () => crawlerState.isStarting;
+  }
+
+  get isStopping() {
+    return () => crawlerState.isStopping;
+  }
+
+  get isPausing() {
+    return () => crawlerState.isPausing;
+  }
+
+  get isResuming() {
+    return () => crawlerState.isResuming;
+  }
+
+  get isOperationPending() {
+    return () => crawlerState.isStarting || crawlerState.isStopping || 
+                 crawlerState.isPausing || crawlerState.isResuming;
   }
 }
 

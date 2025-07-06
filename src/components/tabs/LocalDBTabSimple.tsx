@@ -6,7 +6,7 @@ import { Component, createSignal, For } from 'solid-js';
 
 export const LocalDBTab: Component = () => {
   // 데이터베이스 상태
-  const [dbStats, setDbStats] = createSignal({
+  const [dbStats] = createSignal({
     totalRecords: 1248,
     lastUpdate: '2025-07-05 14:30:00',
     databaseSize: '45.2MB',
@@ -14,7 +14,7 @@ export const LocalDBTab: Component = () => {
   });
 
   // 최근 데이터 (샘플)
-  const [recentData, setRecentData] = createSignal([
+  const [recentData] = createSignal([
     { id: 1, title: 'Samsung Galaxy S24 Ultra 케이스', category: 'Electronics', date: '2025-07-05', status: 'Valid' },
     { id: 2, title: 'Apple iPhone 15 Pro 충전기', category: 'Electronics', date: '2025-07-05', status: 'Valid' },
     { id: 3, title: 'LG 올레드 TV 65인치', category: 'Electronics', date: '2025-07-04', status: 'Valid' },

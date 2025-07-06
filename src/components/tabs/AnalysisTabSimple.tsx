@@ -6,7 +6,7 @@ import { Component, createSignal } from 'solid-js';
 
 export const AnalysisTab: Component = () => {
   // 분석 데이터 (샘플)
-  const [analysisData, setAnalysisData] = createSignal({
+  const [analysisData] = createSignal({
     totalCrawled: 1248,
     successRate: 94.2,
     errorRate: 5.8,
