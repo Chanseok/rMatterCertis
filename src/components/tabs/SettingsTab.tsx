@@ -1,6 +1,5 @@
 /**
- * SettingsTab - 설정 탭 컴포넌트
- * SolidJS-UI-Implementation-Guide.md를 기반으로 구현
+ * SettingsTab - 실제 기능이 있는 설정 탭 컴포넌트
  */
 
 import { Component, createSignal, onMount, createEffect, For } from 'solid-js';
@@ -84,7 +83,7 @@ export const SettingsTab: Component = () => {
   
   // 현재 저장된 배치 설정
   const [savedBatchSettings, setSavedBatchSettings] = createSignal<BatchSettings>({
-    batch_size: 30,
+    batch_size: 5,
     batch_delay_ms: 2000,
     enable_batch_processing: true,
     batch_retry_limit: 3
@@ -92,7 +91,7 @@ export const SettingsTab: Component = () => {
   
   // 현재 UI에서 편집 중인 배치 설정
   const [batchSettings, setBatchSettings] = createSignal<BatchSettings>({
-    batch_size: 30,
+    batch_size: 5,
     batch_delay_ms: 2000,
     enable_batch_processing: true,
     batch_retry_limit: 3
@@ -100,7 +99,7 @@ export const SettingsTab: Component = () => {
   
   // 현재 저장된 크롤링 설정
   const [savedCrawlingSettings, setSavedCrawlingSettings] = createSignal<CrawlingSettings>({
-    page_range_limit: 20,
+    page_range_limit: 6,
     product_list_retry_count: 3,
     product_detail_retry_count: 3,
     auto_add_to_local_db: true
@@ -108,7 +107,7 @@ export const SettingsTab: Component = () => {
   
   // 현재 UI에서 편집 중인 크롤링 설정
   const [crawlingSettings, setCrawlingSettings] = createSignal<CrawlingSettings>({
-    page_range_limit: 20,
+    page_range_limit: 6,
     product_list_retry_count: 3,
     product_detail_retry_count: 3,
     auto_add_to_local_db: true
@@ -253,29 +252,40 @@ export const SettingsTab: Component = () => {
   // 설정 로드 함수
   const loadSettings = async () => {
     try {
+      console.log('🔄 SettingsTab: 설정 파일에서 현재 값들을 로드 중...');
       const frontendConfig = await tauriApi.getFrontendConfig();
+      console.log('✅ SettingsTab: 설정 로드 완료:', frontendConfig);
       
       if (frontendConfig?.user?.logging) {
         const settings = frontendConfig.user.logging;
+        console.log('📋 로깅 설정 적용:', settings);
         setSavedLoggingSettings(settings);
         setLoggingSettings(settings);
       }
       
       if (frontendConfig?.user?.batch) {
         const batchConfig = frontendConfig.user.batch;
+        console.log('📋 배치 설정 적용:', batchConfig);
         setSavedBatchSettings(batchConfig);
         setBatchSettings(batchConfig);
       }
       
       if (frontendConfig?.user?.crawling) {
         const crawlingConfig = frontendConfig.user.crawling;
+        console.log('📋 크롤링 설정 적용:', crawlingConfig);
         setSavedCrawlingSettings(crawlingConfig);
         setCrawlingSettings(crawlingConfig);
       }
+
+      // 전체 설정 상태 로깅
+      console.log('💾 현재 적용된 설정 상태:');
+      console.log('- 로깅:', loggingSettings());
+      console.log('- 배치:', batchSettings());
+      console.log('- 크롤링:', crawlingSettings());
       
       await loggingService.info('설정을 성공적으로 로드했습니다', 'SettingsTab');
     } catch (error) {
-      console.error('Failed to load config:', error);
+      console.error('❌ SettingsTab: 설정 로드 실패:', error);
       setSaveStatus({ 
         type: 'error', 
         message: '설정 로드에 실패했습니다: ' + (error instanceof Error ? error.message : '알 수 없는 오류')
@@ -486,6 +496,31 @@ export const SettingsTab: Component = () => {
           </div>
         </div>
       )}
+
+      {/* 설정 관리 버튼들 */}
+      <div class="flex justify-between items-center">
+        <h2 class="text-xl font-semibold text-gray-900 dark:text-white">⚙️ 설정 관리</h2>
+        <div class="flex space-x-3">
+          <button
+            onClick={loadSettings}
+            class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+          >
+            🔄 설정 다시 로드
+          </button>
+          <button
+            onClick={handleSaveSettings}
+            disabled={isSaving() || !hasUnsavedChanges()}
+            class={`px-4 py-2 rounded-md focus:outline-none focus:ring-2 transition-colors ${
+              isSaving() || !hasUnsavedChanges()
+                ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                : 'bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-500'
+            }`}
+          >
+            {isSaving() ? '💾 저장 중...' : '💾 설정 저장'}
+          </button>
+        </div>
+      </div>
+
       {/* 기본 크롤링 설정 */}
       <ExpandableSection
         title="크롤링 설정"

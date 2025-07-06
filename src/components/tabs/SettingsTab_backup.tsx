@@ -23,7 +23,7 @@ export const SettingsTab: Component = () => {
   const [fileLogging, setFileLogging] = createSignal(true);
 
   // 배치 처리 설정
-  const [batchSize, setBatchSize] = createSignal(50);
+  const [batchSize, setBatchSize] = createSignal(5);
   const [progressInterval, setProgressInterval] = createSignal(1);
   const [autoBackup, setAutoBackup] = createSignal(true);
 
@@ -54,12 +54,17 @@ export const SettingsTab: Component = () => {
 
         // 배치 설정
         if (config.user.batch) {
-          setBatchSize(config.user.batch.batch_size || 50);
+          setBatchSize(config.user.batch.batch_size || 5);
           setAutoBackup(config.user.batch.enable_batch_processing !== false);
         }
 
-        // 기타 설정들 매핑
-        setProgressInterval(1); // 기본값
+        // 크롤링 설정
+        if (config.user.crawling) {
+          const pageRangeLimit = config.user.crawling.page_range_limit;
+          if (pageRangeLimit && pageRangeLimit !== maxPages()) {
+            setMaxPages(pageRangeLimit);
+          }
+        }
       }
 
       console.log('📋 현재 설정값들:');
@@ -83,17 +88,40 @@ export const SettingsTab: Component = () => {
     try {
       console.log('💾 사용자 설정 저장 중...');
       
-      // 여기에 실제 설정 저장 로직 추가
-      // 현재는 로그만 출력
-      console.log('저장할 설정값들:', {
-        max_pages: maxPages(),
-        max_concurrent_requests: concurrentDownloads(),
-        request_delay_ms: requestDelay(),
+      // 로깅 설정 저장
+      await tauriApi.updateLoggingSettings({
+        level: logLevel().toLowerCase(),
+        separate_frontend_backend: false,
+        max_file_size_mb: 10,
+        max_files: 5,
+        auto_cleanup_logs: true,
+        keep_only_latest: false,
+        module_filters: {
+          "matter_certis_v2": logLevel().toLowerCase(),
+        },
+      });
+
+      // 배치 설정 저장
+      await tauriApi.updateBatchSettings({
         batch_size: batchSize(),
-        log_level: logLevel()
+        batch_delay_ms: 100,
+        enable_batch_processing: autoBackup(),
+        batch_retry_limit: 3,
+      });
+
+      // 크롤링 설정 저장
+      await tauriApi.updateCrawlingSettings({
+        page_range_limit: maxPages(),
+        product_list_retry_count: retryCount(),
+        product_detail_retry_count: retryCount(),
+        auto_add_to_local_db: true,
       });
 
       console.log('✅ 설정 저장 완료');
+      
+      // 저장 후 다시 로드하여 동기화 확인
+      await loadSettings();
+      
     } catch (error) {
       console.error('❌ 설정 저장 실패:', error);
     }
@@ -165,7 +193,7 @@ export const SettingsTab: Component = () => {
         </div>
       </div>
 
-      {/* 기본 설정 */}
+      {/* 네트워크 설정 */}
       <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb;">
         <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 500; color: #374151;">네트워크 설정</h3>
         
@@ -245,9 +273,6 @@ export const SettingsTab: Component = () => {
             <span>10</span>
           </div>
         </div>
-            <span>10</span>
-          </div>
-        </div>
       </div>
 
       {/* 로깅 설정 */}
@@ -255,38 +280,41 @@ export const SettingsTab: Component = () => {
         <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 500; color: #374151;">로깅 설정</h3>
         
         <div style="margin-bottom: 16px;">
-          <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #374151;">로그 레벨</label>
+          <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #374151;">
+            로그 레벨: {logLevel()}
+          </label>
           <select
             value={logLevel()}
             onChange={(e) => setLogLevel(e.currentTarget.value)}
-            style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; background: white; font-size: 14px;"
+            style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px;"
+            disabled={isLoading()}
           >
-            <option value="DEBUG">DEBUG</option>
-            <option value="INFO">INFO</option>
-            <option value="WARN">WARN</option>
-            <option value="ERROR">ERROR</option>
+            <option value="DEBUG">DEBUG (상세)</option>
+            <option value="INFO">INFO (일반)</option>
+            <option value="WARN">WARN (경고만)</option>
+            <option value="ERROR">ERROR (오류만)</option>
           </select>
         </div>
 
-        <div style="margin-bottom: 16px;">
-          <label style="display: flex; align-items: center; font-weight: 500; color: #374151; cursor: pointer;">
+        <div style="display: flex; gap: 24px;">
+          <label style="display: flex; align-items: center; cursor: pointer;">
             <input
               type="checkbox"
               checked={terminalOutput()}
               onChange={(e) => setTerminalOutput(e.currentTarget.checked)}
-              style="margin-right: 8px; width: 16px; height: 16px;"
+              style="margin-right: 8px;"
+              disabled={isLoading()}
             />
             터미널 출력
           </label>
-        </div>
-
-        <div style="margin-bottom: 0;">
-          <label style="display: flex; align-items: center; font-weight: 500; color: #374151; cursor: pointer;">
+          
+          <label style="display: flex; align-items: center; cursor: pointer;">
             <input
               type="checkbox"
               checked={fileLogging()}
               onChange={(e) => setFileLogging(e.currentTarget.checked)}
-              style="margin-right: 8px; width: 16px; height: 16px;"
+              style="margin-right: 8px;"
+              disabled={isLoading()}
             />
             파일 로깅
           </label>
@@ -303,16 +331,16 @@ export const SettingsTab: Component = () => {
           </label>
           <input
             type="range"
-            min="10"
-            max="200"
-            step="10"
+            min="1"
+            max="100"
             value={batchSize()}
             onInput={(e) => setBatchSize(parseInt(e.currentTarget.value))}
             style="width: 100%; height: 6px; background: #ddd; border-radius: 3px; outline: none;"
+            disabled={isLoading()}
           />
           <div style="display: flex; justify-content: space-between; font-size: 12px; color: #6b7280; margin-top: 4px;">
-            <span>10</span>
-            <span>200</span>
+            <span>1</span>
+            <span>100</span>
           </div>
         </div>
 
@@ -327,6 +355,7 @@ export const SettingsTab: Component = () => {
             value={progressInterval()}
             onInput={(e) => setProgressInterval(parseInt(e.currentTarget.value))}
             style="width: 100%; height: 6px; background: #ddd; border-radius: 3px; outline: none;"
+            disabled={isLoading()}
           />
           <div style="display: flex; justify-content: space-between; font-size: 12px; color: #6b7280; margin-top: 4px;">
             <span>1초</span>
@@ -334,49 +363,33 @@ export const SettingsTab: Component = () => {
           </div>
         </div>
 
-        <div style="margin-bottom: 0;">
-          <label style="display: flex; align-items: center; font-weight: 500; color: #374151; cursor: pointer;">
-            <input
-              type="checkbox"
-              checked={autoBackup()}
-              onChange={(e) => setAutoBackup(e.currentTarget.checked)}
-              style="margin-right: 8px; width: 16px; height: 16px;"
-            />
-            자동 백업
-          </label>
-        </div>
+        <label style="display: flex; align-items: center; cursor: pointer;">
+          <input
+            type="checkbox"
+            checked={autoBackup()}
+            onChange={(e) => setAutoBackup(e.currentTarget.checked)}
+            style="margin-right: 8px;"
+            disabled={isLoading()}
+          />
+          배치 처리 활성화
+        </label>
       </div>
 
-      {/* 설정 저장 버튼 */}
-      <div style="display: flex; gap: 12px;">
-        <button
-          onClick={() => alert('설정이 저장되었습니다!')}
-          style="padding: 12px 24px; background: #3b82f6; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; transition: background-color 0.2s;"
-          onMouseOver={(e) => e.currentTarget.style.background = '#2563eb'}
-          onMouseOut={(e) => e.currentTarget.style.background = '#3b82f6'}
-        >
-          설정 저장
-        </button>
-        <button
-          onClick={() => {
-            setConcurrentDownloads(3);
-            setRequestDelay(1000);
-            setTimeout(30);
-            setRetryCount(3);
-            setLogLevel('INFO');
-            setTerminalOutput(true);
-            setFileLogging(true);
-            setBatchSize(50);
-            setProgressInterval(1);
-            setAutoBackup(true);
-            alert('기본값으로 복원되었습니다!');
-          }}
-          style="padding: 12px 24px; background: #6b7280; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; transition: background-color 0.2s;"
-          onMouseOver={(e) => e.currentTarget.style.background = '#4b5563'}
-          onMouseOut={(e) => e.currentTarget.style.background = '#6b7280'}
-        >
-          기본값 복원
-        </button>
+      {/* 현재 설정 상태 표시 */}
+      <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fafafa;">
+        <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 500; color: #374151;">💾 현재 저장된 설정</h3>
+        
+        <div style="font-family: 'Monaco', 'Menlo', monospace; font-size: 12px; background: #f8f9fa; padding: 12px; border-radius: 4px; border: 1px solid #e9ecef;">
+          <div>최대 페이지: {maxPages()} (설정 파일의 page_range_limit)</div>
+          <div>동시 요청: {concurrentDownloads()} (설정 파일의 max_concurrent_requests)</div>
+          <div>요청 지연: {requestDelay()}ms (설정 파일의 request_delay_ms)</div>
+          <div>배치 크기: {batchSize()} (설정 파일의 batch_size)</div>
+          <div>로그 레벨: {logLevel()} (설정 파일의 logging.level)</div>
+        </div>
+        
+        <div style="margin-top: 12px; font-size: 13px; color: #6b7280;">
+          💡 이 값들은 실제 설정 파일(matter_certis_config.json)에서 로드되며, "설정 저장" 버튼을 누르면 파일에 반영됩니다.
+        </div>
       </div>
     </div>
   );
