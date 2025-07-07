@@ -82,91 +82,94 @@ export const StatusTab: Component = () => {
   };
 
   const startCrawling = async () => {
+    console.log('🔥 startCrawling 함수 호출됨');
     const result = getActiveResult();
-    if (result) {
-      // 상태 체크 결과가 있으면 추천 범위로 크롤링 시작
-      const suggestion = getSuggestedRange();
-      const config = {
-        // 기본 설정
-        start_page: suggestion ? suggestion[0] : 1,
-        end_page: suggestion ? suggestion[1] : 50,
-        concurrency: 3,
-        delay_ms: 1000,
-        
-        // 고급 설정
-        page_range_limit: 500,
-        product_list_retry_count: 3,
-        product_detail_retry_count: 3,
-        products_per_page: 12,
-        auto_add_to_local_db: true,
-        auto_status_check: true,
-        crawler_type: "smart",
-        
-        // 배치 처리
-        batch_size: 50,
-        batch_delay_ms: 2000,
-        enable_batch_processing: true,
-        batch_retry_limit: 3,
-        
-        // URL 설정
-        base_url: "https://csa-iot.org",
-        matter_filter_url: "https://csa-iot.org/csa_product/?p_type%5B%5D=14&f_program_type%5B%5D=1049",
-        
-        // 타임아웃 설정
-        page_timeout_ms: 30000,
-        product_detail_timeout_ms: 20000,
-        
-        // 동시성 및 성능
-        initial_concurrency: 3,
-        detail_concurrency: 5,
-        retry_concurrency: 2,
-        min_request_delay_ms: 500,
-        max_request_delay_ms: 2000,
-        retry_start: 1,
-        retry_max: 3,
-        cache_ttl_ms: 300000,
-        
-        // 브라우저 설정
-        headless_browser: true,
-        max_concurrent_tasks: 10,
-        request_delay: 1000,
-        custom_user_agent: "rMatterCertis/2.0",
-        
-        // 로깅
-        logging: {
-          level: "info",
-          enable_stack_trace: false,
-          enable_timestamp: true,
-          components: {
-            "crawler": "info",
-            "http": "warn",
-            "database": "info"
-          }
-        }
-      };
+    console.log('🔍 getActiveResult 결과:', result);
+    
+    // 상태 체크 결과가 있으면 추천 범위로, 없으면 기본 설정으로 크롤링 시작
+    const suggestion = result ? getSuggestedRange() : null;
+    const config = {
+      // 기본 설정 (상태 체크 결과가 없어도 동작)
+      start_page: suggestion ? suggestion[0] : 1,
+      end_page: suggestion ? suggestion[1] : 10, // 기본값을 10으로 설정
+      concurrency: 3,
+      delay_ms: 1000,
       
-      try {
-        setCrawlingStatus('running');
-        console.log('🚀 스마트 크롤링 시작:', config);
-        
-        // 실제 크롤링 시작
-        const sessionId = await tauriApi.startCrawling(config);
-        console.log('✅ 크롤링 세션 시작됨:', sessionId);
-        
-        // 실시간 진행률 업데이트 시작 (crawlerStore에서 처리)
-        crawlerStore.startRealTimeUpdates().catch((error: any) => {
-          console.error('실시간 업데이트 시작 실패:', error);
-          // 폴백으로 시뮬레이션 사용
-          simulateProgress();
-        });
-      } catch (error) {
-        console.error('❌ 크롤링 시작 실패:', error);
-        setCrawlingStatus('idle');
-        alert(`크롤링 시작에 실패했습니다: ${error}`);
+      // 고급 설정
+      page_range_limit: 500,
+      product_list_retry_count: 3,
+      product_detail_retry_count: 3,
+      products_per_page: 12,
+      auto_add_to_local_db: true,
+      auto_status_check: true,
+      crawler_type: "smart",
+      
+      // 배치 처리
+      batch_size: 50,
+      batch_delay_ms: 2000,
+      enable_batch_processing: true,
+      batch_retry_limit: 3,
+      
+      // URL 설정
+      base_url: "https://csa-iot.org",
+      matter_filter_url: "https://csa-iot.org/csa_product/?p_type%5B%5D=14&f_program_type%5B%5D=1049",
+      
+      // 타임아웃 설정
+      page_timeout_ms: 30000,
+      product_detail_timeout_ms: 20000,
+      
+      // 동시성 및 성능
+      initial_concurrency: 3,
+      detail_concurrency: 5,
+      retry_concurrency: 2,
+      min_request_delay_ms: 500,
+      max_request_delay_ms: 2000,
+      retry_start: 1,
+      retry_max: 3,
+      cache_ttl_ms: 300000,
+      
+      // 브라우저 설정
+      headless_browser: true,
+      max_concurrent_tasks: 10,
+      request_delay: 1000,
+      custom_user_agent: "rMatterCertis/2.0",
+      
+      // 로깅
+      logging: {
+        level: "info",
+        enable_stack_trace: false,
+        enable_timestamp: true,
+        components: {
+          "crawler": "info",
+          "http": "warn",
+          "database": "info"
+        }
       }
-    } else {
-      // 상태 체크 결과가 없으면 먼저 상태 체크 실행 권장
-      alert('먼저 "상태 체크"를 실행하여 최적의 크롤링 범위를 확인해주세요.');
+    };
+    
+    try {
+      setCrawlingStatus('running');
+      console.log('🚀 크롤링 시작:', config);
+      console.log('📊 상태 체크 결과 기반:', result ? '✅ 스마트 모드' : '🔧 기본 모드');
+      
+      // 실제 크롤링 시작
+      console.log('📞 tauriApi.startCrawling 호출 시도...');
+      const sessionId = await tauriApi.startCrawling(config);
+      console.log('✅ 크롤링 세션 시작됨:', sessionId);
+      
+      // 실시간 진행률 업데이트 시작 (crawlerStore에서 처리)
+      console.log('🔄 실시간 업데이트 시작...');
+      crawlerStore.startRealTimeUpdates().catch((error: any) => {
+        console.error('실시간 업데이트 시작 실패:', error);
+        // 폴백으로 시뮬레이션 사용
+        console.log('🎭 시뮬레이션 모드로 전환...');
+        simulateProgress();
+      });
+    } catch (error) {
+      console.error('❌ 크롤링 시작 실패:', error);
+      console.error('❌ 에러 상세:', error);
+      setCrawlingStatus('idle');
+      alert(`크롤링 시작에 실패했습니다: ${error}`);
     }
   };
 
@@ -438,11 +441,19 @@ export const StatusTab: Component = () => {
         
         <div style="display: flex; gap: 12px; flex-wrap: wrap;">
           <button
-            onClick={startCrawling}
+            onClick={() => {
+              console.log('🔴 버튼 클릭됨 - crawlingStatus:', crawlingStatus());
+              startCrawling();
+            }}
             disabled={crawlingStatus() === 'running'}
             style={`padding: 12px 24px; background: ${crawlingStatus() === 'running' ? '#9ca3af' : statusCheckResult() ? '#10b981' : '#22c55e'}; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: ${crawlingStatus() === 'running' ? 'not-allowed' : 'pointer'}; transition: background-color 0.2s;`}
           >
-            {statusCheckResult() ? '🤖 스마트 크롤링 시작' : '▶️ 기본 크롤링 시작'}
+            {crawlingStatus() === 'running' 
+              ? '🔄 크롤링 중...' 
+              : statusCheckResult() 
+                ? '🤖 스마트 크롤링 시작' 
+                : '▶️ 기본 크롤링 시작 (1-10 페이지)'
+            }
           </button>
           
           <button
@@ -463,8 +474,8 @@ export const StatusTab: Component = () => {
         </div>
 
         {!statusCheckResult() && (
-          <div style="margin-top: 12px; padding: 8px; background: #fef3c7; border-radius: 4px; font-size: 13px; color: #92400e;">
-            💡 최적의 크롤링을 위해 먼저 "상태 체크"를 실행해주세요. {getRecommendationReason()}
+          <div style="margin-top: 12px; padding: 8px; background: #f0f9ff; border-radius: 4px; font-size: 13px; color: #1e40af;">
+            💡 상태 체크 없이도 기본 크롤링(1-10 페이지)을 시작할 수 있습니다. 최적화된 크롤링을 원하시면 먼저 "상태 체크"를 실행해주세요.
           </div>
         )}
       </div>
