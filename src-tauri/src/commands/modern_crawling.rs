@@ -608,6 +608,27 @@ pub async fn check_site_status(
     }
 }
 
+/// 재시도 통계 조회 명령어 - INTEGRATED_PHASE2_PLAN Week 1 Day 3-4
+#[tauri::command]
+pub async fn get_retry_stats(_state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    info!("📊 Getting retry statistics");
+    
+    // ServiceBasedBatchCrawlingEngine에서 재시도 통계를 가져오는 것은 복잡하므로
+    // 향후 CrawlerManager 통합 시 구현 예정
+    
+    // 임시 응답
+    let stats = serde_json::json!({
+        "total_items": 0,
+        "pending_retries": 0,
+        "successful_retries": 0,
+        "failed_retries": 0,
+        "max_retries": 3,
+        "status": "RetryManager integration in progress"
+    });
+    
+    Ok(stats)
+}
+
 /// Get the correct database URL for the application
 fn get_database_url() -> Result<String, String> {
     let data_dir = ConfigManager::get_app_data_dir()
@@ -618,3 +639,54 @@ fn get_database_url() -> Result<String, String> {
     
     Ok(database_url)
 }
+
+/* ==================== CrawlerManager 기반 통합 크롤링 명령어들 (임시 비활성화) ====================
+
+/// CrawlerManager를 사용한 통합 배치 크롤링 시작
+#[tauri::command]
+pub async fn start_integrated_crawling(
+    config: ComprehensiveCrawlerConfig,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    // 추후 모듈 의존성 해결 후 활성화
+    Err("CrawlerManager integration in progress".to_string())
+}
+
+/// CrawlerManager를 사용한 크롤링 중지
+#[tauri::command]
+pub async fn stop_integrated_crawling(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    Err("CrawlerManager integration in progress".to_string())
+}
+
+/// CrawlerManager를 사용한 크롤링 일시정지
+#[tauri::command]
+pub async fn pause_integrated_crawling(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    Err("CrawlerManager integration in progress".to_string())
+}
+
+/// CrawlerManager를 사용한 크롤링 재개
+#[tauri::command]
+pub async fn resume_integrated_crawling(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    Err("CrawlerManager integration in progress".to_string())
+}
+
+/// CrawlerManager를 사용한 크롤링 진행 상황 조회
+#[tauri::command]
+pub async fn get_integrated_crawling_progress(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<CrawlingProgress, String> {
+    Err("CrawlerManager integration in progress".to_string())
+}
+
+*/

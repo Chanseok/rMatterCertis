@@ -5,6 +5,7 @@
 //! and components across the application.
 
 use crate::application::events::EventEmitter;
+// use crate::application::crawler_manager::CrawlerManager; // 임시 비활성화
 use crate::domain::entities::CrawlingSession;
 use crate::domain::events::{CrawlingProgress, CrawlingStatus, DatabaseStats};
 use std::sync::Arc;
@@ -16,6 +17,9 @@ use tracing::info;
 pub struct AppState {
     /// Event emitter for real-time communication with frontend
     pub event_emitter: Arc<RwLock<Option<EventEmitter>>>,
+    
+    /// Integrated crawler manager - 통합 크롤링 매니저 (임시 비활성화)
+    // pub crawler_manager: Arc<RwLock<Option<CrawlerManager>>>,
     
     /// Current crawling session
     pub current_session: Arc<RwLock<Option<CrawlingSession>>>,
@@ -38,6 +42,7 @@ impl AppState {
     pub fn new(config: crate::infrastructure::config::AppConfig) -> Self {
         Self {
             event_emitter: Arc::new(RwLock::new(None)),
+            // crawler_manager: Arc::new(RwLock::new(None)), // 임시 비활성화
             current_session: Arc::new(RwLock::new(None)),
             current_progress: Arc::new(RwLock::new(CrawlingProgress::default())),
             database_stats: Arc::new(RwLock::new(None)),
@@ -45,6 +50,23 @@ impl AppState {
             session_start_time: Arc::new(RwLock::new(None)),
         }
     }
+    
+    /* ===== CrawlerManager 관련 메서드들 (임시 비활성화) =====
+    
+    /// Initialize the crawler manager
+    pub async fn initialize_crawler_manager(&self, crawler_manager: CrawlerManager) -> Result<(), String> {
+        let mut manager_guard = self.crawler_manager.write().await;
+        *manager_guard = Some(crawler_manager);
+        info!("Crawler manager initialized");
+        Ok(())
+    }
+    
+    /// Get the crawler manager
+    pub async fn get_crawler_manager(&self) -> Option<CrawlerManager> {
+        self.crawler_manager.read().await.clone()
+    }
+    
+    */
     
     /// Initialize the event emitter with the app handle
     pub async fn initialize_event_emitter(&self, emitter: EventEmitter) -> Result<(), String> {

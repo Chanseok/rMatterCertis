@@ -22,6 +22,10 @@ export const StatusTab: Component = () => {
   const [isCheckingStatus, setIsCheckingStatus] = createSignal(false);
   const [statusCheckError, setStatusCheckError] = createSignal<string>('');
 
+  // 재시도 통계 - INTEGRATED_PHASE2_PLAN Week 1 Day 5
+  const [retryStats, setRetryStats] = createSignal<any>(null);
+  const [isLoadingRetryStats, setIsLoadingRetryStats] = createSignal(false);
+
   // 사이트 분석 결과는 이제 글로벌 store에서 가져옴
   // const siteAnalysisResult = crawlerStore.siteAnalysisResult;
   // const isAnalyzing = crawlerStore.isAnalyzing;
@@ -230,6 +234,31 @@ export const StatusTab: Component = () => {
     }
   };
 
+  // 재시도 통계 조회 - INTEGRATED_PHASE2_PLAN Week 1 Day 5
+  const loadRetryStats = async () => {
+    try {
+      setIsLoadingRetryStats(true);
+      console.log('📊 재시도 통계 조회 중...');
+      
+      const stats = await tauriApi.getRetryStats();
+      console.log('✅ 재시도 통계 조회 완료:', stats);
+      
+      setRetryStats(stats);
+    } catch (error) {
+      console.error('❌ 재시도 통계 조회 실패:', error);
+      setRetryStats({
+        total_items: 0,
+        pending_retries: 0,
+        successful_retries: 0,
+        failed_retries: 0,
+        max_retries: 3,
+        status: '데이터 로딩 실패'
+      });
+    } finally {
+      setIsLoadingRetryStats(false);
+    }
+  };
+
   // 실시간 모니터링용 상태 체크 (get_crawling_status_check)
   const runStatusCheck = async () => {
     try {
@@ -386,7 +415,7 @@ export const StatusTab: Component = () => {
           </div>
           <div style="padding: 12px; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
             <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">현재 배치</div>
-            <div style="font-size: 18px; font-weight: 600; color: #1f2937;">{currentBatch()}/{totalBatches()}</div>
+            <div style="font-size: 18px; font-weight: 600, color: #1f2937;">{currentBatch()}/{totalBatches()}</div>
           </div>
         </div>
 
@@ -467,6 +496,45 @@ export const StatusTab: Component = () => {
         <div style="margin-bottom: 16px; padding: 12px; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">
           💡 <strong>사이트 종합 분석</strong>: 크롤링 전 사이트 구조를 실제로 분석하여 페이지 수, 예상 제품 수 등을 파악합니다 (네트워크 사용)<br/>
           📊 <strong>크롤링 상태 조회</strong>: 현재 진행 중인 크롤링의 실시간 상태와 진행률을 조회합니다 (메모리 조회)
+        </div>
+
+        {/* 재시도 통계 - INTEGRATED_PHASE2_PLAN Week 1 Day 5 */}
+        <div style="margin-top: 20px; padding: 16px; background: #fef7f0; border-radius: 6px; border: 1px solid #fed7aa;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <h4 style="margin: 0; font-size: 16px; font-weight: 500; color: #ea580c;">🔄 재시도 메커니즘</h4>
+            <button
+              onClick={loadRetryStats}
+              disabled={isLoadingRetryStats()}
+              style={`padding: 6px 12px; background: ${isLoadingRetryStats() ? '#9ca3af' : '#ea580c'}; color: white; border: none; border-radius: 4px; font-size: 12px; cursor: ${isLoadingRetryStats() ? 'not-allowed' : 'pointer'};`}
+            >
+              {isLoadingRetryStats() ? '로딩...' : '새로고침'}
+            </button>
+          </div>
+          
+          {retryStats() ? (
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; font-size: 13px;">
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: #7c2d12;">총 아이템:</span>
+                <span style="font-weight: 500;">{retryStats().total_items}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: #7c2d12;">대기 중:</span>
+                <span style="font-weight: 500; color: #f59e0b;">{retryStats().pending_retries}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: #7c2d12;">성공:</span>
+                <span style="font-weight: 500; color: #10b981;">{retryStats().successful_retries}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: #7c2d12;">실패:</span>
+                <span style="font-weight: 500; color: #ef4444;">{retryStats().failed_retries}</span>
+              </div>
+            </div>
+          ) : (
+            <div style="text-align: center; color: #9ca3af; font-size: 13px; padding: 12px;">
+              재시도 통계를 로드하려면 새로고침 버튼을 클릭하세요
+            </div>
+          )}
         </div>
 
         {statusCheckError() && (

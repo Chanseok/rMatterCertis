@@ -538,6 +538,17 @@ export class TauriApiService {
       throw new Error(`Failed to check site status: ${error}`);
     }
   }
+
+  /**
+   * Get retry statistics - INTEGRATED_PHASE2_PLAN Week 1 Day 5
+   */
+  async getRetryStats(): Promise<any> {
+    try {
+      return await invoke<any>('get_retry_stats');
+    } catch (error) {
+      throw new Error(`Failed to get retry stats: ${error}`);
+    }
+  }
 }
 
 // Create a singleton instance for use throughout the application

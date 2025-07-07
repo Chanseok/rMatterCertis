@@ -15,7 +15,7 @@ use crate::domain::services::{
 use crate::domain::events::{CrawlingProgress, CrawlingStage, CrawlingStatus};
 use crate::domain::product::Product;
 use crate::application::EventEmitter;
-use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
+use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository, RetryManager};
 use crate::infrastructure::crawling_service_impls::*;
 use crate::infrastructure::config::AppConfig;
 
@@ -97,6 +97,9 @@ pub struct ServiceBasedBatchCrawlingEngine {
     product_repo: Arc<IntegratedProductRepository>,
     event_emitter: Arc<Option<EventEmitter>>,
     
+    // 재시도 관리자 - INTEGRATED_PHASE2_PLAN Week 1 Day 3-4
+    retry_manager: Arc<RetryManager>,
+    
     // 설정 및 세션 정보
     config: BatchCrawlingConfig,
     session_id: String,
@@ -152,6 +155,7 @@ impl ServiceBasedBatchCrawlingEngine {
             product_detail_collector,
             product_repo,
             event_emitter,
+            retry_manager: Arc::new(RetryManager::new(config.retry_max)),
             config,
             session_id,
         }
@@ -278,24 +282,138 @@ impl ServiceBasedBatchCrawlingEngine {
         Ok(product_urls)
     }
 
-    /// Stage 3: 제품 상세정보 수집 (서비스 기반)
+    /// Stage 3: 제품 상세정보 수집 (서비스 기반 + 재시도 메커니즘)
     async fn stage3_collect_product_details(&self, product_urls: &[String]) -> Result<Vec<Product>> {
-        info!("Stage 3: Collecting product details using ProductDetailCollector service");
+        info!("Stage 3: Collecting product details using ProductDetailCollector service with retry mechanism");
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
             stage: "ProductDetails".to_string(),
-            message: format!("{}개 제품의 상세정보를 수집하는 중...", product_urls.len()),
+            message: format!("{}개 제품의 상세정보를 수집하는 중... (재시도 지원)", product_urls.len()),
         }).await?;
 
-        let products = self.product_detail_collector.collect_details(product_urls).await?;
+        // 초기 시도
+        let mut successful_products = Vec::new();
+        let mut failed_urls = Vec::new();
+
+        match self.product_detail_collector.collect_details(product_urls).await {
+            Ok(products) => {
+                successful_products = products;
+                info!("✅ Initial collection successful: {} products", successful_products.len());
+            }
+            Err(e) => {
+                warn!("❌ Initial collection failed: {}", e);
+                failed_urls = product_urls.to_vec();
+                
+                // 실패한 URL들을 재시도 큐에 추가
+                for (index, url) in failed_urls.iter().enumerate() {
+                    let item_id = format!("product_detail_{}_{}", self.session_id, index);
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("url".to_string(), url.clone());
+                    metadata.insert("stage".to_string(), "product_details".to_string());
+                    
+                    if let Err(retry_err) = self.retry_manager.add_failed_item(
+                        item_id,
+                        CrawlingStage::ProductDetails,
+                        e.to_string(),
+                        url.clone(),
+                        metadata,
+                    ).await {
+                        warn!("Failed to add item to retry queue: {}", retry_err);
+                    }
+                }
+            }
+        }
+
+        // 재시도 처리
+        let retry_products = self.process_retries_for_product_details().await?;
+        successful_products.extend(retry_products);
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageCompleted {
             stage: "ProductDetails".to_string(),
-            items_processed: products.len(),
+            items_processed: successful_products.len(),
         }).await?;
 
-        info!("Stage 3 completed: {} products collected", products.len());
-        Ok(products)
+        info!("Stage 3 completed: {} products collected (including retries)", successful_products.len());
+        Ok(successful_products)
+    }
+    
+    /// 제품 상세정보 수집 재시도 처리
+    async fn process_retries_for_product_details(&self) -> Result<Vec<Product>> {
+        info!("🔄 Processing retries for product details collection");
+        let mut retry_products = Vec::new();
+        
+        // 최대 3번의 재시도 사이클
+        for cycle in 1..=3 {
+            let ready_items = self.retry_manager.get_ready_items().await?;
+            if ready_items.is_empty() {
+                debug!("No items ready for retry in cycle {}", cycle);
+                break;
+            }
+            
+            info!("🔄 Retry cycle {}: Processing {} items", cycle, ready_items.len());
+            
+            for retry_item in ready_items {
+                if retry_item.stage == CrawlingStage::ProductDetails {
+                    let url = retry_item.original_url;
+                    let item_id = retry_item.item_id.clone();
+                    
+                    info!("🔄 Retrying product detail collection for: {}", url);
+                    
+                    match self.product_detail_collector.collect_details(&[url.clone()]).await {
+                        Ok(mut products) => {
+                            if let Some(product) = products.pop() {
+                                info!("✅ Retry successful for: {}", url);
+                                retry_products.push(product);
+                                
+                                // 성공 기록
+                                if let Err(e) = self.retry_manager.mark_retry_success(&item_id).await {
+                                    warn!("Failed to mark retry success: {}", e);
+                                }
+                                
+                                self.emit_detailed_event(DetailedCrawlingEvent::ProductProcessed {
+                                    url: url.clone(),
+                                    success: true,
+                                }).await?;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("❌ Retry failed for {}: {}", url, e);
+                            
+                            // 재시도 큐에 다시 추가 (재시도 한도 내에서)
+                            let mut metadata = std::collections::HashMap::new();
+                            metadata.insert("url".to_string(), url.clone());
+                            metadata.insert("retry_cycle".to_string(), cycle.to_string());
+                            
+                            if let Err(retry_err) = self.retry_manager.add_failed_item(
+                                item_id,
+                                CrawlingStage::ProductDetails,
+                                e.to_string(),
+                                url.clone(),
+                                metadata,
+                            ).await {
+                                debug!("Item exceeded retry limit or not retryable: {}", retry_err);
+                            }
+                            
+                            self.emit_detailed_event(DetailedCrawlingEvent::ProductProcessed {
+                                url: url.clone(),
+                                success: false,
+                            }).await?;
+                        }
+                    }
+                    
+                    // 재시도 간 지연
+                    tokio::time::sleep(Duration::from_millis(self.config.delay_ms)).await;
+                }
+            }
+            
+            // 사이클 간 지연
+            if cycle < 3 {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        }
+        
+        info!("🔄 Retry processing completed: {} additional products collected", retry_products.len());
+        Ok(retry_products)
     }
 
     /// Stage 4: 데이터베이스 저장

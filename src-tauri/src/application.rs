@@ -15,12 +15,24 @@ pub mod events;
 pub mod state;
 pub mod page_discovery_service;
 pub mod parsing_service;
+pub mod crawler_manager;  // 새로 추가된 통합 크롤러 매니저
 
 // Re-export commonly used items for convenience
 pub use events::EventEmitter;
 pub use state::AppState;
 pub use dto::*;
 pub use integrated_use_cases::IntegratedProductUseCases;
-pub use crawling_use_cases::{CrawlingUseCases, CrawlingConfig};
+pub use crawling_use_cases::CrawlingUseCases;
 pub use parsing_service::{ParsingService, CrawlerService};
 pub use page_discovery_service::PageDiscoveryService;
+
+// Re-export crawler manager types
+pub use crawler_manager::{
+    CrawlerManager, 
+    BatchProcessor, 
+    CrawlingConfig, 
+    CrawlingEngineType,
+    TaskResult,
+    RetryManager,
+    PerformanceMonitor
+};

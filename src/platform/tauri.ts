@@ -48,6 +48,7 @@ export interface MethodParamsMapping {
   get_active_crawling_sessions: void;
   get_crawling_session_history: { limit?: number };
   get_enhanced_crawling_stats: { session_id?: string };
+  get_retry_stats: void; // 재시도 통계 - INTEGRATED_PHASE2_PLAN Week 1 Day 5
 }
 
 // ============================================================================
@@ -83,6 +84,7 @@ export interface MethodReturnMapping {
   get_active_crawling_sessions: SessionStatusDto[];
   get_crawling_session_history: SessionStatusDto[];
   get_enhanced_crawling_stats: EnhancedCrawlingStats;
+  get_retry_stats: RetryStats; // 재시도 통계 - INTEGRATED_PHASE2_PLAN Week 1 Day 5
 }
 
 // ============================================================================
@@ -95,6 +97,15 @@ interface ErrorInfo {
   timestamp: string;
   recoverable: boolean;
   count: number;
+}
+
+interface RetryStats {
+  total_items: number;
+  pending_retries: number;
+  successful_retries: number;
+  failed_retries: number;
+  max_retries: number;
+  status?: string;
 }
 
 interface CrawlingStats {
