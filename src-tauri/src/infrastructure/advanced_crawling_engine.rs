@@ -4,7 +4,7 @@
 //! 엔터프라이즈급 크롤링 엔진을 구현합니다.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use anyhow::{Result, anyhow};
 use tracing::{info, warn, debug};
 
@@ -69,9 +69,12 @@ impl AdvancedBatchCrawlingEngine {
     ) -> Self {
         // 서비스 설정
         let collector_config = CollectorConfig {
+            max_concurrent: config.concurrency,
             concurrency: config.concurrency,
+            delay_between_requests: Duration::from_millis(config.delay_ms),
             delay_ms: config.delay_ms,
             batch_size: config.batch_size,
+            retry_attempts: config.retry_max,
             retry_max: config.retry_max,
         };
 
@@ -90,14 +93,14 @@ impl AdvancedBatchCrawlingEngine {
         )) as Arc<dyn DatabaseAnalyzer>;
 
         let product_list_collector = Arc::new(ProductListCollectorImpl::new(
-            http_client.clone(),
-            data_extractor.clone(),
+            Arc::new(tokio::sync::Mutex::new(http_client.clone())),
+            Arc::new(data_extractor.clone()),
             collector_config.clone(),
         )) as Arc<dyn ProductListCollector>;
 
         let product_detail_collector = Arc::new(ProductDetailCollectorImpl::new(
-            http_client,
-            data_extractor,
+            Arc::new(tokio::sync::Mutex::new(http_client)),
+            Arc::new(data_extractor),
             collector_config,
         )) as Arc<dyn ProductDetailCollector>;
 
@@ -134,7 +137,9 @@ impl AdvancedBatchCrawlingEngine {
     /// 고급 데이터 처리 파이프라인을 포함한 크롤링 실행
     pub async fn execute(&self) -> Result<()> {
         let start_time = Instant::now();
-        info!("Starting advanced batch crawling with data processing pipeline for session: {}", self.session_id);
+        info!("🚀 Starting advanced batch crawling with STRICT CONFIG LIMITS for session: {}", self.session_id);
+        info!("📊 Config limits: start_page={}, end_page={}, batch_size={}, concurrency={}", 
+              self.config.start_page, self.config.end_page, self.config.batch_size, self.config.concurrency);
 
         // 배치 진행 추적 시작
         let batch_id = format!("batch_{}", self.session_id);
@@ -215,15 +220,13 @@ impl AdvancedBatchCrawlingEngine {
         }).await?;
         
         execution_result
-    }
-
-    /// 에러 처리가 포함된 실제 실행 로직
+    }    /// 에러 처리가 포함된 실제 실행 로직
     async fn execute_with_error_handling(&self, batch_id: &str) -> Result<(u32, f64)> {
 
         // Stage 0: 사이트 상태 확인
         let site_status = self.stage0_check_site_status().await?;
         
-        // 진행률 업데이트
+        // 진행률 업데이트 (10%)
         self.progress_tracker.update_progress(batch_id, crate::domain::services::data_processing_services::BatchProgress {
             batch_id: batch_id.to_string(),
             total_items: 100, // 예상 총 작업 수
@@ -232,13 +235,13 @@ impl AdvancedBatchCrawlingEngine {
             failed_items: 0,
             progress_percentage: 10.0,
             estimated_remaining_time: Some(300), // 5분 예상
-            current_stage: "사이트 상태 확인".to_string(),
+            current_stage: "사이트 상태 확인 완료".to_string(),
         }).await?;
-        
+
         // Stage 1: 데이터베이스 분석
         let _db_analysis = self.stage1_analyze_database().await?;
         
-        // 진행률 업데이트
+        // 진행률 업데이트 (20%)
         self.progress_tracker.update_progress(batch_id, crate::domain::services::data_processing_services::BatchProgress {
             batch_id: batch_id.to_string(),
             total_items: 100,
@@ -247,44 +250,44 @@ impl AdvancedBatchCrawlingEngine {
             failed_items: 0,
             progress_percentage: 20.0,
             estimated_remaining_time: Some(240),
-            current_stage: "데이터베이스 분석".to_string(),
+            current_stage: "데이터베이스 분석 완료".to_string(),
         }).await?;
-        
+
         // Stage 2: 제품 목록 수집
         let product_urls = self.stage2_collect_product_list(site_status.total_pages).await?;
         
-        // 진행률 업데이트
+        // 진행률 업데이트 (50%)
         self.progress_tracker.update_progress(batch_id, crate::domain::services::data_processing_services::BatchProgress {
             batch_id: batch_id.to_string(),
             total_items: 100,
-            processed_items: 40,
-            successful_items: 40,
+            processed_items: 50,
+            successful_items: 50,
             failed_items: 0,
-            progress_percentage: 40.0,
-            estimated_remaining_time: Some(180),
-            current_stage: "제품 목록 수집".to_string(),
+            progress_percentage: 50.0,
+            estimated_remaining_time: Some(150),
+            current_stage: format!("제품 목록 수집 완료 ({} URLs)", product_urls.len()),
         }).await?;
         
         // Stage 3: 제품 상세정보 수집
         let raw_products = self.stage3_collect_product_details(&product_urls).await?;
         
-        // 진행률 업데이트
+        // 진행률 업데이트 (75%)
         self.progress_tracker.update_progress(batch_id, crate::domain::services::data_processing_services::BatchProgress {
             batch_id: batch_id.to_string(),
             total_items: 100,
-            processed_items: 70,
-            successful_items: 70,
+            processed_items: 75,
+            successful_items: 75,
             failed_items: 0,
-            progress_percentage: 70.0,
-            estimated_remaining_time: Some(90),
-            current_stage: "제품 상세정보 수집".to_string(),
+            progress_percentage: 75.0,
+            estimated_remaining_time: Some(60),
+            current_stage: format!("제품 상세정보 수집 완료 ({} products)", raw_products.len()),
         }).await?;
         
         // Stage 4: 고급 데이터 처리 파이프라인
         let processed_products = self.stage4_process_data_pipeline(raw_products).await?;
         let total_products = processed_products.len() as u32;
         
-        // 진행률 업데이트
+        // 진행률 업데이트 (90%)
         self.progress_tracker.update_progress(batch_id, crate::domain::services::data_processing_services::BatchProgress {
             batch_id: batch_id.to_string(),
             total_items: 100,
@@ -293,7 +296,7 @@ impl AdvancedBatchCrawlingEngine {
             failed_items: 0,
             progress_percentage: 90.0,
             estimated_remaining_time: Some(30),
-            current_stage: "고급 데이터 처리".to_string(),
+            current_stage: format!("데이터 처리 완료 ({} processed)", total_products),
         }).await?;
         
         // Stage 5: 데이터베이스 저장
@@ -306,7 +309,7 @@ impl AdvancedBatchCrawlingEngine {
             0.0
         };
 
-        // 최종 진행률 업데이트
+        // 최종 진행률 업데이트 (100%)
         self.progress_tracker.update_progress(batch_id, crate::domain::services::data_processing_services::BatchProgress {
             batch_id: batch_id.to_string(),
             total_items: 100,
@@ -315,7 +318,7 @@ impl AdvancedBatchCrawlingEngine {
             failed_items: errors as u32,
             progress_percentage: 100.0,
             estimated_remaining_time: Some(0),
-            current_stage: "완료".to_string(),
+            current_stage: format!("완료 - {} 처리됨, {} 성공, {} 실패", processed_count, processed_count - errors, errors),
         }).await?;
 
         Ok((total_products, success_rate))
@@ -374,22 +377,36 @@ impl AdvancedBatchCrawlingEngine {
 
     /// Stage 2: 제품 목록 수집
     async fn stage2_collect_product_list(&self, total_pages: u32) -> Result<Vec<String>> {
-        info!("Stage 2: Collecting product list");
+        info!("🔄 Stage 2: Collecting product list with STRICT CONFIG LIMITS");
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
             stage: "ProductList".to_string(),
-            message: format!("{}페이지에서 제품 목록을 수집하는 중...", total_pages),
+            message: format!("설정 범위 내에서 제품 목록 수집 중..."),
         }).await?;
 
-        let effective_end = total_pages.min(self.config.end_page);
-        let product_urls = self.product_list_collector.collect_all_pages(effective_end).await?;
+        // 엄격한 설정 제한 적용: end_page가 total_pages보다 작으면 end_page 사용
+        let page_limit = self.config.end_page.min(total_pages);
+        let actual_pages_to_process = page_limit.saturating_sub(self.config.start_page) + 1;
+        
+        info!("📊 STRICT LIMITS APPLIED:");
+        info!("   - Configuration: start_page={}, end_page={}", self.config.start_page, self.config.end_page);
+        info!("   - Site total_pages={}, effective_limit={}", total_pages, page_limit);
+        info!("   - Pages to process: {} (from {} to {})", actual_pages_to_process, self.config.start_page, page_limit);
+        
+        if page_limit < total_pages {
+            info!("⚠️  ENFORCING CONFIG LIMIT: Only processing {} pages instead of {} available pages", 
+                  page_limit, total_pages);
+        }
+        
+        let product_urls = self.product_list_collector.collect_all_pages(page_limit).await?;
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageCompleted {
             stage: "ProductList".to_string(),
             items_processed: product_urls.len(),
         }).await?;
 
-        info!("Stage 2 completed: {} product URLs collected", product_urls.len());
+        info!("✅ Stage 2 completed: {} product URLs collected from {} pages (config limit enforced)", 
+              product_urls.len(), page_limit);
         Ok(product_urls)
     }
 
@@ -402,7 +419,12 @@ impl AdvancedBatchCrawlingEngine {
             message: format!("{}개 제품의 상세정보를 수집하는 중...", product_urls.len()),
         }).await?;
 
-        let products = self.product_detail_collector.collect_details(product_urls).await?;
+        let product_details = self.product_detail_collector.collect_details(product_urls).await?;
+        
+        // ProductDetail을 Product로 변환
+        let products: Vec<Product> = product_details.into_iter()
+            .map(|detail| crate::infrastructure::crawling_service_impls::product_detail_to_product(detail))
+            .collect();
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageCompleted {
             stage: "ProductDetails".to_string(),

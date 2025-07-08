@@ -212,23 +212,28 @@ impl CrawlerManager {
     pub async fn stop_batch_crawling(&self, session_id: &str) -> Result<()> {
         info!("🛑 Stopping batch crawling for session: {}", session_id);
         
-        // 1. 활성 프로세서에서 찾기
+        // 1. 세션 매니저에서 세션을 중지 상태로 마킹 (cancel token 역할)
+        if let Err(e) = self.session_manager.stop_session(session_id).await {
+            warn!("Failed to mark session as stopped: {}", e);
+        }
+        
+        // 2. 활성 프로세서에서 찾기
         let processor = {
             let active = self.active_processors.read().await;
             active.get(session_id).cloned()
         };
         
         if let Some(processor) = processor {
-            // 2. 프로세서 중지
+            // 3. 프로세서 중지
             processor.stop().await?;
             
-            // 3. 활성 프로세서에서 제거
+            // 4. 활성 프로세서에서 제거
             {
                 let mut active = self.active_processors.write().await;
                 active.remove(session_id);
             }
             
-            // 4. 성능 모니터링 중지
+            // 5. 성능 모니터링 중지
             self.performance_monitor.stop_session_tracking(session_id).await;
             
             info!("✅ Batch crawling stopped for session: {}", session_id);
@@ -242,6 +247,11 @@ impl CrawlerManager {
     /// 배치 크롤링 일시정지
     pub async fn pause_batch_crawling(&self, session_id: &str) -> Result<()> {
         info!("⏸️ Pausing batch crawling for session: {}", session_id);
+        
+        // 1. 세션 매니저에서 세션을 일시정지 상태로 마킹
+        if let Err(e) = self.session_manager.pause_session(session_id).await {
+            warn!("Failed to mark session as paused: {}", e);
+        }
         
         let processor = {
             let active = self.active_processors.read().await;
@@ -261,6 +271,11 @@ impl CrawlerManager {
     /// 배치 크롤링 재개
     pub async fn resume_batch_crawling(&self, session_id: &str) -> Result<()> {
         info!("▶️ Resuming batch crawling for session: {}", session_id);
+        
+        // 1. 세션 매니저에서 세션을 실행 상태로 변경
+        if let Err(e) = self.session_manager.resume_session(session_id).await {
+            warn!("Failed to mark session as resumed: {}", e);
+        }
         
         let processor = {
             let active = self.active_processors.read().await;

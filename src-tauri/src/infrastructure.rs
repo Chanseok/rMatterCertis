@@ -5,7 +5,7 @@
 
 pub mod database_connection;
 pub mod integrated_product_repository;
-pub mod html_parser;  // Legacy parser - keeping for backward compatibility
+pub mod html_parser;  // HTML parser with integrated tests
 pub mod simple_http_client;
 pub mod parsing_error;  // Enhanced error types
 pub mod parsing;  // Modern parsing architecture following the guide
@@ -31,7 +31,7 @@ pub mod retry_manager;  // 재시도 관리자 - INTEGRATED_PHASE2_PLAN Week 1 D
 // Re-export commonly used items
 pub use database_connection::DatabaseConnection;
 pub use integrated_product_repository::IntegratedProductRepository;
-pub use html_parser::MatterDataExtractor;  // Legacy
+pub use html_parser::MatterDataExtractor;  // HTML parser with integrated tests
 pub use simple_http_client::HttpClient;
 pub use config::csa_iot;  // CSA-IoT configuration constants
 

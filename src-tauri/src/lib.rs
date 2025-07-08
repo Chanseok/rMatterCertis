@@ -199,6 +199,12 @@ pub fn run() {
             commands::export_crawling_results,
             commands::check_site_status,
             commands::get_retry_stats, // 재시도 통계 - INTEGRATED_PHASE2_PLAN Week 1 Day 5
+            commands::update_user_crawling_preferences, // User settings management
+            
+            // New database commands for real data
+            commands::get_products,
+            commands::get_local_db_stats,
+            commands::get_analysis_data,
             
             // CrawlerManager 기반 통합 크롤링 명령어들 (임시 비활성화)
             // commands::start_integrated_crawling,

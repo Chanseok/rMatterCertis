@@ -885,6 +885,20 @@ impl ProductRepository for SqliteProductRepository {
 
         Ok(device_types)
     }
+
+    /// Get latest updated product (for database analysis)
+    async fn get_latest_updated_product(&self) -> Result<Option<Product>> {
+        let row = sqlx::query(
+            "SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at FROM products ORDER BY created_at DESC LIMIT 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => Ok(Some(Self::row_to_product(&row)?)),
+            None => Ok(None),
+        }
+    }
 }
 
 // Note: CrawlingSessionRepository removed - using memory-based SessionManager instead

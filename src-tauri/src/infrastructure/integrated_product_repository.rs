@@ -668,4 +668,68 @@ impl IntegratedProductRepository {
 
         Ok(products)
     }
+
+    /// Get all products from the database
+    pub async fn get_all_products(&self) -> Result<Vec<Product>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT url, manufacturer, model, certificate_id, device_type, certification_date, 
+                   page_id, index_in_page, created_at, updated_at
+            FROM products
+            ORDER BY page_id DESC, index_in_page ASC
+            "#,
+        )
+        .fetch_all(&*self.pool)
+        .await?;
+
+        let products = rows
+            .into_iter()
+            .map(|row| Product {
+                url: row.get("url"),
+                manufacturer: row.get("manufacturer"),
+                model: row.get("model"),
+                certificate_id: row.get("certificate_id"),
+                device_type: row.get("device_type"),
+                certification_date: row.get("certification_date"),
+                page_id: row.get("page_id"),
+                index_in_page: row.get("index_in_page"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            })
+            .collect();
+
+        Ok(products)
+    }
+
+    /// Get the latest updated product
+    pub async fn get_latest_updated_product(&self) -> Result<Option<Product>> {
+        let row = sqlx::query(
+            r#"
+            SELECT url, manufacturer, model, certificate_id, device_type, certification_date, 
+                   page_id, index_in_page, created_at, updated_at
+            FROM products
+            ORDER BY updated_at DESC
+            LIMIT 1
+            "#,
+        )
+        .fetch_optional(&*self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            Ok(Some(Product {
+                url: row.get("url"),
+                manufacturer: row.get("manufacturer"),
+                model: row.get("model"),
+                certificate_id: row.get("certificate_id"),
+                device_type: row.get("device_type"),
+                certification_date: row.get("certification_date"),
+                page_id: row.get("page_id"),
+                index_in_page: row.get("index_in_page"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
 }

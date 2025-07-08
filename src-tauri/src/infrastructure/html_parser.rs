@@ -317,14 +317,19 @@ impl MatterDataExtractor {
         
         let now = chrono::Utc::now();
         
+        // Extract basic product information from page headers/title
+        let model = self.extract_field_text(html, &self.config.product_detail_selectors.model);
+        let manufacturer = self.extract_field_text(html, "p.company-info, .company-name, .manufacturer, p.entry-company, .entry-company");
+        let device_type = self.extract_field_text(html, "p.device-category, .product-type, .device-type, p.entry-category, .entry-category, h6.entry-category");
+        
         let mut detail = ProductDetail {
             url,
             page_id: None,
             index_in_page: None,
             id: None,
-            manufacturer: None,
-            model: None,
-            device_type: None,
+            manufacturer,
+            model,
+            device_type,
             certification_id: None,
             certification_date: None,
             software_version: None,
@@ -352,6 +357,9 @@ impl MatterDataExtractor {
         
         // Extract from detail list items (guide approach)  
         self.extract_from_detail_list(html, &mut detail)?;
+
+        debug!("Extracted product detail: model={:?}, manufacturer={:?}, device_type={:?}, cert_id={:?}",
+               detail.model, detail.manufacturer, detail.device_type, detail.certification_id);
 
         Ok(detail)
     }
@@ -457,18 +465,50 @@ impl MatterDataExtractor {
 
     /// Extract product information from detail list items (guide-based approach)
     fn extract_from_detail_list(&self, html: &Html, detail: &mut ProductDetail) -> Result<()> {
-        let detail_list_selector = Selector::parse("div.entry-product-details > div > ul li")
-            .map_err(|e| anyhow!("Invalid detail list selector: {}", e))?;
-
-        for item in html.select(&detail_list_selector) {
-            let full_text = item.text().collect::<Vec<_>>().join("").trim().to_string();
+        // First try the new CSA-IoT site format with label/value spans
+        let item_selector = Selector::parse("div.entry-product-details li.item")
+            .or_else(|_| Selector::parse("ul.detail-items li.item"))
+            .map_err(|e| anyhow!("Invalid detail list item selector: {}", e))?;
+        
+        let label_selector = Selector::parse("span.label")
+            .map_err(|e| anyhow!("Invalid label selector: {}", e))?;
             
-            if let Some(colon_index) = full_text.find(':') {
-                let raw_label = full_text[..colon_index].trim().to_lowercase();
-                let raw_value = full_text[colon_index + 1..].trim().to_string();
+        let value_selector = Selector::parse("span.value")
+            .map_err(|e| anyhow!("Invalid value selector: {}", e))?;
+        
+        // Try to extract from structured list items with label/value spans
+        let mut found_items = false;
+        for item in html.select(&item_selector) {
+            if let (Some(label_el), Some(value_el)) = (
+                item.select(&label_selector).next(),
+                item.select(&value_selector).next()
+            ) {
+                let label = label_el.text().collect::<String>().trim().to_lowercase();
+                let value = value_el.text().collect::<String>().trim().to_string();
                 
-                if !raw_value.is_empty() {
-                    self.map_detail_field(&raw_label, &raw_value, detail);
+                if !value.is_empty() {
+                    self.map_detail_field(&label, &value, detail);
+                    found_items = true;
+                }
+            }
+        }
+        
+        // If we didn't find any items with the span structure, try the old format with colon-separated text
+        if !found_items {
+            // Fall back to the original selector for backwards compatibility
+            let fallback_selector = Selector::parse("div.entry-product-details > div > ul li")
+                .map_err(|e| anyhow!("Invalid fallback list selector: {}", e))?;
+                
+            for item in html.select(&fallback_selector) {
+                let full_text = item.text().collect::<Vec<_>>().join("").trim().to_string();
+                
+                if let Some(colon_index) = full_text.find(':') {
+                    let raw_label = full_text[..colon_index].trim().to_lowercase();
+                    let raw_value = full_text[colon_index + 1..].trim().to_string();
+                    
+                    if !raw_value.is_empty() {
+                        self.map_detail_field(&raw_label, &raw_value, detail);
+                    }
                 }
             }
         }
@@ -563,8 +603,6 @@ impl MatterDataExtractor {
             .filter(|text| !text.is_empty())
     }
 
-
-
     /// Resolve relative URLs to absolute URLs
     fn resolve_url(&self, href: &str, base_url: &str) -> String {
         if href.starts_with("http") {
@@ -577,105 +615,48 @@ impl MatterDataExtractor {
     }
 }
 
+// ============================================================================
+// TESTS MODULE - Integrated tests for better cohesion
+// ============================================================================
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use scraper::Html;
 
-    /// Real CSA-IoT website HTML fragment for testing
-    const REAL_CSA_IOT_HTML: &str = r#"
-<div class="post-feed item-count-7" data-item-count="7">
+    // Minimal test data - only what's needed for comprehensive testing
+    const SAMPLE_LISTING_HTML: &str = r#"
+<div class="post-feed item-count-3" data-item-count="3">
     <div class="inner">
-        <article class="post-103277 product type-product status-publish hentry product_type-product product_category-matter product_device_type-on-off-plug-in-unit product_company-tuya-global-inc">
-            <a href="https://csa-iot.org/csa_product/wi-fi-plug-27/" data-uw-rm-brl="PR" data-uw-original-href="https://csa-iot.org/csa_product/wi-fi-plug-27/">
+        <article class="post-103277 product type-product">
+            <a href="https://csa-iot.org/csa_product/wi-fi-plug-27/">
                 <div class="inner">
                     <div class="contents">
-                        <div class="entry-image">
-                            <div class="inner">
-                                <img decoding="async" src="https://csa-iot.org/wp-content/uploads/2022/03/CSA-Certified-Product-default-01-1-300x263.jpg" data-uw-rm-alt-original="" alt="Tuya Global Inc." data-uw-rm-alt="CT">
-                            </div>
-                        </div>
                         <p class="entry-company notranslate">Tuya Global Inc.</p>
-                        <h3 class="entry-title" role="heading" aria-level="1" data-uw-rm-heading="level">Wi-Fi plug</h3>
-                        <p class="entry-category">Matter</p>
+                        <h3 class="entry-title">Wi-Fi plug</h3>
                         <p class="entry-certificate-id">Certificate ID: CSA22059MAT40059-24</p>
-                        <div class="entry-excerpt"><p>Smart Plug integrates your electrical appliances into your smart home system</p></div>
                     </div>
-                    <p class="cta"><span class="btn btn--link link-arrow btn--link-blue"><span class="btn-label">Learn More</span><span class="btn__arrow"></span></span></p>
                 </div>
             </a>
         </article>
-        <article class="post-103278 product type-product status-publish hentry product_type-product product_category-matter product_device_type-on-off-plug-in-unit product_company-tuya-global-inc">
-            <a href="https://csa-iot.org/csa_product/wi-fi-plug-28/" data-uw-rm-brl="PR" data-uw-original-href="https://csa-iot.org/csa_product/wi-fi-plug-28/">
+        <article class="post-103278 product type-product">
+            <a href="https://csa-iot.org/csa_product/wi-fi-plug-28/">
                 <div class="inner">
                     <div class="contents">
-                        <div class="entry-image">
-                            <div class="inner">
-                                <img decoding="async" src="https://csa-iot.org/wp-content/uploads/2022/03/CSA-Certified-Product-default-01-1-300x263.jpg" data-uw-rm-alt-original="" alt="Tuya Global Inc." data-uw-rm-alt="CT">
-                            </div>
-                        </div>
                         <p class="entry-company notranslate">Tuya Global Inc.</p>
-                        <h3 class="entry-title" role="heading" aria-level="2" data-uw-rm-heading="level">Wi-Fi plug</h3>
-                        <p class="entry-category">Matter</p>
+                        <h3 class="entry-title">Wi-Fi plug 2</h3>
                         <p class="entry-certificate-id">Certificate ID: CSA22060MAT40060-24</p>
-                        <div class="entry-excerpt"><p>Smart Plug integrates your electrical appliances into your smart home system</p></div>
                     </div>
-                    <p class="cta"><span class="btn btn--link link-arrow btn--link-blue"><span class="btn-label">Learn More</span><span class="btn__arrow"></span></span></p>
                 </div>
             </a>
         </article>
-        <article class="post-95714 product type-product status-publish hentry product_type-product product_category-matter product_device_type-color-temperature-light product_company-innovation-matters-iot-gmbh">
-            <a href="https://csa-iot.org/csa_product/m2d-bridge-2/" data-uw-rm-brl="PR" data-uw-original-href="https://csa-iot.org/csa_product/m2d-bridge-2/">
+        <article class="post-95714 product type-product">
+            <a href="https://csa-iot.org/csa_product/test-product/">
                 <div class="inner">
                     <div class="contents">
-                        <div class="entry-image">
-                            <div class="inner">
-                                <img decoding="async" src="https://s3.us-east-1.amazonaws.com/assets.knackhq.com/assets/54e658034b4f44e42fb18201/66d8160bc0dd320288b03459/thumb_1/m2dr1_2_cut2.png" data-uw-rm-alt-original="" alt="innovation matters iot GmbH" data-uw-rm-alt="CT">
-                            </div>
-                        </div>
-                        <p class="entry-company notranslate">innovation matters iot GmbH</p>
-                        <h3 class="entry-title">M2D Bridge</h3>
-                        <p class="entry-category">Matter</p>
-                        <p class="entry-certificate-id">Certificate ID: CSA22001MAT40001-24</p>
-                        <div class="entry-excerpt"><p>DALI compatible color temperature broadcast bridge</p></div>
+                        <p class="entry-company notranslate">Test Company</p>
+                        <h3 class="entry-title">Test Product</h3>
                     </div>
-                    <p class="cta"><span class="btn btn--link link-arrow btn--link-blue"><span class="btn-label">Learn More</span><span class="btn__arrow"></span></span></p>
-                </div>
-            </a>
-        </article>
-        <article class="post-100406 product type-product status-publish hentry product_type-product product_category-matter product_device_type-basic-video-player product_company-mmd-hong-kong-holding-limited">
-            <a href="https://csa-iot.org/csa_product/philips-50pus7409/" data-uw-rm-brl="PR" data-uw-original-href="https://csa-iot.org/csa_product/philips-50pus7409/">
-                <div class="inner">
-                    <div class="contents">
-                        <div class="entry-image">
-                            <div class="inner">
-                                <img decoding="async" src="https://csa-iot.org/wp-content/uploads/2022/03/CSA-Certified-Product-default-01-1-300x263.jpg" data-uw-rm-alt-original="" alt="MMD HONG KONG HOLDING LIMITED" data-uw-rm-alt="CT">
-                            </div>
-                        </div>
-                        <p class="entry-company notranslate">MMD HONG KONG HOLDING LIMITED</p>
-                        <h3 class="entry-title">Philips 50PUS7409</h3>
-                        <p class="entry-category">Matter</p>
-                        <p class="entry-certificate-id">Certificate ID: CSA25368MAT45754-00</p>
-                        <div class="entry-excerpt"><p>Philips TV</p></div>
-                    </div>
-                    <p class="cta"><span class="btn btn--link link-arrow btn--link-blue"><span class="btn-label">Learn More</span><span class="btn__arrow"></span></span></p>
-                </div>
-            </a>
-        </article>
-        <article class="post-103911 product type-product status-publish hentry product_type-product product_category-matter product_device_type-aggregator product_company-connectivity-standards-alliance">
-            <a href="https://csa-iot.org/csa_product/test-product-3/" data-uw-rm-brl="PR" data-uw-original-href="https://csa-iot.org/csa_product/test-product-3/">
-                <div class="inner">
-                    <div class="contents">
-                        <div class="entry-image">
-                            <div class="inner">
-                                <img decoding="async" src="https://csa-iot.org/wp-content/uploads/2022/03/CSA-Certified-Product-default-01-1-300x263.jpg" data-uw-rm-alt-original="" alt="Connectivity Standards Alliance" data-uw-rm-alt="CT">
-                            </div>
-                        </div>
-                        <p class="entry-company notranslate">Connectivity Standards Alliance</p>
-                        <h3 class="entry-title">Test Product # 3</h3>
-                        <p class="entry-category">Matter</p>
-                        <div class="entry-excerpt"><p>Test</p></div>
-                    </div>
-                    <p class="cta"><span class="btn btn--link link-arrow btn--link-blue"><span class="btn-label">Learn More</span><span class="btn__arrow"></span></span></p>
                 </div>
             </a>
         </article>
@@ -683,10 +664,57 @@ mod tests {
 </div>
 "#;
 
+    const SAMPLE_DETAIL_HTML: &str = r#"
+<html>
+    <body>
+        <h1 class="entry-title">Test Product Detail</h1>
+        <p class="entry-company">Test Manufacturer</p>
+        <h6 class="entry-category">Test Device Type</h6>
+        
+        <div class="entry-product-details">
+            <div>
+                <ul>
+                    <li class="item">
+                        <span class="label">Certificate ID</span>
+                        <span class="value">CSA12345MAT12345-24</span>
+                    </li>
+                    <li class="item">
+                        <span class="label">Vendor ID</span>
+                        <span class="value">0x1234</span>
+                    </li>
+                    <li class="item">
+                        <span class="label">Product ID</span>
+                        <span class="value">5678</span>
+                    </li>
+                    <li class="item">
+                        <span class="label">Hardware Version</span>
+                        <span class="value">1.0</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+        
+        <table class="product-certificates-table">
+            <tr>
+                <td>Certification Date</td>
+                <td>2024-01-15</td>
+            </tr>
+            <tr>
+                <td>Software Version</td>
+                <td>2.1.0</td>
+            </tr>
+        </table>
+    </body>
+</html>
+"#;
+
     #[test]
     fn test_extractor_creation() {
         let extractor = MatterDataExtractor::new();
         assert!(extractor.is_ok());
+        
+        let extractor = extractor.unwrap();
+        assert_eq!(extractor.config.base_url, csa_iot::BASE_URL);
     }
 
     #[test]
@@ -710,103 +738,177 @@ mod tests {
     }
 
     #[test]
-    fn test_real_site_product_extraction() {
+    fn test_parse_numeric_id() {
         let extractor = MatterDataExtractor::new().unwrap();
         
-        let products = extractor.extract_basic_product_info(REAL_CSA_IOT_HTML, "https://csa-iot.org/csa-iot_products/?page=1").unwrap();
-        
-        // Should extract 5 products (one doesn't have certificate ID)
-        assert_eq!(products.len(), 5);
-        
-        // Test reverse order processing - first product should be the last in HTML
-        let first_product = &products[0];
-        assert_eq!(first_product.manufacturer, Some("Connectivity Standards Alliance".to_string()));
-        assert_eq!(first_product.model, Some("Test Product # 3".to_string()));
-        assert_eq!(first_product.certificate_id, None); // This one has no certificate ID
-        assert!(first_product.url.contains("/csa_product/test-product-3/"));
-        
-        // Test a product with certificate ID
-        let second_product = &products[1];
-        assert_eq!(second_product.manufacturer, Some("MMD HONG KONG HOLDING LIMITED".to_string()));
-        assert_eq!(second_product.model, Some("Philips 50PUS7409".to_string()));
-        assert_eq!(second_product.certificate_id, Some("CSA25368MAT45754-00".to_string()));
-        assert!(second_product.url.contains("/csa_product/philips-50pus7409/"));
-        
-        // Test another product to verify extraction consistency
-        let third_product = &products[2];
-        assert_eq!(third_product.manufacturer, Some("innovation matters iot GmbH".to_string()));
-        assert_eq!(third_product.model, Some("M2D Bridge".to_string()));
-        assert_eq!(third_product.certificate_id, Some("CSA22001MAT40001-24".to_string()));
-        assert!(third_product.url.contains("/csa_product/m2d-bridge-2/"));
+        assert_eq!(extractor.parse_numeric_id("123"), Some(123));
+        assert_eq!(extractor.parse_numeric_id("0x1A"), Some(26));
+        assert_eq!(extractor.parse_numeric_id("0X1A"), Some(26));
+        assert_eq!(extractor.parse_numeric_id("not_a_number"), None);
+        assert_eq!(extractor.parse_numeric_id(""), None);
     }
 
     #[test]
-    fn test_real_site_certificate_id_extraction() {
+    fn test_page_type_detection() {
         let extractor = MatterDataExtractor::new().unwrap();
-        let html = Html::parse_document(REAL_CSA_IOT_HTML);
+        let html = Html::parse_document(SAMPLE_LISTING_HTML);
         
-        // Test certificate ID extraction from first article (Tuya)
-        let article_selector = Selector::parse("article").unwrap();
-        let first_article = html.select(&article_selector).next().unwrap();
-        let cert_id = extractor.extract_certificate_id_from_article(&first_article);
-        assert_eq!(cert_id, Some("CSA22059MAT40059-24".to_string()));
+        // Should detect listing pages
+        assert!(extractor.is_listing_page(&html, "https://csa-iot.org/csa-iot_products/?page=1"));
+        assert!(extractor.is_listing_page(&html, "https://csa-iot.org/products"));
+        
+        // Should not detect detail pages - use a simple HTML without multiple articles
+        let detail_html = Html::parse_document("<html><body><h1>Single Product</h1></body></html>");
+        assert!(!extractor.is_listing_page(&detail_html, "https://csa-iot.org/csa_product/test-123"));
     }
 
     #[test]
-    fn test_real_site_url_extraction() {
+    fn test_product_url_extraction() {
         let extractor = MatterDataExtractor::new().unwrap();
-        let html = Html::parse_document(REAL_CSA_IOT_HTML);
+        let html = Html::parse_document(SAMPLE_LISTING_HTML);
         
         let urls = extractor.extract_product_urls(&html, "https://csa-iot.org").unwrap();
         
-        // Should extract 5 product URLs
-        assert_eq!(urls.len(), 5);
-        
-        // Check specific URLs
+        assert_eq!(urls.len(), 3);
         assert!(urls.contains(&"https://csa-iot.org/csa_product/wi-fi-plug-27/".to_string()));
         assert!(urls.contains(&"https://csa-iot.org/csa_product/wi-fi-plug-28/".to_string()));
-        assert!(urls.contains(&"https://csa-iot.org/csa_product/m2d-bridge-2/".to_string()));
-        assert!(urls.contains(&"https://csa-iot.org/csa_product/philips-50pus7409/".to_string()));
-        assert!(urls.contains(&"https://csa-iot.org/csa_product/test-product-3/".to_string()));
+        assert!(urls.contains(&"https://csa-iot.org/csa_product/test-product/".to_string()));
     }
 
     #[test]
-    fn test_real_site_page_type_detection() {
+    fn test_certificate_id_extraction() {
         let extractor = MatterDataExtractor::new().unwrap();
+        let html = Html::parse_document(SAMPLE_LISTING_HTML);
         
-        // Real listing page
-        let listing_html = Html::parse_document(REAL_CSA_IOT_HTML);
-        assert!(extractor.is_listing_page(&listing_html, "https://csa-iot.org/csa-iot_products/?page=1"));
-        
-        // Mock detail page (single product)
-        let detail_html = Html::parse_document(r#"
-            <div class="product-detail">
-                <h1>Single Product</h1>
-            </div>
-        "#);
-        assert!(!extractor.is_listing_page(&detail_html, "https://csa-iot.org/csa_product/wi-fi-plug-27/"));
+        if let Ok(article_selector) = scraper::Selector::parse("div.post-feed article") {
+            let articles: Vec<_> = html.select(&article_selector).collect();
+            
+            // First article should have certificate ID
+            let cert_id = extractor.extract_certificate_id_from_article(&articles[0]);
+            assert_eq!(cert_id, Some("CSA22059MAT40059-24".to_string()));
+            
+            // Third article should have no certificate ID
+            let cert_id = extractor.extract_certificate_id_from_article(&articles[2]);
+            assert_eq!(cert_id, None);
+        }
     }
 
     #[test]
-    fn test_real_site_product_list_extraction() {
+    fn test_product_list_extraction() {
         let extractor = MatterDataExtractor::new().unwrap();
-        let html = Html::parse_document(REAL_CSA_IOT_HTML);
+        
+        let products = extractor.extract_basic_product_info(
+            SAMPLE_LISTING_HTML, 
+            "https://csa-iot.org/csa-iot_products/?page=1"
+        ).unwrap();
+        
+        assert_eq!(products.len(), 3);
+        
+        // Test reverse order processing - first product should be the last in HTML
+        let first_product = &products[0];
+        assert_eq!(first_product.manufacturer, Some("Test Company".to_string()));
+        assert_eq!(first_product.model, Some("Test Product".to_string()));
+        assert_eq!(first_product.certificate_id, None);
+        assert_eq!(first_product.page_id, Some(1));
+        assert_eq!(first_product.index_in_page, Some(0));
+        
+        // Second product
+        let second_product = &products[1];
+        assert_eq!(second_product.manufacturer, Some("Tuya Global Inc.".to_string()));
+        assert_eq!(second_product.model, Some("Wi-Fi plug 2".to_string()));
+        assert_eq!(second_product.certificate_id, Some("CSA22060MAT40060-24".to_string()));
+        assert_eq!(second_product.page_id, Some(1));
+        assert_eq!(second_product.index_in_page, Some(1));
+    }
 
-        let products = extractor.extract_products_from_list(&html, 1).unwrap();
-        assert_eq!(products.len(), 5);
+    #[test]
+    fn test_product_detail_extraction() {
+        let extractor = MatterDataExtractor::new().unwrap();
         
-        // Verify reverse order processing and real data
-        assert_eq!(products[0].manufacturer, Some("Connectivity Standards Alliance".to_string()));
-        assert_eq!(products[1].manufacturer, Some("MMD HONG KONG HOLDING LIMITED".to_string()));
-        assert_eq!(products[2].manufacturer, Some("innovation matters iot GmbH".to_string()));
-        assert_eq!(products[3].manufacturer, Some("Tuya Global Inc.".to_string()));
-        assert_eq!(products[4].manufacturer, Some("Tuya Global Inc.".to_string()));
+        let html = Html::parse_document(SAMPLE_DETAIL_HTML);
+        let detail = extractor.extract_product_detail(&html, "https://test.com/product/123".to_string()).unwrap();
         
-        // Check certificate IDs
-        assert_eq!(products[0].certificate_id, None); // Test product has no cert ID
-        assert_eq!(products[1].certificate_id, Some("CSA25368MAT45754-00".to_string()));
-        assert_eq!(products[2].certificate_id, Some("CSA22001MAT40001-24".to_string()));
-        assert_eq!(products[3].certificate_id, Some("CSA22060MAT40060-24".to_string()));
-        assert_eq!(products[4].certificate_id, Some("CSA22059MAT40059-24".to_string()));
+        assert_eq!(detail.url, "https://test.com/product/123");
+        assert_eq!(detail.model, Some("Test Product Detail".to_string()));
+        assert_eq!(detail.manufacturer, Some("Test Manufacturer".to_string()));
+        assert_eq!(detail.device_type, Some("Test Device Type".to_string()));
+        assert_eq!(detail.certification_id, Some("CSA12345MAT12345-24".to_string()));
+        assert_eq!(detail.certification_date, Some("2024-01-15".to_string()));
+        assert_eq!(detail.vid, Some(0x1234));
+        assert_eq!(detail.pid, Some(5678));
+        assert_eq!(detail.hardware_version, Some("1.0".to_string()));
+        assert_eq!(detail.software_version, Some("2.1.0".to_string()));
+    }
+
+    #[test]
+    fn test_detail_list_extraction() {
+        let extractor = MatterDataExtractor::new().unwrap();
+        let html = Html::parse_document(SAMPLE_DETAIL_HTML);
+        
+        let mut detail = ProductDetail {
+            url: "test".to_string(),
+            page_id: None,
+            index_in_page: None,
+            id: None,
+            manufacturer: None,
+            model: None,
+            device_type: None,
+            certification_id: None,
+            certification_date: None,
+            software_version: None,
+            hardware_version: None,
+            vid: None,
+            pid: None,
+            family_sku: None,
+            family_variant_sku: None,
+            firmware_version: None,
+            family_id: None,
+            tis_trp_tested: None,
+            specification_version: None,
+            transport_interface: None,
+            primary_device_type_id: None,
+            application_categories: None,
+            description: None,
+            compliance_document_url: None,
+            program_type: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        
+        extractor.extract_from_detail_list(&html, &mut detail).unwrap();
+        
+        assert_eq!(detail.certification_id, Some("CSA12345MAT12345-24".to_string()));
+        assert_eq!(detail.vid, Some(0x1234));
+        assert_eq!(detail.pid, Some(5678));
+        assert_eq!(detail.hardware_version, Some("1.0".to_string()));
+    }
+
+    #[test]
+    fn test_total_pages_extraction() {
+        let extractor = MatterDataExtractor::new().unwrap();
+        
+        let html_with_pagination = r#"
+        <div class="pagination">
+            <a href="?page=1">1</a>
+            <a href="?page=2">2</a>
+            <a href="?page=5">5</a>
+        </div>
+        "#;
+        
+        let total_pages = extractor.extract_total_pages(html_with_pagination).unwrap();
+        assert_eq!(total_pages, 5);
+    }
+
+    #[test]
+    fn test_extract_product_data_json() {
+        let extractor = MatterDataExtractor::new().unwrap();
+        
+        let result = extractor.extract_product_data(SAMPLE_DETAIL_HTML);
+        assert!(result.is_ok());
+        
+        let json = result.unwrap();
+        assert!(json["model"].as_str().unwrap().contains("Test Product Detail"));
+        assert!(json["manufacturer"].as_str().unwrap().contains("Test Manufacturer"));
     }
 }
+

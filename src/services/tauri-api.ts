@@ -28,11 +28,14 @@ export class TauriApiService {
   // =========================================================================
 
   /**
-   * Start a new crawling session with the provided comprehensive configuration
+   * Start a new crawling session with optional page range
    */
-  async startCrawling(config: BackendCrawlerConfig): Promise<string> {
+  async startCrawling(startPage?: number, endPage?: number): Promise<string> {
     try {
-      const sessionId = await invoke<string>('start_crawling', { config });
+      const sessionId = await invoke<string>('start_crawling', { 
+        startPage: startPage || undefined,
+        endPage: endPage || undefined 
+      });
       return sessionId;
     } catch (error) {
       throw new Error(`Failed to start crawling: ${error}`);
@@ -106,6 +109,39 @@ export class TauriApiService {
       return await invoke<string[]>('get_active_sessions');
     } catch (error) {
       throw new Error(`Failed to get active sessions: ${error}`);
+    }
+  }
+
+  /**
+   * Get products from database with pagination
+   */
+  async getProducts(page?: number, limit?: number): Promise<any> {
+    try {
+      return await invoke<any>('get_products', { page, limit });
+    } catch (error) {
+      throw new Error(`Failed to get products: ${error}`);
+    }
+  }
+
+  /**
+   * Get local database statistics
+   */
+  async getLocalDbStats(): Promise<any> {
+    try {
+      return await invoke<any>('get_local_db_stats');
+    } catch (error) {
+      throw new Error(`Failed to get local DB stats: ${error}`);
+    }
+  }
+
+  /**
+   * Get analysis data for Analysis tab
+   */
+  async getAnalysisData(): Promise<any> {
+    try {
+      return await invoke<any>('get_analysis_data');
+    } catch (error) {
+      throw new Error(`Failed to get analysis data: ${error}`);
     }
   }
 
@@ -352,7 +388,7 @@ export class TauriApiService {
   }
 
   /**
-   * Get frontend configuration (complete config)
+   * Get frontend configuration from backend
    */
   async getFrontendConfig(): Promise<any> {
     try {

@@ -30,6 +30,12 @@ export const StatusTab: Component = () => {
   // const siteAnalysisResult = crawlerStore.siteAnalysisResult;
   // const isAnalyzing = crawlerStore.isAnalyzing;
 
+  // 설정은 백엔드에서 관리됨 - 여기서는 제거됨
+
+  // 현재 크롤링 모드 상태
+  const [currentCrawlingMode, setCurrentCrawlingMode] = createSignal<string>('분석 필요');
+  const [plannedRange, setPlannedRange] = createSignal<[number, number] | null>(null);
+
   const getStatusColor = () => {
     switch (crawlingStatus()) {
       case 'running': return '#22c55e';
@@ -67,7 +73,6 @@ export const StatusTab: Component = () => {
 
   // 결과 표시용 헬퍼 함수들
   const getActiveResult = () => statusCheckResult() || null;
-  const getSuggestedRange = () => statusCheckResult()?.recommendation?.suggested_range || null;
   const getRecommendationReason = () => {
     if (statusCheckResult()) {
       return statusCheckResult()!.recommendation?.reason || '권장 사항이 없습니다.';
@@ -81,80 +86,127 @@ export const StatusTab: Component = () => {
     return '상태 체크를 먼저 실행해주세요.';
   };
 
-  const startCrawling = async () => {
-    console.log('🔥 startCrawling 함수 호출됨');
-    const result = getActiveResult();
-    console.log('🔍 getActiveResult 결과:', result);
+  // 크롤링 계획 분석
+  const analyzeCrawlingPlan = () => {
+    const statusResult = getActiveResult();
+    const siteResult = crawlerStore.siteAnalysisResult();
     
-    // 상태 체크 결과가 있으면 추천 범위로, 없으면 기본 설정으로 크롤링 시작
-    const suggestion = result ? getSuggestedRange() : null;
-    const config = {
-      // 기본 설정 (상태 체크 결과가 없어도 동작)
-      start_page: suggestion ? suggestion[0] : 1,
-      end_page: suggestion ? suggestion[1] : 10, // 기본값을 10으로 설정
-      concurrency: 3,
-      delay_ms: 1000,
+    let startPage = 1;
+    let endPage = 50; // 백엔드 기본값 사용
+    let mode = '기본 설정 모드';
+    
+    if (statusResult) {
+      const suggestion = statusResult.recommendation?.suggested_range;
+      if (suggestion && suggestion.length >= 2) {
+        startPage = suggestion[0];
+        endPage = suggestion[1];
+        mode = '스마트 추천 모드';
+      }
+    } else if (siteResult) {
+      const dbStatus = siteResult.database_status;
+      const siteStatus = siteResult.site_status;
       
-      // 고급 설정
-      page_range_limit: 500,
-      product_list_retry_count: 3,
-      product_detail_retry_count: 3,
-      products_per_page: 12,
-      auto_add_to_local_db: true,
-      auto_status_check: true,
-      crawler_type: "smart",
-      
-      // 배치 처리
-      batch_size: 50,
-      batch_delay_ms: 2000,
-      enable_batch_processing: true,
-      batch_retry_limit: 3,
-      
-      // URL 설정
-      base_url: "https://csa-iot.org",
-      matter_filter_url: "https://csa-iot.org/csa_product/?p_type%5B%5D=14&f_program_type%5B%5D=1049",
-      
-      // 타임아웃 설정
-      page_timeout_ms: 30000,
-      product_detail_timeout_ms: 20000,
-      
-      // 동시성 및 성능
-      initial_concurrency: 3,
-      detail_concurrency: 5,
-      retry_concurrency: 2,
-      min_request_delay_ms: 500,
-      max_request_delay_ms: 2000,
-      retry_start: 1,
-      retry_max: 3,
-      cache_ttl_ms: 300000,
-      
-      // 브라우저 설정
-      headless_browser: true,
-      max_concurrent_tasks: 10,
-      request_delay: 1000,
-      custom_user_agent: "rMatterCertis/2.0",
-      
-      // 로깅
-      logging: {
-        level: "info",
-        enable_stack_trace: false,
-        enable_timestamp: true,
-        components: {
-          "crawler": "info",
-          "http": "warn",
-          "database": "info"
+      if (dbStatus && siteStatus) {
+        const dbMaxPage = Math.max(...(dbStatus.page_range || [0]));
+        const siteMaxPage = siteStatus.total_pages || 50; // 백엔드 기본값 사용
+        
+        if (dbMaxPage > 0) {
+          startPage = dbMaxPage + 1;
+          endPage = Math.min(startPage + 50 - 1, siteMaxPage); // 백엔드 기본값 사용
+          mode = '갭 기반 크롤링 모드';
+        } else {
+          startPage = 1;
+          endPage = Math.min(50, siteMaxPage); // 백엔드 기본값 사용
+          mode = '초기 크롤링 모드';
         }
       }
-    };
+    }
+    
+    setCurrentCrawlingMode(mode);
+    setPlannedRange([startPage, endPage]);
+    return { mode, startPage, endPage };
+  };
+
+  // 상태나 설정 변경 시 크롤링 계획 재분석
+  const updateCrawlingPlan = () => {
+    analyzeCrawlingPlan();
+  };
+
+  const startCrawling = async () => {
+    console.log('🔥 startCrawling 함수 호출됨');
+    const statusResult = getActiveResult();
+    const siteResult = crawlerStore.siteAnalysisResult();
+    console.log('🔍 상태 체크 결과:', statusResult);
+    console.log('🔍 사이트 분석 결과:', siteResult);
+    
+    // 스마트한 페이지 범위 계산 로직
+    let startPage = 1;
+    let endPage = 50; // 백엔드 기본값 사용
+    let crawlingMode = '기본 모드';
+    
+    if (statusResult) {
+      // 실시간 상태 체크 결과가 있는 경우 (추천 범위 사용)
+      const suggestion = statusResult.recommendation?.suggested_range;
+      if (suggestion && suggestion.length >= 2) {
+        startPage = suggestion[0];
+        endPage = suggestion[1];
+        crawlingMode = '스마트 추천 모드';
+        console.log('📊 실시간 상태 체크 기반 추천:', `${startPage}-${endPage} 페이지`);
+      }
+    } else if (siteResult) {
+      // 사이트 분석 결과만 있는 경우 (갭 기반 크롤링)
+      const dbStatus = siteResult.database_status;
+      const siteStatus = siteResult.site_status;
+      
+      if (dbStatus && siteStatus) {
+        const dbMaxPage = Math.max(...(dbStatus.page_range || [0]));
+        const siteMaxPage = siteStatus.total_pages || 50; // 백엔드 기본값 사용
+        
+        if (dbMaxPage > 0) {
+          // DB에 데이터가 있는 경우: DB 마지막 페이지 다음부터 크롤링
+          startPage = dbMaxPage + 1;
+          endPage = Math.min(startPage + 50 - 1, siteMaxPage); // 백엔드 기본값 사용
+          crawlingMode = '갭 기반 크롤링 모드';
+          console.log('📈 갭 기반 크롤링:', `DB 마지막 페이지(${dbMaxPage}) 이후 ${startPage}-${endPage} 페이지`);
+        } else {
+          // DB가 비어있는 경우: 처음부터 크롤링
+          startPage = 1;
+          endPage = Math.min(50, siteMaxPage); // 백엔드 기본값 사용
+          crawlingMode = '초기 크롤링 모드';
+          console.log('🆕 초기 크롤링:', `처음부터 ${startPage}-${endPage} 페이지`);
+        }
+      }
+    } else {
+      // 분석 결과가 없는 경우: 백엔드 기본값 사용
+      startPage = 1;
+      endPage = 50; // 백엔드 기본값 사용
+      crawlingMode = '기본 설정 모드';
+      console.log('⚙️ 기본 설정 모드:', `${startPage}-${endPage} 페이지`);
+    }
+    
+    // 페이지 범위 검증
+    if (startPage > endPage) {
+      alert('시작 페이지가 끝 페이지보다 클 수 없습니다.');
+      return;
+    }
+    
+    if (endPage - startPage + 1 > 100) {
+      alert('한 번에 100페이지 이상은 크롤링할 수 없습니다.');
+      return;
+    }
     
     try {
       setCrawlingStatus('running');
-      console.log('🚀 크롤링 시작:', config);
-      console.log('📊 상태 체크 결과 기반:', result ? '✅ 스마트 모드' : '🔧 기본 모드');
+      console.log('� 크롤링 시작:', {
+        mode: crawlingMode,
+        startPage,
+        endPage,
+        totalPages: endPage - startPage + 1
+      });
       
-      // 실제 크롤링 시작
+      // 실제 크롤링 시작 (백엔드 설정 사용)
       console.log('📞 tauriApi.startCrawling 호출 시도...');
-      const sessionId = await tauriApi.startCrawling(config);
+      const sessionId = await tauriApi.startCrawling(startPage, endPage);
       console.log('✅ 크롤링 세션 시작됨:', sessionId);
       
       // 실시간 진행률 업데이트 시작 (crawlerStore에서 처리)
@@ -227,6 +279,8 @@ export const StatusTab: Component = () => {
       
       if (result) {
         console.log('✅ 사이트 분석 완료:', result);
+        // 사이트 분석 완료 후 크롤링 계획 재분석
+        updateCrawlingPlan();
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '알 수 없는 오류';
@@ -276,6 +330,9 @@ export const StatusTab: Component = () => {
       console.log('✅ 상태 체크 완료:', result);
       
       setStatusCheckResult(result);
+      
+      // 상태 체크 완료 후 크롤링 계획 재분석
+      updateCrawlingPlan();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '알 수 없는 오류';
       setStatusCheckError(`상태 체크 실패: ${errorMessage}`);
@@ -380,6 +437,11 @@ export const StatusTab: Component = () => {
     );
   };
 
+  // 컴포넌트 마운트 시 크롤링 계획 분석
+  setTimeout(() => {
+    updateCrawlingPlan();
+  }, 1000);
+
   return (
     <div style="padding: 24px; background: white; color: black; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
       <h2 style="margin: 0 0 24px 0; font-size: 24px; font-weight: 600; color: #1f2937;">📊 상태 & 제어</h2>
@@ -428,9 +490,54 @@ export const StatusTab: Component = () => {
         </div>
       </div>
 
+      {/* 크롤링 설정 안내 */}
+      <div style="margin-bottom: 32px; padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <h3 style="margin: 0 0 4px 0; font-size: 16px; font-weight: 500; color: #374151;">⚙️ 크롤링 설정</h3>
+            <p style="margin: 0; font-size: 13px; color: #6b7280;">
+              크롤링 설정은 백엔드에서 관리됩니다. 설정을 변경하려면 '설정' 탭을 이용하세요.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              // 설정 탭으로 이동하는 로직 (부모 컴포넌트에서 처리)
+              console.log('설정 탭으로 이동 요청');
+            }}
+            style="padding: 8px 16px; background: #3b82f6; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500;"
+          >
+            📝 설정 탭으로 이동
+          </button>
+        </div>
+      </div>
+
       {/* 스마트 크롤링 제어 */}
       <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fefefe;">
         <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 500; color: #374151;">🤖 스마트 크롤링 제어</h3>
+        
+        {/* 현재 크롤링 계획 표시 */}
+        <div style="margin-bottom: 16px; padding: 12px; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="font-weight: 500; color: #374151;">📋 현재 크롤링 계획:</span>
+            <button
+              onClick={updateCrawlingPlan}
+              style="padding: 4px 8px; background: #6b7280; color: white; border: none; border-radius: 3px; font-size: 11px; cursor: pointer;"
+            >
+              재분석
+            </button>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px;">
+            <span style="color: #6b7280;">
+              <strong>모드:</strong> <span style="color: #059669;">{currentCrawlingMode()}</span>
+            </span>
+            {plannedRange() && (
+              <span style="color: #6b7280;">
+                <strong>범위:</strong> <span style="color: #dc2626;">{plannedRange()![0]}-{plannedRange()![1]} 페이지</span>
+                <span style="color: #6b7280; margin-left: 8px;">({plannedRange()![1] - plannedRange()![0] + 1}페이지)</span>
+              </span>
+            )}
+          </div>
+        </div>
         
         {statusCheckResult() && (
           <div style="margin-bottom: 16px; padding: 12px; background: #f0f9ff; border-radius: 6px; border-left: 4px solid #3b82f6; font-size: 14px;">
@@ -450,9 +557,13 @@ export const StatusTab: Component = () => {
           >
             {crawlingStatus() === 'running' 
               ? '🔄 크롤링 중...' 
-              : statusCheckResult() 
+              : currentCrawlingMode() === '스마트 추천 모드' 
                 ? '🤖 스마트 크롤링 시작' 
-                : '▶️ 기본 크롤링 시작 (1-10 페이지)'
+                : currentCrawlingMode() === '갭 기반 크롤링 모드'
+                  ? '📈 갭 기반 크롤링 시작'
+                  : currentCrawlingMode() === '초기 크롤링 모드'
+                    ? '🆕 초기 크롤링 시작'
+                    : '▶️ 기본 크롤링 시작'
             }
           </button>
           
@@ -475,7 +586,10 @@ export const StatusTab: Component = () => {
 
         {!statusCheckResult() && (
           <div style="margin-top: 12px; padding: 8px; background: #f0f9ff; border-radius: 4px; font-size: 13px; color: #1e40af;">
-            💡 상태 체크 없이도 기본 크롤링(1-10 페이지)을 시작할 수 있습니다. 최적화된 크롤링을 원하시면 먼저 "상태 체크"를 실행해주세요.
+            💡 {currentCrawlingMode() === '분석 필요' 
+              ? '상태 체크나 사이트 분석을 실행하면 더 정확한 크롤링 계획을 수립할 수 있습니다.' 
+              : `현재 ${currentCrawlingMode()}로 크롤링이 진행됩니다. 더 정확한 분석을 위해 상태 체크를 실행해보세요.`
+            }
           </div>
         )}
       </div>

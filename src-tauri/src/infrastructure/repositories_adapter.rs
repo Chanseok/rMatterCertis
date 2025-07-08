@@ -206,4 +206,8 @@ impl ProductRepository for SqliteProductRepository {
     async fn get_unique_device_types(&self) -> Result<Vec<String>> {
         Ok(vec![])
     }
+    
+    async fn get_latest_updated_product(&self) -> Result<Option<Product>> {
+        Ok(None)
+    }
 }

@@ -116,9 +116,12 @@ impl ServiceBasedBatchCrawlingEngine {
     ) -> Self {
         // 서비스 설정
         let collector_config = CollectorConfig {
+            max_concurrent: config.concurrency,
             concurrency: config.concurrency,
+            delay_between_requests: Duration::from_millis(config.delay_ms),
             delay_ms: config.delay_ms,
             batch_size: config.batch_size,
+            retry_attempts: config.retry_max,
             retry_max: config.retry_max,
         };
         
@@ -137,14 +140,14 @@ impl ServiceBasedBatchCrawlingEngine {
         )) as Arc<dyn DatabaseAnalyzer>;
 
         let product_list_collector = Arc::new(ProductListCollectorImpl::new(
-            http_client.clone(),
-            data_extractor.clone(),
+            Arc::new(tokio::sync::Mutex::new(http_client.clone())),
+            Arc::new(data_extractor.clone()),
             collector_config.clone(),
         )) as Arc<dyn ProductListCollector>;
 
         let product_detail_collector = Arc::new(ProductDetailCollectorImpl::new(
-            http_client,
-            data_extractor,
+            Arc::new(tokio::sync::Mutex::new(http_client)),
+            Arc::new(data_extractor),
             collector_config,
         )) as Arc<dyn ProductDetailCollector>;
 
@@ -296,8 +299,11 @@ impl ServiceBasedBatchCrawlingEngine {
         let mut failed_urls = Vec::new();
 
         match self.product_detail_collector.collect_details(product_urls).await {
-            Ok(products) => {
-                successful_products = products;
+            Ok(product_details) => {
+                // ProductDetail을 Product로 변환
+                successful_products = product_details.into_iter()
+                    .map(|detail| crate::infrastructure::crawling_service_impls::product_detail_to_product(detail))
+                    .collect();
                 info!("✅ Initial collection successful: {} products", successful_products.len());
             }
             Err(e) => {
@@ -360,8 +366,9 @@ impl ServiceBasedBatchCrawlingEngine {
                     info!("🔄 Retrying product detail collection for: {}", url);
                     
                     match self.product_detail_collector.collect_details(&[url.clone()]).await {
-                        Ok(mut products) => {
-                            if let Some(product) = products.pop() {
+                        Ok(mut product_details) => {
+                            if let Some(detail) = product_details.pop() {
+                                let product = crate::infrastructure::crawling_service_impls::product_detail_to_product(detail);
                                 info!("✅ Retry successful for: {}", url);
                                 retry_products.push(product);
                                 

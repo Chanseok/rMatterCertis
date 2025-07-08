@@ -8,7 +8,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::domain::product::Product;
+use crate::domain::product::{Product, ProductDetail};
 
 /// 사이트 상태 체크 서비스
 #[async_trait]
@@ -53,13 +53,13 @@ pub trait ProductListCollector: Send + Sync {
 #[async_trait]
 pub trait ProductDetailCollector: Send + Sync {
     /// 여러 제품의 상세정보 수집
-    async fn collect_details(&self, urls: &[String]) -> Result<Vec<Product>>;
+    async fn collect_details(&self, urls: &[String]) -> Result<Vec<ProductDetail>>;
     
     /// 단일 제품 상세정보 수집
-    async fn collect_single_product(&self, url: &str) -> Result<Product>;
+    async fn collect_single_product(&self, url: &str) -> Result<ProductDetail>;
     
     /// 배치별 제품 수집
-    async fn collect_product_batch(&self, urls: &[String]) -> Result<Vec<Product>>;
+    async fn collect_product_batch(&self, urls: &[String]) -> Result<Vec<ProductDetail>>;
 }
 
 /// 사이트 상태 정보

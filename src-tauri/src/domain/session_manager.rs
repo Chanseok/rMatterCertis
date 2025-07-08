@@ -408,6 +408,62 @@ impl SessionManager {
         sessions.values().cloned().collect()
     }
 
+    /// Check if session should continue (not stopped/cancelled)
+    pub async fn should_continue(&self, session_id: &str) -> bool {
+        let sessions = self.sessions.read().await;
+        if let Some(session) = sessions.get(session_id) {
+            !matches!(session.status, SessionStatus::Stopped | SessionStatus::Failed)
+        } else {
+            false
+        }
+    }
+
+    /// Stop a session (set status to Stopped)
+    pub async fn stop_session(&self, session_id: &str) -> Result<(), String> {
+        let mut sessions = self.sessions.write().await;
+        
+        if let Some(session) = sessions.get_mut(session_id) {
+            session.status = SessionStatus::Stopped;
+            session.last_updated_at = Utc::now();
+            tracing::info!("🛑 Session {} marked as stopped", session_id);
+            Ok(())
+        } else {
+            Err(format!("Session not found: {session_id}"))
+        }
+    }
+
+    /// Pause a session
+    pub async fn pause_session(&self, session_id: &str) -> Result<(), String> {
+        let mut sessions = self.sessions.write().await;
+        
+        if let Some(session) = sessions.get_mut(session_id) {
+            session.status = SessionStatus::Paused;
+            session.last_updated_at = Utc::now();
+            tracing::info!("⏸️  Session {} paused", session_id);
+            Ok(())
+        } else {
+            Err(format!("Session not found: {session_id}"))
+        }
+    }
+
+    /// Resume a session
+    pub async fn resume_session(&self, session_id: &str) -> Result<(), String> {
+        let mut sessions = self.sessions.write().await;
+        
+        if let Some(session) = sessions.get_mut(session_id) {
+            if session.status == SessionStatus::Paused {
+                session.status = SessionStatus::Running;
+                session.last_updated_at = Utc::now();
+                tracing::info!("▶️  Session {} resumed", session_id);
+                Ok(())
+            } else {
+                Err(format!("Session {} is not paused (current status: {:?})", session_id, session.status))
+            }
+        } else {
+            Err(format!("Session not found: {session_id}"))
+        }
+    }
+
     /// Calculate estimated time of arrival
     async fn calculate_eta(&self, session: &CrawlingSessionState) -> Option<DateTime<Utc>> {
         if session.current_page == 0 || session.total_pages == 0 {

@@ -71,4 +71,7 @@ pub trait ProductRepository: Send + Sync {
     ) -> Result<Vec<MatterProduct>>;
     async fn get_unique_manufacturers(&self) -> Result<Vec<String>>;
     async fn get_unique_device_types(&self) -> Result<Vec<String>>;
+    
+    // Database analysis methods
+    async fn get_latest_updated_product(&self) -> Result<Option<Product>>;
 }

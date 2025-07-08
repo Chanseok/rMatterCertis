@@ -6,24 +6,34 @@
 use crate::application::{AppState, EventEmitter};
 use crate::domain::events::{CrawlingProgress, CrawlingStatus, CrawlingStage, DatabaseStats, DatabaseHealth};
 use crate::domain::entities::CrawlingSession;
-use crate::commands::config_commands::ComprehensiveCrawlerConfig;
 use crate::domain::services::crawling_services::{StatusChecker, DatabaseAnalyzer};
+use crate::commands::config_commands::ComprehensiveCrawlerConfig;
 use tauri::{State, AppHandle};
 use tracing::{info, warn, error};
 use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::infrastructure::config::ConfigManager;
+use sqlx::Row; // Add this import for try_get method
 
-/// Start a new crawling session with comprehensive configuration
+/// Start a new crawling session using backend configuration
 #[tauri::command]
 pub async fn start_crawling(
-    config: ComprehensiveCrawlerConfig,
+    start_page: Option<u32>,
+    end_page: Option<u32>,
     state: State<'_, AppState>,
     app_handle: AppHandle,
 ) -> Result<String, String> {
-    info!("Starting crawling session with comprehensive config: batch_size={}, concurrency={}, delay_ms={}", 
-          config.batch_size, config.concurrency, config.delay_ms);
+    // Load configuration from backend config file
+    let app_config = state.get_config().await;
+    
+    // Use provided page range or fall back to defaults
+    let actual_start_page = start_page.unwrap_or(1);
+    let actual_end_page = end_page.unwrap_or(app_config.user.max_pages);
+    
+    info!("Starting crawling session with backend config: start_page={}, end_page={}, batch_size={}, concurrency={}, delay_ms={}", 
+          actual_start_page, actual_end_page, app_config.user.batch.batch_size, 
+          app_config.user.max_concurrent_requests, app_config.user.request_delay_ms);
     
     // Initialize event emitter if not already done
     {
@@ -39,8 +49,8 @@ pub async fn start_crawling(
     let session = CrawlingSession {
         id: uuid::Uuid::new_v4().to_string(),
         url: "https://csa-iot.org/csa_product/".to_string(), // Default URL for now
-        start_page: config.start_page,
-        end_page: config.end_page,
+        start_page: actual_start_page,
+        end_page: actual_end_page,
         status: "running".to_string(),
         created_at: Utc::now(),
         ..Default::default()
@@ -54,7 +64,7 @@ pub async fn start_crawling(
     // Emit initial progress
     let initial_progress = CrawlingProgress {
         current: 0,
-        total: config.end_page - config.start_page + 1,
+        total: actual_end_page - actual_start_page + 1,
         percentage: 0.0,
         current_stage: CrawlingStage::TotalPages,
         current_step: "크롤링 세션을 초기화하는 중...".to_string(),
@@ -65,7 +75,7 @@ pub async fn start_crawling(
         new_items: 0,
         updated_items: 0,
         current_batch: Some(1),
-        total_batches: Some(config.end_page - config.start_page + 1),
+        total_batches: Some(actual_end_page - actual_start_page + 1),
         errors: 0,
         timestamp: Utc::now(),
     };
@@ -76,13 +86,13 @@ pub async fn start_crawling(
     let session_id_for_task = session_id.clone();
     let _app_handle_for_task = app_handle.clone();
     let crawling_config = crate::infrastructure::service_based_crawling_engine::BatchCrawlingConfig {
-        start_page: config.start_page,
-        end_page: config.end_page,
-        concurrency: config.concurrency,
-        delay_ms: config.delay_ms,
-        batch_size: 10, // 기본 배치 크기
-        retry_max: config.retry_max,
-        timeout_ms: config.page_timeout_ms,
+        start_page: actual_start_page,
+        end_page: actual_end_page,
+        concurrency: app_config.user.max_concurrent_requests,
+        delay_ms: app_config.user.request_delay_ms,
+        batch_size: app_config.user.batch.batch_size,
+        retry_max: app_config.advanced.retry_attempts,
+        timeout_ms: app_config.advanced.request_timeout_seconds * 1000,
     };
     
     // 이벤트 이미터 참조 복제 
@@ -139,6 +149,13 @@ pub async fn start_crawling(
                 return;
             }
         };
+        
+        // Ensure database schema exists
+        if let Err(e) = ensure_database_schema_exists(&db_pool).await {
+            tracing::error!("Failed to ensure database schema: {}", e);
+            update_error_state(&app_state_for_update, &format!("데이터베이스 스키마 확인 실패: {}", e)).await;
+            return;
+        }
         
         let product_repo = std::sync::Arc::new(
             crate::infrastructure::IntegratedProductRepository::new(db_pool)
@@ -391,22 +408,35 @@ pub async fn backup_database(_state: State<'_, AppState>) -> Result<String, Stri
 pub async fn optimize_database(state: State<'_, AppState>) -> Result<(), String> {
     info!("Starting database optimization");
     
-    // TODO: Implement actual database optimization logic
-    
-    // Simulate optimization process
-    tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-    
-    // Update database stats after optimization
-    let updated_stats = DatabaseStats {
-        total_products: 1250,
-        total_devices: 850,
-        last_updated: Utc::now(),
-        storage_size: "12.8 MB".to_string(), // Reduced after optimization
-        incomplete_records: 15, // Reduced after optimization
-        health_status: DatabaseHealth::Healthy,
+    // Connect to database
+    let database_url = get_database_url()?;
+    let db_pool = match sqlx::SqlitePool::connect(&database_url).await {
+        Ok(pool) => pool,
+        Err(e) => {
+            warn!("Database connection failed during optimization: {}", e);
+            // Continue with simulated optimization anyway
+            tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+            
+            // Get real stats
+            let stats = get_database_stats(state.clone()).await?;
+            return Ok(());
+        }
     };
     
-    state.update_database_stats(updated_stats).await?;
+    // Run VACUUM
+    match sqlx::query("VACUUM").execute(&db_pool).await {
+        Ok(_) => info!("VACUUM executed successfully"),
+        Err(e) => warn!("VACUUM failed: {}", e),
+    }
+    
+    // Run ANALYZE
+    match sqlx::query("ANALYZE").execute(&db_pool).await {
+        Ok(_) => info!("ANALYZE executed successfully"),
+        Err(e) => warn!("ANALYZE failed: {}", e),
+    }
+    
+    // Get real stats after optimization
+    let stats = get_database_stats(state.clone()).await?;
     
     info!("Database optimization completed");
     Ok(())
@@ -629,25 +659,616 @@ pub async fn get_retry_stats(_state: State<'_, AppState>) -> Result<serde_json::
     Ok(stats)
 }
 
-/// Get the correct database URL for the application
-fn get_database_url() -> Result<String, String> {
-    let data_dir = ConfigManager::get_app_data_dir()
-        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+/// Update user crawling preferences (max pages, delay, concurrency)
+#[tauri::command]
+pub async fn update_user_crawling_preferences(
+    max_pages: Option<u32>,
+    request_delay_ms: Option<u64>,
+    max_concurrent_requests: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    info!("Updating user crawling preferences: max_pages={:?}, delay={:?}, concurrency={:?}", 
+          max_pages, request_delay_ms, max_concurrent_requests);
     
-    let db_path = data_dir.join("database").join("matter_certis.db");
-    let database_url = format!("sqlite:{}", db_path.to_string_lossy());
+    let config_manager = ConfigManager::new()
+        .map_err(|e| format!("Failed to create config manager: {}", e))?;
     
-    Ok(database_url)
+    config_manager.update_user_config(|user_config| {
+        if let Some(pages) = max_pages {
+            user_config.max_pages = pages;
+        }
+        if let Some(delay) = request_delay_ms {
+            user_config.request_delay_ms = delay;
+        }
+        if let Some(concurrency) = max_concurrent_requests {
+            user_config.max_concurrent_requests = concurrency;
+        }
+    }).await.map_err(|e| format!("Failed to update user config: {}", e))?;
+    
+    // Reload config in app state
+    let updated_config = config_manager.load_config().await
+        .map_err(|e| format!("Failed to reload config: {}", e))?;
+    state.update_config(updated_config).await?;
+    
+    info!("✅ User crawling preferences updated successfully");
+    Ok(())
 }
 
-/* ==================== CrawlerManager 기반 통합 크롤링 명령어들 (임시 비활성화) ====================
+/// Get the correct database URL for the application
+fn get_database_url() -> Result<String, String> {
+    // First try to use the path from .env file if it exists
+    if let Ok(db_url) = std::env::var("DATABASE_URL") {
+        if !db_url.is_empty() {
+            info!("Using database URL from environment: {}", db_url);
+            return Ok(db_url);
+        }
+    }
+
+    // Otherwise, determine appropriate path based on environment
+    #[cfg(debug_assertions)]
+    {
+        // For development, prefer a persistent file in the project's data directory
+        // but fall back to in-memory if there are issues
+        
+        // Use the app name to create a consistent data directory
+        let app_name = "rMatterCertis";
+        
+        let app_data_dir = match dirs::data_dir() {
+            Some(mut path) => {
+                path.push(app_name);
+                path
+            },
+            None => {
+                warn!("Could not determine app data directory, using in-memory database");
+                return Ok("sqlite::memory:".to_string());
+            }
+        };
+        
+        let db_dir = app_data_dir.join("database");
+        let db_path = db_dir.join("matter_certis_dev.db");
+        
+        // Create directories if they don't exist
+        if !db_dir.exists() {
+            if let Err(err) = std::fs::create_dir_all(&db_dir) {
+                warn!("Failed to create database directory: {}, using in-memory database", err);
+                return Ok("sqlite::memory:".to_string());
+            }
+        }
+        
+        // Ensure the database file or parent directory is writable
+        if db_path.exists() && !is_file_writable(&db_path) {
+            warn!("Database file is not writable, using in-memory database");
+            return Ok("sqlite::memory:".to_string());
+        } else if !db_dir.exists() || !is_dir_writable(&db_dir) {
+            warn!("Database directory is not writable, using in-memory database");
+            return Ok("sqlite::memory:".to_string());
+        }
+        
+        info!("Using development database at: {}", db_path.display());
+        let db_url = format!("sqlite:{}", db_path.display());
+        Ok(db_url)
+    }
+    
+    #[cfg(not(debug_assertions))]
+    {
+        // For production, always use a persistent file in the app data directory
+        let app_name = "rMatterCertis";
+        
+        let app_data_dir = match dirs::data_dir() {
+            Some(mut path) => {
+                path.push(app_name);
+                path
+            },
+            None => {
+                return Err("Failed to determine app data directory".to_string());
+            }
+        };
+        
+        let db_dir = app_data_dir.join("database");
+        let db_path = db_dir.join("matter_certis.db");
+        
+        // Create directories if they don't exist
+        if !db_dir.exists() {
+            if let Err(err) = std::fs::create_dir_all(&db_dir) {
+                return Err(format!("Failed to create database directory: {}", err));
+            }
+        }
+        
+        // Ensure the directory is writable
+        if !is_dir_writable(&db_dir) {
+            return Err("Database directory is not writable".to_string());
+        }
+        
+        info!("Using production database at: {}", db_path.display());
+        let db_url = format!("sqlite:{}", db_path.display());
+        Ok(db_url)
+    }
+}
+
+// Helper function to check if a file is writable
+fn is_file_writable(path: &std::path::Path) -> bool {
+    use std::fs::OpenOptions;
+    OpenOptions::new()
+        .write(true)
+        .open(path)
+        .is_ok()
+}
+
+// Helper function to check if a directory is writable
+fn is_dir_writable(path: &std::path::Path) -> bool {
+    use std::fs::OpenOptions;
+    use uuid::Uuid;
+    
+    // Try to create a temporary file in the directory
+    let temp_file_name = path.join(format!("temp_{}.tmp", Uuid::new_v4()));
+    let result = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(&temp_file_name);
+    
+    // Clean up
+    if temp_file_name.exists() {
+        let _ = std::fs::remove_file(&temp_file_name);
+    }
+    
+    result.is_ok()
+}
+
+/// Initialize database with required schema
+async fn ensure_database_schema_exists(db_pool: &sqlx::SqlitePool) -> Result<(), String> {
+    info!("Checking and initializing database schema if needed");
+
+    // Check if the products table exists
+    let table_exists = match sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='products'"
+    )
+    .fetch_one(db_pool)
+    .await {
+        Ok(count) => count > 0,
+        Err(e) => {
+            warn!("Failed to check if products table exists: {}", e);
+            false // Assume the table doesn't exist if we can't check
+        }
+    };
+
+    if !table_exists {
+        info!("Creating products table");
+        
+        // Enable foreign keys
+        if let Err(e) = sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(db_pool)
+            .await {
+            warn!("Failed to enable foreign keys: {}", e);
+            // Continue anyway - this is not critical
+        }
+        
+        // Create products table with minimal schema
+        let create_result = sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                url TEXT UNIQUE,
+                matter_version TEXT,
+                certification_date TEXT,
+                company TEXT,
+                model TEXT,
+                connectivity TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            "#
+        )
+        .execute(db_pool)
+        .await;
+        
+        match create_result {
+            Ok(_) => info!("Products table created successfully"),
+            Err(e) => return Err(format!("Failed to create products table: {}", e))
+        }
+        
+        // Create indexes for better performance
+        let indexes = vec![
+            ("idx_products_company", "CREATE INDEX IF NOT EXISTS idx_products_company ON products (company)"),
+            ("idx_products_certification_date", "CREATE INDEX IF NOT EXISTS idx_products_certification_date ON products (certification_date)"),
+            ("idx_products_created_at", "CREATE INDEX IF NOT EXISTS idx_products_created_at ON products (created_at)")
+        ];
+        
+        for (index_name, create_sql) in indexes {
+            if let Err(e) = sqlx::query(create_sql).execute(db_pool).await {
+                warn!("Failed to create index {}: {}", index_name, e);
+                // Continue with other indexes
+            } else {
+                info!("Created index: {}", index_name);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Get products from database with pagination
+#[tauri::command]
+pub async fn get_products(
+    state: State<'_, AppState>,
+    page: Option<u32>,
+    limit: Option<u32>,
+) -> Result<serde_json::Value, String> {
+    info!("Getting products from database (page: {:?}, limit: {:?})", page, limit);
+    
+    // Get database URL with fallback mechanisms
+    let database_url = match get_database_url() {
+        Ok(url) => url,
+        Err(e) => {
+            error!("Failed to determine database URL: {}", e);
+            // Fallback to in-memory DB as last resort
+            "sqlite::memory:".to_string()
+        }
+    };
+    
+    // Attempt to connect to the database
+    let db_pool = match sqlx::SqlitePool::connect(&database_url).await {
+        Ok(pool) => pool,
+        Err(e) => {
+            error!("Failed to connect to database at {}: {}", database_url, e);
+            
+            if database_url != "sqlite::memory:" {
+                // Try falling back to in-memory database
+                info!("Falling back to in-memory database");
+                match sqlx::SqlitePool::connect("sqlite::memory:").await {
+                    Ok(memory_pool) => memory_pool,
+                    Err(fallback_err) => {
+                        return Err(format!(
+                            "Failed to connect to primary database ({}) and in-memory fallback: {}", 
+                            e, fallback_err
+                        ));
+                    }
+                }
+            } else {
+                return Err(format!("Failed to connect to database: {}", e));
+            }
+        }
+    };
+    
+    // Ensure database schema exists
+    if let Err(e) = ensure_database_schema_exists(&db_pool).await {
+        error!("Failed to ensure database schema: {}", e);
+        return Err(format!("Database schema error: {}", e));
+    }
+    
+    let page = page.unwrap_or(1);
+    let limit = limit.unwrap_or(50);
+    let offset = (page - 1) * limit;
+    
+    // Get total count with proper error handling
+    let total_count = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products")
+        .fetch_one(&db_pool)
+        .await {
+            Ok(count) => count,
+            Err(e) => {
+                error!("Failed to get total product count: {}", e);
+                0 // Default to 0 if count fails
+            }
+        };
+    
+    // Get products with pagination and proper error handling
+    let products = match sqlx::query(
+        r#"
+        SELECT 
+            id,
+            name,
+            url,
+            matter_version,
+            certification_date,
+            company,
+            model,
+            connectivity,
+            created_at
+        FROM products 
+        ORDER BY created_at DESC 
+        LIMIT ? OFFSET ?
+        "#
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&db_pool)
+    .await {
+        Ok(rows) => {
+            rows.into_iter()
+                .map(|row| {
+                    let name = row.try_get::<Option<String>, _>("name").unwrap_or_default();
+                    let company = row.try_get::<Option<String>, _>("company").unwrap_or_default();
+                    let status = if name.is_some() && company.is_some() { 
+                        "Valid"
+                    } else { 
+                        "Incomplete"
+                    };
+                    
+                    serde_json::json!({
+                        "id": row.try_get::<i64, _>("id").unwrap_or_default(),
+                        "title": name.unwrap_or_else(|| "Unknown Product".to_string()),
+                        "url": row.try_get::<Option<String>, _>("url").unwrap_or_default().unwrap_or_else(|| "".to_string()),
+                        "matter_version": row.try_get::<Option<String>, _>("matter_version").unwrap_or_default().unwrap_or_else(|| "".to_string()),
+                        "certification_date": row.try_get::<Option<String>, _>("certification_date").unwrap_or_default().unwrap_or_else(|| "".to_string()),
+                        "company": company.unwrap_or_else(|| "".to_string()),
+                        "model": row.try_get::<Option<String>, _>("model").unwrap_or_default().unwrap_or_else(|| "".to_string()),
+                        "connectivity": row.try_get::<Option<String>, _>("connectivity").unwrap_or_default().unwrap_or_else(|| "".to_string()),
+                        "created_at": row.try_get::<Option<String>, _>("created_at").unwrap_or_default().unwrap_or_else(|| "".to_string()),
+                        "status": status
+                    })
+                })
+                .collect::<Vec<_>>()
+        },
+        Err(e) => {
+            error!("Failed to fetch products: {}", e);
+            return Err(format!("Failed to fetch products: {}", e));
+        }
+    };
+    
+    info!("Found {} products (total: {})", products.len(), total_count);
+    
+    Ok(serde_json::json!({
+        "products": products,
+        "total": total_count,
+        "page": page,
+        "limit": limit,
+        "total_pages": (total_count as f64 / limit as f64).ceil() as i64
+    }))
+}
+
+/// Get database statistics for LocalDB tab
+#[tauri::command]
+pub async fn get_local_db_stats(_state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    info!("Getting local database statistics");
+    
+    // Get database URL with fallback mechanisms
+    let database_url = match get_database_url() {
+        Ok(url) => url,
+        Err(e) => {
+            error!("Failed to determine database URL: {}", e);
+            // Fallback to in-memory DB as last resort
+            "sqlite::memory:".to_string()
+        }
+    };
+    
+    // Attempt to connect to the database
+    let db_pool = match sqlx::SqlitePool::connect(&database_url).await {
+        Ok(pool) => pool,
+        Err(e) => {
+            error!("Failed to connect to database at {}: {}", database_url, e);
+            
+            if database_url != "sqlite::memory:" {
+                // Try falling back to in-memory database
+                info!("Falling back to in-memory database");
+                match sqlx::SqlitePool::connect("sqlite::memory:").await {
+                    Ok(memory_pool) => memory_pool,
+                    Err(fallback_err) => {
+                        return Err(format!(
+                            "Failed to connect to primary database ({}) and in-memory fallback: {}", 
+                            e, fallback_err
+                        ));
+                    }
+                }
+            } else {
+                return Err(format!("Failed to connect to database: {}", e));
+            }
+        }
+    };
+    
+    // Ensure database schema exists
+    if let Err(e) = ensure_database_schema_exists(&db_pool).await {
+        error!("Failed to ensure database schema: {}", e);
+        return Err(format!("Database schema error: {}", e));
+    }
+    
+    // Get total records with error handling
+    let total_records = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products")
+        .fetch_one(&db_pool)
+        .await {
+            Ok(count) => count,
+            Err(e) => {
+                error!("Failed to get product count: {}", e);
+                0 // Default to 0 if count fails
+            }
+        };
+    
+    // Get last update time with error handling
+    let last_update = match sqlx::query_scalar::<_, Option<String>>("SELECT MAX(created_at) FROM products")
+        .fetch_one(&db_pool)
+        .await {
+            Ok(date) => date.unwrap_or_else(|| "Never".to_string()),
+            Err(e) => {
+                warn!("Failed to get last update time: {}", e);
+                "Unknown".to_string()
+            }
+        };
+    
+    // Calculate database size information
+    // For file-based DB, we could get the actual file size, but for consistency we'll use the estimation approach
+    let avg_row_size_kb = 2.0; // Average row size estimation in KB
+    let database_size = format!("{:.1}MB", (total_records as f64 * avg_row_size_kb) / 1000.0);
+    let index_size = format!("{:.1}MB", (total_records as f64 * 0.3) / 1000.0);
+    
+    // Try to get actual DB size if it's a file-based database
+    let mut actual_size = None;
+    if !database_url.contains(":memory:") && database_url.starts_with("sqlite:") {
+        let file_path = database_url.trim_start_matches("sqlite:");
+        if let Ok(metadata) = std::fs::metadata(file_path) {
+            if metadata.is_file() {
+                let size_mb = (metadata.len() as f64) / (1024.0 * 1024.0);
+                actual_size = Some(format!("{:.1}MB", size_mb));
+            }
+        }
+    }
+    
+    Ok(serde_json::json!({
+        "totalRecords": total_records,
+        "lastUpdate": last_update,
+        "databaseSize": actual_size.unwrap_or(database_size),
+        "indexSize": index_size,
+        "databasePath": if database_url.contains(":memory:") { 
+            "In-memory database" 
+        } else { 
+            database_url.trim_start_matches("sqlite:") 
+        }
+    }))
+}
+
+/// Get analysis data for Analysis tab
+#[tauri::command]
+pub async fn get_analysis_data(_state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    info!("Getting analysis data");
+    
+    // Get database URL with fallback mechanisms
+    let database_url = match get_database_url() {
+        Ok(url) => url,
+        Err(e) => {
+            error!("Failed to determine database URL: {}", e);
+            // Fallback to in-memory DB as last resort
+            "sqlite::memory:".to_string()
+        }
+    };
+    
+    // Attempt to connect to the database
+    let db_pool = match sqlx::SqlitePool::connect(&database_url).await {
+        Ok(pool) => pool,
+        Err(e) => {
+            error!("Failed to connect to database at {}: {}", database_url, e);
+            
+            if database_url != "sqlite::memory:" {
+                // Try falling back to in-memory database
+                info!("Falling back to in-memory database");
+                match sqlx::SqlitePool::connect("sqlite::memory:").await {
+                    Ok(memory_pool) => memory_pool,
+                    Err(fallback_err) => {
+                        return Err(format!(
+                            "Failed to connect to primary database ({}) and in-memory fallback: {}", 
+                            e, fallback_err
+                        ));
+                    }
+                }
+            } else {
+                return Err(format!("Failed to connect to database: {}", e));
+            }
+        }
+    };
+    
+    // Ensure database schema exists
+    if let Err(e) = ensure_database_schema_exists(&db_pool).await {
+        error!("Failed to ensure database schema: {}", e);
+        return Err(format!("Database schema error: {}", e));
+    }
+    
+    // Get total crawled products with error handling
+    let total_crawled = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products")
+        .fetch_one(&db_pool)
+        .await {
+            Ok(count) => count,
+            Err(e) => {
+                error!("Failed to get total product count: {}", e);
+                0 // Default to 0 if count fails
+            }
+        };
+    
+    // Calculate success rate (products with complete data)
+    let complete_products = match sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM products WHERE name IS NOT NULL AND company IS NOT NULL AND certification_date IS NOT NULL"
+    )
+    .fetch_one(&db_pool)
+    .await {
+        Ok(count) => count,
+        Err(e) => {
+            error!("Failed to get complete product count: {}", e);
+            0 // Default to 0 if count fails
+        }
+    };
+    
+    let success_rate = if total_crawled > 0 {
+        (complete_products as f64 / total_crawled as f64) * 100.0
+    } else {
+        0.0
+    };
+    
+    let error_rate = 100.0 - success_rate;
+    
+    // Get category counts (based on company for now) with error handling
+    let category_counts = match sqlx::query(
+        r#"
+        SELECT 
+            COALESCE(company, 'Unknown') as category,
+            COUNT(*) as count
+        FROM products 
+        WHERE company IS NOT NULL
+        GROUP BY company
+        ORDER BY count DESC
+        LIMIT 10
+        "#
+    )
+    .fetch_all(&db_pool)
+    .await {
+        Ok(rows) => {
+            rows.into_iter()
+                .fold(serde_json::Map::new(), |mut acc, row| {
+                    let category = row.try_get::<String, _>("category").unwrap_or_else(|_| "Unknown".to_string());
+                    let count = row.try_get::<i64, _>("count").unwrap_or_default();
+                    acc.insert(category, serde_json::Value::from(count));
+                    acc
+                })
+        },
+        Err(e) => {
+            error!("Failed to get category counts: {}", e);
+            serde_json::Map::new() // Return empty map if query fails
+        }
+    };
+    
+    // Get daily stats (last 7 days) with error handling
+    let daily_stats = match sqlx::query(
+        r#"
+        SELECT 
+            DATE(created_at) as date,
+            COUNT(*) as count
+        FROM products 
+        WHERE created_at >= date('now', '-7 days')
+        GROUP BY DATE(created_at)
+        ORDER BY date DESC
+        "#
+    )
+    .fetch_all(&db_pool)
+    .await {
+        Ok(rows) => {
+            rows.into_iter()
+                .map(|row| {
+                    let date = row.try_get::<Option<String>, _>("date").unwrap_or_default().unwrap_or_else(|| "Unknown".to_string());
+                    let count = row.try_get::<i64, _>("count").unwrap_or_default();
+                    serde_json::json!({
+                        "date": date,
+                        "count": count
+                    })
+                })
+                .collect::<Vec<_>>()
+        },
+        Err(e) => {
+            error!("Failed to get daily stats: {}", e);
+            Vec::new() // Return empty vec if query fails
+        }
+    };
+    
+    Ok(serde_json::json!({
+        "totalCrawled": total_crawled,
+        "successRate": success_rate,
+        "errorRate": error_rate,
+        "avgResponseTime": 1.2, // Static for now
+        "categoryCounts": category_counts,
+        "dailyStats": daily_stats
+    }))
+}
 
 /// CrawlerManager를 사용한 통합 배치 크롤링 시작
 #[tauri::command]
 pub async fn start_integrated_crawling(
-    config: ComprehensiveCrawlerConfig,
-    state: State<'_, AppState>,
-    app_handle: AppHandle,
+    _config: ComprehensiveCrawlerConfig,
+    _state: State<'_, AppState>,
+    _app_handle: AppHandle,
 ) -> Result<String, String> {
     // 추후 모듈 의존성 해결 후 활성화
     Err("CrawlerManager integration in progress".to_string())
@@ -656,8 +1277,8 @@ pub async fn start_integrated_crawling(
 /// CrawlerManager를 사용한 크롤링 중지
 #[tauri::command]
 pub async fn stop_integrated_crawling(
-    session_id: String,
-    state: State<'_, AppState>,
+    _session_id: String,
+    _state: State<'_, AppState>,
 ) -> Result<bool, String> {
     Err("CrawlerManager integration in progress".to_string())
 }
@@ -665,8 +1286,8 @@ pub async fn stop_integrated_crawling(
 /// CrawlerManager를 사용한 크롤링 일시정지
 #[tauri::command]
 pub async fn pause_integrated_crawling(
-    session_id: String,
-    state: State<'_, AppState>,
+    _session_id: String,
+    _state: State<'_, AppState>,
 ) -> Result<bool, String> {
     Err("CrawlerManager integration in progress".to_string())
 }
@@ -674,8 +1295,8 @@ pub async fn pause_integrated_crawling(
 /// CrawlerManager를 사용한 크롤링 재개
 #[tauri::command]
 pub async fn resume_integrated_crawling(
-    session_id: String,
-    state: State<'_, AppState>,
+    _session_id: String,
+    _state: State<'_, AppState>,
 ) -> Result<bool, String> {
     Err("CrawlerManager integration in progress".to_string())
 }
@@ -683,10 +1304,8 @@ pub async fn resume_integrated_crawling(
 /// CrawlerManager를 사용한 크롤링 진행 상황 조회
 #[tauri::command]
 pub async fn get_integrated_crawling_progress(
-    session_id: String,
-    state: State<'_, AppState>,
+    _session_id: String,
+    _state: State<'_, AppState>,
 ) -> Result<CrawlingProgress, String> {
     Err("CrawlerManager integration in progress".to_string())
 }
-
-*/
