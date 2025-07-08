@@ -735,6 +735,14 @@ fn get_database_url() -> Result<String, String> {
             }
         }
         
+        // Create database file if it doesn't exist
+        if !db_path.exists() {
+            if let Err(err) = std::fs::File::create(&db_path) {
+                warn!("Failed to create database file: {}, using in-memory database", err);
+                return Ok("sqlite::memory:".to_string());
+            }
+        }
+        
         // Ensure the database file or parent directory is writable
         if db_path.exists() && !is_file_writable(&db_path) {
             warn!("Database file is not writable, using in-memory database");
@@ -771,6 +779,13 @@ fn get_database_url() -> Result<String, String> {
         if !db_dir.exists() {
             if let Err(err) = std::fs::create_dir_all(&db_dir) {
                 return Err(format!("Failed to create database directory: {}", err));
+            }
+        }
+        
+        // Create database file if it doesn't exist
+        if !db_path.exists() {
+            if let Err(err) = std::fs::File::create(&db_path) {
+                return Err(format!("Failed to create database file: {}", err));
             }
         }
         
