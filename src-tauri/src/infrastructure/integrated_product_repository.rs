@@ -34,25 +34,50 @@ impl IntegratedProductRepository {
 
     /// Insert or update basic product information from listing page
     pub async fn create_or_update_product(&self, product: &Product) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT OR REPLACE INTO products 
-            (url, manufacturer, model, certificate_id, device_type, certification_date, page_id, index_in_page, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&product.url)
-        .bind(&product.manufacturer)
-        .bind(&product.model)
-        .bind(&product.certificate_id)
-        .bind(&product.device_type)
-        .bind(&product.certification_date)
-        .bind(product.page_id)
-        .bind(product.index_in_page)
-        .bind(product.created_at)
-        .bind(product.updated_at)
-        .execute(&*self.pool)
-        .await?;
+        let now = chrono::Utc::now();
+        
+        // Check if product already exists
+        let existing = self.get_product_by_url(&product.url).await?;
+        
+        if let Some(existing_product) = existing {
+            // Update existing product, preserve created_at
+            sqlx::query(
+                r#"
+                UPDATE products 
+                SET manufacturer = ?, model = ?, certificateId = ?, pageId = ?, indexInPage = ?, updatedAt = ?
+                WHERE url = ?
+                "#,
+            )
+            .bind(&product.manufacturer)
+            .bind(&product.model)
+            .bind(&product.certificate_id)
+            .bind(product.page_id)
+            .bind(product.index_in_page)
+            .bind(now)
+            .bind(&product.url)
+            .execute(&*self.pool)
+            .await?;
+        } else {
+            // Insert new product
+            sqlx::query(
+                r#"
+                INSERT INTO products 
+                (url, manufacturer, model, certificateId, pageId, indexInPage, createdAt, updatedAt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&product.url)
+            .bind(&product.manufacturer)
+            .bind(&product.model)
+            .bind(&product.certificate_id)
+            .bind(product.page_id)
+            .bind(product.index_in_page)
+            .bind(now)
+            .bind(now)
+            .execute(&*self.pool)
+            .await?;
+        }
+        
         Ok(())
     }
 
@@ -107,9 +132,9 @@ impl IntegratedProductRepository {
         let offset = (page - 1) * limit;
         let rows = sqlx::query(
             r#"
-            SELECT url, manufacturer, model, certificate_id, device_type, certification_date, page_id, index_in_page, created_at, updated_at
+            SELECT url, manufacturer, model, certificateId, pageId, indexInPage, createdAt, updatedAt
             FROM products 
-            ORDER BY page_id DESC, index_in_page ASC 
+            ORDER BY pageId DESC, indexInPage ASC 
             LIMIT ? OFFSET ?
             "#,
         )
@@ -124,13 +149,11 @@ impl IntegratedProductRepository {
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
-                certificate_id: row.get("certificate_id"),
-                device_type: row.get("device_type"),
-                certification_date: row.get("certification_date"),
-                page_id: row.get("page_id"),
-                index_in_page: row.get("index_in_page"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
+                certificate_id: row.get("certificateId"),
+                page_id: row.get("pageId"),
+                index_in_page: row.get("indexInPage"),
+                created_at: row.get("createdAt"),
+                updated_at: row.get("updatedAt"),
             })
             .collect();
 
@@ -141,7 +164,7 @@ impl IntegratedProductRepository {
     pub async fn get_product_by_url(&self, url: &str) -> Result<Option<Product>> {
         let row = sqlx::query(
             r#"
-            SELECT url, manufacturer, model, certificate_id, device_type, certification_date, page_id, index_in_page, created_at, updated_at
+            SELECT url, manufacturer, model, certificateId, pageId, indexInPage, createdAt, updatedAt
             FROM products WHERE url = ?
             "#,
         )
@@ -154,13 +177,11 @@ impl IntegratedProductRepository {
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
-                certificate_id: row.get("certificate_id"),
-                device_type: row.get("device_type"),
-                certification_date: row.get("certification_date"),
-                page_id: row.get("page_id"),
-                index_in_page: row.get("index_in_page"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
+                certificate_id: row.get("certificateId"),
+                page_id: row.get("pageId"),
+                index_in_page: row.get("indexInPage"),
+                created_at: row.get("createdAt"),
+                updated_at: row.get("updatedAt"),
             })),
             None => Ok(None),
         }
@@ -290,8 +311,8 @@ impl IntegratedProductRepository {
         // Get paginated results
         let data_query = format!(
             r#"
-            SELECT p.url, p.manufacturer, p.model, p.certificate_id, p.device_type, p.certification_date, p.page_id, p.index_in_page, 
-                   p.created_at as p_created_at, p.updated_at as p_updated_at,
+            SELECT p.url, p.manufacturer, p.model, p.certificateId, p.pageId, p.indexInPage, 
+                   p.createdAt as p_created_at, p.updatedAt as p_updated_at,
                    pd.id, pd.device_type as pd_device_type, pd.certification_date as pd_certification_date, pd.software_version, pd.hardware_version,
                    pd.vid, pd.pid, pd.family_sku, pd.family_variant_sku, pd.firmware_version, pd.family_id,
                    pd.tis_trp_tested, pd.specification_version, pd.transport_interface, 
@@ -301,7 +322,7 @@ impl IntegratedProductRepository {
             FROM products p
             LEFT JOIN product_details pd ON p.url = pd.url
             {}
-            ORDER BY p.page_id DESC, p.index_in_page ASC
+            ORDER BY p.pageId DESC, p.indexInPage ASC
             LIMIT ? OFFSET ?
             "#,
             where_clause
@@ -321,11 +342,9 @@ impl IntegratedProductRepository {
                     url: row.get("url"),
                     manufacturer: row.get("manufacturer"),
                     model: row.get("model"),
-                    certificate_id: row.get("certificate_id"),
-                    device_type: row.get("device_type"),
-                    certification_date: row.get("certification_date"),
-                    page_id: row.get("page_id"),
-                    index_in_page: row.get("index_in_page"),
+                    certificate_id: row.get("certificateId"),
+                    page_id: row.get("pageId"),
+                    index_in_page: row.get("indexInPage"),
                     created_at: row.get("p_created_at"),
                     updated_at: row.get("p_updated_at"),
                 };
@@ -398,8 +417,6 @@ impl IntegratedProductRepository {
             manufacturer: product_json["manufacturer"].as_str().map(|s| s.to_string()),
             model: product_json["model"].as_str().map(|s| s.to_string()),
             certificate_id: product_json["certification_id"].as_str().map(|s| s.to_string()),
-            device_type: product_json["device_type"].as_str().map(|s| s.to_string()),
-            certification_date: product_json["certification_date"].as_str().map(|s| s.to_string()),
             page_id: product_json["page_id"].as_i64().map(|i| i as i32),
             index_in_page: product_json["index_in_page"].as_i64().map(|i| i as i32),
             created_at: chrono::Utc::now(),
@@ -638,11 +655,11 @@ impl IntegratedProductRepository {
     pub async fn get_products_without_details(&self, limit: i32) -> Result<Vec<Product>> {
         let rows = sqlx::query(
             r#"
-            SELECT p.url, p.manufacturer, p.model, p.certificate_id, p.device_type, p.certification_date, p.page_id, p.index_in_page, p.created_at, p.updated_at
+            SELECT p.url, p.manufacturer, p.model, p.certificateId, p.pageId, p.indexInPage, p.createdAt, p.updatedAt
             FROM products p
             LEFT JOIN product_details pd ON p.url = pd.url
             WHERE pd.url IS NULL
-            ORDER BY p.page_id DESC, p.index_in_page ASC
+            ORDER BY p.pageId DESC, p.indexInPage ASC
             LIMIT ?
             "#,
         )
@@ -656,13 +673,11 @@ impl IntegratedProductRepository {
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
-                certificate_id: row.get("certificate_id"),
-                device_type: row.get("device_type"),
-                certification_date: row.get("certification_date"),
-                page_id: row.get("page_id"),
-                index_in_page: row.get("index_in_page"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
+                certificate_id: row.get("certificateId"),
+                page_id: row.get("pageId"),
+                index_in_page: row.get("indexInPage"),
+                created_at: row.get("createdAt"),
+                updated_at: row.get("updatedAt"),
             })
             .collect();
 
@@ -673,10 +688,10 @@ impl IntegratedProductRepository {
     pub async fn get_all_products(&self) -> Result<Vec<Product>> {
         let rows = sqlx::query(
             r#"
-            SELECT url, manufacturer, model, certificate_id, device_type, certification_date, 
-                   page_id, index_in_page, created_at, updated_at
+            SELECT url, manufacturer, model, certificateId, 
+                   pageId, indexInPage, createdAt, updatedAt
             FROM products
-            ORDER BY page_id DESC, index_in_page ASC
+            ORDER BY pageId DESC, indexInPage ASC
             "#,
         )
         .fetch_all(&*self.pool)
@@ -688,13 +703,11 @@ impl IntegratedProductRepository {
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
-                certificate_id: row.get("certificate_id"),
-                device_type: row.get("device_type"),
-                certification_date: row.get("certification_date"),
-                page_id: row.get("page_id"),
-                index_in_page: row.get("index_in_page"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
+                certificate_id: row.get("certificateId"),
+                page_id: row.get("pageId"),
+                index_in_page: row.get("indexInPage"),
+                created_at: row.get("createdAt"),
+                updated_at: row.get("updatedAt"),
             })
             .collect();
 
@@ -705,10 +718,10 @@ impl IntegratedProductRepository {
     pub async fn get_latest_updated_product(&self) -> Result<Option<Product>> {
         let row = sqlx::query(
             r#"
-            SELECT url, manufacturer, model, certificate_id, device_type, certification_date, 
-                   page_id, index_in_page, created_at, updated_at
+            SELECT url, manufacturer, model, certificateId, 
+                   pageId, indexInPage, createdAt, updatedAt
             FROM products
-            ORDER BY updated_at DESC
+            ORDER BY updatedAt DESC
             LIMIT 1
             "#,
         )
@@ -720,13 +733,11 @@ impl IntegratedProductRepository {
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
-                certificate_id: row.get("certificate_id"),
-                device_type: row.get("device_type"),
-                certification_date: row.get("certification_date"),
-                page_id: row.get("page_id"),
-                index_in_page: row.get("index_in_page"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
+                certificate_id: row.get("certificateId"),
+                page_id: row.get("pageId"),
+                index_in_page: row.get("indexInPage"),
+                created_at: row.get("createdAt"),
+                updated_at: row.get("updatedAt"),
             }))
         } else {
             Ok(None)

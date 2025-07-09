@@ -10,8 +10,10 @@
 use anyhow::{anyhow, Result};
 use scraper::{Html, Selector, ElementRef};
 use tracing::debug;
+use std::sync::{Arc, RwLock};
 use crate::infrastructure::csa_iot;
 use crate::domain::product::{Product, ProductDetail};
+use chrono::{DateTime, Utc};
 
 /// Configuration for CSA-IoT website data extraction
 #[derive(Debug, Clone)]
@@ -101,6 +103,7 @@ impl Default for MatterExtractorConfig {
 #[derive(Clone)]
 pub struct MatterDataExtractor {
     config: MatterExtractorConfig,
+    pagination_context: Arc<RwLock<Option<PaginationContext>>>,
 }
 
 impl MatterDataExtractor {
@@ -111,7 +114,22 @@ impl MatterDataExtractor {
 
     /// Create a new data extractor with custom configuration
     pub fn with_config(config: MatterExtractorConfig) -> Result<Self> {
-        Ok(Self { config })
+        Ok(Self { 
+            config,
+            pagination_context: Arc::new(RwLock::new(None)),
+        })
+    }
+
+    /// Set pagination context for proper pageId and indexInPage calculation
+    pub fn set_pagination_context(&self, context: PaginationContext) -> Result<()> {
+        let mut pagination_context = self.pagination_context.write()
+            .map_err(|e| anyhow!("Failed to acquire write lock: {}", e))?;
+        
+        debug!("📊 Pagination context updated: total_pages={}, items_on_last_page={}", 
+               context.total_pages, context.items_on_last_page);
+        
+        *pagination_context = Some(context);
+        Ok(())
     }
 
     /// Extract product URLs from a product listing page (guide-based approach)
@@ -280,8 +298,6 @@ impl MatterDataExtractor {
             manufacturer,
             model,
             certificate_id,
-            device_type,
-            certification_date,
             page_id: None,
             index_in_page: None,
             created_at: now,
@@ -365,8 +381,22 @@ impl MatterDataExtractor {
     }
 
     /// Extract a single product from a list container element (guide-based approach)
-    fn extract_single_product_from_list(&self, article: ElementRef, page_id: i32, index: i32) -> Result<Product> {
+    fn extract_single_product_from_list(&self, article: ElementRef, source_page_id: i32, source_index: i32) -> Result<Product> {
         let now = chrono::Utc::now();
+        
+        // Calculate proper pageId and indexInPage using pagination context
+        let (page_id, index_in_page) = {
+            let pagination_context = self.pagination_context.read()
+                .map_err(|e| anyhow!("Failed to acquire read lock: {}", e))?;
+            
+            if let Some(ref context) = *pagination_context {
+                context.calculate_page_index(source_page_id as u32, source_index as u32)
+            } else {
+                // Fallback to original logic if no pagination context is set
+                debug!("⚠️  No pagination context set, using original page_id and index");
+                (source_page_id, source_index)
+            }
+        };
         
         // Extract URL - simple and direct approach
         let link_selector = Selector::parse("a").unwrap();
@@ -375,7 +405,7 @@ impl MatterDataExtractor {
             .next()
             .and_then(|link| link.value().attr("href"))
             .map(|href| self.resolve_url(href, &self.config.base_url))
-            .unwrap_or_else(|| format!("unknown-{}-{}", page_id, index));
+            .unwrap_or_else(|| format!("unknown-{}-{}", page_id, index_in_page));
 
         // Extract manufacturer - exactly as in guide
         let manufacturer_selector = Selector::parse("p.entry-company.notranslate").unwrap();
@@ -396,18 +426,16 @@ impl MatterDataExtractor {
         // Extract certificate ID with fallback logic from guide
         let certificate_id = self.extract_certificate_id_from_article(&article);
 
-        debug!("Extracted from listing article {}: manufacturer={:?}, model={:?}, cert_id={:?}", 
-               index, manufacturer, model, certificate_id);
+        debug!("Extracted from listing article {} (source page {}, index {}): manufacturer={:?}, model={:?}, cert_id={:?} -> pageId={}, indexInPage={}", 
+               source_index, source_page_id, source_index, manufacturer, model, certificate_id, page_id, index_in_page);
 
         Ok(Product {
             url,
             manufacturer,
             model,
             certificate_id,
-            device_type: None,
-            certification_date: None,
             page_id: Some(page_id),
-            index_in_page: Some(index),
+            index_in_page: Some(index_in_page),
             created_at: now,
             updated_at: now,
         })
@@ -612,6 +640,40 @@ impl MatterDataExtractor {
         } else {
             format!("{}/{}", base_url.trim_end_matches('/'), href)
         }
+    }
+}
+
+/// Pagination calculation parameters for converting source site pagination to our system
+#[derive(Debug, Clone)]
+pub struct PaginationContext {
+    /// Total pages in the source site
+    pub total_pages: u32,
+    /// Items per page in the source site (usually 12)
+    pub items_per_page: u32,
+    /// Number of items on the last page of the source site
+    pub items_on_last_page: u32,
+    /// Target page size for our system (usually 12)
+    pub target_page_size: u32,
+}
+
+impl PaginationContext {
+    /// Calculate pageId and indexInPage based on source site page and index
+    /// Following the specification in prompts6
+    pub fn calculate_page_index(&self, current_page: u32, index_on_page: u32) -> (i32, i32) {
+        // Step 1: Calculate total products
+        let total_products = (self.total_pages - 1) * self.items_per_page + self.items_on_last_page;
+        
+        // Step 2: Calculate index from newest (0-based from page 1 item 1)
+        let index_from_newest = (current_page - 1) * self.items_per_page + index_on_page;
+        
+        // Step 3: Calculate total index (0-based from oldest product)
+        let total_index = total_products - 1 - index_from_newest;
+        
+        // Step 4: Calculate final pageId and indexInPage
+        let page_id = total_index / self.target_page_size;
+        let index_in_page = total_index % self.target_page_size;
+        
+        (page_id as i32, index_in_page as i32)
     }
 }
 
@@ -909,6 +971,41 @@ mod tests {
         let json = result.unwrap();
         assert!(json["model"].as_str().unwrap().contains("Test Product Detail"));
         assert!(json["manufacturer"].as_str().unwrap().contains("Test Manufacturer"));
+    }
+
+    #[test]
+    fn test_pagination_calculation() {
+        let context = PaginationContext {
+            total_pages: 5,
+            items_per_page: 12,
+            items_on_last_page: 3,
+            target_page_size: 12,
+        };
+
+        // Example: 1st page, 1st item
+        let (page_id, index_in_page) = context.calculate_page_index(1, 1);
+        assert_eq!(page_id, 0);
+        assert_eq!(index_in_page, 11);
+
+        // Example: 1st page, 12th item (last item on first page)
+        let (page_id, index_in_page) = context.calculate_page_index(1, 12);
+        assert_eq!(page_id, 0);
+        assert_eq!(index_in_page, 0);
+
+        // Example: 2nd page, 1st item
+        let (page_id, index_in_page) = context.calculate_page_index(2, 1);
+        assert_eq!(page_id, 0);
+        assert_eq!(index_in_page, 10);
+
+        // Example: 5th page, 3rd item (last item on last page)
+        let (page_id, index_in_page) = context.calculate_page_index(5, 3);
+        assert_eq!(page_id, 0);
+        assert_eq!(index_in_page, 9);
+
+        // Example: 5th page, 12th item (out of bounds, should be treated as last item)
+        let (page_id, index_in_page) = context.calculate_page_index(5, 12);
+        assert_eq!(page_id, 0);
+        assert_eq!(index_in_page, 8);
     }
 }
 

@@ -244,8 +244,6 @@ impl IntegratedProductUseCases {
             manufacturer,
             model,
             certificate_id,
-            device_type,
-            certification_date,
             page_id,
             index_in_page,
             created_at: Utc::now(),

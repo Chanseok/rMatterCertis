@@ -591,9 +591,9 @@ pub mod defaults {
     
     /// Default CSS selectors for finding products
     pub const PRODUCT_SELECTORS: &[&str] = &[
-        "div.post-feed article.type-product",  // 사용자 제공 구체적 selector (최우선)
+        "div.post-feed article.type-product",  // 정확한 제품 selector
+        // "article.type-product",                // 불필요한 중복
         // "div > article.product.type-product",  // 기존 selector
-        // "article.type-product",                // 더 간단한 버전
         // ".product",
         // ".product-item", 
         // ".product-card",

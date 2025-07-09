@@ -7,12 +7,15 @@ pub struct Product {
     pub url: String,
     pub manufacturer: Option<String>,
     pub model: Option<String>,
+    #[serde(rename = "certificateId")]
     pub certificate_id: Option<String>,
-    pub device_type: Option<String>,
-    pub certification_date: Option<String>,
+    #[serde(rename = "pageId")]
     pub page_id: Option<i32>,
+    #[serde(rename = "indexInPage")]
     pub index_in_page: Option<i32>,
+    #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,
+    #[serde(rename = "updatedAt")]
     pub updated_at: DateTime<Utc>,
 }
 

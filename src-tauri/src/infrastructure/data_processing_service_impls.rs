@@ -222,8 +222,7 @@ impl ValidationServiceImpl {
         max_score += 0.3;
         let optional_fields = [
             product.certificate_id.as_ref(),
-            product.device_type.as_ref(),
-            product.certification_date.as_ref(),
+            // device_type과 certification_date는 ProductDetail에만 있음
         ];
         let optional_filled = optional_fields.iter()
             .filter(|field| field.map_or(false, |f| !f.trim().is_empty()))
@@ -388,9 +387,7 @@ impl ValidationService for ValidationServiceImpl {
             empty_fields.push("certificate_id".to_string());
         }
 
-        if product.device_type.as_ref().map_or(false, |d| d.trim().is_empty()) {
-            empty_fields.push("device_type".to_string());
-        }
+        // device_type은 ProductDetail에만 있으므로 스킵
 
         Ok(FieldValidation {
             missing_required_fields,
@@ -469,7 +466,7 @@ impl ConflictResolver for ConflictResolverImpl {
                             if p.manufacturer.is_some() { score += 1; }
                             if p.model.is_some() { score += 1; }
                             if p.certificate_id.is_some() { score += 1; }
-                            if p.device_type.is_some() { score += 1; }
+                            // device_type은 ProductDetail에만 있으므로 스킵
                             score
                         }) {
                         debug!("Resolved conflict by keeping most complete: {:?}", most_complete.model);
@@ -494,14 +491,14 @@ impl ConflictResolver for ConflictResolverImpl {
                     existing.manufacturer.as_ref(),
                     existing.model.as_ref(),
                     existing.certificate_id.as_ref(),
-                    existing.device_type.as_ref(),
+                    // device_type은 ProductDetail에만 있으므로 스킵
                 ].iter().filter(|f| f.is_some()).count();
 
                 let new_score = [
                     new.manufacturer.as_ref(),
                     new.model.as_ref(),
                     new.certificate_id.as_ref(),
-                    new.device_type.as_ref(),
+                    // device_type은 ProductDetail에만 있으므로 스킵
                 ].iter().filter(|f| f.is_some()).count();
 
                 if new_score >= existing_score {

@@ -161,6 +161,7 @@ export interface Product {
   page_id?: number;
   index_in_page?: number;
   created_at: string;
+  updated_at: string;
 }
 
 export interface MatterProduct {

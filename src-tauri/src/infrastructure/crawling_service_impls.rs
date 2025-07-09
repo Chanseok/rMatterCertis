@@ -69,6 +69,25 @@ impl StatusCheckerImpl {
             page_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
+
+    /// Update the pagination context in the data extractor based on discovered page information
+    pub async fn update_pagination_context(&self, total_pages: u32, items_on_last_page: u32) -> Result<()> {
+        // Create pagination context
+        let pagination_context = crate::infrastructure::html_parser::PaginationContext {
+            total_pages,
+            items_per_page: 12, // CSA-IoT site uses 12 items per page
+            items_on_last_page,
+            target_page_size: 12, // Our system also uses 12 items per page
+        };
+        
+        // Update the data extractor's pagination context
+        self.data_extractor.set_pagination_context(pagination_context)?;
+        
+        info!("📊 Updated pagination context: total_pages={}, items_on_last_page={}", 
+               total_pages, items_on_last_page);
+        
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -110,6 +129,11 @@ impl StatusChecker for StatusCheckerImpl {
 
         // Step 2: 페이지 수 탐지 및 마지막 페이지 제품 수 확인
         let (total_pages, products_on_last_page) = self.discover_total_pages().await?;
+
+        // Step 2.5: 페이지네이션 컨텍스트 업데이트
+        if let Err(e) = self.update_pagination_context(total_pages, products_on_last_page).await {
+            warn!("Failed to update pagination context: {}", e);
+        }
 
         let response_time_ms = start_time.elapsed().as_millis() as u64;
         let response_time = start_time.elapsed();
@@ -883,18 +907,6 @@ impl StatusCheckerImpl {
             }
         }
         
-        // 기본 선택자들도 시도
-        if max_count == 0 {
-            if let Ok(article_selector) = scraper::Selector::parse("article") {
-                let count = doc.select(&article_selector).count() as u32;
-                if count > 0 {
-                    max_count = count;
-                    best_selector = "article (fallback)";
-                    debug!("Fallback: Found {} products using generic article selector", count);
-                }
-            }
-        }
-        
         info!("Total products found on page: {} (using selector: {})", max_count, best_selector);
         max_count
     }
@@ -1010,9 +1022,8 @@ impl DatabaseAnalyzerImpl {
             missing_matter_version = 0;
             // Note: Product 구조체에 connectivity 필드가 없으므로 스킵
             missing_connectivity = 0;
-            if product.certification_date.is_none() {
-                missing_certification_date += 1;
-            }
+            // Note: certification_date는 ProductDetail에만 있으므로 스킵
+            missing_certification_date = 0;
         }
         
         info!("📊 Field analysis: {}/{} missing company, {}/{} missing model, {}/{} missing matter_version",
@@ -1079,7 +1090,8 @@ impl DatabaseAnalyzerImpl {
                 // matter_version과 connectivity 필드가 Product에 없으므로 false로 설정
                 false, // matter_version
                 false, // connectivity
-                product.certification_date.is_none(),
+                // certification_date는 ProductDetail에만 있으므로 false로 설정
+                false, // certification_date
             ].iter().filter(|&&missing| missing).count();
             
             // 3개 이상 필드가 누락된 제품들을 우선순위로 설정
@@ -1408,11 +1420,10 @@ pub fn product_detail_to_product(detail: crate::domain::product::ProductDetail) 
         manufacturer: detail.manufacturer,
         model: detail.model,
         certificate_id: detail.certification_id,
-        device_type: detail.device_type,
-        certification_date: detail.certification_date,
         page_id: detail.page_id,
         index_in_page: detail.index_in_page,
         created_at: detail.created_at,
         updated_at: detail.updated_at,
     }
 }
+
