@@ -742,6 +742,7 @@ pub struct SiteStatus {
     pub response_time_ms: u32,
     pub total_pages: u32,
     pub estimated_products: u32,
+    pub products_on_last_page: u32,
     pub last_check_time: String,
     pub health_score: f32, // 0.0 ~ 1.0
     pub data_change_status: String, // Simplified for now
@@ -999,6 +1000,7 @@ pub async fn get_crawling_status_check(
             response_time_ms: site_status.response_time_ms as u32,
             total_pages: site_status.total_pages,
             estimated_products: estimated_total_products.unwrap_or(0),
+            products_on_last_page: site_status.products_on_last_page,
             last_check_time: current_time.clone(),
             health_score: site_status.health_score as f32,
             data_change_status: "Stable".to_string(), // Simplified for now

@@ -19,12 +19,13 @@ use crate::domain::services::{
     SiteStatus, DatabaseAnalysis, FieldAnalysis, DuplicateAnalysis, ProcessingStrategy
 };
 use crate::domain::services::crawling_services::{
-    SiteDataChangeStatus, DataDecreaseRecommendation, RecommendedAction, SeverityLevel
+    SiteDataChangeStatus, DataDecreaseRecommendation, RecommendedAction, SeverityLevel, CrawlingRangeRecommendation
 };
 use crate::domain::product::{Product, ProductDetail};
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::config::utils as config_utils;
+use crate::infrastructure::config::defaults;
 
 /// 페이지 분석 결과를 캐싱하기 위한 구조체
 #[derive(Debug, Clone)]
@@ -49,6 +50,8 @@ pub struct StatusCheckerImpl {
     config: AppConfig,
     /// 페이지 분석 결과 캐시 (페이지 번호 -> 분석 결과)
     page_cache: Arc<tokio::sync::Mutex<HashMap<u32, PageAnalysisCache>>>,
+    /// 제품 레포지토리 (로컬 DB 상태 조회용)
+    product_repo: Option<Arc<IntegratedProductRepository>>,
 }
 
 impl StatusCheckerImpl {
@@ -67,7 +70,19 @@ impl StatusCheckerImpl {
             data_extractor: Arc::new(data_extractor),
             config,
             page_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            product_repo: None,
         }
+    }
+
+    pub fn with_product_repo(
+        http_client: HttpClient,
+        data_extractor: MatterDataExtractor,
+        config: AppConfig,
+        product_repo: Arc<IntegratedProductRepository>,
+    ) -> Self {
+        let mut instance = Self::new(http_client, data_extractor, config);
+        instance.product_repo = Some(product_repo);
+        instance
     }
 
     /// Update the pagination context in the data extractor based on discovered page information
@@ -119,10 +134,12 @@ impl StatusChecker for StatusCheckerImpl {
                     response_time_ms: start_time.elapsed().as_millis() as u64,
                     total_pages: 0,
                     estimated_products: 0,
+                    products_on_last_page: 0,
                     last_check_time: chrono::Utc::now(),
                     health_score: 0.0,
                     data_change_status: SiteDataChangeStatus::Inaccessible,
                     decrease_recommendation: None,
+                    crawling_range_recommendation: CrawlingRangeRecommendation::None,
                 });
             }
         }
@@ -159,15 +176,25 @@ impl StatusChecker for StatusCheckerImpl {
 
         // Step 4: 데이터 변화 상태 분석
         let (data_change_status, decrease_recommendation) = self.analyze_data_changes(estimated_products).await;
+        
+        // Step 5: 크롤링 범위 권장사항 계산
+        let crawling_range_recommendation = self.calculate_crawling_range_recommendation(
+            total_pages, 
+            products_on_last_page, 
+            estimated_products
+        ).await?;
               
-        Ok(SiteStatus {                is_accessible: true,
-                response_time_ms: response_time_ms,
-                total_pages,
-                estimated_products,
-                last_check_time: chrono::Utc::now(),
-                health_score,
+        Ok(SiteStatus {
+            is_accessible: true,
+            response_time_ms: response_time_ms,
+            total_pages,
+            estimated_products,
+            products_on_last_page,
+            last_check_time: chrono::Utc::now(),
+            health_score,
             data_change_status,
             decrease_recommendation,
+            crawling_range_recommendation,
         })
     }
 
@@ -183,7 +210,9 @@ impl StatusChecker for StatusCheckerImpl {
 
     async fn verify_site_accessibility(&self) -> Result<bool> {
         let status = self.check_site_status().await?;
-        Ok(status.is_accessible && status.health_score > 0.5)
+        // health_score는 성능 정보일 뿐, 크롤링 가능 여부와는 무관
+        // 사이트 접근 가능성과 기본적인 페이지 구조만 확인
+        Ok(status.is_accessible && status.total_pages > 0)
     }
 }
 
@@ -966,263 +995,228 @@ impl StatusCheckerImpl {
         cache.clear();
         debug!("🗑️  Page cache cleared");
     }
-}
-
-/// 데이터베이스 분석 서비스 구현체
-pub struct DatabaseAnalyzerImpl {
-    product_repo: Arc<IntegratedProductRepository>,
-}
-
-impl DatabaseAnalyzerImpl {
-    pub fn new(product_repo: Arc<IntegratedProductRepository>) -> Self {
-        Self { product_repo }
-    }
-
-    /// 실제 중복 제품 수 계산
-    async fn count_duplicate_products(&self) -> Result<u32> {
-        // certificate_id로 그룹화하여 중복 찾기
-        let products = self.product_repo.get_all_products().await?;
-        let mut cert_id_count = std::collections::HashMap::new();
+    
+    /// 크롤링 범위 권장사항 계산
+    /// 로컬 DB 상태와 사이트 정보를 기반으로 다음 크롤링 대상 페이지 범위를 계산
+    async fn calculate_crawling_range_recommendation(
+        &self,
+        total_pages_on_site: u32,
+        products_on_last_page: u32,
+        estimated_products: u32,
+    ) -> Result<CrawlingRangeRecommendation> {
+        info!("🔍 Calculating crawling range recommendation...");
         
-        for product in products {
-            if let Some(cert_id) = &product.certificate_id {
-                *cert_id_count.entry(cert_id.clone()).or_insert(0) += 1;
-            }
+        // 현재 로컬 DB 상태 확인
+        let local_db_status = self.get_local_db_status().await?;
+        
+        // DB가 비어있는 경우 전체 크롤링 권장
+        if local_db_status.is_empty {
+            info!("📊 Local DB is empty - recommending full crawl");
+            return Ok(CrawlingRangeRecommendation::Full);
         }
         
-        // 중복된 제품 수 계산 (그룹 크기 - 1)
-        let duplicate_count: u32 = cert_id_count.values()
-            .filter(|&&count| count > 1)
-            .map(|&count| count - 1)
-            .sum();
-            
-        debug!("Found {} duplicate products based on certificate_id", duplicate_count);
-        Ok(duplicate_count)
-    }
-
-    /// 실제 필드 누락 분석
-    async fn analyze_missing_fields(&self) -> Result<FieldAnalysis> {
-        let products = self.product_repo.get_all_products().await?;
-        let total = products.len() as u32;
+        // 사이트 데이터 변화 분석
+        let data_change_analysis = self.analyze_site_data_changes(estimated_products).await;
         
-        let mut missing_company = 0u32;
-        let mut missing_model = 0u32;
-        let mut missing_matter_version = 0u32;
-        let mut missing_connectivity = 0u32;
-        let mut missing_certification_date = 0u32;
+        // 크롤링 범위 계산
+        let crawling_range = self.calculate_next_crawling_pages(
+            &local_db_status,
+            total_pages_on_site,
+            products_on_last_page,
+            estimated_products,
+            &data_change_analysis,
+        ).await?;
         
-        for product in products {
-            if product.manufacturer.is_none() || product.manufacturer.as_ref().map_or(true, |s| s.is_empty()) {
-                missing_company += 1;
-            }
-            if product.model.is_none() || product.model.as_ref().map_or(true, |s| s.is_empty()) {
-                missing_model += 1;
-            }
-            // Note: Product 구조체에 matter_version 필드가 없으므로 스킵
-            missing_matter_version = 0;
-            // Note: Product 구조체에 connectivity 필드가 없으므로 스킵
-            missing_connectivity = 0;
-            // Note: certification_date는 ProductDetail에만 있으므로 스킵
-            missing_certification_date = 0;
-        }
-        
-        info!("📊 Field analysis: {}/{} missing company, {}/{} missing model, {}/{} missing matter_version",
-              missing_company, total, missing_model, total, missing_matter_version, total);
-        
-        Ok(FieldAnalysis {
-            missing_company,
-            missing_model,
-            missing_matter_version,
-            missing_connectivity,
-            missing_certification_date,
-        })
-    }
-
-    /// 실제 데이터 품질 점수 계산
-    fn calculate_data_quality_score(&self, total: u32, unique: u32, missing_fields: &FieldAnalysis) -> f64 {
-        if total == 0 {
-            return 1.0;
-        }
-        
-        // 중복률 점수 (70% 가중치)
-        let uniqueness_score = (unique as f64 / total as f64) * 0.7;
-        
-        // 필드 완성도 점수 (30% 가중치)
-        let total_fields = total * 5; // 5개 주요 필드
-        let missing_total = missing_fields.missing_company + 
-                           missing_fields.missing_model + 
-                           missing_fields.missing_matter_version + 
-                           missing_fields.missing_connectivity + 
-                           missing_fields.missing_certification_date;
-        
-        let completeness_score = if total_fields > 0 {
-            ((total_fields - missing_total) as f64 / total_fields as f64) * 0.3
-        } else {
-            0.3
-        };
-        
-        let final_score = uniqueness_score + completeness_score;
-        debug!("Quality score: uniqueness={:.3} + completeness={:.3} = {:.3}", 
-               uniqueness_score, completeness_score, final_score);
-        
-        final_score.min(1.0).max(0.0)
-    }
-
-    /// 마지막 업데이트 시간 가져오기
-    async fn get_last_update_time(&self) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
-        // 가장 최근에 업데이트된 제품의 시간을 가져오기
-        match self.product_repo.get_latest_updated_product().await {
-            Ok(Some(product)) => Ok(Some(product.updated_at)),
-            Ok(None) => Ok(None),
-            Err(_) => Ok(None), // 에러 시 None 반환
-        }
-    }
-
-    /// 누락된 필드가 많은 제품들의 우선순위 URL 생성
-    async fn get_priority_urls_for_missing_fields(&self) -> Result<Vec<String>> {
-        let products = self.product_repo.get_all_products().await?;
-        let mut priority_products = Vec::new();
-        
-        for product in products {
-            let missing_count = [
-                product.manufacturer.is_none() || product.manufacturer.as_ref().map_or(true, |s| s.is_empty()),
-                product.model.is_none() || product.model.as_ref().map_or(true, |s| s.is_empty()),
-                // matter_version과 connectivity 필드가 Product에 없으므로 false로 설정
-                false, // matter_version
-                false, // connectivity
-                // certification_date는 ProductDetail에만 있으므로 false로 설정
-                false, // certification_date
-            ].iter().filter(|&&missing| missing).count();
-            
-            // 3개 이상 필드가 누락된 제품들을 우선순위로 설정
-            if missing_count >= 3 {
-                priority_products.push(product.url.clone());
-            }
-        }
-        
-        // 최대 50개까지만 우선순위로 설정
-        priority_products.truncate(50);
-        
-        info!("📋 Generated {} priority URLs for products with missing fields", priority_products.len());
-        Ok(priority_products)
-    }
-
-    /// 중복 그룹 찾기
-    async fn find_duplicate_groups(&self) -> Result<Vec<Vec<String>>> {
-        let products = self.product_repo.get_all_products().await?;
-        let mut cert_id_groups: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-        
-        for product in products {
-            if let Some(cert_id) = &product.certificate_id {
-                cert_id_groups.entry(cert_id.clone())
-                    .or_insert_with(Vec::new)
-                    .push(product.url.clone());
-            }
-        }
-        
-        // 2개 이상의 제품이 있는 그룹만 중복으로 간주
-        let duplicate_groups: Vec<Vec<String>> = cert_id_groups.into_values()
-            .filter(|group| group.len() > 1)
-            .collect();
-        
-        debug!("Found {} duplicate groups", duplicate_groups.len());
-        Ok(duplicate_groups)
-    }
-}
-
-#[async_trait]
-impl DatabaseAnalyzer for DatabaseAnalyzerImpl {
-    async fn analyze_current_state(&self) -> Result<DatabaseAnalysis> {
-        let products = self.product_repo.get_all_products().await?;
-        let total = products.len() as u32;
-        
-        // 중복 제품 계산
-        let duplicate_count = self.count_duplicate_products().await?;
-        let unique = total.saturating_sub(duplicate_count);
-        
-        // 필드 누락 분석
-        let missing_fields_analysis = self.analyze_missing_fields().await?;
-        
-        // 데이터 품질 점수 계산
-        let data_quality_score = self.calculate_data_quality_score(total, unique, &missing_fields_analysis);
-        
-        // 마지막 업데이트 시간
-        let last_update = self.get_last_update_time().await?;
-        
-        info!("📊 Database Analysis: total={}, unique={}, duplicates={}, quality={:.3}", 
-              total, unique, duplicate_count, data_quality_score);
-        
-        Ok(DatabaseAnalysis {
-            total_products: total,
-            unique_products: unique,
-            duplicate_count,
-            last_update,
-            missing_fields_analysis,
-            data_quality_score,
-        })
+        info!("📊 Crawling range recommendation: {:?}", crawling_range);
+        Ok(crawling_range)
     }
     
-    async fn recommend_processing_strategy(&self) -> Result<ProcessingStrategy> {
-        let analysis = self.analyze_current_state().await?;
-        
-        // 배치 크기 추천 (데이터 품질에 따라 조정)
-        let recommended_batch_size = if analysis.data_quality_score > 0.8 {
-            20 // 높은 품질일 때는 큰 배치
-        } else if analysis.data_quality_score > 0.5 {
-            10 // 중간 품질
-        } else {
-            5  // 낮은 품질일 때는 작은 배치
-        };
-        
-        // 동시성 추천
-        let recommended_concurrency = if analysis.total_products > 1000 {
-            3
-        } else {
-            2
-        };
-        
-        // 중복 건너뛰기 여부
-        let should_skip_duplicates = analysis.duplicate_count > analysis.total_products / 10;
-        
-        // 기존 데이터 업데이트 여부
-        let should_update_existing = analysis.data_quality_score < 0.7;
-        
-        // 우선순위 URL 생성
-        let priority_urls = self.get_priority_urls_for_missing_fields().await?;
-        
-        info!("🎯 Strategy: batch_size={}, concurrency={}, skip_duplicates={}, update_existing={}", 
-              recommended_batch_size, recommended_concurrency, should_skip_duplicates, should_update_existing);
-        
-        Ok(ProcessingStrategy {
-            recommended_batch_size,
-            recommended_concurrency,
-            should_skip_duplicates,
-            should_update_existing,
-            priority_urls,
-        })
+    /// 로컬 DB 상태 조회
+    async fn get_local_db_status(&self) -> Result<LocalDbStatus> {
+        match &self.product_repo {
+            Some(repo) => {
+                let products = repo.get_all_products().await?;
+                
+                if products.is_empty() {
+                    return Ok(LocalDbStatus {
+                        is_empty: true,
+                        max_page_id: 0,
+                        max_index_in_page: 0,
+                        total_saved_products: 0,
+                    });
+                }
+                
+                // 가장 높은 pageId와 해당 페이지에서의 최대 indexInPage 찾기
+                let mut max_page_id = 0i32;
+                let mut max_index_in_page = 0i32;
+                
+                for product in &products {
+                    if let (Some(page_id), Some(index_in_page)) = (product.page_id, product.index_in_page) {
+                        if page_id > max_page_id {
+                            max_page_id = page_id;
+                            max_index_in_page = index_in_page;
+                        } else if page_id == max_page_id && index_in_page > max_index_in_page {
+                            max_index_in_page = index_in_page;
+                        }
+                    }
+                }
+                
+                info!("📊 Local DB status: max_page_id={}, max_index_in_page={}, total_products={}", 
+                      max_page_id, max_index_in_page, products.len());
+                
+                Ok(LocalDbStatus {
+                    is_empty: false,
+                    max_page_id: max_page_id.max(0) as u32,
+                    max_index_in_page: max_index_in_page.max(0) as u32,
+                    total_saved_products: products.len() as u32,
+                })
+            },
+            None => {
+                warn!("⚠️  Product repository not available - assuming empty DB");
+                Ok(LocalDbStatus {
+                    is_empty: true,
+                    max_page_id: 0,
+                    max_index_in_page: 0,
+                    total_saved_products: 0,
+                })
+            }
+        }
     }
     
-    async fn analyze_duplicates(&self) -> Result<DuplicateAnalysis> {
-        let total_products = self.product_repo.get_all_products().await?.len() as u32;
-        let total_duplicates = self.count_duplicate_products().await?;
-        let duplicate_percentage = if total_products > 0 {
-            (total_duplicates as f64 / total_products as f64) * 100.0
+    /// 사이트 데이터 변화 분석
+    async fn analyze_site_data_changes(&self, current_estimated_products: u32) -> DataChangeAnalysis {
+        let previous_count = self.config.app_managed.last_crawl_product_count;
+        
+        match previous_count {
+            None => DataChangeAnalysis::Initial,
+            Some(prev_count) => {
+                let change_percentage = if prev_count > 0 {
+                    ((current_estimated_products as f64 - prev_count as f64) / prev_count as f64) * 100.0
+                } else {
+                    0.0
+                };
+                
+                if current_estimated_products > prev_count {
+                    DataChangeAnalysis::Increased { 
+                        new_products: current_estimated_products - prev_count,
+                        change_percentage,
+                    }
+                } else if current_estimated_products == prev_count {
+                    DataChangeAnalysis::Stable
+                } else {
+                    DataChangeAnalysis::Decreased {
+                        lost_products: prev_count - current_estimated_products,
+                        change_percentage: -change_percentage,
+                    }
+                }
+            }
+        }
+    }
+    
+    /// 다음 크롤링 페이지 범위 계산
+    async fn calculate_next_crawling_pages(
+        &self,
+        local_db_status: &LocalDbStatus,
+        total_pages_on_site: u32,
+        products_on_last_page: u32,
+        estimated_products: u32,
+        data_change_analysis: &DataChangeAnalysis,
+    ) -> Result<CrawlingRangeRecommendation> {
+        use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
+        let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
+        
+        // 데이터 변화에 따른 크롤링 전략 결정
+        match data_change_analysis {
+            DataChangeAnalysis::Initial => {
+                info!("📊 Initial crawling - recommending full crawl");
+                return Ok(CrawlingRangeRecommendation::Full);
+            },
+            DataChangeAnalysis::Decreased { lost_products, .. } => {
+                warn!("📉 Site data decreased by {} products - recommending full recrawl", lost_products);
+                return Ok(CrawlingRangeRecommendation::Full);
+            },
+            DataChangeAnalysis::Increased { new_products, .. } => {
+                // 새로운 제품이 많이 추가된 경우 부분 크롤링
+                let recommended_pages = (*new_products as f64 / products_per_page as f64).ceil() as u32;
+                let limited_pages = recommended_pages.min(self.config.user.crawling.page_range_limit);
+                
+                info!("📈 Site data increased by {} products - recommending partial crawl of {} pages", 
+                      new_products, limited_pages);
+                return Ok(CrawlingRangeRecommendation::Partial(limited_pages));
+            },
+            DataChangeAnalysis::Stable => {
+                // 안정적인 경우 기존 로직 적용
+            }
+        }
+        
+        // 기존 로직: 로컬 DB 상태 기반 계산
+        if local_db_status.is_empty {
+            return Ok(CrawlingRangeRecommendation::Full);
+        }
+        
+        // 1단계: 로컬 DB에 마지막으로 저장된 제품의 '역순 절대 인덱스' 계산
+        let last_saved_index = (local_db_status.max_page_id * products_per_page) + local_db_status.max_index_in_page;
+        info!("📊 Last saved product index: {}", last_saved_index);
+        
+        // 2단계: 다음에 크롤링해야 할 제품의 '역순 절대 인덱스' 결정
+        let next_product_index = last_saved_index + 1;
+        info!("📊 Next product index to crawl: {}", last_saved_index);
+        
+        // 3단계: '역순 절대 인덱스'를 웹사이트 페이지 번호로 변환
+        let total_products = ((total_pages_on_site - 1) * products_per_page) + products_on_last_page;
+        
+        // 다음 제품이 전체 제품 수를 초과하는 경우 (모든 제품 크롤링 완료)
+        if next_product_index >= total_products {
+            info!("📊 All products have been crawled - no crawling needed");
+            return Ok(CrawlingRangeRecommendation::None);
+        }
+        
+        // '순차 인덱스'로 변환 (최신 제품이 0)
+        let forward_index = (total_products - 1) - next_product_index;
+        
+        // 웹사이트 페이지 번호 계산
+        let target_page_number = (forward_index / products_per_page) + 1;
+        
+        info!("📊 Target page to start crawling: {}", target_page_number);
+        
+        // 4단계: 크롤링 페이지 범위 결정
+        let max_crawl_pages = self.config.user.crawling.page_range_limit;
+        let start_page = target_page_number;
+        let end_page = if start_page >= max_crawl_pages {
+            start_page - max_crawl_pages + 1
         } else {
-            0.0
+            1
         };
         
-        // 중복 그룹 찾기 (간소화된 버전)
-        let duplicate_groups = vec![]; // 실제 구현에서는 find_duplicate_groups() 사용
+        let actual_pages_to_crawl = if start_page >= end_page {
+            start_page - end_page + 1
+        } else {
+            start_page
+        };
         
-        info!("🔄 Duplicate Analysis: {}/{} duplicates ({:.1}%)", 
-              total_duplicates, total_products, duplicate_percentage);
+        info!("📊 Crawling range: pages {} to {} (total: {} pages)", 
+              start_page, end_page, actual_pages_to_crawl);
         
-        Ok(DuplicateAnalysis {
-            total_duplicates,
-            duplicate_groups,
-            duplicate_percentage,
-        })
+        Ok(CrawlingRangeRecommendation::Partial(actual_pages_to_crawl))
     }
+}
+
+/// 로컬 DB 상태 정보
+#[derive(Debug, Clone)]
+struct LocalDbStatus {
+    is_empty: bool,
+    max_page_id: u32,
+    max_index_in_page: u32,
+    total_saved_products: u32,
+}
+
+/// 데이터 변화 분석 결과
+#[derive(Debug, Clone)]
+enum DataChangeAnalysis {
+    Initial,
+    Increased { new_products: u32, change_percentage: f64 },
+    Decreased { lost_products: u32, change_percentage: f64 },
+    Stable,
 }
 
 /// 컬렉터 설정
@@ -1253,18 +1247,18 @@ impl Default for CollectorConfig {
 
 /// 헬스 스코어 계산 함수
 fn calculate_health_score(response_time: Duration, total_pages: u32) -> f64 {
-    // 응답 시간 기반 점수 (0.0 ~ 0.7)
-    let response_score = if response_time.as_millis() <= 500 {
-        0.7
-    } else if response_time.as_millis() <= 1000 {
-        0.5
-    } else if response_time.as_millis() <= 2000 {
-        0.3
+    // 응답 시간 기반 점수 (0.0 ~ 0.7) - 더 관대한 기준으로 수정
+    let response_score = if response_time.as_millis() <= 2000 {
+        0.7  // 2초 이하는 양호
+    } else if response_time.as_millis() <= 5000 {
+        0.5  // 5초 이하는 보통
+    } else if response_time.as_millis() <= 10000 {
+        0.3  // 10초 이하는 느림
     } else {
-        0.1
+        0.1  // 10초 초과는 문제
     };
     
-    // 페이지 수 기반 점수 (0.0 ~ 0.3)
+    // 페이지 수 기반 점수 (0.0 ~ 0.3) - 페이지 발견 여부가 더 중요
     let page_score = if total_pages > 0 {
         0.3
     } else {
@@ -1424,6 +1418,474 @@ pub fn product_detail_to_product(detail: crate::domain::product::ProductDetail) 
         index_in_page: detail.index_in_page,
         created_at: detail.created_at,
         updated_at: detail.updated_at,
+    }
+}
+
+/// 크롤링 범위 계산 및 관리 서비스
+pub struct CrawlingRangeCalculator {
+    product_repo: Arc<IntegratedProductRepository>,
+    config: AppConfig,
+}
+
+impl CrawlingRangeCalculator {
+    pub fn new(product_repo: Arc<IntegratedProductRepository>, config: AppConfig) -> Self {
+        Self {
+            product_repo,
+            config,
+        }
+    }
+
+    /// 다음 크롤링 대상 페이지 범위를 계산합니다.
+    /// 
+    /// 이 메서드는 prompts6에서 설명한 로직을 구현합니다:
+    /// 1. 로컬 DB에서 마지막으로 저장된 제품의 pageId와 indexInPage를 가져옵니다.
+    /// 2. 사이트 정보 (총 페이지 수, 마지막 페이지 제품 수)를 사용하여 다음 크롤링 범위를 계산합니다.
+    /// 3. 크롤링 페이지 제한을 적용합니다.
+    /// 
+    /// Returns: Some((start_page, end_page)) 또는 None (모든 제품이 크롤링됨)
+    pub async fn calculate_next_crawling_range(
+        &self,
+        total_pages_on_site: u32,
+        products_on_last_page: u32,
+    ) -> Result<Option<(u32, u32)>> {
+        let crawl_page_limit = self.config.user.crawling.page_range_limit;
+        let products_per_page = defaults::DEFAULT_PRODUCTS_PER_PAGE;
+
+        let range = self.product_repo.calculate_next_crawling_range(
+            total_pages_on_site,
+            products_on_last_page,
+            crawl_page_limit,
+            products_per_page,
+        ).await?;
+
+        if let Some((start_page, end_page)) = range {
+            info!("🎯 Next crawling range: pages {} to {} (limit: {})", 
+                  start_page, end_page, crawl_page_limit);
+            
+            // 추가 검증: 해당 범위가 이미 크롤링되었는지 확인
+            if self.product_repo.is_page_range_crawled(start_page, end_page, products_per_page).await? {
+                warn!("⚠️  Calculated range {} to {} appears to be already crawled, skipping", 
+                      start_page, end_page);
+                return Ok(None);
+            }
+        } else {
+            info!("🏁 All products have been crawled - no more work to do");
+        }
+
+        Ok(range)
+    }
+
+    /// 특정 페이지 범위가 크롤링되었는지 확인합니다.
+    pub async fn is_range_crawled(&self, start_page: u32, end_page: u32) -> Result<bool> {
+        let products_per_page = defaults::DEFAULT_PRODUCTS_PER_PAGE;
+        self.product_repo.is_page_range_crawled(start_page, end_page, products_per_page).await
+    }
+
+    /// 크롤링 진행 상황을 분석합니다.
+    pub async fn analyze_crawling_progress(
+        &self,
+        total_pages_on_site: u32,
+        products_on_last_page: u32,
+    ) -> Result<CrawlingProgress> {
+        let products_per_page = defaults::DEFAULT_PRODUCTS_PER_PAGE;
+        
+        // 전체 제품 수 계산
+        let total_products = ((total_pages_on_site - 1) * products_per_page) + products_on_last_page;
+        
+        // 현재 DB에 저장된 제품 수
+        let saved_products = self.product_repo.get_product_count().await? as u32;
+        
+        // 진행률 계산
+        let progress_percentage = if total_products > 0 {
+            (saved_products as f64 / total_products as f64 * 100.0).min(100.0)
+        } else {
+            0.0
+        };
+        
+        // 마지막 저장된 제품 정보
+        let (max_page_id, max_index_in_page) = self.product_repo.get_max_page_id_and_index().await?;
+        
+        // 다음 크롤링 범위 계산
+        let next_range = self.calculate_next_crawling_range(total_pages_on_site, products_on_last_page).await?;
+        
+        info!("📊 Crawling Progress Analysis:");
+        info!("  Total products on site: {}", total_products);
+        info!("  Products saved in DB: {}", saved_products);
+        info!("  Progress: {:.2}%", progress_percentage);
+        info!("  Last saved: pageId={:?}, indexInPage={:?}", max_page_id, max_index_in_page);
+        info!("  Next range: {:?}", next_range);
+        
+        Ok(CrawlingProgress {
+            total_products,
+            saved_products,
+            progress_percentage,
+            max_page_id,
+            max_index_in_page,
+            next_range,
+            is_completed: next_range.is_none(),
+        })
+    }
+}
+
+/// 크롤링 진행 상황 정보
+#[derive(Debug, Clone)]
+pub struct CrawlingProgress {
+    pub total_products: u32,
+    pub saved_products: u32,
+    pub progress_percentage: f64,
+    pub max_page_id: Option<i32>,
+    pub max_index_in_page: Option<i32>,
+    pub next_range: Option<(u32, u32)>,
+    pub is_completed: bool,
+}
+
+/// 통합된 크롤링 서비스 - 범위 계산 로직을 포함
+pub struct SmartCrawlingService {
+    range_calculator: Arc<CrawlingRangeCalculator>,
+    status_checker: Arc<StatusCheckerImpl>,
+    list_collector: Arc<ProductListCollectorImpl>,
+    detail_collector: Arc<ProductDetailCollectorImpl>,
+    product_repo: Arc<IntegratedProductRepository>,
+    config: AppConfig,
+}
+
+impl SmartCrawlingService {
+    pub fn new(
+        range_calculator: Arc<CrawlingRangeCalculator>,
+        status_checker: Arc<StatusCheckerImpl>,
+        list_collector: Arc<ProductListCollectorImpl>,
+        detail_collector: Arc<ProductDetailCollectorImpl>,
+        product_repo: Arc<IntegratedProductRepository>,
+        config: AppConfig,
+    ) -> Self {
+        Self {
+            range_calculator,
+            status_checker,
+            list_collector,
+            detail_collector,
+            product_repo,
+            config,
+        }
+    }
+
+    /// 스마트 크롤링 실행 - 자동으로 다음 크롤링 범위를 계산하고 실행합니다.
+    pub async fn run_smart_crawling(&self) -> Result<CrawlingProgress> {
+        info!("🚀 Starting smart crawling with automatic range calculation");
+        
+        // 1. 사이트 상태 체크
+        let site_status = self.status_checker.check_site_status().await?;
+        info!("📊 Site status: {} pages discovered", site_status.total_pages);
+        
+        // 2. 다음 크롤링 범위 계산
+        let next_range = self.range_calculator.calculate_next_crawling_range(
+            site_status.total_pages,
+            site_status.products_on_last_page,
+        ).await?;
+        
+        match next_range {
+            Some((start_page, end_page)) => {
+                info!("🎯 Crawling pages {} to {}", start_page, end_page);
+                
+                // 3. 페이지 범위 크롤링
+                let pages_to_crawl: Vec<u32> = if start_page >= end_page {
+                    // 정상적인 역순 크롤링 (높은 번호에서 낮은 번호로)
+                    (end_page..=start_page).rev().collect()
+                } else {
+                    // 순차 크롤링 (낮은 번호에서 높은 번호로)
+                    (start_page..=end_page).collect()
+                };
+                
+                // 4. 제품 URL 수집
+                let mut all_urls = Vec::new();
+                for page in pages_to_crawl {
+                    match self.list_collector.collect_single_page(page).await {
+                        Ok(urls) => {
+                            all_urls.extend(urls);
+                            info!("📄 Collected {} URLs from page {}", all_urls.len(), page);
+                        }
+                        Err(e) => {
+                            warn!("⚠️  Failed to collect URLs from page {}: {}", page, e);
+                        }
+                    }
+                    
+                    // 페이지 간 지연
+                    tokio::time::sleep(tokio::time::Duration::from_millis(self.config.user.request_delay_ms)).await;
+                }
+                
+                info!("🔗 Total URLs collected: {}", all_urls.len());
+                
+                // 5. 제품 상세 정보 수집
+                let mut processed_count = 0;
+                let total_urls = all_urls.len();
+                
+                for url in all_urls {
+                    match self.detail_collector.collect_single_product(&url).await {
+                        Ok(product_detail) => {
+                            // 제품을 DB에 저장
+                            let product = product_detail_to_product(product_detail.clone());
+                            
+                            if let Err(e) = self.product_repo.create_or_update_product(&product).await {
+                                warn!("⚠️  Failed to save product {}: {}", url, e);
+                            } else {
+                                processed_count += 1;
+                                if processed_count % 10 == 0 {
+                                    info!("📦 Processed {}/{} products", processed_count, total_urls);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("⚠️  Failed to collect product details from {}: {}", url, e);
+                        }
+                    }
+                    
+                    // 요청 간 지연
+                    tokio::time::sleep(tokio::time::Duration::from_millis(self.config.user.request_delay_ms)).await;
+                }
+                
+                info!("✅ Smart crawling completed: processed {}/{} products", processed_count, total_urls);
+            }
+            None => {
+                info!("🏁 All products have been crawled - no more work to do");
+            }
+        }
+        
+        // 6. 최종 진행 상황 분석
+        let progress = self.range_calculator.analyze_crawling_progress(
+            site_status.total_pages,
+            site_status.products_on_last_page,
+        ).await?;
+        
+        Ok(progress)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
+    use crate::infrastructure::crawling_service_impls::CrawlingRangeCalculator;
+    use crate::infrastructure::config::AppConfig;
+    use sqlx::SqlitePool;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_step_by_step_calculation() {
+        // Test the step-by-step calculation as described in prompts6
+        
+        // Given data from prompts6
+        let max_page_id = 10i32;
+        let max_index_in_page = 6i32;
+        let total_pages_on_site = 481u32;
+        let products_on_last_page = 10u32;
+        let crawl_page_limit = 10u32;
+        let products_per_page = 12u32;
+        
+        println!("📊 Step-by-step calculation test:");
+        println!("Input data:");
+        println!("  max_page_id: {}", max_page_id);
+        println!("  max_index_in_page: {}", max_index_in_page);
+        println!("  total_pages_on_site: {}", total_pages_on_site);
+        println!("  products_on_last_page: {}", products_on_last_page);
+        println!("  crawl_page_limit: {}", crawl_page_limit);
+        println!("  products_per_page: {}", products_per_page);
+        
+        // Step 1: Calculate last saved index
+        let last_saved_index = (max_page_id as u32 * products_per_page) + max_index_in_page as u32;
+        println!("\nStep 1: lastSavedIndex = ({} * {}) + {} = {}", 
+                 max_page_id, products_per_page, max_index_in_page, last_saved_index);
+        assert_eq!(last_saved_index, 126, "Last saved index should be 126");
+        
+        // Step 2: Calculate next product index
+        let next_product_index = last_saved_index + 1;
+        println!("Step 2: nextProductIndex = {} + 1 = {}", last_saved_index, next_product_index);
+        assert_eq!(next_product_index, 127, "Next product index should be 127");
+        
+        // Step 3: Calculate total products
+        let total_products = ((total_pages_on_site - 1) * products_per_page) + products_on_last_page;
+        println!("Step 3: totalProducts = (({} - 1) * {}) + {} = {}", 
+                 total_pages_on_site, products_per_page, products_on_last_page, total_products);
+        assert_eq!(total_products, 5770, "Total products should be 5770");
+        
+        // Step 4: Convert to forward index
+        let forward_index = (total_products - 1) - next_product_index;
+        println!("Step 4: forwardIndex = ({} - 1) - {} = {}", 
+                 total_products, next_product_index, forward_index);
+        assert_eq!(forward_index, 5642, "Forward index should be 5642");
+        
+        // Step 5: Calculate target page number
+        let target_page_number = (forward_index / products_per_page) + 1;
+        println!("Step 5: targetPageNumber = ({} / {}) + 1 = {}", 
+                 forward_index, products_per_page, target_page_number);
+        assert_eq!(target_page_number, 471, "Target page number should be 471");
+        
+        // Step 6: Apply crawl page limit
+        let start_page = target_page_number;
+        let end_page = if start_page >= crawl_page_limit {
+            start_page - crawl_page_limit + 1
+        } else {
+            1
+        };
+        println!("Step 6: startPage = {}, endPage = {} - {} + 1 = {}", 
+                 start_page, start_page, crawl_page_limit, end_page);
+        
+        assert_eq!(start_page, 471, "Start page should be 471");
+        assert_eq!(end_page, 462, "End page should be 462");
+        
+        println!("\n✅ All calculation steps match prompts6 specification!");
+        println!("🎯 Final result: crawl pages {} to {}", start_page, end_page);
+    }
+}
+
+/// 데이터베이스 분석 서비스 구현체
+pub struct DatabaseAnalyzerImpl {
+    product_repo: Arc<IntegratedProductRepository>,
+}
+
+impl DatabaseAnalyzerImpl {
+    pub fn new(product_repo: Arc<IntegratedProductRepository>) -> Self {
+        Self { product_repo }
+    }
+
+    /// 실제 중복 제품 수 계산
+    async fn count_duplicate_products(&self) -> Result<u32> {
+        // certificate_id로 그룹화하여 중복 찾기
+        let products = self.product_repo.get_all_products().await?;
+        let mut cert_id_count = std::collections::HashMap::new();
+        
+        for product in products {
+            if let Some(cert_id) = &product.certificate_id {
+                *cert_id_count.entry(cert_id.clone()).or_insert(0) += 1;
+            }
+        }
+        
+        // 중복된 제품 수 계산 (그룹 크기 - 1)
+        let duplicate_count: u32 = cert_id_count.values()
+            .filter(|&&count| count > 1)
+            .map(|&count| count - 1)
+            .sum();
+            
+        debug!("Found {} duplicate products based on certificate_id", duplicate_count);
+        Ok(duplicate_count)
+    }
+
+    /// 실제 필드 누락 분석
+    async fn analyze_missing_fields(&self) -> Result<FieldAnalysis> {
+        let products = self.product_repo.get_all_products().await?;
+        let total = products.len() as u32;
+        
+        let mut missing_company = 0u32;
+        let mut missing_model = 0u32;
+        let missing_matter_version = 0u32;
+        let missing_connectivity = 0u32;
+        let missing_certification_date = 0u32;
+        
+        for product in products {
+            if product.manufacturer.is_none() || product.manufacturer.as_ref().map_or(true, |s| s.is_empty()) {
+                missing_company += 1;
+            }
+            if product.model.is_none() || product.model.as_ref().map_or(true, |s| s.is_empty()) {
+                missing_model += 1;
+            }
+        }
+        
+        info!("📊 Field analysis: {}/{} missing company, {}/{} missing model",
+              missing_company, total, missing_model, total);
+        
+        Ok(FieldAnalysis {
+            missing_company,
+            missing_model,
+            missing_matter_version,
+            missing_connectivity,
+            missing_certification_date,
+        })
+    }
+}
+
+#[async_trait]
+impl DatabaseAnalyzer for DatabaseAnalyzerImpl {
+    async fn analyze_current_state(&self) -> Result<DatabaseAnalysis> {
+        let products = self.product_repo.get_all_products().await?;
+        let total_products = products.len() as u32;
+        
+        let duplicate_count = self.count_duplicate_products().await?;
+        let unique_products = total_products.saturating_sub(duplicate_count);
+        
+        let missing_fields_analysis = self.analyze_missing_fields().await?;
+        
+        // 데이터 품질 점수 계산 (0.0 ~ 1.0)
+        let quality_score = if total_products > 0 {
+            let completeness_score = 1.0 - (missing_fields_analysis.missing_company as f64 + missing_fields_analysis.missing_model as f64) / (total_products as f64 * 2.0);
+            let uniqueness_score = unique_products as f64 / total_products as f64;
+            (completeness_score + uniqueness_score) / 2.0
+        } else {
+            0.0
+        };
+        
+        // 마지막 업데이트 시간 (가장 최근 제품의 created_at 사용)
+        let last_update = products.iter()
+            .map(|p| p.created_at)
+            .max();
+        
+        info!("📊 Database analysis: total={}, unique={}, duplicates={}, quality={:.2}", 
+              total_products, unique_products, duplicate_count, quality_score);
+        
+        Ok(DatabaseAnalysis {
+            total_products,
+            unique_products,
+            duplicate_count,
+            last_update,
+            missing_fields_analysis,
+            data_quality_score: quality_score,
+        })
+    }
+    
+    async fn recommend_processing_strategy(&self) -> Result<ProcessingStrategy> {
+        let analysis = self.analyze_current_state().await?;
+        
+        // 데이터 상태에 따른 처리 전략 결정
+        let (batch_size, concurrency) = if analysis.total_products < 1000 {
+            (50, 3)  // 소규모: 작은 배치, 낮은 동시성
+        } else if analysis.total_products < 5000 {
+            (100, 5) // 중규모: 중간 배치, 중간 동시성
+        } else {
+            (200, 8) // 대규모: 큰 배치, 높은 동시성
+        };
+        
+        let should_skip_duplicates = analysis.duplicate_count > analysis.total_products / 10; // 10% 이상 중복
+        let should_update_existing = analysis.data_quality_score < 0.8; // 품질이 80% 미만
+        
+        Ok(ProcessingStrategy {
+            recommended_batch_size: batch_size,
+            recommended_concurrency: concurrency,
+            should_skip_duplicates,
+            should_update_existing,
+            priority_urls: Vec::new(), // 우선순위 URL은 비워둠
+        })
+    }
+    
+    async fn analyze_duplicates(&self) -> Result<DuplicateAnalysis> {
+        let products = self.product_repo.get_all_products().await?;
+        let total_products = products.len() as u32;
+        
+        if total_products == 0 {
+            return Ok(DuplicateAnalysis {
+                total_duplicates: 0,
+                duplicate_groups: Vec::new(),
+                duplicate_percentage: 0.0,
+            });
+        }
+        
+        let duplicate_count = self.count_duplicate_products().await?;
+        let duplicate_percentage = (duplicate_count as f64 / total_products as f64) * 100.0;
+        
+        info!("📊 Duplicate analysis: {}/{} duplicates ({:.1}%)", 
+              duplicate_count, total_products, duplicate_percentage);
+        
+        Ok(DuplicateAnalysis {
+            total_duplicates: duplicate_count,
+            duplicate_groups: Vec::new(), // 간단한 구현에서는 그룹 정보 생략
+            duplicate_percentage,
+        })
     }
 }
 

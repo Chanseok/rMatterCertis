@@ -74,11 +74,13 @@ pub mod commands {
     pub mod modern_crawling;
     pub mod parsing_commands;
     pub mod config_commands;
+    pub mod smart_crawling;
 
     // Re-export all commands
     pub use modern_crawling::*;
     pub use parsing_commands::*;
     pub use config_commands::*;
+    pub use smart_crawling::*;
 }
 
 // Test utilities (only available during testing)
@@ -248,7 +250,13 @@ pub fn run() {
             commands::batch_crawl_product_details,
             commands::check_has_next_page,
             commands::get_crawler_config,
-            commands::crawler_health_check
+            commands::crawler_health_check,
+            
+            // Smart crawling commands (prompts6 implementation)
+            commands::calculate_crawling_range,
+            commands::get_crawling_progress,
+            commands::get_database_state_for_range_calculation,
+            commands::demo_prompts6_calculation
         ]);
     
     info!("✅ Tauri application built successfully, starting...");

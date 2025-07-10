@@ -224,8 +224,8 @@ impl ServiceBasedBatchCrawlingEngine {
 
         let site_status = self.status_checker.check_site_status().await?;
         
-        if !site_status.is_accessible || site_status.health_score < 0.5 {
-            let error_msg = format!("Site is not accessible or unhealthy (score: {})", site_status.health_score);
+        if !site_status.is_accessible || site_status.total_pages == 0 {
+            let error_msg = format!("Site is not accessible or has no pages (pages: {})", site_status.total_pages);
             self.emit_detailed_event(DetailedCrawlingEvent::ErrorOccurred {
                 stage: "SiteStatus".to_string(),
                 error: error_msg.clone(),

@@ -62,6 +62,17 @@ pub trait ProductDetailCollector: Send + Sync {
     async fn collect_product_batch(&self, urls: &[String]) -> Result<Vec<ProductDetail>>;
 }
 
+/// 크롤링 범위 권장 사항
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum CrawlingRangeRecommendation {
+    /// 전체 크롤링 권장
+    Full,
+    /// 최근 추가된 일부만 크롤링 권장 (페이지 수)
+    Partial(u32),
+    /// 크롤링 필요 없음
+    None,
+}
+
 /// 사이트 상태 정보
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SiteStatus {
@@ -69,10 +80,12 @@ pub struct SiteStatus {
     pub response_time_ms: u64,
     pub total_pages: u32,
     pub estimated_products: u32,
+    pub products_on_last_page: u32,
     pub last_check_time: chrono::DateTime<chrono::Utc>,
     pub health_score: f64, // 0.0 ~ 1.0
     pub data_change_status: SiteDataChangeStatus,
     pub decrease_recommendation: Option<DataDecreaseRecommendation>,
+    pub crawling_range_recommendation: CrawlingRangeRecommendation,
 }
 
 /// 데이터베이스 분석 결과

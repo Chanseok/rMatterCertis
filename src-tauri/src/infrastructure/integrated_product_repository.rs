@@ -743,4 +743,159 @@ impl IntegratedProductRepository {
             Ok(None)
         }
     }
+
+    // ===============================
+    // CRAWLING RANGE CALCULATION
+    // ===============================
+
+    /// Get the maximum pageId and indexInPage from the database
+    /// Returns (max_page_id, max_index_in_page) or (None, None) if no data
+    pub async fn get_max_page_id_and_index(&self) -> Result<(Option<i32>, Option<i32>)> {
+        let row = sqlx::query(
+            r#"
+            SELECT MAX(pageId) as max_page_id, 
+                   MAX(CASE WHEN pageId = (SELECT MAX(pageId) FROM products) THEN indexInPage END) as max_index_in_page
+            FROM products
+            WHERE pageId IS NOT NULL AND indexInPage IS NOT NULL
+            "#,
+        )
+        .fetch_optional(&*self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let max_page_id: Option<i32> = row.get("max_page_id");
+            let max_index_in_page: Option<i32> = row.get("max_index_in_page");
+            Ok((max_page_id, max_index_in_page))
+        } else {
+            Ok((None, None))
+        }
+    }
+
+    /// Get the count of products stored in the database
+    pub async fn get_product_count(&self) -> Result<i32> {
+        let count: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+            .fetch_one(&*self.pool)
+            .await?;
+        Ok(count)
+    }
+
+    /// Calculate the next crawling range based on local DB state and site information
+    /// Returns (start_page, end_page) for the next crawling range
+    /// 
+    /// This implements the logic from prompts6:
+    /// 1. Get the last saved product's reverse absolute index
+    /// 2. Calculate the next product index to crawl
+    /// 3. Convert to website page numbers
+    /// 4. Apply crawl page limit
+    pub async fn calculate_next_crawling_range(
+        &self,
+        total_pages_on_site: u32,
+        products_on_last_page: u32,
+        crawl_page_limit: u32,
+        products_per_page: u32,
+    ) -> Result<Option<(u32, u32)>> {
+        // Step 1: Get the last saved product's pageId and indexInPage
+        let (max_page_id, max_index_in_page) = self.get_max_page_id_and_index().await?;
+        
+        // If no data exists, start from the oldest page (highest page number)
+        if max_page_id.is_none() || max_index_in_page.is_none() {
+            let start_page = total_pages_on_site;
+            let end_page = if start_page >= crawl_page_limit {
+                start_page - crawl_page_limit + 1
+            } else {
+                1
+            };
+            tracing::info!("🆕 No existing data, starting from page {} to {}", start_page, end_page);
+            return Ok(Some((start_page, end_page)));
+        }
+
+        let max_page_id = max_page_id.unwrap();
+        let max_index_in_page = max_index_in_page.unwrap();
+
+        // Step 2: Calculate the last saved product's reverse absolute index
+        // Formula: lastSavedIndex = (max_pageId * productsPerPage) + max_indexInPage
+        let last_saved_index = (max_page_id as u32 * products_per_page) + max_index_in_page as u32;
+        
+        // Step 3: Calculate the next product index to crawl
+        // Formula: nextProductIndex = lastSavedIndex + 1
+        let next_product_index = last_saved_index + 1;
+        
+        // Step 4: Calculate total products on the site
+        // Formula: totalProducts = ((totalPagesOnSite - 1) * productsPerPage) + productsOnLastPage
+        let total_products = ((total_pages_on_site - 1) * products_per_page) + products_on_last_page;
+        
+        // Check if we've already crawled all products
+        if next_product_index >= total_products {
+            tracing::info!("🏁 All products have been crawled (next_index: {}, total: {})", next_product_index, total_products);
+            return Ok(None);
+        }
+        
+        // Step 5: Convert next product index to website page number
+        // Formula: forwardIndex = (totalProducts - 1) - nextProductIndex
+        let forward_index = (total_products - 1) - next_product_index;
+        
+        // Formula: targetPageNumber = floor(forwardIndex / productsPerPage) + 1
+        let target_page_number = (forward_index / products_per_page) + 1;
+        
+        // Step 6: Apply crawl page limit
+        // Crawling goes from older pages (higher numbers) to newer pages (lower numbers)
+        let start_page = target_page_number;
+        let end_page = if start_page >= crawl_page_limit {
+            start_page - crawl_page_limit + 1
+        } else {
+            1
+        };
+        
+        tracing::info!("📊 Crawling range calculation:");
+        tracing::info!("  Last saved: pageId={}, indexInPage={}", max_page_id, max_index_in_page);
+        tracing::info!("  Last saved index: {}", last_saved_index);
+        tracing::info!("  Next product index: {}", next_product_index);
+        tracing::info!("  Total products on site: {}", total_products);
+        tracing::info!("  Forward index: {}", forward_index);
+        tracing::info!("  Target page: {}", target_page_number);
+        tracing::info!("  Crawl range: {} to {} (limit: {})", start_page, end_page, crawl_page_limit);
+        
+        Ok(Some((start_page, end_page)))
+    }
+
+    /// Check if a specific page range has already been crawled
+    pub async fn is_page_range_crawled(&self, start_page: u32, end_page: u32, products_per_page: u32) -> Result<bool> {
+        // Convert website page numbers to our internal pageId system
+        // Website pages are in reverse order (1 = newest, high number = oldest)
+        // Our pageId starts from 0 for the oldest products
+        
+        // For the check, we need to see if we have products in the corresponding pageId range
+        let start_page_id = if start_page > end_page {
+            // Normal case: start_page is higher (older) than end_page
+            end_page - 1  // Convert to 0-based pageId
+        } else {
+            start_page - 1
+        };
+        
+        let end_page_id = if start_page > end_page {
+            start_page - 1
+        } else {
+            end_page - 1
+        };
+        
+        let count: i32 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*) 
+            FROM products 
+            WHERE pageId >= ? AND pageId <= ?
+            "#,
+        )
+        .bind(start_page_id as i32)
+        .bind(end_page_id as i32)
+        .fetch_one(&*self.pool)
+        .await?;
+        
+        // Expected number of products in this range
+        let expected_products = (end_page_id - start_page_id + 1) * products_per_page;
+        
+        tracing::debug!("Range check: pageId {} to {} has {} products (expected: {})", 
+                       start_page_id, end_page_id, count, expected_products);
+        
+        Ok(count >= expected_products as i32)
+    }
 }
