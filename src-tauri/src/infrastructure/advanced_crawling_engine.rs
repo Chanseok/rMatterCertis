@@ -384,29 +384,31 @@ impl AdvancedBatchCrawlingEngine {
             message: format!("설정 범위 내에서 제품 목록 수집 중..."),
         }).await?;
 
-        // 엄격한 설정 제한 적용: end_page가 total_pages보다 작으면 end_page 사용
-        let page_limit = self.config.end_page.min(total_pages);
-        let actual_pages_to_process = page_limit.saturating_sub(self.config.start_page) + 1;
+        // 엄격한 설정 제한 적용: start_page와 end_page 범위 사용
+        let start_page = self.config.start_page;
+        let end_page = self.config.end_page;
+        let actual_pages_to_process = if start_page > end_page {
+            start_page - end_page + 1
+        } else {
+            end_page - start_page + 1
+        };
         
         info!("📊 STRICT LIMITS APPLIED:");
-        info!("   - Configuration: start_page={}, end_page={}", self.config.start_page, self.config.end_page);
-        info!("   - Site total_pages={}, effective_limit={}", total_pages, page_limit);
-        info!("   - Pages to process: {} (from {} to {})", actual_pages_to_process, self.config.start_page, page_limit);
+        info!("   - Configuration: start_page={}, end_page={}", start_page, end_page);
+        info!("   - Site total_pages={}", total_pages);
+        info!("   - Pages to process: {} (from {} to {})", actual_pages_to_process, start_page, end_page);
+        info!("   - Collection order: {}", if start_page > end_page { "oldest first (descending)" } else { "newest first (ascending)" });
         
-        if page_limit < total_pages {
-            info!("⚠️  ENFORCING CONFIG LIMIT: Only processing {} pages instead of {} available pages", 
-                  page_limit, total_pages);
-        }
-        
-        let product_urls = self.product_list_collector.collect_all_pages(page_limit).await?;
+        // Use page range collection instead of collect_all_pages
+        let product_urls = self.product_list_collector.collect_page_range(start_page, end_page).await?;
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageCompleted {
             stage: "ProductList".to_string(),
             items_processed: product_urls.len(),
         }).await?;
 
-        info!("✅ Stage 2 completed: {} product URLs collected from {} pages (config limit enforced)", 
-              product_urls.len(), page_limit);
+        info!("✅ Stage 2 completed: {} product URLs collected from pages {}-{} (range enforced)", 
+              product_urls.len(), start_page, end_page);
         Ok(product_urls)
     }
 

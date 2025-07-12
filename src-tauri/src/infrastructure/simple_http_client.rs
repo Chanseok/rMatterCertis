@@ -31,7 +31,7 @@ impl Default for HttpClientConfig {
             max_requests_per_second: 2,
             timeout_seconds: 30,
             max_retries: 3,
-            user_agent: "rMatterCertis/1.0 (Research Tool; +https://github.com/your-repo)".to_string(),
+            user_agent: "matter-certis-v2/1.0 (Research Tool; +https://github.com/your-repo)".to_string(),
             follow_redirects: true,
         }
     }

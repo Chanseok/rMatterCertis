@@ -196,7 +196,7 @@ impl Default for CrawlerConfig {
             auto_status_check: true,
             headless_browser: Some(true),
             crawler_type: Some(CrawlerType::Reqwest),
-            user_agent: Some("rMatterCertis/1.0".to_string()),
+            user_agent: Some("matter-certis-v2/1.0".to_string()),
             max_concurrent_tasks: Some(10),
             request_delay: Some(1000),
             request_timeout: Some(30000),

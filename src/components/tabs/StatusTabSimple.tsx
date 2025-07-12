@@ -6,8 +6,11 @@ import { Component, createSignal, For } from 'solid-js';
 import { tauriApi } from '../../services/tauri-api';
 import { crawlerStore } from '../../stores/crawlerStore';
 import type { CrawlingStatusCheck } from '../../types/crawling';
+import { confirm } from '@tauri-apps/plugin-dialog';
 
 export const StatusTab: Component = () => {
+  console.log('🚀 StatusTab 컴포넌트가 로드되었습니다');
+  
   // 크롤링 상태 (기본 UI 상태들)
   const [crawlingStatus, setCrawlingStatus] = createSignal<'idle' | 'running' | 'paused' | 'completed'>('idle');
   const [progress, setProgress] = createSignal(0);
@@ -184,6 +187,56 @@ export const StatusTab: Component = () => {
       console.log('⚙️ 기본 설정 모드:', `${startPage}-${endPage} 페이지`);
     }
     
+    // 사용자 확인 대화상자 추가
+    console.log('❓ 사용자 확인 대화상자를 표시합니다:', {
+      mode: crawlingMode,
+      startPage,
+      endPage,
+      totalPages: endPage - startPage + 1
+    });
+    
+    const confirmMessage = `🔧 크롤링 설정 확인\n\n` +
+      `모드: ${crawlingMode}\n` +
+      `범위: ${startPage} ~ ${endPage} 페이지 (총 ${endPage - startPage + 1}페이지)\n` +
+      `병렬 처리: 24개 페이지 동시 처리\n` +
+      `예상 시간: ${Math.ceil((endPage - startPage + 1) * 2 / 24)}분\n\n` +
+      `⚠️ 설정을 변경하려면 '설정' 탭에서 page_range_limit 값을 조정하세요.\n\n` +
+      `이 설정으로 크롤링을 시작하시겠습니까?`;
+    
+    console.log('📝 대화상자 메시지:', confirmMessage);
+    
+    let userConfirmed = false;
+    try {
+      console.log('� Tauri dialog confirm 함수 호출을 시도합니다...');
+      userConfirmed = await confirm(confirmMessage, { 
+        title: '크롤링 설정 확인',
+        kind: 'info' 
+      });
+      console.log('✅ Tauri dialog confirm 함수 호출 성공, 결과:', userConfirmed);
+    } catch (error) {
+      console.error('❌ Tauri dialog confirm 함수 호출 실패:', error);
+      console.log('🔄 fallback으로 window.confirm 사용...');
+      // 폴백으로 window.confirm 사용
+      try {
+        userConfirmed = window.confirm(confirmMessage);
+        console.log('✅ window.confirm 결과:', userConfirmed);
+      } catch (fallbackError) {
+        console.error('❌ window.confirm도 실패:', fallbackError);
+        // 최종 폴백으로 자동 승인
+        userConfirmed = true;
+        console.log('⚠️ 자동으로 승인합니다.');
+      }
+    }
+    
+    console.log('💬 사용자 선택 결과:', userConfirmed ? '승인됨' : '취소됨');
+    
+    if (!userConfirmed) {
+      console.log('❌ 사용자가 크롤링을 취소했습니다.');
+      return;
+    }
+    
+    console.log('✅ 사용자가 크롤링을 승인했습니다. 진행합니다...');
+    
     // 페이지 범위 검증
     if (startPage > endPage) {
       alert('시작 페이지가 끝 페이지보다 클 수 없습니다.');
@@ -204,10 +257,11 @@ export const StatusTab: Component = () => {
         totalPages: endPage - startPage + 1
       });
       
-      // 실제 크롤링 시작 (백엔드 설정 사용)
-      console.log('📞 tauriApi.startCrawling 호출 시도...');
-      const sessionId = await tauriApi.startCrawling(startPage, endPage);
-      console.log('✅ 크롤링 세션 시작됨:', sessionId);
+    // 백엔드에서 지능적인 범위 계산을 사용하도록 수정
+    // startPage, endPage를 전달하지 않고 백엔드가 계산하도록 함
+    console.log('📞 tauriApi.startCrawling 호출 시도 (백엔드 지능형 범위 계산 사용)...');
+    const sessionId = await tauriApi.startCrawling(undefined, undefined); // 백엔드에서 지능적 범위 계산 사용
+    console.log('✅ 크롤링 세션 시작됨:', sessionId);
       
       // 실시간 진행률 업데이트 시작 (crawlerStore에서 처리)
       console.log('🔄 실시간 업데이트 시작...');
@@ -490,26 +544,7 @@ export const StatusTab: Component = () => {
         </div>
       </div>
 
-      {/* 크롤링 설정 안내 */}
-      <div style="margin-bottom: 32px; padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <div>
-            <h3 style="margin: 0 0 4px 0; font-size: 16px; font-weight: 500; color: #374151;">⚙️ 크롤링 설정</h3>
-            <p style="margin: 0; font-size: 13px; color: #6b7280;">
-              크롤링 설정은 백엔드에서 관리됩니다. 설정을 변경하려면 '설정' 탭을 이용하세요.
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              // 설정 탭으로 이동하는 로직 (부모 컴포넌트에서 처리)
-              console.log('설정 탭으로 이동 요청');
-            }}
-            style="padding: 8px 16px; background: #3b82f6; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500;"
-          >
-            📝 설정 탭으로 이동
-          </button>
-        </div>
-      </div>
+
 
       {/* 스마트 크롤링 제어 */}
       <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fefefe;">
@@ -548,9 +583,16 @@ export const StatusTab: Component = () => {
         
         <div style="display: flex; gap: 12px; flex-wrap: wrap;">
           <button
+            ref={(el) => console.log('🔧 크롤링 버튼이 렌더링되었습니다:', el)}
             onClick={() => {
               console.log('🔴 버튼 클릭됨 - crawlingStatus:', crawlingStatus());
-              startCrawling();
+              console.log('🔴 startCrawling 함수 호출 시도...');
+              try {
+                startCrawling();
+              } catch (error) {
+                console.error('🔴 startCrawling 함수 호출 실패:', error);
+                alert('크롤링 시작 중 오류가 발생했습니다: ' + error);
+              }
             }}
             disabled={crawlingStatus() === 'running'}
             style={`padding: 12px 24px; background: ${crawlingStatus() === 'running' ? '#9ca3af' : statusCheckResult() ? '#10b981' : '#22c55e'}; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: ${crawlingStatus() === 'running' ? 'not-allowed' : 'pointer'}; transition: background-color 0.2s;`}

@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 use crate::infrastructure::config::ConfigManager;
 use sqlx::Row; // Add this import for try_get method
 
-/// Start a new crawling session using backend configuration
+/// Start a new crawling session using backend configuration with intelligent range calculation
 #[tauri::command]
 pub async fn start_crawling(
     start_page: Option<u32>,
@@ -24,12 +24,41 @@ pub async fn start_crawling(
     state: State<'_, AppState>,
     app_handle: AppHandle,
 ) -> Result<String, String> {
+    info!("🚀 start_crawling 명령 수신됨");
+    info!("📋 파라미터: start_page={:?}, end_page={:?}", start_page, end_page);
+    
     // Load configuration from backend config file
     let app_config = state.get_config().await;
+    info!("📋 설정 로드 완료: max_pages={}", app_config.user.max_pages);
     
-    // Use provided page range or fall back to defaults
-    let actual_start_page = start_page.unwrap_or(1);
-    let actual_end_page = end_page.unwrap_or(app_config.user.max_pages);
+    // Calculate intelligent crawling range if not explicitly provided
+    let (actual_start_page, actual_end_page) = if start_page.is_some() && end_page.is_some() {
+        // Use explicitly provided range
+        info!("🎯 명시적 범위 사용: {} to {}", start_page.unwrap(), end_page.unwrap());
+        (start_page.unwrap(), end_page.unwrap())
+    } else {
+        // Calculate intelligent range based on site status and database state
+        info!("🧠 지능적 범위 계산 시작...");
+        match calculate_intelligent_crawling_range(&state, &app_config).await {
+            Ok((calculated_start, calculated_end)) => {
+                info!("🎯 Using calculated intelligent range: {} to {} (oldest to newest)", calculated_start, calculated_end);
+                (calculated_start, calculated_end)
+            }
+            Err(e) => {
+                warn!("Failed to calculate intelligent range, using fallback: {}", e);
+                // Fallback: crawl from oldest pages (highest page numbers)
+                let max_pages = app_config.user.max_pages;
+                let fallback_start = 481; // Start from known last page
+                let fallback_end = if fallback_start >= max_pages {
+                    fallback_start - max_pages + 1
+                } else {
+                    1
+                };
+                info!("🔄 폴백 범위 사용: {} to {}", fallback_start, fallback_end);
+                (fallback_start, fallback_end)
+            }
+        }
+    };
     
     info!("Starting crawling session with backend config: start_page={}, end_page={}, batch_size={}, concurrency={}, delay_ms={}", 
           actual_start_page, actual_end_page, app_config.user.batch.batch_size, 
@@ -711,7 +740,7 @@ fn get_database_url() -> Result<String, String> {
         // but fall back to in-memory if there are issues
         
         // Use the app name to create a consistent data directory
-        let app_name = "rMatterCertis";
+        let app_name = "matter-certis-v2";
         
         let app_data_dir = match dirs::data_dir() {
             Some(mut path) => {
@@ -725,7 +754,7 @@ fn get_database_url() -> Result<String, String> {
         };
         
         let db_dir = app_data_dir.join("database");
-        let db_path = db_dir.join("matter_certis_dev.db");
+        let db_path = db_dir.join("matter_certis.db");
         
         // Create directories if they don't exist
         if !db_dir.exists() {
@@ -760,7 +789,7 @@ fn get_database_url() -> Result<String, String> {
     #[cfg(not(debug_assertions))]
     {
         // For production, always use a persistent file in the app data directory
-        let app_name = "rMatterCertis";
+        let app_name = "matter-certis-v2";
         
         let app_data_dir = match dirs::data_dir() {
             Some(mut path) => {
@@ -857,7 +886,7 @@ async fn ensure_database_schema_exists(db_pool: &sqlx::SqlitePool) -> Result<(),
             // Continue anyway - this is not critical
         }
         
-        // Create products table with minimal schema
+        // Create products table with complete schema
         let create_result = sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS products (
@@ -869,6 +898,12 @@ async fn ensure_database_schema_exists(db_pool: &sqlx::SqlitePool) -> Result<(),
                 company TEXT,
                 model TEXT,
                 connectivity TEXT,
+                manufacturer TEXT,
+                certificateId TEXT,
+                pageId INTEGER,
+                indexInPage INTEGER,
+                createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TEXT DEFAULT CURRENT_TIMESTAMP,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
@@ -885,8 +920,12 @@ async fn ensure_database_schema_exists(db_pool: &sqlx::SqlitePool) -> Result<(),
         // Create indexes for better performance
         let indexes = vec![
             ("idx_products_company", "CREATE INDEX IF NOT EXISTS idx_products_company ON products (company)"),
+            ("idx_products_manufacturer", "CREATE INDEX IF NOT EXISTS idx_products_manufacturer ON products (manufacturer)"),
+            ("idx_products_certificateId", "CREATE INDEX IF NOT EXISTS idx_products_certificateId ON products (certificateId)"),
+            ("idx_products_pageId", "CREATE INDEX IF NOT EXISTS idx_products_pageId ON products (pageId)"),
             ("idx_products_certification_date", "CREATE INDEX IF NOT EXISTS idx_products_certification_date ON products (certification_date)"),
-            ("idx_products_created_at", "CREATE INDEX IF NOT EXISTS idx_products_created_at ON products (created_at)")
+            ("idx_products_created_at", "CREATE INDEX IF NOT EXISTS idx_products_created_at ON products (created_at)"),
+            ("idx_products_createdAt", "CREATE INDEX IF NOT EXISTS idx_products_createdAt ON products (createdAt)")
         ];
         
         for (index_name, create_sql) in indexes {
@@ -897,9 +936,147 @@ async fn ensure_database_schema_exists(db_pool: &sqlx::SqlitePool) -> Result<(),
                 info!("Created index: {}", index_name);
             }
         }
+    } else {
+        info!("Products table already exists, checking for missing columns");
+        
+        // Check and add missing columns for existing tables
+        let missing_columns = vec![
+            ("manufacturer", "ALTER TABLE products ADD COLUMN manufacturer TEXT"),
+            ("certificateId", "ALTER TABLE products ADD COLUMN certificateId TEXT"),
+            ("pageId", "ALTER TABLE products ADD COLUMN pageId INTEGER"),
+            ("indexInPage", "ALTER TABLE products ADD COLUMN indexInPage INTEGER"),
+            ("createdAt", "ALTER TABLE products ADD COLUMN createdAt TEXT DEFAULT CURRENT_TIMESTAMP"),
+            ("updatedAt", "ALTER TABLE products ADD COLUMN updatedAt TEXT DEFAULT CURRENT_TIMESTAMP"),
+        ];
+        
+        for (column_name, alter_sql) in missing_columns {
+            // Check if column exists
+            let column_exists = match sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM pragma_table_info('products') WHERE name = ?"
+            )
+            .bind(column_name)
+            .fetch_one(db_pool)
+            .await {
+                Ok(count) => count > 0,
+                Err(e) => {
+                    warn!("Failed to check if column '{}' exists: {}", column_name, e);
+                    false
+                }
+            };
+            
+            if !column_exists {
+                info!("Adding missing column: {}", column_name);
+                if let Err(e) = sqlx::query(alter_sql).execute(db_pool).await {
+                    warn!("Failed to add column {}: {}", column_name, e);
+                } else {
+                    info!("Successfully added column: {}", column_name);
+                }
+            }
+        }
+        
+        // Add missing indexes
+        let indexes = vec![
+            ("idx_products_manufacturer", "CREATE INDEX IF NOT EXISTS idx_products_manufacturer ON products (manufacturer)"),
+            ("idx_products_certificateId", "CREATE INDEX IF NOT EXISTS idx_products_certificateId ON products (certificateId)"),
+            ("idx_products_pageId", "CREATE INDEX IF NOT EXISTS idx_products_pageId ON products (pageId)"),
+            ("idx_products_createdAt", "CREATE INDEX IF NOT EXISTS idx_products_createdAt ON products (createdAt)")
+        ];
+        
+        for (index_name, create_sql) in indexes {
+            if let Err(e) = sqlx::query(create_sql).execute(db_pool).await {
+                warn!("Failed to create index {}: {}", index_name, e);
+            } else {
+                info!("Created/verified index: {}", index_name);
+            }
+        }
     }
 
     Ok(())
+}
+
+/// Calculate intelligent crawling range based on site status and database state
+async fn calculate_intelligent_crawling_range(
+    state: &State<'_, AppState>, 
+    app_config: &crate::infrastructure::config::AppConfig
+) -> Result<(u32, u32), String> {
+    info!("🔍 Calculating intelligent crawling range...");
+    
+    // Get database URL and connect
+    let database_url = get_database_url()?;
+    let db_pool = sqlx::SqlitePool::connect(&database_url).await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    
+    // Create necessary components for range calculation
+    let http_client = crate::infrastructure::HttpClient::new()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let data_extractor = crate::infrastructure::MatterDataExtractor::new()
+        .map_err(|e| format!("Failed to create data extractor: {}", e))?;
+    
+    // Create status checker
+    let status_checker = crate::infrastructure::StatusCheckerImpl::new(
+        http_client,
+        data_extractor,
+        app_config.clone(),
+    );
+    
+    // Create database analyzer
+    let repo = crate::infrastructure::IntegratedProductRepository::new(db_pool);
+    let repo_arc = std::sync::Arc::new(repo);
+    let db_analyzer = crate::infrastructure::DatabaseAnalyzerImpl::new(repo_arc);
+    
+    // Get site status
+    let site_status = status_checker.check_site_status().await
+        .map_err(|e| format!("Failed to check site status: {}", e))?;
+    
+    // Get database analysis
+    let db_analysis = db_analyzer.analyze_current_state().await
+        .map_err(|e| format!("Failed to analyze database: {}", e))?;
+    
+    // Calculate crawling range recommendation
+    let recommendation = status_checker.calculate_crawling_range_recommendation(&site_status, &db_analysis).await
+        .map_err(|e| format!("Failed to calculate range recommendation: {}", e))?;
+    
+    match recommendation {
+        crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full => {
+            // STRICTLY RESPECT USER SETTINGS: Use page_range_limit instead of max_pages
+            let total_pages = site_status.total_pages;
+            let user_page_limit = app_config.user.crawling.page_range_limit;
+            let start_page = total_pages;
+            let end_page = if start_page >= user_page_limit {
+                start_page - user_page_limit + 1
+            } else {
+                1
+            };
+            info!("📊 Full crawl recommended: {} to {} ({} pages, STRICTLY following user page_range_limit)", start_page, end_page, user_page_limit);
+            Ok((start_page, end_page))
+        },
+        crate::domain::services::crawling_services::CrawlingRangeRecommendation::Partial(pages_to_crawl) => {
+            // STRICTLY RESPECT USER SETTINGS: Limit to page_range_limit
+            let total_pages = site_status.total_pages;
+            let user_page_limit = app_config.user.crawling.page_range_limit;
+            let actual_pages = pages_to_crawl.min(user_page_limit);
+            let start_page = total_pages;
+            let end_page = if start_page >= actual_pages {
+                start_page - actual_pages + 1
+            } else {
+                1
+            };
+            info!("📊 Partial crawl recommended: {} to {} ({} pages, STRICTLY following user page_range_limit)", start_page, end_page, actual_pages);
+            Ok((start_page, end_page))
+        },
+        crate::domain::services::crawling_services::CrawlingRangeRecommendation::None => {
+            // Still crawl a minimal range for verification
+            let verification_pages = 5.min(app_config.user.max_pages);
+            let start_page = site_status.total_pages;
+            let end_page = if start_page >= verification_pages {
+                start_page - verification_pages + 1
+            } else {
+                1
+            };
+            info!("📊 No update needed, verification crawl: {} to {} ({} pages)", start_page, end_page, verification_pages);
+            Ok((start_page, end_page))
+        }
+    }
 }
 
 /// Get products from database with pagination

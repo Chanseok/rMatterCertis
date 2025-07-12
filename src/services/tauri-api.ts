@@ -28,16 +28,23 @@ export class TauriApiService {
   // =========================================================================
 
   /**
-   * Start a new crawling session with optional page range
+   * Start a new crawling session with intelligent backend range calculation
    */
   async startCrawling(startPage?: number, endPage?: number): Promise<string> {
     try {
-      const sessionId = await invoke<string>('start_crawling', { 
-        startPage: startPage || undefined,
-        endPage: endPage || undefined 
+      console.log('🚀 TauriApiService.startCrawling 호출됨');
+      console.log('📋 파라미터:', { startPage, endPage });
+      
+      // 백엔드에서 지능적인 범위 계산을 사용하도록 파라미터 전달
+      console.log('📞 Tauri invoke 호출 시도: start_crawling');
+      const sessionId = await invoke<string>('start_crawling', {
+        start_page: startPage,
+        end_page: endPage
       });
+      console.log('✅ 백엔드 응답 받음:', sessionId);
       return sessionId;
     } catch (error) {
+      console.error('❌ TauriApiService.startCrawling 실패:', error);
       throw new Error(`Failed to start crawling: ${error}`);
     }
   }

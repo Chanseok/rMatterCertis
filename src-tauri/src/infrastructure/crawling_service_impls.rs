@@ -178,7 +178,7 @@ impl StatusChecker for StatusCheckerImpl {
         let (data_change_status, decrease_recommendation) = self.analyze_data_changes(estimated_products).await;
         
         // Step 5: 크롤링 범위 권장사항 계산
-        let crawling_range_recommendation = self.calculate_crawling_range_recommendation(
+        let crawling_range_recommendation = self.calculate_crawling_range_recommendation_internal(
             total_pages, 
             products_on_last_page, 
             estimated_products
@@ -196,6 +196,41 @@ impl StatusChecker for StatusCheckerImpl {
             decrease_recommendation,
             crawling_range_recommendation,
         })
+    }
+
+    async fn calculate_crawling_range_recommendation(
+        &self, 
+        site_status: &SiteStatus, 
+        db_analysis: &DatabaseAnalysis
+    ) -> Result<CrawlingRangeRecommendation> {
+        info!("🔍 Calculating crawling range recommendation from site status and DB analysis...");
+        
+        // If database is empty, recommend full crawl
+        if db_analysis.total_products == 0 {
+            info!("📊 Local DB is empty - recommending full crawl");
+            return Ok(CrawlingRangeRecommendation::Full);
+        }
+        
+        // Calculate how many new products might have been added
+        let estimated_new_products = if site_status.estimated_products > db_analysis.total_products as u32 {
+            site_status.estimated_products - db_analysis.total_products as u32
+        } else {
+            0
+        };
+        
+        if estimated_new_products == 0 {
+            info!("📊 No new products detected - recommending minimal verification crawl");
+            return Ok(CrawlingRangeRecommendation::Partial(5)); // 5 pages for verification
+        }
+        
+        // Calculate pages needed for new products
+        use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
+        let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
+        let pages_needed = (estimated_new_products as f64 / products_per_page as f64).ceil() as u32;
+        let limited_pages = pages_needed.min(self.config.user.max_pages);
+        
+        info!("📊 Estimated {} new products, recommending {} pages crawl", estimated_new_products, limited_pages);
+        Ok(CrawlingRangeRecommendation::Partial(limited_pages))
     }
 
     async fn estimate_crawling_time(&self, pages: u32) -> Duration {
@@ -997,8 +1032,8 @@ impl StatusCheckerImpl {
     }
     
     /// 크롤링 범위 권장사항 계산
-    /// 로컬 DB 상태와 사이트 정보를 기반으로 다음 크롤링 대상 페이지 범위를 계산
-    async fn calculate_crawling_range_recommendation(
+    /// 로컬 DB 상태와 사이트 정보를 기반으로 다음 크롤링 대상 페이지 범위를 계산 (내부용)
+    async fn calculate_crawling_range_recommendation_internal(
         &self,
         total_pages_on_site: u32,
         products_on_last_page: u32,
@@ -1312,6 +1347,81 @@ impl ProductListCollector for ProductListCollectorImpl {
         Ok(all_urls)
     }
     
+    async fn collect_page_range(&self, start_page: u32, end_page: u32) -> Result<Vec<String>> {
+        let mut all_urls = Vec::new();
+        
+        // Handle descending range (older to newer) - typical for our use case
+        let pages: Vec<u32> = if start_page > end_page {
+            // Descending range: start from oldest (highest page number) to newest (lower page number)
+            (end_page..=start_page).rev().collect()
+        } else {
+            // Ascending range: start from lowest to highest page number
+            (start_page..=end_page).collect()
+        };
+        
+        info!("🔍 Collecting from {} pages in range {} to {} (order: {})", 
+              pages.len(), 
+              start_page, 
+              end_page,
+              if start_page > end_page { "oldest first" } else { "newest first" });
+        
+        let max_concurrent = self.config.max_concurrent as usize;
+        
+        // Process pages in true parallel batches with proper concurrency control
+        for chunk in pages.chunks(max_concurrent) {
+            let mut tasks = Vec::new();
+            
+            info!("🚀 Starting parallel batch of {} pages", chunk.len());
+            
+            for &page in chunk {
+                let http_client = Arc::clone(&self.http_client);
+                let data_extractor = Arc::clone(&self.data_extractor);
+                
+                let task = tokio::spawn(async move {
+                    let url = config_utils::matter_products_page_url_simple(page);
+                    let mut client = http_client.lock().await;
+                    let html = client.fetch_html_string(&url).await?;
+                    drop(client);
+                    
+                    let doc = scraper::Html::parse_document(&html);
+                    let urls = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
+                    
+                    debug!("🔗 Extracted {} URLs from page {}", urls.len(), page);
+                    Ok::<(u32, Vec<String>), anyhow::Error>((page, urls))
+                });
+                
+                tasks.push(task);
+            }
+            
+            // Wait for all tasks in this batch to complete concurrently
+            let results = futures::future::join_all(tasks).await;
+            
+            for result in results {
+                match result {
+                    Ok(Ok((page, urls))) => {
+                        let urls_len = urls.len();
+                        all_urls.extend(urls);
+                        debug!("📄 Collected {} URLs from page {} (total so far: {})", urls_len, page, all_urls.len());
+                    }
+                    Ok(Err(e)) => warn!("⚠️  Failed to collect URLs: {}", e),
+                    Err(e) => warn!("Task failed: {}", e),
+                }
+            }
+            
+            info!("📊 Completed parallel batch: {}/{} pages processed, {} URLs collected so far", 
+                  chunk.len(), pages.len(), all_urls.len());
+            
+            // Apply rate limiting between batches, not between individual requests
+            if chunk.len() == max_concurrent && !pages.chunks(max_concurrent).last().unwrap().contains(&chunk[0]) {
+                tokio::time::sleep(self.config.delay_between_requests).await;
+                info!("⏱️  Rate limiting delay applied between batches");
+            }
+        }
+        
+        info!("📋 Total URLs collected from page range {}-{}: {}", start_page, end_page, all_urls.len());
+        Ok(all_urls)
+    }
+    
     async fn collect_single_page(&self, page: u32) -> Result<Vec<String>> {
         let url = config_utils::matter_products_page_url_simple(page);
         let mut client = self.http_client.lock().await;
@@ -1366,16 +1476,58 @@ impl ProductDetailCollectorImpl {
 impl ProductDetailCollector for ProductDetailCollectorImpl {
     async fn collect_details(&self, urls: &[String]) -> Result<Vec<ProductDetail>> {
         let mut products = Vec::new();
+        let max_concurrent = self.config.max_concurrent as usize;
         
-        for url in urls {
-            match self.collect_single_product(url).await {
-                Ok(product) => products.push(product),
-                Err(e) => warn!("Failed to collect product from {}: {}", url, e),
+        info!("🚀 Starting parallel product detail collection: {} URLs with {} concurrent workers", 
+              urls.len(), max_concurrent);
+        
+        // Process URLs in batches with true parallel execution
+        for chunk in urls.chunks(max_concurrent) {
+            let mut tasks = Vec::new();
+            
+            info!("🚀 Starting parallel detail collection batch of {} products", chunk.len());
+            
+            for url in chunk {
+                let url = url.clone();
+                let http_client = Arc::clone(&self.http_client);
+                let data_extractor = Arc::clone(&self.data_extractor);
+                
+                let task = tokio::spawn(async move {
+                    let mut client = http_client.lock().await;
+                    let html = client.fetch_html_string(&url).await?;
+                    drop(client);
+                    
+                    let doc = scraper::Html::parse_document(&html);
+                    let product_detail = data_extractor.extract_product_detail(&doc, url)?;
+                    
+                    debug!("📦 Extracted product: {}", product_detail.certification_id.as_deref().unwrap_or("Unknown"));
+                    Ok::<ProductDetail, anyhow::Error>(product_detail)
+                });
+                
+                tasks.push(task);
             }
             
-            tokio::time::sleep(self.config.delay_between_requests).await;
+            // Wait for all tasks in this batch to complete concurrently
+            let results = futures::future::join_all(tasks).await;
+            
+            for result in results {
+                match result {
+                    Ok(Ok(product)) => products.push(product),
+                    Ok(Err(e)) => warn!("Failed to collect product: {}", e),
+                    Err(e) => warn!("Task failed: {}", e),
+                }
+            }
+            
+            info!("📊 Completed parallel detail batch: {}/{} products collected so far", products.len(), urls.len());
+            
+            // Apply rate limiting between batches only
+            if chunk.len() == max_concurrent && !urls.chunks(max_concurrent).last().unwrap().contains(&chunk[0]) {
+                tokio::time::sleep(self.config.delay_between_requests).await;
+                info!("⏱️  Rate limiting delay applied between detail batches");
+            }
         }
         
+        info!("✅ Parallel collection completed: {}/{} products successfully collected", products.len(), urls.len());
         Ok(products)
     }
     

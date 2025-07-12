@@ -16,6 +16,13 @@ pub trait StatusChecker: Send + Sync {
     /// 사이트 상태 확인
     async fn check_site_status(&self) -> Result<SiteStatus>;
     
+    /// 크롤링 범위 추천 계산
+    async fn calculate_crawling_range_recommendation(
+        &self, 
+        site_status: &SiteStatus, 
+        db_analysis: &DatabaseAnalysis
+    ) -> Result<CrawlingRangeRecommendation>;
+    
     /// 크롤링 예상 시간 계산
     async fn estimate_crawling_time(&self, pages: u32) -> Duration;
     
@@ -41,6 +48,9 @@ pub trait DatabaseAnalyzer: Send + Sync {
 pub trait ProductListCollector: Send + Sync {
     /// 모든 페이지에서 제품 URL 수집
     async fn collect_all_pages(&self, total_pages: u32) -> Result<Vec<String>>;
+    
+    /// 페이지 범위에서 제품 URL 수집 (start_page부터 end_page까지)
+    async fn collect_page_range(&self, start_page: u32, end_page: u32) -> Result<Vec<String>>;
     
     /// 단일 페이지에서 제품 URL 수집
     async fn collect_single_page(&self, page: u32) -> Result<Vec<String>>;

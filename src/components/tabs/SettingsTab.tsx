@@ -32,6 +32,12 @@ interface CrawlingSettings {
   auto_add_to_local_db: boolean;
 }
 
+interface PerformanceSettings {
+  max_concurrent_requests: number;
+  request_delay_ms: number;
+  max_pages: number;
+}
+
 interface SaveStatus {
   type: 'success' | 'error' | 'info' | null;
   message: string;
@@ -111,6 +117,20 @@ export const SettingsTab: Component = () => {
     product_list_retry_count: 3,
     product_detail_retry_count: 3,
     auto_add_to_local_db: true
+  });
+  
+  // 현재 저장된 성능 설정
+  const [savedPerformanceSettings, setSavedPerformanceSettings] = createSignal<PerformanceSettings>({
+    max_concurrent_requests: 12,
+    request_delay_ms: 800,
+    max_pages: 10
+  });
+  
+  // 현재 UI에서 편집 중인 성능 설정
+  const [performanceSettings, setPerformanceSettings] = createSignal<PerformanceSettings>({
+    max_concurrent_requests: 12,
+    request_delay_ms: 800,
+    max_pages: 10
   });
   
   // 상태 체크 관련 signals
@@ -521,6 +541,99 @@ export const SettingsTab: Component = () => {
         </div>
       </div>
 
+      {/* 성능 설정 - 새로 추가 */}
+      <ExpandableSection
+        title="성능 설정"
+        isExpanded={true}
+        onToggle={() => {}}
+        icon="⚡"
+      >
+        <div class="bg-yellow-50 border border-yellow-200 rounded-md p-4 mb-4">
+          <div class="flex items-center">
+            <div class="flex-shrink-0">
+              <svg class="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+              </svg>
+            </div>
+            <div class="ml-3">
+              <h3 class="text-sm font-medium text-yellow-800">
+                중요: 성능 설정은 크롤링 속도와 서버 부하에 직접 영향을 미칩니다
+              </h3>
+              <div class="mt-2 text-sm text-yellow-700">
+                <p>• 병렬 처리 수가 높을수록 빠르지만 서버 부하가 증가합니다</p>
+                <p>• 요청 간격이 짧을수록 빠르지만 차단될 위험이 높아집니다</p>
+                <p>• 현재 설정: 12개 동시 처리, 800ms 간격 (권장)</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              🔥 동시 병렬 처리 수
+            </label>
+            <input 
+              type="number" 
+              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
+              placeholder="12"
+              min="1"
+              max="24"
+              value={performanceSettings().max_concurrent_requests}
+              onInput={(e) => setPerformanceSettings(prev => ({
+                ...prev,
+                max_concurrent_requests: parseInt(e.currentTarget.value) || 12
+              }))}
+            />
+            <p class="text-xs text-gray-500 mt-1">1-24 권장: 12</p>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              ⏱️ 요청 간격 (ms)
+            </label>
+            <input 
+              type="number" 
+              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
+              placeholder="800"
+              min="200"
+              max="3000"
+              value={performanceSettings().request_delay_ms}
+              onInput={(e) => setPerformanceSettings(prev => ({
+                ...prev,
+                request_delay_ms: parseInt(e.currentTarget.value) || 800
+              }))}
+            />
+            <p class="text-xs text-gray-500 mt-1">200-3000ms 권장: 800ms</p>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              📄 전체 최대 페이지 수
+            </label>
+            <input 
+              type="number" 
+              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
+              placeholder="10"
+              min="1"
+              max="100"
+              value={performanceSettings().max_pages}
+              onInput={(e) => setPerformanceSettings(prev => ({
+                ...prev,
+                max_pages: parseInt(e.currentTarget.value) || 10
+              }))}
+            />
+            <p class="text-xs text-gray-500 mt-1">1-100 권장: 10</p>
+          </div>
+        </div>
+        
+        <div class="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+          <h4 class="text-sm font-medium text-blue-800 mb-2">💡 예상 성능</h4>
+          <div class="text-sm text-blue-700 grid grid-cols-1 md:grid-cols-2 gap-2">
+            <p>• 페이지 수집 속도: ~{Math.round(performanceSettings().max_concurrent_requests / (performanceSettings().request_delay_ms / 1000))}페이지/초</p>
+            <p>• 예상 완료 시간: ~{Math.ceil(performanceSettings().max_pages / performanceSettings().max_concurrent_requests)}분</p>
+          </div>
+        </div>
+      </ExpandableSection>
+
       {/* 기본 크롤링 설정 */}
       <ExpandableSection
         title="크롤링 설정"
@@ -528,21 +641,43 @@ export const SettingsTab: Component = () => {
         onToggle={() => {}}
         icon="⚙️"
       >
+        <div class="bg-emerald-50 border border-emerald-200 rounded-md p-4 mb-4">
+          <div class="flex items-center">
+            <div class="flex-shrink-0">
+              <svg class="h-5 w-5 text-emerald-400" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+              </svg>
+            </div>
+            <div class="ml-3">
+              <h3 class="text-sm font-medium text-emerald-800">
+                🎯 페이지 범위 제한: 실제 크롤링에서 처리할 최대 페이지 수
+              </h3>
+              <div class="mt-2 text-sm text-emerald-700">
+                <p>• <strong>시스템이 임의로 변경하지 않습니다</strong> - 사용자 설정을 엄격히 준수</p>
+                <p>• 빈 데이터베이스라도 이 값을 초과하지 않습니다</p>
+                <p>• 현재 설정: 최대 {crawlingSettings().page_range_limit}페이지만 크롤링</p>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              페이지 범위 제한
+              🎯 페이지 범위 제한 (핵심 설정)
             </label>
             <input 
               type="number" 
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white"
-              placeholder="20"
+              class="w-full px-3 py-2 border-2 border-emerald-300 dark:border-emerald-600 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:bg-gray-700 dark:text-white font-bold"
+              placeholder="6"
+              min="1"
+              max="50"
               value={crawlingSettings().page_range_limit}
               onInput={(e) => setCrawlingSettings(prev => ({
                 ...prev,
-                page_range_limit: parseInt(e.currentTarget.value) || 20
+                page_range_limit: parseInt(e.currentTarget.value) || 6
               }))}
             />
+            <p class="text-xs text-emerald-600 mt-1 font-medium">⚠️ 이 값이 실제 크롤링 페이지 수를 결정합니다</p>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">

@@ -22,7 +22,7 @@ pub struct HttpClientConfig {
 impl Default for HttpClientConfig {
     fn default() -> Self {
         Self {
-            user_agent: "rMatterCertis/1.0 (Educational Purpose)".to_string(),
+            user_agent: "matter-certis-v2/1.0 (Educational Purpose)".to_string(),
             timeout_seconds: 30,
             max_requests_per_second: 2, // Conservative rate limit
             respect_robots_txt: true,

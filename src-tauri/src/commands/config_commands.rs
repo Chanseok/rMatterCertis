@@ -531,9 +531,9 @@ fn convert_to_frontend_config(app_config: &AppConfig) -> FrontendConfig {
             logging: app_config.user.logging.clone(),
         },
         app: AppMetadata {
-            name: "rMatterCertis".to_string(),
+            name: "matter-certis-v2".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            user_agent: format!("rMatterCertis/{} (Research Tool)", env!("CARGO_PKG_VERSION")),
+            user_agent: format!("matter-certis-v2/{} (Research Tool)", env!("CARGO_PKG_VERSION")),
             config_version: app_config.app_managed.config_version,
         },
     }
@@ -1132,7 +1132,7 @@ mod tests {
         assert_eq!(frontend_config.site.base_url, "https://csa-iot.org");
         assert!(frontend_config.site.products_page_matter_only.contains("p_type%5B%5D=14"));
         assert_eq!(frontend_config.crawling.max_pages, app_config.user.max_pages);
-        assert_eq!(frontend_config.app.name, "rMatterCertis");
+        assert_eq!(frontend_config.app.name, "matter-certis-v2");
     }
     
     #[test]

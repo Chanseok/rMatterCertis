@@ -45,7 +45,14 @@ const [windowState, setWindowState] = createStore<WindowStore>({
   // 상태 저장
   async saveState() {
     try {
-      const stateToSave = { ...windowState.state };
+      // Backend expects snake_case field names
+      const stateToSave = {
+        position: windowState.state.position,
+        size: windowState.state.size,
+        zoom_level: windowState.state.zoomLevel,  // camelCase to snake_case
+        last_active_tab: windowState.state.lastActiveTab,  // camelCase to snake_case
+        is_maximized: windowState.state.isMaximized  // camelCase to snake_case
+      };
       await invoke('save_window_state', { state: stateToSave });
       console.log('🔧 Window state saved:', stateToSave);
     } catch (error) {
