@@ -1328,24 +1328,10 @@ impl ProductListCollectorImpl {
 #[async_trait]
 impl ProductListCollector for ProductListCollectorImpl {
     async fn collect_all_pages(&self, total_pages: u32) -> Result<Vec<String>> {
-        let mut all_urls = Vec::new();
+        info!("🔍 Collecting from {} pages with parallel processing", total_pages);
         
-        for page in 1..=total_pages {
-            match self.collect_single_page(page).await {
-                Ok(urls) => {
-                    all_urls.extend(urls);
-                    debug!("📄 Collected {} URLs from page {}", all_urls.len(), page);
-                }
-                Err(e) => {
-                    warn!("⚠️  Failed to collect URLs from page {}: {}", page, e);
-                }
-            }
-            
-            tokio::time::sleep(self.config.delay_between_requests).await;
-        }
-        
-        info!("📋 Total URLs collected: {}", all_urls.len());
-        Ok(all_urls)
+        // Use the existing parallel implementation from collect_page_range
+        self.collect_page_range(1, total_pages).await
     }
     
     async fn collect_page_range(&self, start_page: u32, end_page: u32) -> Result<Vec<String>> {
@@ -1593,107 +1579,12 @@ impl ProductDetailCollectorImpl {
 #[async_trait]
 impl ProductDetailCollector for ProductDetailCollectorImpl {
     async fn collect_details(&self, urls: &[String]) -> Result<Vec<ProductDetail>> {
-        let mut products = Vec::new();
-        let max_concurrent = self.config.max_concurrent as usize;
+        // 백업 안전장치: 취소 토큰이 없어도 최소한의 체크를 위해 기본 토큰 생성
+        let default_token = CancellationToken::new();
+        warn!("⚠️  collect_details called without cancellation token - using default token as fallback");
         
-        info!("🚀 Starting REAL concurrent product detail collection: {} URLs with {} concurrent workers", 
-              urls.len(), max_concurrent);
-        
-        // Use a semaphore to limit actual concurrent HTTP requests
-        let semaphore = Arc::new(Semaphore::new(max_concurrent));
-        
-        // Create ALL tasks immediately for true parallel execution
-        let mut all_tasks = Vec::new();
-        
-        for (index, url) in urls.iter().enumerate() {
-            let url = url.clone();
-            let http_client = Arc::clone(&self.http_client);
-            let data_extractor = Arc::clone(&self.data_extractor);
-            let semaphore = Arc::clone(&semaphore);
-            
-            let task = tokio::spawn(async move {
-                // Acquire semaphore permit (limits concurrent HTTP requests)
-                let permit = semaphore.acquire().await.expect("Semaphore has been closed");
-                
-                info!("🌐 Starting HTTP request for URL {}: {}", index, url);
-                
-                // HTTP request with timeout
-                let html = {
-                    let client_future = http_client.lock();
-                    let mut client = client_future.await;
-                    
-                    let fetch_future = client.fetch_html_string(&url);
-                    let timeout_future = tokio::time::sleep(tokio::time::Duration::from_secs(30));
-                    
-                    // Race between HTTP request and timeout
-                    let result = tokio::select! {
-                        result = fetch_future => {
-                            match result {
-                                Ok(html) => {
-                                    info!("✅ HTTP request completed for URL {}", index);
-                                    Ok(html)
-                                }
-                                Err(e) => {
-                                    warn!("❌ HTTP request failed for URL {}: {}", index, e);
-                                    Err(e)
-                                }
-                            }
-                        }
-                        _ = timeout_future => {
-                            warn!("⏰ HTTP request TIMEOUT for URL {}", index);
-                            Err(anyhow::anyhow!("HTTP request timeout"))
-                        }
-                    };
-                    
-                    drop(client); // Release HTTP client lock immediately
-                    drop(permit); // Release semaphore permit immediately
-                    result?
-                };
-                
-                // Parse and extract product details
-                let doc = scraper::Html::parse_document(&html);
-                let product_detail = data_extractor.extract_product_detail(&doc, url.clone())?;
-                
-                info!("📦 Product extracted successfully for URL {}: {}", index, 
-                      product_detail.certification_id.as_deref().unwrap_or("Unknown"));
-                Ok::<ProductDetail, anyhow::Error>(product_detail)
-            });
-            
-            all_tasks.push(task);
-        }
-        
-        info!("🚀 Launched {} concurrent tasks with semaphore limit of {}, waiting for completion...", 
-              all_tasks.len(), max_concurrent);
-        
-        // Wait for ALL tasks to complete concurrently
-        let results = futures::future::join_all(all_tasks).await;
-        
-        // Process results
-        let mut successful_count = 0;
-        let mut failed_count = 0;
-        
-        for (index, result) in results.into_iter().enumerate() {
-            match result {
-                Ok(Ok(product)) => {
-                    products.push(product);
-                    successful_count += 1;
-                    debug!("✅ Task {} completed successfully", index);
-                }
-                Ok(Err(e)) => {
-                    failed_count += 1;
-                    warn!("❌ Task {} failed: {}", index, e);
-                }
-                Err(e) => {
-                    failed_count += 1;
-                    warn!("💥 Task {} panicked: {}", index, e);
-                }
-            }
-        }
-        
-        info!("✅ Collection COMPLETED: {} successful, {} failed out of {} total", 
-              successful_count, failed_count, urls.len());
-        
-        Ok(products)
+        // 취소 가능한 메서드로 위임
+        self.collect_details_with_cancellation(urls, default_token).await
     }
     
     async fn collect_details_with_cancellation(&self, urls: &[String], cancellation_token: CancellationToken) -> Result<Vec<ProductDetail>> {
