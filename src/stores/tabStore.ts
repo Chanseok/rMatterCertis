@@ -69,6 +69,17 @@ const [tabState, setTabState] = createStore<TabState>({
         text: 'text-amber-700',
         accent: 'from-amber-500 to-orange-500'
       }
+    },
+    {
+      id: 'game',
+      label: '게임 대시보드',
+      icon: '🎮',
+      theme: {
+        bg: 'bg-rose-50',
+        border: 'border-rose-200',
+        text: 'text-rose-700',
+        accent: 'from-rose-500 to-pink-500'
+      }
     }
   ],
   expandedSections: {}
