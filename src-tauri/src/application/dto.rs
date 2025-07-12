@@ -2,6 +2,10 @@
 //! 
 //! Contains DTOs for data exchange between Use Cases and Tauri Commands.
 
+#![allow(missing_docs)]
+#![allow(clippy::unnecessary_qualification)]
+#![allow(unused_must_use)]
+
 use serde::{Deserialize, Serialize};
 use crate::domain::entities::{Vendor, Product, MatterProduct, DatabaseSummary};
 use crate::domain::session_manager::{CrawlingSessionState};

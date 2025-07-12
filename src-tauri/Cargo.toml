@@ -1,10 +1,14 @@
 [package]
 name = "matter-certis-v2"
-version = "0.1.0"
-description = "Matter Certis v2 - E-commerce Product Crawling Application"
+version = "0.2.0"
+description = "Matter Certis v2 - Modern Event-Driven E-commerce Product Crawling Application"
 authors = ["Chanseok <hi007chans@gmail.com>"]
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 default-run = "matter-certis-v2"
+license = "MIT"
+repository = "https://github.com/Chanseok/rMatterCertis"
+readme = "README.md"
 
 [workspace]
 resolver = "2"
@@ -64,89 +68,155 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# 🚀 Tauri v2.0 Core Framework
+tauri = { version = "2", features = ["macos-proxy"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
-serde = { version = "1.0", features = ["derive"] }
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-store = "2"
+
+# 🔧 Serialization & Data Handling
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
-tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "fs", "time"] }
-reqwest = { version = "0.11", features = ["json", "cookies", "gzip"] }
-sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls", "chrono", "migrate"] }
-scraper = "0.19"
+
+# ⚡ Async Runtime & Concurrency
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "fs", "time", "signal"] }
+tokio-util = { version = "0.7", features = ["time", "codec"] }
+tokio-stream = "0.1"
+futures = "0.3"
+async-trait = "0.1"
+rayon = "1.7"
+
+# 🌐 HTTP Client & Web Scraping
+reqwest = { version = "0.12", features = ["json", "cookies", "gzip", "brotli", "stream"] }
+scraper = "0.20"
 select = "0.6"
 regex = "1.10"
+url = "2.5"
+
+# 🗄️ Database & Storage
+sqlx = { version = "0.8", features = ["sqlite", "postgres", "runtime-tokio-rustls", "chrono", "migrate", "uuid"] }
+
+# 🔄 Rate Limiting & Control
+governor = "0.6"
+tower = { version = "0.4", features = ["timeout", "retry"] }
+
+# 📊 Logging & Telemetry
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "chrono", "fmt"] }
+tracing-appender = "0.2"
+tracing-opentelemetry = "0.22"
+
+# 🛠️ Error Handling & Utilities
 anyhow = "1.0"
 thiserror = "1.0"
-rayon = "1.7"
-futures = "0.3"
-config = "0.13"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "chrono"] }
-tracing-appender = "0.2"
-chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
-async-trait = "0.1"
-tokio-util = { version = "0.7", features = ["time"] }
-governor = "0.6"
-lazy_static = "1.4"
-url = "2.4"
+chrono = { version = "0.4", features = ["serde"] }
+
+# 📁 Configuration & File System
+config = "0.14"
 dirs = "5.0"
 
+# 🎯 Development & Testing Utilities
+lazy_static = "1.4"
+
 [dev-dependencies]
+# 🧪 Testing Infrastructure
 tempfile = "3.8"
 tokio-test = "0.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
+rstest = "0.18"
 
-# Optimize for faster compilation during development
+# 🚀 Modern Rust Development Profile (2024)
 [profile.dev]
-# Minimal compilation for maximum speed
 opt-level = 0
-debug = 0  # No debug info for fastest builds
-split-debuginfo = "off"  # Skip debug info splitting
-incremental = false  # sccache와 호환을 위해 비활성화
-codegen-units = 512  # Maximum parallelization for faster builds
-# Skip expensive checks
-overflow-checks = false
-panic = "abort"  # Skip unwinding tables
-# Additional speed optimizations
-lto = "off"  # No link-time optimization in dev mode
-rpath = false  # Disable rpath for faster linking
-# 스트립 최적화 (바이너리 크기 축소로 링킹 속도 향상)
-strip = "symbols"
+debug = 2  # Full debug info for development
+split-debuginfo = "packed"
+incremental = true  # Enable incremental compilation
+codegen-units = 256
+overflow-checks = true
+debug-assertions = true
+panic = "unwind"  # Enable unwinding for better debugging
+lto = false
+rpath = false
 
-# Fast build profile for development
-[profile.fast-dev]
+# 📈 Performance Development Profile
+[profile.dev-fast]
 inherits = "dev"
 opt-level = 1
-debug = false
-incremental = false  # sccache 호환
-codegen-units = 512
-panic = "abort"
-debug-assertions = false
-strip = "symbols"
-
-# Ultra-fast test compilation
-[profile.test]
-opt-level = 0
-debug = 0  # No debug info for fastest builds
-split-debuginfo = "off"
-incremental = false  # sccache 호환
-codegen-units = 256
+debug = 1
+incremental = true
+codegen-units = 16
 overflow-checks = false
 debug-assertions = false
+
+# 🎯 Release Profile (Production)
+[profile.release]
+opt-level = 3
+debug = false
+split-debuginfo = "off"
+incremental = false
+codegen-units = 1
+overflow-checks = false
+debug-assertions = false
+panic = "abort"
+lto = "fat"
 strip = "symbols"
 
-# Dependencies are still optimized even in dev mode
+# 📦 Dependencies optimization for all profiles
 [profile.dev.package."*"]
 opt-level = 3
 debug = false
 
-[profile.test.package."*"]
+[profile.dev-fast.package."*"]
 opt-level = 3
 debug = false
 
-# 빠른 개발/테스트를 위한 feature 플래그
+# 🔧 Modern Rust 2024 Features & Lints (강화된 Clippy 규칙)
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "allow"  # 일시적으로 allow로 변경
+unused_import_braces = "allow"
+unused_qualifications = "allow"  # 일시적으로 allow로 변경
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unused_extern_crates = "warn"
+unused_results = "allow"  # 일시적으로 allow로 변경
+
+[lints.clippy]
+# Core Clippy 규칙
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+cargo = "warn"
+
+# Modern Rust 2024 엄격한 규칙
+complexity = "warn"
+perf = "warn"
+style = "warn"
+correctness = "warn"
+suspicious = "warn"
+
+# 모듈 구조 관련 규칙
+module_inception = "warn"          # mod.rs 사용 방지
+wildcard_imports = "warn"          # * import 방지  
+explicit_iter_loop = "warn"        # 명시적 반복자 사용
+explicit_into_iter_loop = "warn"   # 명시적 into_iter 사용
+
+# Allow some pedantic lints that are too strict for our use case
+missing_errors_doc = "allow"
+missing_panics_doc = "allow" 
+module_name_repetitions = "allow"
+too_many_arguments = "allow"        # 의존성 주입 시 필요
+
+# 🎨 Feature Flags for Clean Architecture
 [features]
-default = []
-minimal = []  # 최소 의존성으로 빠른 컴파일
-test-utils = []  # 테스트 유틸리티 활성화
+default = ["modern-ui", "event-driven", "telemetry"]
+modern-ui = []           # Modern UI components
+event-driven = []        # Event-driven architecture
+telemetry = []          # Telemetry and observability
+minimal = []            # Minimal build for CI/CD
+test-utils = []         # Testing utilities
 

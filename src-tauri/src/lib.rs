@@ -9,6 +9,9 @@
 //! - Direct module declarations following Rust 2024 conventions
 
 #![allow(clippy::uninlined_format_args)]
+#![allow(missing_docs)]
+#![allow(clippy::unnecessary_qualification)]
+#![allow(unused_must_use)]
 
 use crate::infrastructure::{DatabaseConnection, init_logging_with_config};
 use crate::infrastructure::config::{ConfigManager, AppConfig};
@@ -21,6 +24,7 @@ pub mod domain {
     pub mod entities;
     pub mod events;
     pub mod repositories;
+    pub mod value_objects;
     pub mod services {
         //! Domain services for business logic
         pub mod product_service;
@@ -48,6 +52,7 @@ pub mod domain {
     // Re-export commonly used items
     pub use entities::*;
     pub use events::*;
+    pub use value_objects::*;
 }
 
 pub mod application {
@@ -69,19 +74,10 @@ pub mod application {
 
 pub mod infrastructure;
 
-pub mod commands {
-    //! Command module for crawling operations
-    pub mod modern_crawling;
-    pub mod parsing_commands;
-    pub mod config_commands;
-    pub mod smart_crawling;
+pub mod commands;
 
-    // Re-export all commands
-    pub use modern_crawling::*;
-    pub use parsing_commands::*;
-    pub use config_commands::*;
-    pub use smart_crawling::*;
-}
+// Modern Rust 2024 - 명시적 모듈 선언
+pub mod crawling;
 
 // Test utilities (only available during testing)
 #[cfg(any(test, feature = "test-utils"))]
@@ -169,6 +165,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(db)
         .manage(app_state)
+        .manage(commands::crawling_v4::CrawlingEngineState {
+            engine: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            database: commands::crawling_v4::MockDatabase {
+                connection_status: "Mock Connected".to_string(),
+            },
+        })
         .setup(|app| {
             let app_handle = app.handle().clone();
             
@@ -187,11 +189,21 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // Modern real-time commands
-            commands::start_crawling,
+            // Modern real-time commands (Legacy v3.x)
+            commands::start_crawling_v3,
             commands::pause_crawling,
             commands::resume_crawling,
-            commands::stop_crawling,
+            commands::stop_crawling_v3,
+            
+            // Backend v4.0 commands
+            commands::crawling_v4::init_crawling_engine,
+            commands::crawling_v4::start_crawling,
+            commands::crawling_v4::stop_crawling,
+            commands::crawling_v4::get_crawling_stats,
+            commands::crawling_v4::get_system_health,
+            commands::crawling_v4::update_crawling_config,
+            commands::crawling_v4::get_crawling_config,
+            commands::crawling_v4::emergency_stop,
             commands::get_crawling_status,
             commands::get_active_sessions,
             commands::get_database_stats,
@@ -244,20 +256,20 @@ pub fn run() {
             commands::set_window_size,
             commands::maximize_window,
             
-            // Legacy parsing commands (kept for compatibility)
-            commands::crawl_product_list_page,
-            commands::crawl_product_detail_page,
-            commands::batch_crawl_product_lists,
-            commands::batch_crawl_product_details,
-            commands::check_has_next_page,
-            commands::get_crawler_config,
-            commands::crawler_health_check,
+            // Legacy parsing commands (temporarily disabled for Modern Rust 2024 migration)
+            // commands::crawl_product_list_page,
+            // commands::crawl_product_detail_page,
+            // commands::batch_crawl_product_lists,
+            // commands::batch_crawl_product_details,
+            // commands::check_has_next_page,
+            // commands::get_crawler_config,
+            // commands::crawler_health_check,
             
-            // Smart crawling commands (prompts6 implementation)
-            commands::calculate_crawling_range,
-            commands::get_crawling_progress,
-            commands::get_database_state_for_range_calculation,
-            commands::demo_prompts6_calculation
+            // Smart crawling commands (temporarily disabled for Modern Rust 2024 migration)
+            // commands::calculate_crawling_range,
+            // commands::get_crawling_progress,
+            // commands::get_database_state_for_range_calculation,
+            // commands::demo_prompts6_calculation
         ]);
     
     info!("✅ Tauri application built successfully, starting...");

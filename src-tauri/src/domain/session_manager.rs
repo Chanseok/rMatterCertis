@@ -29,7 +29,7 @@ impl Type<sqlx::Sqlite> for SessionStatus {
 }
 
 impl<'q> Encode<'q, sqlx::Sqlite> for SessionStatus {
-    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>> {
         let s = match self {
             SessionStatus::Initializing => "Initializing",
             SessionStatus::Running => "Running",
@@ -38,7 +38,10 @@ impl<'q> Encode<'q, sqlx::Sqlite> for SessionStatus {
             SessionStatus::Failed => "Failed",
             SessionStatus::Stopped => "Stopped",
         };
-        <String as Encode<sqlx::Sqlite>>::encode(s.to_string(), buf)
+        match <String as Encode<sqlx::Sqlite>>::encode(s.to_string(), buf) {
+            Ok(null) => Ok(null),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -72,13 +75,16 @@ impl Type<sqlx::Sqlite> for CrawlingStage {
 }
 
 impl<'q> Encode<'q, sqlx::Sqlite> for CrawlingStage {
-    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>> {
         let s = match self {
             CrawlingStage::ProductList => "ProductList",
             CrawlingStage::ProductDetails => "ProductDetails",
             CrawlingStage::MatterDetails => "MatterDetails",
         };
-        <String as Encode<sqlx::Sqlite>>::encode(s.to_string(), buf)
+        match <String as Encode<sqlx::Sqlite>>::encode(s.to_string(), buf) {
+            Ok(null) => Ok(null),
+            Err(e) => Err(e),
+        }
     }
 }
 

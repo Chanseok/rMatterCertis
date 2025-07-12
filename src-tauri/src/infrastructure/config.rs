@@ -8,6 +8,9 @@
 //! 3. Application-managed settings (auto-updated by app)
 
 #![allow(clippy::uninlined_format_args)]
+#![allow(missing_docs)]
+#![allow(clippy::unnecessary_qualification)]
+#![allow(unused_must_use)]
 #![allow(clippy::derivable_impls)]
 #![allow(clippy::useless_format)]
 

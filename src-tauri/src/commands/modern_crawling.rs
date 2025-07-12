@@ -17,8 +17,9 @@ use crate::infrastructure::config::ConfigManager;
 use sqlx::Row; // Add this import for try_get method
 
 /// Start a new crawling session using backend configuration with intelligent range calculation
+/// NOTE: This command is deprecated. Use start_crawling_v4 instead.
 #[tauri::command]
-pub async fn start_crawling(
+pub async fn start_crawling_v3(
     start_page: Option<u32>,
     end_page: Option<u32>,
     state: State<'_, AppState>,
@@ -295,8 +296,9 @@ pub async fn resume_crawling(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 /// Stop the current crawling session
+/// NOTE: This command is deprecated. Use stop_crawling_v4 instead.
 #[tauri::command]
-pub async fn stop_crawling(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn stop_crawling_v3(state: State<'_, AppState>) -> Result<(), String> {
     info!("Stopping crawling session");
     
     // Update state to cancelled

@@ -1,9 +1,51 @@
-//! Domain entities for Matter Certification crawling
+//! # Domain Entities
+//!
+//! Pure business objects representing the core concepts of the crawling domain.
+//! These entities have no external dependencies and contain only business logic.
 //! 
-//! Contains the core business entities specific to CSA-IoT Matter Certification database.
+//! Following Clean Architecture principles, these entities are:
+//! - Independent of frameworks, databases, and external systems
+//! - Focused on business rules and logic
+//! - Highly testable and maintainable
+
+#![allow(missing_docs)]
+#![allow(clippy::unnecessary_qualification)]
+#![allow(unused_must_use)]
 
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+use uuid::Uuid;
+
+/// Unique identifier for domain entities
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EntityId(Uuid);
+
+impl EntityId {
+    /// Creates a new unique entity ID
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    /// Returns the inner UUID
+    #[must_use]
+    pub const fn as_uuid(&self) -> &Uuid {
+        &self.0
+    }
+}
+
+impl Default for EntityId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for EntityId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// Crawling session entity for tracking crawling operations
 #[derive(Debug, Clone, Serialize, Deserialize)]

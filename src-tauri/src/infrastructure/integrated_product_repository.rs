@@ -5,6 +5,9 @@
 //! filtering capabilities.
 
 #![allow(clippy::uninlined_format_args)]
+#![allow(missing_docs)]
+#![allow(clippy::unnecessary_qualification)]
+#![allow(unused_must_use)]
 
 use crate::domain::product::{
     Product, ProductDetail, ProductWithDetails, ProductSearchCriteria, 
