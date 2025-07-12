@@ -114,6 +114,14 @@ pub async fn start_crawling(
     // 비동기 태스크에서 사용할 변수들 복제
     let session_id_for_task = session_id.clone();
     let _app_handle_for_task = app_handle.clone();
+    
+    // Get cancellation token from AppState
+    let cancellation_token = state.get_cancellation_token().await;
+    info!("🛑 DEBUG: Cancellation token retrieved from AppState: {:?}", cancellation_token.is_some());
+    if let Some(ref token) = cancellation_token {
+        info!("🛑 DEBUG: Cancellation token current state - is_cancelled: {}", token.is_cancelled());
+    }
+    
     let crawling_config = crate::infrastructure::service_based_crawling_engine::BatchCrawlingConfig {
         start_page: actual_start_page,
         end_page: actual_end_page,
@@ -122,7 +130,10 @@ pub async fn start_crawling(
         batch_size: app_config.user.batch.batch_size,
         retry_max: app_config.advanced.retry_attempts,
         timeout_ms: app_config.advanced.request_timeout_seconds * 1000,
+        cancellation_token,
     };
+    
+    info!("🛑 DEBUG: Created BatchCrawlingConfig with cancellation_token: {:?}", crawling_config.cancellation_token.is_some());
     
     // 이벤트 이미터 참조 복제 
     let event_emitter_for_task = {

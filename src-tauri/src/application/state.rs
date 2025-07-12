@@ -10,6 +10,7 @@ use crate::domain::entities::CrawlingSession;
 use crate::domain::events::{CrawlingProgress, CrawlingStatus, DatabaseStats};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use chrono::Utc;
 use tracing::info;
 
@@ -35,6 +36,9 @@ pub struct AppState {
     
     /// Session start time for calculating elapsed time
     pub session_start_time: Arc<RwLock<Option<chrono::DateTime<Utc>>>>,
+    
+    /// Cancellation token for stopping crawling operations
+    pub crawling_cancellation_token: Arc<RwLock<Option<CancellationToken>>>,
 }
 
 impl AppState {
@@ -48,6 +52,7 @@ impl AppState {
             database_stats: Arc::new(RwLock::new(None)),
             config: Arc::new(RwLock::new(config)),
             session_start_time: Arc::new(RwLock::new(None)),
+            crawling_cancellation_token: Arc::new(RwLock::new(None)),
         }
     }
     
@@ -115,6 +120,15 @@ impl AppState {
     pub async fn start_session(&self, session: CrawlingSession) -> Result<(), String> {
         let now = Utc::now();
         
+        // Create a new cancellation token for this session
+        let cancellation_token = CancellationToken::new();
+        
+        // Store the cancellation token
+        {
+            let mut token_guard = self.crawling_cancellation_token.write().await;
+            *token_guard = Some(cancellation_token);
+        }
+        
         // Set session start time
         {
             let mut start_time_guard = self.session_start_time.write().await;
@@ -147,6 +161,21 @@ impl AppState {
     
     /// Stop the current crawling session
     pub async fn stop_session(&self) -> Result<(), String> {
+        // Cancel all ongoing operations
+        {
+            let token_guard = self.crawling_cancellation_token.read().await;
+            if let Some(token) = token_guard.as_ref() {
+                token.cancel();
+                info!("🛑 Cancellation token activated - all HTTP requests will be cancelled");
+            }
+        }
+        
+        // Clear the cancellation token
+        {
+            let mut token_guard = self.crawling_cancellation_token.write().await;
+            *token_guard = None;
+        }
+        
         {
             let mut session_guard = self.current_session.write().await;
             *session_guard = None;
@@ -169,6 +198,12 @@ impl AppState {
         Ok(())
     }
     
+    /// Get the current cancellation token
+    pub async fn get_cancellation_token(&self) -> Option<CancellationToken> {
+        let token_guard = self.crawling_cancellation_token.read().await;
+        token_guard.clone()
+    }
+
     /// Get the current crawling session
     pub async fn get_current_session(&self) -> Option<CrawlingSession> {
         self.current_session.read().await.clone()

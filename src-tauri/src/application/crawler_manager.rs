@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, RwLock};
 use anyhow::{Result, anyhow};
 use tracing::{info, warn, error, debug};
 use chrono::{DateTime, Utc};
+use tokio_util::sync::CancellationToken;
 
 use crate::domain::session_manager::SessionManager;
 use crate::domain::events::{CrawlingProgress, CrawlingStage, CrawlingStatus};
@@ -17,7 +18,8 @@ use crate::application::EventEmitter;
 use crate::infrastructure::{
     BatchCrawlingEngine, 
     ServiceBasedBatchCrawlingEngine, 
-    AdvancedBatchCrawlingEngine
+    AdvancedBatchCrawlingEngine,
+    BatchCrawlingConfig,
 };
 
 /// 배치 프로세서 트레이트 - 3개 엔진을 통합하는 인터페이스
@@ -41,6 +43,8 @@ pub struct CrawlingConfig {
     pub retry_max: u32,
     pub timeout_ms: u64,
     pub engine_type: CrawlingEngineType,
+    #[serde(skip)]
+    pub cancellation_token: Option<tokio_util::sync::CancellationToken>,
 }
 
 /// 크롤링 엔진 타입
@@ -476,6 +480,19 @@ impl Clone for CrawlerManager {
 // BatchProcessor 구현체들
 // ============================================================================
 
+pub struct BasicBatchProcessor {
+    engine: Arc<BatchCrawlingEngine>,
+}
+
+pub struct ServiceBatchProcessor {
+    // 기존 엔진의 컴포넌트들에 접근하기 위해 엔진 참조 유지
+    base_engine: Arc<ServiceBasedBatchCrawlingEngine>,
+}
+
+pub struct AdvancedBatchProcessor {
+    engine: Arc<AdvancedBatchCrawlingEngine>,
+}
+
 impl BasicBatchProcessor {
     pub fn new(engine: Arc<BatchCrawlingEngine>) -> Self {
         Self { engine }
@@ -546,8 +563,8 @@ impl BatchProcessor for BasicBatchProcessor {
 }
 
 impl ServiceBatchProcessor {
-    pub fn new(engine: Arc<ServiceBasedBatchCrawlingEngine>) -> Self {
-        Self { engine }
+    pub fn new(base_engine: Arc<ServiceBasedBatchCrawlingEngine>) -> Self {
+        Self { base_engine }
     }
 }
 
@@ -558,15 +575,56 @@ impl BatchProcessor for ServiceBatchProcessor {
         
         let start_time = Instant::now();
         
-        // 임시 결과 반환 (실제 구현에서는 engine을 사용)
-        Ok(TaskResult {
-            session_id: "service_session".to_string(),
-            items_processed: config.end_page - config.start_page + 1,
-            items_success: config.end_page - config.start_page + 1,
-            items_failed: 0,
-            duration: start_time.elapsed(),
-            final_status: CrawlingStatus::Completed,
-        })
+        // CrawlingConfig를 BatchCrawlingConfig로 변환
+        let batch_config = BatchCrawlingConfig {
+            start_page: config.start_page,
+            end_page: config.end_page,
+            concurrency: config.concurrency,
+            delay_ms: config.delay_ms,
+            batch_size: config.batch_size,
+            retry_max: config.retry_max,
+            timeout_ms: config.timeout_ms,
+            cancellation_token: config.cancellation_token.clone(), // 🔥 중요: cancellation_token 전달
+        };
+        
+        // 새로운 ServiceBasedBatchCrawlingEngine 생성 (cancellation_token 포함)
+        let engine = ServiceBasedBatchCrawlingEngine::new(
+            self.http_client.clone(),
+            self.data_extractor.clone(),
+            self.product_repo.clone(),
+            self.event_emitter.clone(),
+            batch_config,
+            format!("service_session_{}", chrono::Utc::now().timestamp()),
+        );
+        
+        info!("🛑 Created ServiceBasedBatchCrawlingEngine with cancellation_token: {}", 
+              config.cancellation_token.is_some());
+        
+        // 실행 결과 처리
+        match engine.execute().await {
+            Ok(()) => {
+                info!("✅ ServiceBatchProcessor completed successfully");
+                Ok(TaskResult {
+                    session_id: "service_session".to_string(),
+                    items_processed: config.end_page - config.start_page + 1,
+                    items_success: config.end_page - config.start_page + 1,
+                    items_failed: 0,
+                    duration: start_time.elapsed(),
+                    final_status: CrawlingStatus::Completed,
+                })
+            }
+            Err(e) => {
+                warn!("❌ ServiceBatchProcessor failed: {}", e);
+                Ok(TaskResult {
+                    session_id: "service_session".to_string(),
+                    items_processed: 0,
+                    items_success: 0,
+                    items_failed: config.end_page - config.start_page + 1,
+                    duration: start_time.elapsed(),
+                    final_status: CrawlingStatus::Error,
+                })
+            }
+        }
     }
     
     async fn get_progress(&self) -> CrawlingProgress {

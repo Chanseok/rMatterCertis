@@ -10,6 +10,7 @@ use anyhow::{Result, anyhow};
 use tracing::{info, warn, error, debug};
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 use futures::future::try_join_all;
 use scraper;
 use regex;
@@ -1435,6 +1436,123 @@ impl ProductListCollector for ProductListCollectorImpl {
         Ok(urls)
     }
     
+    async fn collect_page_range_with_cancellation(&self, start_page: u32, end_page: u32, cancellation_token: CancellationToken) -> Result<Vec<String>> {
+        let mut all_urls = Vec::new();
+        
+        // Handle descending range (older to newer) - typical for our use case
+        let pages: Vec<u32> = if start_page > end_page {
+            // Descending range: start from oldest (highest page number) to newest (lower page number)
+            (end_page..=start_page).rev().collect()
+        } else {
+            // Ascending range: start from lowest to highest page number
+            (start_page..=end_page).collect()
+        };
+        
+        info!("🔍 Collecting from {} pages in range {} to {} with cancellation support", 
+              pages.len(), start_page, end_page);
+        
+        let max_concurrent = self.config.max_concurrent as usize;
+        
+        // Process pages in true parallel batches with proper concurrency control
+        for chunk in pages.chunks(max_concurrent) {
+            // 배치 시작 전 취소 확인
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Page range collection cancelled at batch");
+                return Err(anyhow::anyhow!("Page range collection cancelled"));
+            }
+            
+            let mut tasks = Vec::new();
+            
+            info!("🚀 Starting cancellable parallel batch of {} pages", chunk.len());
+            
+            for &page in chunk {
+                let http_client = Arc::clone(&self.http_client);
+                let data_extractor = Arc::clone(&self.data_extractor);
+                let token_clone = cancellation_token.clone();
+                
+                let task = tokio::spawn(async move {
+                    // 작업 시작 전 취소 확인
+                    if token_clone.is_cancelled() {
+                        debug!("🛑 Page {} collection cancelled before start", page);
+                        return Err(anyhow::anyhow!("Page collection cancelled"));
+                    }
+                    
+                    let url = config_utils::matter_products_page_url_simple(page);
+                    let mut client = http_client.lock().await;
+                    let html = client.fetch_html_string(&url).await?;
+                    drop(client);
+                    
+                    // HTTP 요청 완료 후 취소 확인
+                    if token_clone.is_cancelled() {
+                        debug!("🛑 Page {} collection cancelled after HTTP request", page);
+                        return Err(anyhow::anyhow!("Page collection cancelled after HTTP request"));
+                    }
+                    
+                    let doc = scraper::Html::parse_document(&html);
+                    let urls = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
+                    
+                    debug!("🔗 Extracted {} URLs from page {}", urls.len(), page);
+                    Ok::<(u32, Vec<String>), anyhow::Error>((page, urls))
+                });
+                
+                tasks.push(task);
+            }
+            
+            // 배치 작업 완료 대기 (취소 토큰과 함께)
+            let results = tokio::select! {
+                results = futures::future::join_all(tasks) => results,
+                _ = cancellation_token.cancelled() => {
+                    warn!("🛑 Page range collection cancelled during batch execution");
+                    return Err(anyhow::anyhow!("Page range collection cancelled during batch execution"));
+                }
+            };
+            
+            for result in results {
+                match result {
+                    Ok(Ok((page, urls))) => {
+                        let urls_len = urls.len();
+                        all_urls.extend(urls);
+                        debug!("📄 Collected {} URLs from page {} (total so far: {})", urls_len, page, all_urls.len());
+                    }
+                    Ok(Err(e)) => {
+                        if e.to_string().contains("cancelled") {
+                            warn!("🛑 Page collection was cancelled");
+                            return Err(e);
+                        } else {
+                            warn!("⚠️  Failed to collect URLs: {}", e);
+                        }
+                    }
+                    Err(e) => warn!("Task failed: {}", e),
+                }
+            }
+            
+            // 배치 완료 후 취소 확인
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Page range collection cancelled after batch completion");
+                return Err(anyhow::anyhow!("Page range collection cancelled"));
+            }
+            
+            info!("📊 Completed cancellable parallel batch: {}/{} pages processed, {} URLs collected so far", 
+                  chunk.len(), pages.len(), all_urls.len());
+            
+            // Apply rate limiting between batches with cancellation support
+            if chunk.len() == max_concurrent && !pages.chunks(max_concurrent).last().unwrap().contains(&chunk[0]) {
+                tokio::select! {
+                    _ = tokio::time::sleep(self.config.delay_between_requests) => {
+                        info!("⏱️  Rate limiting delay applied between batches");
+                    },
+                    _ = cancellation_token.cancelled() => {
+                        warn!("🛑 Page range collection cancelled during rate limiting delay");
+                        return Err(anyhow::anyhow!("Page range collection cancelled during delay"));
+                    }
+                }
+            }
+        }
+        
+        info!("📋 Total URLs collected from page range {}-{} with cancellation: {}", start_page, end_page, all_urls.len());
+        Ok(all_urls)
+    }
+    
     async fn collect_page_batch(&self, pages: &[u32]) -> Result<Vec<String>> {
         let mut all_urls = Vec::new();
         
@@ -1478,59 +1596,278 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
         let mut products = Vec::new();
         let max_concurrent = self.config.max_concurrent as usize;
         
-        info!("🚀 Starting parallel product detail collection: {} URLs with {} concurrent workers", 
+        info!("🚀 Starting REAL concurrent product detail collection: {} URLs with {} concurrent workers", 
               urls.len(), max_concurrent);
         
-        // Process URLs in batches with true parallel execution
-        for chunk in urls.chunks(max_concurrent) {
-            let mut tasks = Vec::new();
+        // Use a semaphore to limit actual concurrent HTTP requests
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
+        
+        // Create ALL tasks immediately for true parallel execution
+        let mut all_tasks = Vec::new();
+        
+        for (index, url) in urls.iter().enumerate() {
+            let url = url.clone();
+            let http_client = Arc::clone(&self.http_client);
+            let data_extractor = Arc::clone(&self.data_extractor);
+            let semaphore = Arc::clone(&semaphore);
             
-            info!("🚀 Starting parallel detail collection batch of {} products", chunk.len());
-            
-            for url in chunk {
-                let url = url.clone();
-                let http_client = Arc::clone(&self.http_client);
-                let data_extractor = Arc::clone(&self.data_extractor);
+            let task = tokio::spawn(async move {
+                // Acquire semaphore permit (limits concurrent HTTP requests)
+                let permit = semaphore.acquire().await.expect("Semaphore has been closed");
                 
-                let task = tokio::spawn(async move {
-                    let mut client = http_client.lock().await;
-                    let html = client.fetch_html_string(&url).await?;
-                    drop(client);
-                    
-                    let doc = scraper::Html::parse_document(&html);
-                    let product_detail = data_extractor.extract_product_detail(&doc, url)?;
-                    
-                    debug!("📦 Extracted product: {}", product_detail.certification_id.as_deref().unwrap_or("Unknown"));
-                    Ok::<ProductDetail, anyhow::Error>(product_detail)
-                });
+                info!("🌐 Starting HTTP request for URL {}: {}", index, url);
                 
-                tasks.push(task);
-            }
+                // HTTP request with timeout
+                let html = {
+                    let client_future = http_client.lock();
+                    let mut client = client_future.await;
+                    
+                    let fetch_future = client.fetch_html_string(&url);
+                    let timeout_future = tokio::time::sleep(tokio::time::Duration::from_secs(30));
+                    
+                    // Race between HTTP request and timeout
+                    let result = tokio::select! {
+                        result = fetch_future => {
+                            match result {
+                                Ok(html) => {
+                                    info!("✅ HTTP request completed for URL {}", index);
+                                    Ok(html)
+                                }
+                                Err(e) => {
+                                    warn!("❌ HTTP request failed for URL {}: {}", index, e);
+                                    Err(e)
+                                }
+                            }
+                        }
+                        _ = timeout_future => {
+                            warn!("⏰ HTTP request TIMEOUT for URL {}", index);
+                            Err(anyhow::anyhow!("HTTP request timeout"))
+                        }
+                    };
+                    
+                    drop(client); // Release HTTP client lock immediately
+                    drop(permit); // Release semaphore permit immediately
+                    result?
+                };
+                
+                // Parse and extract product details
+                let doc = scraper::Html::parse_document(&html);
+                let product_detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                
+                info!("📦 Product extracted successfully for URL {}: {}", index, 
+                      product_detail.certification_id.as_deref().unwrap_or("Unknown"));
+                Ok::<ProductDetail, anyhow::Error>(product_detail)
+            });
             
-            // Wait for all tasks in this batch to complete concurrently
-            let results = futures::future::join_all(tasks).await;
-            
-            for result in results {
-                match result {
-                    Ok(Ok(product)) => products.push(product),
-                    Ok(Err(e)) => warn!("Failed to collect product: {}", e),
-                    Err(e) => warn!("Task failed: {}", e),
+            all_tasks.push(task);
+        }
+        
+        info!("🚀 Launched {} concurrent tasks with semaphore limit of {}, waiting for completion...", 
+              all_tasks.len(), max_concurrent);
+        
+        // Wait for ALL tasks to complete concurrently
+        let results = futures::future::join_all(all_tasks).await;
+        
+        // Process results
+        let mut successful_count = 0;
+        let mut failed_count = 0;
+        
+        for (index, result) in results.into_iter().enumerate() {
+            match result {
+                Ok(Ok(product)) => {
+                    products.push(product);
+                    successful_count += 1;
+                    debug!("✅ Task {} completed successfully", index);
                 }
-            }
-            
-            info!("📊 Completed parallel detail batch: {}/{} products collected so far", products.len(), urls.len());
-            
-            // Apply rate limiting between batches only
-            if chunk.len() == max_concurrent && !urls.chunks(max_concurrent).last().unwrap().contains(&chunk[0]) {
-                tokio::time::sleep(self.config.delay_between_requests).await;
-                info!("⏱️  Rate limiting delay applied between detail batches");
+                Ok(Err(e)) => {
+                    failed_count += 1;
+                    warn!("❌ Task {} failed: {}", index, e);
+                }
+                Err(e) => {
+                    failed_count += 1;
+                    warn!("💥 Task {} panicked: {}", index, e);
+                }
             }
         }
         
-        info!("✅ Parallel collection completed: {}/{} products successfully collected", products.len(), urls.len());
+        info!("✅ Collection COMPLETED: {} successful, {} failed out of {} total", 
+              successful_count, failed_count, urls.len());
+        
         Ok(products)
     }
     
+    async fn collect_details_with_cancellation(&self, urls: &[String], cancellation_token: CancellationToken) -> Result<Vec<ProductDetail>> {
+        let mut products = Vec::new();
+        let max_concurrent = self.config.max_concurrent as usize;
+        
+        info!("🚀 Starting REAL concurrent product detail collection with cancellation: {} URLs with {} concurrent workers", 
+              urls.len(), max_concurrent);
+        
+        // Use a semaphore to limit actual concurrent HTTP requests
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
+        
+        // Create ALL tasks immediately for true parallel execution
+        let mut all_tasks = Vec::new();
+        
+        for (index, url) in urls.iter().enumerate() {
+            // Early cancellation check
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Cancellation detected before starting task {}", index);
+                break;
+            }
+            
+            let url = url.clone();
+            let http_client = Arc::clone(&self.http_client);
+            let data_extractor = Arc::clone(&self.data_extractor);
+            let cancellation_token = cancellation_token.clone();
+            let semaphore = Arc::clone(&semaphore);
+            
+            let task = tokio::spawn(async move {
+                // Acquire semaphore permit (limits concurrent HTTP requests)
+                let permit = match semaphore.try_acquire() {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        // If can't acquire immediately, wait with cancellation
+                        let acquire_future = semaphore.acquire();
+                        tokio::select! {
+                            permit = acquire_future => {
+                                match permit {
+                                    Ok(permit) => permit,
+                                    Err(_) => {
+                                        debug!("🛑 Task {} cancelled while waiting for semaphore", index);
+                                        return Err(anyhow::anyhow!("Cancelled while waiting for semaphore"));
+                                    }
+                                }
+                            }
+                            _ = cancellation_token.cancelled() => {
+                                debug!("🛑 Task {} cancelled while waiting for semaphore", index);
+                                return Err(anyhow::anyhow!("Cancelled while waiting for semaphore"));
+                            }
+                        }
+                    }
+                };
+                
+                // Immediate cancellation check after acquiring permit
+                if cancellation_token.is_cancelled() {
+                    debug!("🛑 Task {} cancelled before HTTP request", index);
+                    return Err(anyhow::anyhow!("Operation cancelled before request"));
+                }
+                
+                info!("🌐 Starting HTTP request for URL {}: {}", index, url);
+                
+                // HTTP request with timeout and cancellation
+                let html = {
+                    let client_future = http_client.lock();
+                    let mut client = tokio::select! {
+                        client = client_future => client,
+                        _ = cancellation_token.cancelled() => {
+                            warn!("🛑 HTTP client acquisition CANCELLED for URL {}", index);
+                            return Err(anyhow::anyhow!("HTTP client acquisition cancelled"));
+                        }
+                    };
+                    
+                    let fetch_future = client.fetch_html_string(&url);
+                    let timeout_future = tokio::time::sleep(tokio::time::Duration::from_secs(30));
+                    
+                    // Race between HTTP request, timeout, and cancellation
+                    let result = tokio::select! {
+                        result = fetch_future => {
+                            match result {
+                                Ok(html) => {
+                                    info!("✅ HTTP request completed for URL {}", index);
+                                    Ok(html)
+                                }
+                                Err(e) => {
+                                    warn!("❌ HTTP request failed for URL {}: {}", index, e);
+                                    Err(e)
+                                }
+                            }
+                        }
+                        _ = timeout_future => {
+                            warn!("⏰ HTTP request TIMEOUT for URL {}", index);
+                            Err(anyhow::anyhow!("HTTP request timeout"))
+                        }
+                        _ = cancellation_token.cancelled() => {
+                            warn!("🛑 HTTP request CANCELLED for URL {}: {}", index, url);
+                            Err(anyhow::anyhow!("HTTP request cancelled by user"))
+                        }
+                    };
+                    
+                    drop(client); // Release HTTP client lock immediately
+                    drop(permit); // Release semaphore permit immediately
+                    result?
+                };
+                
+                // Final cancellation check before processing
+                if cancellation_token.is_cancelled() {
+                    warn!("🛑 Processing cancelled for URL {}", index);
+                    return Err(anyhow::anyhow!("Processing cancelled"));
+                }
+                
+                // Parse and extract product details
+                let doc = scraper::Html::parse_document(&html);
+                let product_detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                
+                info!("📦 Product extracted successfully for URL {}: {}", index, 
+                      product_detail.certification_id.as_deref().unwrap_or("Unknown"));
+                Ok::<ProductDetail, anyhow::Error>(product_detail)
+            });
+            
+            all_tasks.push(task);
+        }
+        
+        info!("🚀 Launched {} concurrent tasks with semaphore limit of {}, waiting for completion...", 
+              all_tasks.len(), max_concurrent);
+        
+        // Use tokio::select! to race between task completion and cancellation
+        let results = tokio::select! {
+            results = futures::future::join_all(all_tasks) => results,
+            _ = cancellation_token.cancelled() => {
+                warn!("🛑 Task collection CANCELLED by user - tasks may still be running");
+                return Err(anyhow::anyhow!("Task collection cancelled by user"));
+            }
+        };
+        
+        // Process results
+        let mut successful_count = 0;
+        let mut cancelled_count = 0;
+        let mut failed_count = 0;
+        
+        for (index, result) in results.into_iter().enumerate() {
+            match result {
+                Ok(Ok(product)) => {
+                    products.push(product);
+                    successful_count += 1;
+                    debug!("✅ Task {} completed successfully", index);
+                }
+                Ok(Err(e)) => {
+                    if e.to_string().contains("cancelled") {
+                        cancelled_count += 1;
+                        debug!("🛑 Task {} was cancelled: {}", index, e);
+                    } else {
+                        failed_count += 1;
+                        warn!("❌ Task {} failed: {}", index, e);
+                    }
+                }
+                Err(e) => {
+                    failed_count += 1;
+                    warn!("💥 Task {} panicked: {}", index, e);
+                }
+            }
+        }
+        
+        // Final status report
+        if cancellation_token.is_cancelled() {
+            warn!("🛑 Collection CANCELLED: {} successful, {} cancelled, {} failed out of {} total", 
+                  successful_count, cancelled_count, failed_count, urls.len());
+        } else {
+            info!("✅ Collection COMPLETED: {} successful, {} failed out of {} total", 
+                  successful_count, failed_count, urls.len());
+        }
+        
+        Ok(products)
+    }
+
     async fn collect_single_product(&self, url: &str) -> Result<ProductDetail> {
         let mut client = self.http_client.lock().await;
         let html = client.fetch_html_string(url).await?;

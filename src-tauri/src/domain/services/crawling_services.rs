@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 use crate::domain::product::{Product, ProductDetail};
 
@@ -52,6 +53,9 @@ pub trait ProductListCollector: Send + Sync {
     /// 페이지 범위에서 제품 URL 수집 (start_page부터 end_page까지)
     async fn collect_page_range(&self, start_page: u32, end_page: u32) -> Result<Vec<String>>;
     
+    /// 페이지 범위에서 제품 URL 수집 (취소 토큰 지원)
+    async fn collect_page_range_with_cancellation(&self, start_page: u32, end_page: u32, cancellation_token: CancellationToken) -> Result<Vec<String>>;
+    
     /// 단일 페이지에서 제품 URL 수집
     async fn collect_single_page(&self, page: u32) -> Result<Vec<String>>;
     
@@ -62,8 +66,11 @@ pub trait ProductListCollector: Send + Sync {
 /// 제품 상세정보 수집 서비스
 #[async_trait]
 pub trait ProductDetailCollector: Send + Sync {
-    /// 여러 제품의 상세정보 수집
+    /// 여러 제품의 상세정보 수집 (cancellation token 지원)
     async fn collect_details(&self, urls: &[String]) -> Result<Vec<ProductDetail>>;
+    
+    /// 여러 제품의 상세정보 수집 (cancellation token 지원)
+    async fn collect_details_with_cancellation(&self, urls: &[String], cancellation_token: CancellationToken) -> Result<Vec<ProductDetail>>;
     
     /// 단일 제품 상세정보 수집
     async fn collect_single_product(&self, url: &str) -> Result<ProductDetail>;

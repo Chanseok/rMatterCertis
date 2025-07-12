@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use tracing::{info, warn, debug};
+use tokio_util::sync::CancellationToken;
 
 use crate::domain::services::{
     StatusChecker, DatabaseAnalyzer, ProductListCollector, ProductDetailCollector,
@@ -29,6 +30,8 @@ pub struct BatchCrawlingConfig {
     pub batch_size: u32,
     pub retry_max: u32,
     pub timeout_ms: u64,
+    #[serde(skip)]
+    pub cancellation_token: Option<CancellationToken>,
 }
 
 impl Default for BatchCrawlingConfig {
@@ -41,6 +44,7 @@ impl Default for BatchCrawlingConfig {
             batch_size: 10,
             retry_max: 3,
             timeout_ms: 30000,
+            cancellation_token: None,
         }
     }
 }
@@ -175,18 +179,58 @@ impl ServiceBasedBatchCrawlingEngine {
             config: self.config.clone(),
         }).await?;
 
+        // 시작 전 취소 확인
+        if let Some(cancellation_token) = &self.config.cancellation_token {
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Crawling session cancelled before starting");
+                return Err(anyhow!("Crawling session cancelled before starting"));
+            }
+        }
+
         // Stage 0: 사이트 상태 확인
         let site_status = self.stage0_check_site_status().await?;
+        
+        // Stage 0 완료 후 취소 확인
+        if let Some(cancellation_token) = &self.config.cancellation_token {
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Crawling session cancelled after Stage 0");
+                return Err(anyhow!("Crawling session cancelled after site status check"));
+            }
+        }
         
         // Stage 1: 데이터베이스 분석
         let _db_analysis = self.stage1_analyze_database().await?;
         
+        // Stage 1 완료 후 취소 확인
+        if let Some(cancellation_token) = &self.config.cancellation_token {
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Crawling session cancelled after Stage 1");
+                return Err(anyhow!("Crawling session cancelled after database analysis"));
+            }
+        }
+        
         // Stage 2: 제품 목록 수집
         let product_urls = self.stage2_collect_product_list(site_status.total_pages).await?;
+        
+        // Stage 2 완료 후 취소 확인
+        if let Some(cancellation_token) = &self.config.cancellation_token {
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Crawling session cancelled after Stage 2");
+                return Err(anyhow!("Crawling session cancelled after product list collection"));
+            }
+        }
         
         // Stage 3: 제품 상세정보 수집
         let products = self.stage3_collect_product_details(&product_urls).await?;
         let total_products = products.len() as u32;
+        
+        // Stage 3 완료 후 취소 확인
+        if let Some(cancellation_token) = &self.config.cancellation_token {
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Crawling session cancelled after Stage 3");
+                return Err(anyhow!("Crawling session cancelled after product details collection"));
+            }
+        }
         
         // Stage 4: 데이터베이스 저장
         let (processed_count, _new_items, _updated_items, errors) = self.stage4_save_to_database(products).await?;
@@ -268,13 +312,43 @@ impl ServiceBasedBatchCrawlingEngine {
     async fn stage2_collect_product_list(&self, total_pages: u32) -> Result<Vec<String>> {
         info!("Stage 2: Collecting product list using ProductListCollector service");
         
+        // 취소 확인 - 단계 시작 전
+        if let Some(cancellation_token) = &self.config.cancellation_token {
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Stage 2 (ProductList) cancelled before starting");
+                return Err(anyhow!("Product list collection cancelled"));
+            }
+        }
+        
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
             stage: "ProductList".to_string(),
             message: format!("{}페이지에서 제품 목록을 수집하는 중...", total_pages),
         }).await?;
 
         let effective_end = total_pages.min(self.config.end_page);
-        let product_urls = self.product_list_collector.collect_all_pages(effective_end).await?;
+        
+        // 취소 가능한 제품 목록 수집 실행
+        let product_urls = if let Some(cancellation_token) = &self.config.cancellation_token {
+            info!("🛑 Using cancellation token for product list collection");
+            
+            // 취소 토큰과 함께 제품 목록 수집 - 개선된 ProductListCollector 사용
+            self.product_list_collector.collect_page_range_with_cancellation(
+                self.config.start_page, 
+                effective_end, 
+                cancellation_token.clone()
+            ).await?
+        } else {
+            warn!("⚠️  No cancellation token available for product list collection");
+            self.product_list_collector.collect_all_pages(effective_end).await?
+        };
+        
+        // 취소 확인 - 단계 완료 후
+        if let Some(cancellation_token) = &self.config.cancellation_token {
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Stage 2 (ProductList) cancelled after collection");
+                return Err(anyhow!("Product list collection cancelled after completion"));
+            }
+        }
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageCompleted {
             stage: "ProductList".to_string(),
@@ -285,21 +359,146 @@ impl ServiceBasedBatchCrawlingEngine {
         Ok(product_urls)
     }
 
+    /// 취소 가능한 제품 목록 수집 메서드
+    async fn collect_product_list_with_cancellation(
+        &self,
+        total_pages: u32,
+        cancellation_token: CancellationToken,
+    ) -> Result<Vec<String>> {
+        info!("🔄 Starting cancellable product list collection for {} pages", total_pages);
+
+        let start_page = self.config.start_page;
+        let end_page = total_pages.min(self.config.end_page);
+        let pages_to_process: Vec<u32> = (start_page..=end_page).collect();
+
+        let batch_size = self.config.batch_size as usize;
+        let mut all_urls = Vec::new();
+
+        for (batch_index, batch_pages) in pages_to_process.chunks(batch_size).enumerate() {
+            // 배치 시작 전 취소 확인
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Product list collection cancelled at batch {}", batch_index + 1);
+                return Err(anyhow!("Product list collection cancelled"));
+            }
+
+            info!("📄 Processing batch {}: pages {:?}", batch_index + 1, batch_pages);
+
+            // 배치 내 페이지들을 병렬로 처리
+            let mut batch_tasks = Vec::new();
+            for &page in batch_pages {
+                let product_list_collector = Arc::clone(&self.product_list_collector);
+                let token_clone = cancellation_token.clone();
+
+                let task = tokio::spawn(async move {
+                    // 작업 시작 전 취소 확인
+                    if token_clone.is_cancelled() {
+                        debug!("🛑 Page {} collection cancelled before start", page);
+                        return Err(anyhow!("Page collection cancelled"));
+                    }
+
+                    // 페이지 수집 실행
+                    let result = product_list_collector.collect_single_page(page).await;
+                    
+                    // 작업 완료 후 취소 확인
+                    if token_clone.is_cancelled() {
+                        debug!("🛑 Page {} collection cancelled after completion", page);
+                        return Err(anyhow!("Page collection cancelled after completion"));
+                    }
+
+                    result
+                });
+                batch_tasks.push(task);
+            }
+
+            // 배치 작업 완료 대기
+            let batch_results = futures::future::join_all(batch_tasks).await;
+
+            // 결과 처리
+            for (i, result) in batch_results.into_iter().enumerate() {
+                match result {
+                    Ok(Ok(urls)) => {
+                        let urls_len = urls.len();
+                        all_urls.extend(urls);
+                        debug!("✅ Page {} completed: {} URLs", batch_pages[i], urls_len);
+                    }
+                    Ok(Err(e)) => {
+                        if e.to_string().contains("cancelled") {
+                            warn!("🛑 Page {} was cancelled", batch_pages[i]);
+                            return Err(e);
+                        } else {
+                            warn!("❌ Page {} failed: {}", batch_pages[i], e);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("💥 Page {} task panicked: {}", batch_pages[i], e);
+                    }
+                }
+            }
+            
+            // 배치 완료 후 취소 확인
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Product list collection cancelled after batch {}", batch_index + 1);
+                return Err(anyhow!("Product list collection cancelled"));
+            }
+
+            // 배치 간 지연 (마지막 배치가 아닌 경우)
+            if batch_index < pages_to_process.chunks(batch_size).count() - 1 {
+                let delay = Duration::from_millis(self.config.delay_ms);
+                tokio::select! {
+                    _ = tokio::time::sleep(delay) => {},
+                    _ = cancellation_token.cancelled() => {
+                        warn!("🛑 Product list collection cancelled during batch delay");
+                        return Err(anyhow!("Product list collection cancelled during delay"));
+                    }
+                }
+            }
+        }
+
+        info!("✅ Cancellable product list collection completed: {} URLs collected", all_urls.len());
+        Ok(all_urls)
+    }
+
     /// Stage 3: 제품 상세정보 수집 (서비스 기반 + 재시도 메커니즘)
     async fn stage3_collect_product_details(&self, product_urls: &[String]) -> Result<Vec<Product>> {
         info!("Stage 3: Collecting product details using ProductDetailCollector service with retry mechanism");
+        
+        // 취소 확인 - 단계 시작 전
+        if let Some(cancellation_token) = &self.config.cancellation_token {
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Stage 3 (ProductDetails) cancelled before starting");
+                return Err(anyhow!("Product details collection cancelled"));
+            }
+        }
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
             stage: "ProductDetails".to_string(),
             message: format!("{}개 제품의 상세정보를 수집하는 중... (재시도 지원)", product_urls.len()),
         }).await?;
 
-        // 초기 시도
+        // 초기 시도 - cancellation token 사용
         let mut successful_products = Vec::new();
         let mut failed_urls = Vec::new();
 
-        match self.product_detail_collector.collect_details(product_urls).await {
+        // cancellation token 사용 여부 확인
+        let result = if let Some(cancellation_token) = &self.config.cancellation_token {
+            info!("🛑 USING CANCELLATION TOKEN for product detail collection (token present)");
+            info!("🛑 Cancellation token is_cancelled: {}", cancellation_token.is_cancelled());
+            self.product_detail_collector.collect_details_with_cancellation(product_urls, cancellation_token.clone()).await
+        } else {
+            warn!("⚠️  NO CANCELLATION TOKEN provided - using standard collection (this is the problem!)");
+            self.product_detail_collector.collect_details(product_urls).await
+        };
+
+        match result {
             Ok(product_details) => {
+                // 취소 확인 - 데이터 변환 전
+                if let Some(cancellation_token) = &self.config.cancellation_token {
+                    if cancellation_token.is_cancelled() {
+                        warn!("🛑 Product details collection cancelled before processing results");
+                        return Err(anyhow!("Product details collection cancelled"));
+                    }
+                }
+                
                 // ProductDetail을 Product로 변환
                 successful_products = product_details.into_iter()
                     .map(|detail| crate::infrastructure::crawling_service_impls::product_detail_to_product(detail))
@@ -307,6 +506,14 @@ impl ServiceBasedBatchCrawlingEngine {
                 info!("✅ Initial collection successful: {} products", successful_products.len());
             }
             Err(e) => {
+                // cancellation 체크
+                if let Some(cancellation_token) = &self.config.cancellation_token {
+                    if cancellation_token.is_cancelled() {
+                        warn!("🛑 Collection cancelled by user");
+                        return Ok(successful_products); // 이미 수집된 제품들 반환
+                    }
+                }
+                
                 warn!("❌ Initial collection failed: {}", e);
                 failed_urls = product_urls.to_vec();
                 
@@ -330,7 +537,18 @@ impl ServiceBasedBatchCrawlingEngine {
             }
         }
 
-        // 재시도 처리
+        // 재시도 처리 (cancellation token 확인 후)
+        if let Some(cancellation_token) = &self.config.cancellation_token {
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Skipping retries due to cancellation");
+                self.emit_detailed_event(DetailedCrawlingEvent::StageCompleted {
+                    stage: "ProductDetails".to_string(),
+                    items_processed: successful_products.len(),
+                }).await?;
+                return Ok(successful_products);
+            }
+        }
+
         let retry_products = self.process_retries_for_product_details().await?;
         successful_products.extend(retry_products);
         
@@ -350,6 +568,14 @@ impl ServiceBasedBatchCrawlingEngine {
         
         // 최대 3번의 재시도 사이클
         for cycle in 1..=3 {
+            // 재시도 사이클 시작 전 취소 확인
+            if let Some(cancellation_token) = &self.config.cancellation_token {
+                if cancellation_token.is_cancelled() {
+                    warn!("🛑 Retry processing cancelled at cycle {}", cycle);
+                    return Ok(retry_products);
+                }
+            }
+            
             let ready_items = self.retry_manager.get_ready_items().await?;
             if ready_items.is_empty() {
                 debug!("No items ready for retry in cycle {}", cycle);
@@ -359,6 +585,14 @@ impl ServiceBasedBatchCrawlingEngine {
             info!("🔄 Retry cycle {}: Processing {} items", cycle, ready_items.len());
             
             for retry_item in ready_items {
+                // 각 재시도 항목 처리 전 취소 확인
+                if let Some(cancellation_token) = &self.config.cancellation_token {
+                    if cancellation_token.is_cancelled() {
+                        warn!("🛑 Retry processing cancelled during item processing");
+                        return Ok(retry_products);
+                    }
+                }
+                
                 if retry_item.stage == CrawlingStage::ProductDetails {
                     let url = retry_item.original_url;
                     let item_id = retry_item.item_id.clone();
@@ -408,14 +642,36 @@ impl ServiceBasedBatchCrawlingEngine {
                         }
                     }
                     
-                    // 재시도 간 지연
-                    tokio::time::sleep(Duration::from_millis(self.config.delay_ms)).await;
+                    // 재시도 간 지연 (취소 확인 포함)
+                    let delay = Duration::from_millis(self.config.delay_ms);
+                    if let Some(cancellation_token) = &self.config.cancellation_token {
+                        tokio::select! {
+                            _ = tokio::time::sleep(delay) => {},
+                            _ = cancellation_token.cancelled() => {
+                                warn!("🛑 Retry processing cancelled during item delay");
+                                return Ok(retry_products);
+                            }
+                        }
+                    } else {
+                        tokio::time::sleep(delay).await;
+                    }
                 }
             }
             
-            // 사이클 간 지연
+            // 사이클 간 지연 (취소 확인 포함)
             if cycle < 3 {
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                let cycle_delay = Duration::from_secs(5);
+                if let Some(cancellation_token) = &self.config.cancellation_token {
+                    tokio::select! {
+                        _ = tokio::time::sleep(cycle_delay) => {},
+                        _ = cancellation_token.cancelled() => {
+                            warn!("🛑 Retry processing cancelled during cycle delay");
+                            return Ok(retry_products);
+                        }
+                    }
+                } else {
+                    tokio::time::sleep(cycle_delay).await;
+                }
             }
         }
         
@@ -513,5 +769,12 @@ impl ServiceBasedBatchCrawlingEngine {
         
         debug!("Emitted detailed event: {:?}", event);
         Ok(())
+    }
+
+    /// Update cancellation token for the current session
+    pub fn update_cancellation_token(&mut self, cancellation_token: Option<CancellationToken>) {
+        self.config.cancellation_token = cancellation_token;
+        info!("🔄 Updated cancellation token in ServiceBasedBatchCrawlingEngine: {}", 
+              self.config.cancellation_token.is_some());
     }
 }

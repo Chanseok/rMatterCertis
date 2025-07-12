@@ -8,6 +8,7 @@ use reqwest::{Client, Response, header::{HeaderMap, HeaderValue, USER_AGENT}};
 use anyhow::{Result, Context};
 use governor::{Quota, RateLimiter, state::{direct::NotKeyed, InMemoryState}, clock::DefaultClock};
 use std::num::NonZeroU32;
+use tokio_util::sync::CancellationToken;
 
 /// HTTP client configuration for crawling
 #[derive(Debug, Clone, serde::Serialize)]
@@ -106,6 +107,57 @@ impl HttpClient {
         let text = response.text().await
             .with_context(|| format!("Failed to read response body from: {url}"))?;
         
+        Ok(text)
+    }
+
+    /// Fetch URL and return text content with cancellation support
+    pub async fn get_text_with_cancellation(&self, url: &str, cancellation_token: CancellationToken) -> Result<String> {
+        // Check cancellation before starting
+        if cancellation_token.is_cancelled() {
+            anyhow::bail!("Request cancelled before starting");
+        }
+
+        // Wait for rate limiter with cancellation support
+        tokio::select! {
+            _ = self.rate_limiter.until_ready() => {},
+            _ = cancellation_token.cancelled() => {
+                anyhow::bail!("Request cancelled during rate limiting");
+            }
+        }
+
+        tracing::info!("Fetching HTML as string from: {}", url);
+
+        // Make HTTP request with cancellation support
+        let response = tokio::select! {
+            result = self.client.get(url).send() => {
+                result.with_context(|| format!("Failed to fetch URL: {url}"))?
+            },
+            _ = cancellation_token.cancelled() => {
+                tracing::warn!("🛑 HTTP request cancelled for URL: {}", url);
+                anyhow::bail!("HTTP request cancelled");
+            }
+        };
+
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "HTTP request failed with status {}: {}",
+                response.status(),
+                url
+            );
+        }
+
+        // Read response body with cancellation support
+        let text = tokio::select! {
+            result = response.text() => {
+                result.with_context(|| format!("Failed to read response body from: {url}"))?
+            },
+            _ = cancellation_token.cancelled() => {
+                tracing::warn!("🛑 Response reading cancelled for URL: {}", url);
+                anyhow::bail!("Response reading cancelled");
+            }
+        };
+
+        tracing::debug!("Successfully fetched: {} ({} chars)", url, text.len());
         Ok(text)
     }
 
