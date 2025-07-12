@@ -6,10 +6,9 @@
 import { Component, createMemo } from 'solid-js';
 import { AppLayout } from './layout/AppLayout';
 import { SettingsTab } from './tabs/SettingsTab';
-import { StatusTab } from './tabs/StatusTabSimple';
-import { LocalDBTab } from './tabs/LocalDBTabSimple';
-import { AnalysisTab } from './tabs/AnalysisTabSimple';
-import { GameDashboardTab } from './tabs/GameDashboardTab';
+import { StatusTab } from './tabs/StatusTab';
+import { LocalDBTab } from './tabs/LocalDBTab';
+import { AnalysisTab } from './tabs/AnalysisTab';
 import { tabState } from '../stores/tabStore';
 
 export const AppWithTabs: Component = () => {
@@ -25,8 +24,6 @@ export const AppWithTabs: Component = () => {
         return <LocalDBTab />;
       case 'analysis':
         return <AnalysisTab />;
-      case 'game':
-        return <GameDashboardTab />;
       default:
         return <StatusTab />;
     }

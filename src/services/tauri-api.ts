@@ -592,6 +592,24 @@ export class TauriApiService {
       throw new Error(`Failed to get retry stats: ${error}`);
     }
   }
+
+  /**
+   * Check backend connection status
+   */
+  async checkBackendConnection(): Promise<boolean> {
+    try {
+      console.log('🔌 백엔드 연결 상태 확인 중...');
+      
+      // 간단한 ping 명령으로 백엔드 응답 확인
+      const result = await invoke<any>('ping_backend');
+      console.log('✅ 백엔드 연결 확인:', result);
+      
+      return result && result.status === 'ok';
+    } catch (error) {
+      console.error('❌ 백엔드 연결 확인 실패:', error);
+      return false;
+    }
+  }
 }
 
 // Create a singleton instance for use throughout the application
