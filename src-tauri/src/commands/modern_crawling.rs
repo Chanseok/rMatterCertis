@@ -49,13 +49,13 @@ pub async fn start_crawling_v3(
                 warn!("Failed to calculate intelligent range, using fallback: {}", e);
                 // Fallback: crawl from oldest pages (highest page numbers)
                 let max_pages = app_config.user.max_pages;
-                let fallback_start = 481; // Start from known last page
+                let fallback_start = app_config.app_managed.last_known_max_page.unwrap_or(481);
                 let fallback_end = if fallback_start >= max_pages {
                     fallback_start - max_pages + 1
                 } else {
                     1
                 };
-                info!("🔄 폴백 범위 사용: {} to {}", fallback_start, fallback_end);
+                info!("🔄 폴백 범위 사용: {} to {} (last_known_max_page: {})", fallback_start, fallback_end, fallback_start);
                 (fallback_start, fallback_end)
             }
         }
@@ -432,14 +432,18 @@ pub async fn get_database_stats(state: State<'_, AppState>) -> Result<DatabaseSt
 
 /// Backup the database
 #[tauri::command]
-pub async fn backup_database(_state: State<'_, AppState>) -> Result<String, String> {
+pub async fn backup_database(state: State<'_, AppState>) -> Result<String, String> {
     info!("Starting database backup");
     
     // TODO: Implement actual database backup logic
     let backup_path = format!("backup_{}.db", Utc::now().format("%Y%m%d_%H%M%S"));
     
+    // Load app config for delay settings
+    let app_config = state.get_config().await;
+    
     // Simulate backup process
-    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    // Sleep briefly to prevent overwhelming the system
+    tokio::time::sleep(tokio::time::Duration::from_millis(app_config.user.batch.batch_delay_ms)).await;
     
     info!("Database backup completed: {}", backup_path);
     Ok(backup_path)
@@ -682,8 +686,11 @@ pub async fn check_site_status(
 
 /// 재시도 통계 조회 명령어 - INTEGRATED_PHASE2_PLAN Week 1 Day 3-4
 #[tauri::command]
-pub async fn get_retry_stats(_state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+pub async fn get_retry_stats(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     info!("📊 Getting retry statistics");
+    
+    // Load app config for retry settings
+    let app_config = state.get_config().await;
     
     // ServiceBasedBatchCrawlingEngine에서 재시도 통계를 가져오는 것은 복잡하므로
     // 향후 CrawlerManager 통합 시 구현 예정
@@ -694,7 +701,7 @@ pub async fn get_retry_stats(_state: State<'_, AppState>) -> Result<serde_json::
         "pending_retries": 0,
         "successful_retries": 0,
         "failed_retries": 0,
-        "max_retries": 3,
+        "max_retries": app_config.user.crawling.product_list_retry_count,
         "status": "RetryManager integration in progress"
     });
     
@@ -1101,6 +1108,9 @@ pub async fn get_products(
 ) -> Result<serde_json::Value, String> {
     info!("Getting products from database (page: {:?}, limit: {:?})", page, limit);
     
+    // Load app config for batch settings
+    let app_config = state.get_config().await;
+    
     // Get database URL with fallback mechanisms
     let database_url = match get_database_url() {
         Ok(url) => url,
@@ -1142,7 +1152,7 @@ pub async fn get_products(
     }
     
     let page = page.unwrap_or(1);
-    let limit = limit.unwrap_or(50);
+    let limit = limit.unwrap_or(app_config.user.batch.batch_size);
     let offset = (page - 1) * limit;
     
     // Get total count with proper error handling

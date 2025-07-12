@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 use async_trait::async_trait;
-use sqlx::{Pool, Postgres, Transaction};
+use sqlx::{Pool, Sqlite, Transaction, Row};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -16,7 +16,7 @@ use super::{Worker, WorkerError};
 
 /// Worker that saves product data to the database
 pub struct DbSaver {
-    pool: Pool<Postgres>,
+    pool: Pool<Sqlite>,
     batch_size: usize,
     batch_buffer: Arc<Mutex<Vec<ProductData>>>,
     flush_interval: std::time::Duration,
@@ -25,7 +25,7 @@ pub struct DbSaver {
 impl DbSaver {
     /// Creates a new database saver
     pub fn new(
-        pool: Pool<Postgres>,
+        pool: Pool<Sqlite>,
         batch_size: usize,
         flush_interval: std::time::Duration,
     ) -> Self {
@@ -71,90 +71,34 @@ impl DbSaver {
     }
 
     /// Inserts a single product into the database within a transaction
-    async fn insert_product(&self, tx: &mut Transaction<'_, Postgres>, product: &ProductData) -> Result<(), WorkerError> {
-        // Check if product already exists (Modern Rust 2024 - 타입 안전한 쿼리)
-        let existing = sqlx::query("SELECT id FROM products WHERE product_id = ?")
-            .bind(&product.product_id)
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(|e| WorkerError::DatabaseError(format!("Failed to check existing product: {}", e)))?;
-
-        if existing.is_some() {
-            // Update existing product
-            sqlx::query!(
-                r#"
-                UPDATE products SET
-                    product_name = $2,
-                    company_name = $3,
-                    license_number = $4,
-                    registration_date = $5,
-                    expiry_date = $6,
-                    product_type = $7,
-                    status = $8,
-                    manufacturer = $9,
-                    country_of_origin = $10,
-                    ingredients = $11,
-                    usage_instructions = $12,
-                    warnings = $13,
-                    storage_conditions = $14,
-                    source_url = $15,
-                    updated_at = NOW()
-                WHERE product_id = $1
-                "#,
-                product.product_id,
-                product.product_name,
-                product.company_name,
-                product.license_number,
-                product.registration_date,
-                product.expiry_date,
-                product.product_type,
-                product.status,
-                product.manufacturer,
-                product.country_of_origin,
-                product.ingredients,
-                product.usage_instructions,
-                product.warnings,
-                product.storage_conditions,
-                product.source_url,
-            )
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| WorkerError::DatabaseError(format!("Failed to update product: {}", e)))?;
-        } else {
-            // Insert new product
-            sqlx::query!(
-                r#"
-                INSERT INTO products (
-                    id, product_id, product_name, company_name, license_number,
-                    registration_date, expiry_date, product_type, status,
-                    manufacturer, country_of_origin, ingredients, usage_instructions,
-                    warnings, storage_conditions, source_url, created_at, updated_at
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW()
-                )
-                "#,
-                Uuid::new_v4(),
-                product.product_id,
-                product.product_name,
-                product.company_name,
-                product.license_number,
-                product.registration_date,
-                product.expiry_date,
-                product.product_type,
-                product.status,
-                product.manufacturer,
-                product.country_of_origin,
-                product.ingredients,
-                product.usage_instructions,
-                product.warnings,
-                product.storage_conditions,
-                product.source_url,
-            )
+    async fn insert_product(&self, tx: &mut Transaction<'_, Sqlite>, product: &ProductData) -> Result<(), WorkerError> {
+        // Use parameterized query instead of sqlx! macro to avoid compilation-time database dependency
+        let query = r#"
+            INSERT INTO products (
+                url, manufacturer, model, certificateId, pageId, indexInPage, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(url) DO UPDATE SET
+                manufacturer = excluded.manufacturer,
+                model = excluded.model,
+                certificateId = excluded.certificateId,
+                updated_at = excluded.updated_at
+        "#;
+        
+        sqlx::query(query)
+            .bind(product.source_url.as_str())
+            .bind(product.manufacturer.as_deref().unwrap_or(""))
+            .bind(product.model.as_deref().unwrap_or(""))
+            .bind(product.certification_number.as_deref().unwrap_or(""))
+            .bind(0i32) // pageId - placeholder
+            .bind(0i32) // indexInPage - placeholder  
+            .bind(product.extracted_at)
+            .bind(product.extracted_at)
             .execute(&mut **tx)
             .await
             .map_err(|e| WorkerError::DatabaseError(format!("Failed to insert product: {}", e)))?;
-        }
-
+        
+        tracing::info!("Successfully inserted product: {}", product.name);
+        
         Ok(())
     }
 
@@ -194,23 +138,26 @@ impl DbSaver {
 
     /// Gets database statistics
     async fn get_db_stats(&self) -> Result<DatabaseStats, WorkerError> {
-        let result = sqlx::query!(
-            "SELECT COUNT(*) as total_products, MAX(updated_at) as last_updated FROM products"
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| WorkerError::DatabaseError(format!("Failed to get database stats: {}", e)))?;
-
+        let query = "SELECT COUNT(*) as total_products, MAX(updated_at) as last_updated FROM products";
+        
+        let row = sqlx::query(query)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| WorkerError::DatabaseError(format!("Failed to get database stats: {}", e)))?;
+        
+        let total_products: i64 = row.try_get("total_products").unwrap_or(0);
+        let last_updated: Option<chrono::DateTime<chrono::Utc>> = row.try_get("last_updated").ok();
+        
         Ok(DatabaseStats {
-            total_products: result.total_products.unwrap_or(0) as u64,
-            last_updated: result.last_updated,
+            total_products: total_products as u64,
+            last_updated,
         })
     }
 
     /// Convert TaskProductData to domain ProductData
     fn convert_task_product_to_domain(&self, task_product: &TaskProductData) -> Result<ProductData, WorkerError> {
         // Create a validated URL
-        let validated_url = crate::domain::value_objects::ValidatedUrl::new(&task_product.source_url)
+        let validated_url = crate::domain::value_objects::ValidatedUrl::new(task_product.source_url.clone())
             .map_err(|e| WorkerError::InvalidInput(format!("Invalid URL: {}", e)))?;
 
         // Create the domain product data
@@ -230,12 +177,24 @@ pub struct DatabaseStats {
 }
 
 #[async_trait]
-impl Worker for DbSaver {
+impl Worker<CrawlingTask> for DbSaver {
     type Task = CrawlingTask;
+
+    fn worker_id(&self) -> &'static str {
+        "DbSaver"
+    }
+
+    fn worker_name(&self) -> &'static str {
+        "Database Saver"
+    }
+
+    fn max_concurrency(&self) -> usize {
+        4 // Database I/O, conservative concurrency
+    }
 
     async fn process_task(
         &self,
-        task: Self::Task,
+        task: CrawlingTask,
         shared_state: Arc<SharedState>,
     ) -> Result<TaskResult, WorkerError> {
         let start_time = Instant::now();
@@ -274,7 +233,7 @@ impl Worker for DbSaver {
 
                 tracing::info!(
                     "Successfully saved product: {} (ID: {})",
-                    product_data.product_name,
+                    product_data.name,
                     product_data.product_id
                 );
 
@@ -292,14 +251,6 @@ impl Worker for DbSaver {
             )),
         }
     }
-
-    fn worker_name(&self) -> &'static str {
-        "DbSaver"
-    }
-
-    fn max_concurrency(&self) -> usize {
-        4 // Database I/O bound, moderate concurrency to avoid overwhelming DB
-    }
 }
 
 impl Drop for DbSaver {
@@ -314,41 +265,34 @@ impl Drop for DbSaver {
                 if !buffer.is_empty() {
                     let products = buffer.drain(..).collect::<Vec<_>>();
                     if !products.is_empty() {
-                        let mut tx = pool.begin().await.ok();
-                        if let Some(ref mut tx) = tx {
+                        let tx = pool.begin().await.ok();
+                        if let Some(mut tx) = tx {
                             for product in &products {
-                                let _ = sqlx::query!(
-                                    r#"
+                                // Use parameterized query instead of sqlx! macro
+                                let query = r#"
                                     INSERT INTO products (
-                                        id, product_id, product_name, company_name, license_number,
-                                        registration_date, expiry_date, product_type, status,
-                                        manufacturer, country_of_origin, ingredients, usage_instructions,
-                                        warnings, storage_conditions, source_url, created_at, updated_at
-                                    ) VALUES (
-                                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW()
-                                    )
-                                    ON CONFLICT (product_id) DO UPDATE SET
-                                        product_name = EXCLUDED.product_name,
-                                        company_name = EXCLUDED.company_name,
-                                        updated_at = NOW()
-                                    "#,
-                                    Uuid::new_v4(),
-                                    product.product_id,
-                                    product.product_name,
-                                    product.company_name,
-                                    product.license_number,
-                                    product.registration_date,
-                                    product.expiry_date,
-                                    product.product_type,
-                                    product.status,
-                                    product.manufacturer,
-                                    product.country_of_origin,
-                                    product.ingredients,
-                                    product.usage_instructions,
-                                    product.warnings,
-                                    product.storage_conditions,
-                                    product.source_url,
-                                ).execute(&mut **tx).await;
+                                        url, manufacturer, model, certificateId, pageId, indexInPage, created_at, updated_at
+                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                    ON CONFLICT(url) DO UPDATE SET
+                                        manufacturer = excluded.manufacturer,
+                                        model = excluded.model,
+                                        certificateId = excluded.certificateId,
+                                        updated_at = excluded.updated_at
+                                "#;
+                                
+                                let _ = sqlx::query(query)
+                                    .bind(product.source_url.as_str())
+                                    .bind(product.manufacturer.as_deref().unwrap_or(""))
+                                    .bind(product.model.as_deref().unwrap_or(""))
+                                    .bind(product.certification_number.as_deref().unwrap_or(""))
+                                    .bind(0i32) // pageId - placeholder
+                                    .bind(0i32) // indexInPage - placeholder
+                                    .bind(product.extracted_at)
+                                    .bind(product.extracted_at)
+                                    .execute(tx.as_mut())
+                                    .await;
+                                
+                                tracing::info!("Inserted product during cleanup: {}", product.name);
                             }
                             let _ = tx.commit().await;
                             tracing::info!("Flushed {} products during cleanup", products.len());

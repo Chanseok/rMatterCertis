@@ -1,7 +1,6 @@
 //! # Crawling Domain Module v2.0
 //!
-//! Modern Rust 2024 + Clean Architecture
-//! - 명시적 모듈 구조 (mod.rs 비사용)
+//! Clean Architecture + Modern Rust 2024 구현
 //! - 도메인 로직 중심 설계
 //! - 의존성 역전 원칙 준수
 //! - 테스트 가능한 구조
@@ -13,9 +12,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::{info, error};
 
-// Modern Rust 2024 - 명시적 모듈 선언 (mod.rs 비사용)
+// Domain modules
 pub mod tasks;
 pub mod state;
 pub mod queues;
@@ -24,8 +22,8 @@ pub mod orchestrator;
 
 // Clean re-exports
 pub use tasks::{TaskId, CrawlingTask, TaskResult, TaskOutput, TaskProductData};
-pub use state::{SharedState, CrawlingStats, CrawlingConfig};
-pub use queues::{QueueManager, TaskQueue, QueueError};
+pub use state::{SharedState, CrawlingStats, CrawlingConfig, CrawlingStatus};
+pub use queues::{QueueManager, TaskQueue, QueueManagerError};
 pub use workers::{WorkerPool, WorkerError, WorkerPoolStats, WorkerPoolBuilder};
 pub use orchestrator::{CrawlingOrchestrator, OrchestratorConfig, OrchestratorError};
 
@@ -78,34 +76,34 @@ impl CrawlingEngineFactory {
         // 1. 공유 상태 초기화
         let shared_state = Arc::new(SharedState::new(config.clone()));
         
-        // 2. 큐 매니저 초기화 (설정값 사용)
-        let queue_manager = Arc::new(QueueManager::new_with_config(
+        // 2. 큐 매니저 초기화
+        let queue_manager = Arc::new(QueueManager::new(
             config.max_queue_size,
             config.backpressure_threshold,
         ));
         
-        // 3. 워커 풀 생성 (Mock 구현 사용)
+        // 3. 워커 풀 생성 (의존성 주입)
         let worker_pool = WorkerPoolBuilder::new()
-            .with_max_concurrency(config.max_concurrent_requests)
-            .with_list_page_fetcher(Arc::new(workers::ListPageFetcher::new_simple()))
-            .with_list_page_parser(Arc::new(workers::ListPageParser::new_simple()))
-            .with_product_detail_fetcher(Arc::new(workers::ProductDetailFetcher::new_simple()))
-            .with_product_detail_parser(Arc::new(workers::ProductDetailParser::new_simple()))
-            .with_db_saver(Arc::new(workers::MockDbSaver::new_simple()))
+            .with_max_concurrency(config.max_concurrent_tasks)
+            .with_list_page_fetcher(dependencies.list_page_fetcher)
+            .with_list_page_parser(dependencies.list_page_parser)
+            .with_product_detail_fetcher(dependencies.product_detail_fetcher)
+            .with_product_detail_parser(dependencies.product_detail_parser)
+            .with_db_saver(dependencies.db_saver)
             .build()
             .map_err(|e| CrawlingEngineError::WorkerPoolError(e.to_string()))?;
         
-        // 4. 오케스트레이터 설정 (설정 파일에서 값 사용)
+        // 4. 오케스트레이터 설정
         let orchestrator_config = OrchestratorConfig {
-            max_global_concurrency: config.max_concurrent_requests,
-            scheduler_interval: Duration::from_millis(100), // 기본값 (설정 필요시 추가)
-            shutdown_timeout: Duration::from_secs(30), // 기본값 (설정 필요시 추가)
-            stats_interval: Duration::from_secs(10), // 기본값 (설정 필요시 추가)
-            auto_retry_enabled: true, // 기본값 (설정 필요시 추가)
+            max_global_concurrency: config.max_concurrent_tasks,
+            scheduler_interval: Duration::from_millis(config.scheduler_interval_ms),
+            shutdown_timeout: Duration::from_secs(config.shutdown_timeout_seconds),
+            stats_interval: Duration::from_secs(config.stats_interval_seconds),
+            auto_retry_enabled: config.auto_retry_enabled,
             max_retries: config.max_retries,
             retry_delay: Duration::from_millis(config.retry_delay_ms),
-            backpressure_enabled: false, // 기본값 (개발 단계에서 비활성화)
-            backpressure_threshold: 1000, // 기본값 (설정 필요시 추가)
+            backpressure_enabled: config.backpressure_enabled,
+            backpressure_threshold: config.backpressure_threshold,
         };
         
         // 5. 오케스트레이터 생성
@@ -160,26 +158,18 @@ impl CrawlingEngine {
         let mut is_running = self.is_running.write().await;
         
         if !*is_running {
-            tracing::warn!("🟡 Crawling engine is already stopped");
-            return Ok(()); // 이미 중지된 상태면 성공으로 처리
+            return Err(CrawlingEngineError::NotRunning);
         }
         
-        tracing::info!("🛑 Stopping crawling engine...");
+        tracing::info!("Stopping crawling engine...");
         
         // 오케스트레이터 중지
-        match self.orchestrator.stop().await {
-            Ok(()) => {
-                tracing::info!("✅ Orchestrator stopped successfully");
-            }
-            Err(e) => {
-                tracing::error!("❌ Error stopping orchestrator: {}", e);
-                // 오케스트레이터 중지 실패해도 엔진 상태는 중지로 설정
-            }
-        }
+        self.orchestrator.stop().await
+            .map_err(|e| CrawlingEngineError::OrchestratorError(e.to_string()))?;
         
         *is_running = false;
         
-        tracing::info!("✅ Crawling engine stopped successfully");
+        tracing::info!("Crawling engine stopped successfully");
         Ok(())
     }
     
@@ -190,8 +180,7 @@ impl CrawlingEngine {
     
     /// 크롤링 통계 조회
     pub async fn get_stats(&self) -> CrawlingStats {
-        let stats = self.shared_state.stats.read().await;
-        stats.clone()
+        self.shared_state.get_stats().await
     }
     
     /// 설정 조회
@@ -208,21 +197,18 @@ impl CrawlingEngine {
         }
         
         self.config = new_config.clone();
-        // Update shared state configuration as needed
-        // For now, we'll just update local config
+        self.shared_state.update_config(new_config).await;
         Ok(())
     }
     
     /// 태스크 추가
-    pub async fn add_task(&self, task: CrawlingTask) -> Result<(), CrawlingEngineError> {
+    pub async fn add_task(&self, task: CrawlingTask) -> Result<TaskId, CrawlingEngineError> {
         if !self.is_running().await {
             return Err(CrawlingEngineError::NotRunning);
         }
         
-        self.orchestrator.add_initial_task(task).await
-            .map_err(|e| CrawlingEngineError::OrchestratorError(e.to_string()))?;
-        
-        Ok(())
+        self.orchestrator.add_task(task).await
+            .map_err(|e| CrawlingEngineError::OrchestratorError(e.to_string()))
     }
     
     /// 크롤링 세션 시작
@@ -235,30 +221,13 @@ impl CrawlingEngine {
             return Err(CrawlingEngineError::NotRunning);
         }
         
-        tracing::info!("🚀 Starting crawling session: pages {} to {}", start_page, end_page);
-        
-        // 페이지 범위 유효성 검사
-        if start_page == 0 || end_page == 0 {
-            return Err(CrawlingEngineError::ConfigurationError(
-                "Page numbers must be greater than 0".to_string()
-            ));
-        }
+        tracing::info!("Starting crawling session: pages {} to {}", start_page, end_page);
         
         // Matter Certification Products URL 패턴 사용
         const MATTER_PRODUCTS_URL_PATTERN: &str = "https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver";
         
-        // 페이지 범위 처리: start_page가 end_page보다 클 수 있음 (최신 페이지부터 크롤링)
-        let (min_page, max_page) = if start_page <= end_page {
-            (start_page, end_page)
-        } else {
-            (end_page, start_page)
-        };
-        
-        let total_pages = max_page - min_page + 1;
-        tracing::info!("📋 Creating {} tasks for pages {} to {}", total_pages, min_page, max_page);
-        
         // 페이지 범위에 따른 태스크 생성
-        for page in min_page..=max_page {
+        for page in start_page..=end_page {
             let url = MATTER_PRODUCTS_URL_PATTERN.replace("{}", &page.to_string());
             let task = CrawlingTask::FetchListPage {
                 task_id: TaskId::new(),
@@ -266,11 +235,10 @@ impl CrawlingEngine {
                 url: url.clone(),
             };
             
-            tracing::info!("✅ Created task for page {}: {}", page, url);
+            tracing::info!("Created task for page {}: {}", page, url);
             self.add_task(task).await?;
         }
         
-        tracing::info!("🎯 All {} tasks created successfully", total_pages);
         Ok(())
     }
     
@@ -281,8 +249,8 @@ impl CrawlingEngine {
         // 강제 중지
         *self.is_running.write().await = false;
         
-        // 오케스트레이터 중지
-        self.orchestrator.stop().await
+        // 오케스트레이터 응급 중지
+        self.orchestrator.emergency_stop().await
             .map_err(|e| CrawlingEngineError::OrchestratorError(e.to_string()))?;
         
         tracing::warn!("Emergency stop completed");
@@ -297,129 +265,9 @@ impl CrawlingEngine {
         CrawlingEngineHealth {
             is_running,
             stats,
-            orchestrator_health: self.orchestrator.get_stats().await,
+            orchestrator_health: self.orchestrator.health_check().await,
             last_check: chrono::Utc::now(),
         }
-    }
-    
-    /// 새로운 크롤링 엔진을 생성합니다
-    pub async fn new(
-        _database_pool: sqlx::Pool<sqlx::Sqlite>, 
-        config: CrawlingConfig
-    ) -> Result<Self, CrawlingEngineError> {
-        // 개발 용이성을 위해 Mock 데이터베이스 사용
-        info!("개발 모드: Mock 데이터베이스를 사용합니다");
-        
-        Self::with_config(config).await
-    }
-    
-    /// 설정과 데이터베이스 연결을 사용하여 크롤링 엔진을 생성합니다
-    pub async fn with_config_and_db(
-        config: CrawlingConfig,
-        database_pool: sqlx::SqlitePool,
-    ) -> Result<Self, CrawlingEngineError> {
-        // 1. 공유 상태 초기화
-        let shared_state = Arc::new(SharedState::new(config.clone()));
-        
-        // 2. 큐 매니저 초기화
-        let queue_manager = Arc::new(QueueManager::new_with_config(
-            config.max_queue_size,
-            config.backpressure_threshold,
-        ));
-        
-        // 3. 워커 풀 생성 (의존성 주입) - 일단 Mock 유지
-        let worker_pool = WorkerPoolBuilder::new()
-            .with_max_concurrency(config.max_concurrent_tasks)
-            .with_list_page_fetcher(Arc::new(workers::ListPageFetcher::new_simple()))
-            .with_list_page_parser(Arc::new(workers::ListPageParser::new_simple()))
-            .with_product_detail_fetcher(Arc::new(workers::ProductDetailFetcher::new_simple()))
-            .with_product_detail_parser(Arc::new(workers::ProductDetailParser::new_simple()))
-            .with_db_saver(Arc::new(workers::MockDbSaver::new_simple()))  // Mock 유지
-            .build()
-            .map_err(|e| CrawlingEngineError::WorkerPoolError(e.to_string()))?;
-        
-        // 4. 오케스트레이터 설정
-        let orchestrator_config = OrchestratorConfig {
-            max_global_concurrency: config.max_concurrent_tasks,
-            scheduler_interval: Duration::from_millis(config.scheduler_interval_ms),
-            shutdown_timeout: Duration::from_secs(config.shutdown_timeout_seconds),
-            stats_interval: Duration::from_secs(config.stats_interval_seconds),
-            auto_retry_enabled: config.auto_retry_enabled,
-            max_retries: config.max_retries,
-            retry_delay: Duration::from_millis(config.retry_delay_ms),
-            backpressure_enabled: config.backpressure_enabled,
-            backpressure_threshold: 1000, // Default value
-        };
-        
-        // 5. 오케스트레이터 생성
-        let orchestrator = Arc::new(CrawlingOrchestrator::new(
-            Arc::new(worker_pool),
-            queue_manager,
-            shared_state.clone(),
-            orchestrator_config,
-        ));
-        
-        // 6. 엔진 생성
-        let engine = CrawlingEngine {
-            orchestrator,
-            shared_state,
-            is_running: Arc::new(RwLock::new(false)),
-            config,
-        };
-        
-        tracing::info!("크롤링 엔진 생성 완료 (실제 데이터베이스 연결)");
-        Ok(engine)
-    }
-
-    /// 설정을 사용하여 크롤링 엔진을 생성합니다 (Mock DB 사용)
-    pub async fn with_config(config: CrawlingConfig) -> Result<Self, CrawlingEngineError> {
-        // 1. 공유 상태 초기화
-        let shared_state = Arc::new(SharedState::new(config.clone()));
-        
-        // 2. 큐 매니저 초기화
-        let queue_manager = Arc::new(QueueManager::new_with_config(
-            config.max_queue_size,
-            config.backpressure_threshold,
-        ));
-        
-        // 3. 워커 풀 생성 (의존성 주입)
-        let worker_pool = WorkerPoolBuilder::new()
-            .with_max_concurrency(config.max_concurrent_tasks)
-            .with_list_page_fetcher(Arc::new(workers::ListPageFetcher::new_simple()))
-            .with_list_page_parser(Arc::new(workers::ListPageParser::new_simple()))
-            .with_product_detail_fetcher(Arc::new(workers::ProductDetailFetcher::new_simple()))
-            .with_product_detail_parser(Arc::new(workers::ProductDetailParser::new_simple()))
-            .with_db_saver(Arc::new(workers::MockDbSaver::new_simple()))
-            .build()
-            .map_err(|e| CrawlingEngineError::WorkerPoolError(e.to_string()))?;
-        
-        // 4. 오케스트레이터 설정
-        let orchestrator_config = OrchestratorConfig {
-            max_global_concurrency: config.max_concurrent_tasks,
-            scheduler_interval: Duration::from_millis(config.scheduler_interval_ms),
-            shutdown_timeout: Duration::from_secs(config.shutdown_timeout_seconds),
-            stats_interval: Duration::from_secs(config.stats_interval_seconds),
-            auto_retry_enabled: config.auto_retry_enabled,
-            max_retries: config.max_retries,
-            retry_delay: Duration::from_millis(config.retry_delay_ms),
-            backpressure_enabled: config.backpressure_enabled,
-            backpressure_threshold: 1000, // Default value
-        };
-        
-        // 5. 오케스트레이터 생성
-        let orchestrator = Arc::new(CrawlingOrchestrator::new(
-            Arc::new(worker_pool),
-            queue_manager,
-            shared_state.clone(),
-            orchestrator_config,
-        ));
-        
-        Ok(CrawlingEngine {
-            orchestrator,
-            shared_state,
-            is_running: Arc::new(RwLock::new(false)),
-            config,
-        })
     }
 }
 
@@ -428,7 +276,7 @@ impl CrawlingEngine {
 pub struct CrawlingEngineHealth {
     pub is_running: bool,
     pub stats: CrawlingStats,
-    pub orchestrator_health: orchestrator::OrchestratorStats,
+    pub orchestrator_health: orchestrator::OrchestratorHealth,
     pub last_check: chrono::DateTime<chrono::Utc>,
 }
 

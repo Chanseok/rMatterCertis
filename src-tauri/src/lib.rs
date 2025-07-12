@@ -204,6 +204,8 @@ pub fn run() {
             commands::crawling_v4::update_crawling_config,
             commands::crawling_v4::get_crawling_config,
             commands::crawling_v4::emergency_stop,
+            commands::crawling_v4::ping_backend,
+            commands::crawling_v4::get_app_settings,
             commands::get_crawling_status,
             commands::get_active_sessions,
             commands::get_database_stats,

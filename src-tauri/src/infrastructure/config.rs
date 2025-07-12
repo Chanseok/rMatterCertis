@@ -341,7 +341,7 @@ impl Default for TimingConfig {
             shutdown_timeout_seconds: defaults::SHUTDOWN_TIMEOUT_SECONDS,
             stats_interval_seconds: defaults::STATS_INTERVAL_SECONDS,
             retry_delay_ms: defaults::WORKER_RETRY_DELAY_MS,
-            operation_timeout_seconds: defaults::OPERATION_TIMEOUT_SECONDS,
+            operation_timeout_seconds: defaults::SHUTDOWN_TIMEOUT_SECONDS, // Use existing timeout
         }
     }
 }
@@ -455,10 +455,36 @@ impl ConfigManager {
                 info!("Loaded configuration from: {:?}", self.config_path);
                 Ok(config)
             }
-            Err(_) => {
+            Err(parse_error) => {
                 // If parsing fails, try to migrate from old format
                 info!("Configuration file format outdated, attempting migration...");
-                self.migrate_config_format(&content).await
+                match self.migrate_config_format(&content).await {
+                    Ok(migrated_config) => {
+                        info!("✅ Successfully migrated configuration");
+                        Ok(migrated_config)
+                    }
+                    Err(migration_error) => {
+                        tracing::warn!("⚠️  Configuration migration failed: {}", migration_error);
+                        tracing::warn!("⚠️  Original parse error: {}", parse_error);
+                        tracing::warn!("⚠️  Resetting to default configuration");
+                        
+                        // Create backup of corrupted config
+                        let backup_path = self.config_path.with_extension("json.corrupted");
+                        if let Err(e) = fs::copy(&self.config_path, &backup_path).await {
+                            tracing::warn!("Failed to create backup of corrupted config: {}", e);
+                        } else {
+                            tracing::info!("Backed up corrupted config to: {:?}", backup_path);
+                        }
+                        
+                        // Reset to default configuration
+                        let default_config = AppConfig::default();
+                        self.save_config(&default_config).await
+                            .context("Failed to save default configuration")?;
+                        
+                        tracing::info!("✅ Reset to default configuration");
+                        Ok(default_config)
+                    }
+                }
             }
         }
     }
@@ -666,23 +692,7 @@ pub mod defaults {
     /// Default number of products per page (based on actual site analysis)
     pub const DEFAULT_PRODUCTS_PER_PAGE: u32 = 12;
     
-    // Worker configuration defaults
-    /// Default maximum concurrent requests for list page fetcher
-    pub const LIST_PAGE_MAX_CONCURRENT: usize = 5;
-    
-    /// Default maximum concurrent requests for product detail fetcher  
-    pub const PRODUCT_DETAIL_MAX_CONCURRENT: usize = 10;
-    
-    /// Default maximum retry attempts
-    pub const MAX_RETRIES: u32 = 3;
-    
-    /// Default batch size for database operations
-    pub const DB_BATCH_SIZE: usize = 100;
-    
-    /// Default maximum concurrency for database operations
-    pub const DB_MAX_CONCURRENCY: usize = 10;
-    
-    // Timing configuration defaults
+    // Orchestrator configuration defaults
     /// Default scheduler interval in milliseconds
     pub const SCHEDULER_INTERVAL_MS: u64 = 100;
     
@@ -692,11 +702,27 @@ pub mod defaults {
     /// Default stats interval in seconds
     pub const STATS_INTERVAL_SECONDS: u64 = 10;
     
+    /// Default maximum retries for orchestrator
+    pub const MAX_RETRIES: u32 = 3;
+    
     /// Default worker retry delay in milliseconds
     pub const WORKER_RETRY_DELAY_MS: u64 = 1000;
     
-    /// Default operation timeout in seconds
-    pub const OPERATION_TIMEOUT_SECONDS: u64 = 5;
+    /// Default backpressure threshold
+    pub const BACKPRESSURE_THRESHOLD: usize = 1000;
+    
+    // Worker configuration defaults
+    /// Default maximum concurrent requests for list page fetcher
+    pub const LIST_PAGE_MAX_CONCURRENT: usize = 5;
+    
+    /// Default maximum concurrent requests for product detail fetcher  
+    pub const PRODUCT_DETAIL_MAX_CONCURRENT: usize = 10;
+    
+    /// Default batch size for database operations
+    pub const DB_BATCH_SIZE: usize = 100;
+    
+    /// Default maximum concurrency for database operations
+    pub const DB_MAX_CONCURRENCY: usize = 10;
     
     // Crawling configuration defaults
     /// Default page range limit

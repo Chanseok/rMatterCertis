@@ -933,10 +933,11 @@ impl StatusCheckerImpl {
     fn extract_page_number(&self, url: &str) -> Option<u32> {
         // URL 패턴: /page/123/ 또는 paged=123
         let patterns = [
-            r"/page/(\d+)",
+            r"/page/(\d+)/?",  // CSA-IoT 사이트의 /page/123/ 패턴
             r"paged=(\d+)",
             r"page=(\d+)",
             r"/(\d+)/$",  // 끝에 숫자가 있는 경우
+            r"page/(\d+)/\?",  // page/123/?... 패턴
         ];
         
         for pattern in &patterns {

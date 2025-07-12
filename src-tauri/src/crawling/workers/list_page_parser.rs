@@ -29,7 +29,7 @@ impl ListPageParser {
     /// 개발 용이성을 위한 간단한 생성자
     pub fn new_simple() -> Self {
         Self {
-            base_url: "https://rra.go.kr".to_string(),
+            base_url: "https://csa-iot.org".to_string(),
             max_products_per_page: 50,
         }
     }
@@ -37,40 +37,35 @@ impl ListPageParser {
     fn parse_product_urls(&self, html: &str, page_number: u32) -> Result<Vec<String>, WorkerError> {
         let document = Html::parse_document(html);
         
-        // CSS selectors for product links (Korean RRA website)
-        let link_selectors = [
-            "a[href*='A_01_01_view.do']",
-            "a[href*='detail']",
-            ".list-item a",
-            "td a[href*='view']",
-        ];
+        // CSS selectors for product links (Matter Certis CSA-IoT website)
+        let product_container_selector = "div.post-feed article.type-product";
+        let link_selector = "a";
 
         let mut product_urls = Vec::new();
 
-        for selector_str in &link_selectors {
-            if let Ok(selector) = Selector::parse(selector_str) {
-                for element in document.select(&selector) {
-                    if let Some(href) = element.value().attr("href") {
-                        match self.normalize_url(href) {
-                            Ok(url) => {
-                                if self.is_valid_product_url(&url) && !product_urls.contains(&url) {
-                                    product_urls.push(url);
-                                    
-                                    // Limit products per page
-                                    if product_urls.len() >= self.max_products_per_page {
-                                        break;
+        // Parse article containers first
+        if let Ok(container_selector) = Selector::parse(product_container_selector) {
+            if let Ok(link_sel) = Selector::parse(link_selector) {
+                for article in document.select(&container_selector) {
+                    if let Some(link) = article.select(&link_sel).next() {
+                        if let Some(href) = link.value().attr("href") {
+                            match self.normalize_url(href) {
+                                Ok(url) => {
+                                    if self.is_valid_product_url(&url) && !product_urls.contains(&url) {
+                                        product_urls.push(url);
+                                        
+                                        // Limit products per page
+                                        if product_urls.len() >= self.max_products_per_page {
+                                            break;
+                                        }
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to normalize URL '{}': {}", href, e);
+                                Err(e) => {
+                                    tracing::warn!("Failed to normalize URL '{}': {}", href, e);
+                                }
                             }
                         }
                     }
-                }
-                
-                if product_urls.len() >= self.max_products_per_page {
-                    break;
                 }
             }
         }
@@ -101,10 +96,10 @@ impl ListPageParser {
     }
 
     fn is_valid_product_url(&self, url: &str) -> bool {
-        // Validate that this looks like a product detail URL
-        url.contains("view.do") || 
-        url.contains("detail") ||
-        (url.contains("rra.go.kr") && url.contains("A_01_01"))
+        // Validate that this looks like a product detail URL for Matter Certis (CSA-IoT)
+        url.contains("/csa_product/") || 
+        url.contains("/product/") ||
+        (url.contains("csa-iot.org") && url.contains("csa_product"))
     }
 
     fn extract_page_metadata(&self, html: &str) -> PageMetadata {

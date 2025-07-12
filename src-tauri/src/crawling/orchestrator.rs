@@ -200,13 +200,17 @@ impl CrawlingOrchestrator {
         let stats = self.shared_state.stats.read().await;
         let start_time = std::time::Instant::now(); // Placeholder for now
         
+        // Calculate active tasks correctly: total capacity - available permits
+        let total_capacity = self.config.max_global_concurrency;
+        let active_tasks = total_capacity - self.global_semaphore.available_permits();
+        
         OrchestratorStats {
             uptime: start_time.elapsed(),
             total_tasks_processed: stats.total_tasks_created,
             successful_tasks: stats.tasks_completed,
             failed_tasks: stats.tasks_failed,
             retry_attempts: 0, // Placeholder
-            current_active_tasks: self.global_semaphore.available_permits(),
+            current_active_tasks: active_tasks,
             queue_sizes: self.get_queue_sizes().await,
             worker_utilization: self.calculate_worker_utilization().await,
             tasks_per_second: self.calculate_tasks_per_second(&stats, start_time.elapsed()),

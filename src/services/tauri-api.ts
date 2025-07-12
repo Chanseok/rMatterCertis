@@ -28,21 +28,51 @@ export class TauriApiService {
   // =========================================================================
 
   /**
-   * Start a new crawling session with intelligent backend range calculation
+   * Start a new crawling session with page range
    */
   async startCrawling(startPage?: number, endPage?: number): Promise<string> {
     try {
       console.log('🚀 TauriApiService.startCrawling 호출됨');
       console.log('📋 파라미터:', { startPage, endPage });
       
-      // 백엔드에서 지능적인 범위 계산을 사용하도록 파라미터 전달
+      // 1. 먼저 크롤링 엔진을 초기화합니다
+      console.log('🔧 크롤링 엔진 초기화 시도...');
+      try {
+        const initResponse = await invoke<any>('init_crawling_engine');
+        console.log('✅ 크롤링 엔진 초기화 응답:', initResponse);
+        
+        if (initResponse && !initResponse.success && initResponse.message !== "Crawling engine is already initialized") {
+          throw new Error(`엔진 초기화 실패: ${initResponse.message}`);
+        }
+      } catch (initError) {
+        console.error('❌ 크롤링 엔진 초기화 실패:', initError);
+        throw new Error(`크롤링 엔진 초기화 실패: ${initError}`);
+      }
+      
+      // 2. 백엔드에서 기대하는 StartCrawlingRequest 형태로 파라미터 전달
+      // start_page와 end_page를 전달하면 백엔드에서 해당 범위를 크롤링
+      const request = {
+        start_page: startPage || 1,     // 시작 페이지 (기본값: 1)
+        end_page: endPage || 50,        // 끝 페이지 (기본값: 50)
+        max_products_per_page: null,
+        concurrent_requests: null,
+        request_timeout_seconds: null
+      };
+      
       console.log('📞 Tauri invoke 호출 시도: start_crawling');
-      const sessionId = await invoke<string>('start_crawling', {
-        start_page: startPage,
-        end_page: endPage
-      });
-      console.log('✅ 백엔드 응답 받음:', sessionId);
-      return sessionId;
+      console.log('📋 Request 구조:', request);
+      
+      const response = await invoke<any>('start_crawling', { request });
+      console.log('✅ 백엔드 응답 받음:', response);
+      
+      // 응답이 객체인 경우 적절히 처리
+      if (typeof response === 'object' && response.success) {
+        return response.message || 'Crawling started successfully';
+      } else if (typeof response === 'string') {
+        return response;
+      } else {
+        return 'Crawling started successfully';
+      }
     } catch (error) {
       console.error('❌ TauriApiService.startCrawling 실패:', error);
       throw new Error(`Failed to start crawling: ${error}`);
@@ -294,6 +324,21 @@ export class TauriApiService {
     });
     
     this.eventListeners.set('crawling-completed', unlisten);
+    return unlisten;
+  }
+
+  /**
+   * Subscribe to crawling stop events
+   */
+  async subscribeToCrawlingStopped(callback: (data: { status: string; message: string; timestamp: string }) => void): Promise<UnlistenFn> {
+    const unlisten = await listen<{ status: string; message: string; timestamp: string }>(
+      'crawling-stopped',
+      (event) => {
+        callback(event.payload);
+      }
+    );
+    
+    this.eventListeners.set('crawling-stopped', unlisten);
     return unlisten;
   }
 

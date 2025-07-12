@@ -369,7 +369,7 @@ impl Default for CrawlingConfig {
             max_concurrent_tasks: 20,
             request_timeout_seconds: 30,
             max_retries: 3,
-            base_url: "https://rra.go.kr".to_string(),
+            base_url: "https://csa-iot.org/csa-iot_products/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver".to_string(),
             user_agent: "Mozilla/5.0 (compatible; RMatterCertis/1.0)".to_string(),
             request_delay_ms: 1000,
             max_pages: Some(100),

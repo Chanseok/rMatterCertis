@@ -2,7 +2,7 @@
  * StatusTab - 크롤링 상태 및 제어 탭 컴포넌트 (통합 뷰 모드 지원)
  */
 
-import { Component, createSignal, For, Show, onMount } from 'solid-js';
+import { Component, createSignal, For, Show, onMount, onCleanup } from 'solid-js';
 import { tauriApi } from '../../services/tauri-api';
 import { crawlerStore } from '../../stores/crawlerStore';
 import { useIntegratedCrawlingStore } from '../../stores/integratedCrawlingStore';
@@ -79,6 +79,33 @@ const ClassicStatusView: Component = () => {
   // 현재 크롤링 모드 상태
   const [currentCrawlingMode, setCurrentCrawlingMode] = createSignal<string>('분석 필요');
   const [plannedRange, setPlannedRange] = createSignal<[number, number] | null>(null);
+
+  // 이벤트 리스너 등록
+  onMount(async () => {
+    let unlistenStoppedEvent: (() => void) | undefined;
+    
+    try {
+      // 크롤링 중지 이벤트 리스너
+      unlistenStoppedEvent = await tauriApi.subscribeToCrawlingStopped((data) => {
+        console.log('🛑 크롤링 중지 이벤트 수신:', data);
+        setCrawlingStatus('idle');
+        setProgress(0);
+        setCurrentPage(0);
+      });
+      
+      console.log('✅ 이벤트 리스너 등록 완료');
+    } catch (error) {
+      console.error('❌ 이벤트 리스너 등록 실패:', error);
+    }
+    
+    // 컴포넌트 언마운트 시 이벤트 리스너 정리
+    onCleanup(() => {
+      if (unlistenStoppedEvent) {
+        unlistenStoppedEvent();
+        console.log('🧹 크롤링 중지 이벤트 리스너 정리됨');
+      }
+    });
+  });
 
   const getStatusColor = () => {
     switch (crawlingStatus()) {

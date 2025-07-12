@@ -1,7 +1,6 @@
 //! # Worker Pool Module v2.0
 //!
-//! Modern Rust 2024 + Clean Architecture 패턴 적용
-//! - 명시적 모듈 구조 (mod.rs 비사용)
+//! Clean Architecture + Modern Rust 2024 패턴 적용
 //! - 도메인 로직과 인프라스트럭처 분리
 //! - 의존성 역전 원칙 준수
 //! - 타입 안전성 및 테스트 가능한 구조
@@ -15,24 +14,18 @@ use serde::{Deserialize, Serialize};
 use crate::crawling::tasks::{TaskId, TaskResult, TaskOutput, CrawlingTask};
 use crate::crawling::state::SharedState;
 
-// Re-export for public API (without duplicates)
-pub use crate::crawling::tasks::TaskResult as PublicTaskResult;
-pub use crate::crawling::tasks::TaskOutput as PublicTaskOutput;
-
-// Modern Rust 2024 - 명시적 모듈 선언 (하위 모듈들)
+// Re-export worker implementations
 pub mod list_page_fetcher;
 pub mod list_page_parser; 
 pub mod product_detail_fetcher;
 pub mod product_detail_parser;
-pub mod db_saver_sqlx;  // 실제 SQLX 구현
-pub mod mock_db_saver;  // 개발용 Mock (임시 유지)
+pub mod db_saver;
 
 pub use list_page_fetcher::ListPageFetcher;
 pub use list_page_parser::ListPageParser;
 pub use product_detail_fetcher::ProductDetailFetcher;
 pub use product_detail_parser::ProductDetailParser;
-pub use db_saver_sqlx::DbSaver;  // 실제 SQLX 구현 사용
-pub use mock_db_saver::MockDbSaver;  // Mock 추가 (단계적 제거 예정)
+pub use db_saver::DbSaver;
 
 /// Clean Architecture 워커 에러 타입
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
@@ -48,9 +41,6 @@ pub enum WorkerError {
     
     #[error("Timeout error: {0}")]
     TimeoutError(String),
-    
-    #[error("Task timeout: {message}")]
-    Timeout { message: String },
     
     #[error("Rate limit error: {0}")]
     RateLimitError(String),
@@ -83,14 +73,8 @@ pub trait Worker<T>: Send + Sync + 'static
 where
     T: Send + Sync + 'static,
 {
-    /// Associated task type
-    type Task;
-    
     /// Worker 식별자
     fn worker_id(&self) -> &'static str;
-
-    /// Worker 이름 (디버깅용)
-    fn worker_name(&self) -> &'static str;
 
     /// 최대 동시 실행 태스크 수
     fn max_concurrency(&self) -> usize;
@@ -137,7 +121,7 @@ pub struct WorkerPool {
     list_page_parser: Arc<ListPageParser>,
     product_detail_fetcher: Arc<ProductDetailFetcher>,
     product_detail_parser: Arc<ProductDetailParser>,
-    db_saver: Arc<MockDbSaver>,  // 일단 Mock 유지 (단계적 전환)
+    db_saver: Arc<DbSaver>,
     max_total_concurrency: usize,
     metrics: Arc<tokio::sync::RwLock<WorkerPoolMetrics>>,
 }
@@ -149,7 +133,7 @@ impl WorkerPool {
         list_page_parser: Arc<ListPageParser>,
         product_detail_fetcher: Arc<ProductDetailFetcher>,
         product_detail_parser: Arc<ProductDetailParser>,
-        db_saver: Arc<MockDbSaver>,  // 일단 Mock 유지
+        db_saver: Arc<DbSaver>,
         max_total_concurrency: usize,
     ) -> Self {
         Self {
@@ -195,6 +179,30 @@ impl WorkerPool {
         result
     }
 
+    /// 워커 풀 헬스 체크
+    pub async fn health_check(&self) -> WorkerPoolHealthStatus {
+        let mut statuses = Vec::new();
+        
+        // 모든 워커의 헬스 체크
+        statuses.push(("list_page_fetcher", self.list_page_fetcher.health_check().await));
+        statuses.push(("list_page_parser", self.list_page_parser.health_check().await));
+        statuses.push(("product_detail_fetcher", self.product_detail_fetcher.health_check().await));
+        statuses.push(("product_detail_parser", self.product_detail_parser.health_check().await));
+        statuses.push(("db_saver", self.db_saver.health_check().await));
+        
+        let healthy_count = statuses.iter()
+            .filter(|(_, status)| matches!(status, Ok(WorkerHealthStatus::Healthy)))
+            .count();
+            
+        WorkerPoolHealthStatus {
+            total_workers: 5,
+            healthy_workers: healthy_count,
+            worker_statuses: statuses.into_iter()
+                .map(|(name, status)| (name.to_string(), status.unwrap_or(WorkerHealthStatus::Unhealthy { reason: "Unknown error".to_string() })))
+                .collect(),
+        }
+    }
+
     /// 워커 풀 통계
     pub async fn get_statistics(&self) -> WorkerPoolStats {
         let metrics = self.metrics.read().await;
@@ -211,27 +219,6 @@ impl WorkerPool {
         }
     }
 
-    /// 워커 접근자 메서드들
-    pub fn list_page_fetcher(&self) -> &Arc<ListPageFetcher> {
-        &self.list_page_fetcher
-    }
-
-    pub fn list_page_parser(&self) -> &Arc<ListPageParser> {
-        &self.list_page_parser
-    }
-
-    pub fn product_detail_fetcher(&self) -> &Arc<ProductDetailFetcher> {
-        &self.product_detail_fetcher
-    }
-
-    pub fn product_detail_parser(&self) -> &Arc<ProductDetailParser> {
-        &self.product_detail_parser
-    }
-
-    pub fn db_saver(&self) -> &Arc<MockDbSaver> {
-        &self.db_saver
-    }
-
     /// 메트릭스 업데이트 (내부 메서드)
     async fn update_metrics(&self, start_time: std::time::Instant, result: &Result<TaskResult, WorkerError>) {
         let mut metrics = self.metrics.write().await;
@@ -246,16 +233,20 @@ impl WorkerPool {
         if metrics.total_tasks_processed == 1 {
             metrics.average_processing_time = duration;
         } else {
-            // u32로 안전하게 캐스팅하여 Duration 산술 연산 수행
-            let count_minus_one = std::cmp::min(metrics.total_tasks_processed - 1, u32::MAX as u64) as u32;
-            let count = std::cmp::min(metrics.total_tasks_processed, u32::MAX as u64) as u32;
-            
-            let total_time = metrics.average_processing_time * count_minus_one + duration;
-            metrics.average_processing_time = total_time / count;
+            let total_time = metrics.average_processing_time * (metrics.total_tasks_processed - 1) + duration;
+            metrics.average_processing_time = total_time / metrics.total_tasks_processed as u32;
         }
         
         metrics.last_task_completed = Some(chrono::Utc::now());
     }
+}
+
+/// 워커 풀 헬스 상태
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerPoolHealthStatus {
+    pub total_workers: usize,
+    pub healthy_workers: usize,
+    pub worker_statuses: std::collections::HashMap<String, WorkerHealthStatus>,
 }
 
 /// 워커 풀 통계
@@ -288,13 +279,13 @@ pub struct WorkerPoolBuilder {
     list_page_parser: Option<Arc<ListPageParser>>,
     product_detail_fetcher: Option<Arc<ProductDetailFetcher>>,
     product_detail_parser: Option<Arc<ProductDetailParser>>,
-    db_saver: Option<Arc<MockDbSaver>>,  // 일단 Mock 유지
+    db_saver: Option<Arc<DbSaver>>,
 }
 
 impl WorkerPoolBuilder {
     pub fn new() -> Self {
         Self {
-            max_total_concurrency: 10,
+            max_total_concurrency: crate::infrastructure::config::defaults::MAX_CONCURRENT_REQUESTS as usize,
             list_page_fetcher: None,
             list_page_parser: None,
             product_detail_fetcher: None,
@@ -328,7 +319,7 @@ impl WorkerPoolBuilder {
         self
     }
 
-    pub fn with_db_saver(mut self, worker: Arc<MockDbSaver>) -> Self {
+    pub fn with_db_saver(mut self, worker: Arc<DbSaver>) -> Self {
         self.db_saver = Some(worker);
         self
     }
@@ -343,7 +334,7 @@ impl WorkerPoolBuilder {
         let product_detail_parser = self.product_detail_parser
             .ok_or_else(|| WorkerError::ConfigurationError("ProductDetailParser not configured".to_string()))?;
         let db_saver = self.db_saver
-            .ok_or_else(|| WorkerError::ConfigurationError("MockDbSaver not configured".to_string()))?;
+            .ok_or_else(|| WorkerError::ConfigurationError("DbSaver not configured".to_string()))?;
 
         Ok(WorkerPool::new(
             list_page_fetcher,
