@@ -40,10 +40,11 @@ impl ListPageFetcher {
 
     /// 개발 용이성을 위한 간단한 생성자
     pub fn new_simple() -> Self {
+        use crate::infrastructure::config::defaults;
         Self {
             http_client: reqwest::Client::new(),
-            request_timeout: Duration::from_secs(30),
-            max_retries: 3,
+            request_timeout: Duration::from_secs(defaults::REQUEST_TIMEOUT_SECONDS),
+            max_retries: defaults::MAX_RETRIES,
         }
     }
 

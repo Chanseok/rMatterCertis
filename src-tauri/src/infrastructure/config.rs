@@ -73,6 +73,53 @@ pub struct CrawlingConfig {
     
     /// Automatically add crawled products to local database (자동으로 로컬 DB에 추가)
     pub auto_add_to_local_db: bool,
+    
+    /// Worker configuration
+    pub workers: WorkerConfig,
+    
+    /// Timing configuration
+    pub timing: TimingConfig,
+}
+
+/// Worker configuration settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerConfig {
+    /// Maximum concurrent requests for list page fetcher
+    pub list_page_max_concurrent: usize,
+    
+    /// Maximum concurrent requests for product detail fetcher
+    pub product_detail_max_concurrent: usize,
+    
+    /// Request timeout in seconds
+    pub request_timeout_seconds: u64,
+    
+    /// Maximum retry attempts
+    pub max_retries: u32,
+    
+    /// Batch size for database operations
+    pub db_batch_size: usize,
+    
+    /// Maximum concurrency for database operations
+    pub db_max_concurrency: usize,
+}
+
+/// Timing configuration settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimingConfig {
+    /// Scheduler interval in milliseconds
+    pub scheduler_interval_ms: u64,
+    
+    /// Shutdown timeout in seconds
+    pub shutdown_timeout_seconds: u64,
+    
+    /// Stats reporting interval in seconds
+    pub stats_interval_seconds: u64,
+    
+    /// Retry delay in milliseconds
+    pub retry_delay_ms: u64,
+    
+    /// Operation timeout in seconds
+    pub operation_timeout_seconds: u64,
 }
 
 /// Batch processing configuration settings
@@ -268,6 +315,33 @@ impl Default for CrawlingConfig {
             product_list_retry_count: defaults::PRODUCT_LIST_RETRY_COUNT,
             product_detail_retry_count: defaults::PRODUCT_DETAIL_RETRY_COUNT,
             auto_add_to_local_db: defaults::AUTO_ADD_TO_LOCAL_DB,
+            workers: WorkerConfig::default(),
+            timing: TimingConfig::default(),
+        }
+    }
+}
+
+impl Default for WorkerConfig {
+    fn default() -> Self {
+        Self {
+            list_page_max_concurrent: defaults::LIST_PAGE_MAX_CONCURRENT,
+            product_detail_max_concurrent: defaults::PRODUCT_DETAIL_MAX_CONCURRENT,
+            request_timeout_seconds: defaults::REQUEST_TIMEOUT_SECONDS,
+            max_retries: defaults::MAX_RETRIES,
+            db_batch_size: defaults::DB_BATCH_SIZE,
+            db_max_concurrency: defaults::DB_MAX_CONCURRENCY,
+        }
+    }
+}
+
+impl Default for TimingConfig {
+    fn default() -> Self {
+        Self {
+            scheduler_interval_ms: defaults::SCHEDULER_INTERVAL_MS,
+            shutdown_timeout_seconds: defaults::SHUTDOWN_TIMEOUT_SECONDS,
+            stats_interval_seconds: defaults::STATS_INTERVAL_SECONDS,
+            retry_delay_ms: defaults::WORKER_RETRY_DELAY_MS,
+            operation_timeout_seconds: defaults::OPERATION_TIMEOUT_SECONDS,
         }
     }
 }
@@ -576,7 +650,7 @@ pub mod defaults {
     /// Default retry attempts for failed requests
     pub const RETRY_ATTEMPTS: u32 = 3;
     
-    /// Default retry delay in milliseconds
+    /// Default retry delay in milliseconds (for advanced config)
     pub const RETRY_DELAY_MS: u64 = 2000;
     
     /// Default starting page number for last page search
@@ -592,19 +666,65 @@ pub mod defaults {
     /// Default number of products per page (based on actual site analysis)
     pub const DEFAULT_PRODUCTS_PER_PAGE: u32 = 12;
     
-    /// Default CSS selectors for finding products
-    pub const PRODUCT_SELECTORS: &[&str] = &[
-        "div.post-feed article.type-product",  // 정확한 제품 selector
-        // "article.type-product",                // 불필요한 중복
-        // "div > article.product.type-product",  // 기존 selector
-        // ".product",
-        // ".product-item", 
-        // ".product-card",
-        // "article.product",
-        // "[class*='product-']:not([class*='pagination']):not([class*='search'])",
-    ];
+    // Worker configuration defaults
+    /// Default maximum concurrent requests for list page fetcher
+    pub const LIST_PAGE_MAX_CONCURRENT: usize = 5;
     
-    // Logging defaults
+    /// Default maximum concurrent requests for product detail fetcher  
+    pub const PRODUCT_DETAIL_MAX_CONCURRENT: usize = 10;
+    
+    /// Default maximum retry attempts
+    pub const MAX_RETRIES: u32 = 3;
+    
+    /// Default batch size for database operations
+    pub const DB_BATCH_SIZE: usize = 100;
+    
+    /// Default maximum concurrency for database operations
+    pub const DB_MAX_CONCURRENCY: usize = 10;
+    
+    // Timing configuration defaults
+    /// Default scheduler interval in milliseconds
+    pub const SCHEDULER_INTERVAL_MS: u64 = 100;
+    
+    /// Default shutdown timeout in seconds
+    pub const SHUTDOWN_TIMEOUT_SECONDS: u64 = 30;
+    
+    /// Default stats interval in seconds
+    pub const STATS_INTERVAL_SECONDS: u64 = 10;
+    
+    /// Default worker retry delay in milliseconds
+    pub const WORKER_RETRY_DELAY_MS: u64 = 1000;
+    
+    /// Default operation timeout in seconds
+    pub const OPERATION_TIMEOUT_SECONDS: u64 = 5;
+    
+    // Crawling configuration defaults
+    /// Default page range limit
+    pub const PAGE_RANGE_LIMIT: u32 = 100;
+    
+    /// Default product list retry count
+    pub const PRODUCT_LIST_RETRY_COUNT: u32 = 3;
+    
+    /// Default product detail retry count
+    pub const PRODUCT_DETAIL_RETRY_COUNT: u32 = 3;
+    
+    /// Default auto add to local database
+    pub const AUTO_ADD_TO_LOCAL_DB: bool = true;
+    
+    // Batch configuration defaults
+    /// Default batch size
+    pub const BATCH_SIZE: u32 = 50;
+    
+    /// Default batch delay in milliseconds
+    pub const BATCH_DELAY_MS: u64 = 100;
+    
+    /// Default enable batch processing
+    pub const ENABLE_BATCH_PROCESSING: bool = true;
+    
+    /// Default batch retry limit
+    pub const BATCH_RETRY_LIMIT: u32 = 3;
+    
+    // Log configuration defaults
     /// Default log level
     pub const LOG_LEVEL: &str = "info";
     
@@ -626,40 +746,21 @@ pub mod defaults {
     /// Default maximum log file size in MB
     pub const LOG_MAX_FILE_SIZE_MB: u64 = 10;
     
-    /// Default number of log files to keep
+    /// Default maximum log files to keep
     pub const LOG_MAX_FILES: u32 = 5;
     
     /// Default auto cleanup logs setting
     pub const LOG_AUTO_CLEANUP: bool = true;
     
-    /// Default keep only latest log file setting
+    /// Default keep only latest setting
     pub const LOG_KEEP_ONLY_LATEST: bool = false;
     
-    // Batch processing defaults
-    /// Default batch size for processing
-    pub const BATCH_SIZE: u32 = 30;
-    
-    /// Default delay between batches in milliseconds
-    pub const BATCH_DELAY_MS: u64 = 2000;
-    
-    /// Default enable batch processing setting
-    pub const ENABLE_BATCH_PROCESSING: bool = true;
-    
-    /// Default batch retry limit
-    pub const BATCH_RETRY_LIMIT: u32 = 3;
-    
-    // Crawling specific defaults
-    /// Default page range limit for crawling
-    pub const PAGE_RANGE_LIMIT: u32 = 20;
-    
-    /// Default retry count for product list pages
-    pub const PRODUCT_LIST_RETRY_COUNT: u32 = 3;
-    
-    /// Default retry count for product detail pages
-    pub const PRODUCT_DETAIL_RETRY_COUNT: u32 = 3;
-    
-    /// Default auto add to local database setting
-    pub const AUTO_ADD_TO_LOCAL_DB: bool = true;
+    /// Default CSS selectors for finding products
+    pub const PRODUCT_SELECTORS: &[&str] = &[
+        "div.post-feed article.type-product",  // 정확한 제품 selector
+        "article.type-product",                // 백업 selector
+        ".product",                           // 일반적인 제품 selector
+    ];
 }
 
 /// URL building helper functions

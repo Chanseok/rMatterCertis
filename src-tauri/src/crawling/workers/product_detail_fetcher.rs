@@ -53,12 +53,13 @@ impl ProductDetailFetcher {
 
     /// 개발 용이성을 위한 간단한 생성자
     pub fn new_simple() -> Self {
+        use crate::infrastructure::config::defaults;
         Self {
             client: Client::new(),
-            rate_limiter: Arc::new(Semaphore::new(10)),
-            request_timeout: Duration::from_secs(30),
-            max_retries: 3,
-            retry_delay: Duration::from_millis(1000),
+            rate_limiter: Arc::new(Semaphore::new(defaults::PRODUCT_DETAIL_MAX_CONCURRENT)),
+            request_timeout: Duration::from_secs(defaults::REQUEST_TIMEOUT_SECONDS),
+            max_retries: defaults::MAX_RETRIES,
+            retry_delay: Duration::from_millis(defaults::WORKER_RETRY_DELAY_MS),
         }
     }
 

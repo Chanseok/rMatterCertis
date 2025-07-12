@@ -75,14 +75,15 @@ pub struct OrchestratorConfig {
 
 impl Default for OrchestratorConfig {
     fn default() -> Self {
+        use crate::infrastructure::config::defaults;
         Self {
             max_global_concurrency: 50,
-            scheduler_interval: Duration::from_millis(100),
-            shutdown_timeout: Duration::from_secs(30),
-            stats_interval: Duration::from_secs(10),
+            scheduler_interval: Duration::from_millis(defaults::SCHEDULER_INTERVAL_MS),
+            shutdown_timeout: Duration::from_secs(defaults::SHUTDOWN_TIMEOUT_SECONDS),
+            stats_interval: Duration::from_secs(defaults::STATS_INTERVAL_SECONDS),
             auto_retry_enabled: true,
-            max_retries: 3,
-            retry_delay: Duration::from_secs(1),
+            max_retries: defaults::MAX_RETRIES,
+            retry_delay: Duration::from_millis(defaults::WORKER_RETRY_DELAY_MS),
             backpressure_enabled: true,
             backpressure_threshold: 1000,
         }
