@@ -16,6 +16,11 @@ import type {
   CrawlingStatusCheck,
   DatabaseStats
 } from '../types/crawling';
+import type { 
+  AtomicTaskEvent, 
+  AtomicEventType, 
+  AtomicEventStats 
+} from '../types/atomic-events';
 
 /**
  * Service class for communicating with the Rust backend
@@ -340,6 +345,66 @@ export class TauriApiService {
     
     this.eventListeners.set('crawling-stopped', unlisten);
     return unlisten;
+  }
+
+  // =========================================================================
+  // 원자적 태스크 이벤트 구독 (proposal5.md 구현)
+  // =========================================================================
+
+  /**
+   * Subscribe to atomic task events (high-frequency, real-time task updates)
+   */
+  async subscribeToAtomicTaskEvents(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
+    const unlisten = await listen<AtomicTaskEvent>('atomic-task-update', (event) => {
+      callback(event.payload);
+    });
+    
+    this.eventListeners.set('atomic-task-update', unlisten);
+    return unlisten;
+  }
+
+  /**
+   * Subscribe to task started events specifically
+   */
+  async subscribeToTaskStarted(callback: (event: AtomicTaskEvent & { type: 'TaskStarted' }) => void): Promise<UnlistenFn> {
+    return this.subscribeToAtomicTaskEvents((event) => {
+      if (event.type === 'TaskStarted') {
+        callback(event as AtomicTaskEvent & { type: 'TaskStarted' });
+      }
+    });
+  }
+
+  /**
+   * Subscribe to task completed events specifically
+   */
+  async subscribeToTaskCompleted(callback: (event: AtomicTaskEvent & { type: 'TaskCompleted' }) => void): Promise<UnlistenFn> {
+    return this.subscribeToAtomicTaskEvents((event) => {
+      if (event.type === 'TaskCompleted') {
+        callback(event as AtomicTaskEvent & { type: 'TaskCompleted' });
+      }
+    });
+  }
+
+  /**
+   * Subscribe to task failed events specifically
+   */
+  async subscribeToTaskFailed(callback: (event: AtomicTaskEvent & { type: 'TaskFailed' }) => void): Promise<UnlistenFn> {
+    return this.subscribeToAtomicTaskEvents((event) => {
+      if (event.type === 'TaskFailed') {
+        callback(event as AtomicTaskEvent & { type: 'TaskFailed' });
+      }
+    });
+  }
+
+  /**
+   * Subscribe to task retrying events specifically
+   */
+  async subscribeToTaskRetrying(callback: (event: AtomicTaskEvent & { type: 'TaskRetrying' }) => void): Promise<UnlistenFn> {
+    return this.subscribeToAtomicTaskEvents((event) => {
+      if (event.type === 'TaskRetrying') {
+        callback(event as AtomicTaskEvent & { type: 'TaskRetrying' });
+      }
+    });
   }
 
   // =========================================================================

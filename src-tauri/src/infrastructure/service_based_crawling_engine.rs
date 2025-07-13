@@ -49,6 +49,26 @@ impl Default for BatchCrawlingConfig {
     }
 }
 
+impl BatchCrawlingConfig {
+    /// Phase 4: 지능형 범위 계산 결과를 config에 적용
+    pub fn update_range_from_calculation(&mut self, optimal_range: Option<(u32, u32)>) {
+        if let Some((start_page, end_page)) = optimal_range {
+            info!("🔄 Updating crawling range from {}..{} to {}..{}", 
+                  self.start_page, self.end_page, start_page, end_page);
+            self.start_page = start_page;
+            self.end_page = end_page;
+        } else {
+            info!("🔄 No optimal range available, keeping current range {}..{}", 
+                  self.start_page, self.end_page);
+        }
+    }
+    
+    /// 현재 설정된 범위 정보 반환
+    pub fn get_page_range(&self) -> (u32, u32) {
+        (self.start_page, self.end_page)
+    }
+}
+
 /// 세분화된 크롤링 이벤트 타입
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DetailedCrawlingEvent {
@@ -97,6 +117,9 @@ pub struct ServiceBasedBatchCrawlingEngine {
     product_list_collector: Arc<dyn ProductListCollector>,
     product_detail_collector: Arc<dyn ProductDetailCollector>,
     
+    // 지능형 범위 계산기 - Phase 3 Integration
+    range_calculator: Arc<CrawlingRangeCalculator>,
+    
     // 기존 컴포넌트들
     product_repo: Arc<IntegratedProductRepository>,
     event_emitter: Arc<Option<EventEmitter>>,
@@ -136,7 +159,7 @@ impl ServiceBasedBatchCrawlingEngine {
         let status_checker = Arc::new(StatusCheckerImpl::new(
             http_client.clone(),
             data_extractor.clone(),
-            app_config,
+            app_config.clone(),
         )) as Arc<dyn StatusChecker>;
 
         let database_analyzer = Arc::new(DatabaseAnalyzerImpl::new(
@@ -155,11 +178,18 @@ impl ServiceBasedBatchCrawlingEngine {
             collector_config,
         )) as Arc<dyn ProductDetailCollector>;
 
+        // 지능형 범위 계산기 초기화 - Phase 3 Integration
+        let range_calculator = Arc::new(CrawlingRangeCalculator::new(
+            Arc::clone(&product_repo),
+            app_config.clone(),
+        ));
+
         Self {
             status_checker,
             database_analyzer,
             product_list_collector,
             product_detail_collector,
+            range_calculator,
             product_repo,
             event_emitter,
             retry_manager: Arc::new(RetryManager::new(config.retry_max)),
@@ -198,6 +228,39 @@ impl ServiceBasedBatchCrawlingEngine {
             }
         }
         
+        // Stage 0.5: 지능형 범위 재계산 및 실제 적용 - Phase 4 Implementation
+        info!("🧠 Stage 0.5: Performing intelligent range recalculation");
+        let optimal_range = self.range_calculator.calculate_next_crawling_range(
+            site_status.total_pages,
+            10, // products_on_last_page (default assumption)
+        ).await?;
+        
+        // 계산된 범위를 실제로 적용하여 최종 범위 결정
+        let (actual_start_page, actual_end_page) = if let Some((optimal_start, optimal_end)) = optimal_range {
+            if optimal_start != self.config.start_page || optimal_end != self.config.end_page {
+                info!("💡 Applying intelligent range recommendation: pages {} to {} (original: {} to {})", 
+                      optimal_start, optimal_end, self.config.start_page, self.config.end_page);
+                
+                // 범위 적용 이벤트 발송
+                self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
+                    stage: "Range Optimization Applied".to_string(),
+                    message: format!("Applied optimal range: {} to {} (was: {} to {})", 
+                                   optimal_start, optimal_end, self.config.start_page, self.config.end_page),
+                }).await?;
+                
+                (optimal_start, optimal_end)
+            } else {
+                info!("✅ Current range already optimal: {} to {}", self.config.start_page, self.config.end_page);
+                (self.config.start_page, self.config.end_page)
+            }
+        } else {
+            info!("✅ All products appear to be crawled - using current range for verification: {} to {}", 
+                  self.config.start_page, self.config.end_page);
+            (self.config.start_page, self.config.end_page)
+        };
+        
+        info!("🎯 Final crawling range determined: {} to {}", actual_start_page, actual_end_page);
+        
         // Stage 1: 데이터베이스 분석
         let _db_analysis = self.stage1_analyze_database().await?;
         
@@ -209,8 +272,8 @@ impl ServiceBasedBatchCrawlingEngine {
             }
         }
         
-        // Stage 2: 제품 목록 수집
-        let product_urls = self.stage2_collect_product_list(site_status.total_pages).await?;
+        // Stage 2: 제품 목록 수집 - 계산된 최적 범위 사용
+        let product_urls = self.stage2_collect_product_list_optimized(actual_start_page, actual_end_page).await?;
         
         // Stage 2 완료 후 취소 확인
         if let Some(cancellation_token) = &self.config.cancellation_token {
@@ -357,6 +420,47 @@ impl ServiceBasedBatchCrawlingEngine {
         }).await?;
 
         info!("Stage 2 completed: {} product URLs collected", product_urls.len());
+        Ok(product_urls)
+    }
+
+    /// Stage 2: 제품 목록 수집 (최적화된 범위 사용) - Phase 4 Implementation
+    async fn stage2_collect_product_list_optimized(&self, start_page: u32, end_page: u32) -> Result<Vec<String>> {
+        info!("Stage 2: Collecting product list using optimized range {} to {}", start_page, end_page);
+        
+        // 취소 확인 - 단계 시작 전
+        if let Some(cancellation_token) = &self.config.cancellation_token {
+            if cancellation_token.is_cancelled() {
+                warn!("🛑 Stage 2 (ProductList) cancelled before starting");
+                return Err(anyhow!("Product list collection cancelled"));
+            }
+        }
+        
+        self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
+            stage: "ProductList (Optimized)".to_string(),
+            message: format!("페이지 {} ~ {}에서 제품 목록을 수집하는 중...", start_page, end_page),
+        }).await?;
+
+        // 최적화된 범위로 제품 목록 수집 (cancellation 지원)
+        let product_urls = if let Some(cancellation_token) = &self.config.cancellation_token {
+            self.product_list_collector.collect_page_range_with_cancellation(
+                start_page,
+                end_page,
+                cancellation_token.clone(),
+            ).await.map_err(|e| anyhow!("Product list collection failed: {}", e))?
+        } else {
+            self.product_list_collector.collect_page_range(
+                start_page,
+                end_page,
+            ).await.map_err(|e| anyhow!("Product list collection failed: {}", e))?
+        };
+
+        info!("✅ Stage 2 completed: {} product URLs collected from optimized range", product_urls.len());
+        
+        self.emit_detailed_event(DetailedCrawlingEvent::StageCompleted {
+            stage: "ProductList (Optimized)".to_string(),
+            items_processed: product_urls.len(),
+        }).await?;
+
         Ok(product_urls)
     }
 
@@ -689,5 +793,18 @@ impl ServiceBasedBatchCrawlingEngine {
         self.config.cancellation_token = cancellation_token;
         info!("🔄 Updated cancellation token in ServiceBasedBatchCrawlingEngine: {}", 
               self.config.cancellation_token.is_some());
+    }
+
+    /// Stop the crawling engine by cancelling the cancellation token
+    pub async fn stop(&self) -> Result<(), String> {
+        if let Some(cancellation_token) = &self.config.cancellation_token {
+            tracing::info!("🛑 Stopping ServiceBasedBatchCrawlingEngine by cancelling token");
+            cancellation_token.cancel();
+            Ok(())
+        } else {
+            let error_msg = "Cannot stop: No cancellation token available";
+            tracing::warn!("⚠️ {}", error_msg);
+            Err(error_msg.to_string())
+        }
     }
 }

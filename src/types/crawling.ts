@@ -28,7 +28,8 @@ export enum TaskStatus {
   Running = "Running",
   Completed = "Completed",
   Failed = "Failed",
-  Cancelled = "Cancelled",
+  Retrying = "Retrying", // 추가
+  Cancelled = "Cancelled", // 추가
 }
 
 export enum DatabaseHealth {
@@ -377,6 +378,7 @@ export const getTaskStatusDisplayName = (status: TaskStatus): string => {
     [TaskStatus.Completed]: "완료",
     [TaskStatus.Failed]: "실패",
     [TaskStatus.Cancelled]: "취소",
+    [TaskStatus.Retrying]: "재시도 중", // 추가
   };
   return statusNames[status] || status;
 };
@@ -497,6 +499,7 @@ export const getTaskStatusColor = (status: TaskStatus): string => {
     case TaskStatus.Completed: return "text-green-500";
     case TaskStatus.Failed: return "text-red-500";
     case TaskStatus.Cancelled: return "text-orange-500";
+    case TaskStatus.Retrying: return "text-yellow-500"; // 추가
     default: return "text-gray-500";
   }
 };
@@ -582,4 +585,46 @@ export interface CrawlingStatusCheck {
     sync_percentage: number;
     last_sync_time?: string;
   };
+}
+
+// =========================================================================
+// 원자적 태스크 이벤트 타입 (proposal5.md 구현)
+// =========================================================================
+
+export type AtomicTaskEvent = 
+  | { 
+      type: 'TaskStarted';
+      task_id: string;
+      task_type: string;
+      timestamp: string;
+    }
+  | { 
+      type: 'TaskCompleted';
+      task_id: string;
+      task_type: string;
+      duration_ms: number;
+      timestamp: string;
+    }
+  | { 
+      type: 'TaskFailed';
+      task_id: string;
+      task_type: string;
+      error_message: string;
+      retry_count: number;
+      timestamp: string;
+    }
+  | { 
+      type: 'TaskRetrying';
+      task_id: string;
+      task_type: string;
+      retry_count: number;
+      delay_ms: number;
+      timestamp: string;
+    };
+
+export interface AtomicEventStats {
+  events_emitted: number;
+  events_per_second: number;
+  last_emission_time: string;
+  event_type_counts: Record<string, number>;
 }

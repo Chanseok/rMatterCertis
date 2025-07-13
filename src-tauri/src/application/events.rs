@@ -4,6 +4,7 @@
 //! the crawling engine to send real-time updates to the frontend.
 
 use crate::domain::events::{CrawlingEvent, CrawlingProgress, CrawlingTaskStatus, DatabaseStats};
+use crate::domain::atomic_events::{AtomicTaskEvent, AtomicEventStats}; // 추가
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, warn};
@@ -191,6 +192,60 @@ impl EventEmitter {
         let event = CrawlingEvent::Completed(result);
         self.emit_event(event).await
     }
+
+    // =========================================================================
+    // 원자적 태스크 이벤트 (Atomic Task Events) - proposal5.md 구현
+    // =========================================================================
+
+    /// Emit an atomic task event immediately (high-frequency, lightweight)
+    pub async fn emit_atomic_task_event(&self, event: AtomicTaskEvent) -> EventResult {
+        // 빠른 경로: 비활성화 검사
+        if !self.is_enabled().await {
+            return Err(EventEmissionError::Disabled);
+        }
+
+        let event_name = AtomicTaskEvent::event_name();
+        
+        match self.app_handle.emit(event_name, &event) {
+            Ok(_) => {
+                debug!("Successfully emitted atomic task event: {} for task {}", 
+                       event_name, event.task_id());
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to emit atomic task event {}: {}", event_name, e);
+                Err(EventEmissionError::TauriError(e))
+            }
+        }
+    }
+
+    /// Emit task started event
+    pub async fn emit_task_started(&self, task_id: crate::domain::atomic_events::TaskId, task_type: String) -> EventResult {
+        let event = AtomicTaskEvent::started(task_id, task_type);
+        self.emit_atomic_task_event(event).await
+    }
+
+    /// Emit task completed event
+    pub async fn emit_task_completed(&self, task_id: crate::domain::atomic_events::TaskId, task_type: String, duration_ms: u64) -> EventResult {
+        let event = AtomicTaskEvent::completed(task_id, task_type, duration_ms);
+        self.emit_atomic_task_event(event).await
+    }
+
+    /// Emit task failed event
+    pub async fn emit_task_failed(&self, task_id: crate::domain::atomic_events::TaskId, task_type: String, error_message: String, retry_count: u32) -> EventResult {
+        let event = AtomicTaskEvent::failed(task_id, task_type, error_message, retry_count);
+        self.emit_atomic_task_event(event).await
+    }
+
+    /// Emit task retrying event
+    pub async fn emit_task_retrying(&self, task_id: crate::domain::atomic_events::TaskId, task_type: String, retry_count: u32, delay_ms: u64) -> EventResult {
+        let event = AtomicTaskEvent::retrying(task_id, task_type, retry_count, delay_ms);
+        self.emit_atomic_task_event(event).await
+    }
+
+    // =========================================================================
+    // 기존 이벤트 (상태 스냅샷) - 저주파, 무거운 정보
+    // =========================================================================
 
     /// Emit multiple events in batch (useful for reducing frontend update frequency)
     pub async fn emit_batch(&self, events: Vec<CrawlingEvent>) -> Vec<EventResult> {

@@ -23,6 +23,7 @@ pub mod domain {
     //! Domain module - Core business logic and entities
     pub mod entities;
     pub mod events;
+    pub mod atomic_events; // 추가: 원자적 태스크 이벤트
     pub mod repositories;
     pub mod value_objects;
     pub mod services {
@@ -267,11 +268,11 @@ pub fn run() {
             // commands::get_crawler_config,
             // commands::crawler_health_check,
             
-            // Smart crawling commands (temporarily disabled for Modern Rust 2024 migration)
-            // commands::calculate_crawling_range,
-            // commands::get_crawling_progress,
-            // commands::get_database_state_for_range_calculation,
-            // commands::demo_prompts6_calculation
+            // Smart crawling commands (Phase 2: Intelligent Range Calculation)
+            commands::calculate_crawling_range,
+            commands::get_crawling_progress,
+            commands::get_database_state_for_range_calculation,
+            commands::demo_prompts6_calculation
         ]);
     
     info!("✅ Tauri application built successfully, starting...");

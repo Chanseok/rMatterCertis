@@ -659,17 +659,20 @@ pub struct PaginationContext {
 impl PaginationContext {
     /// Calculate pageId and indexInPage based on source site page and index
     /// Following the specification in prompts6
+    /// 
+    /// Note: current_page is 1-based, index_on_page is 1-based (first item on page = 1)
+    /// Returns: (pageId, indexInPage) both 0-based where oldest product = (0, 0)
     pub fn calculate_page_index(&self, current_page: u32, index_on_page: u32) -> (i32, i32) {
-        // Step 1: Calculate total products
+        // Step 1: Calculate total products on site
         let total_products = (self.total_pages - 1) * self.items_per_page + self.items_on_last_page;
         
-        // Step 2: Calculate index from newest (0-based from page 1 item 1)
-        let index_from_newest = (current_page - 1) * self.items_per_page + index_on_page;
+        // Step 2: Calculate 0-based index from newest (convert 1-based inputs to 0-based)
+        let index_from_newest = (current_page - 1) * self.items_per_page + (index_on_page - 1);
         
-        // Step 3: Calculate total index (0-based from oldest product)
+        // Step 3: Calculate 0-based index from oldest product (reverse the order)
         let total_index = total_products - 1 - index_from_newest;
         
-        // Step 4: Calculate final pageId and indexInPage
+        // Step 4: Calculate final pageId and indexInPage (both 0-based)
         let page_id = total_index / self.target_page_size;
         let index_in_page = total_index % self.target_page_size;
         
@@ -975,37 +978,47 @@ mod tests {
 
     #[test]
     fn test_pagination_calculation() {
+        // Test with realistic scenario: 482 pages, 12 items per page, 2 items on last page
         let context = PaginationContext {
-            total_pages: 5,
+            total_pages: 482,
             items_per_page: 12,
-            items_on_last_page: 3,
+            items_on_last_page: 2,
             target_page_size: 12,
         };
 
-        // Example: 1st page, 1st item
+        // Total products = (482-1) * 12 + 2 = 5774
+        
+        // Test user's specific example: 116th product should be (pageId=9, indexInPage=7)
+        // The 116th oldest product corresponds to product index 115 in our 0-based system
+        // We need to find which website page/item this corresponds to
+        
+        // 116 oldest products correspond to products at indices 5774-116 to 5774-1 on website
+        // So 116th product (our index 115) = website product 5774-116 = 5658
+        // Website product 5658 (0-based) = page 472, item 7 (1-based)
+        // 5658 / 12 = 471 remainder 6, so page 472 (1-based), item 7 (1-based) 
+        
+        let (page_id, index_in_page) = context.calculate_page_index(472, 7);
+        assert_eq!(page_id, 9, "116th product should have pageId=9");
+        assert_eq!(index_in_page, 7, "116th product should have indexInPage=7");
+
+        // Test first product (oldest): should be at pageId=0, indexInPage=0
+        // First oldest product = website product 5773 (0-based) = page 482, item 2
+        let (page_id, index_in_page) = context.calculate_page_index(482, 2);
+        assert_eq!(page_id, 0, "Oldest product should have pageId=0");
+        assert_eq!(index_in_page, 0, "Oldest product should have indexInPage=0");
+
+        // Test second oldest product: should be at pageId=0, indexInPage=1 
+        // Second oldest product = website product 5772 (0-based) = page 482, item 1
+        let (page_id, index_in_page) = context.calculate_page_index(482, 1);
+        assert_eq!(page_id, 0, "Second oldest product should have pageId=0");
+        assert_eq!(index_in_page, 1, "Second oldest product should have indexInPage=1");
+
+        // Test newest product: should have highest pageId and indexInPage
+        // Newest product = website product 0 (0-based) = page 1, item 1
         let (page_id, index_in_page) = context.calculate_page_index(1, 1);
-        assert_eq!(page_id, 0);
-        assert_eq!(index_in_page, 11);
-
-        // Example: 1st page, 12th item (last item on first page)
-        let (page_id, index_in_page) = context.calculate_page_index(1, 12);
-        assert_eq!(page_id, 0);
-        assert_eq!(index_in_page, 0);
-
-        // Example: 2nd page, 1st item
-        let (page_id, index_in_page) = context.calculate_page_index(2, 1);
-        assert_eq!(page_id, 0);
-        assert_eq!(index_in_page, 10);
-
-        // Example: 5th page, 3rd item (last item on last page)
-        let (page_id, index_in_page) = context.calculate_page_index(5, 3);
-        assert_eq!(page_id, 0);
-        assert_eq!(index_in_page, 9);
-
-        // Example: 5th page, 12th item (out of bounds, should be treated as last item)
-        let (page_id, index_in_page) = context.calculate_page_index(5, 12);
-        assert_eq!(page_id, 0);
-        assert_eq!(index_in_page, 8);
+        // This should be at index 5773 in our system = pageId=481, indexInPage=1
+        assert_eq!(page_id, 481, "Newest product should have pageId=481");
+        assert_eq!(index_in_page, 1, "Newest product should have indexInPage=1");
     }
 }
 

@@ -1336,8 +1336,6 @@ impl ProductListCollector for ProductListCollectorImpl {
     }
     
     async fn collect_page_range(&self, start_page: u32, end_page: u32) -> Result<Vec<String>> {
-        let mut all_urls = Vec::new();
-        
         // Handle descending range (older to newer) - typical for our use case
         let pages: Vec<u32> = if start_page > end_page {
             // Descending range: start from oldest (highest page number) to newest (lower page number)
@@ -1347,66 +1345,87 @@ impl ProductListCollector for ProductListCollectorImpl {
             (start_page..=end_page).collect()
         };
         
-        info!("🔍 Collecting from {} pages in range {} to {} (order: {})", 
-              pages.len(), 
-              start_page, 
-              end_page,
-              if start_page > end_page { "oldest first" } else { "newest first" });
+        info!("🔍 Collecting from {} pages in range {} to {} with true concurrent execution", 
+              pages.len(), start_page, end_page);
         
         let max_concurrent = self.config.max_concurrent as usize;
         
-        // Process pages in true parallel batches with proper concurrency control
-        for chunk in pages.chunks(max_concurrent) {
-            let mut tasks = Vec::new();
+        // Phase 5 Implementation: 진정한 동시성 실행을 위한 세마포어 기반 처리
+        // 1. 세마포어 생성: max_concurrent 개의 permit만 허용
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
+        
+        // 2. 모든 페이지에 대해 즉시 태스크 생성 (하지만 세마포어로 제어)
+        let mut tasks = Vec::new();
+        
+        info!("🚀 Creating {} concurrent tasks with semaphore control (max: {})", pages.len(), max_concurrent);
+        
+        for page in pages {
+            let http_client = Arc::clone(&self.http_client);
+            let data_extractor = Arc::clone(&self.data_extractor);
+            let semaphore_clone = Arc::clone(&semaphore);
             
-            info!("🚀 Starting parallel batch of {} pages", chunk.len());
-            
-            for &page in chunk {
-                let http_client = Arc::clone(&self.http_client);
-                let data_extractor = Arc::clone(&self.data_extractor);
-                
-                let task = tokio::spawn(async move {
-                    let url = config_utils::matter_products_page_url_simple(page);
-                    let mut client = http_client.lock().await;
-                    let html = client.fetch_html_string(&url).await?;
-                    drop(client);
-                    
-                    let doc = scraper::Html::parse_document(&html);
-                    let urls = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
-                    
-                    debug!("🔗 Extracted {} URLs from page {}", urls.len(), page);
-                    Ok::<(u32, Vec<String>), anyhow::Error>((page, urls))
-                });
-                
-                tasks.push(task);
-            }
-            
-            // Wait for all tasks in this batch to complete concurrently
-            let results = futures::future::join_all(tasks).await;
-            
-            for result in results {
-                match result {
-                    Ok(Ok((page, urls))) => {
-                        let urls_len = urls.len();
-                        all_urls.extend(urls);
-                        debug!("📄 Collected {} URLs from page {} (total so far: {})", urls_len, page, all_urls.len());
+            // 3. 각 태스크는 세마포어 permit을 획득한 후 실행
+            let task = tokio::spawn(async move {
+                // 실행 허가를 받을 때까지 대기 (진정한 동시성 제어)
+                let _permit = match semaphore_clone.acquire().await {
+                    Ok(permit) => {
+                        debug!("🔓 Acquired permit for page {}", page);
+                        permit
+                    },
+                    Err(_) => {
+                        error!("Failed to acquire semaphore permit for page {}", page);
+                        return Err(anyhow!("Semaphore acquisition failed"));
                     }
-                    Ok(Err(e)) => warn!("⚠️  Failed to collect URLs: {}", e),
-                    Err(e) => warn!("Task failed: {}", e),
+                };
+                
+                // 실제 페이지 수집 작업
+                let url = config_utils::matter_products_page_url_simple(page);
+                let mut client = http_client.lock().await;
+                let html = client.fetch_html_string(&url).await?;
+                drop(client);
+                
+                let doc = scraper::Html::parse_document(&html);
+                let urls = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
+                
+                debug!("🔗 Extracted {} URLs from page {} (permit released)", urls.len(), page);
+                Ok::<(u32, Vec<String>), anyhow::Error>((page, urls))
+                // _permit이 여기서 자동으로 drop되어 다음 태스크가 실행될 수 있음
+            });
+            
+            tasks.push(task);
+        }
+        
+        info!("✅ Created {} tasks, waiting for all to complete with concurrent execution", tasks.len());
+        
+        // 4. 모든 태스크가 완료될 때까지 기다림 (진정한 파이프라인 실행)
+        let results = futures::future::join_all(tasks).await;
+        
+        // 결과 수집
+        let mut all_urls = Vec::new();
+        let mut successful_pages = 0;
+        let mut failed_pages = 0;
+        
+        for result in results {
+            match result {
+                Ok(Ok((page, urls))) => {
+                    all_urls.extend(urls);
+                    successful_pages += 1;
+                    debug!("✅ Page {} completed successfully", page);
+                },
+                Ok(Err(e)) => {
+                    error!("❌ Page collection failed: {}", e);
+                    failed_pages += 1;
+                },
+                Err(e) => {
+                    error!("❌ Task join failed: {}", e);
+                    failed_pages += 1;
                 }
-            }
-            
-            info!("📊 Completed parallel batch: {}/{} pages processed, {} URLs collected so far", 
-                  chunk.len(), pages.len(), all_urls.len());
-            
-            // Apply rate limiting between batches, not between individual requests
-            if chunk.len() == max_concurrent && !pages.chunks(max_concurrent).last().unwrap().contains(&chunk[0]) {
-                tokio::time::sleep(self.config.delay_between_requests).await;
-                info!("⏱️  Rate limiting delay applied between batches");
             }
         }
         
-        info!("📋 Total URLs collected from page range {}-{}: {}", start_page, end_page, all_urls.len());
+        info!("📊 Concurrent collection completed: {} successful, {} failed, {} total URLs", 
+              successful_pages, failed_pages, all_urls.len());
+        
         Ok(all_urls)
     }
     
@@ -1424,7 +1443,7 @@ impl ProductListCollector for ProductListCollectorImpl {
     }
     
     async fn collect_page_range_with_cancellation(&self, start_page: u32, end_page: u32, cancellation_token: CancellationToken) -> Result<Vec<String>> {
-        let mut all_urls = Vec::new();
+        let mut all_urls: Vec<String> = Vec::new();
         
         // Handle descending range (older to newer) - typical for our use case
         let pages: Vec<u32> = if start_page > end_page {
@@ -1440,108 +1459,106 @@ impl ProductListCollector for ProductListCollectorImpl {
         
         let max_concurrent = self.config.max_concurrent as usize;
         
-        // Process pages in true parallel batches with proper concurrency control
-        for chunk in pages.chunks(max_concurrent) {
-            // 배치 시작 전 취소 확인
+        // Phase 5 Implementation: 진정한 동시성 실행을 위한 세마포어 기반 처리
+        // 1. 세마포어 생성: max_concurrent 개의 permit만 허용
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
+        
+        // 2. 모든 페이지에 대해 즉시 태스크 생성 (하지만 세마포어로 제어)
+        let mut tasks = Vec::new();
+        
+        info!("🚀 Creating {} concurrent tasks with semaphore control (max: {})", pages.len(), max_concurrent);
+        
+        for page in pages {
+            // 취소 토큰 확인
             if cancellation_token.is_cancelled() {
-                warn!("🛑 Page range collection cancelled at batch");
-                return Err(anyhow::anyhow!("Page range collection cancelled"));
+                warn!("🛑 Task creation cancelled for page {}", page);
+                break;
             }
             
-            let mut tasks = Vec::new();
+            let http_client = Arc::clone(&self.http_client);
+            let data_extractor = Arc::clone(&self.data_extractor);
+            let token_clone = cancellation_token.clone();
+            let semaphore_clone = Arc::clone(&semaphore);
             
-            info!("🚀 Starting cancellable parallel batch of {} pages", chunk.len());
-            
-            for &page in chunk {
-                let http_client = Arc::clone(&self.http_client);
-                let data_extractor = Arc::clone(&self.data_extractor);
-                let token_clone = cancellation_token.clone();
-                
-                let task = tokio::spawn(async move {
-                    // 작업 시작 전 취소 확인
-                    if token_clone.is_cancelled() {
-                        debug!("🛑 Page {} collection cancelled before start", page);
-                        return Err(anyhow::anyhow!("Page collection cancelled"));
-                    }
-                    
-                    let url = config_utils::matter_products_page_url_simple(page);
-                    let mut client = http_client.lock().await;
-                    let html = client.fetch_html_string(&url).await?;
-                    drop(client);
-                    
-                    // HTTP 요청 완료 후 취소 확인
-                    if token_clone.is_cancelled() {
-                        debug!("🛑 Page {} collection cancelled after HTTP request", page);
-                        return Err(anyhow::anyhow!("Page collection cancelled after HTTP request"));
-                    }
-                    
-                    let doc = scraper::Html::parse_document(&html);
-                    let urls = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
-                    
-                    debug!("🔗 Extracted {} URLs from page {}", urls.len(), page);
-                    Ok::<(u32, Vec<String>), anyhow::Error>((page, urls))
-                });
-                
-                tasks.push(task);
-            }
-            
-            // 배치 작업 완료 대기 (취소 토큰과 함께)
-            let results = tokio::select! {
-                results = futures::future::join_all(tasks) => results,
-                _ = cancellation_token.cancelled() => {
-                    warn!("🛑 Page range collection cancelled during batch execution");
-                    return Err(anyhow::anyhow!("Page range collection cancelled during batch execution"));
-                }
-            };
-            
-            for result in results {
-                match result {
-                    Ok(Ok((page, urls))) => {
-                        let urls_len = urls.len();
-                        all_urls.extend(urls);
-                        debug!("📄 Collected {} URLs from page {} (total so far: {})", urls_len, page, all_urls.len());
-                    }
-                    Ok(Err(e)) => {
-                        if e.to_string().contains("cancelled") {
-                            warn!("🛑 Page collection was cancelled");
-                            return Err(e);
-                        } else {
-                            warn!("⚠️  Failed to collect URLs: {}", e);
-                        }
-                    }
-                    Err(e) => warn!("Task failed: {}", e),
-                }
-            }
-            
-            // 배치 완료 후 취소 확인
-            if cancellation_token.is_cancelled() {
-                warn!("🛑 Page range collection cancelled after batch completion");
-                return Err(anyhow::anyhow!("Page range collection cancelled"));
-            }
-            
-            info!("📊 Completed cancellable parallel batch: {}/{} pages processed, {} URLs collected so far", 
-                  chunk.len(), pages.len(), all_urls.len());
-            
-            // Apply rate limiting between batches with cancellation support
-            if chunk.len() == max_concurrent && !pages.chunks(max_concurrent).last().unwrap().contains(&chunk[0]) {
-                tokio::select! {
-                    _ = tokio::time::sleep(self.config.delay_between_requests) => {
-                        info!("⏱️  Rate limiting delay applied between batches");
+            // 3. 각 태스크는 세마포어 permit을 획득한 후 실행
+            let task = tokio::spawn(async move {
+                // 실행 허가를 받을 때까지 대기 (진정한 동시성 제어)
+                let _permit = match semaphore_clone.acquire().await {
+                    Ok(permit) => {
+                        debug!("🔓 Acquired permit for page {}", page);
+                        permit
                     },
-                    _ = cancellation_token.cancelled() => {
-                        warn!("🛑 Page range collection cancelled during rate limiting delay");
-                        return Err(anyhow::anyhow!("Page range collection cancelled during delay"));
+                    Err(_) => {
+                        error!("Failed to acquire semaphore permit for page {}", page);
+                        return Err(anyhow!("Semaphore acquisition failed"));
                     }
+                };
+                
+                // 작업 시작 전 취소 확인
+                if token_clone.is_cancelled() {
+                    warn!("🛑 Task cancelled before execution for page {}", page);
+                    return Err(anyhow!("Task cancelled"));
+                }
+                
+                // 실제 페이지 수집 작업
+                let url = config_utils::matter_products_page_url_simple(page);
+                let mut client = http_client.lock().await;
+                let html = client.fetch_html_string(&url).await?;
+                drop(client);
+                
+                // 중간에 취소 확인
+                if token_clone.is_cancelled() {
+                    warn!("� Task cancelled during processing for page {}", page);
+                    return Err(anyhow!("Task cancelled during processing"));
+                }
+                
+                let doc = scraper::Html::parse_document(&html);
+                let urls = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
+                
+                debug!("🔗 Extracted {} URLs from page {} (permit released)", urls.len(), page);
+                Ok::<(u32, Vec<String>), anyhow::Error>((page, urls))
+                // _permit이 여기서 자동으로 drop되어 다음 태스크가 실행될 수 있음
+            });
+            
+            tasks.push(task);
+        }
+        
+        info!("✅ Created {} tasks, waiting for all to complete with concurrent execution", tasks.len());
+        
+        // 4. 모든 태스크가 완료될 때까지 기다림 (진정한 파이프라인 실행)
+        let results = futures::future::join_all(tasks).await;
+        
+        // 결과 수집
+        let mut all_urls = Vec::new();
+        let mut successful_pages = 0;
+        let mut failed_pages = 0;
+        
+        for result in results {
+            match result {
+                Ok(Ok((page, urls))) => {
+                    all_urls.extend(urls);
+                    successful_pages += 1;
+                    debug!("✅ Page {} completed successfully", page);
+                },
+                Ok(Err(e)) => {
+                    error!("❌ Page collection failed: {}", e);
+                    failed_pages += 1;
+                },
+                Err(e) => {
+                    error!("❌ Task join failed: {}", e);
+                    failed_pages += 1;
                 }
             }
         }
         
-        info!("📋 Total URLs collected from page range {}-{} with cancellation: {}", start_page, end_page, all_urls.len());
+        info!("📊 Concurrent collection completed: {} successful, {} failed, {} total URLs", 
+              successful_pages, failed_pages, all_urls.len());
+        
         Ok(all_urls)
     }
     
     async fn collect_page_batch(&self, pages: &[u32]) -> Result<Vec<String>> {
-        let mut all_urls = Vec::new();
+        let mut all_urls: Vec<String> = Vec::new();
         
         for page in pages {
             match self.collect_single_page(*page).await {

@@ -18,6 +18,17 @@ use crate::crawling::{
     workers::{WorkerPool, Worker},
 };
 
+/// Get task type name for atomic events
+fn get_task_type_name(task: &CrawlingTask) -> String {
+    match task {
+        CrawlingTask::FetchListPage { .. } => "FetchListPage".to_string(),
+        CrawlingTask::ParseListPage { .. } => "ParseListPage".to_string(),
+        CrawlingTask::FetchProductDetail { .. } => "FetchProductDetail".to_string(),
+        CrawlingTask::ParseProductDetail { .. } => "ParseProductDetail".to_string(),
+        CrawlingTask::SaveProduct { .. } => "SaveProduct".to_string(),
+    }
+}
+
 /// Main orchestrator that coordinates the entire crawling process
 pub struct CrawlingOrchestrator {
     /// Worker pool for processing tasks
@@ -344,6 +355,7 @@ impl CrawlingOrchestrator {
                     shared_state,
                     queue_manager,
                     config,
+                    None, // EventEmitter는 나중에 추가
                 ).await;
                 
                 if let Err(e) = result {
@@ -363,7 +375,7 @@ impl CrawlingOrchestrator {
         queue_manager: Arc<QueueManager>,
         config: OrchestratorConfig,
     ) -> Result<(), OrchestratorError> {
-        process_single_task_static(task, worker_pool, shared_state, queue_manager, config).await
+        process_single_task_static(task, worker_pool, shared_state, queue_manager, config, None).await
     }
 
     /// Helper methods for internal operations
@@ -453,9 +465,20 @@ pub async fn process_single_task_static(
     shared_state: Arc<SharedState>,
     queue_manager: Arc<QueueManager>,
     config: OrchestratorConfig,
+    event_emitter: Option<Arc<crate::application::EventEmitter>>, // 추가: 원자적 이벤트용
 ) -> Result<(), OrchestratorError> {
     let start_time = Instant::now();
     let task_for_follow_up = task.clone(); // Clone task for follow-up use
+    let task_id = task.task_id(); // 태스크 ID 추출
+    let task_type = get_task_type_name(&task); // 태스크 타입 이름
+    
+    // 🎯 원자적 이벤트: 태스크 시작 알림
+    if let Some(emitter) = &event_emitter {
+        let _ = emitter.emit_task_started(
+            task_id.into(), // TaskId를 Uuid로 변환
+            task_type.clone()
+        ).await;
+    }
     
     // Route task to appropriate worker
     let task_result = match &task {
@@ -479,6 +502,17 @@ pub async fn process_single_task_static(
     // Handle task result
     match task_result {
         Ok(TaskResult::Success { task_id, output, duration }) => {
+            let duration_ms = duration.as_millis() as u64;
+            
+            // 🎯 원자적 이벤트: 태스크 완료 알림
+            if let Some(emitter) = &event_emitter {
+                let _ = emitter.emit_task_completed(
+                    task_id.into(),
+                    task_type.clone(),
+                    duration_ms
+                ).await;
+            }
+            
             // Update shared state with success
             shared_state.record_task_success(task_id, duration).await;
             
@@ -492,11 +526,34 @@ pub async fn process_single_task_static(
             }
         }
         Ok(TaskResult::Failure { task_id, error, duration, retry_count }) => {
+            let duration_ms = duration.as_millis() as u64;
+            
+            // 🎯 원자적 이벤트: 태스크 실패 알림
+            if let Some(emitter) = &event_emitter {
+                let _ = emitter.emit_task_failed(
+                    task_id.into(),
+                    task_type.clone(),
+                    error.to_string(),
+                    retry_count
+                ).await;
+            }
+            
             // Update shared state with failure
             shared_state.record_task_failure(task_id, error.clone(), duration).await;
             
             // Check if we should retry
             if retry_count < config.max_retries {
+                // 🎯 원자적 이벤트: 재시도 알림
+                if let Some(emitter) = &event_emitter {
+                    let retry_delay_ms = config.retry_delay.as_millis() as u64;
+                    let _ = emitter.emit_task_retrying(
+                        task_id.into(),
+                        task_type.clone(),
+                        retry_count + 1,
+                        retry_delay_ms
+                    ).await;
+                }
+                
                 // Re-enqueue with incremented retry count
                 let mut retry_task = task_for_follow_up.clone();
                 retry_task.increment_retry_count();

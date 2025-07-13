@@ -10,8 +10,10 @@
 pub mod modern_crawling;
 pub mod config_commands;
 pub mod crawling_v4;
+pub mod smart_crawling;
 
 // Re-export all commands
 pub use modern_crawling::*;
 pub use config_commands::*;
 pub use crawling_v4::*;
+pub use smart_crawling::*;

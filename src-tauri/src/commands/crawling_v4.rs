@@ -119,8 +119,12 @@ pub async fn init_crawling_engine(
     
     let product_repo = Arc::new(crate::infrastructure::IntegratedProductRepository::new(db_pool));
     
-    // Create default configuration for engine
-    let config = BatchCrawlingConfig::default();
+    // Create default configuration with CancellationToken
+    let cancellation_token = tokio_util::sync::CancellationToken::new();
+    let mut config = BatchCrawlingConfig::default();
+    config.cancellation_token = Some(cancellation_token);
+    
+    tracing::info!("🔄 Created BatchCrawlingConfig with cancellation_token");
     
     // Initialize the ServiceBasedBatchCrawlingEngine
     let engine = ServiceBasedBatchCrawlingEngine::new(
@@ -134,7 +138,7 @@ pub async fn init_crawling_engine(
     
     *engine_guard = Some(engine);
     
-    tracing::info!("Crawling engine v4.0 initialized successfully");
+    tracing::info!("Crawling engine v4.0 initialized successfully with cancellation support");
     
     Ok(CrawlingResponse {
         success: true,
@@ -174,24 +178,58 @@ pub async fn start_crawling(
     let (start_page, end_page) = calculate_intelligent_crawling_range_v4(&app_config, &request).await
         .map_err(|e| format!("Failed to calculate intelligent range: {}", e))?;
     
-    tracing::info!("� Step 5: Calculated optimal range: {} to {}", start_page, end_page);
+    tracing::info!("✅ Step 5: Calculated optimal range: {} to {}", start_page, end_page);
     
     // Validate page range
     if start_page == 0 || end_page == 0 {
         return Err("Page numbers must be greater than 0".to_string());
     }
     
+    // UI에 계산된 범위 정보 전송
+    if let Err(e) = app.emit("crawling-range-calculated", serde_json::json!({
+        "start_page": start_page,
+        "end_page": end_page,
+        "total_pages": end_page - start_page + 1,
+        "calculation_reason": "Based on intelligent range calculation"
+    })) {
+        tracing::warn!("Failed to emit range calculation event: {}", e);
+    }
+    
     tracing::info!("🔍 Step 6: Starting crawling execution...");
-    // Execute the crawling directly using the engine
+    
+    // 동기적으로 실행 (현재 구조에서는 백그라운드 실행 시 라이프타임 문제 발생)
+    // TODO: 향후 엔진 구조 개선 시 백그라운드 실행으로 변경
     let execution_result = engine.execute().await
         .map_err(|e| format!("Failed to execute crawling: {}", e));
     
     match execution_result {
         Ok(_) => {
             tracing::info!("✅ Crawling completed successfully: pages {} to {}", start_page, end_page);
+            
+            // 완료 이벤트 발송
+            if let Err(e) = app.emit("crawling-completed", serde_json::json!({
+                "status": "completed",
+                "message": "Crawling completed successfully",
+                "start_page": start_page,
+                "end_page": end_page,
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            })) {
+                tracing::warn!("Failed to emit completion event: {}", e);
+            }
         }
         Err(e) => {
             tracing::error!("❌ Crawling failed: {}", e);
+            
+            // 실패 이벤트 발송
+            if let Err(emit_err) = app.emit("crawling-failed", serde_json::json!({
+                "status": "failed",
+                "message": format!("Crawling failed: {}", e),
+                "error": e.to_string(),
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            })) {
+                tracing::warn!("Failed to emit failure event: {}", emit_err);
+            }
+            
             return Err(e);
         }
     }
@@ -209,17 +247,25 @@ pub async fn stop_crawling(
     app: AppHandle,
     state: State<'_, CrawlingEngineState>,
 ) -> Result<CrawlingResponse, String> {
-    tracing::info!("Stopping crawling...");
+    tracing::info!("🛑 Stop crawling command received");
     
+    // 1. 즉시 엔진 중단 신호 전송
     let engine_guard = state.engine.read().await;
-    let engine = engine_guard.as_ref()
-        .ok_or_else(|| "Crawling engine not initialized".to_string())?;
+    if let Some(engine) = engine_guard.as_ref() {
+        match engine.stop().await {
+            Ok(()) => {
+                tracing::info!("✅ Engine stop signal sent successfully");
+            }
+            Err(e) => {
+                tracing::warn!("⚠️ Failed to send stop signal to engine: {}", e);
+                // 중단 신호 전송 실패해도 UI 업데이트는 계속 진행
+            }
+        }
+    } else {
+        tracing::warn!("⚠️ No engine found to stop");
+    }
     
-    // ServiceBasedBatchCrawlingEngine doesn't have stop method
-    // For now, we'll just emit the stop event
-    tracing::info!("Crawling stop requested (engine doesn't support runtime stopping)");
-    
-    // Emit stop event to update UI immediately
+    // 2. 즉시 UI 상태 업데이트
     if let Err(e) = app.emit("crawling-stopped", serde_json::json!({
         "status": "stopped",
         "message": "Crawling has been stopped",
@@ -228,7 +274,8 @@ pub async fn stop_crawling(
         tracing::warn!("Failed to emit stop event: {}", e);
     }
     
-    tracing::info!("Crawling stopped successfully");
+    // 3. 즉시 응답 반환
+    tracing::info!("🛑 Stop crawling command completed - immediate response");
     
     Ok(CrawlingResponse {
         success: true,
