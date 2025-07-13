@@ -205,16 +205,40 @@ impl StatusChecker for StatusCheckerImpl {
         db_analysis: &DatabaseAnalysis
     ) -> Result<CrawlingRangeRecommendation> {
         info!("🔍 Calculating crawling range recommendation from site status and DB analysis...");
+        info!("📊 DB Analysis shows: total_products={}, unique_products={}", 
+              db_analysis.total_products, db_analysis.unique_products);
+        
+        // Cross-check with local status to ensure consistency
+        let local_status = self.get_local_db_status().await?;
+        
+        // Verify consistency between different DB access methods
+        let db_total = db_analysis.total_products as u32;
+        if db_total != local_status.total_saved_products {
+            warn!("⚠️  DB inconsistency detected: analysis={}, local_status={}", 
+                  db_analysis.total_products, local_status.total_saved_products);
+            
+            // Use the higher value for safer operation
+            let effective_total = db_total.max(local_status.total_saved_products);
+            info!("🔧 Using effective total: {}", effective_total);
+        }
         
         // If database is empty, recommend full crawl
-        if db_analysis.total_products == 0 {
-            info!("📊 Local DB is empty - recommending full crawl");
+        if db_analysis.total_products == 0 && local_status.is_empty {
+            info!("📊 Local DB is confirmed empty - recommending full crawl");
             return Ok(CrawlingRangeRecommendation::Full);
         }
         
+        // If there's inconsistency but some data exists, use partial crawl
+        if db_analysis.total_products == 0 && !local_status.is_empty {
+            warn!("⚠️  Inconsistent DB state: analysis says empty but local status says not empty");
+            warn!("⚠️  This suggests a DB access issue - using local status for safety");
+            // Continue with partial crawl logic using local_status data
+        }
+        
         // Calculate how many new products might have been added
-        let estimated_new_products = if site_status.estimated_products > db_analysis.total_products as u32 {
-            site_status.estimated_products - db_analysis.total_products as u32
+        let effective_total = (db_analysis.total_products as u32).max(local_status.total_saved_products);
+        let estimated_new_products = if site_status.estimated_products > effective_total {
+            site_status.estimated_products - effective_total
         } else {
             0
         };
@@ -1110,6 +1134,10 @@ impl StatusCheckerImpl {
             },
             None => {
                 warn!("⚠️  Product repository not available - assuming empty DB");
+                
+                // DB 분석과 로컬 상태가 불일치할 수 있음을 경고
+                warn!("⚠️  DB inconsistency possible: repository unavailable but analysis may show different results");
+                
                 Ok(LocalDbStatus {
                     is_empty: true,
                     max_page_id: 0,
@@ -1847,7 +1875,12 @@ impl CrawlingRangeCalculator {
         products_on_last_page: u32,
     ) -> Result<Option<(u32, u32)>> {
         let crawl_page_limit = self.config.user.crawling.page_range_limit;
-        let products_per_page = defaults::DEFAULT_PRODUCTS_PER_PAGE;
+        // ✅ 설정에서 실제 평균 페이지당 제품 수 사용 (이전: 하드코딩 12)
+        let products_per_page = self.config.app_managed.avg_products_per_page
+            .unwrap_or(defaults::DEFAULT_PRODUCTS_PER_PAGE as f64) as u32;
+        
+        info!("📊 Range calculation parameters: total_pages={}, products_on_last_page={}, products_per_page={}, limit={}", 
+              total_pages_on_site, products_on_last_page, products_per_page, crawl_page_limit);
 
         let range = self.product_repo.calculate_next_crawling_range(
             total_pages_on_site,

@@ -180,16 +180,35 @@ pub async fn start_crawling(
     
     tracing::info!("✅ Step 5: Calculated optimal range: {} to {}", start_page, end_page);
     
-    // Validate page range
+    // Validate page range for reverse crawling (start_page >= end_page is valid)
     if start_page == 0 || end_page == 0 {
         return Err("Page numbers must be greater than 0".to_string());
     }
     
+    // For reverse crawling, start_page should be >= end_page
+    // start_page is the older page (higher number), end_page is the newer page (lower number)
+    let (final_start_page, final_end_page) = if start_page < end_page {
+        tracing::warn!("⚠️ Range calculator returned forward direction, converting to reverse crawling");
+        let reverse_start = end_page;  // Use higher number as start (older page)
+        let reverse_end = start_page;  // Use lower number as end (newer page)
+        tracing::info!("🔄 Converted to reverse: pages {} down to {}", reverse_start, reverse_end);
+        (reverse_start, reverse_end)
+    } else {
+        (start_page, end_page)
+    };
+    
+    // Calculate total pages for reverse crawling: from final_start_page down to final_end_page
+    let total_pages = final_start_page.saturating_sub(final_end_page).saturating_add(1);
+    
+    tracing::info!("🔄 Reverse crawling setup: from page {} down to page {} (total: {} pages)", 
+                   final_start_page, final_end_page, total_pages);
+    
     // UI에 계산된 범위 정보 전송
     if let Err(e) = app.emit("crawling-range-calculated", serde_json::json!({
-        "start_page": start_page,
-        "end_page": end_page,
-        "total_pages": end_page - start_page + 1,
+        "start_page": final_start_page,
+        "end_page": final_end_page,
+        "total_pages": total_pages,
+        "crawling_direction": "reverse",
         "calculation_reason": "Based on intelligent range calculation"
     })) {
         tracing::warn!("Failed to emit range calculation event: {}", e);
@@ -204,7 +223,7 @@ pub async fn start_crawling(
     
     match execution_result {
         Ok(_) => {
-            tracing::info!("✅ Crawling completed successfully: pages {} to {}", start_page, end_page);
+            tracing::info!("✅ Crawling completed successfully: pages {} to {}", final_start_page, final_end_page);
             
             // 완료 이벤트 발송
             if let Err(e) = app.emit("crawling-completed", serde_json::json!({
@@ -236,7 +255,7 @@ pub async fn start_crawling(
     
     Ok(CrawlingResponse {
         success: true,
-        message: format!("Crawling started: pages {} to {}", start_page, end_page),
+        message: format!("Crawling started: pages {} to {}", final_start_page, final_end_page),
         data: None,
     })
 }
@@ -468,13 +487,14 @@ async fn calculate_intelligent_crawling_range_v4(
     tracing::info!("🔍 Using proven smart_crawling.rs range calculation logic...");
     tracing::info!("📝 User request: start_page={}, end_page={}", user_request.start_page, user_request.end_page);
     
-    // If user provided explicit range, use it directly
+    // If user provided explicit range (both > 0), use it directly
     if user_request.start_page > 0 && user_request.end_page > 0 {
         tracing::info!("✅ Using explicit user range: {} to {}", user_request.start_page, user_request.end_page);
         return Ok((user_request.start_page, user_request.end_page));
     }
     
-    // Otherwise, use the proven smart calculation from smart_crawling.rs
+    // If 0 values provided, use intelligent calculation
+    tracing::info!("🧠 User provided 0 values - using intelligent calculation from app config and DB state");
     // Get configuration
     let config_manager = crate::infrastructure::config::ConfigManager::new()
         .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
@@ -491,13 +511,33 @@ async fn calculate_intelligent_crawling_range_v4(
 
     // Create range calculator with proven implementation
     let range_calculator = CrawlingRangeCalculator::new(
-        repo_arc,
-        config,
+        repo_arc.clone(),
+        config.clone(),
     );
 
-    // Use default site parameters (these will be auto-discovered by the calculator)
-    let total_pages_on_site = 481; // Default known value
-    let products_on_last_page = 10; // Default known value
+    // ✅ 실제 사이트 상태 분석 (하드코딩 제거)
+    tracing::info!("🔍 Performing real-time site analysis...");
+    let http_client = crate::infrastructure::HttpClient::new()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    
+    let data_extractor = crate::infrastructure::MatterDataExtractor::new()
+        .map_err(|e| format!("Failed to create data extractor: {}", e))?;
+    
+    let status_checker = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
+        http_client,
+        data_extractor,
+        config,
+    );
+    
+    let site_status = status_checker.check_site_status().await
+        .map_err(|e| format!("Failed to check site status: {}", e))?;
+    
+    tracing::info!("📊 Real site status: total_pages={}, products_on_last_page={}", 
+                   site_status.total_pages, site_status.products_on_last_page);
+
+    // ✅ 실제 사이트 데이터 사용 (하드코딩 제거)
+    let total_pages_on_site = site_status.total_pages;
+    let products_on_last_page = site_status.products_on_last_page;
 
     tracing::info!("🌐 Using site parameters: {} total pages, {} products on last page", 
                   total_pages_on_site, products_on_last_page);
@@ -512,20 +552,38 @@ async fn calculate_intelligent_crawling_range_v4(
     
     match result {
         Some((start_page, end_page)) => {
-            tracing::info!("✅ Calculated range: pages {} to {} (total: {} pages)", 
-                          start_page, end_page, start_page - end_page + 1);
-            Ok((start_page, end_page))
+            // For reverse crawling, start_page should be >= end_page (we crawl from newer to older pages)
+            // start_page = older page (higher number), end_page = newer page (lower number)
+            if start_page < end_page {
+                tracing::warn!("⚠️ Range calculator returned forward direction: start_page ({}) < end_page ({})", start_page, end_page);
+                tracing::info!("� Converting to reverse crawling direction");
+                // For reverse crawling, swap the values so start_page > end_page
+                let reverse_start = end_page;   // Use the larger number as start (older page)
+                let reverse_end = start_page;   // Use the smaller number as end (newer page)
+                let total_pages = reverse_start.saturating_sub(reverse_end).saturating_add(1);
+                tracing::info!("✅ Reverse crawling range: pages {} down to {} (total: {} pages)", 
+                              reverse_start, reverse_end, total_pages);
+                Ok((reverse_start, reverse_end))
+            } else {
+                // Already in correct reverse order: start_page >= end_page
+                let total_pages = start_page.saturating_sub(end_page).saturating_add(1);
+                tracing::info!("✅ Calculated reverse range: pages {} down to {} (total: {} pages)", 
+                              start_page, end_page, total_pages);
+                Ok((start_page, end_page))
+            }
         },
         None => {
-            tracing::info!("� All products crawled - using verification range");
-            // Return a small verification range
+            tracing::info!("✅ All products crawled - using verification range");
+            // Return a small verification range for reverse crawling
             let verification_pages = 5;
-            let start_page = total_pages_on_site;
+            let start_page = total_pages_on_site;  // Start from the last page (oldest)
             let end_page = if start_page >= verification_pages {
-                start_page - verification_pages + 1
+                start_page.saturating_sub(verification_pages).saturating_add(1)  // Go back a few pages
             } else {
                 1
             };
+            tracing::info!("🔍 Verification range: pages {} down to {} ({} pages)", 
+                          start_page, end_page, verification_pages);
             Ok((start_page, end_page))
         }
     }

@@ -17,9 +17,7 @@ import type {
   DatabaseStats
 } from '../types/crawling';
 import type { 
-  AtomicTaskEvent, 
-  AtomicEventType, 
-  AtomicEventStats 
+  AtomicTaskEvent
 } from '../types/atomic-events';
 
 /**
@@ -55,10 +53,10 @@ export class TauriApiService {
       }
       
       // 2. 백엔드에서 기대하는 StartCrawlingRequest 형태로 파라미터 전달
-      // start_page와 end_page를 전달하면 백엔드에서 해당 범위를 크롤링
+      // start_page와 end_page가 0이면 백엔드에서 지능형 계산 사용
       const request = {
-        start_page: startPage || 1,     // 시작 페이지 (기본값: 1)
-        end_page: endPage || 50,        // 끝 페이지 (기본값: 50)
+        start_page: startPage || 0,     // 0이면 백엔드에서 지능형 계산
+        end_page: endPage || 0,         // 0이면 백엔드에서 지능형 계산
         max_products_per_page: null,
         concurrent_requests: null,
         request_timeout_seconds: null
@@ -366,10 +364,10 @@ export class TauriApiService {
   /**
    * Subscribe to task started events specifically
    */
-  async subscribeToTaskStarted(callback: (event: AtomicTaskEvent & { type: 'TaskStarted' }) => void): Promise<UnlistenFn> {
+  async subscribeToTaskStarted(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
     return this.subscribeToAtomicTaskEvents((event) => {
-      if (event.type === 'TaskStarted') {
-        callback(event as AtomicTaskEvent & { type: 'TaskStarted' });
+      if (event.event_type.type === 'TaskStarted') {
+        callback(event);
       }
     });
   }
@@ -377,10 +375,10 @@ export class TauriApiService {
   /**
    * Subscribe to task completed events specifically
    */
-  async subscribeToTaskCompleted(callback: (event: AtomicTaskEvent & { type: 'TaskCompleted' }) => void): Promise<UnlistenFn> {
+  async subscribeToTaskCompleted(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
     return this.subscribeToAtomicTaskEvents((event) => {
-      if (event.type === 'TaskCompleted') {
-        callback(event as AtomicTaskEvent & { type: 'TaskCompleted' });
+      if (event.event_type.type === 'TaskCompleted') {
+        callback(event);
       }
     });
   }
@@ -388,10 +386,10 @@ export class TauriApiService {
   /**
    * Subscribe to task failed events specifically
    */
-  async subscribeToTaskFailed(callback: (event: AtomicTaskEvent & { type: 'TaskFailed' }) => void): Promise<UnlistenFn> {
+  async subscribeToTaskFailed(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
     return this.subscribeToAtomicTaskEvents((event) => {
-      if (event.type === 'TaskFailed') {
-        callback(event as AtomicTaskEvent & { type: 'TaskFailed' });
+      if (event.event_type.type === 'TaskFailed') {
+        callback(event);
       }
     });
   }
@@ -399,10 +397,10 @@ export class TauriApiService {
   /**
    * Subscribe to task retrying events specifically
    */
-  async subscribeToTaskRetrying(callback: (event: AtomicTaskEvent & { type: 'TaskRetrying' }) => void): Promise<UnlistenFn> {
+  async subscribeToTaskRetrying(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
     return this.subscribeToAtomicTaskEvents((event) => {
-      if (event.type === 'TaskRetrying') {
-        callback(event as AtomicTaskEvent & { type: 'TaskRetrying' });
+      if (event.event_type.type === 'TaskRetrying') {
+        callback(event);
       }
     });
   }

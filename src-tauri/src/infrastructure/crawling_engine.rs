@@ -31,7 +31,7 @@ impl Default for BatchCrawlingConfig {
     fn default() -> Self {
         Self {
             start_page: 1,
-            end_page: 100,
+            end_page: 1, // Changed from 100 - will be overridden by intelligent range calculation
             concurrency: 3,
             delay_ms: 1000,
             batch_size: 10,
@@ -202,76 +202,84 @@ impl BatchCrawlingEngine {
         Ok(all_product_urls)
     }
 
-    /// Stage 3: 제품 상세정보 수집 (병렬 처리)
+    /// Stage 3: 제품 상세정보 수집 (개선된 병렬 처리 - Spawn All, Control with Semaphore)
     async fn stage3_collect_product_details(&self, product_urls: &[String]) -> Result<Vec<serde_json::Value>> {
-        info!("Stage 3: Collecting product details from {} URLs", product_urls.len());
+        info!("Stage 3: Collecting product details from {} URLs (improved concurrency)", product_urls.len());
         
         let total_products = product_urls.len() as u32;
         self.emit_progress(CrawlingStage::ProductDetails, 0, total_products, 0.0,
             "제품 상세정보를 수집하는 중...").await?;
 
         let semaphore = Arc::new(Semaphore::new(self.config.concurrency as usize));
-        let mut all_products = Vec::new();
-        let mut completed_products = 0u32;
 
-        // 배치별로 제품 상세정보 수집
-        for batch in product_urls.chunks(self.config.batch_size as usize) {
-            let batch_tasks: Vec<_> = batch.iter().enumerate().map(|(idx, url)| {
-                let semaphore = Arc::clone(&semaphore);
-                let http_client = Arc::clone(&self.http_client);
-                let data_extractor = Arc::clone(&self.data_extractor);
-                let url = url.clone();
-                let delay_ms = self.config.delay_ms;
+        // Spawn ALL tasks at once - proposal6.md recommendation
+        let tasks: Vec<_> = product_urls.iter().enumerate().map(|(idx, url)| {
+            let semaphore = Arc::clone(&semaphore);
+            let http_client = Arc::clone(&self.http_client);
+            let data_extractor = Arc::clone(&self.data_extractor);
+            let url = url.clone();
+            let delay_ms = self.config.delay_ms;
 
-                tokio::spawn(async move {
-                    let _permit = semaphore.acquire().await.unwrap();
-                    
-                    if delay_ms > 0 && idx > 0 {
-                        sleep(Duration::from_millis(delay_ms)).await;
-                    }
-
-                    debug!("Fetching product details: {}", url);
-                    
-                    let mut client = http_client.lock().await;
-                    match client.fetch_html_string(&url).await {
-                        Ok(html_str) => {
-                            match data_extractor.extract_product_data(&html_str) {
-                                Ok(product) => {
-                                    debug!("Successfully extracted product data from: {}", url);
-                                    Ok(Some(product))
-                                },
-                                Err(e) => {
-                                    warn!("Failed to extract product data from {}: {}", url, e);
-                                    Ok(None)
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            error!("Failed to fetch product page {}: {}", url, e);
-                            Err(e)
-                        }
-                    }
-                })
-            }).collect();
-
-            // 배치 실행 및 결과 수집
-            let batch_results = try_join_all(batch_tasks).await?;
-            for result in batch_results {
-                match result {
-                    Ok(Some(product)) => all_products.push(product),
-                    Ok(None) => {}, // 추출 실패한 제품은 무시
-                    Err(e) => warn!("Product detail task failed: {}", e),
+            tokio::spawn(async move {
+                let _permit = semaphore.acquire().await.unwrap();
+                
+                if delay_ms > 0 && idx > 0 {
+                    sleep(Duration::from_millis(delay_ms)).await;
                 }
-            }
 
-            completed_products += batch.len() as u32;
-            let progress = (completed_products as f64 / total_products as f64) * 100.0;
-            
-            self.emit_progress(CrawlingStage::ProductDetails, completed_products, total_products, 
-                progress, &format!("{}/{} 제품 상세정보 수집 완료", completed_products, total_products)).await?;
+                debug!("Fetching product details: {}", url);
+                
+                let mut client = http_client.lock().await;
+                match client.fetch_html_string(&url).await {
+                    Ok(html_str) => {
+                        match data_extractor.extract_product_data(&html_str) {
+                            Ok(product) => {
+                                debug!("Successfully extracted product data from: {}", url);
+                                Ok(Some(product))
+                            },
+                            Err(e) => {
+                                warn!("Failed to extract product data from {}: {}", url, e);
+                                Ok(None)
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        error!("Failed to fetch product page {}: {}", url, e);
+                        Err(e)
+                    }
+                }
+            })
+        }).collect();
+
+        // Wait for ALL tasks to complete - no chunking
+        let all_results = try_join_all(tasks).await?;
+        
+        // Collect results
+        let mut all_products = Vec::new();
+        let mut successful_count = 0u32;
+        let mut failed_count = 0u32;
+
+        for result in all_results {
+            match result {
+                Ok(Some(product)) => {
+                    all_products.push(product);
+                    successful_count += 1;
+                },
+                Ok(None) => {
+                    failed_count += 1;
+                },
+                Err(e) => {
+                    warn!("Product detail task failed: {}", e);
+                    failed_count += 1;
+                },
+            }
         }
 
-        info!("Stage 3 completed: {} products detailed collected", all_products.len());
+        // Final progress update
+        self.emit_progress(CrawlingStage::ProductDetails, total_products, total_products, 
+            100.0, &format!("제품 상세정보 수집 완료: 성공 {}, 실패 {}", successful_count, failed_count)).await?;
+
+        info!("Stage 3 completed: {} products detailed collected (no chunking)", all_products.len());
         Ok(all_products)
     }
 

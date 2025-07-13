@@ -725,7 +725,7 @@ pub mod defaults {
     pub const DB_MAX_CONCURRENCY: usize = 10;
     
     // Crawling configuration defaults
-    /// Default page range limit
+    /// Default page range limit - Restored to 100 for intelligent crawling
     pub const PAGE_RANGE_LIMIT: u32 = 100;
     
     /// Default product list retry count

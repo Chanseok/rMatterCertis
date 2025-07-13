@@ -11,7 +11,7 @@ import { CrawlingStage, CrawlingStatus } from '../../types/crawling';
 export const GameDashboardTab: Component = () => {
   const [isRunning, setIsRunning] = createSignal(false);
   const [crawlingProgress, setCrawlingProgress] = createSignal<CrawlingProgress | null>(null);
-  const [sessionId, setSessionId] = createSignal<string | null>(null);
+  const [, setSessionId] = createSignal<string | null>(null);
 
   let progressInterval: number;
 

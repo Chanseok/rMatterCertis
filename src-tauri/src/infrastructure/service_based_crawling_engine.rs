@@ -38,7 +38,7 @@ impl Default for BatchCrawlingConfig {
     fn default() -> Self {
         Self {
             start_page: 1,
-            end_page: 100,
+            end_page: 1, // ✅ 기본값을 1로 설정 (실제 계산된 범위 사용)
             concurrency: 3,
             delay_ms: 1000,
             batch_size: 10,
@@ -230,9 +230,12 @@ impl ServiceBasedBatchCrawlingEngine {
         
         // Stage 0.5: 지능형 범위 재계산 및 실제 적용 - Phase 4 Implementation
         info!("🧠 Stage 0.5: Performing intelligent range recalculation");
+        info!("📊 Site analysis: total_pages={}, products_on_last_page={}", 
+              site_status.total_pages, site_status.products_on_last_page);
+        
         let optimal_range = self.range_calculator.calculate_next_crawling_range(
             site_status.total_pages,
-            10, // products_on_last_page (default assumption)
+            site_status.products_on_last_page, // ✅ 실제 값 사용 (이전: 하드코딩 10)
         ).await?;
         
         // 계산된 범위를 실제로 적용하여 최종 범위 결정

@@ -77,8 +77,7 @@ const ClassicStatusView: Component = () => {
   // 설정은 백엔드에서 관리됨 - 여기서는 제거됨
 
   // 현재 크롤링 모드 상태
-  const [currentCrawlingMode, setCurrentCrawlingMode] = createSignal<string>('분석 필요');
-  const [plannedRange, setPlannedRange] = createSignal<[number, number] | null>(null);
+  const [currentCrawlingMode, setCurrentCrawlingMode] = createSignal<string>('백엔드 지능형 계산 모드');
 
   // 이벤트 리스너 등록
   onMount(async () => {
@@ -157,21 +156,19 @@ const ClassicStatusView: Component = () => {
     return '상태 체크를 먼저 실행해주세요.';
   };
 
-  // 크롤링 계획 분석
+  // 크롤링 계획 분석 - 백엔드 지능형 계산 사용
   const analyzeCrawlingPlan = () => {
     const statusResult = getActiveResult();
     const siteResult = crawlerStore.siteAnalysisResult();
     
-    let startPage = 1;
-    let endPage = 50; // 백엔드 기본값 사용
-    let mode = '기본 설정 모드';
+    let mode = '지능형 계산 모드';
+    let displayRange: [number, number] | null = null;
     
     if (statusResult) {
       const suggestion = statusResult.recommendation?.suggested_range;
       if (suggestion && suggestion.length >= 2) {
-        startPage = suggestion[0];
-        endPage = suggestion[1];
-        mode = '스마트 추천 모드';
+        displayRange = [suggestion[0], suggestion[1]];
+        mode = '스마트 추천 모드 (실시간 체크 기반)';
       }
     } else if (siteResult) {
       const dbStatus = siteResult.database_status;
@@ -179,23 +176,21 @@ const ClassicStatusView: Component = () => {
       
       if (dbStatus && siteStatus) {
         const dbMaxPage = Math.max(...(dbStatus.page_range || [0]));
-        const siteMaxPage = siteStatus.total_pages || 50; // 백엔드 기본값 사용
+        const siteMaxPage = siteStatus.total_pages;
         
-        if (dbMaxPage > 0) {
-          startPage = dbMaxPage + 1;
-          endPage = Math.min(startPage + 50 - 1, siteMaxPage); // 백엔드 기본값 사용
-          mode = '갭 기반 크롤링 모드';
-        } else {
-          startPage = 1;
-          endPage = Math.min(50, siteMaxPage); // 백엔드 기본값 사용
-          mode = '초기 크롤링 모드';
+        if (dbMaxPage > 0 && siteMaxPage) {
+          // 표시용 예상 범위 (실제 계산은 백엔드에서)
+          displayRange = [dbMaxPage + 1, Math.min(dbMaxPage + 100, siteMaxPage)];
+          mode = '갭 기반 크롤링 모드 (백엔드 계산)';
+        } else if (siteMaxPage) {
+          displayRange = [1, Math.min(100, siteMaxPage)];
+          mode = '초기 크롤링 모드 (백엔드 계산)';
         }
       }
     }
     
     setCurrentCrawlingMode(mode);
-    setPlannedRange([startPage, endPage]);
-    return { mode, startPage, endPage };
+    return { mode, displayRange };
   };
 
   // 상태나 설정 변경 시 크롤링 계획 재분석
@@ -210,66 +205,15 @@ const ClassicStatusView: Component = () => {
     console.log('🔍 상태 체크 결과:', statusResult);
     console.log('🔍 사이트 분석 결과:', siteResult);
     
-    // 스마트한 페이지 범위 계산 로직
-    let startPage = 1;
-    let endPage = 50; // 백엔드 기본값 사용
-    let crawlingMode = '기본 모드';
+    // 백엔드 지능형 계산 모드 - 프론트엔드에서 범위 계산하지 않음
+    console.log('🧠 백엔드 지능형 계산 사용 - 프론트엔드 범위 계산 건너뜀');
     
-    if (statusResult) {
-      // 실시간 상태 체크 결과가 있는 경우 (추천 범위 사용)
-      const suggestion = statusResult.recommendation?.suggested_range;
-      if (suggestion && suggestion.length >= 2) {
-        startPage = suggestion[0];
-        endPage = suggestion[1];
-        crawlingMode = '스마트 추천 모드';
-        console.log('📊 실시간 상태 체크 기반 추천:', `${startPage}-${endPage} 페이지`);
-      }
-    } else if (siteResult) {
-      // 사이트 분석 결과만 있는 경우 (갭 기반 크롤링)
-      const dbStatus = siteResult.database_status;
-      const siteStatus = siteResult.site_status;
-      
-      if (dbStatus && siteStatus) {
-        const dbMaxPage = Math.max(...(dbStatus.page_range || [0]));
-        const siteMaxPage = siteStatus.total_pages || 50; // 백엔드 기본값 사용
-        
-        if (dbMaxPage > 0) {
-          // DB에 데이터가 있는 경우: DB 마지막 페이지 다음부터 크롤링
-          startPage = dbMaxPage + 1;
-          endPage = Math.min(startPage + 50 - 1, siteMaxPage); // 백엔드 기본값 사용
-          crawlingMode = '갭 기반 크롤링 모드';
-          console.log('📈 갭 기반 크롤링:', `DB 마지막 페이지(${dbMaxPage}) 이후 ${startPage}-${endPage} 페이지`);
-        } else {
-          // DB가 비어있는 경우: 처음부터 크롤링
-          startPage = 1;
-          endPage = Math.min(50, siteMaxPage); // 백엔드 기본값 사용
-          crawlingMode = '초기 크롤링 모드';
-          console.log('🆕 초기 크롤링:', `처음부터 ${startPage}-${endPage} 페이지`);
-        }
-      }
-    } else {
-      // 분석 결과가 없는 경우: 백엔드 기본값 사용
-      startPage = 1;
-      endPage = 50; // 백엔드 기본값 사용
-      crawlingMode = '기본 설정 모드';
-      console.log('⚙️ 기본 설정 모드:', `${startPage}-${endPage} 페이지`);
-    }
-    
-    // 사용자 확인 대화상자 추가
-    console.log('❓ 사용자 확인 대화상자를 표시합니다:', {
-      mode: crawlingMode,
-      startPage,
-      endPage,
-      totalPages: endPage - startPage + 1
-    });
-    
-    const confirmMessage = `🔧 크롤링 설정 확인\n\n` +
-      `모드: ${crawlingMode}\n` +
-      `범위: ${startPage} ~ ${endPage} 페이지 (총 ${endPage - startPage + 1}페이지)\n` +
-      `병렬 처리: 24개 페이지 동시 처리\n` +
-      `예상 시간: ${Math.ceil((endPage - startPage + 1) * 2 / 24)}분\n\n` +
-      `⚠️ 설정을 변경하려면 '설정' 탭에서 page_range_limit 값을 조정하세요.\n\n` +
-      `이 설정으로 크롤링을 시작하시겠습니까?`;
+    // 백엔드에서 완전히 계산하도록 하기 위해 확인 대화상자도 단순화
+    const confirmMessage = `🧠 지능형 크롤링 시작\n\n` +
+      `✨ 백엔드에서 최적의 크롤링 범위를 실시간 계산합니다\n` +
+      `🔍 사이트 상태와 DB 상태를 분석하여 자동 결정\n` +
+      `⚡ 병렬 처리 및 최적화된 성능\n\n` +
+      `크롤링을 시작하시겠습니까?`;
     
     console.log('📝 대화상자 메시지:', confirmMessage);
     
@@ -305,31 +249,15 @@ const ClassicStatusView: Component = () => {
     
     console.log('✅ 사용자가 크롤링을 승인했습니다. 진행합니다...');
     
-    // 페이지 범위 검증
-    if (startPage > endPage) {
-      alert('시작 페이지가 끝 페이지보다 클 수 없습니다.');
-      return;
-    }
-    
-    if (endPage - startPage + 1 > 100) {
-      alert('한 번에 100페이지 이상은 크롤링할 수 없습니다.');
-      return;
-    }
-    
     try {
       setCrawlingStatus('running');
-      console.log('� 크롤링 시작:', {
-        mode: crawlingMode,
-        startPage,
-        endPage,
-        totalPages: endPage - startPage + 1
-      });
+      console.log('🧠 백엔드 지능형 크롤링 시작');
       
-    // 백엔드에서 지능적인 범위 계산을 사용하도록 수정
-    // startPage, endPage를 전달하지 않고 백엔드가 계산하도록 함
-    console.log('📞 tauriApi.startCrawling 호출 시도 (백엔드 지능형 범위 계산 사용)...');
-    const sessionId = await tauriApi.startCrawling(undefined, undefined); // 백엔드에서 지능적 범위 계산 사용
-    console.log('✅ 크롤링 세션 시작됨:', sessionId);
+      // 백엔드에서 지능적인 범위 계산을 사용하도록 수정
+      // startPage, endPage를 전달하지 않고 백엔드가 계산하도록 함
+      console.log('📞 tauriApi.startCrawling 호출 시도 (백엔드 지능형 범위 계산 사용)...');
+      const sessionId = await tauriApi.startCrawling(undefined, undefined); // 백엔드에서 지능적 범위 계산 사용
+      console.log('✅ 크롤링 세션 시작됨:', sessionId);
       
       // 실시간 진행률 업데이트 시작 (crawlerStore에서 처리)
       console.log('🔄 실시간 업데이트 시작...');
@@ -642,18 +570,15 @@ const ClassicStatusView: Component = () => {
             <span style="color: #6b7280;">
               <strong>모드:</strong> <span style="color: #059669;">{currentCrawlingMode()}</span>
             </span>
-            {plannedRange() && (
-              <span style="color: #6b7280;">
-                <strong>범위:</strong> <span style="color: #dc2626;">{plannedRange()![0]}-{plannedRange()![1]} 페이지</span>
-                <span style="color: #6b7280; margin-left: 8px;">({plannedRange()![1] - plannedRange()![0] + 1}페이지)</span>
-              </span>
-            )}
+            <span style="color: #6b7280;">
+              <strong>범위:</strong> <span style="color: #3b82f6;">백엔드에서 자동 계산</span>
+            </span>
           </div>
         </div>
         
         {statusCheckResult() && (
           <div style="margin-bottom: 16px; padding: 12px; background: #f0f9ff; border-radius: 6px; border-left: 4px solid #3b82f6; font-size: 14px;">
-            <strong>🎯 추천 크롤링:</strong> 페이지 {statusCheckResult()!.recommendation?.suggested_range?.[0] || 1}-{statusCheckResult()!.recommendation?.suggested_range?.[1] || 50} 
+            <strong>🎯 추천 크롤링:</strong> 백엔드에서 실시간 분석 후 자동 범위 결정
             (약 {statusCheckResult()!.recommendation?.estimated_new_items || 0}개 신규 제품 예상)
           </div>
         )}
