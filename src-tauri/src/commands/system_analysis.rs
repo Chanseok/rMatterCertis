@@ -29,15 +29,12 @@ pub async fn analyze_system_status(
 ) -> Result<CrawlingResponse, String> {
     info!("🔍 Starting comprehensive system analysis...");
     
-    // Phase 1: Site Analysis
-    info!("📊 Phase 1: Performing site analysis");
-    let site_analysis = perform_site_analysis().await
-        .map_err(|e| format!("Site analysis failed: {}", e))?;
-    
-    // Phase 2: Database Analysis  
-    info!("🗄️ Phase 2: Performing database analysis");
-    let db_analysis = perform_database_analysis().await
-        .map_err(|e| format!("Database analysis failed: {}", e))?;
+    // Phase 1 & 2: Perform Site and Database Analysis in Parallel
+    info!("📊 Phase 1 & 2: Performing site and database analysis in parallel...");
+    let (site_analysis, db_analysis) = tokio::try_join!(
+        perform_site_analysis(),
+        perform_database_analysis()
+    ).map_err(|e| format!("System analysis failed: {}", e))?;
     
     // Phase 3: Update SharedStateCache
     info!("💾 Phase 3: Updating SharedStateCache with analysis results");

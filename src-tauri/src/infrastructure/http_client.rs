@@ -25,7 +25,7 @@ impl Default for HttpClientConfig {
         Self {
             user_agent: "matter-certis-v2/1.0 (Educational Purpose)".to_string(),
             timeout_seconds: 30,
-            max_requests_per_second: 2, // Conservative rate limit
+            max_requests_per_second: 7, // 1000ms / 150ms = ~6.66 -> 7
             respect_robots_txt: true,
             follow_redirects: true,
         }

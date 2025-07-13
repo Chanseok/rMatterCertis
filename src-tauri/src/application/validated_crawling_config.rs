@@ -19,6 +19,8 @@ pub struct ValidatedCrawlingConfig {
     pub products_per_page: u32,
     pub page_range_limit: u32,
     pub enable_debug_logging: bool,
+    pub list_page_max_concurrent: u32,
+    pub product_detail_max_concurrent: u32,
 }
 
 impl ValidatedCrawlingConfig {
@@ -46,6 +48,8 @@ impl ValidatedCrawlingConfig {
             products_per_page: 12, // Matters.town has 12 products per page
             page_range_limit: app_config.user.crawling.page_range_limit,
             enable_debug_logging: app_config.user.verbose_logging,
+            list_page_max_concurrent: app_config.user.crawling.workers.list_page_max_concurrent as u32,
+            product_detail_max_concurrent: app_config.user.crawling.workers.product_detail_max_concurrent as u32,
         }
     }
 
@@ -85,6 +89,8 @@ impl Default for ValidatedCrawlingConfig {
             products_per_page: 12, // Matters.town has 12 products per page
             page_range_limit: 20, // Default page range limit
             enable_debug_logging: false, // Default debug logging off
+            list_page_max_concurrent: 10, // Default list page concurrency
+            product_detail_max_concurrent: 8, // Default product detail concurrency
         }
     }
 }

@@ -9,6 +9,10 @@ use std::time::Duration;
 pub struct ValidatedCrawlingConfig {
     /// 검증된 최대 동시 요청 수 (하드코딩 제거)
     pub max_concurrent: u32,
+    /// 검증된 리스트 페이지 수집 동시성
+    pub list_page_max_concurrent: u32,
+    /// 검증된 제품 상세 수집 동시성
+    pub product_detail_max_concurrent: u32,
     /// 검증된 페이지 범위 제한 (하드코딩 제거) 
     pub page_range_limit: u32,
     /// 검증된 배치 크기
@@ -34,6 +38,16 @@ impl ValidatedCrawlingConfig {
         
         // 동시성 설정 검증 (1-50 범위)
         let max_concurrent = workers_config.list_page_max_concurrent
+            .max(1)   // 최소 1개
+            .min(50); // 최대 50개
+            
+        // 리스트 페이지 동시성 검증 (1-50 범위)
+        let list_page_max_concurrent = workers_config.list_page_max_concurrent
+            .max(1)   // 최소 1개
+            .min(50); // 최대 50개
+            
+        // 제품 상세 동시성 검증 (1-50 범위)
+        let product_detail_max_concurrent = workers_config.product_detail_max_concurrent
             .max(1)   // 최소 1개
             .min(50); // 최대 50개
             
@@ -64,6 +78,8 @@ impl ValidatedCrawlingConfig {
             
         Self {
             max_concurrent,
+            list_page_max_concurrent,
+            product_detail_max_concurrent,
             page_range_limit,
             batch_size,
             semaphore_permits: max_concurrent as usize,
@@ -99,12 +115,44 @@ impl ValidatedCrawlingConfig {
     pub fn get_request_timeout(&self) -> Duration {
         Duration::from_secs(self.request_timeout_seconds as u64)
     }
+    
+    /// 최대 동시 요청 수 반환
+    pub fn max_concurrent(&self) -> u32 {
+        self.max_concurrent
+    }
+    
+    /// 리스트 페이지 최대 동시 수집 수 반환
+    pub fn list_page_max_concurrent(&self) -> u32 {
+        self.list_page_max_concurrent
+    }
+    
+    /// 제품 상세 최대 동시 수집 수 반환
+    pub fn product_detail_max_concurrent(&self) -> u32 {
+        self.product_detail_max_concurrent
+    }
+    
+    /// 배치 크기 반환
+    pub fn batch_size(&self) -> u32 {
+        self.batch_size
+    }
+    
+    /// 요청 지연 시간 반환
+    pub fn request_delay(&self) -> Duration {
+        self.get_request_delay()
+    }
+    
+    /// 최대 재시도 횟수 반환
+    pub fn max_retries(&self) -> u32 {
+        self.max_retries
+    }
 }
 
 impl Default for ValidatedCrawlingConfig {
     fn default() -> Self {
         Self {
             max_concurrent: 3,
+            list_page_max_concurrent: 5,
+            product_detail_max_concurrent: 10,
             page_range_limit: 10,
             batch_size: 50,
             semaphore_permits: 3,
@@ -133,6 +181,8 @@ mod tests {
         
         // 검증된 범위 확인
         assert_eq!(validated.max_concurrent, 1); // 최소값으로 보정
+        assert_eq!(validated.list_page_max_concurrent, 1); // 최소값으로 보정
+        assert_eq!(validated.product_detail_max_concurrent, 1); // 기본값으로 보정
         assert_eq!(validated.page_range_limit, 500); // 최대값으로 보정
         assert_eq!(validated.request_delay_ms, 100); // 최소값으로 보정
         assert_eq!(validated.semaphore_permits, 1); // max_concurrent와 동일
@@ -144,6 +194,7 @@ mod tests {
         
         // 정상적인 값들 설정
         config.user.crawling.workers.list_page_max_concurrent = 24;
+        config.user.crawling.workers.product_detail_max_concurrent = 15;
         config.user.crawling.page_range_limit = 20;
         config.user.request_delay_ms = 500;
         
@@ -151,6 +202,8 @@ mod tests {
         
         // 설정값이 그대로 유지되는지 확인
         assert_eq!(validated.max_concurrent, 24);
+        assert_eq!(validated.list_page_max_concurrent, 24);
+        assert_eq!(validated.product_detail_max_concurrent, 15);
         assert_eq!(validated.page_range_limit, 20);
         assert_eq!(validated.request_delay_ms, 500);
         assert_eq!(validated.semaphore_permits, 24);

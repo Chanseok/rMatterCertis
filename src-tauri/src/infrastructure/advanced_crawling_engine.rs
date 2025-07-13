@@ -15,6 +15,7 @@ use crate::domain::services::{
 };
 use crate::domain::events::{CrawlingProgress, CrawlingStage, CrawlingStatus};
 use crate::domain::product::Product;
+use crate::domain::product_url::ProductUrl;
 use crate::application::EventEmitter;
 use crate::infrastructure::{
     HttpClient, MatterDataExtractor, IntegratedProductRepository,
@@ -376,7 +377,7 @@ impl AdvancedBatchCrawlingEngine {
     }
 
     /// Stage 2: 제품 목록 수집
-    async fn stage2_collect_product_list(&self, total_pages: u32) -> Result<Vec<String>> {
+    async fn stage2_collect_product_list(&self, total_pages: u32) -> Result<Vec<ProductUrl>> {
         info!("🔄 Stage 2: Collecting product list with STRICT CONFIG LIMITS");
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
@@ -413,7 +414,7 @@ impl AdvancedBatchCrawlingEngine {
     }
 
     /// Stage 3: 제품 상세정보 수집
-    async fn stage3_collect_product_details(&self, product_urls: &[String]) -> Result<Vec<Product>> {
+    async fn stage3_collect_product_details(&self, product_urls: &[ProductUrl]) -> Result<Vec<Product>> {
         info!("Stage 3: Collecting product details");
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {

@@ -943,6 +943,8 @@ async fn execute_crawling_with_range(
         start_page: final_start_page,
         end_page: final_end_page,
         concurrency: 3,
+        list_page_concurrency: 24, // 설정에서 가져올 값
+        product_detail_concurrency: 10, // 설정에서 가져올 값
         delay_ms: 1000,
         batch_size: 10,
         retry_max: 3,

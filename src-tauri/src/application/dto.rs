@@ -91,8 +91,8 @@ impl From<Product> for ProductResponseDto {
             manufacturer: product.manufacturer,
             model: product.model,
             certificate_id: product.certificate_id,
-            page_id: product.page_id,
-            index_in_page: product.index_in_page,
+            page_id: product.page_id.map(|id| id as u32),
+            index_in_page: product.index_in_page.map(|idx| idx as u32),
             created_at: product.created_at.to_rfc3339(),
         }
     }
@@ -152,8 +152,8 @@ impl From<MatterProduct> for MatterProductResponseDto {
     fn from(product: MatterProduct) -> Self {
         Self {
             url: product.url,
-            page_id: product.page_id,
-            index_in_page: product.index_in_page,
+            page_id: product.page_id.map(|id| id as u32),
+            index_in_page: product.index_in_page.map(|idx| idx as u32),
             id: product.id,
             manufacturer: product.manufacturer,
             model: product.model,

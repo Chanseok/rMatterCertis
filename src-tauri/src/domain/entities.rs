@@ -92,9 +92,10 @@ pub struct Product {
     pub manufacturer: Option<String>,   // Manufacturer name
     pub model: Option<String>,          // Model name
     pub certificate_id: Option<String>, // Certificate ID
-    pub page_id: Option<u32>,          // Collected page number
-    pub index_in_page: Option<u32>,    // Order within page
+    pub page_id: Option<i32>,          // Collected page number
+    pub index_in_page: Option<i32>,    // Order within page
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Complete Matter product information (Stage 2 collection result)

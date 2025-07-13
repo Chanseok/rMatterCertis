@@ -27,6 +27,7 @@ pub mod domain {
     pub mod repositories;
     pub mod value_objects;
     pub mod constants; // 추가: 사이트 및 도메인 상수들
+    pub mod product_url; // 추가: URL과 메타데이터를 함께 전달하는 구조체
     pub mod services {
         //! Domain services for business logic
         pub mod product_service;
@@ -95,6 +96,9 @@ pub mod commands {
 
 // Modern Rust 2024 - 명시적 모듈 선언
 pub mod crawling;
+
+// Utilities module
+pub mod utils;
 
 // Test utilities (only available during testing)
 #[cfg(any(test, feature = "test-utils"))]

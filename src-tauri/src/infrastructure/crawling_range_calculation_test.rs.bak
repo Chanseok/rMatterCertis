@@ -31,7 +31,7 @@ mod tests {
                 page_id INTEGER,
                 index_in_page INTEGER,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updatedAt TEXT NOT NULL
             )
         "#)
         .execute(&pool)
@@ -50,7 +50,7 @@ mod tests {
                 let url = format!("https://example.com/product/{}/{}", page_id, index_in_page);
                 
                 sqlx::query(r#"
-                    INSERT INTO products (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
+                    INSERT INTO products (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updatedAt)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 "#)
                 .bind(&url)

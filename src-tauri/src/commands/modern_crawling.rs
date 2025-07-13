@@ -127,6 +127,8 @@ pub async fn start_crawling_v3(
         start_page: actual_start_page,
         end_page: actual_end_page,
         concurrency: app_config.user.max_concurrent_requests,
+        list_page_concurrency: app_config.user.crawling.workers.list_page_max_concurrent as u32,
+        product_detail_concurrency: app_config.user.crawling.workers.product_detail_max_concurrent as u32,
         delay_ms: app_config.user.request_delay_ms,
         batch_size: app_config.user.batch.batch_size,
         retry_max: app_config.advanced.retry_attempts,
@@ -920,9 +922,9 @@ async fn ensure_database_schema_exists(db_pool: &sqlx::SqlitePool) -> Result<(),
                 model TEXT,
                 connectivity TEXT,
                 manufacturer TEXT,
-                certificateId TEXT,
-                pageId INTEGER,
-                indexInPage INTEGER,
+                certificate_id TEXT,
+                page_id INTEGER,
+                index_in_page INTEGER,
                 createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
                 updatedAt TEXT DEFAULT CURRENT_TIMESTAMP,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -942,8 +944,8 @@ async fn ensure_database_schema_exists(db_pool: &sqlx::SqlitePool) -> Result<(),
         let indexes = vec![
             ("idx_products_company", "CREATE INDEX IF NOT EXISTS idx_products_company ON products (company)"),
             ("idx_products_manufacturer", "CREATE INDEX IF NOT EXISTS idx_products_manufacturer ON products (manufacturer)"),
-            ("idx_products_certificateId", "CREATE INDEX IF NOT EXISTS idx_products_certificateId ON products (certificateId)"),
-            ("idx_products_pageId", "CREATE INDEX IF NOT EXISTS idx_products_pageId ON products (pageId)"),
+            ("idx_products_certificate_id", "CREATE INDEX IF NOT EXISTS idx_products_certificate_id ON products (certificate_id)"),
+            ("idx_products_page_id", "CREATE INDEX IF NOT EXISTS idx_products_page_id ON products (page_id)"),
             ("idx_products_certification_date", "CREATE INDEX IF NOT EXISTS idx_products_certification_date ON products (certification_date)"),
             ("idx_products_created_at", "CREATE INDEX IF NOT EXISTS idx_products_created_at ON products (created_at)"),
             ("idx_products_createdAt", "CREATE INDEX IF NOT EXISTS idx_products_createdAt ON products (createdAt)")
@@ -963,9 +965,9 @@ async fn ensure_database_schema_exists(db_pool: &sqlx::SqlitePool) -> Result<(),
         // Check and add missing columns for existing tables
         let missing_columns = vec![
             ("manufacturer", "ALTER TABLE products ADD COLUMN manufacturer TEXT"),
-            ("certificateId", "ALTER TABLE products ADD COLUMN certificateId TEXT"),
-            ("pageId", "ALTER TABLE products ADD COLUMN pageId INTEGER"),
-            ("indexInPage", "ALTER TABLE products ADD COLUMN indexInPage INTEGER"),
+            ("certificate_id", "ALTER TABLE products ADD COLUMN certificate_id TEXT"),
+            ("page_id", "ALTER TABLE products ADD COLUMN page_id INTEGER"),
+            ("index_in_page", "ALTER TABLE products ADD COLUMN index_in_page INTEGER"),
             ("createdAt", "ALTER TABLE products ADD COLUMN createdAt TEXT DEFAULT CURRENT_TIMESTAMP"),
             ("updatedAt", "ALTER TABLE products ADD COLUMN updatedAt TEXT DEFAULT CURRENT_TIMESTAMP"),
         ];
@@ -998,8 +1000,8 @@ async fn ensure_database_schema_exists(db_pool: &sqlx::SqlitePool) -> Result<(),
         // Add missing indexes
         let indexes = vec![
             ("idx_products_manufacturer", "CREATE INDEX IF NOT EXISTS idx_products_manufacturer ON products (manufacturer)"),
-            ("idx_products_certificateId", "CREATE INDEX IF NOT EXISTS idx_products_certificateId ON products (certificateId)"),
-            ("idx_products_pageId", "CREATE INDEX IF NOT EXISTS idx_products_pageId ON products (pageId)"),
+            ("idx_products_certificate_id", "CREATE INDEX IF NOT EXISTS idx_products_certificate_id ON products (certificate_id)"),
+            ("idx_products_page_id", "CREATE INDEX IF NOT EXISTS idx_products_page_id ON products (page_id)"),
             ("idx_products_createdAt", "CREATE INDEX IF NOT EXISTS idx_products_createdAt ON products (createdAt)")
         ];
         

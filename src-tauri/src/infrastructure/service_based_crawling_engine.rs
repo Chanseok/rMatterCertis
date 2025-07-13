@@ -14,7 +14,8 @@ use crate::domain::services::{
     SiteStatus, DatabaseAnalysis
 };
 use crate::domain::events::{CrawlingProgress, CrawlingStage, CrawlingStatus};
-use crate::domain::product::Product;
+use crate::domain::product::{Product, ProductDetail};
+use crate::domain::product_url::ProductUrl;
 use crate::application::EventEmitter;
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository, RetryManager};
 use crate::infrastructure::crawling_service_impls::*;
@@ -26,6 +27,8 @@ pub struct BatchCrawlingConfig {
     pub start_page: u32,
     pub end_page: u32,
     pub concurrency: u32,
+    pub list_page_concurrency: u32,
+    pub product_detail_concurrency: u32,
     pub delay_ms: u64,
     pub batch_size: u32,
     pub retry_max: u32,
@@ -41,11 +44,13 @@ impl BatchCrawlingConfig {
         Self {
             start_page: 1,
             end_page: 1, // Will be set by range calculator
-            concurrency: validated_config.max_concurrent_requests,
+            concurrency: validated_config.max_concurrent(),
+            list_page_concurrency: validated_config.list_page_max_concurrent,
+            product_detail_concurrency: validated_config.product_detail_max_concurrent,
             delay_ms: validated_config.request_delay_ms,
-            batch_size: validated_config.batch_size,
-            retry_max: validated_config.max_retry_attempts,
-            timeout_ms: validated_config.request_timeout_ms,
+            batch_size: validated_config.batch_size(),
+            retry_max: validated_config.max_retries(),
+            timeout_ms: (validated_config.request_timeout_ms as u64),
             cancellation_token: None,
         }
     }
@@ -59,11 +64,13 @@ impl Default for BatchCrawlingConfig {
         Self {
             start_page: 1,
             end_page: 1, // ✅ 기본값을 1로 설정 (실제 계산된 범위 사용)
-            concurrency: validated_config.max_concurrent_requests,
+            concurrency: validated_config.max_concurrent(),
+            list_page_concurrency: validated_config.list_page_max_concurrent,
+            product_detail_concurrency: validated_config.product_detail_max_concurrent,
             delay_ms: validated_config.request_delay_ms,
-            batch_size: validated_config.batch_size,
-            retry_max: validated_config.max_retry_attempts,
-            timeout_ms: validated_config.request_timeout_ms,
+            batch_size: validated_config.batch_size(),
+            retry_max: validated_config.max_retries(),
+            timeout_ms: (validated_config.request_timeout_ms as u64),
             cancellation_token: None,
         }
     }
@@ -142,6 +149,7 @@ pub struct ServiceBasedBatchCrawlingEngine {
     
     // 기존 컴포넌트들
     product_repo: Arc<IntegratedProductRepository>,
+    product_detail_repo: Arc<IntegratedProductRepository>,
     event_emitter: Arc<Option<EventEmitter>>,
     
     // 재시도 관리자 - INTEGRATED_PHASE2_PLAN Week 1 Day 3-4
@@ -162,10 +170,20 @@ impl ServiceBasedBatchCrawlingEngine {
         session_id: String,
         app_config: AppConfig,
     ) -> Self {
-        // 서비스 설정
-        let collector_config = CollectorConfig {
-            max_concurrent: config.concurrency,
-            concurrency: config.concurrency,
+        // 서비스별 설정 생성
+        let list_collector_config = CollectorConfig {
+            max_concurrent: config.list_page_concurrency,
+            concurrency: config.list_page_concurrency,
+            delay_between_requests: Duration::from_millis(config.delay_ms),
+            delay_ms: config.delay_ms,
+            batch_size: config.batch_size,
+            retry_attempts: config.retry_max,
+            retry_max: config.retry_max,
+        };
+        
+        let detail_collector_config = CollectorConfig {
+            max_concurrent: config.product_detail_concurrency,
+            concurrency: config.product_detail_concurrency,
             delay_between_requests: Duration::from_millis(config.delay_ms),
             delay_ms: config.delay_ms,
             batch_size: config.batch_size,
@@ -187,13 +205,13 @@ impl ServiceBasedBatchCrawlingEngine {
         let product_list_collector = Arc::new(ProductListCollectorImpl::new(
             Arc::new(tokio::sync::Mutex::new(http_client.clone())),
             Arc::new(data_extractor.clone()),
-            collector_config.clone(),
+            list_collector_config,
         )) as Arc<dyn ProductListCollector>;
 
         let product_detail_collector = Arc::new(ProductDetailCollectorImpl::new(
             Arc::new(tokio::sync::Mutex::new(http_client)),
             Arc::new(data_extractor),
-            collector_config,
+            detail_collector_config,
         )) as Arc<dyn ProductDetailCollector>;
 
         // 지능형 범위 계산기 초기화 - Phase 3 Integration
@@ -208,7 +226,8 @@ impl ServiceBasedBatchCrawlingEngine {
             product_list_collector,
             product_detail_collector,
             range_calculator,
-            product_repo,
+            product_repo: product_repo.clone(),
+            product_detail_repo: product_repo,
             event_emitter,
             retry_manager: Arc::new(RetryManager::new(config.retry_max)),
             config,
@@ -393,7 +412,7 @@ impl ServiceBasedBatchCrawlingEngine {
     }
 
     /// Stage 2: 제품 목록 수집 (서비스 기반)
-    async fn stage2_collect_product_list(&self, total_pages: u32) -> Result<Vec<String>> {
+    async fn stage2_collect_product_list(&self, total_pages: u32) -> Result<Vec<ProductUrl>> {
         info!("Stage 2: Collecting product list using ProductListCollector service");
         
         // 취소 확인 - 단계 시작 전
@@ -445,7 +464,7 @@ impl ServiceBasedBatchCrawlingEngine {
     }
 
     /// Stage 2: 제품 목록 수집 (최적화된 범위 사용) - Phase 4 Implementation
-    async fn stage2_collect_product_list_optimized(&self, start_page: u32, end_page: u32) -> Result<Vec<String>> {
+    async fn stage2_collect_product_list_optimized(&self, start_page: u32, end_page: u32) -> Result<Vec<ProductUrl>> {
         info!("Stage 2: Collecting product list using optimized range {} to {}", start_page, end_page);
         
         // 취소 확인 - 단계 시작 전
@@ -486,7 +505,7 @@ impl ServiceBasedBatchCrawlingEngine {
     }
 
     /// Stage 3: 제품 상세정보 수집 (서비스 기반 + 재시도 메커니즘)
-    async fn stage3_collect_product_details(&self, product_urls: &[String]) -> Result<Vec<Product>> {
+    async fn stage3_collect_product_details(&self, product_urls: &[ProductUrl]) -> Result<Vec<(Product, ProductDetail)>> {
         info!("Stage 3: Collecting product details using ProductDetailCollector service with retry mechanism");
         
         // 취소 확인 - 단계 시작 전
@@ -527,9 +546,12 @@ impl ServiceBasedBatchCrawlingEngine {
                     }
                 }
                 
-                // ProductDetail을 Product로 변환
+                // ProductDetail을 Product로 변환하고 원본 ProductDetail과 함께 저장
                 successful_products = product_details.into_iter()
-                    .map(|detail| crate::infrastructure::crawling_service_impls::product_detail_to_product(detail))
+                    .map(|detail| {
+                        let product = crate::infrastructure::crawling_service_impls::product_detail_to_product(detail.clone());
+                        (product, detail)
+                    })
                     .collect();
                 info!("✅ Initial collection successful: {} products", successful_products.len());
             }
@@ -549,14 +571,14 @@ impl ServiceBasedBatchCrawlingEngine {
                 for (index, url) in failed_urls.iter().enumerate() {
                     let item_id = format!("product_detail_{}_{}", self.session_id, index);
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("url".to_string(), url.clone());
+                    metadata.insert("url".to_string(), url.to_string());
                     metadata.insert("stage".to_string(), "product_details".to_string());
                     
                     if let Err(retry_err) = self.retry_manager.add_failed_item(
                         item_id,
                         CrawlingStage::ProductDetails,
                         e.to_string(),
-                        url.clone(),
+                        url.to_string(),
                         metadata,
                     ).await {
                         warn!("Failed to add item to retry queue: {}", retry_err);
@@ -590,7 +612,7 @@ impl ServiceBasedBatchCrawlingEngine {
     }
     
     /// 제품 상세정보 수집 재시도 처리
-    async fn process_retries_for_product_details(&self) -> Result<Vec<Product>> {
+    async fn process_retries_for_product_details(&self) -> Result<Vec<(Product, ProductDetail)>> {
         info!("🔄 Processing retries for product details collection");
         let mut retry_products = Vec::new();
         
@@ -627,12 +649,15 @@ impl ServiceBasedBatchCrawlingEngine {
                     
                     info!("🔄 Retrying product detail collection for: {}", url);
                     
-                    match self.product_detail_collector.collect_details(&[url.clone()]).await {
+                    // Convert String URL to ProductUrl for the new API
+                    let product_url = ProductUrl::new(url.clone(), -1, -1); // Use -1 for retry URLs
+                    
+                    match self.product_detail_collector.collect_details(&[product_url]).await {
                         Ok(mut product_details) => {
                             if let Some(detail) = product_details.pop() {
-                                let product = crate::infrastructure::crawling_service_impls::product_detail_to_product(detail);
+                                let product = crate::infrastructure::crawling_service_impls::product_detail_to_product(detail.clone());
                                 info!("✅ Retry successful for: {}", url);
-                                retry_products.push(product);
+                                retry_products.push((product, detail));
                                 
                                 // 성공 기록
                                 if let Err(e) = self.retry_manager.mark_retry_success(&item_id).await {
@@ -708,7 +733,7 @@ impl ServiceBasedBatchCrawlingEngine {
     }
 
     /// Stage 4: 데이터베이스 저장
-    async fn stage4_save_to_database(&self, products: Vec<Product>) -> Result<(usize, usize, usize, usize)> {
+    async fn stage4_save_to_database(&self, products: Vec<(Product, ProductDetail)>) -> Result<(usize, usize, usize, usize)> {
         info!("Stage 4: Saving {} products to database", products.len());
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
@@ -720,7 +745,7 @@ impl ServiceBasedBatchCrawlingEngine {
         let mut updated_items = 0;
         let mut errors = 0;
 
-        for (index, product) in products.into_iter().enumerate() {
+        for (index, (product, product_detail)) in products.into_iter().enumerate() {
             // 주기적으로 취소 확인 (100개마다)
             if index % 100 == 0 {
                 if let Some(cancellation_token) = &self.config.cancellation_token {
@@ -731,8 +756,12 @@ impl ServiceBasedBatchCrawlingEngine {
                 }
             }
             
-            match self.product_repo.create_or_update_product(&product).await {
-                Ok(_) => {
+            // Product와 ProductDetail을 모두 저장
+            let product_save_result = self.product_repo.create_or_update_product(&product).await;
+            let product_detail_save_result = self.product_detail_repo.create_or_update_product_detail(&product_detail).await;
+            
+            match (product_save_result, product_detail_save_result) {
+                (Ok(_), Ok(_)) => {
                     // 제품이 새로 추가되었는지 업데이트되었는지 확인하기 위해
                     // 기존 제품을 조회해보겠습니다
                     match self.product_repo.get_product_by_url(&product.url).await? {
@@ -745,7 +774,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         success: true,
                     }).await?;
                 },
-                Err(e) => {
+                (Err(e), _) | (_, Err(e)) => {
                     errors += 1;
                     warn!("Failed to save product {:?}: {}", product.model, e);
                     

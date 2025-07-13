@@ -19,6 +19,7 @@ use crate::domain::services::{
     StatusChecker, DatabaseAnalyzer, ProductListCollector, ProductDetailCollector,
     SiteStatus, DatabaseAnalysis, FieldAnalysis, DuplicateAnalysis, ProcessingStrategy
 };
+use crate::domain::product_url::ProductUrl;
 use crate::domain::services::crawling_services::{
     SiteDataChangeStatus, DataDecreaseRecommendation, RecommendedAction, SeverityLevel, CrawlingRangeRecommendation
 };
@@ -1381,14 +1382,14 @@ impl ProductListCollectorImpl {
 
 #[async_trait]
 impl ProductListCollector for ProductListCollectorImpl {
-    async fn collect_all_pages(&self, total_pages: u32) -> Result<Vec<String>> {
+    async fn collect_all_pages(&self, total_pages: u32) -> Result<Vec<ProductUrl>> {
         info!("🔍 Collecting from {} pages with parallel processing", total_pages);
         
         // Use the existing parallel implementation from collect_page_range
         self.collect_page_range(1, total_pages).await
     }
     
-    async fn collect_page_range(&self, start_page: u32, end_page: u32) -> Result<Vec<String>> {
+    async fn collect_page_range(&self, start_page: u32, end_page: u32) -> Result<Vec<ProductUrl>> {
         // Handle descending range (older to newer) - typical for our use case
         let pages: Vec<u32> = if start_page > end_page {
             // Descending range: start from oldest (highest page number) to newest (lower page number)
@@ -1400,6 +1401,14 @@ impl ProductListCollector for ProductListCollectorImpl {
         
         info!("🔍 Collecting from {} pages in range {} to {} with true concurrent execution", 
               pages.len(), start_page, end_page);
+        
+        // 우선 사이트 분석 정보를 가져와야 함 (총 페이지 수, 마지막 페이지 제품 수)
+        // 현재는 기본값으로 설정, 추후 사이트 분석 정보를 주입받도록 수정 필요
+        let last_page_number = start_page; // 가장 큰 페이지 번호 (가장 오래된 페이지)
+        let products_in_last_page = 4; // 마지막 페이지의 제품 수 (추후 동적으로 계산)
+        
+        // PageIdCalculator 초기화
+        let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page);
         
         let max_concurrent = self.config.max_concurrent as usize;
         
@@ -1416,6 +1425,7 @@ impl ProductListCollector for ProductListCollectorImpl {
             let http_client = Arc::clone(&self.http_client);
             let data_extractor = Arc::clone(&self.data_extractor);
             let semaphore_clone = Arc::clone(&semaphore);
+            let calculator = page_calculator.clone();
             
             // 3. 각 태스크는 세마포어 permit을 획득한 후 실행
             let task = tokio::spawn(async move {
@@ -1438,10 +1448,24 @@ impl ProductListCollector for ProductListCollectorImpl {
                 drop(client);
                 
                 let doc = scraper::Html::parse_document(&html);
-                let urls = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
+                let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
                 
-                debug!("🔗 Extracted {} URLs from page {} (permit released)", urls.len(), page);
-                Ok::<(u32, Vec<String>), anyhow::Error>((page, urls))
+                // Convert URLs to ProductUrl with proper pageId and indexInPage calculation
+                let product_urls: Vec<ProductUrl> = url_strings
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, url)| {
+                        let calculation = calculator.calculate(page, index);
+                        ProductUrl {
+                            url,
+                            page_id: calculation.page_id,
+                            index_in_page: calculation.index_in_page,
+                        }
+                    })
+                    .collect();
+                
+                debug!("🔗 Extracted {} URLs from page {} (permit released)", product_urls.len(), page);
+                Ok::<(u32, Vec<ProductUrl>), anyhow::Error>((page, product_urls))
                 // _permit이 여기서 자동으로 drop되어 다음 태스크가 실행될 수 있음
             });
             
@@ -1482,21 +1506,41 @@ impl ProductListCollector for ProductListCollectorImpl {
         Ok(all_urls)
     }
     
-    async fn collect_single_page(&self, page: u32) -> Result<Vec<String>> {
+    async fn collect_single_page(&self, page: u32) -> Result<Vec<ProductUrl>> {
         let url = config_utils::matter_products_page_url_simple(page);
         let mut client = self.http_client.lock().await;
         let html = client.fetch_html_string(&url).await?;
         drop(client);
         
         let doc = scraper::Html::parse_document(&html);
-        let urls = self.data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
+        let url_strings = self.data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
         
-        debug!("🔗 Extracted {} URLs from page {}", urls.len(), page);
-        Ok(urls)
+        // 기본값으로 설정 (추후 사이트 분석 정보 주입 필요)
+        let last_page_number = page; // 단일 페이지 수집이므로 현재 페이지를 마지막 페이지로 가정
+        let products_in_last_page = url_strings.len();
+        
+        let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page);
+        
+        // Convert URLs to ProductUrl with proper pageId and indexInPage calculation
+        let product_urls: Vec<ProductUrl> = url_strings
+            .into_iter()
+            .enumerate()
+            .map(|(index, url)| {
+                let calculation = page_calculator.calculate(page, index);
+                ProductUrl {
+                    url,
+                    page_id: calculation.page_id,
+                    index_in_page: calculation.index_in_page,
+                }
+            })
+            .collect();
+        
+        debug!("🔗 Extracted {} URLs from page {}", product_urls.len(), page);
+        Ok(product_urls)
     }
     
-    async fn collect_page_range_with_cancellation(&self, start_page: u32, end_page: u32, cancellation_token: CancellationToken) -> Result<Vec<String>> {
-        let mut all_urls: Vec<String> = Vec::new();
+    async fn collect_page_range_with_cancellation(&self, start_page: u32, end_page: u32, cancellation_token: CancellationToken) -> Result<Vec<ProductUrl>> {
+        let mut all_urls: Vec<ProductUrl> = Vec::new();
         
         // Handle descending range (older to newer) - typical for our use case
         let pages: Vec<u32> = if start_page > end_page {
@@ -1566,10 +1610,30 @@ impl ProductListCollector for ProductListCollectorImpl {
                 }
                 
                 let doc = scraper::Html::parse_document(&html);
-                let urls = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
+                let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
                 
-                debug!("🔗 Extracted {} URLs from page {} (permit released)", urls.len(), page);
-                Ok::<(u32, Vec<String>), anyhow::Error>((page, urls))
+                // 기본값으로 설정 (추후 사이트 분석 정보 주입 필요)
+                let last_page_number = page; // 현재 페이지를 마지막 페이지로 가정
+                let products_in_last_page = url_strings.len();
+                
+                let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page);
+                
+                // Convert URLs to ProductUrl with proper pageId and indexInPage calculation
+                let product_urls: Vec<ProductUrl> = url_strings
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, url)| {
+                        let calculation = page_calculator.calculate(page, index);
+                        ProductUrl {
+                            url,
+                            page_id: calculation.page_id,
+                            index_in_page: calculation.index_in_page,
+                        }
+                    })
+                    .collect();
+                
+                debug!("🔗 Extracted {} URLs from page {} (permit released)", product_urls.len(), page);
+                Ok::<(u32, Vec<ProductUrl>), anyhow::Error>((page, product_urls))
                 // _permit이 여기서 자동으로 drop되어 다음 태스크가 실행될 수 있음
             });
             
@@ -1610,12 +1674,12 @@ impl ProductListCollector for ProductListCollectorImpl {
         Ok(all_urls)
     }
     
-    async fn collect_page_batch(&self, pages: &[u32]) -> Result<Vec<String>> {
-        let mut all_urls: Vec<String> = Vec::new();
+    async fn collect_page_batch(&self, pages: &[u32]) -> Result<Vec<ProductUrl>> {
+        let mut all_urls: Vec<ProductUrl> = Vec::new();
         
         for page in pages {
             match self.collect_single_page(*page).await {
-                Ok(urls) => all_urls.extend(urls),
+                Ok(product_urls) => all_urls.extend(product_urls),
                 Err(e) => warn!("Failed to collect from page {}: {}", page, e),
             }
             
@@ -1649,21 +1713,21 @@ impl ProductDetailCollectorImpl {
 
 #[async_trait]
 impl ProductDetailCollector for ProductDetailCollectorImpl {
-    async fn collect_details(&self, urls: &[String]) -> Result<Vec<ProductDetail>> {
+    async fn collect_details(&self, product_urls: &[ProductUrl]) -> Result<Vec<ProductDetail>> {
         // 백업 안전장치: 취소 토큰이 없어도 최소한의 체크를 위해 기본 토큰 생성
         let default_token = CancellationToken::new();
         warn!("⚠️  collect_details called without cancellation token - using default token as fallback");
         
         // 취소 가능한 메서드로 위임
-        self.collect_details_with_cancellation(urls, default_token).await
+        self.collect_details_with_cancellation(product_urls, default_token).await
     }
     
-    async fn collect_details_with_cancellation(&self, urls: &[String], cancellation_token: CancellationToken) -> Result<Vec<ProductDetail>> {
+    async fn collect_details_with_cancellation(&self, product_urls: &[ProductUrl], cancellation_token: CancellationToken) -> Result<Vec<ProductDetail>> {
         let mut products = Vec::new();
         let max_concurrent = self.config.max_concurrent as usize;
         
         info!("🚀 Starting REAL concurrent product detail collection with cancellation: {} URLs with {} concurrent workers", 
-              urls.len(), max_concurrent);
+              product_urls.len(), max_concurrent);
         
         // Use a semaphore to limit actual concurrent HTTP requests
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
@@ -1671,14 +1735,15 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
         // Create ALL tasks immediately for true parallel execution
         let mut all_tasks = Vec::new();
         
-        for (index, url) in urls.iter().enumerate() {
+        for (index, product_url) in product_urls.iter().enumerate() {
             // Early cancellation check
             if cancellation_token.is_cancelled() {
                 warn!("🛑 Cancellation detected before starting task {}", index);
                 break;
             }
             
-            let url = url.clone();
+            let product_url_clone = product_url.clone();
+            let url = product_url.url.clone();
             let http_client = Arc::clone(&self.http_client);
             let data_extractor = Arc::clone(&self.data_extractor);
             let cancellation_token = cancellation_token.clone();
@@ -1768,7 +1833,11 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                 
                 // Parse and extract product details
                 let doc = scraper::Html::parse_document(&html);
-                let product_detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                let mut product_detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                
+                // Set page metadata from ProductUrl
+                product_detail.page_id = Some(product_url_clone.page_id);
+                product_detail.index_in_page = Some(product_url_clone.index_in_page);
                 
                 info!("📦 Product extracted successfully for URL {}: {}", index, 
                       product_detail.certification_id.as_deref().unwrap_or("Unknown"));
@@ -1821,34 +1890,38 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
         // Final status report
         if cancellation_token.is_cancelled() {
             warn!("🛑 Collection CANCELLED: {} successful, {} cancelled, {} failed out of {} total", 
-                  successful_count, cancelled_count, failed_count, urls.len());
+                  successful_count, cancelled_count, failed_count, product_urls.len());
         } else {
             info!("✅ Collection COMPLETED: {} successful, {} failed out of {} total", 
-                  successful_count, failed_count, urls.len());
+                  successful_count, failed_count, product_urls.len());
         }
         
         Ok(products)
     }
 
-    async fn collect_single_product(&self, url: &str) -> Result<ProductDetail> {
+    async fn collect_single_product(&self, product_url: &ProductUrl) -> Result<ProductDetail> {
         let mut client = self.http_client.lock().await;
-        let html = client.fetch_html_string(url).await?;
+        let html = client.fetch_html_string(&product_url.url).await?;
         drop(client);
         
         let doc = scraper::Html::parse_document(&html);
-        let product_detail = self.data_extractor.extract_product_detail(&doc, url.to_string())?;
+        let mut product_detail = self.data_extractor.extract_product_detail(&doc, product_url.url.clone())?;
+        
+        // Set page metadata from ProductUrl
+        product_detail.page_id = Some(product_url.page_id);
+        product_detail.index_in_page = Some(product_url.index_in_page);
         
         debug!("📦 Extracted product: {}", product_detail.certification_id.as_deref().unwrap_or("Unknown"));
         Ok(product_detail)
     }
     
-    async fn collect_product_batch(&self, urls: &[String]) -> Result<Vec<ProductDetail>> {
+    async fn collect_product_batch(&self, product_urls: &[ProductUrl]) -> Result<Vec<ProductDetail>> {
         let mut products = Vec::new();
         
-        for url in urls {
-            match self.collect_single_product(url).await {
+        for product_url in product_urls {
+            match self.collect_single_product(product_url).await {
                 Ok(product) => products.push(product),
-                Err(e) => warn!("Failed to collect product from {}: {}", url, e),
+                Err(e) => warn!("Failed to collect product from {}: {}", product_url, e),
             }
             
             tokio::time::sleep(self.config.delay_between_requests).await;

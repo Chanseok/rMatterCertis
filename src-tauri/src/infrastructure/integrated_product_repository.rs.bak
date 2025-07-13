@@ -47,7 +47,7 @@ impl IntegratedProductRepository {
             sqlx::query(
                 r#"
                 UPDATE products 
-                SET manufacturer = ?, model = ?, certificate_id = ?, page_id = ?, index_in_page = ?, updated_at = ?
+                SET manufacturer = ?, model = ?, certificate_id = ?, page_id = ?, index_in_page = ?, updatedAt = ?
                 WHERE url = ?
                 "#,
             )
@@ -65,7 +65,7 @@ impl IntegratedProductRepository {
             sqlx::query(
                 r#"
                 INSERT INTO products 
-                (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
+                (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updatedAt)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
@@ -135,7 +135,7 @@ impl IntegratedProductRepository {
         let offset = (page - 1) * limit;
         let rows = sqlx::query(
             r#"
-            SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
+            SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updatedAt
             FROM products 
             ORDER BY page_id DESC, index_in_page ASC 
             LIMIT ? OFFSET ?
@@ -156,7 +156,7 @@ impl IntegratedProductRepository {
                 page_id: row.get("page_id"),
                 index_in_page: row.get("index_in_page"),
                 created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
+                updated_at: row.get("updatedAt"),
             })
             .collect();
 
@@ -167,7 +167,7 @@ impl IntegratedProductRepository {
     pub async fn get_product_by_url(&self, url: &str) -> Result<Option<Product>> {
         let row = sqlx::query(
             r#"
-            SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
+            SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updatedAt
             FROM products WHERE url = ?
             "#,
         )
@@ -184,7 +184,7 @@ impl IntegratedProductRepository {
                 page_id: row.get("page_id"),
                 index_in_page: row.get("index_in_page"),
                 created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
+                updated_at: row.get("updatedAt"),
             })),
             None => Ok(None),
         }
@@ -315,7 +315,7 @@ impl IntegratedProductRepository {
         let data_query = format!(
             r#"
             SELECT p.url, p.manufacturer, p.model, p.certificate_id, p.page_id, p.index_in_page, 
-                   p.created_at as p_created_at, p.updated_at as p_updated_at,
+                   p.created_at as p_created_at, p.updatedAt as p_updated_at,
                    pd.id, pd.device_type as pd_device_type, pd.certification_date as pd_certification_date, pd.software_version, pd.hardware_version,
                    pd.vid, pd.pid, pd.family_sku, pd.family_variant_sku, pd.firmware_version, pd.family_id,
                    pd.tis_trp_tested, pd.specification_version, pd.transport_interface, 
@@ -658,7 +658,7 @@ impl IntegratedProductRepository {
     pub async fn get_products_without_details(&self, limit: i32) -> Result<Vec<Product>> {
         let rows = sqlx::query(
             r#"
-            SELECT p.url, p.manufacturer, p.model, p.certificate_id, p.page_id, p.index_in_page, p.created_at, p.updated_at
+            SELECT p.url, p.manufacturer, p.model, p.certificate_id, p.page_id, p.index_in_page, p.created_at, p.updatedAt
             FROM products p
             LEFT JOIN product_details pd ON p.url = pd.url
             WHERE pd.url IS NULL
@@ -680,7 +680,7 @@ impl IntegratedProductRepository {
                 page_id: row.get("page_id"),
                 index_in_page: row.get("index_in_page"),
                 created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
+                updated_at: row.get("updatedAt"),
             })
             .collect();
 
@@ -692,7 +692,7 @@ impl IntegratedProductRepository {
         let rows = sqlx::query(
             r#"
             SELECT url, manufacturer, model, certificate_id, 
-                   page_id, index_in_page, created_at, updated_at
+                   page_id, index_in_page, created_at, updatedAt
             FROM products
             ORDER BY page_id DESC, index_in_page ASC
             "#,
@@ -710,7 +710,7 @@ impl IntegratedProductRepository {
                 page_id: row.get("page_id"),
                 index_in_page: row.get("index_in_page"),
                 created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
+                updated_at: row.get("updatedAt"),
             })
             .collect();
 
@@ -722,9 +722,9 @@ impl IntegratedProductRepository {
         let row = sqlx::query(
             r#"
             SELECT url, manufacturer, model, certificate_id, 
-                   page_id, index_in_page, created_at, updated_at
+                   page_id, index_in_page, created_at, updatedAt
             FROM products
-            ORDER BY updated_at DESC
+            ORDER BY updatedAt DESC
             LIMIT 1
             "#,
         )
@@ -740,7 +740,7 @@ impl IntegratedProductRepository {
                 page_id: row.get("page_id"),
                 index_in_page: row.get("index_in_page"),
                 created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
+                updated_at: row.get("updatedAt"),
             }))
         } else {
             Ok(None)

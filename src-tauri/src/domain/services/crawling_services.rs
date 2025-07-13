@@ -10,6 +10,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::product::{Product, ProductDetail};
+use crate::domain::product_url::ProductUrl;
 
 /// 사이트 상태 체크 서비스
 #[async_trait]
@@ -47,36 +48,36 @@ pub trait DatabaseAnalyzer: Send + Sync {
 /// 제품 목록 수집 서비스
 #[async_trait]
 pub trait ProductListCollector: Send + Sync {
-    /// 모든 페이지에서 제품 URL 수집
-    async fn collect_all_pages(&self, total_pages: u32) -> Result<Vec<String>>;
+    /// 모든 페이지에서 제품 URL 수집 (메타데이터 포함)
+    async fn collect_all_pages(&self, total_pages: u32) -> Result<Vec<ProductUrl>>;
     
-    /// 페이지 범위에서 제품 URL 수집 (start_page부터 end_page까지)
-    async fn collect_page_range(&self, start_page: u32, end_page: u32) -> Result<Vec<String>>;
+    /// 페이지 범위에서 제품 URL 수집 (start_page부터 end_page까지, 메타데이터 포함)
+    async fn collect_page_range(&self, start_page: u32, end_page: u32) -> Result<Vec<ProductUrl>>;
     
-    /// 페이지 범위에서 제품 URL 수집 (취소 토큰 지원)
-    async fn collect_page_range_with_cancellation(&self, start_page: u32, end_page: u32, cancellation_token: CancellationToken) -> Result<Vec<String>>;
+    /// 페이지 범위에서 제품 URL 수집 (취소 토큰 지원, 메타데이터 포함)
+    async fn collect_page_range_with_cancellation(&self, start_page: u32, end_page: u32, cancellation_token: CancellationToken) -> Result<Vec<ProductUrl>>;
     
-    /// 단일 페이지에서 제품 URL 수집
-    async fn collect_single_page(&self, page: u32) -> Result<Vec<String>>;
+    /// 단일 페이지에서 제품 URL 수집 (메타데이터 포함)
+    async fn collect_single_page(&self, page: u32) -> Result<Vec<ProductUrl>>;
     
-    /// 배치별 페이지 수집
-    async fn collect_page_batch(&self, pages: &[u32]) -> Result<Vec<String>>;
+    /// 배치별 페이지 수집 (메타데이터 포함)
+    async fn collect_page_batch(&self, pages: &[u32]) -> Result<Vec<ProductUrl>>;
 }
 
 /// 제품 상세정보 수집 서비스
 #[async_trait]
 pub trait ProductDetailCollector: Send + Sync {
-    /// 여러 제품의 상세정보 수집 (cancellation token 지원)
-    async fn collect_details(&self, urls: &[String]) -> Result<Vec<ProductDetail>>;
+    /// 여러 제품의 상세정보 수집 (메타데이터 포함)
+    async fn collect_details(&self, product_urls: &[ProductUrl]) -> Result<Vec<ProductDetail>>;
     
-    /// 여러 제품의 상세정보 수집 (cancellation token 지원)
-    async fn collect_details_with_cancellation(&self, urls: &[String], cancellation_token: CancellationToken) -> Result<Vec<ProductDetail>>;
+    /// 여러 제품의 상세정보 수집 (cancellation token 지원, 메타데이터 포함)
+    async fn collect_details_with_cancellation(&self, product_urls: &[ProductUrl], cancellation_token: CancellationToken) -> Result<Vec<ProductDetail>>;
     
-    /// 단일 제품 상세정보 수집
-    async fn collect_single_product(&self, url: &str) -> Result<ProductDetail>;
+    /// 단일 제품 상세정보 수집 (메타데이터 포함)
+    async fn collect_single_product(&self, product_url: &ProductUrl) -> Result<ProductDetail>;
     
-    /// 배치별 제품 수집
-    async fn collect_product_batch(&self, urls: &[String]) -> Result<Vec<ProductDetail>>;
+    /// 배치별 제품 수집 (메타데이터 포함)
+    async fn collect_product_batch(&self, product_urls: &[ProductUrl]) -> Result<Vec<ProductDetail>>;
 }
 
 /// 크롤링 범위 권장 사항
