@@ -308,8 +308,8 @@ mod tests {
         let product = ProductData::new(
             "test_id".to_string(),
             "Test Product".to_string(),
-            "https://example.com/product".to_string(),
-        )
+            crate::domain::ValidatedUrl::new("https://example.com/product".to_string()).unwrap(),
+        ).unwrap()
         .with_category(Some("Electronics".to_string()))
         .with_manufacturer(Some("Test Corp".to_string()));
         

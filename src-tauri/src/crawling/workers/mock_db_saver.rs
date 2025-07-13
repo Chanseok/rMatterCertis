@@ -120,12 +120,25 @@ mod tests {
             compliance_details: std::collections::HashMap::new(),
             confidence_score: 0.8,
             extracted_at: chrono::Utc::now(),
-            source_url: crate::domain::ValidatedUrl::new("https://example.com/test".to_string()).unwrap_or_default(),
+            source_url: crate::domain::ValidatedUrl::new("https://example.com/test".to_string()).unwrap(),
+        };
+
+        let task_product_data = crate::crawling::tasks::TaskProductData {
+            product_id: "test123".to_string(),
+            name: "Test Product".to_string(),
+            category: Some("Electronics".to_string()),
+            manufacturer: Some("Test Company".to_string()),
+            model: None,
+            certification_number: None,
+            certification_date: None,
+            details: std::collections::HashMap::new(),
+            extracted_at: chrono::Utc::now(),
+            source_url: "https://example.com/test".to_string(),
         };
 
         let task = CrawlingTask::SaveProduct {
             task_id: TaskId::new(),
-            product_data,
+            product_data: task_product_data,
         };
 
         let result = saver.process_task(task, shared_state).await;

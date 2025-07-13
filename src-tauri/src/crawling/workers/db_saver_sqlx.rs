@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 use async_trait::async_trait;
-use sqlx::{Pool, Sqlite, Transaction, Row};
+use sqlx::{Pool, Sqlite, Postgres, Transaction, Row};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -314,7 +314,7 @@ mod tests {
         // Note: This test would need a real database connection
         // For now, we test the batch buffer logic
         
-        let mock_pool = Pool::<Postgres>::connect("postgresql://test").await;
+        let mock_pool = Pool::<Sqlite>::connect("sqlite::memory:").await;
         if mock_pool.is_err() {
             // Skip test if no database available
             return;
@@ -327,12 +327,12 @@ mod tests {
         );
 
         // Test batch buffer
-        let product = ProductData::builder()
-            .product_id("test123".to_string())
-            .product_name("Test Product".to_string())
-            .company_name("Test Company".to_string())
-            .build()
-            .unwrap();
+        let product = ProductData::new(
+            "test123".to_string(),
+            "Test Product".to_string(),
+            crate::domain::ValidatedUrl::new("https://example.com/test".to_string()).unwrap(),
+        ).unwrap()
+        .with_manufacturer(Some("Test Company".to_string()));
 
         // Add products to batch
         let should_flush_1 = db_saver.add_to_batch(product.clone()).await.unwrap();
@@ -345,9 +345,9 @@ mod tests {
         assert!(should_flush_3); // Should flush when batch size is reached
     }
 
-    #[test]
-    fn worker_properties() {
-        let mock_pool = Pool::<Postgres>::connect("postgresql://test");
+    #[tokio::test]
+    async fn worker_properties() {
+        let mock_pool = Pool::<Sqlite>::connect("sqlite::memory:").await;
         if mock_pool.is_err() {
             return;
         }

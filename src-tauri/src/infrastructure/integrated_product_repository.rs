@@ -753,23 +753,30 @@ impl IntegratedProductRepository {
 
     /// Get the maximum page_id and index_in_page from the database
     /// Returns (max_page_id, max_index_in_page) or (None, None) if no data
+    /// 
+    /// This finds the product with the highest page_id, and among those products,
+    /// the one with the highest index_in_page. This represents the "last" product
+    /// we've crawled in the reverse chronological order.
     pub async fn get_max_page_id_and_index(&self) -> Result<(Option<i32>, Option<i32>)> {
         let row = sqlx::query(
             r#"
-            SELECT MAX(page_id) as max_page_id, 
-                   MAX(CASE WHEN page_id = (SELECT MAX(page_id) FROM products) THEN index_in_page END) as max_index_in_page
+            SELECT page_id, index_in_page
             FROM products
             WHERE page_id IS NOT NULL AND index_in_page IS NOT NULL
+            ORDER BY page_id DESC, index_in_page DESC
+            LIMIT 1
             "#,
         )
         .fetch_optional(&*self.pool)
         .await?;
 
         if let Some(row) = row {
-            let max_page_id: Option<i32> = row.get("max_page_id");
-            let max_index_in_page: Option<i32> = row.get("max_index_in_page");
+            let max_page_id: Option<i32> = row.get("page_id");
+            let max_index_in_page: Option<i32> = row.get("index_in_page");
+            tracing::debug!("📊 Found last saved product: page_id={:?}, index_in_page={:?}", max_page_id, max_index_in_page);
             Ok((max_page_id, max_index_in_page))
         } else {
+            tracing::debug!("📊 No products found with page_id and index_in_page");
             Ok((None, None))
         }
     }
@@ -800,6 +807,9 @@ impl IntegratedProductRepository {
         let products_per_page = crate::domain::constants::site::PRODUCTS_PER_PAGE as u32;
         // Step 1: Get the last saved product's page_id and index_in_page
         let (max_page_id, max_index_in_page) = self.get_max_page_id_and_index().await?;
+        
+        // 상세한 디버깅 로그 추가
+        tracing::info!("🔍 DB state check: max_page_id={:?}, max_index_in_page={:?}", max_page_id, max_index_in_page);
         
         // If no data exists, start from the oldest page (highest page number)
         if max_page_id.is_none() || max_index_in_page.is_none() {

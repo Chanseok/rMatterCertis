@@ -104,6 +104,10 @@ pub mod utils;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
+// PageIdCalculator 테스트 모듈 추가
+#[cfg(test)]
+pub mod test_page_id_calculator;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize runtime for async operations first

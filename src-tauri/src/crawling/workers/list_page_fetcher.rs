@@ -14,6 +14,7 @@ use tokio::time::timeout;
 
 use crate::crawling::{tasks::*, state::*};
 use super::{Worker, WorkerError};
+use crate::domain::ProductData;
 
 /// Worker that fetches HTML content from list pages
 pub struct ListPageFetcher {
@@ -223,11 +224,18 @@ mod tests {
         // Invalid task
         let invalid_task = CrawlingTask::SaveProduct {
             task_id: TaskId::new(),
-            product_data: ProductData::new(
-                "test".to_string(),
-                "test".to_string(),
-                "test".to_string(),
-            ),
+            product_data: crate::crawling::tasks::TaskProductData {
+                product_id: "test".to_string(),
+                name: "test".to_string(),
+                category: None,
+                manufacturer: None,
+                model: None,
+                certification_number: None,
+                certification_date: None,
+                details: std::collections::HashMap::new(),
+                extracted_at: chrono::Utc::now(),
+                source_url: "test".to_string(),
+            },
         };
 
         let result = fetcher.process_task(invalid_task, shared_state).await;

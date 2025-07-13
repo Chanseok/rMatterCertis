@@ -1364,6 +1364,7 @@ pub struct ProductListCollectorImpl {
     http_client: Arc<tokio::sync::Mutex<HttpClient>>,
     data_extractor: Arc<MatterDataExtractor>,
     config: CollectorConfig,
+    status_checker: Arc<StatusCheckerImpl>,
 }
 
 impl ProductListCollectorImpl {
@@ -1371,11 +1372,13 @@ impl ProductListCollectorImpl {
         http_client: Arc<tokio::sync::Mutex<HttpClient>>,
         data_extractor: Arc<MatterDataExtractor>,
         config: CollectorConfig,
+        status_checker: Arc<StatusCheckerImpl>,
     ) -> Self {
         Self {
             http_client,
             data_extractor,
             config,
+            status_checker,
         }
     }
 }
@@ -1402,13 +1405,18 @@ impl ProductListCollector for ProductListCollectorImpl {
         info!("🔍 Collecting from {} pages in range {} to {} with true concurrent execution", 
               pages.len(), start_page, end_page);
         
-        // 우선 사이트 분석 정보를 가져와야 함 (총 페이지 수, 마지막 페이지 제품 수)
-        // 현재는 기본값으로 설정, 추후 사이트 분석 정보를 주입받도록 수정 필요
-        let last_page_number = start_page; // 가장 큰 페이지 번호 (가장 오래된 페이지)
-        let products_in_last_page = 4; // 마지막 페이지의 제품 수 (추후 동적으로 계산)
+        // 사이트 분석 정보를 가져와서 정확한 총 페이지 수와 마지막 페이지 제품 수 확인
+        let (total_pages, products_on_last_page) = self.status_checker.discover_total_pages().await?;
+        
+        // 가장 큰 페이지 번호가 마지막 페이지 번호임
+        let last_page_number = total_pages;
+        let products_in_last_page = products_on_last_page;
+        
+        info!("📊 Site analysis result: total_pages={}, products_on_last_page={}", 
+              total_pages, products_on_last_page);
         
         // PageIdCalculator 초기화
-        let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page);
+        let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page as usize);
         
         let max_concurrent = self.config.max_concurrent as usize;
         
@@ -1507,6 +1515,15 @@ impl ProductListCollector for ProductListCollectorImpl {
     }
     
     async fn collect_single_page(&self, page: u32) -> Result<Vec<ProductUrl>> {
+        // 사이트 분석 정보를 먼저 가져오기
+        let (total_pages, products_on_last_page) = self.status_checker.discover_total_pages().await?;
+        
+        // 가장 큰 페이지 번호가 마지막 페이지 번호임
+        let last_page_number = total_pages;
+        let products_in_last_page = products_on_last_page;
+        
+        let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page as usize);
+        
         let url = config_utils::matter_products_page_url_simple(page);
         let mut client = self.http_client.lock().await;
         let html = client.fetch_html_string(&url).await?;
@@ -1514,12 +1531,6 @@ impl ProductListCollector for ProductListCollectorImpl {
         
         let doc = scraper::Html::parse_document(&html);
         let url_strings = self.data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
-        
-        // 기본값으로 설정 (추후 사이트 분석 정보 주입 필요)
-        let last_page_number = page; // 단일 페이지 수집이므로 현재 페이지를 마지막 페이지로 가정
-        let products_in_last_page = url_strings.len();
-        
-        let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page);
         
         // Convert URLs to ProductUrl with proper pageId and indexInPage calculation
         let product_urls: Vec<ProductUrl> = url_strings
@@ -1554,6 +1565,16 @@ impl ProductListCollector for ProductListCollectorImpl {
         info!("🔍 Collecting from {} pages in range {} to {} with cancellation support", 
               pages.len(), start_page, end_page);
         
+        // 사이트 분석 정보를 가져와서 정확한 총 페이지 수와 마지막 페이지 제품 수 확인
+        let (total_pages, products_on_last_page) = self.status_checker.discover_total_pages().await?;
+        
+        // 가장 큰 페이지 번호가 마지막 페이지 번호임
+        let last_page_number = total_pages;
+        let products_in_last_page = products_on_last_page;
+        
+        info!("📊 Site analysis result: total_pages={}, products_on_last_page={}", 
+              total_pages, products_on_last_page);
+        
         let max_concurrent = self.config.max_concurrent as usize;
         
         // Phase 5 Implementation: 진정한 동시성 실행을 위한 세마포어 기반 처리
@@ -1576,6 +1597,10 @@ impl ProductListCollector for ProductListCollectorImpl {
             let data_extractor = Arc::clone(&self.data_extractor);
             let token_clone = cancellation_token.clone();
             let semaphore_clone = Arc::clone(&semaphore);
+            
+            // 사이트 분석 결과를 클로저로 전달
+            let last_page_number_clone = last_page_number;
+            let products_in_last_page_clone = products_in_last_page;
             
             // 3. 각 태스크는 세마포어 permit을 획득한 후 실행
             let task = tokio::spawn(async move {
@@ -1612,11 +1637,8 @@ impl ProductListCollector for ProductListCollectorImpl {
                 let doc = scraper::Html::parse_document(&html);
                 let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
                 
-                // 기본값으로 설정 (추후 사이트 분석 정보 주입 필요)
-                let last_page_number = page; // 현재 페이지를 마지막 페이지로 가정
-                let products_in_last_page = url_strings.len();
-                
-                let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page);
+                // 사이트 분석 결과를 사용하여 정확한 PageIdCalculator 생성
+                let page_calculator = crate::utils::PageIdCalculator::new(last_page_number_clone, products_in_last_page_clone as usize);
                 
                 // Convert URLs to ProductUrl with proper pageId and indexInPage calculation
                 let product_urls: Vec<ProductUrl> = url_strings
