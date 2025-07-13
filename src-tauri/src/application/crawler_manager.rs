@@ -588,6 +588,11 @@ impl BatchProcessor for ServiceBatchProcessor {
         };
         
         // 새로운 ServiceBasedBatchCrawlingEngine 생성 (cancellation_token 포함)
+        // AppConfig를 기본값으로 생성하되, 중요한 설정들은 config에서 가져옴
+        let mut app_config = crate::infrastructure::config::AppConfig::default();
+        // page_range_limit은 config의 end_page - start_page로 설정
+        app_config.user.crawling.page_range_limit = (config.end_page - config.start_page + 1).min(100);
+        
         let engine = ServiceBasedBatchCrawlingEngine::new(
             self.http_client.clone(),
             self.data_extractor.clone(),
@@ -595,6 +600,7 @@ impl BatchProcessor for ServiceBatchProcessor {
             self.event_emitter.clone(),
             batch_config,
             format!("service_session_{}", chrono::Utc::now().timestamp()),
+            app_config,
         );
         
         info!("🛑 Created ServiceBasedBatchCrawlingEngine with cancellation_token: {}", 

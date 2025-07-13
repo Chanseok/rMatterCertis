@@ -141,14 +141,13 @@ async fn perform_site_analysis() -> Result<SiteAnalysisResult, String> {
 async fn perform_database_analysis() -> Result<DbAnalysisResult, String> {
     info!("🗄️ Analyzing database state...");
     
-    // Create database connection
+    // Create database connection and repository
     let database_url = crate::commands::crawling_v4::get_database_url_v4()?;
     let db_pool = sqlx::SqlitePool::connect(&database_url).await
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
-    
     let product_repo = crate::infrastructure::IntegratedProductRepository::new(db_pool);
     
-    // Analyze database state
+    // Perform actual database analysis
     let analysis = product_repo.analyze_database_state().await
         .map_err(|e| format!("Failed to analyze database: {}", e))?;
     

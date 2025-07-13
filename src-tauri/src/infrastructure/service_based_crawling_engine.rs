@@ -160,6 +160,7 @@ impl ServiceBasedBatchCrawlingEngine {
         event_emitter: Arc<Option<EventEmitter>>,
         config: BatchCrawlingConfig,
         session_id: String,
+        app_config: AppConfig,
     ) -> Self {
         // 서비스 설정
         let collector_config = CollectorConfig {
@@ -171,9 +172,6 @@ impl ServiceBasedBatchCrawlingEngine {
             retry_attempts: config.retry_max,
             retry_max: config.retry_max,
         };
-        
-        // 기본 앱 설정 로드
-        let app_config = AppConfig::default();
 
         // 서비스 인스턴스 생성
         let status_checker = Arc::new(StatusCheckerImpl::new(

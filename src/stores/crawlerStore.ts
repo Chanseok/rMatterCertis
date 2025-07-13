@@ -14,8 +14,12 @@ import type {
   CrawlingTaskStatus,
   CrawlingResult,
   BackendCrawlerConfig,
-  CrawlingStatusCheck
+  CrawlingStatusCheck,
+  CrawlingStatus, 
+  CrawlingStage,
+  AtomicTaskEvent
 } from '../types/crawling';
+import { DatabaseHealth } from '../types/crawling';
 import type { 
   SessionStatusDto, 
   StartCrawlingDto
@@ -417,11 +421,66 @@ class CrawlerStore {
       
       const result = await tauriApi.checkSiteStatus();
       
-      setCrawlerState('siteAnalysisResult', result);
-      setCrawlerState('siteAnalysisTimestamp', new Date());
-      
-      console.log('✅ 사이트 분석 완료:', result);
-      return result;
+      // Backend는 CrawlingResponse 구조로 반환하므로 data 필드에서 실제 데이터 추출
+      if (result && result.success && result.data) {
+        const analysisData = result.data;
+        
+        // Backend 응답을 Frontend가 기대하는 형식으로 변환
+        const transformedResult: CrawlingStatusCheck = {
+          database_status: {
+            total_products: analysisData.database_analysis?.total_products || 0,
+            last_updated: analysisData.database_analysis?.analyzed_at || new Date().toISOString(),
+            last_crawl_time: analysisData.database_analysis?.analyzed_at,
+            page_range: [
+              analysisData.database_analysis?.max_page_id || 0, 
+              (analysisData.database_analysis?.max_page_id || 0) + 10
+            ] as [number, number],
+            health: DatabaseHealth.Healthy,
+            size_mb: 0 // TODO: 실제 DB 크기 계산
+          },
+          site_status: {
+            is_accessible: (analysisData.site_analysis?.health_score || 0) > 0.5,
+            response_time_ms: 0, // TODO: 실제 응답 시간 추가
+            total_pages: analysisData.site_analysis?.total_pages || 0,
+            estimated_products: analysisData.site_analysis?.estimated_products || 0,
+            last_check_time: analysisData.site_analysis?.analyzed_at || new Date().toISOString(),
+            health_score: analysisData.site_analysis?.health_score || 0,
+            data_change_status: { Stable: { count: analysisData.site_analysis?.estimated_products || 0 } }
+          },
+          recommendation: {
+            action: 'crawl' as const,
+            priority: 'medium' as const,
+            reason: `사이트: ${analysisData.site_analysis?.total_pages || 0}페이지, DB: ${analysisData.database_analysis?.total_products || 0}개 제품 저장됨`,
+            suggested_range: [
+              analysisData.range_preview?.start_page || 1, 
+              analysisData.range_preview?.end_page || 10
+            ] as [number, number],
+            estimated_new_items: Math.max(0, (analysisData.site_analysis?.estimated_products || 0) - (analysisData.database_analysis?.total_products || 0)),
+            efficiency_score: analysisData.site_analysis?.health_score || 0,
+            next_steps: [`${analysisData.range_preview?.start_page || 1}페이지부터 크롤링 시작`]
+          },
+          sync_comparison: {
+            database_count: analysisData.database_analysis?.total_products || 0,
+            site_estimated_count: analysisData.site_analysis?.estimated_products || 0,
+            sync_percentage: analysisData.database_analysis?.total_products && analysisData.site_analysis?.estimated_products 
+              ? (analysisData.database_analysis.total_products / analysisData.site_analysis.estimated_products) * 100 
+              : 0,
+            last_sync_time: analysisData.database_analysis?.analyzed_at
+          }
+        };
+        
+        setCrawlerState('siteAnalysisResult', transformedResult);
+        setCrawlerState('siteAnalysisTimestamp', new Date());
+        
+        console.log('✅ 사이트 분석 완료 및 변환:', transformedResult);
+        console.log('📊 원본 Backend 데이터:', analysisData);
+        
+        return transformedResult;
+      } else {
+        console.error('❌ Backend 응답 구조가 예상과 다름:', result);
+        setCrawlerState('lastError', 'Backend 응답 구조 오류');
+        return null;
+      }
       
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

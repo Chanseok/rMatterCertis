@@ -210,6 +210,7 @@ pub async fn start_crawling_v3(
             std::sync::Arc::new(event_emitter_for_task),
             crawling_config,
             session_id_for_task,
+            app_config.clone(),
         );
 
         if let Err(e) = engine.execute().await {

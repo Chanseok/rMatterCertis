@@ -414,38 +414,27 @@ export const integratedActions = {
       console.log('🔄 백엔드 연결 테스트 중...');
       setIntegratedState('isBackendConnected', false);
       
-      // 실제 백엔드 명령어들을 순차적으로 테스트
-      const testCommands = [
-        { name: 'get_local_db_stats', description: '로컬 DB 통계' },
-        { name: 'get_comprehensive_crawler_config', description: '크롤러 설정' },
-        { name: 'get_frontend_config', description: '프론트엔드 설정' }
-      ];
-      
-      let successCount = 0;
-      for (const cmd of testCommands) {
-        try {
-          console.log(`🔍 테스트 중: ${cmd.description}...`);
-          await invoke(cmd.name);
-          successCount++;
-          console.log(`✅ ${cmd.description} 테스트 성공`);
-        } catch (error) {
-          console.warn(`⚠️ ${cmd.description} 테스트 실패:`, error);
-        }
-      }
-      
-      const isConnected = successCount >= 2; // 최소 2개 명령어 성공 시 연결된 것으로 간주
-      setIntegratedState('isBackendConnected', isConnected);
-      setIntegratedState('simulationMode', !isConnected);
-      
-      if (isConnected) {
-        console.log(`✅ 백엔드 연결 성공 (${successCount}/${testCommands.length} 명령어 성공)`);
+      // analyze_system_status 명령어를 사용한 간단한 연결 테스트
+      try {
+        console.log('🔍 시스템 상태 분석으로 연결 테스트 중...');
+        const result = await invoke('analyze_system_status');
+        console.log('✅ 백엔드 연결 성공:', result);
+        
+        setIntegratedState('isBackendConnected', true);
+        setIntegratedState('simulationMode', false);
+        
         // 실제 연결 시 실시간 리스너 설정
         await this.setupRealTimeListeners();
-      } else {
-        console.log(`❌ 백엔드 연결 실패 (${successCount}/${testCommands.length} 명령어 성공)`);
+        
+        return true;
+      } catch (error) {
+        console.warn('⚠️ 백엔드 연결 실패:', error);
+        
+        setIntegratedState('isBackendConnected', false);
+        setIntegratedState('simulationMode', true);
+        
+        return false;
       }
-      
-      return isConnected;
     } catch (error) {
       console.error('❌ 백엔드 연결 테스트 오류:', error);
       setIntegratedState('isBackendConnected', false);

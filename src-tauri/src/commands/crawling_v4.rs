@@ -144,6 +144,7 @@ pub async fn init_crawling_engine(
         Arc::new(None), // No event emitter for now
         config,
         uuid::Uuid::new_v4().to_string(),
+        app_config,
     );
     
     *engine_guard = Some(engine);
@@ -531,10 +532,18 @@ async fn calculate_intelligent_crawling_range_v4(
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
         let data_extractor = crate::infrastructure::MatterDataExtractor::new()
             .map_err(|e| format!("Failed to create data extractor: {}", e))?;
-        let status_checker = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
+        // Create product repository for StatusCheckerImpl
+        let database_url = get_database_url_v4()?;
+        let db_pool = sqlx::SqlitePool::connect(&database_url).await
+            .map_err(|e| format!("Failed to connect to database: {}", e))?;
+        let product_repo = crate::infrastructure::IntegratedProductRepository::new(db_pool);
+        let repo_arc = std::sync::Arc::new(product_repo);
+
+        let status_checker = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
             http_client,
             data_extractor,
             config,
+            repo_arc,
         );
         
         let site_status = status_checker.check_site_status().await
@@ -582,7 +591,7 @@ async fn calculate_intelligent_crawling_range_v4(
     }
     
     // Phase 5: Calculate fresh range with guaranteed fresh data
-    tracing::info!("🎯 Calculating fresh range with guaranteed fresh site/DB data");
+    tracing::info!("🎯 Calculating fresh range with cached site/DB data");
     let config_manager = crate::infrastructure::config::ConfigManager::new()
         .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
     let config = config_manager.load_config().await
@@ -601,31 +610,14 @@ async fn calculate_intelligent_crawling_range_v4(
         config.clone(),
     );
 
-    // ✅ 실제 사이트 상태 분석 (하드코딩 제거)
-    tracing::info!("🔍 Performing real-time site analysis...");
-    let http_client = crate::infrastructure::HttpClient::new()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    // ✅ Use cached site analysis instead of repeating site analysis
+    tracing::info!("🔍 Using cached site analysis for range calculation...");
     
-    let data_extractor = crate::infrastructure::MatterDataExtractor::new()
-        .map_err(|e| format!("Failed to create data extractor: {}", e))?;
-    
-    let status_checker = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
-        http_client,
-        data_extractor,
-        config.clone(),
-    );
-    
-    let site_status = status_checker.check_site_status().await
-        .map_err(|e| format!("Failed to check site status: {}", e))?;
-    
-    tracing::info!("📊 Real site status: total_pages={}, products_on_last_page={}", 
-                   site_status.total_pages, site_status.products_on_last_page);
+    // Use the site_analysis we already obtained above
+    let total_pages_on_site = site_analysis.total_pages;
+    let products_on_last_page = site_analysis.products_on_last_page;
 
-    // ✅ 실제 사이트 데이터 사용 (하드코딩 제거)
-    let total_pages_on_site = site_status.total_pages;
-    let products_on_last_page = site_status.products_on_last_page;
-
-    tracing::info!("🌐 Using site parameters: {} total pages, {} products on last page", 
+    tracing::info!("🌐 Using cached site parameters: {} total pages, {} products on last page", 
                   total_pages_on_site, products_on_last_page);
     
     // Calculate next crawling range using proven logic
