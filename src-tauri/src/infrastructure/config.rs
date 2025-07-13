@@ -65,6 +65,9 @@ pub struct CrawlingConfig {
     /// Maximum pages to process (페이지 범위 제한)
     pub page_range_limit: u32,
     
+    /// Intelligent mode configuration
+    pub intelligent_mode: IntelligentModeConfig,
+    
     /// Retry count for product list pages (제품 목록 재시도 횟수)
     pub product_list_retry_count: u32,
     
@@ -79,6 +82,34 @@ pub struct CrawlingConfig {
     
     /// Timing configuration
     pub timing: TimingConfig,
+}
+
+/// Intelligent mode configuration settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntelligentModeConfig {
+    /// Enable intelligent mode
+    pub enabled: bool,
+    
+    /// Maximum range limit for intelligent calculations
+    pub max_range_limit: u32,
+    
+    /// Allow intelligent mode to override config limit
+    pub override_config_limit: bool,
+    
+    /// Cache TTL for site analysis (in minutes)
+    pub site_analysis_ttl_minutes: u64,
+    
+    /// Cache TTL for database analysis (in minutes)
+    pub db_analysis_ttl_minutes: u64,
+    
+    /// Cache TTL for calculated ranges (in minutes)
+    pub range_calculation_ttl_minutes: u64,
+    
+    /// Minimum pages for incremental crawling
+    pub min_incremental_pages: u32,
+    
+    /// Maximum pages for full crawling
+    pub max_full_crawl_pages: u32,
 }
 
 /// Worker configuration settings
@@ -312,11 +343,27 @@ impl Default for CrawlingConfig {
     fn default() -> Self {
         Self {
             page_range_limit: defaults::PAGE_RANGE_LIMIT,
+            intelligent_mode: IntelligentModeConfig::default(),
             product_list_retry_count: defaults::PRODUCT_LIST_RETRY_COUNT,
             product_detail_retry_count: defaults::PRODUCT_DETAIL_RETRY_COUNT,
             auto_add_to_local_db: defaults::AUTO_ADD_TO_LOCAL_DB,
             workers: WorkerConfig::default(),
             timing: TimingConfig::default(),
+        }
+    }
+}
+
+impl Default for IntelligentModeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_range_limit: 1000,  // 지능형 모드에서는 더 높은 제한
+            override_config_limit: true,  // 지능형 계산이 설정값을 무시할 수 있음
+            site_analysis_ttl_minutes: 5,
+            db_analysis_ttl_minutes: 10,  // DB 분석은 더 오래 캐시
+            range_calculation_ttl_minutes: 3,
+            min_incremental_pages: 10,
+            max_full_crawl_pages: 500,
         }
     }
 }

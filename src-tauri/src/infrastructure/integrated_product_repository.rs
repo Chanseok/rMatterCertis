@@ -795,8 +795,9 @@ impl IntegratedProductRepository {
         total_pages_on_site: u32,
         products_on_last_page: u32,
         crawl_page_limit: u32,
-        products_per_page: u32,
     ) -> Result<Option<(u32, u32)>> {
+        // Use site constants for products per page - no more hardcoding!
+        let products_per_page = crate::domain::constants::site::PRODUCTS_PER_PAGE as u32;
         // Step 1: Get the last saved product's pageId and indexInPage
         let (max_page_id, max_index_in_page) = self.get_max_page_id_and_index().await?;
         
@@ -862,7 +863,9 @@ impl IntegratedProductRepository {
     }
 
     /// Check if a specific page range has already been crawled
-    pub async fn is_page_range_crawled(&self, start_page: u32, end_page: u32, products_per_page: u32) -> Result<bool> {
+    pub async fn is_page_range_crawled(&self, start_page: u32, end_page: u32) -> Result<bool> {
+        // Use site constants instead of parameter
+        let products_per_page = crate::domain::constants::site::PRODUCTS_PER_PAGE as u32;
         // Convert website page numbers to our internal pageId system
         // Website pages are in reverse order (1 = newest, high number = oldest)
         // Our pageId starts from 0 for the oldest products
@@ -900,5 +903,24 @@ impl IntegratedProductRepository {
                        start_page_id, end_page_id, count, expected_products);
         
         Ok(count >= expected_products as i32)
+    }
+
+    /// Analyze database state for system diagnostics
+    pub async fn analyze_database_state(&self) -> Result<crate::application::shared_state::DbAnalysisResult> {
+        let stats = self.get_database_statistics().await?;
+        
+        // Calculate quality score based on available data
+        let quality_score = if stats.total_products > 0 { 0.8 } else { 0.0 };
+        
+        Ok(crate::application::shared_state::DbAnalysisResult {
+            total_products: stats.total_products as u32,
+            max_page_id: Some(stats.total_products as i32 / 12), // Assuming 12 products per page
+            max_index_in_page: Some(11), // 0-indexed, so max is 11
+            quality_score,
+            analyzed_at: chrono::Utc::now(),
+            cached_at: std::time::Instant::now(),
+            is_empty: stats.total_products == 0,
+            is_valid: true,
+        })
     }
 }

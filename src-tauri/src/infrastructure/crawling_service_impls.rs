@@ -88,19 +88,23 @@ impl StatusCheckerImpl {
 
     /// Update the pagination context in the data extractor based on discovered page information
     pub async fn update_pagination_context(&self, total_pages: u32, items_on_last_page: u32) -> Result<()> {
+        // Get validated configuration for products per page instead of hardcoding
+        let validated_config = crate::application::validated_crawling_config::ValidatedCrawlingConfig::from_app_config(&self.config);
+        let products_per_page = validated_config.products_per_page;
+        
         // Create pagination context
         let pagination_context = crate::infrastructure::html_parser::PaginationContext {
             total_pages,
-            items_per_page: 12, // CSA-IoT site uses 12 items per page
+            items_per_page: products_per_page, // Use config instead of hardcoded 12
             items_on_last_page,
-            target_page_size: 12, // Our system also uses 12 items per page
+            target_page_size: products_per_page, // Use config instead of hardcoded 12
         };
         
         // Update the data extractor's pagination context
         self.data_extractor.set_pagination_context(pagination_context)?;
         
-        info!("📊 Updated pagination context: total_pages={}, items_on_last_page={}", 
-               total_pages, items_on_last_page);
+        info!("📊 Updated pagination context: total_pages={}, items_on_last_page={}, products_per_page={}", 
+               total_pages, items_on_last_page, products_per_page);
         
         Ok(())
     }
@@ -1284,7 +1288,9 @@ enum DataChangeAnalysis {
     Stable,
 }
 
-/// 컬렉터 설정
+/// 컬렉터 설정 (Modern Rust 2024 준수)
+/// 
+/// ValidatedCrawlingConfig에서 검증된 값을 사용하여 하드코딩을 방지합니다.
 #[derive(Debug, Clone)]
 pub struct CollectorConfig {
     pub batch_size: u32,
@@ -1296,17 +1302,36 @@ pub struct CollectorConfig {
     pub retry_max: u32, // alias for retry_attempts
 }
 
-impl Default for CollectorConfig {
-    fn default() -> Self {
+impl CollectorConfig {
+    /// ValidatedCrawlingConfig에서 CollectorConfig 생성
+    /// 
+    /// # Arguments
+    /// * `validated_config` - 검증된 크롤링 설정
+    /// 
+    /// # Returns
+    /// 설정값이 적용된 CollectorConfig
+    #[must_use]
+    pub fn from_validated(validated_config: &crate::application::validated_crawling_config::ValidatedCrawlingConfig) -> Self {
+        let delay_ms = validated_config.request_delay().as_millis() as u64;
+        
         Self {
-            batch_size: 10,
-            max_concurrent: 3,
-            concurrency: 3,
-            delay_between_requests: Duration::from_millis(500),
-            delay_ms: 500,
-            retry_attempts: 3,
-            retry_max: 3,
+            batch_size: validated_config.batch_size(),
+            max_concurrent: validated_config.max_concurrent(),
+            concurrency: validated_config.max_concurrent(), // alias
+            delay_between_requests: validated_config.request_delay(),
+            delay_ms,
+            retry_attempts: validated_config.max_retries(),
+            retry_max: validated_config.max_retries(), // alias
         }
+    }
+}
+
+impl Default for CollectorConfig {
+    /// 기본값은 ValidatedCrawlingConfig::default()에서 가져옴
+    /// 하드코딩을 방지하기 위해 ValidatedCrawlingConfig를 사용
+    fn default() -> Self {
+        let validated_config = crate::application::validated_crawling_config::ValidatedCrawlingConfig::default();
+        Self::from_validated(&validated_config)
     }
 }
 
@@ -1875,18 +1900,16 @@ impl CrawlingRangeCalculator {
         products_on_last_page: u32,
     ) -> Result<Option<(u32, u32)>> {
         let crawl_page_limit = self.config.user.crawling.page_range_limit;
-        // ✅ 설정에서 실제 평균 페이지당 제품 수 사용 (이전: 하드코딩 12)
-        let products_per_page = self.config.app_managed.avg_products_per_page
-            .unwrap_or(defaults::DEFAULT_PRODUCTS_PER_PAGE as f64) as u32;
+        // Use site constants instead of config-based products_per_page calculation
+        let products_per_page = crate::domain::constants::site::PRODUCTS_PER_PAGE as u32;
         
-        info!("📊 Range calculation parameters: total_pages={}, products_on_last_page={}, products_per_page={}, limit={}", 
+        info!("📊 Range calculation parameters: total_pages={}, products_on_last_page={}, products_per_page={} (site constant), limit={}", 
               total_pages_on_site, products_on_last_page, products_per_page, crawl_page_limit);
 
         let range = self.product_repo.calculate_next_crawling_range(
             total_pages_on_site,
             products_on_last_page,
             crawl_page_limit,
-            products_per_page,
         ).await?;
 
         if let Some((start_page, end_page)) = range {
@@ -1894,7 +1917,7 @@ impl CrawlingRangeCalculator {
                   start_page, end_page, crawl_page_limit);
             
             // 추가 검증: 해당 범위가 이미 크롤링되었는지 확인
-            if self.product_repo.is_page_range_crawled(start_page, end_page, products_per_page).await? {
+            if self.product_repo.is_page_range_crawled(start_page, end_page).await? {
                 warn!("⚠️  Calculated range {} to {} appears to be already crawled, skipping", 
                       start_page, end_page);
                 return Ok(None);
@@ -1909,7 +1932,7 @@ impl CrawlingRangeCalculator {
     /// 특정 페이지 범위가 크롤링되었는지 확인합니다.
     pub async fn is_range_crawled(&self, start_page: u32, end_page: u32) -> Result<bool> {
         let products_per_page = defaults::DEFAULT_PRODUCTS_PER_PAGE;
-        self.product_repo.is_page_range_crawled(start_page, end_page, products_per_page).await
+        self.product_repo.is_page_range_crawled(start_page, end_page).await
     }
 
     /// 크롤링 진행 상황을 분석합니다.
@@ -2103,12 +2126,12 @@ mod tests {
     async fn test_step_by_step_calculation() {
         // Test the step-by-step calculation as described in prompts6
         
-        // Given data from prompts6
+        // Given data from prompts6 - using configuration-driven values where possible
         let max_page_id = 10i32;
         let max_index_in_page = 6i32;
         let total_pages_on_site = 481u32;
         let products_on_last_page = 10u32;
-        let crawl_page_limit = 10u32;
+        let crawl_page_limit = 10u32; // TODO: Use validated config in production
         let products_per_page = 12u32;
         
         println!("📊 Step-by-step calculation test:");

@@ -684,7 +684,7 @@ export class TauriApiService {
    */
   async checkSiteStatus(): Promise<any> {
     try {
-      return await invoke<any>('check_site_status');
+      return await invoke<any>('analyze_system_status');
     } catch (error) {
       throw new Error(`Failed to check site status: ${error}`);
     }

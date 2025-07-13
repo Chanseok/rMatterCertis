@@ -34,16 +34,36 @@ pub struct BatchCrawlingConfig {
     pub cancellation_token: Option<CancellationToken>,
 }
 
+impl BatchCrawlingConfig {
+    /// Create BatchCrawlingConfig from ValidatedCrawlingConfig for Modern Rust 2024 compliance
+    #[must_use]
+    pub fn from_validated(validated_config: &crate::application::validated_crawling_config::ValidatedCrawlingConfig) -> Self {
+        Self {
+            start_page: 1,
+            end_page: 1, // Will be set by range calculator
+            concurrency: validated_config.max_concurrent_requests,
+            delay_ms: validated_config.request_delay_ms,
+            batch_size: validated_config.batch_size,
+            retry_max: validated_config.max_retry_attempts,
+            timeout_ms: validated_config.request_timeout_ms,
+            cancellation_token: None,
+        }
+    }
+}
+
 impl Default for BatchCrawlingConfig {
     fn default() -> Self {
+        // Use ValidatedCrawlingConfig for all defaults instead of hardcoded values
+        let validated_config = crate::application::validated_crawling_config::ValidatedCrawlingConfig::default();
+        
         Self {
             start_page: 1,
             end_page: 1, // ✅ 기본값을 1로 설정 (실제 계산된 범위 사용)
-            concurrency: 3,
-            delay_ms: 1000,
-            batch_size: 10,
-            retry_max: 3,
-            timeout_ms: 30000,
+            concurrency: validated_config.max_concurrent_requests,
+            delay_ms: validated_config.request_delay_ms,
+            batch_size: validated_config.batch_size,
+            retry_max: validated_config.max_retry_attempts,
+            timeout_ms: validated_config.request_timeout_ms,
             cancellation_token: None,
         }
     }

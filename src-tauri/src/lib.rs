@@ -26,6 +26,7 @@ pub mod domain {
     pub mod atomic_events; // 추가: 원자적 태스크 이벤트
     pub mod repositories;
     pub mod value_objects;
+    pub mod constants; // 추가: 사이트 및 도메인 상수들
     pub mod services {
         //! Domain services for business logic
         pub mod product_service;
@@ -64,18 +65,33 @@ pub mod application {
     pub mod dto;
     pub mod events;
     pub mod state;
+    pub mod shared_state;  // 새로 추가된 공유 상태 관리
+    pub mod crawling_profile;  // 크롤링 프로필 정의
     pub mod page_discovery_service;
     pub mod parsing_service;
+    pub mod validated_crawling_config;  // 검증된 크롤링 설정
 
     // Re-export commonly used items
     pub use events::EventEmitter;
     pub use state::AppState;
+    pub use shared_state::{SharedStateCache};
+    pub use crawling_profile::{CrawlingProfile, CrawlingRequest};
     pub use page_discovery_service::PageDiscoveryService;
+    pub use validated_crawling_config::ValidatedCrawlingConfig;
 }
 
 pub mod infrastructure;
 
-pub mod commands;
+// Modern Rust 2024 - Commands module with direct declarations
+pub mod commands {
+    //! Command handlers for Tauri frontend-backend communication
+    pub mod config_commands;
+    pub mod crawling_v4;
+    pub mod modern_crawling;
+    pub mod parsing_commands;
+    pub mod smart_crawling;
+    pub mod system_analysis;
+}
 
 // Modern Rust 2024 - 명시적 모듈 선언
 pub mod crawling;
@@ -159,6 +175,9 @@ pub fn run() {
     // Create application state
     let app_state = application::AppState::new(config);
     
+    // Create shared state cache for stateful backend operations
+    let shared_state = crate::application::shared_state::SharedStateCache::new();
+    
     info!("🔧 Building Tauri application...");
     
     let builder = tauri::Builder::default()
@@ -166,6 +185,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(db)
         .manage(app_state)
+        .manage(shared_state)  // SharedState 추가
         .manage(commands::crawling_v4::CrawlingEngineState {
             engine: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
             database: commands::crawling_v4::MockDatabase {
@@ -190,15 +210,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // Modern real-time commands (Legacy v3.x)
-            commands::start_crawling_v3,
-            commands::pause_crawling,
-            commands::resume_crawling,
-            commands::stop_crawling_v3,
-            
-            // Backend v4.0 commands
+            // Core v4.0 commands - keeping only the implemented ones
             commands::crawling_v4::init_crawling_engine,
             commands::crawling_v4::start_crawling,
+            commands::crawling_v4::start_crawling_with_profile,
+            commands::crawling_v4::get_cache_status,
+            commands::crawling_v4::clear_cache,
             commands::crawling_v4::stop_crawling,
             commands::crawling_v4::get_crawling_stats,
             commands::crawling_v4::get_system_health,
@@ -207,72 +224,20 @@ pub fn run() {
             commands::crawling_v4::emergency_stop,
             commands::crawling_v4::ping_backend,
             commands::crawling_v4::get_app_settings,
-            commands::get_crawling_status,
-            commands::get_active_sessions,
-            commands::get_database_stats,
-            commands::backup_database,
-            commands::optimize_database,
-            commands::export_database_data,
-            commands::clear_crawling_errors,
-            commands::export_crawling_results,
-            commands::check_site_status,
-            commands::get_retry_stats, // 재시도 통계 - INTEGRATED_PHASE2_PLAN Week 1 Day 5
-            commands::update_user_crawling_preferences, // User settings management
             
-            // New database commands for real data
-            commands::get_products,
-            commands::get_local_db_stats,
-            commands::get_analysis_data,
+            // System Analysis commands (proposal6.md Phase 3)
+            commands::system_analysis::analyze_system_status,
+            commands::system_analysis::get_analysis_cache_status,
+            commands::system_analysis::clear_analysis_cache,
             
-            // CrawlerManager 기반 통합 크롤링 명령어들 (임시 비활성화)
-            // commands::start_integrated_crawling,
-            // commands::stop_integrated_crawling,
-            // commands::pause_integrated_crawling,
-            // commands::resume_integrated_crawling,
-            // commands::get_integrated_crawling_progress,
+            // Smart crawling commands 
+            commands::smart_crawling::calculate_crawling_range,
+            commands::smart_crawling::get_crawling_progress,
+            commands::smart_crawling::get_database_state_for_range_calculation,
+            commands::smart_crawling::demo_prompts6_calculation
             
-            // Configuration management commands
-            commands::get_frontend_config,
-            commands::get_site_config,
-            commands::get_default_crawling_config,
-            commands::get_comprehensive_crawler_config,
-            commands::initialize_app_config,
-            commands::reset_config_to_defaults,
-            commands::get_app_directories,
-            commands::is_first_run,
-            commands::update_crawling_settings,
-            commands::get_crawling_status_check,
-            commands::build_page_url,
-            commands::resolve_url,
-            
-            // Frontend logging commands
-            commands::write_frontend_log,
-            commands::get_log_directory_path,
-            commands::cleanup_logs,
-            commands::update_logging_settings,
-            commands::update_batch_settings,
-            
-            // Window state management commands
-            commands::save_window_state,
-            commands::load_window_state,
-            commands::set_window_position,
-            commands::set_window_size,
-            commands::maximize_window,
-            
-            // Legacy parsing commands (temporarily disabled for Modern Rust 2024 migration)
-            // commands::crawl_product_list_page,
-            // commands::crawl_product_detail_page,
-            // commands::batch_crawl_product_lists,
-            // commands::batch_crawl_product_details,
-            // commands::check_has_next_page,
-            // commands::get_crawler_config,
-            // commands::crawler_health_check,
-            
-            // Smart crawling commands (Phase 2: Intelligent Range Calculation)
-            commands::calculate_crawling_range,
-            commands::get_crawling_progress,
-            commands::get_database_state_for_range_calculation,
-            commands::demo_prompts6_calculation
+            // TODO: Add other commands as they are implemented
+            // Most commands are temporarily disabled for compilation
         ]);
     
     info!("✅ Tauri application built successfully, starting...");

@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use crate::domain::services::crawling_services::{StatusChecker, DatabaseAnalyzer};
 use crate::infrastructure::service_based_crawling_engine::{ServiceBasedBatchCrawlingEngine, BatchCrawlingConfig};
 use crate::infrastructure::crawling_service_impls::CrawlingRangeCalculator;
+use crate::application::shared_state::{SharedStateCache, SiteAnalysisResult, DbAnalysisResult, CalculatedRange};
+use crate::application::crawling_profile::{CrawlingProfile, CrawlingRequest};
 
 /// Global state for the crawling engine v4.0
 pub struct CrawlingEngineState {
@@ -119,12 +121,20 @@ pub async fn init_crawling_engine(
     
     let product_repo = Arc::new(crate::infrastructure::IntegratedProductRepository::new(db_pool));
     
-    // Create default configuration with CancellationToken
+    // Create configuration-driven BatchCrawlingConfig with CancellationToken
     let cancellation_token = tokio_util::sync::CancellationToken::new();
-    let mut config = BatchCrawlingConfig::default();
+    
+    // Load validated configuration instead of using hardcoded defaults
+    let config_manager = crate::infrastructure::config::ConfigManager::new()
+        .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
+    let app_config = config_manager.load_config().await
+        .map_err(|e| format!("Failed to load configuration: {}", e))?;
+    let validated_config = crate::application::validated_crawling_config::ValidatedCrawlingConfig::from_app_config(&app_config);
+    
+    let mut config = BatchCrawlingConfig::from_validated(&validated_config);
     config.cancellation_token = Some(cancellation_token);
     
-    tracing::info!("🔄 Created BatchCrawlingConfig with cancellation_token");
+    tracing::info!("🔄 Created configuration-driven BatchCrawlingConfig with cancellation_token");
     
     // Initialize the ServiceBasedBatchCrawlingEngine
     let engine = ServiceBasedBatchCrawlingEngine::new(
@@ -152,6 +162,7 @@ pub async fn init_crawling_engine(
 pub async fn start_crawling(
     app: AppHandle,
     state: State<'_, CrawlingEngineState>,
+    shared_state: State<'_, SharedStateCache>,
     request: StartCrawlingRequest,
 ) -> Result<CrawlingResponse, String> {
     tracing::info!("🚀 START_CRAWLING FUNCTION CALLED!");
@@ -175,7 +186,7 @@ pub async fn start_crawling(
     tracing::info!("🧠 Performing intelligent range calculation...");
     tracing::info!("📋 User request parameters: start_page={}, end_page={}", request.start_page, request.end_page);
     
-    let (start_page, end_page) = calculate_intelligent_crawling_range_v4(&app_config, &request).await
+    let (start_page, end_page) = calculate_intelligent_crawling_range_v4(&app_config, &request, &shared_state).await
         .map_err(|e| format!("Failed to calculate intelligent range: {}", e))?;
     
     tracing::info!("✅ Step 5: Calculated optimal range: {} to {}", start_page, end_page);
@@ -452,18 +463,25 @@ pub async fn ping_backend() -> Result<String, String> {
 /// Get application settings
 #[tauri::command]
 pub async fn get_app_settings() -> Result<serde_json::Value, String> {
-    tracing::info!("⚙️ Getting app settings");
+    tracing::info!("⚙️ Getting app settings from validated configuration");
     
-    // Default settings
+    // Load configuration instead of using hardcoded values
+    let config_manager = crate::infrastructure::config::ConfigManager::new()
+        .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
+    let app_config = config_manager.load_config().await
+        .map_err(|e| format!("Failed to load configuration: {}", e))?;
+    let validated_config = crate::application::validated_crawling_config::ValidatedCrawlingConfig::from_app_config(&app_config);
+    
+    // Use configuration-driven settings instead of hardcoded values
     let settings = serde_json::json!({
-        "page_range_limit": 50,
-        "concurrent_requests": 24,
-        "request_timeout_seconds": 30,
-        "max_products_per_page": 100,
-        "enable_debug_logging": true,
-        "auto_retry_failed_requests": true,
-        "max_retry_attempts": 3,
-        "crawling_delay_ms": 1000
+        "page_range_limit": validated_config.page_range_limit,
+        "concurrent_requests": validated_config.max_concurrent_requests,
+        "request_timeout_seconds": validated_config.request_timeout_ms / 1000, // Convert to seconds
+        "max_products_per_page": validated_config.products_per_page,
+        "enable_debug_logging": validated_config.enable_debug_logging,
+        "auto_retry_failed_requests": true, // Default behavior
+        "max_retry_attempts": validated_config.max_retry_attempts,
+        "crawling_delay_ms": validated_config.request_delay_ms
     });
     
     Ok(settings)
@@ -478,13 +496,14 @@ async fn broadcast_real_time_stats(app: AppHandle, _engine: ServiceBasedBatchCra
 
 // Convert stats function removed as ServiceBasedBatchCrawlingEngine doesn't provide stats interface
 
-/// Calculate intelligent crawling range using existing CrawlingRangeCalculator
-/// This is the proven implementation that works correctly
+/// Calculate intelligent crawling range using SharedStateCache with TTL (State-Ensuring Gateway Pattern)
+/// This implements the proposal6.comment.md "State-Ensuring Gateway" approach
 async fn calculate_intelligent_crawling_range_v4(
     _app_config: &crate::infrastructure::config::AppConfig,
     user_request: &StartCrawlingRequest,
+    shared_state: &State<'_, SharedStateCache>,
 ) -> Result<(u32, u32), String> {
-    tracing::info!("🔍 Using proven smart_crawling.rs range calculation logic...");
+    tracing::info!("🔍 State-Ensuring Gateway: Starting intelligent range calculation...");
     tracing::info!("📝 User request: start_page={}, end_page={}", user_request.start_page, user_request.end_page);
     
     // If user provided explicit range (both > 0), use it directly
@@ -493,12 +512,79 @@ async fn calculate_intelligent_crawling_range_v4(
         return Ok((user_request.start_page, user_request.end_page));
     }
     
-    // If 0 values provided, use intelligent calculation
-    tracing::info!("🧠 User provided 0 values - using intelligent calculation from app config and DB state");
-    // Get configuration
+    // Phase 1: Initialize SharedStateCache and check for valid cached data
+    tracing::info!("🧠 User provided 0 values - using intelligent calculation with TTL-based caching");
+    
+    // Phase 2: Ensure fresh site analysis (TTL-based)
+    let site_analysis = if let Some(cached_analysis) = shared_state.get_valid_site_analysis_async(Some(5)).await {
+        tracing::info!("🎯 Using cached site analysis (avoiding duplicate work)");
+        cached_analysis
+    } else {
+        tracing::info!("🔄 Performing fresh site analysis (cache miss or expired)");
+        // Perform fresh site analysis
+        let config_manager = crate::infrastructure::config::ConfigManager::new()
+            .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
+        let config = config_manager.load_config().await
+            .map_err(|e| format!("Failed to get config: {}", e))?;
+            
+        let http_client = crate::infrastructure::HttpClient::new()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+        let data_extractor = crate::infrastructure::MatterDataExtractor::new()
+            .map_err(|e| format!("Failed to create data extractor: {}", e))?;
+        let status_checker = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
+            http_client,
+            data_extractor,
+            config,
+        );
+        
+        let site_status = status_checker.check_site_status().await
+            .map_err(|e| format!("Failed to check site status: {}", e))?;
+        
+        let analysis = crate::application::shared_state::SiteAnalysisResult::new(
+            site_status.total_pages,
+            site_status.products_on_last_page,
+            site_status.estimated_products,
+            "https://matters.town".to_string(),
+            1.0, // health_score
+        );
+        
+        // Cache the fresh analysis
+        shared_state.set_site_analysis(analysis.clone()).await;
+        analysis
+    };
+    
+    // Phase 3: Ensure fresh DB analysis (TTL-based)
+    let db_analysis = if let Some(cached_db_analysis) = shared_state.get_valid_db_analysis_async(Some(3)).await {
+        tracing::info!("🎯 Using cached DB analysis");
+        cached_db_analysis
+    } else {
+        tracing::info!("🔄 Performing fresh DB analysis");
+        // Perform fresh DB analysis
+        let database_url = get_database_url_v4()?;
+        let db_pool = sqlx::SqlitePool::connect(&database_url).await
+            .map_err(|e| format!("Failed to connect to database: {}", e))?;
+        let product_repo = crate::infrastructure::IntegratedProductRepository::new(db_pool);
+        let repo_arc = std::sync::Arc::new(product_repo);
+        
+        let analysis = repo_arc.analyze_database_state().await
+            .map_err(|e| format!("Failed to analyze database: {}", e))?;
+        
+        // Cache the fresh DB analysis
+        shared_state.set_db_analysis(analysis.clone()).await;
+        analysis
+    };
+    
+    // Phase 4: Use cached or calculate range
+    if let Some(cached_range) = shared_state.get_valid_calculated_range_async(2).await {
+        tracing::info!("🎯 Using cached calculated range: {} to {} ({} pages)", 
+                      cached_range.start_page, cached_range.end_page, cached_range.total_pages);
+        return Ok((cached_range.start_page, cached_range.end_page));
+    }
+    
+    // Phase 5: Calculate fresh range with guaranteed fresh data
+    tracing::info!("🎯 Calculating fresh range with guaranteed fresh site/DB data");
     let config_manager = crate::infrastructure::config::ConfigManager::new()
         .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
-    
     let config = config_manager.load_config().await
         .map_err(|e| format!("Failed to get config: {}", e))?;
     // Create product repository
@@ -526,7 +612,7 @@ async fn calculate_intelligent_crawling_range_v4(
     let status_checker = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
         http_client,
         data_extractor,
-        config,
+        config.clone(),
     );
     
     let site_status = status_checker.check_site_status().await
@@ -574,15 +660,15 @@ async fn calculate_intelligent_crawling_range_v4(
         },
         None => {
             tracing::info!("✅ All products crawled - using verification range");
-            // Return a small verification range for reverse crawling
-            let verification_pages = 5;
+            // Use configuration-driven verification pages instead of hardcoded value
+            let verification_pages = config.user.crawling.page_range_limit.min(10); // Limit verification to reasonable size
             let start_page = total_pages_on_site;  // Start from the last page (oldest)
             let end_page = if start_page >= verification_pages {
                 start_page.saturating_sub(verification_pages).saturating_add(1)  // Go back a few pages
             } else {
                 1
             };
-            tracing::info!("🔍 Verification range: pages {} down to {} ({} pages)", 
+            tracing::info!("🔍 Verification range: pages {} down to {} ({} pages, based on config)", 
                           start_page, end_page, verification_pages);
             Ok((start_page, end_page))
         }
@@ -590,7 +676,7 @@ async fn calculate_intelligent_crawling_range_v4(
 }
 
 /// Get the correct database URL for v4 commands
-fn get_database_url_v4() -> Result<String, String> {
+pub fn get_database_url_v4() -> Result<String, String> {
     // First try to use the path from .env file if it exists
     if let Ok(db_url) = std::env::var("DATABASE_URL") {
         if !db_url.is_empty() {
@@ -632,4 +718,296 @@ fn get_database_url_v4() -> Result<String, String> {
     tracing::info!("Using database at: {}", db_path.display());
     let db_url = format!("sqlite:{}", db_path.display());
     Ok(db_url)
+}
+
+/// 새로운 SharedState 기반 크롤링 시작 명령
+#[tauri::command]
+pub async fn start_crawling_with_profile(
+    app: AppHandle,
+    engine_state: State<'_, CrawlingEngineState>,
+    shared_state: State<'_, SharedStateCache>,
+    crawling_request: CrawlingRequest,
+) -> Result<CrawlingResponse, String> {
+    tracing::info!("🚀 START_CRAWLING_WITH_PROFILE CALLED!");
+    tracing::info!("Crawling request: {:?}", crawling_request);
+    
+    // 요청 유효성 검증
+    crawling_request.validate()
+        .map_err(|e| format!("Invalid crawling request: {}", e))?;
+    
+    let profile = &crawling_request.profile;
+    tracing::info!("🎯 Crawling mode: {}", profile.mode);
+    
+    // TTL 설정 (5분)
+    let cache_ttl_minutes = 5;
+    
+    match profile.mode.as_str() {
+        "intelligent" => {
+            start_intelligent_crawling(&app, &engine_state, &shared_state, cache_ttl_minutes).await
+        }
+        "manual" => {
+            let (start_page, end_page) = profile.get_page_range()
+                .ok_or_else(|| "Manual mode requires page range".to_string())?;
+            start_manual_crawling(&app, &engine_state, &shared_state, start_page, end_page).await
+        }
+        "verification" => {
+            let pages = profile.verification_pages.as_ref()
+                .ok_or_else(|| "Verification mode requires pages list".to_string())?;
+            start_verification_crawling(&app, &engine_state, &shared_state, pages.clone()).await
+        }
+        _ => Err(format!("Unsupported crawling mode: {}", profile.mode))
+    }
+}
+
+/// 지능형 크롤링 실행
+async fn start_intelligent_crawling(
+    app: &AppHandle,
+    engine_state: &State<'_, CrawlingEngineState>,
+    shared_state: &State<'_, SharedStateCache>,
+    cache_ttl_minutes: u64,
+) -> Result<CrawlingResponse, String> {
+    tracing::info!("🧠 Starting intelligent crawling...");
+    
+    // 1. 캐시된 사이트 분석 결과 확인
+    let site_analysis = if let Some(cached_analysis) = shared_state.get_valid_site_analysis_async(Some(cache_ttl_minutes)).await {
+        tracing::info!("✅ Using cached site analysis from {}", cached_analysis.analyzed_at);
+        cached_analysis.clone()
+    } else {
+        tracing::info!("🔍 No valid cached site analysis, performing new analysis...");
+        
+        // 사이트 분석 수행 - 구체적인 구현체 생성
+        let http_client = crate::infrastructure::simple_http_client::HttpClient::new()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+        let data_extractor = crate::infrastructure::html_parser::MatterDataExtractor::new()
+            .map_err(|e| format!("Failed to create data extractor: {}", e))?;
+        let app_config = crate::infrastructure::config::AppConfig::default();
+        
+        let status_checker = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
+            http_client,
+            data_extractor,
+            app_config,
+        );
+        
+        // 사이트 분석 수행
+        let site_status = status_checker.check_site_status().await
+            .map_err(|e| format!("Failed to check site status: {}", e))?;
+            
+        let analysis = SiteAnalysisResult::new(
+            site_status.total_pages,
+            site_status.products_on_last_page,
+            site_status.estimated_products,
+            "https://matters.town".to_string(),
+            0.8, // Default health score
+        );
+        
+        // 캐시에 저장
+        shared_state.set_site_analysis(analysis.clone());
+        tracing::info!("💾 Site analysis cached for future use");
+        analysis
+    };
+    
+    // 2. 캐시된 DB 분석 결과 확인
+    let db_analysis = if let Some(cached_db_analysis) = shared_state.get_valid_db_analysis_async(Some(cache_ttl_minutes)).await {
+        tracing::info!("✅ Using cached DB analysis from {}", cached_db_analysis.analyzed_at);
+        cached_db_analysis.clone()
+    } else {
+        tracing::info!("🔍 No valid cached DB analysis, performing new analysis...");
+        
+        // DB 분석 수행 (실제 구현으로 대체 필요)
+        let analysis = DbAnalysisResult::new(
+            0, // TODO: 실제 DB에서 제품 수 조회
+            None,
+            None,
+            1.0,
+        );
+        
+        // 캐시에 저장
+        shared_state.set_db_analysis(analysis.clone());
+        tracing::info!("💾 DB analysis cached for future use");
+        analysis
+    };
+    
+    // 3. 지능적 범위 계산
+    let app_config = crate::infrastructure::config::AppConfig::default();
+    let page_range_limit = app_config.user.crawling.page_range_limit as u32;
+    
+    let (start_page, end_page) = if db_analysis.is_empty {
+        // 빈 DB인 경우: 최신 페이지부터 역순으로
+        let calculated_end = 1;
+        let calculated_start = std::cmp::min(site_analysis.total_pages, page_range_limit);
+        (calculated_start, calculated_end)
+    } else {
+        // 기존 데이터가 있는 경우: 증분 크롤링
+        let last_page = db_analysis.max_page_id.unwrap_or(1) as u32;
+        let calculated_start = std::cmp::min(site_analysis.total_pages, last_page + page_range_limit);
+        let calculated_end = last_page + 1;
+        (calculated_start, calculated_end)
+    };
+    
+    let calculated_range = CalculatedRange::new(
+        start_page,
+        end_page,
+        site_analysis.total_pages,
+        false, // Not a complete crawl in intelligent mode
+    );
+    
+    // 계산된 범위 캐시에 저장
+    shared_state.set_calculated_range(calculated_range.clone());
+    
+    tracing::info!("🎯 Intelligent range calculated: {} to {} (reason: {})", 
+                   start_page, end_page, calculated_range.calculation_reason);
+    
+    // 4. 실제 크롤링 실행
+    execute_crawling_with_range(app, engine_state, start_page, end_page).await
+}
+
+/// 수동 크롤링 실행
+async fn start_manual_crawling(
+    app: &AppHandle,
+    engine_state: &State<'_, CrawlingEngineState>,
+    shared_state: &State<'_, SharedStateCache>,
+    start_page: u32,
+    end_page: u32,
+) -> Result<CrawlingResponse, String> {
+    tracing::info!("🔧 Starting manual crawling: {} to {}", start_page, end_page);
+    
+    let calculated_range = CalculatedRange::new(
+        start_page,
+        end_page,
+        end_page - start_page + 1, // Total pages being crawled
+        false, // Manual range is not a complete crawl
+    );
+    
+    shared_state.set_calculated_range(calculated_range);
+    
+    execute_crawling_with_range(app, engine_state, start_page, end_page).await
+}
+
+/// 검증 크롤링 실행
+async fn start_verification_crawling(
+    app: &AppHandle,
+    engine_state: &State<'_, CrawlingEngineState>,
+    shared_state: &State<'_, SharedStateCache>,
+    pages: Vec<u32>,
+) -> Result<CrawlingResponse, String> {
+    tracing::info!("🔍 Starting verification crawling for pages: {:?}", pages);
+    
+    let min_page = *pages.iter().min().unwrap();
+    let max_page = *pages.iter().max().unwrap();
+    
+    let calculated_range = CalculatedRange::new(
+        min_page,
+        max_page,
+        max_page - min_page + 1, // Total pages being verified
+        false, // Verification is not a complete crawl
+    );
+    
+    shared_state.set_calculated_range(calculated_range);
+    
+    // 검증 모드에서는 특정 페이지들만 크롤링
+    // 여기서는 간단히 min~max 범위로 처리하지만, 
+    // 실제로는 특정 페이지들만 처리하는 로직 필요
+    execute_crawling_with_range(app, engine_state, max_page, min_page).await
+}
+
+/// 공통 크롤링 실행 로직
+async fn execute_crawling_with_range(
+    app: &AppHandle,
+    engine_state: &State<'_, CrawlingEngineState>,
+    start_page: u32,
+    end_page: u32,
+) -> Result<CrawlingResponse, String> {
+    tracing::info!("🔍 Step: Getting engine guard...");
+    let engine_guard = engine_state.engine.read().await;
+    let engine = engine_guard.as_ref()
+        .ok_or_else(|| "Crawling engine not initialized".to_string())?;
+    
+    tracing::info!("🔍 Step: Engine ready for execution");
+    
+    // Validate page range for reverse crawling (start_page >= end_page is valid)
+    if start_page == 0 || end_page == 0 {
+        return Err("Page numbers must be greater than 0".to_string());
+    }
+    
+    // For reverse crawling, start_page should be >= end_page
+    let (final_start_page, final_end_page) = if start_page < end_page {
+        tracing::warn!("⚠️ Converting forward direction to reverse crawling");
+        (end_page, start_page)
+    } else {
+        (start_page, end_page)
+    };
+    
+    // Calculate total pages for reverse crawling: from final_start_page down to final_end_page
+    let total_pages = final_start_page.saturating_sub(final_end_page).saturating_add(1);
+    
+    tracing::info!("📊 Final crawling parameters:");
+    tracing::info!("   📍 Start page (oldest): {}", final_start_page);
+    tracing::info!("   📍 End page (newest): {}", final_end_page);
+    tracing::info!("   📊 Total pages to crawl: {}", total_pages);
+    tracing::info!("   🔄 Direction: Reverse (older → newer)");
+    
+    // Create batch crawling config
+    let config = BatchCrawlingConfig {
+        start_page: final_start_page,
+        end_page: final_end_page,
+        concurrency: 3,
+        delay_ms: 1000,
+        batch_size: 10,
+        retry_max: 3,
+        timeout_ms: 30000,
+        cancellation_token: None,
+    };
+    
+    tracing::info!("🚀 Starting batch crawling with config: {:?}", config);
+    
+    match engine.execute().await {
+        Ok(_) => {
+            tracing::info!("✅ Crawling started successfully");
+            Ok(CrawlingResponse {
+                success: true,
+                message: format!("Crawling started for pages {} to {} ({} total pages)", 
+                               final_start_page, final_end_page, total_pages),
+                data: Some(serde_json::json!({
+                    "start_page": final_start_page,
+                    "end_page": final_end_page,
+                    "total_pages": total_pages,
+                    "estimated_duration_minutes": total_pages as f64 * 0.5
+                })),
+            })
+        }
+        Err(e) => {
+            tracing::error!("❌ Failed to start crawling: {}", e);
+            Err(format!("Failed to start crawling: {}", e))
+        }
+    }
+}
+
+/// 캐시 상태 조회 명령
+#[tauri::command]
+pub async fn get_cache_status(
+    shared_state: State<'_, SharedStateCache>,
+) -> Result<serde_json::Value, String> {
+    let summary = shared_state.get_status_summary().await;
+    let warnings: Vec<String> = Vec::new(); // Temporarily empty warnings
+    
+    Ok(serde_json::json!({
+        "cache_summary": summary,
+        "consistency_warnings": warnings,
+        "has_site_analysis": shared_state.get_valid_site_analysis_async(Some(5)).await.is_some(),
+        "has_db_analysis": shared_state.get_valid_db_analysis_async(Some(5)).await.is_some(),
+        "has_calculated_range": shared_state.get_valid_calculated_range_async(5).await.is_some(),
+        "site_analysis_time": shared_state.get_valid_site_analysis_async(Some(5)).await.map(|a| a.analyzed_at),
+        "db_analysis_time": shared_state.get_valid_db_analysis_async(Some(5)).await.map(|a| a.analyzed_at),
+        "calculated_range_time": shared_state.get_valid_calculated_range_async(5).await.map(|r| r.calculated_at),
+    }))
+}
+
+/// 캐시 초기화 명령
+#[tauri::command]
+pub async fn clear_cache(
+    shared_state: State<'_, SharedStateCache>,
+) -> Result<String, String> {
+    shared_state.clear_all_caches().await;
+    tracing::info!("🧹 Shared state cache cleared");
+    Ok("Cache cleared successfully".to_string())
 }

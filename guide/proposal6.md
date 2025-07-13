@@ -1,99 +1,288 @@
-# 제안: 백엔드 핵심 로직 검토 및 정상화를 위한 구현 방안
+# 제안 6: 설정 기반 동작 및 구조적 개선 방안
 
-**문서 목적:** 현재 백엔드 구현에서 확인된 3가지 핵심 문제(1. 범위 설정 오류, 2. 비효율적 동시성, 3. 이벤트 누락)를 명확히 진단하고, 이를 해결하여 시스템을 설계된 아키텍처에 맞게 정상화하기 위한 구체적인 기술 제안을 합니다.
+**문서 목적:** 로그 분석 결과 발견된 핵심 문제들 - 하드코딩된 값들, 설정 무시, 중복 작업 등을 해결하기 위한 구조적 개선 방안을 제시합니다.
 
---- 
+---
 
-## 1. 진단: 현재 백엔드는 "반쪽짜리" 상태
+## 🔍 발견된 핵심 문제들 (로그 분석 기반)
 
-현재 백엔드는 이벤트 기반 아키텍처의 뼈대는 갖추었으나, 가장 중요한 두뇌와 신경계가 빠져있는 상태입니다.
+### 1. 하드코딩된 값들이 설정을 무시
+```log
+INFO 🚀 Creating 100 concurrent tasks with semaphore control (max: 3)
+```
+- **문제**: 페이지 범위 100개, 동시성 3개가 하드코딩
+- **설정**: `page_range_limit: 100`, `max_concurrent_requests: 3` in config
+- **실제**: 사용자가 설정을 24로 변경해도 하드코딩된 3 사용
 
--   **두뇌 (지능)의 부재:** 스스로 최적의 작업 범위를 계산하는 지능형 로직이 실행 로직과 연결되지 않았습니다.
--   **신경계 (반응속도)의 부재:** 수많은 작업을 동시에 처리하여 성능을 극대화하는 동시성 모델이 잘못 구현되어 있으며, 작업 하나하나의 상태 변화를 UI에 전달하는 실시간 이벤트 시스템이 누락되었습니다.
+### 2. 중복된 사이트 분석 수행
+```log
+19:01:00.509  INFO Site status check completed: 482 pages found, 1931ms total time
+19:01:03.509  INFO Site status check completed: 482 pages found, 2997ms total time
+```
+- **문제**: 동일 세션에서 사이트 분석을 2번 수행 (총 4.9초 소요)
+- **원인**: SharedStateCache TTL 미활용
 
-이 문제를 해결하지 않으면, 우리가 설계한 v4.0 이상의 아키텍처가 제공하는 사용자 경험과 성능은 결코 달성할 수 없습니다.
+### 3. DB 상태 불일치
+```log
+WARN ⚠️  Product repository not available - assuming empty DB
+INFO Stage 1 completed: 116 total products, quality score: 1
+```
+- **문제**: 같은 세션에서 DB가 "비어있음"과 "116개 제품"으로 모순
+- **원인**: 다른 접근 방식 간 불일치
 
-## 2. 핵심 문제 해결 방안
+### 4. 설정값 기반 범위 계산 실패
+```log
+INFO 🆕 No existing data, starting from page 482 to 383
+```
+- **문제**: 로컬 DB 116개 제품 무시하고 "빈 DB" 가정
+- **기대**: pageId=9, indexInPage=7 기준으로 정확한 범위 계산
 
-### 2.1. 문제 1: 지능형 크롤링 범위 설정 기능 정상화
+---
 
--   **진단:** 시스템이 최적의 크롤링 범위를 성공적으로 계산하고도, 이를 무시하고 UI의 정적 요청 값으로 작업을 시작합니다.
--   **원인:** 범위 계산 로직의 결과가 실제 작업 실행 함수의 인자로 전달되지 않고 유실됩니다.
--   **해결 방안:** `start_crawling` 커맨드의 워크플로우를 명확하게 수정합니다.
-    1.  **`start_crawling` 함수 내 책임 분리:** 함수를 "1. 사전 분석 및 범위 계산" 단계와 "2. 계산된 범위로 작업 실행" 단계로 명확히 나눕니다.
-    2.  **결과 전달 강제:** 1단계에서 계산된 `(start_page, end_page)` 결과를 변수에 저장하고, 이 변수를 2단계 `engine.start_crawling_session` 함수의 인자로 **반드시** 사용하도록 코드를 수정합니다.
-    3.  **코드 예시 (개념):**
-        ```rust
-        // src-tauri/src/commands/crawling_v4.rs
-        #[tauri::command]
-        pub async fn start_crawling(...) {
-            // ...
-            // 1. 지능형 범위 계산 (proposal3, 4의 로직 호출)
-            let maybe_range = engine.calculate_intelligent_range().await?;
+## 🎯 구조적 개선 방안
 
-            if let Some((start_page, end_page)) = maybe_range {
-                // 2. 계산된 결과로 크롤링 세션 시작!
-                engine.start_crawling_session(start_page, end_page).await?;
-            } else {
-                // 크롤링 할 내용이 없음, UI에 "완료" 상태 전송
-            }
-            // ...
+### 1. 설정 중심 아키텍처 (Configuration-Driven Architecture)
+
+```rust
+// 현재 문제: 하드코딩
+let semaphore = Arc::new(Semaphore::new(3)); // 하드코딩!
+
+// 개선 방안: 설정 기반
+let config = app_config.user.crawling.workers;
+let semaphore = Arc::new(Semaphore::new(config.list_page_max_concurrent as usize));
+let page_limit = config.page_range_limit;
+```
+
+#### 설정 우선순위 체계
+1. **사용자 설정**: `matter_certis_config.json`의 user 섹션
+2. **지능형 계산**: 사이트/DB 분석 기반 추천값
+3. **기본값**: defaults 모듈의 fallback 값
+
+### 2. SharedStateCache 활용 강화
+
+```rust
+#[derive(Debug, Clone)]
+pub struct SharedStateCache {
+    // TTL 기반 캐싱으로 중복 작업 방지
+    site_analysis: Option<CachedSiteAnalysis>,
+    db_analysis: Option<CachedDbAnalysis>,
+    calculated_range: Option<CachedRange>,
+    
+    // 설정 기반 동작 보장
+    effective_config: EffectiveConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct CachedSiteAnalysis {
+    pub result: SiteStatus,
+    pub cached_at: Instant,
+    pub ttl: Duration, // 5-10분
+}
+
+#[derive(Debug, Clone)]
+pub struct EffectiveConfig {
+    pub max_concurrent: u32,        // 설정에서 가져온 실제 값
+    pub page_range_limit: u32,      // 설정에서 가져온 실제 값
+    pub batch_size: u32,            // 설정에서 가져온 실제 값
+    pub request_delay_ms: u64,      // 설정에서 가져온 실제 값
+}
+```
+
+### 3. 정확한 pageId/indexInPage 기반 범위 계산
+
+```rust
+#[derive(Debug, Clone)]
+pub struct DbCursorPosition {
+    pub max_page_id: i32,      // 0-based
+    pub max_index_in_page: i32, // 0-based
+    pub total_products: u32,
+}
+
+impl DbCursorPosition {
+    /// 로컬 DB 상태 기반 다음 크롤링 시작점 계산
+    pub fn calculate_next_range(&self, site_total_pages: u32, config: &CrawlingConfig) -> CrawlingRange {
+        let products_per_page = 12; // 사이트 기본 값
+        
+        // 현재 저장된 마지막 제품의 절대 인덱스 (0-based)
+        let last_saved_absolute_index = (self.max_page_id * products_per_page) + self.max_index_in_page;
+        
+        // 다음 크롤링할 제품의 절대 인덱스
+        let next_absolute_index = last_saved_absolute_index + 1;
+        
+        // 웹사이트 페이지 번호로 변환 (1-based)
+        let next_page = (next_absolute_index / products_per_page) + 1;
+        
+        // 설정된 페이지 범위 제한 적용
+        let end_page = next_page + config.page_range_limit.min(config.max_pages);
+        let end_page = end_page.min(site_total_pages);
+        
+        CrawlingRange {
+            start_page: next_page as u32,
+            end_page: end_page as u32,
+            total_pages: (end_page - next_page + 1) as u32,
+            is_complete_crawl: false,
         }
-        ```
+    }
+}
+```
 
-### 2.2. 문제 2: 진정한 동시성 실행 모델 구현
+### 4. 설정 값 검증 및 적용 시스템
 
--   **진단:** 동시성 설정에도 불구하고, 작업들이 작은 묶음(chunk) 단위로 순차 처리되어 성능이 저하됩니다.
--   **원인:** `for chunk in ...` 루프를 사용하는 비효율적인 동시성 패턴이 구현되어 있습니다.
--   **해결 방안:** "Spawn All, Control with Semaphore" 패턴으로 전면 교체합니다.
-    1.  **`Orchestrator` 또는 `WorkerPool` 수정:** `for chunk` 루프를 완전히 제거합니다.
-    2.  **모든 작업 즉시 생성:** 크롤링할 전체 페이지 목록(예: 100개)을 대상으로 `for` 루프를 돌며, **100개의 모든 비동기 태스크(`tokio::spawn`)를 한 번에 생성**합니다.
-    3.  **세마포어로 제어:** 각 태스크 내의 시작점에서 `semaphore.acquire().await`를 호출하여 동시에 실행되는 작업의 수를 제한합니다. 작업이 끝나면 `permit`이 자동으로 반납되어 대기 중인 다른 태스크가 즉시 실행됩니다.
-    4.  **코드 예시 (개념):**
-        ```rust
-        // src-tauri/src/crawling/orchestrator.rs (또는 관련 작업자)
-        async fn process_page_range(&self, pages: Vec<u32>) {
-            let semaphore = Arc::new(Semaphore::new(self.config.max_concurrency));
-            let mut tasks = Vec::new();
+```rust
+#[derive(Debug, Clone)]
+pub struct ValidatedCrawlingConfig {
+    pub max_concurrent: u32,        // 검증된 설정값
+    pub page_range_limit: u32,      // 검증된 설정값  
+    pub batch_size: u32,            // 검증된 설정값
+    pub semaphore_permits: usize,   // max_concurrent와 동일
+}
 
-            for page in pages {
-                let sem_clone = semaphore.clone();
-                tasks.push(tokio::spawn(async move {
-                    let _permit = sem_clone.acquire().await.unwrap();
-                    // ... 실제 페이지 fetch 로직 ...
-                }));
-            }
-
-            futures::future::join_all(tasks).await;
+impl ValidatedCrawlingConfig {
+    pub fn from_user_config(config: &AppConfig) -> Self {
+        let user_config = &config.user.crawling;
+        
+        // 설정값 검증 및 범위 제한
+        let max_concurrent = user_config.workers.list_page_max_concurrent
+            .max(1)  // 최소 1
+            .min(50); // 최대 50
+            
+        let page_range_limit = user_config.page_range_limit
+            .max(1)   // 최소 1페이지
+            .min(500); // 최대 500페이지
+            
+        Self {
+            max_concurrent,
+            page_range_limit,
+            batch_size: user_config.workers.db_batch_size,
+            semaphore_permits: max_concurrent as usize,
         }
-        ```
+    }
+}
+```
 
-### 2.3. 문제 3: 실시간 피드백을 위한 원자적 이벤트 구현
+---
 
--   **진단:** 개별 작업의 상태 변화(시작, 완료, 실패 등)가 UI로 전송되지 않아, 상세하고 동적인 시각화가 불가능합니다.
--   **원인:** 주기적인 종합 상태 스냅샷 이벤트만 존재하고, 개별 상태 변화를 즉시 알리는 이벤트 시스템이 누락되었습니다.
--   **해결 방안:** `proposal5.md`에서 제안된 "듀얼 채널 이벤트 시스템"을 구현합니다.
-    1.  **`AtomicTaskEvent` 정의:** `TaskStarted`, `TaskCompleted`, `TaskFailed` 등을 포함하는 `enum`을 Rust와 TypeScript 양쪽에 정의합니다.
-    2.  **`Orchestrator`에서 이벤트 발생:** `Orchestrator`가 개별 작업을 처리하고 그 결과를 받는 즉시, `TaskResult`를 `AtomicTaskEvent`로 변환하여 `event://atomic-task-update` 채널로 `emit`하는 로직을 추가합니다.
-    3.  **코드 예시 (개념):**
-        ```rust
-        // src-tauri/src/crawling/orchestrator.rs
-        // process_single_task_static 함수가 끝나는 지점
+## 🔧 구현 우선순위
 
-        let result = worker_pool.process_task(task, ...).await;
+### Phase 1: 하드코딩 제거 (최우선)
+1. **설정 기반 동시성 제어**
+   ```rust
+   // 현재: Semaphore::new(3)
+   // 개선: Semaphore::new(validated_config.semaphore_permits)
+   ```
 
-        // 결과를 즉시 UI에 전송할 이벤트로 변환
-        let event = AtomicTaskEvent::from(result);
-        app_handle.emit("atomic-task-update", event).unwrap();
-        ```
+2. **설정 기반 페이지 범위**
+   ```rust
+   // 현재: range 482 to 383 (하드코딩된 100페이지)
+   // 개선: 사용자 설정 page_range_limit 사용
+   ```
 
-## 4. 결론 및 권장 로드맵
+### Phase 2: SharedStateCache TTL 활용
+1. **사이트 분석 결과 재사용**
+   - 5-10분 TTL로 중복 분석 방지
+   - 세션 내 일관성 보장
 
-현재 백엔드는 잠재력 있는 아키텍처 위에 세워졌지만, 핵심적인 기능들이 활성화되지 않은 상태입니다. 위 세 가지 문제를 해결하는 것은 선택이 아닌 필수입니다.
+2. **DB 분석 결과 캐싱**
+   - 정확한 pageId/indexInPage 유지
+   - Repository 불일치 해결
 
-**권장 진행 순서:**
-1.  **1단계 (성능 정상화):** **문제 2(동시성 모델)**를 최우선으로 해결하여 시스템의 기본 성능을 확보합니다.
-2.  **2단계 (로직 정상화):** **문제 1(범위 설정)**을 해결하여 시스템이 올바른 비즈니스 로직으로 동작하게 합니다.
-3.  **3단계 (UX 고도화):** **문제 3(원자적 이벤트)**을 해결하여, 정상화된 시스템의 동작을 UI가 완벽하게 표현할 수 있도록 합니다.
+### Phase 3: 정확한 범위 계산
+1. **pageId/indexInPage 기반 로직**
+   - 0-based 인덱스 정확히 계산
+   - 사이트 페이지 번호 (1-based)로 정확한 변환
 
-이 로드맵에 따라 개선을 진행하면, 백엔드는 설계 문서에 정의된 대로 지능적이고, 효율적이며, 반응성이 뛰어난 시스템으로 거듭날 것입니다.
+2. **설정값 우선순위 적용**
+   - 사용자 설정 → 지능형 계산 → 기본값 순서
+
+---
+
+## 🎮 사용자 경험 개선
+
+### 설정 유효성 즉시 반영
+```rust
+// 사용자가 동시성을 24로 변경하면
+// 즉시 새로운 크롤링에서 24개 동시 작업 수행
+let concurrent_tasks = validated_config.max_concurrent; // 24
+
+// 사용자가 페이지 범위를 20으로 설정하면
+// 다음 크롤링에서 정확히 20페이지만 처리
+let page_limit = validated_config.page_range_limit; // 20
+```
+
+### 일관된 상태 표시
+```rust
+// 동일 세션에서 일관된 정보 제공
+if let Some(cached_site) = shared_cache.get_site_analysis() {
+    // 캐시된 결과 사용 (중복 분석 방지)
+    use_cached_result(cached_site);
+} else {
+    // 새로운 분석 수행 후 캐시에 저장
+    let new_analysis = perform_site_analysis().await;
+    shared_cache.store_site_analysis(new_analysis, Duration::from_secs(600));
+}
+```
+
+---
+
+## 📋 검증 방법
+
+### 1. 설정값 적용 검증
+- 설정 변경 후 로그에서 실제 적용된 값 확인
+- `max_concurrent_requests: 24` → `Creating 24 concurrent tasks`
+
+### 2. 중복 작업 제거 검증  
+- 동일 세션에서 사이트 분석 1회만 수행
+- 캐시 적중률 로그 모니터링
+
+### 3. 정확한 범위 계산 검증
+- pageId=9, indexInPage=7 → 정확한 시작 페이지 계산
+- 로컬 DB 상태와 크롤링 범위 일치 확인
+
+이 구조적 개선을 통해 설정 기반으로 동작하는 안정적이고 예측 가능한 크롤링 시스템을 구축할 수 있습니다.
+
+## 3. 워크플로우 및 역할 재정의
+
+### 3.1. `StatusTab`의 역할: 분석 및 캐시 업데이트
+
+-   **사용자 액션:** 사용자가 `StatusTab`에서 "사이트 종합 분석" 버튼을 클릭합니다.
+-   **프론트엔드:** `invoke('analyze_system_status')` 커맨드를 호출합니다.
+-   **백엔드 (`analyze_system_status` 커맨드):**
+    1.  사이트 분석과 DB 분석을 수행합니다.
+    2.  결과를 `SiteAnalysisResult`와 `DbAnalysisResult` 구조체에 담습니다.
+    3.  **`AppStateCache`를 잠그고(lock), 분석 결과를 캐시에 업데이트합니다.**
+    4.  분석 결과를 UI에 전송하여 화면에 표시합니다.
+-   **결과:** 백엔드는 이제 `total_pages`가 몇 개인지, DB 커서가 어디에 있는지 **기억하게 됩니다.**
+
+### 3.2. `크롤링 시작`의 역할: 캐시 활용 및 실행
+
+-   **사용자 액션:** 사용자가 `크롤링 시작` 버튼을 클릭합니다.
+-   **프론트엔드:** `invoke('start_crawling')` 커맨드를 호출합니다. **더 이상 `start_page`, `end_page` 같은 구체적인 실행 계획을 전달하지 않습니다.**
+-   **백엔드 (`start_crawling` 커맨드):**
+    1.  **`AppStateCache`를 잠그고(lock), 캐시된 분석 결과를 읽어옵니다.**
+    2.  만약 캐시가 비어있다면(사용자가 분석을 건너뛰었다면), 내부적으로 `analyze_system_status` 로직을 호출하여 분석을 수행하고 결과를 캐싱합니다.
+    3.  **캐시된 `SiteAnalysisResult`와 `DbAnalysisResult`를 바탕으로, 최적의 크롤링 범위(`start_page`, `end_page`)를 계산합니다.** (`proposal3.md`의 알고리즘 사용)
+    4.  계산된 범위로 크롤링 엔진(`Orchestrator`)을 시작합니다.
+-   **결과:** 백엔드가 스스로의 기억(캐시)을 바탕으로 판단하고 실행하는, 진정한 의미의 역할 분리가 완성됩니다.
+
+## 4. 구체적인 구현 제안
+
+### 4.1. `start_crawling` 커맨드 시그니처 변경
+
+-   **기존:** `start_crawling(start_page: u32, end_page: u32)`
+-   **변경:** `start_crawling(operating_profile: OperatingProfile)`
+    -   UI는 이제 어떻게(How)가 아닌, 무엇(What)과 정책(Policy)만 전달합니다. "균형 모드로 크롤링 시작해줘" 라고만 요청하면, 백엔드가 알아서 범위를 계산합니다.
+
+### 4.2. `Orchestrator` 및 `Worker` 수정
+
+-   **동시성 문제 해결:** `proposal6.md`에서 제안된 "Spawn All, Control with Semaphore" 패턴을 `ProductListCollector` 또는 관련 작업자에 적용하여, 작업들이 진정한 병렬로 실행되도록 수정합니다.
+-   **이벤트 시스템 구현:** `proposal5.md`에서 제안된 "듀얼 채널 이벤트 시스템"을 구현합니다.
+    -   `Orchestrator`가 개별 작업 완료 시 `atomic-task-update` 이벤트를 즉시 `emit` 하도록 수정합니다.
+    -   주기적으로 `system-state-update`를 `emit`하는 로직을 추가합니다.
+
+## 5. 기대 효과
+
+-   **명확한 역할 분리:** 프론트엔드는 사용자 경험에, 백엔드는 비즈니스 로직과 데이터 처리에만 집중할 수 있게 됩니다.
+-   **성능 및 효율성 향상:** 불필요한 중복 분석 작업을 제거하여 크롤링 시작 시간을 단축하고 서버 부하를 줄입니다.
+-   **아키텍처의 완성:** 시스템이 상태를 기억하고, 그 상태를 기반으로 스스로 판단하고, 모든 과정을 UI에 실시간으로 보고하는, 우리가 원래 설계했던 지능적이고 반응적인 아키텍처가 완성됩니다.
+
+이 제안을 적용하여 백엔드를 "기억력을 가진" 상태 저장 시스템으로 전환하는 것이 현재의 모든 문제를 해결하고 다음 단계로 나아가기 위한 가장 핵심적인 과제입니다.
