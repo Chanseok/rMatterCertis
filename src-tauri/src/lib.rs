@@ -83,6 +83,9 @@ pub mod application {
 
 pub mod infrastructure;
 
+// Events module - 실시간 이벤트 시스템
+pub mod events;
+
 // Modern Rust 2024 - Commands module with direct declarations
 pub mod commands {
     //! Command handlers for Tauri frontend-backend communication
@@ -202,6 +205,7 @@ pub fn run() {
         })
         .setup(|app| {
             let app_handle = app.handle().clone();
+            let broadcaster_handle = app_handle.clone();
             
             // Initialize event emitter in background
             tauri::async_runtime::spawn(async move {
@@ -213,6 +217,12 @@ pub fn run() {
                 } else {
                     info!("✅ Event emitter initialized successfully");
                 }
+            });
+            
+            // Initialize system state broadcaster
+            tauri::async_runtime::spawn(async move {
+                info!("🚀 Starting system state broadcaster...");
+                crate::infrastructure::system_broadcaster::start_system_broadcaster(broadcaster_handle);
             });
             
             Ok(())

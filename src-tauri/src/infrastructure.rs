@@ -18,6 +18,7 @@ pub mod data_processing_service_impls;  // Data processing service implementatio
 pub mod config;  // Configuration constants and helpers
 pub mod logging;  // Logging infrastructure
 pub mod retry_manager;  // 재시도 관리자 - INTEGRATED_PHASE2_PLAN Week 1 Day 3-4
+pub mod system_broadcaster;  // 실시간 시스템 상태 브로드캐스터
 
 // Temporarily disabled - working on schema compatibility
 // pub mod product_repository;

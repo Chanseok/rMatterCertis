@@ -9,25 +9,27 @@ import { useIntegratedCrawlingStore } from '../../stores/integratedCrawlingStore
 import { CrawlingCityDashboard } from '../visualization/CrawlingCityDashboard';
 import { CrawlingCity3D } from '../visualization/CrawlingCity3D';
 import { CrawlingMetricsChart } from '../visualization/CrawlingMetricsChart';
+import { CrawlingProcessDashboard } from '../CrawlingProcessDashboard';
 import type { CrawlingStatusCheck } from '../../types/crawling';
 import { confirm } from '@tauri-apps/plugin-dialog';
 
 // 뷰 모드 선택기 컴포넌트
 const ViewModeSelector: Component<{
   value: string;
-  onChange: (mode: 'classic' | 'city' | '3d' | 'metrics') => void;
+  onChange: (mode: 'classic' | 'city' | '3d' | 'metrics' | 'live') => void;
 }> = (props) => {
   const viewModes = [
     { id: 'classic', label: '📊 Classic View', description: '기존 UI 유지' },
     { id: 'city', label: '🏙️ City View', description: '도시 대시보드' },
     { id: '3d', label: '🎮 3D View', description: '3D 시각화' },
-    { id: 'metrics', label: '📈 Metrics View', description: '차트 중심' }
+    { id: 'metrics', label: '📈 Metrics View', description: '차트 중심' },
+    { id: 'live', label: '🏭 Live Production Line', description: '실시간 공정 대시보드' }
   ];
 
   return (
     <div class="mb-6 bg-white rounded-xl shadow-lg p-4">
       <h3 class="text-lg font-bold text-gray-800 mb-3">🎨 뷰 모드 선택</h3>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
         <For each={viewModes}>
           {(mode) => (
             <button
@@ -900,7 +902,7 @@ const ClassicStatusView: Component = () => {
 export const StatusTab: Component = () => {
   // 통합 크롤링 상태 (INTEGRATED_PHASE2_PLAN)
   const integratedStore = useIntegratedCrawlingStore();
-  const [viewMode, setViewMode] = createSignal<'classic' | 'city' | '3d' | 'metrics'>('classic');
+  const [viewMode, setViewMode] = createSignal<'classic' | 'city' | '3d' | 'metrics' | 'live'>('classic');
 
   onMount(() => {
     // 컴포넌트 마운트 시 초기 데이터 로드
@@ -1009,6 +1011,9 @@ export const StatusTab: Component = () => {
           isRunning={integratedStore.state.systemState?.overallStatus === 'Running'}
           timeRange={5}
         />
+      </Show>
+      <Show when={viewMode() === 'live'}>
+        <CrawlingProcessDashboard />
       </Show>
     </div>
   );

@@ -226,6 +226,32 @@ pub struct CrawlingSessionInfo {
     pub is_active: bool,
 }
 
+/// 실시간 크롤링 상태 정보
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeState {
+    pub is_crawling_active: bool,
+    pub session_target_items: Option<u32>,
+    pub session_collected_items: Option<u32>,
+    pub session_eta_seconds: Option<u32>,
+    pub items_per_minute: Option<f64>,
+    pub current_stage: Option<String>,
+    pub analyzed_at: Option<DateTime<Utc>>,
+}
+
+impl Default for RuntimeState {
+    fn default() -> Self {
+        Self {
+            is_crawling_active: false,
+            session_target_items: None,
+            session_collected_items: None,
+            session_eta_seconds: None,
+            items_per_minute: None,
+            current_stage: None,
+            analyzed_at: None,
+        }
+    }
+}
+
 impl CacheItem for CrawlingSessionInfo {
     fn is_expired(&self, ttl: Duration) -> bool {
         self.start_time.naive_utc() + chrono::Duration::from_std(ttl).unwrap_or_default() < Utc::now().naive_utc()
@@ -257,6 +283,9 @@ pub struct SharedStateCache {
     /// 마지막 크롤링 세션 정보
     pub last_crawling_session: Arc<RwLock<Option<CrawlingSessionInfo>>>,
     
+    /// 실시간 크롤링 상태 정보 (UI 브로드캐스팅용)
+    pub runtime_state: Arc<RwLock<RuntimeState>>,
+    
     /// 캐시 생성 시간
     created_at: Instant,
 }
@@ -277,6 +306,7 @@ impl SharedStateCache {
             calculated_range: Arc::new(RwLock::new(None)),
             validated_config: Arc::new(RwLock::new(ValidatedCrawlingConfig::default())),
             last_crawling_session: Arc::new(RwLock::new(None)),
+            runtime_state: Arc::new(RwLock::new(RuntimeState::default())),
             created_at: Instant::now(),
         }
     }
@@ -292,6 +322,7 @@ impl SharedStateCache {
             calculated_range: Arc::new(RwLock::new(None)),
             validated_config: Arc::new(RwLock::new(validated_config)),
             last_crawling_session: Arc::new(RwLock::new(None)),
+            runtime_state: Arc::new(RwLock::new(RuntimeState::default())),
             created_at: Instant::now(),
         }
     }
