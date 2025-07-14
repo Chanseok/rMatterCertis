@@ -60,6 +60,17 @@ const [tabState, setTabState] = createStore<TabState>({
       }
     },
     {
+      id: 'liveProduction',
+      label: 'Live Production',
+      icon: '🎬',
+      theme: {
+        bg: 'bg-red-50',
+        border: 'border-red-200',
+        text: 'text-red-700',
+        accent: 'from-red-500 to-pink-500'
+      }
+    },
+    {
       id: 'analysis',
       label: '분석',
       icon: '📈',

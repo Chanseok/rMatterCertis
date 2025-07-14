@@ -9,6 +9,7 @@ import { SettingsTab } from './tabs/SettingsTab';
 import { StatusTab } from './tabs/StatusTab';
 import { LocalDBTab } from './tabs/LocalDBTab';
 import { AnalysisTab } from './tabs/AnalysisTab';
+import { LiveProductionTab } from './tabs/LiveProductionTab';
 import { tabState } from '../stores/tabStore';
 
 export const AppWithTabs: Component = () => {
@@ -22,6 +23,8 @@ export const AppWithTabs: Component = () => {
         return <StatusTab />;
       case 'localDB':
         return <LocalDBTab />;
+      case 'liveProduction':
+        return <LiveProductionTab />;
       case 'analysis':
         return <AnalysisTab />;
       default:

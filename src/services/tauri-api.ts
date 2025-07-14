@@ -17,8 +17,10 @@ import type {
   DatabaseStats
 } from '../types/crawling';
 import type { 
-  AtomicTaskEvent
-} from '../types/atomic-events';
+  AtomicTaskEvent,
+  SystemStatePayload,
+  LiveSystemState
+} from '../types/events';
 
 /**
  * Service class for communicating with the Rust backend
@@ -348,25 +350,15 @@ export class TauriApiService {
   // =========================================================================
   // 원자적 태스크 이벤트 구독 (proposal5.md 구현)
   // =========================================================================
-
-  /**
-   * Subscribe to atomic task events (high-frequency, real-time task updates)
-   */
-  async subscribeToAtomicTaskEvents(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
-    const unlisten = await listen<AtomicTaskEvent>('atomic-task-update', (event) => {
-      callback(event.payload);
-    });
-    
-    this.eventListeners.set('atomic-task-update', unlisten);
-    return unlisten;
-  }
+  // Live Production Line Event Subscriptions
+  // =========================================================================
 
   /**
    * Subscribe to task started events specifically
    */
   async subscribeToTaskStarted(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
-    return this.subscribeToAtomicTaskEvents((event) => {
-      if (event.event_type.type === 'TaskStarted') {
+    return this.subscribeToAtomicTaskUpdates((event) => {
+      if (event.status === 'Active') {
         callback(event);
       }
     });
@@ -376,8 +368,8 @@ export class TauriApiService {
    * Subscribe to task completed events specifically
    */
   async subscribeToTaskCompleted(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
-    return this.subscribeToAtomicTaskEvents((event) => {
-      if (event.event_type.type === 'TaskCompleted') {
+    return this.subscribeToAtomicTaskUpdates((event) => {
+      if (event.status === 'Success') {
         callback(event);
       }
     });
@@ -387,8 +379,8 @@ export class TauriApiService {
    * Subscribe to task failed events specifically
    */
   async subscribeToTaskFailed(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
-    return this.subscribeToAtomicTaskEvents((event) => {
-      if (event.event_type.type === 'TaskFailed') {
+    return this.subscribeToAtomicTaskUpdates((event) => {
+      if (event.status === 'Error') {
         callback(event);
       }
     });
@@ -398,11 +390,79 @@ export class TauriApiService {
    * Subscribe to task retrying events specifically
    */
   async subscribeToTaskRetrying(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
-    return this.subscribeToAtomicTaskEvents((event) => {
-      if (event.event_type.type === 'TaskRetrying') {
+    return this.subscribeToAtomicTaskUpdates((event) => {
+      if (event.status === 'Retrying') {
         callback(event);
       }
     });
+  }
+
+  // =========================================================================
+  // Live Production Line Event Subscriptions
+  // =========================================================================
+
+  /**
+   * Subscribe to system state updates (macro-level information)
+   */
+  async subscribeToSystemStateUpdates(callback: (state: SystemStatePayload) => void): Promise<UnlistenFn> {
+    const unlisten = await listen<SystemStatePayload>('system-state-update', (event) => {
+      callback(event.payload);
+    });
+    
+    this.eventListeners.set('system-state-update', unlisten);
+    return unlisten;
+  }
+
+  /**
+   * Subscribe to atomic task events (micro-level information)
+   */
+  async subscribeToAtomicTaskUpdates(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
+    const unlisten = await listen<AtomicTaskEvent>('atomic-task-update', (event) => {
+      callback(event.payload);
+    });
+    
+    this.eventListeners.set('atomic-task-update', unlisten);
+    return unlisten;
+  }
+
+  /**
+   * Subscribe to live system state updates (comprehensive Live Production Line data)
+   */
+  async subscribeToLiveSystemState(callback: (state: LiveSystemState) => void): Promise<UnlistenFn> {
+    const unlisten = await listen<LiveSystemState>('live-state-update', (event) => {
+      callback(event.payload);
+    });
+    
+    this.eventListeners.set('live-state-update', unlisten);
+    return unlisten;
+  }
+
+  /**
+   * Subscribe to all Live Production Line events with proper typing
+   */
+  async subscribeToLiveProductionLineEvents(callbacks: {
+    onSystemStateUpdate?: (state: SystemStatePayload) => void;
+    onAtomicTaskUpdate?: (event: AtomicTaskEvent) => void;
+    onLiveStateUpdate?: (state: LiveSystemState) => void;
+  }): Promise<UnlistenFn[]> {
+    const unlisteners: UnlistenFn[] = [];
+
+    if (callbacks.onSystemStateUpdate) {
+      const unlisten = await this.subscribeToSystemStateUpdates(callbacks.onSystemStateUpdate);
+      unlisteners.push(unlisten);
+    }
+
+    if (callbacks.onAtomicTaskUpdate) {
+      const unlisten = await this.subscribeToAtomicTaskUpdates(callbacks.onAtomicTaskUpdate);
+      unlisteners.push(unlisten);
+    }
+
+    if (callbacks.onLiveStateUpdate) {
+      const unlisten = await this.subscribeToLiveSystemState(callbacks.onLiveStateUpdate);
+      unlisteners.push(unlisten);
+    }
+
+    return unlisteners;
   }
 
   // =========================================================================

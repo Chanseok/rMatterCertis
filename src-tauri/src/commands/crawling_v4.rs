@@ -226,7 +226,33 @@ pub async fn start_crawling(
         tracing::warn!("Failed to emit range calculation event: {}", e);
     }
     
-    tracing::info!("🔍 Step 6: Starting crawling execution...");
+    tracing::info!("🔍 Step 6: Setting up SystemStateBroadcaster...");
+    
+    // SystemStateBroadcaster 설정 (Live Production Line UI용)
+    let broadcaster = crate::infrastructure::system_broadcaster::SystemStateBroadcaster::new(
+        app.clone(),
+    );
+    
+    tracing::info!("📡 SystemStateBroadcaster configured for Live Production Line UI");
+    
+    // 엔진에 broadcaster 설정
+    // NOTE: 현재 구조에서는 mutable reference가 필요하므로 임시로 drop 후 재설정
+    drop(engine_guard);
+    
+    {
+        let mut engine_guard = state.engine.write().await;
+        if let Some(engine) = engine_guard.as_mut() {
+            engine.set_broadcaster(broadcaster);
+            tracing::info!("✅ SystemStateBroadcaster set on crawling engine");
+        }
+    }
+    
+    // 다시 engine guard 획득
+    let engine_guard = state.engine.read().await;
+    let engine = engine_guard.as_ref()
+        .ok_or_else(|| "Crawling engine not initialized".to_string())?;
+    
+    tracing::info!("🔍 Step 7: Starting crawling execution...");
     
     // 동기적으로 실행 (현재 구조에서는 백그라운드 실행 시 라이프타임 문제 발생)
     // TODO: 향후 엔진 구조 개선 시 백그라운드 실행으로 변경

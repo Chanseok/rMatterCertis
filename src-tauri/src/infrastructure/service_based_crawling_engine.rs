@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use tracing::{info, warn, debug};
 use tokio_util::sync::CancellationToken;
+use chrono::Utc;
 
 use crate::domain::services::{
     StatusChecker, DatabaseAnalyzer, ProductListCollector, ProductDetailCollector,
@@ -20,6 +21,8 @@ use crate::application::EventEmitter;
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository, RetryManager};
 use crate::infrastructure::crawling_service_impls::*;
 use crate::infrastructure::config::AppConfig;
+use crate::infrastructure::system_broadcaster::SystemStateBroadcaster;
+use crate::events::{AtomicTaskEvent, TaskStatus};
 
 /// 배치 크롤링 설정
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -152,6 +155,9 @@ pub struct ServiceBasedBatchCrawlingEngine {
     product_detail_repo: Arc<IntegratedProductRepository>,
     event_emitter: Arc<Option<EventEmitter>>,
     
+    // Live Production Line 이벤트 브로드캐스터
+    broadcaster: Option<SystemStateBroadcaster>,
+    
     // 재시도 관리자 - INTEGRATED_PHASE2_PLAN Week 1 Day 3-4
     retry_manager: Arc<RetryManager>,
     
@@ -237,10 +243,16 @@ impl ServiceBasedBatchCrawlingEngine {
             product_repo: product_repo.clone(),
             product_detail_repo: product_repo,
             event_emitter,
+            broadcaster: None, // 나중에 설정됨
             retry_manager: Arc::new(RetryManager::new(config.retry_max)),
             config,
             session_id,
         }
+    }
+
+    /// SystemStateBroadcaster 설정 (크롤링 시작 전에 호출)
+    pub fn set_broadcaster(&mut self, broadcaster: SystemStateBroadcaster) {
+        self.broadcaster = Some(broadcaster);
     }
 
     /// 4단계 서비스 기반 크롤링 실행
@@ -488,6 +500,28 @@ impl ServiceBasedBatchCrawlingEngine {
             message: format!("페이지 {} ~ {}에서 제품 목록을 수집하는 중...", start_page, end_page),
         }).await?;
 
+        // 페이지별 AtomicTaskEvent 발송을 위한 페이지 범위 생성
+        let total_pages = if start_page >= end_page {
+            start_page.saturating_sub(end_page).saturating_add(1)
+        } else {
+            end_page.saturating_sub(start_page).saturating_add(1)
+        };
+
+        // 각 페이지 작업 시작 이벤트 발송
+        for page_num in if start_page >= end_page {
+            (end_page..=start_page).rev().collect::<Vec<_>>()
+        } else {
+            (start_page..=end_page).collect::<Vec<_>>()
+        } {
+            self.emit_atomic_task_event(
+                &format!("page-{}", page_num),
+                "ListPageCollection",
+                TaskStatus::Pending,
+                0.0,
+                Some(format!("Preparing to collect product list from page {}", page_num))
+            );
+        }
+
         // 최적화된 범위로 제품 목록 수집 (cancellation 지원)
         let product_urls = if let Some(cancellation_token) = &self.config.cancellation_token {
             self.product_list_collector.collect_page_range_with_cancellation(
@@ -501,6 +535,21 @@ impl ServiceBasedBatchCrawlingEngine {
                 end_page,
             ).await.map_err(|e| anyhow!("Product list collection failed: {}", e))?
         };
+
+        // 각 페이지 작업 완료 이벤트 발송
+        for page_num in if start_page >= end_page {
+            (end_page..=start_page).rev().collect::<Vec<_>>()
+        } else {
+            (start_page..=end_page).collect::<Vec<_>>()
+        } {
+            self.emit_atomic_task_event(
+                &format!("page-{}", page_num),
+                "ListPageCollection",
+                TaskStatus::Success,
+                1.0,
+                Some(format!("Completed product list collection from page {}", page_num))
+            );
+        }
 
         info!("✅ Stage 2 completed: {} product URLs collected from optimized range", product_urls.len());
         
@@ -528,6 +577,17 @@ impl ServiceBasedBatchCrawlingEngine {
             stage: "ProductDetails".to_string(),
             message: format!("{}개 제품의 상세정보를 수집하는 중... (재시도 지원)", product_urls.len()),
         }).await?;
+
+        // 각 제품 상세정보 수집 작업 시작 이벤트 발송
+        for (index, url) in product_urls.iter().enumerate() {
+            self.emit_atomic_task_event(
+                &format!("product-detail-{}", index),
+                "ProductDetailCollection",
+                TaskStatus::Pending,
+                0.0,
+                Some(format!("Preparing to collect product detail from {}", url))
+            );
+        }
 
         // 초기 시도 - cancellation token 사용
         let mut successful_products = Vec::new();
@@ -561,6 +621,18 @@ impl ServiceBasedBatchCrawlingEngine {
                         (product, detail)
                     })
                     .collect();
+                
+                // 성공한 제품들 완료 이벤트 발송
+                for (index, _) in successful_products.iter().enumerate() {
+                    self.emit_atomic_task_event(
+                        &format!("product-detail-{}", index),
+                        "ProductDetailCollection",
+                        TaskStatus::Success,
+                        1.0,
+                        Some(format!("Successfully collected product detail"))
+                    );
+                }
+                
                 info!("✅ Initial collection successful: {} products", successful_products.len());
             }
             Err(e) => {
@@ -574,6 +646,17 @@ impl ServiceBasedBatchCrawlingEngine {
                 
                 warn!("❌ Initial collection failed: {}", e);
                 failed_urls = product_urls.to_vec();
+                
+                // 실패한 제품들 실패 이벤트 발송
+                for (index, _url) in failed_urls.iter().enumerate() {
+                    self.emit_atomic_task_event(
+                        &format!("product-detail-{}", index),
+                        "ProductDetailCollection",
+                        TaskStatus::Error,
+                        0.0,
+                        Some(format!("Failed to collect product detail: {}", e))
+                    );
+                }
                 
                 // 실패한 URL들을 재시도 큐에 추가
                 for (index, url) in failed_urls.iter().enumerate() {
@@ -863,6 +946,26 @@ impl ServiceBasedBatchCrawlingEngine {
             let error_msg = "Cannot stop: No cancellation token available";
             tracing::warn!("⚠️ {}", error_msg);
             Err(error_msg.to_string())
+        }
+    }
+
+    /// AtomicTaskEvent 발송 (Live Production Line UI용)
+    fn emit_atomic_task_event(&self, task_id: &str, stage_name: &str, status: TaskStatus, progress: f64, message: Option<String>) {
+        if let Some(broadcaster) = &self.broadcaster {
+            let batch_id = 1; // 현재는 단일 배치로 처리
+            let event = AtomicTaskEvent {
+                task_id: task_id.to_string(),
+                batch_id,
+                stage_name: stage_name.to_string(),
+                status,
+                progress,
+                message,
+                timestamp: Utc::now(),
+            };
+            
+            if let Err(e) = broadcaster.emit_atomic_task_event(event) {
+                warn!("Failed to emit atomic task event: {}", e);
+            }
         }
     }
 }

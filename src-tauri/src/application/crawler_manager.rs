@@ -20,7 +20,11 @@ use crate::infrastructure::{
     ServiceBasedBatchCrawlingEngine, 
     AdvancedBatchCrawlingEngine,
     BatchCrawlingConfig,
+    HttpClient,
+    MatterDataExtractor,
+    IntegratedProductRepository,
 };
+use tauri::AppHandle;
 
 /// 배치 프로세서 트레이트 - 3개 엔진을 통합하는 인터페이스
 #[async_trait::async_trait]
@@ -138,6 +142,12 @@ pub struct CrawlerManager {
     service_engine: Arc<ServiceBasedBatchCrawlingEngine>,
     advanced_engine: Arc<AdvancedBatchCrawlingEngine>,
     
+    // 공통 컴포넌트들 (ServiceBatchProcessor에서 사용)
+    http_client: HttpClient,
+    data_extractor: MatterDataExtractor,
+    product_repo: Arc<IntegratedProductRepository>,
+    app_handle: Option<AppHandle>,
+    
     // 활성 세션들
     active_processors: Arc<RwLock<HashMap<String, Arc<dyn BatchProcessor>>>>,
 }
@@ -149,6 +159,10 @@ impl CrawlerManager {
         basic_engine: Arc<BatchCrawlingEngine>,
         service_engine: Arc<ServiceBasedBatchCrawlingEngine>,
         advanced_engine: Arc<AdvancedBatchCrawlingEngine>,
+        http_client: HttpClient,
+        data_extractor: MatterDataExtractor,
+        product_repo: Arc<IntegratedProductRepository>,
+        app_handle: Option<AppHandle>,
     ) -> Self {
         let retry_manager = Arc::new(RetryManager::new(3)); // 기본 3회 재시도
         let performance_monitor = Arc::new(PerformanceMonitor::new());
@@ -161,6 +175,10 @@ impl CrawlerManager {
             basic_engine,
             service_engine,
             advanced_engine,
+            http_client,
+            data_extractor,
+            product_repo,
+            app_handle,
             active_processors: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -317,7 +335,13 @@ impl CrawlerManager {
                 Ok(Arc::new(BasicBatchProcessor::new(self.basic_engine.clone())))
             }
             CrawlingEngineType::Service => {
-                Ok(Arc::new(ServiceBatchProcessor::new(self.service_engine.clone())))
+                Ok(Arc::new(ServiceBatchProcessor::new(
+                    self.service_engine.clone(),
+                    self.http_client.clone(),
+                    self.data_extractor.clone(),
+                    self.product_repo.clone(),
+                    self.app_handle.clone(),
+                )))
             }
             CrawlingEngineType::Advanced => {
                 Ok(Arc::new(AdvancedBatchProcessor::new(self.advanced_engine.clone())))
@@ -471,6 +495,10 @@ impl Clone for CrawlerManager {
             basic_engine: self.basic_engine.clone(),
             service_engine: self.service_engine.clone(),
             advanced_engine: self.advanced_engine.clone(),
+            http_client: self.http_client.clone(),
+            data_extractor: self.data_extractor.clone(),
+            product_repo: self.product_repo.clone(),
+            app_handle: self.app_handle.clone(),
             active_processors: self.active_processors.clone(),
         }
     }
@@ -487,6 +515,10 @@ pub struct BasicBatchProcessor {
 pub struct ServiceBatchProcessor {
     // 기존 엔진의 컴포넌트들에 접근하기 위해 엔진 참조 유지
     base_engine: Arc<ServiceBasedBatchCrawlingEngine>,
+    http_client: HttpClient,
+    data_extractor: MatterDataExtractor,
+    product_repo: Arc<IntegratedProductRepository>,
+    app_handle: Option<AppHandle>,
 }
 
 pub struct AdvancedBatchProcessor {
@@ -563,8 +595,20 @@ impl BatchProcessor for BasicBatchProcessor {
 }
 
 impl ServiceBatchProcessor {
-    pub fn new(base_engine: Arc<ServiceBasedBatchCrawlingEngine>) -> Self {
-        Self { base_engine }
+    pub fn new(
+        base_engine: Arc<ServiceBasedBatchCrawlingEngine>,
+        http_client: HttpClient,
+        data_extractor: MatterDataExtractor,
+        product_repo: Arc<IntegratedProductRepository>,
+        app_handle: Option<AppHandle>,
+    ) -> Self {
+        Self { 
+            base_engine,
+            http_client,
+            data_extractor,
+            product_repo,
+            app_handle,
+        }
     }
 }
 
@@ -593,7 +637,7 @@ impl BatchProcessor for ServiceBatchProcessor {
         // page_range_limit은 config의 end_page - start_page로 설정
         app_config.user.crawling.page_range_limit = (config.end_page - config.start_page + 1).min(100);
         
-        let engine = ServiceBasedBatchCrawlingEngine::new(
+        let mut engine = ServiceBasedBatchCrawlingEngine::new(
             self.http_client.clone(),
             self.data_extractor.clone(),
             self.product_repo.clone(),
@@ -605,6 +649,15 @@ impl BatchProcessor for ServiceBatchProcessor {
         
         info!("🛑 Created ServiceBasedBatchCrawlingEngine with cancellation_token: {}", 
               config.cancellation_token.is_some());
+        
+        // SystemStateBroadcaster 설정 (Live Production Line UI용)
+        if let Some(app_handle) = self.app_handle.clone() {
+            let broadcaster = crate::infrastructure::system_broadcaster::SystemStateBroadcaster::new(
+                app_handle,
+            );
+            engine.set_broadcaster(broadcaster);
+            info!("📡 SystemStateBroadcaster configured for Live Production Line UI");
+        }
         
         // 실행 결과 처리
         match engine.execute().await {
