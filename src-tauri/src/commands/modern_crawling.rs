@@ -205,7 +205,7 @@ pub async fn start_crawling_v3(
         );
 
         // 서비스 기반 배치 크롤링 엔진 생성 및 실행 (개선된 취소 기능 포함)
-        let engine = crate::infrastructure::service_based_crawling_engine::ServiceBasedBatchCrawlingEngine::new(
+        let mut engine = crate::infrastructure::service_based_crawling_engine::ServiceBasedBatchCrawlingEngine::new(
             http_client,
             data_extractor,
             product_repo,

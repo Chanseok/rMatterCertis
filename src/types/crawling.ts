@@ -628,3 +628,101 @@ export interface AtomicEventStats {
   last_emission_time: string;
   event_type_counts: Record<string, number>;
 }
+
+// D3.js 시각화를 위한 새로운 타입 정의
+export type BatchStatus = 'ready' | 'active' | 'completed' | 'failed';
+export type PageStatus = 'pending' | 'collecting' | 'completed' | 'failed';
+export type ProductStatus = 'empty' | 'collecting' | 'success' | 'retry' | 'failed';
+
+export interface BatchInfo {
+  id: string;
+  status: BatchStatus;
+  totalPages: number;
+  completedPages: number;
+  failedPages: number;
+  totalProducts: number;
+  completedProducts: number;
+  failedProducts: number;
+  startTime?: Date;
+  endTime?: Date;
+}
+
+export interface PageInfo {
+  id: string;
+  batchId: string;
+  url: string;
+  status: PageStatus;
+  productCount: number;
+  completedProductCount: number;
+  retryCount: number;
+  lastUpdateTime: Date;
+}
+
+export interface ProductInfo {
+  id: string;
+  batchId: string;
+  pageId: string;
+  url: string;
+  status: ProductStatus;
+  retryCount: number;
+  lastUpdateTime: Date;
+  data?: any;
+}
+
+export interface AnimationState {
+  scene: 'A' | 'B' | 'C';
+  isTransitioning: boolean;
+  animationProgress: number;
+}
+
+export interface VisualizationNode {
+  id: string;
+  type: 'batch' | 'page' | 'product';
+  status: BatchStatus | PageStatus | ProductStatus;
+  x: number;
+  y: number;
+  radius: number;
+  color: string;
+  data: BatchInfo | PageInfo | ProductInfo;
+}
+
+export interface CrawlingSystemState {
+  currentBatch: BatchInfo | null;
+  activeBatches: BatchInfo[];
+  completedBatches: BatchInfo[];
+  pages: PageInfo[];
+  products: ProductInfo[];
+  animationState: AnimationState;
+  lastUpdateTime: Date;
+}
+
+export interface VisualizationConfig {
+  width: number;
+  height: number;
+  backgroundColor: string;
+  batchColor: {
+    ready: string;
+    active: string;
+    completed: string;
+    failed: string;
+  };
+  pageColor: {
+    pending: string;
+    collecting: string;
+    completed: string;
+    failed: string;
+  };
+  productColor: {
+    empty: string;
+    collecting: string;
+    success: string;
+    retry: string;
+    failed: string;
+  };
+  animationDuration: number;
+  physics: {
+    gravity: number;
+    bounce: number;
+    friction: number;
+  };
+}

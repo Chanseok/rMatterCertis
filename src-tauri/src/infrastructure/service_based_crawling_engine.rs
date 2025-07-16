@@ -255,10 +255,22 @@ impl ServiceBasedBatchCrawlingEngine {
         self.broadcaster = Some(broadcaster);
     }
 
+    /// SystemStateBroadcaster에 대한 mutable 참조를 반환
+    pub fn get_broadcaster_mut(&mut self) -> Option<&mut SystemStateBroadcaster> {
+        self.broadcaster.as_mut()
+    }
+
     /// 4단계 서비스 기반 크롤링 실행
-    pub async fn execute(&self) -> Result<()> {
+    pub async fn execute(&mut self) -> Result<()> {
         let start_time = Instant::now();
         info!("Starting service-based 4-stage batch crawling for session: {}", self.session_id);
+
+        // 🔥 크롤링 시작 이벤트 발송 (UI 연결)
+        if let Some(broadcaster) = &mut self.broadcaster {
+            if let Err(e) = broadcaster.emit_crawling_started() {
+                warn!("Failed to emit crawling-started event: {}", e);
+            }
+        }
 
         // 세션 시작 이벤트
         self.emit_detailed_event(DetailedCrawlingEvent::SessionStarted {
@@ -365,9 +377,29 @@ impl ServiceBasedBatchCrawlingEngine {
             0.0
         };
 
+        // 🔥 배치 완료 이벤트 발송 (UI 연결)
+        if let Some(broadcaster) = &mut self.broadcaster {
+            let pages_processed = if actual_start_page >= actual_end_page {
+                actual_start_page - actual_end_page + 1
+            } else {
+                actual_end_page - actual_start_page + 1
+            };
+            
+            if let Err(e) = broadcaster.emit_batch_completed(pages_processed, total_products, success_rate) {
+                warn!("Failed to emit batch-completed event: {}", e);
+            }
+        }
+
         let duration = start_time.elapsed();
         info!("Service-based batch crawling completed in {:?}: {} products collected, {:.2}% success rate", 
             duration, total_products, success_rate * 100.0);
+        
+        // 🔥 크롤링 완료 이벤트 발송 (UI 연결)
+        if let Some(broadcaster) = &mut self.broadcaster {
+            if let Err(e) = broadcaster.emit_crawling_completed() {
+                warn!("Failed to emit crawling-completed event: {}", e);
+            }
+        }
         
         // 세션 완료 이벤트
         self.emit_detailed_event(DetailedCrawlingEvent::SessionCompleted {
@@ -484,8 +516,15 @@ impl ServiceBasedBatchCrawlingEngine {
     }
 
     /// Stage 2: 제품 목록 수집 (최적화된 범위 사용) - Phase 4 Implementation
-    async fn stage2_collect_product_list_optimized(&self, start_page: u32, end_page: u32) -> Result<Vec<ProductUrl>> {
+    async fn stage2_collect_product_list_optimized(&mut self, start_page: u32, end_page: u32) -> Result<Vec<ProductUrl>> {
         info!("Stage 2: Collecting product list using optimized range {} to {}", start_page, end_page);
+        
+        // 🔥 배치 생성 이벤트 발송 (UI 연결)
+        if let Some(broadcaster) = &mut self.broadcaster {
+            if let Err(e) = broadcaster.emit_batch_created(start_page, end_page) {
+                warn!("Failed to emit batch-created event: {}", e);
+            }
+        }
         
         // 취소 확인 - 단계 시작 전
         if let Some(cancellation_token) = &self.config.cancellation_token {
@@ -500,56 +539,120 @@ impl ServiceBasedBatchCrawlingEngine {
             message: format!("페이지 {} ~ {}에서 제품 목록을 수집하는 중...", start_page, end_page),
         }).await?;
 
-        // 페이지별 AtomicTaskEvent 발송을 위한 페이지 범위 생성
-        let total_pages = if start_page >= end_page {
-            start_page.saturating_sub(end_page).saturating_add(1)
-        } else {
-            end_page.saturating_sub(start_page).saturating_add(1)
-        };
-
-        // 각 페이지 작업 시작 이벤트 발송
-        for page_num in if start_page >= end_page {
-            (end_page..=start_page).rev().collect::<Vec<_>>()
-        } else {
-            (start_page..=end_page).collect::<Vec<_>>()
-        } {
-            self.emit_atomic_task_event(
-                &format!("page-{}", page_num),
-                "ListPageCollection",
-                TaskStatus::Pending,
-                0.0,
-                Some(format!("Preparing to collect product list from page {}", page_num))
-            );
-        }
-
         // 최적화된 범위로 제품 목록 수집 (cancellation 지원)
         let product_urls = if let Some(cancellation_token) = &self.config.cancellation_token {
-            self.product_list_collector.collect_page_range_with_cancellation(
-                start_page,
-                end_page,
-                cancellation_token.clone(),
-            ).await.map_err(|e| anyhow!("Product list collection failed: {}", e))?
+            // 각 페이지별로 크롤링 진행하며 이벤트 발송
+            let pages_to_crawl: Vec<u32> = if start_page >= end_page {
+                (end_page..=start_page).rev().collect()
+            } else {
+                (start_page..=end_page).collect()
+            };
+            
+            let mut all_urls = Vec::new();
+            
+            for page_num in pages_to_crawl {
+                // 페이지 크롤링 시작
+                let page_url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page_num);
+                
+                // 개별 페이지 크롤링
+                match self.product_list_collector.collect_page_range_with_cancellation(
+                    page_num,
+                    page_num,
+                    cancellation_token.clone(),
+                ).await {
+                    Ok(page_urls) => {
+                        // 🔥 페이지 크롤링 완료 이벤트 발송 (UI 연결)
+                        if let Some(broadcaster) = &mut self.broadcaster {
+                            if let Err(e) = broadcaster.emit_page_crawled(page_num, page_url.clone(), page_urls.len() as u32, true) {
+                                warn!("Failed to emit page-crawled event: {}", e);
+                            }
+                        }
+                        all_urls.extend(page_urls);
+                    }
+                    Err(e) => {
+                        warn!("❌ Page {} collection failed: {}", page_num, e);
+                        
+                        // 🔥 페이지 크롤링 실패 이벤트 발송 (UI 연결)
+                        if let Some(broadcaster) = &mut self.broadcaster {
+                            if let Err(emit_err) = broadcaster.emit_page_crawled(page_num, page_url.clone(), 0, false) {
+                                warn!("Failed to emit page-crawled failure event: {}", emit_err);
+                            }
+                        }
+                        
+                        // 🔥 페이지 재시도 이벤트 발송
+                        if let Some(broadcaster) = &mut self.broadcaster {
+                            if let Err(e) = broadcaster.emit_retry_attempt(
+                                format!("page_{}", page_num),
+                                "page".to_string(),
+                                page_url.clone(),
+                                1,
+                                2, // 페이지는 최대 2번 재시도
+                                e.to_string()
+                            ) {
+                                warn!("Failed to emit page retry-attempt event: {}", e);
+                            }
+                        }
+                        
+                        // 페이지 재시도 (1회만)
+                        info!("🔄 Retrying page {} collection", page_num);
+                        match self.product_list_collector.collect_page_range_with_cancellation(
+                            page_num,
+                            page_num,
+                            cancellation_token.clone(),
+                        ).await {
+                            Ok(retry_urls) => {
+                                info!("✅ Page {} retry successful", page_num);
+                                
+                                // 🔥 페이지 재시도 성공 이벤트 발송
+                                if let Some(broadcaster) = &mut self.broadcaster {
+                                    if let Err(e) = broadcaster.emit_retry_success(
+                                        format!("page_{}", page_num),
+                                        "page".to_string(),
+                                        page_url.clone(),
+                                        2
+                                    ) {
+                                        warn!("Failed to emit page retry-success event: {}", e);
+                                    }
+                                }
+                                
+                                if let Some(broadcaster) = &mut self.broadcaster {
+                                    if let Err(e) = broadcaster.emit_page_crawled(page_num, page_url, retry_urls.len() as u32, true) {
+                                        warn!("Failed to emit page-crawled retry success event: {}", e);
+                                    }
+                                }
+                                all_urls.extend(retry_urls);
+                            }
+                            Err(retry_e) => {
+                                warn!("❌ Page {} retry also failed: {}", page_num, retry_e);
+                                
+                                // 🔥 페이지 재시도 최종 실패 이벤트 발송
+                                if let Some(broadcaster) = &mut self.broadcaster {
+                                    if let Err(e) = broadcaster.emit_retry_failed(
+                                        format!("page_{}", page_num),
+                                        "page".to_string(),
+                                        page_url.clone(),
+                                        2,
+                                        retry_e.to_string()
+                                    ) {
+                                        warn!("Failed to emit page retry-failed event: {}", e);
+                                    }
+                                }
+                                
+                                // 페이지 실패는 전체 작업을 중단시키지 않음
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            all_urls
         } else {
             self.product_list_collector.collect_page_range(
                 start_page,
                 end_page,
             ).await.map_err(|e| anyhow!("Product list collection failed: {}", e))?
         };
-
-        // 각 페이지 작업 완료 이벤트 발송
-        for page_num in if start_page >= end_page {
-            (end_page..=start_page).rev().collect::<Vec<_>>()
-        } else {
-            (start_page..=end_page).collect::<Vec<_>>()
-        } {
-            self.emit_atomic_task_event(
-                &format!("page-{}", page_num),
-                "ListPageCollection",
-                TaskStatus::Success,
-                1.0,
-                Some(format!("Completed product list collection from page {}", page_num))
-            );
-        }
 
         info!("✅ Stage 2 completed: {} product URLs collected from optimized range", product_urls.len());
         
@@ -562,7 +665,7 @@ impl ServiceBasedBatchCrawlingEngine {
     }
 
     /// Stage 3: 제품 상세정보 수집 (서비스 기반 + 재시도 메커니즘)
-    async fn stage3_collect_product_details(&self, product_urls: &[ProductUrl]) -> Result<Vec<(Product, ProductDetail)>> {
+    async fn stage3_collect_product_details(&mut self, product_urls: &[ProductUrl]) -> Result<Vec<(Product, ProductDetail)>> {
         info!("Stage 3: Collecting product details using ProductDetailCollector service with retry mechanism");
         
         // 취소 확인 - 단계 시작 전
@@ -577,17 +680,6 @@ impl ServiceBasedBatchCrawlingEngine {
             stage: "ProductDetails".to_string(),
             message: format!("{}개 제품의 상세정보를 수집하는 중... (재시도 지원)", product_urls.len()),
         }).await?;
-
-        // 각 제품 상세정보 수집 작업 시작 이벤트 발송
-        for (index, url) in product_urls.iter().enumerate() {
-            self.emit_atomic_task_event(
-                &format!("product-detail-{}", index),
-                "ProductDetailCollection",
-                TaskStatus::Pending,
-                0.0,
-                Some(format!("Preparing to collect product detail from {}", url))
-            );
-        }
 
         // 초기 시도 - cancellation token 사용
         let mut successful_products = Vec::new();
@@ -615,23 +707,47 @@ impl ServiceBasedBatchCrawlingEngine {
                 }
                 
                 // ProductDetail을 Product로 변환하고 원본 ProductDetail과 함께 저장
+                let product_count = product_details.len();
                 successful_products = product_details.into_iter()
-                    .map(|detail| {
+                    .enumerate()
+                    .map(|(index, detail)| {
                         let product = crate::infrastructure::crawling_service_impls::product_detail_to_product(detail.clone());
+                        
+                        // 🔥 제품 수집 완료 이벤트 발송 (UI 연결)
+                        if let Some(broadcaster) = &mut self.broadcaster {
+                            if let Some(product_url) = product_urls.get(index) {
+                                if let Err(e) = broadcaster.emit_product_collected(
+                                    product.page_id.unwrap_or(0) as u32,
+                                    product.model.clone().unwrap_or_else(|| format!("product-{}", index)),
+                                    product_url.to_string(),
+                                    true
+                                ) {
+                                    warn!("Failed to emit product-collected event: {}", e);
+                                }
+                            }
+                        }
+                        
+                        // 🔥 배치 진행 상황 업데이트 (10개마다)
+                        if index % 10 == 0 || index == product_count - 1 {
+                            let progress = (index + 1) as f64 / product_urls.len() as f64;
+                            
+                            if let Some(broadcaster) = &mut self.broadcaster {
+                                if let Err(e) = broadcaster.emit_batch_progress(
+                                    "ProductDetails".to_string(),
+                                    progress,
+                                    product_urls.len() as u32,
+                                    (index + 1) as u32,
+                                    0, // items_active
+                                    0  // items_failed (아직 실패한 항목 없음)
+                                ) {
+                                    warn!("Failed to emit batch-progress event: {}", e);
+                                }
+                            }
+                        }
+                        
                         (product, detail)
                     })
                     .collect();
-                
-                // 성공한 제품들 완료 이벤트 발송
-                for (index, _) in successful_products.iter().enumerate() {
-                    self.emit_atomic_task_event(
-                        &format!("product-detail-{}", index),
-                        "ProductDetailCollection",
-                        TaskStatus::Success,
-                        1.0,
-                        Some(format!("Successfully collected product detail"))
-                    );
-                }
                 
                 info!("✅ Initial collection successful: {} products", successful_products.len());
             }
@@ -647,15 +763,18 @@ impl ServiceBasedBatchCrawlingEngine {
                 warn!("❌ Initial collection failed: {}", e);
                 failed_urls = product_urls.to_vec();
                 
-                // 실패한 제품들 실패 이벤트 발송
-                for (index, _url) in failed_urls.iter().enumerate() {
-                    self.emit_atomic_task_event(
-                        &format!("product-detail-{}", index),
-                        "ProductDetailCollection",
-                        TaskStatus::Error,
-                        0.0,
-                        Some(format!("Failed to collect product detail: {}", e))
-                    );
+                // 🔥 실패한 제품들 실패 이벤트 발송 (UI 연결)
+                for (index, url) in failed_urls.iter().enumerate() {
+                    if let Some(broadcaster) = &mut self.broadcaster {
+                        if let Err(emit_err) = broadcaster.emit_product_collected(
+                            0, // 페이지 ID 미상
+                            format!("failed-{}", index),
+                            url.to_string(),
+                            false
+                        ) {
+                            warn!("Failed to emit product-collected failure event: {}", emit_err);
+                        }
+                    }
                 }
                 
                 // 실패한 URL들을 재시도 큐에 추가
@@ -703,7 +822,7 @@ impl ServiceBasedBatchCrawlingEngine {
     }
     
     /// 제품 상세정보 수집 재시도 처리
-    async fn process_retries_for_product_details(&self) -> Result<Vec<(Product, ProductDetail)>> {
+    async fn process_retries_for_product_details(&mut self) -> Result<Vec<(Product, ProductDetail)>> {
         info!("🔄 Processing retries for product details collection");
         let mut retry_products = Vec::new();
         
@@ -740,6 +859,20 @@ impl ServiceBasedBatchCrawlingEngine {
                     
                     info!("🔄 Retrying product detail collection for: {}", url);
                     
+                    // 🔥 재시도 시도 이벤트 발송
+                    if let Some(broadcaster) = &mut self.broadcaster {
+                        if let Err(e) = broadcaster.emit_retry_attempt(
+                            item_id.clone(),
+                            "product".to_string(),
+                            url.clone(),
+                            cycle,
+                            3,
+                            "Product detail collection failed".to_string()
+                        ) {
+                            warn!("Failed to emit retry-attempt event: {}", e);
+                        }
+                    }
+                    
                     // Convert String URL to ProductUrl for the new API
                     let product_url = ProductUrl::new(url.clone(), -1, -1); // Use -1 for retry URLs
                     
@@ -749,6 +882,18 @@ impl ServiceBasedBatchCrawlingEngine {
                                 let product = crate::infrastructure::crawling_service_impls::product_detail_to_product(detail.clone());
                                 info!("✅ Retry successful for: {}", url);
                                 retry_products.push((product, detail));
+                                
+                                // 🔥 재시도 성공 이벤트 발송
+                                if let Some(broadcaster) = &mut self.broadcaster {
+                                    if let Err(e) = broadcaster.emit_retry_success(
+                                        item_id.clone(),
+                                        "product".to_string(),
+                                        url.clone(),
+                                        cycle
+                                    ) {
+                                        warn!("Failed to emit retry-success event: {}", e);
+                                    }
+                                }
                                 
                                 // 성공 기록
                                 if let Err(e) = self.retry_manager.mark_retry_success(&item_id).await {
@@ -770,13 +915,26 @@ impl ServiceBasedBatchCrawlingEngine {
                             metadata.insert("retry_cycle".to_string(), cycle.to_string());
                             
                             if let Err(retry_err) = self.retry_manager.add_failed_item(
-                                item_id,
+                                item_id.clone(),
                                 CrawlingStage::ProductDetails,
                                 e.to_string(),
                                 url.clone(),
                                 metadata,
                             ).await {
                                 debug!("Item exceeded retry limit or not retryable: {}", retry_err);
+                                
+                                // 🔥 재시도 최종 실패 이벤트 발송
+                                if let Some(broadcaster) = &mut self.broadcaster {
+                                    if let Err(emit_err) = broadcaster.emit_retry_failed(
+                                        item_id.clone(),
+                                        "product".to_string(),
+                                        url.clone(),
+                                        cycle,
+                                        e.to_string()
+                                    ) {
+                                        warn!("Failed to emit retry-failed event: {}", emit_err);
+                                    }
+                                }
                             }
                             
                             self.emit_detailed_event(DetailedCrawlingEvent::ProductProcessed {
@@ -824,7 +982,7 @@ impl ServiceBasedBatchCrawlingEngine {
     }
 
     /// Stage 4: 데이터베이스 저장
-    async fn stage4_save_to_database(&self, products: Vec<(Product, ProductDetail)>) -> Result<(usize, usize, usize, usize)> {
+    async fn stage4_save_to_database(&mut self, products: Vec<(Product, ProductDetail)>) -> Result<(usize, usize, usize, usize)> {
         info!("Stage 4: Saving {} products to database", products.len());
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
@@ -835,6 +993,7 @@ impl ServiceBasedBatchCrawlingEngine {
         let mut new_items = 0;
         let mut updated_items = 0;
         let mut errors = 0;
+        let total_items = products.len();
 
         for (index, (product, product_detail)) in products.into_iter().enumerate() {
             // 주기적으로 취소 확인 (100개마다)
@@ -846,6 +1005,23 @@ impl ServiceBasedBatchCrawlingEngine {
                     }
                 }
             }
+
+            let item_id = format!("db_save_{}_{}", index, product.url.replace("https://", "").replace("/", "_"));
+            
+            // 🔥 DB 저장 시도 이벤트 발송
+            if let Some(broadcaster) = &mut self.broadcaster {
+                if let Err(e) = broadcaster.emit_database_save_attempt(
+                    item_id.clone(),
+                    "product".to_string(),
+                    product.url.clone()
+                ) {
+                    warn!("Failed to emit database-save-attempt event: {}", e);
+                }
+            }
+            
+            // 제품이 기존에 존재하는지 확인
+            let existing_product = self.product_repo.get_product_by_url(&product.url).await?;
+            let is_update = existing_product.is_some();
             
             // Product와 ProductDetail을 모두 저장
             let product_save_result = self.product_repo.create_or_update_product(&product).await;
@@ -853,11 +1029,22 @@ impl ServiceBasedBatchCrawlingEngine {
             
             match (product_save_result, product_detail_save_result) {
                 (Ok(_), Ok(_)) => {
-                    // 제품이 새로 추가되었는지 업데이트되었는지 확인하기 위해
-                    // 기존 제품을 조회해보겠습니다
-                    match self.product_repo.get_product_by_url(&product.url).await? {
-                        Some(_existing) => updated_items += 1,
-                        None => new_items += 1,
+                    if is_update {
+                        updated_items += 1;
+                    } else {
+                        new_items += 1;
+                    }
+                    
+                    // 🔥 DB 저장 성공 이벤트 발송
+                    if let Some(broadcaster) = &mut self.broadcaster {
+                        if let Err(e) = broadcaster.emit_database_save_success(
+                            item_id.clone(),
+                            "product".to_string(),
+                            product.url.clone(),
+                            is_update
+                        ) {
+                            warn!("Failed to emit database-save-success event: {}", e);
+                        }
                     }
                     
                     self.emit_detailed_event(DetailedCrawlingEvent::ProductProcessed {
@@ -865,14 +1052,66 @@ impl ServiceBasedBatchCrawlingEngine {
                         success: true,
                     }).await?;
                 },
-                (Err(e), _) | (_, Err(e)) => {
+                (Err(e), _) => {
                     errors += 1;
                     warn!("Failed to save product {:?}: {}", product.model, e);
+                    
+                    // 🔥 DB 저장 실패 이벤트 발송
+                    if let Some(broadcaster) = &mut self.broadcaster {
+                        if let Err(emit_err) = broadcaster.emit_database_save_failed(
+                            item_id.clone(),
+                            "product".to_string(),
+                            product.url.clone(),
+                            e.to_string()
+                        ) {
+                            warn!("Failed to emit database-save-failed event: {}", emit_err);
+                        }
+                    }
                     
                     self.emit_detailed_event(DetailedCrawlingEvent::ProductProcessed {
                         url: product.url.clone(),
                         success: false,
                     }).await?;
+                }
+                (_, Err(e)) => {
+                    errors += 1;
+                    warn!("Failed to save product detail for {:?}: {}", product.model, e);
+                    
+                    // 🔥 DB 저장 실패 이벤트 발송 (ProductDetail 저장 실패)
+                    if let Some(broadcaster) = &mut self.broadcaster {
+                        if let Err(emit_err) = broadcaster.emit_database_save_failed(
+                            format!("{}_detail", item_id),
+                            "product_detail".to_string(),
+                            product.url.clone(),
+                            e.to_string()
+                        ) {
+                            warn!("Failed to emit database-save-failed event: {}", emit_err);
+                        }
+                    }
+                    
+                    self.emit_detailed_event(DetailedCrawlingEvent::ProductProcessed {
+                        url: product.url.clone(),
+                        success: false,
+                    }).await?;
+                }
+            }
+
+            // 🔥 배치 진행 상황 업데이트 (10개마다)
+            if index % 10 == 0 || index == total_items - 1 {
+                let progress = (index + 1) as f64 / total_items as f64;
+                let completed = new_items + updated_items + errors;
+                
+                if let Some(broadcaster) = &mut self.broadcaster {
+                    if let Err(e) = broadcaster.emit_batch_progress(
+                        "DatabaseSave".to_string(),
+                        progress,
+                        total_items as u32,
+                        completed as u32,
+                        0, // items_active (현재 처리 중인 항목)
+                        errors as u32
+                    ) {
+                        warn!("Failed to emit batch-progress event: {}", e);
+                    }
                 }
             }
         }

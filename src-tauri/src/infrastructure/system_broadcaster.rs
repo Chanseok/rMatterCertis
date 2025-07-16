@@ -5,12 +5,127 @@ use crate::events::{SystemStatePayload, AtomicTaskEvent, LiveSystemState, BatchI
 use crate::application::shared_state::SharedStateCache;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::infrastructure::database_connection::DatabaseConnection;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// UI 이벤트 페이로드 구조체들
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchCreatedPayload {
+    pub batch_id: String,
+    pub page_range: (u32, u32),
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageCrawledPayload {
+    pub batch_id: String,
+    pub page_id: u32,
+    pub url: String,
+    pub product_count: u32,
+    pub status: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProductCollectedPayload {
+    pub batch_id: String,
+    pub page_id: u32,
+    pub product_id: String,
+    pub url: String,
+    pub status: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchCompletedPayload {
+    pub batch_id: String,
+    pub pages_processed: u32,
+    pub products_collected: u32,
+    pub success_rate: f64,
+    pub timestamp: String,
+}
+
+// 🔥 새로운 이벤트 페이로드들 추가
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryAttemptPayload {
+    pub batch_id: String,
+    pub item_id: String,
+    pub item_type: String, // "page" or "product"
+    pub url: String,
+    pub attempt_number: u32,
+    pub max_attempts: u32,
+    pub reason: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetrySuccessPayload {
+    pub batch_id: String,
+    pub item_id: String,
+    pub item_type: String,
+    pub url: String,
+    pub final_attempt: u32,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryFailedPayload {
+    pub batch_id: String,
+    pub item_id: String,
+    pub item_type: String,
+    pub url: String,
+    pub total_attempts: u32,
+    pub final_error: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabaseSaveAttemptPayload {
+    pub batch_id: String,
+    pub item_id: String,
+    pub item_type: String, // "product" or "product_detail"
+    pub url: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabaseSaveSuccessPayload {
+    pub batch_id: String,
+    pub item_id: String,
+    pub item_type: String,
+    pub url: String,
+    pub was_update: bool, // true if updated, false if newly created
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabaseSaveFailedPayload {
+    pub batch_id: String,
+    pub item_id: String,
+    pub item_type: String,
+    pub url: String,
+    pub error: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchProgressPayload {
+    pub batch_id: String,
+    pub stage: String,
+    pub progress: f64, // 0.0 to 1.0
+    pub items_total: u32,
+    pub items_completed: u32,
+    pub items_active: u32,
+    pub items_failed: u32,
+    pub timestamp: String,
+}
 
 /// 시스템 상태 브로드캐스터
 pub struct SystemStateBroadcaster {
     app_handle: AppHandle,
     last_broadcast: Option<Instant>,
     broadcast_interval: Duration,
+    current_batch_id: Option<String>,
 }
 
 impl SystemStateBroadcaster {
@@ -19,6 +134,7 @@ impl SystemStateBroadcaster {
             app_handle,
             last_broadcast: None,
             broadcast_interval: Duration::from_secs(2), // 2초마다 브로드캐스트
+            current_batch_id: None,
         }
     }
 
@@ -77,8 +193,6 @@ impl SystemStateBroadcaster {
         self.app_handle.emit("system-state-update", &system_state)?;
         
         self.last_broadcast = Some(now);
-        println!("📡 System state broadcasted: running={}, total_pages={}, db_products={}", 
-                 system_state.is_running, system_state.total_pages, system_state.db_total_products);
         
         Ok(())
     }
@@ -86,7 +200,6 @@ impl SystemStateBroadcaster {
     /// 원자적 작업 이벤트 발송
     pub fn emit_atomic_task_event(&self, event: AtomicTaskEvent) -> anyhow::Result<()> {
         self.app_handle.emit("atomic-task-update", &event)?;
-        println!("⚡ Atomic task event: {} - {} - {:?}", event.task_id, event.stage_name, event.status);
         Ok(())
     }
 
@@ -159,6 +272,204 @@ impl SystemStateBroadcaster {
                 eprintln!("❌ Failed to broadcast system state: {}", e);
             }
         }
+    }
+
+    /// 새로운 배치 시작 이벤트 발송
+    pub fn emit_batch_created(&mut self, page_start: u32, page_end: u32) -> anyhow::Result<()> {
+        let batch_id = Uuid::new_v4().to_string();
+        self.current_batch_id = Some(batch_id.clone());
+        
+        let payload = BatchCreatedPayload {
+            batch_id: batch_id.clone(),
+            page_range: (page_start, page_end),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        
+        self.app_handle.emit("batch-created", &payload)?;
+        Ok(())
+    }
+
+    /// 페이지 크롤링 완료 이벤트 발송
+    pub fn emit_page_crawled(&self, page_id: u32, url: String, product_count: u32, success: bool) -> anyhow::Result<()> {
+        let payload = PageCrawledPayload {
+            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            page_id,
+            url,
+            product_count,
+            status: if success { "completed" } else { "failed" }.to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        
+        self.app_handle.emit("page-crawled", &payload)?;
+        Ok(())
+    }
+
+    /// 제품 수집 완료 이벤트 발송
+    pub fn emit_product_collected(&self, page_id: u32, product_id: String, url: String, success: bool) -> anyhow::Result<()> {
+        let payload = ProductCollectedPayload {
+            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            page_id,
+            product_id,
+            url,
+            status: if success { "completed" } else { "failed" }.to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        
+        self.app_handle.emit("product-collected", &payload)?;
+        Ok(())
+    }
+
+    /// 배치 완료 이벤트 발송
+    pub fn emit_batch_completed(&mut self, pages_processed: u32, products_collected: u32, success_rate: f64) -> anyhow::Result<()> {
+        if let Some(batch_id) = &self.current_batch_id {
+            let payload = BatchCompletedPayload {
+                batch_id: batch_id.clone(),
+                pages_processed,
+                products_collected,
+                success_rate,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            };
+            
+            self.app_handle.emit("batch-completed", &payload)?;
+            
+            // 배치 완료 후 ID 초기화
+            self.current_batch_id = None;
+        }
+        Ok(())
+    }
+
+    /// 크롤링 시작 이벤트 발송
+    pub fn emit_crawling_started(&self) -> anyhow::Result<()> {
+        self.app_handle.emit("crawling-started", &{})?;
+        Ok(())
+    }
+
+    /// 크롤링 완료 이벤트 발송
+    pub fn emit_crawling_completed(&self) -> anyhow::Result<()> {
+        self.app_handle.emit("crawling-completed", &{})?;
+        Ok(())
+    }
+
+    /// 크롤링 에러 이벤트 발송
+    pub fn emit_crawling_error(&self, error_message: String) -> anyhow::Result<()> {
+        let payload = serde_json::json!({
+            "error": error_message,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        });
+        
+        self.app_handle.emit("crawling-error", &payload)?;
+        Ok(())
+    }
+
+    // 🔥 재시도 관련 이벤트 발송 메서드들 추가
+    /// 재시도 시도 이벤트 발송
+    pub fn emit_retry_attempt(&self, item_id: String, item_type: String, url: String, attempt_number: u32, max_attempts: u32, reason: String) -> anyhow::Result<()> {
+        let payload = RetryAttemptPayload {
+            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            item_id,
+            item_type,
+            url,
+            attempt_number,
+            max_attempts,
+            reason,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        
+        self.app_handle.emit("retry-attempt", &payload)?;
+        Ok(())
+    }
+
+    /// 재시도 성공 이벤트 발송
+    pub fn emit_retry_success(&self, item_id: String, item_type: String, url: String, final_attempt: u32) -> anyhow::Result<()> {
+        let payload = RetrySuccessPayload {
+            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            item_id,
+            item_type,
+            url,
+            final_attempt,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        
+        self.app_handle.emit("retry-success", &payload)?;
+        Ok(())
+    }
+
+    /// 재시도 최종 실패 이벤트 발송
+    pub fn emit_retry_failed(&self, item_id: String, item_type: String, url: String, total_attempts: u32, final_error: String) -> anyhow::Result<()> {
+        let payload = RetryFailedPayload {
+            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            item_id,
+            item_type,
+            url,
+            total_attempts,
+            final_error,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        
+        self.app_handle.emit("retry-failed", &payload)?;
+        Ok(())
+    }
+
+    // 🔥 DB 저장 관련 이벤트 발송 메서드들 추가
+    /// DB 저장 시도 이벤트 발송
+    pub fn emit_database_save_attempt(&self, item_id: String, item_type: String, url: String) -> anyhow::Result<()> {
+        let payload = DatabaseSaveAttemptPayload {
+            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            item_id,
+            item_type,
+            url,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        
+        self.app_handle.emit("database-save-attempt", &payload)?;
+        Ok(())
+    }
+
+    /// DB 저장 성공 이벤트 발송
+    pub fn emit_database_save_success(&self, item_id: String, item_type: String, url: String, was_update: bool) -> anyhow::Result<()> {
+        let payload = DatabaseSaveSuccessPayload {
+            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            item_id,
+            item_type,
+            url,
+            was_update,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        
+        self.app_handle.emit("database-save-success", &payload)?;
+        Ok(())
+    }
+
+    /// DB 저장 실패 이벤트 발송
+    pub fn emit_database_save_failed(&self, item_id: String, item_type: String, url: String, error: String) -> anyhow::Result<()> {
+        let payload = DatabaseSaveFailedPayload {
+            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            item_id,
+            item_type,
+            url,
+            error,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        
+        self.app_handle.emit("database-save-failed", &payload)?;
+        Ok(())
+    }
+
+    /// 배치 진행 상황 업데이트 이벤트 발송
+    pub fn emit_batch_progress(&self, stage: String, progress: f64, items_total: u32, items_completed: u32, items_active: u32, items_failed: u32) -> anyhow::Result<()> {
+        let payload = BatchProgressPayload {
+            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            stage,
+            progress,
+            items_total,
+            items_completed,
+            items_active,
+            items_failed,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        
+        self.app_handle.emit("batch-progress", &payload)?;
+        Ok(())
     }
 }
 

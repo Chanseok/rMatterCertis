@@ -247,9 +247,9 @@ pub async fn start_crawling(
         }
     }
     
-    // 다시 engine guard 획득
-    let engine_guard = state.engine.read().await;
-    let engine = engine_guard.as_ref()
+    // 다시 engine guard 획득 (mutable)
+    let mut engine_guard = state.engine.write().await;
+    let engine = engine_guard.as_mut()
         .ok_or_else(|| "Crawling engine not initialized".to_string())?;
     
     tracing::info!("🔍 Step 7: Starting crawling execution...");
@@ -936,8 +936,8 @@ async fn execute_crawling_with_range(
     end_page: u32,
 ) -> Result<CrawlingResponse, String> {
     tracing::info!("🔍 Step: Getting engine guard...");
-    let engine_guard = engine_state.engine.read().await;
-    let engine = engine_guard.as_ref()
+    let mut engine_guard = engine_state.engine.write().await;
+    let engine = engine_guard.as_mut()
         .ok_or_else(|| "Crawling engine not initialized".to_string())?;
     
     tracing::info!("🔍 Step: Engine ready for execution");
