@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use std::any::Any;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::product::{Product, ProductDetail};
@@ -62,6 +63,9 @@ pub trait ProductListCollector: Send + Sync {
     
     /// 배치별 페이지 수집 (메타데이터 포함)
     async fn collect_page_batch(&self, pages: &[u32]) -> Result<Vec<ProductUrl>>;
+    
+    /// Any 트레이트 지원을 위한 다운캐스팅
+    fn as_any(&self) -> &dyn Any;
 }
 
 /// 제품 상세정보 수집 서비스

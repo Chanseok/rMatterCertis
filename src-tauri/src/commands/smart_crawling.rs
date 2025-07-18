@@ -4,7 +4,8 @@
 //! the next pages to crawl based on the current database state and site information.
 
 use crate::application::AppState;
-use crate::infrastructure::crawling_service_impls::{CrawlingRangeCalculator, CrawlingProgress};
+use crate::infrastructure::crawling_service_impls::CrawlingRangeCalculator;
+use crate::domain::events::CrawlingProgress;
 use crate::infrastructure::config::ConfigManager;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::infrastructure::DatabaseConnection;
@@ -84,7 +85,7 @@ pub async fn calculate_crawling_range(
     .map_err(|e| format!("Failed to calculate crawling range: {}", e))?;
 
     // Get progress information
-    let progress = range_calculator.analyze_crawling_progress(
+    let progress = range_calculator.analyze_simple_progress(
         request.total_pages_on_site,
         request.products_on_last_page,
     ).await
@@ -145,7 +146,7 @@ pub async fn get_crawling_progress(
     );
 
     // Analyze progress
-    let progress = range_calculator.analyze_crawling_progress(
+    let progress = range_calculator.analyze_simple_progress(
         total_pages_on_site,
         products_on_last_page,
     ).await
@@ -261,11 +262,11 @@ pub async fn demo_prompts6_calculation() -> Result<String, String> {
 /// Convert internal progress to API response format
 fn convert_progress(progress: &CrawlingProgress) -> CrawlingProgressInfo {
     CrawlingProgressInfo {
-        total_products: progress.total_products,
-        saved_products: progress.saved_products,
-        progress_percentage: progress.progress_percentage,
-        max_page_id: progress.max_page_id,
-        max_index_in_page: progress.max_index_in_page,
-        is_completed: progress.is_completed,
+        total_products: progress.total,
+        saved_products: progress.current,
+        progress_percentage: progress.percentage,
+        max_page_id: progress.current_batch.map(|b| b as i32),
+        max_index_in_page: progress.total_batches.map(|b| b as i32),
+        is_completed: progress.status == crate::domain::events::CrawlingStatus::Completed,
     }
 }

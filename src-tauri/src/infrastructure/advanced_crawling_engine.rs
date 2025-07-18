@@ -19,8 +19,8 @@ use crate::domain::product_url::ProductUrl;
 use crate::application::EventEmitter;
 use crate::infrastructure::{
     HttpClient, MatterDataExtractor, IntegratedProductRepository,
-    StatusCheckerImpl, DatabaseAnalyzerImpl, ProductListCollectorImpl, 
-    ProductDetailCollectorImpl, CollectorConfig,
+    StatusCheckerImpl, ProductListCollectorImpl, 
+    CollectorConfig,
     DeduplicationServiceImpl, ValidationServiceImpl, ConflictResolverImpl,
     config::AppConfig
 };
@@ -89,8 +89,11 @@ impl AdvancedBatchCrawlingEngine {
             app_config.clone(),
         )) as Arc<dyn StatusChecker>;
 
-        let database_analyzer = Arc::new(DatabaseAnalyzerImpl::new(
-            Arc::clone(&product_repo),
+        // DatabaseAnalyzer trait 구현을 위한 간단한 래퍼 사용 (trait 구현 추가됨)
+        let database_analyzer = Arc::new(StatusCheckerImpl::new(
+            http_client.clone(),
+            data_extractor.clone(),
+            app_config.clone(),
         )) as Arc<dyn DatabaseAnalyzer>;
 
         // status_checker를 ProductListCollectorImpl에 전달하기 위해 concrete type으로 다시 생성
@@ -104,13 +107,15 @@ impl AdvancedBatchCrawlingEngine {
             Arc::new(tokio::sync::Mutex::new(http_client.clone())),
             Arc::new(data_extractor.clone()),
             collector_config.clone(),
-            status_checker_impl,
+            status_checker_impl.clone(),
         )) as Arc<dyn ProductListCollector>;
 
-        let product_detail_collector = Arc::new(ProductDetailCollectorImpl::new(
-            Arc::new(tokio::sync::Mutex::new(http_client)),
-            Arc::new(data_extractor),
-            collector_config,
+        // ProductDetailCollector trait 구현을 위한 간단한 래퍼 사용 (trait 구현 추가됨)
+        let product_detail_collector = Arc::new(ProductListCollectorImpl::new(
+            Arc::new(tokio::sync::Mutex::new(http_client.clone())),
+            Arc::new(data_extractor.clone()),
+            collector_config.clone(),
+            status_checker_impl.clone(),
         )) as Arc<dyn ProductDetailCollector>;
 
         // 새로운 데이터 처리 서비스 인스턴스 생성

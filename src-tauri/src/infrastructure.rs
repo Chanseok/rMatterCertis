@@ -42,7 +42,7 @@ pub use crawling::WebCrawler;
 pub use crawling_engine::{BatchCrawlingEngine, BatchCrawlingConfig};
 pub use service_based_crawling_engine::ServiceBasedBatchCrawlingEngine;
 pub use advanced_crawling_engine::AdvancedBatchCrawlingEngine;
-pub use crawling_service_impls::{StatusCheckerImpl, DatabaseAnalyzerImpl, ProductListCollectorImpl, ProductDetailCollectorImpl, CollectorConfig};
+pub use crawling_service_impls::{StatusCheckerImpl, ProductListCollectorImpl, CollectorConfig};
 pub use data_processing_service_impls::{DeduplicationServiceImpl, ValidationServiceImpl, ConflictResolverImpl};
 pub use logging::{init_logging, init_logging_with_config, get_log_directory};
 pub use retry_manager::{RetryManager, RetryItem, RetryStats, ErrorClassification};

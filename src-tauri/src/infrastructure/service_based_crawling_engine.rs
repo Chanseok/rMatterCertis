@@ -10,7 +10,11 @@ use tracing::{info, warn, debug};
 use tokio_util::sync::CancellationToken;
 use chrono::Utc;
 
-use crate::domain::services::{
+// 🔥 이벤트 콜백 타입 정의 추가
+pub type PageEventCallback = Arc<dyn Fn(u32, String, u32, bool) -> Result<()> + Send + Sync>;
+pub type RetryEventCallback = Arc<dyn Fn(String, String, String, u32, u32, String) -> Result<()> + Send + Sync>;
+
+use crate::domain::services::crawling_services::{
     StatusChecker, DatabaseAnalyzer, ProductListCollector, ProductDetailCollector,
     SiteStatus, DatabaseAnalysis
 };
@@ -19,7 +23,10 @@ use crate::domain::product::{Product, ProductDetail};
 use crate::domain::product_url::ProductUrl;
 use crate::application::EventEmitter;
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository, RetryManager};
-use crate::infrastructure::crawling_service_impls::*;
+use crate::infrastructure::crawling_service_impls::{
+    StatusCheckerImpl, ProductListCollectorImpl,
+    CrawlingRangeCalculator, CollectorConfig, product_detail_to_product
+};
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::system_broadcaster::SystemStateBroadcaster;
 use crate::events::{AtomicTaskEvent, TaskStatus};
@@ -53,7 +60,7 @@ impl BatchCrawlingConfig {
             delay_ms: validated_config.request_delay_ms,
             batch_size: validated_config.batch_size(),
             retry_max: validated_config.max_retries(),
-            timeout_ms: (validated_config.request_timeout_ms as u64),
+            timeout_ms: validated_config.request_timeout_ms,
             cancellation_token: None,
         }
     }
@@ -73,7 +80,7 @@ impl Default for BatchCrawlingConfig {
             delay_ms: validated_config.request_delay_ms,
             batch_size: validated_config.batch_size(),
             retry_max: validated_config.max_retries(),
-            timeout_ms: (validated_config.request_timeout_ms as u64),
+            timeout_ms: validated_config.request_timeout_ms,
             cancellation_token: None,
         }
     }
@@ -198,15 +205,18 @@ impl ServiceBasedBatchCrawlingEngine {
         };
 
         // 서비스 인스턴스 생성
-        let status_checker = Arc::new(StatusCheckerImpl::new(
+        let status_checker: Arc<dyn StatusChecker> = Arc::new(StatusCheckerImpl::new(
             http_client.clone(),
             data_extractor.clone(),
             app_config.clone(),
-        )) as Arc<dyn StatusChecker>;
+        ));
 
-        let database_analyzer = Arc::new(DatabaseAnalyzerImpl::new(
-            Arc::clone(&product_repo),
-        )) as Arc<dyn DatabaseAnalyzer>;
+        // DatabaseAnalyzer는 StatusCheckerImpl을 재사용 (trait 구현 추가됨)
+        let database_analyzer: Arc<dyn DatabaseAnalyzer> = Arc::new(StatusCheckerImpl::new(
+            http_client.clone(),
+            data_extractor.clone(),
+            app_config.clone(),
+        ));
 
         // status_checker를 ProductListCollectorImpl에 전달하기 위해 concrete type으로 다시 생성
         let status_checker_impl = Arc::new(StatusCheckerImpl::new(
@@ -215,18 +225,20 @@ impl ServiceBasedBatchCrawlingEngine {
             app_config.clone(),
         ));
 
-        let product_list_collector = Arc::new(ProductListCollectorImpl::new(
+        let product_list_collector: Arc<dyn ProductListCollector> = Arc::new(ProductListCollectorImpl::new(
             Arc::new(tokio::sync::Mutex::new(http_client.clone())),
             Arc::new(data_extractor.clone()),
             list_collector_config,
-            status_checker_impl,
-        )) as Arc<dyn ProductListCollector>;
+            status_checker_impl.clone(),
+        ));
 
-        let product_detail_collector = Arc::new(ProductDetailCollectorImpl::new(
-            Arc::new(tokio::sync::Mutex::new(http_client)),
-            Arc::new(data_extractor),
+        // ProductDetailCollector는 ProductListCollectorImpl을 재사용 (trait 구현 추가됨)
+        let product_detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(ProductListCollectorImpl::new(
+            Arc::new(tokio::sync::Mutex::new(http_client.clone())),
+            Arc::new(data_extractor.clone()),
             detail_collector_config,
-        )) as Arc<dyn ProductDetailCollector>;
+            status_checker_impl,
+        ));
 
         // 지능형 범위 계산기 초기화 - Phase 3 Integration
         let range_calculator = Arc::new(CrawlingRangeCalculator::new(
@@ -517,7 +529,7 @@ impl ServiceBasedBatchCrawlingEngine {
 
     /// Stage 2: 제품 목록 수집 (최적화된 범위 사용) - Phase 4 Implementation
     async fn stage2_collect_product_list_optimized(&mut self, start_page: u32, end_page: u32) -> Result<Vec<ProductUrl>> {
-        info!("Stage 2: Collecting product list using optimized range {} to {}", start_page, end_page);
+        info!("Stage 2: Collecting product list using optimized range {} to {} with TRUE concurrent execution", start_page, end_page);
         
         // 🔥 배치 생성 이벤트 발송 (UI 연결)
         if let Some(broadcaster) = &mut self.broadcaster {
@@ -536,125 +548,106 @@ impl ServiceBasedBatchCrawlingEngine {
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
             stage: "ProductList (Optimized)".to_string(),
-            message: format!("페이지 {} ~ {}에서 제품 목록을 수집하는 중...", start_page, end_page),
+            message: format!("페이지 {} ~ {}에서 제품 목록을 수집하는 중... (동시성 실행)", start_page, end_page),
         }).await?;
 
-        // 최적화된 범위로 제품 목록 수집 (cancellation 지원)
-        let product_urls = if let Some(cancellation_token) = &self.config.cancellation_token {
-            // 각 페이지별로 크롤링 진행하며 이벤트 발송
-            let pages_to_crawl: Vec<u32> = if start_page >= end_page {
-                (end_page..=start_page).rev().collect()
-            } else {
-                (start_page..=end_page).collect()
-            };
-            
-            let mut all_urls = Vec::new();
-            
-            for page_num in pages_to_crawl {
-                // 페이지 크롤링 시작
-                let page_url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page_num);
-                
-                // 개별 페이지 크롤링
-                match self.product_list_collector.collect_page_range_with_cancellation(
-                    page_num,
-                    page_num,
-                    cancellation_token.clone(),
-                ).await {
-                    Ok(page_urls) => {
-                        // 🔥 페이지 크롤링 완료 이벤트 발송 (UI 연결)
-                        if let Some(broadcaster) = &mut self.broadcaster {
-                            if let Err(e) = broadcaster.emit_page_crawled(page_num, page_url.clone(), page_urls.len() as u32, true) {
-                                warn!("Failed to emit page-crawled event: {}", e);
-                            }
-                        }
-                        all_urls.extend(page_urls);
-                    }
-                    Err(e) => {
-                        warn!("❌ Page {} collection failed: {}", page_num, e);
-                        
-                        // 🔥 페이지 크롤링 실패 이벤트 발송 (UI 연결)
-                        if let Some(broadcaster) = &mut self.broadcaster {
-                            if let Err(emit_err) = broadcaster.emit_page_crawled(page_num, page_url.clone(), 0, false) {
-                                warn!("Failed to emit page-crawled failure event: {}", emit_err);
-                            }
-                        }
-                        
-                        // 🔥 페이지 재시도 이벤트 발송
-                        if let Some(broadcaster) = &mut self.broadcaster {
-                            if let Err(e) = broadcaster.emit_retry_attempt(
-                                format!("page_{}", page_num),
-                                "page".to_string(),
-                                page_url.clone(),
-                                1,
-                                2, // 페이지는 최대 2번 재시도
-                                e.to_string()
-                            ) {
-                                warn!("Failed to emit page retry-attempt event: {}", e);
-                            }
-                        }
-                        
-                        // 페이지 재시도 (1회만)
-                        info!("🔄 Retrying page {} collection", page_num);
-                        match self.product_list_collector.collect_page_range_with_cancellation(
-                            page_num,
-                            page_num,
-                            cancellation_token.clone(),
-                        ).await {
-                            Ok(retry_urls) => {
-                                info!("✅ Page {} retry successful", page_num);
-                                
-                                // 🔥 페이지 재시도 성공 이벤트 발송
-                                if let Some(broadcaster) = &mut self.broadcaster {
-                                    if let Err(e) = broadcaster.emit_retry_success(
-                                        format!("page_{}", page_num),
-                                        "page".to_string(),
-                                        page_url.clone(),
-                                        2
-                                    ) {
-                                        warn!("Failed to emit page retry-success event: {}", e);
-                                    }
+        // 🔥 동시성 크롤링 실행 - 이벤트 발송을 위한 채널 생성
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<(String, serde_json::Value)>(100);
+        
+        // 이벤트 처리를 위한 백그라운드 태스크 생성
+        let broadcaster_opt = self.broadcaster.take(); // 소유권 이동
+        let event_handler = tokio::spawn(async move {
+            let mut broadcaster = broadcaster_opt;
+            while let Some((event_type, payload)) = event_rx.recv().await {
+                if let Some(ref mut b) = broadcaster {
+                    match event_type.as_str() {
+                        "page-crawled" => {
+                            if let Ok(data) = serde_json::from_value::<(u32, String, u32, bool)>(payload) {
+                                if let Err(e) = b.emit_page_crawled(data.0, data.1, data.2, data.3) {
+                                    warn!("Failed to emit page-crawled event: {}", e);
                                 }
-                                
-                                if let Some(broadcaster) = &mut self.broadcaster {
-                                    if let Err(e) = broadcaster.emit_page_crawled(page_num, page_url, retry_urls.len() as u32, true) {
-                                        warn!("Failed to emit page-crawled retry success event: {}", e);
-                                    }
-                                }
-                                all_urls.extend(retry_urls);
-                            }
-                            Err(retry_e) => {
-                                warn!("❌ Page {} retry also failed: {}", page_num, retry_e);
-                                
-                                // 🔥 페이지 재시도 최종 실패 이벤트 발송
-                                if let Some(broadcaster) = &mut self.broadcaster {
-                                    if let Err(e) = broadcaster.emit_retry_failed(
-                                        format!("page_{}", page_num),
-                                        "page".to_string(),
-                                        page_url.clone(),
-                                        2,
-                                        retry_e.to_string()
-                                    ) {
-                                        warn!("Failed to emit page retry-failed event: {}", e);
-                                    }
-                                }
-                                
-                                // 페이지 실패는 전체 작업을 중단시키지 않음
-                                continue;
                             }
                         }
+                        "retry-attempt" => {
+                            if let Ok(data) = serde_json::from_value::<(String, String, String, u32, u32, String)>(payload) {
+                                if let Err(e) = b.emit_retry_attempt(data.0, data.1, data.2, data.3, data.4, data.5) {
+                                    warn!("Failed to emit retry-attempt event: {}", e);
+                                }
+                            }
+                        }
+                        "retry-success" => {
+                            if let Ok(data) = serde_json::from_value::<(String, String, String, u32)>(payload) {
+                                if let Err(e) = b.emit_retry_success(data.0, data.1, data.2, data.3) {
+                                    warn!("Failed to emit retry-success event: {}", e);
+                                }
+                            }
+                        }
+                        "retry-failed" => {
+                            if let Ok(data) = serde_json::from_value::<(String, String, String, u32, String)>(payload) {
+                                if let Err(e) = b.emit_retry_failed(data.0, data.1, data.2, data.3, data.4) {
+                                    warn!("Failed to emit retry-failed event: {}", e);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
+            broadcaster // 소유권 반환
+        });
+
+        // 🔥 이벤트 콜백 함수 정의
+        let event_tx_clone = event_tx.clone();
+        let page_callback = move |page_id: u32, url: String, product_count: u32, success: bool| -> Result<()> {
+            let payload = serde_json::to_value((page_id, url, product_count, success))?;
+            if let Err(e) = event_tx_clone.try_send(("page-crawled".to_string(), payload)) {
+                warn!("Failed to send page-crawled event: {}", e);
+            }
+            Ok(())
+        };
+
+        let event_tx_clone2 = event_tx.clone();
+        let retry_callback = move |item_id: String, item_type: String, url: String, attempt: u32, max_attempts: u32, reason: String| -> Result<()> {
+            let payload = serde_json::to_value((item_id, item_type, url, attempt, max_attempts, reason))?;
+            if let Err(e) = event_tx_clone2.try_send(("retry-attempt".to_string(), payload)) {
+                warn!("Failed to send retry-attempt event: {}", e);
+            }
+            Ok(())
+        };
+
+        // 실제 크롤링 실행 (동시성 유지)
+        let product_urls = if let Some(cancellation_token) = &self.config.cancellation_token {
+            // 기존 동시성 메서드 사용하지만 이벤트 콜백과 함께
+            let collector = self.product_list_collector.clone();
+            let collector_impl = collector.as_ref()
+                .as_any()
+                .downcast_ref::<ProductListCollectorImpl>()
+                .ok_or_else(|| anyhow!("Failed to downcast ProductListCollector"))?;
             
-            all_urls
+            collector_impl.collect_page_range_with_events(
+                start_page,
+                end_page,
+                Some(cancellation_token.clone()),
+                page_callback,
+                retry_callback,
+            ).await?
         } else {
+            // 기존 동시성 메서드 사용
             self.product_list_collector.collect_page_range(
                 start_page,
                 end_page,
             ).await.map_err(|e| anyhow!("Product list collection failed: {}", e))?
         };
 
-        info!("✅ Stage 2 completed: {} product URLs collected from optimized range", product_urls.len());
+        // 이벤트 채널 종료
+        drop(event_tx);
+        
+        // 이벤트 처리 완료 대기 및 브로드캐스터 복구
+        if let Ok(broadcaster_opt) = event_handler.await {
+            self.broadcaster = broadcaster_opt;
+        }
+
+        info!("✅ Stage 2 completed: {} product URLs collected from optimized range with TRUE concurrent execution", product_urls.len());
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageCompleted {
             stage: "ProductList (Optimized)".to_string(),
@@ -711,13 +704,13 @@ impl ServiceBasedBatchCrawlingEngine {
                 successful_products = product_details.into_iter()
                     .enumerate()
                     .map(|(index, detail)| {
-                        let product = crate::infrastructure::crawling_service_impls::product_detail_to_product(detail.clone());
+                        let product = product_detail_to_product(detail.clone());
                         
                         // 🔥 제품 수집 완료 이벤트 발송 (UI 연결)
                         if let Some(broadcaster) = &mut self.broadcaster {
                             if let Some(product_url) = product_urls.get(index) {
                                 if let Err(e) = broadcaster.emit_product_collected(
-                                    product.page_id.unwrap_or(0) as u32,
+                                    product.page_id.map(|id| id as u32).unwrap_or(0),
                                     product.model.clone().unwrap_or_else(|| format!("product-{}", index)),
                                     product_url.to_string(),
                                     true
@@ -879,7 +872,7 @@ impl ServiceBasedBatchCrawlingEngine {
                     match self.product_detail_collector.collect_details(&[product_url]).await {
                         Ok(mut product_details) => {
                             if let Some(detail) = product_details.pop() {
-                                let product = crate::infrastructure::crawling_service_impls::product_detail_to_product(detail.clone());
+                                let product = product_detail_to_product(detail.clone());
                                 info!("✅ Retry successful for: {}", url);
                                 retry_products.push((product, detail));
                                 
