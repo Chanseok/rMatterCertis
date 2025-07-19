@@ -1,120 +1,156 @@
-# 검토 보고서: UI 피드백을 위한 이벤트 발행 아키텍처 보완 제안
+# 검토 보고서: `re-arch-plan2.md` 제어 흐름 개선을 위한 명령 큐 아키텍처 제안
 
-*본 문서는 `re-arch-plan.md` 및 이전 논의들이 **UI 피드백 메커니즘**을 간과한 심각한 문제를 지적하고, 각 컴포넌트의 상태 변화를 UI에 투명하게 전달하기 위한 **구체적인 이벤트 발행 아키텍처**를 제안합니다.*
+*본 문서는 `re-arch-plan2.md`의 완성도 높은 설계를 인정하면서도, 사용자 제어(중단/일시정지) 메커니즘을 더욱 단순하고 반응적으로 만들기 위해 **명령 큐(Command Queue) 기반 아키텍처** 도입을 제안합니다.*
 
-## 1. 문제점: "깜깜이" 시스템 - UI 피드백의 부재
+## 1. 종합 평가: 훌륭한 설계, 그러나 제어 방식은 더 개선될 수 있다
 
-현재까지의 설계는 시스템 내부의 데이터 처리와 로직에만 집중한 나머지, 사용자에게 "지금 무슨 일이 일어나고 있는가?"를 알려주는 가장 기본적인 메커니즘이 빠져있습니다. `EventHub`라는 이름만 존재할 뿐, 다음과 같은 핵심 질문에 대한 답이 없습니다.
+`re-arch-plan2.md`는 도메인 지식과 UI 상호작용을 통합한 매우 뛰어난 계획입니다. 하지만 현재의 `SharedSessionState`와 `cancellation_token`을 통한 제어 방식은 각 작업 단위에 취소 로직을 확인해야 하는 책임을 부여하여, 미세한 반응성 지연과 코드 복잡성을 유발할 수 있습니다.
 
-*   **언제 (When):** 분석, 계획, 실행 등 각 단계의 시작, 진행, 완료 시점 중 정확히 언제 이벤트를 보내는가?
-*   **누가 (Who):** `PreCrawlingAnalyzer`, `CrawlingPlanner`, `SessionOrchestrator` 중 누가 이벤트 발행의 최종 책임을 지는가?
-*   **무엇을 (What):** UI가 상태를 표시하는 데 필요한 구체적인 데이터(예: "사이트 분석 중...", "총 1250 페이지 발견", "크롤링 계획 수립 완료")가 이벤트에 포함되는가?
+제안하신 **"작업 큐에 중단이라는 다음 작업을 넣는"** 아이디어는 이 문제를 해결할 매우 강력하고 우아한 접근법입니다. 이를 더욱 발전시켜, 시스템의 모든 동작을 '명령'으로 취급하는 아키텍처를 제안합니다.
 
-이 설계대로라면, 사용자는 크롤링 시작 버튼을 누른 후, 시스템이 모든 것을 마칠 때까지 아무런 피드백도 받지 못하는 **"깜깜이" 시스템**이 될 것입니다.
+## 2. 해결책: 명령 큐(Command Queue) 기반 제어 아키텍처
 
-## 2. 해결책: 책임 기반의 명시적 이벤트 발행 아키텍처
+### 2.1. 핵심 아이디어: 모든 것을 '명령'으로 추상화
 
-각 주요 컴포넌트가 자신의 **핵심 책임(Responsibility)을 완수하는 시점**에, 그 결과를 담은 **명시적인 이벤트를 발행**하도록 아키텍처를 재설계해야 합니다.
+크롤링 작업(예: "10번 페이지를 가져와라")과 사용자 제어(예: "즉시 중단하라")를 구분하지 않고, 모두 동일한 `CrawlingCommand` 열거형(enum)으로 취급합니다. `SessionOrchestrator`는 이 명령들을 순차적으로 처리하는 단일 워커(Single Worker)처럼 동작합니다.
 
-### 2.1. 이벤트 발행 주체와 시점 정의
+```mermaid
+graph TD
+    subgraph "Command Producers"
+        A[CrawlingPlanner<br/>"1~100페이지 수집해"] --> C
+        B[UI<br/>"지금 당장 중단해!"] --> C
+    end
 
-| 발행 주체 | 발행 시점 (책임 완수 시점) | 발행 이벤트 | UI 표시 예시 |
-| :--- | :--- | :--- | :--- |
-| **`PreCrawlingAnalyzer`** | 각 하위 분석기(`SiteStatusChecker` 등)의 작업 시작/완료 시 | `AnalysisEvent` | "사이트 상태 확인 중...", "DB 분석 완료" |
-| **`CrawlingPlanner`** | 최종 `CrawlingPlan` 수립 완료 시 | `PlanningEvent` | "크롤링 계획 수립 완료: 1201~1250 페이지 대상" |
-| **`SessionOrchestrator`** | 전체 워크플로우 및 주요 단계(Stage) 시작/종료 시 | `SessionEvent` | "크롤링 세션 시작됨", "분석 단계 완료, 실행 단계 시작" |
-| **`BatchManager`** | 개별 배치(Batch) 시작/진행/종료 시 | `BatchEvent` | "배치 1/10 처리 중 (50/100)" |
+    subgraph "Command Queue (MPSC Channel)"
+        C["<b>CrawlingCommand Queue</b><br/>(tokio::sync::mpsc::channel)"]
+    end
 
-### 2.2. 구체적인 이벤트 발행 흐름 (Sequence Diagram)
+    subgraph "Command Processor (Single Worker)"
+        D["<b>SessionOrchestrator</b><br/>(loop { let cmd = queue.recv().await; ... })"]
+    end
 
-이벤트 발행 책임을 포함한 새로운 시퀀스는 다음과 같습니다.
+    C --> D
+```
+
+### 2.2. `CrawlingCommand` 정의
+
+```rust
+// in new_architecture/commands.rs
+
+pub enum CrawlingCommand {
+    // 작업 명령
+    FetchListPage { page: u32 },
+    ParseListPage { page: u32, content: String },
+    FetchProductDetail { url: String },
+    SaveToDatabase { data: Vec<Product> },
+
+    // 제어 명령 (사용자 또는 시스템이 발행)
+    Pause,          // 현재 진행 중인 배치를 완료하고 대기
+    Resume,         // 일시정지 상태에서 다시 시작
+    Cancel,         // 모든 작업을 즉시 중단하고 큐를 비움
+    Shutdown,       // 정상적으로 모든 작업을 완료하고 종료
+}
+```
+
+### 2.3. 새로운 아키텍처: 단순화된 제어 흐름
+
+이 구조에서 `SessionOrchestrator`의 역할은 매우 단순해집니다. 큐에서 명령을 하나씩 꺼내 처리하고, `Cancel`이나 `Shutdown` 명령을 받으면 루프를 종료합니다. 더 이상 복잡한 공유 상태(SharedState)를 모든 작업에 전파할 필요가 없습니다.
 
 ```mermaid
 sequenceDiagram
     participant UI
-    participant Facade as CrawlingFacade
-    participant SO as SessionOrchestrator
-    participant Analyzer as PreCrawlingAnalyzer
-    participant Planner as CrawlingPlanner
-    participant EventHub
+    participant Facade
+    participant Orchestrator
+    participant CommandQueue
 
-    UI->>Facade: start_full_crawl(user_config)
-    Facade->>SO: run_workflow(user_config)
-    SO->>EventHub: emit(SessionEvent::Started)
-    EventHub-->>UI: "크롤링 세션 시작됨"
-
-    SO->>Analyzer: analyze_all()
-    Analyzer->>EventHub: emit(AnalysisEvent::Started)
-    EventHub-->>UI: "사이트 분석 시작..."
-    Analyzer-->>SO: site_status, db_report
-    Analyzer->>EventHub: emit(AnalysisEvent::Completed { site_status, db_report })
-    EventHub-->>UI: "분석 완료: 총 1250 페이지 발견"
-
-    SO->>Planner: create_plan(user_config, site_status, db_report)
-    Planner->>EventHub: emit(PlanningEvent::Started)
-    EventHub-->>UI: "크롤링 계획 수립 중..."
-    Planner-->>SO: final_crawling_plan
-    Planner->>EventHub: emit(PlanningEvent::Completed { plan })
-    EventHub-->>UI: "계획 수립 완료: 1201~1250 페이지 대상"
-
-    SO->>SO: execute_plan(final_crawling_plan)
-    SO->>EventHub: emit(SessionEvent::ExecutionStarted)
-    EventHub-->>UI: "크롤링 실행 시작"
+    UI->>Facade: start_crawl()
+    Facade->>Orchestrator: run_workflow()
     
-    Note over SO: (이후 BatchEvent, TaskEvent, ActivityEvent 등이 발생)
+    Note over Orchestrator: 작업 명령들을 큐에 추가
+    Orchestrator->>CommandQueue: send(FetchListPage { page: 1 })
+    Orchestrator->>CommandQueue: send(FetchListPage { page: 2 })
+    Orchestrator->>CommandQueue: send(FetchListPage { page: 3 })
+
+    Note over UI: 사용자가 "중단" 클릭
+    UI->>Facade: cancel_session()
+    Facade->>CommandQueue: send(CrawlingCommand::Cancel)
+
+    Note over Orchestrator: 큐를 처리하는 메인 루프
+    Orchestrator->>CommandQueue: recv() -> FetchListPage { page: 1 }
+    Orchestrator->>Orchestrator: (1페이지 처리)
+
+    Orchestrator->>CommandQueue: recv() -> FetchListPage { page: 2 }
+    Orchestrator->>Orchestrator: (2페이지 처리)
+
+    Orchestrator->>CommandQueue: recv() -> <b>CrawlingCommand::Cancel</b>
+    Note over Orchestrator: Cancel 명령 수신!
+    Orchestrator->>Orchestrator: break loop and cleanup()
+    Orchestrator->>EventHub: emit(Session::Cancelled)
 ```
 
-### 2.3. UI 피드백을 위한 이벤트 타입 상세 설계
-
-UI가 풍부한 정보를 표시할 수 있도록, 각 이벤트는 구체적인 데이터를 포함해야 합니다.
+### 2.4. `SessionOrchestrator`의 새로운 구현
 
 ```rust
-// in new_architecture/events/types.rs
+// in new_architecture/orchestrator.rs
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", content = "payload")]
-pub enum AppEvent {
-    Session(SessionEvent),
-    Analysis(AnalysisEvent),
-    Planning(PlanningEvent),
-    Batch(BatchEvent),
-    // ... Task, Activity events
+pub struct SessionOrchestrator {
+    // ... dependencies
+    cmd_tx: mpsc::Sender<CrawlingCommand>,
+    cmd_rx: mpsc::Receiver<CrawlingCommand>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub enum AnalysisEvent {
-    Started,
-    Progress { stage: String, message: String }, // e.g., stage: "SiteStatus", message: "Checking last page..."
-    Completed { 
-        site_status: SiteStatus,
-        db_report: DBStateReport,
-    },
-    Failed { error: String },
-}
+impl SessionOrchestrator {
+    pub async fn run_workflow(&mut self) -> Result<WorkflowResult> {
+        // ... 분석 및 계획 단계 ...
+        let plan = self.planner.create_plan(...).await?;
 
-#[derive(Debug, Clone, Serialize)]
-pub enum PlanningEvent {
-    Started,
-    Completed { plan: CrawlingPlan },
-    Failed { error: String },
-}
+        // 계획에 따라 작업 명령들을 큐에 채움
+        for page in plan.target_pages {
+            self.cmd_tx.send(CrawlingCommand::FetchListPage { page }).await?;
+        }
+        self.cmd_tx.send(CrawlingCommand::Shutdown).await?;
 
-#[derive(Debug, Clone, Serialize)]
-pub enum SessionEvent {
-    Started { session_id: String },
-    StageChanged { from: Stage, to: Stage }, // e.g., from: Analysis, to: Execution
-    ExecutionStarted { plan: CrawlingPlan },
-    Completed { result: WorkflowResult },
-    Failed { error: String },
+        // 메인 명령 처리 루프
+        while let Some(command) = self.cmd_rx.recv().await {
+            match command {
+                CrawlingCommand::FetchListPage { page } => {
+                    // ... 페이지 가져오기 작업 실행 ...
+                }
+                CrawlingCommand::Cancel => {
+                    // **핵심 로직:** 즉시 루프를 탈출하고 정리
+                    println!("Cancellation command received. Shutting down...");
+                    break;
+                }
+                CrawlingCommand::Shutdown => {
+                    println!("Graceful shutdown command received.");
+                    break;
+                }
+                // ... 다른 명령 처리 ...
+            }
+        }
+
+        self.cleanup().await;
+        Ok(WorkflowResult::completed())
+    }
+
+    // Facade에서 호출될 함수
+    pub async fn request_cancellation(&self) {
+        // 큐의 맨 앞에 Cancel 명령을 삽입 (우선순위 처리 필요 시)
+        // 또는 단순히 send
+        let _ = self.cmd_tx.send(CrawlingCommand::Cancel).await;
+    }
 }
 ```
 
-## 3. 결론: 투명하고 신뢰할 수 있는 시스템으로의 발전
+## 3. 기대 효과 및 장점
 
-이번 제안은 **"모든 의미 있는 상태 변화는 반드시 이벤트를 통해 외부에 알려져야 한다"**는 원칙을 아키텍처에 명시적으로 적용합니다.
+*   **극도로 단순화된 제어 로직:** 복잡한 `Arc<Mutex<State>>`와 `AtomicBool`을 통한 상태 공유 및 확인 로직이 사라지고, 단일 명령 큐 처리 로직으로 통일됩니다.
+*   **향상된 반응성:** 사용자의 중단 요청이 큐에 들어오면, 현재 진행 중인 단일 작업만 완료된 후 즉시 처리됩니다. 긴 작업 중간에 취소 확인을 기다릴 필요가 없습니다.
+*   **결합도 감소:** 개별 `AsyncTask`들은 더 이상 세션의 전체 상태(중단 여부 등)를 알 필요가 없으며, 오직 자신의 작업만 수행하면 됩니다.
+*   **확장성:** 새로운 종류의 제어(예: `ChangePriority`)를 추가하고 싶을 때, `CrawlingCommand` 열거형에 새로운 variant를 추가하고 `match` 문에서 처리하기만 하면 됩니다.
 
-*   **투명성 확보:** 사용자는 더 이상 시스템 내부에서 어떤 일이 일어나는지 추측할 필요 없이, 분석, 계획, 실행의 모든 단계를 실시간으로 확인할 수 있습니다.
-*   **책임의 명확화:** 각 컴포넌트는 자신의 핵심 책임을 완수한 후, 그 결과를 담은 이벤트를 발행할 명확한 의무를 가집니다. 이는 코드의 구조를 더 예측 가능하게 만듭니다.
-*   **UI-백엔드 연동의 기반 마련:** 구체적인 이벤트 설계를 통해, 프론트엔드 개발자는 어떤 데이터를 받아 어떻게 UI를 구성해야 할지 명확하게 알 수 있습니다.
+## 4. 결론: 더 단순하고, 더 강력하며, 더 우아한 설계로의 진화
 
-`re-arch-plan.md`는 이처럼 구체적인 이벤트 발행 아키텍처가 추가될 때, 비로소 내부적으로만 완결된 시스템이 아닌, 사용자와 소통하는 살아있는 시스템으로 완성될 수 있습니다. 최종 실행 계획에는 반드시 이 내용이 반영되어야 합니다.
+`re-arch-plan2.md`는 이미 훌륭한 계획이지만, **명령 큐 기반 아키텍처**를 도입함으로써 시스템의 제어 흐름을 한 차원 더 높은 수준으로 끌어올릴 수 있습니다. 이는 시스템의 복잡도를 크게 낮추면서도, 더 빠르고 안정적인 사용자 상호작용을 보장하는 매우 효과적인 설계 패턴입니다.
+
+`re-arch-plan-improved.md`의 최종 버전에는 이 **명령 큐 아키텍처**를 핵심 제어 메커니즘으로 채택할 것을 강력히 제안합니다.

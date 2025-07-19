@@ -1,278 +1,199 @@
-# 최종 실행 계획: 도메인 지식과 사용자 상호작용 중심의 크롤링 아키텍처 v2
+# 최종 실행 계획: 명령 큐 기반의 상호작용 중심 아키텍처
 
-*본 문서는 `re-arch-plan.md`의 아이디어를 기반으로, **기존 도메인 지식, 체계적인 역할 분담, UI 상호작용**이라는 세 가지 핵심 원칙을 완벽하게 통합하여 재설계한 최종 실행 계획입니다.*
+*본 문서는 이전의 모든 논의를 종합하고, **명령 큐(Command Queue)** 패러다임을 핵심으로 도입하여, **도메인 지식, UI 상호작용, 체계적 역할 분담**을 완벽하게 통합한 최종 실행 계획입니다.*
 
-## 1. 아키텍처 철학: 왜 이 설계인가?
+## 1. 최종 아키텍처 철학: 단순성, 명확성, 반응성
 
-이 설계는 과거의 논의에서 제기된 모든 문제점(논리적 비약, 도메인 지식 누락, UI 상호작용 부재)을 해결하고, **실제로 동작하며, 유지보수 가능하고, 사용자에게 가치를 제공하는 시스템**을 구축하는 것을 유일한 목표로 합니다.
+이 설계의 최종 목표는 **"모든 동작과 제어를 예측 가능한 '명령'으로 추상화하여, 단순하고, 명확하며, 즉각적으로 반응하는 시스템을 구축하는 것"** 입니다. 복잡한 공유 상태(Shared State)를 통한 제어 대신, 중앙 집중화된 명령 큐를 통해 시스템의 모든 흐름을 관리합니다.
 
-### 최종 아키텍처 비전: 명확한 책임과 데이터 흐름
+### 최종 아키텍처 비전: 명령 큐가 중심이 되는 설계
 
 ```mermaid
 graph TD
-    subgraph "UI / User Interaction Layer"
+    subgraph "UI / External Triggers"
         A[CrawlingDashboard UI]
-        B[User Commands<br/>'Start, Stop, Continue, Cancel']
+        B[User Commands<br/>(Start, Pause, Cancel)]
     end
 
     subgraph "Application Facade (API Layer)"
-        C["<b>CrawlingFacade</b><br/>UI와 시스템 간의 유일한 통로"]
+        C["<b>CrawlingFacade</b><br/>UI 명령을 Command로 변환"]
     end
 
-    subgraph "Orchestration & State Layer"
-        D["<b>SessionOrchestrator</b><br/>(Crawl Session의 생명주기 관리)"]
-        E["<b>SharedSessionState</b><br/>(Arc<Mutex<State>>)<br/>(일시정지/취소 플래그, 현재 상태)"]
+    subgraph "Domain Logic (The Brain)"
+        D["<b>CrawlingPlanner</b><br/>분석 결과를 바탕으로<br/>일련의 Command를 생성"]
     end
 
-    subgraph "Domain Logic Layer (The Brain)"
-        F["<b>CrawlingPlanner</b><br/>(모든 도메인 지식 집약)<br/>- 범위 계산, 전략 수립"]
+    subgraph "Central Control Flow"
+        E["<b>Command Queue</b><br/>(MPSC Channel)<br/>모든 작업과 제어 명령의 통로"]
     end
 
-    subgraph "Data Gathering Layer"
-        G[SiteStatusChecker]
-        H[DatabaseAnalyzer]
-    end
-    
-    subgraph "Execution Layer"
-        I[BatchManager]
-        J[StageRunner / AsyncTask]
+    subgraph "Command Processor (The Engine)"
+        F["<b>SessionOrchestrator</b><br/>Command를 순차적으로 처리하는<br/>단일 워커 루프"]
     end
 
-    subgraph "Event System"
-        K[EventHub]
+    subgraph "Execution & Eventing"
+        G[AsyncTask / BatchManager]
+        H[EventHub]
     end
 
-    A <--> C
+    A --> C
     B --> C
-    C --> D
-    C --> E
-    C --> K
+    C -- "제어 명령 (Cancel, Pause)" --> E
+    D -- "작업 명령 (Fetch, Parse)" --> E
+    
+    E -- "Next Command" --> F
+    F -- "executes" --> G
+    F -- "emits" --> H
+    G -- "emits" --> H
+    H -- "updates" --> A
 
-    D -- "1. uses" --> G
-    D -- "2. uses" --> H
-    D -- "3. uses" --> F
-    D -- "4. manages" --> I
-    D -- "updates" --> E
-    D -- "emits" --> K
-
-    I -- "executes" --> J
-    J -- "reads" --> E
-    J -- "emits" --> K
-
-    style C fill:#e3f2fd,stroke:#333,stroke-width:2px
+    style E fill:#e3f2fd,stroke:#333,stroke-width:2px
     style F fill:#fff3e0,stroke:#333,stroke-width:2px
-    style E fill:#fce4ec,stroke:#333,stroke-width:2px
 ```
 
 ---
 
-## 2. 핵심 컴포넌트 재설계: 역할과 책임(R&R)의 명확화
+## 2. 핵심 설계: 명령(Command) 기반 아키텍처
 
-### 2.1. `CrawlingFacade`: 유일하고 명확한 시스템 API
+### 2.1. `CrawlingCommand`: 모든 것의 시작
 
-*   **책임:** UI로부터 오는 모든 명령(시작, 중지, 재개, 취소)을 수신하고, 내부 시스템에 전달하는 유일한 진입점. `EventHub`를 구독하여 UI에 데이터를 전송하는 역할도 담당.
-*   **상호작용:**
-    *   `start_crawl` 명령 수신 시, `SessionOrchestrator`를 생성하고 비동기적으로 실행(`tokio::spawn`).
-    *   `pause`, `resume`, `cancel` 명령 수신 시, `SharedSessionState`의 상태 플래그를 변경하여 실행 중인 작업에 전파.
-
-### 2.2. `SessionOrchestrator`: 워크플로우의 지휘자
-
-*   **책임:** 단일 크롤링 세션의 전체 워크플로우(**분석 → 계획 → 실행**)를 순차적으로 지휘. 모든 하위 컴포넌트를 조율하고, 각 단계의 시작/완료/실패 이벤트를 발행.
-*   **상호작용:**
-    1.  **분석:** `SiteStatusChecker`, `DatabaseAnalyzer`를 호출하여 원시 데이터 수집.
-    2.  **계획:** 수집된 데이터와 사용자 설정을 `CrawlingPlanner`에 전달하여 최종 `CrawlingPlan` 생성.
-    3.  **실행:** 생성된 `CrawlingPlan`과 `SharedSessionState`를 `BatchManager`에 전달하여 실제 작업 실행.
-
-### 2.3. `CrawlingPlanner`: 모든 도메인 지식의 집약체
-
-*   **책임:** **과거의 성공적인 구현과 도메인 지식을 계승**하는 가장 중요한 컴포넌트. [사용자 설정], [사이트 상태], [DB 상태] 3가지 정보를 종합하여, **어떻게 크롤링할지(전략)와 무엇을 크롤링할지(범위)를 결정**.
-*   **핵심 도메인 로직:**
-    *   **범위 계산:** `(전체 페이지 수, 마지막 수집 페이지) -> 증분 수집 범위 도출`
-    *   **전략 수립:** `(사용자 요청: Full/Incremental/Recovery) -> CrawlingStrategy 결정`
-    *   **누락 데이터 통합:** `(DB 누락 데이터 리스트, 신규 범위) -> 최종 작업 목록 생성`
-
-### 2.4. `SharedSessionState`: 상태 전파 및 제어의 핵심
-
-*   **책임:** 모든 비동기 작업들이 공유하는 중앙 상태 저장소. `Arc<Mutex<State>>`로 구현.
-*   **포함 정보:**
-    *   `cancellation_token`: `true`가 되면 모든 작업이 즉시 중단.
-    *   `pause_signal`: `true`가 되면 진행 중인 배치를 완료한 후 작업 일시 중지.
-    *   `current_status_message`: UI에 표시될 현재 작업 상태 메시지.
-*   **상호작용:** 최하위의 `AsyncTask`까지 이 상태 객체를 참조하여, `cancel`이나 `pause` 신호에 즉시 반응.
-
----
-
-## 3. UI 상호작용 시나리오: 어떻게 동작하는가
-
-### 3.1. 크롤링 시작 및 실시간 피드백
-
-```mermaid
-sequenceDiagram
-    participant UI
-    participant Facade
-    participant Orchestrator
-    participant EventHub
-
-    UI->>Facade: start_crawl(config)
-    Facade->>Orchestrator: run_workflow()
-    Orchestrator->>EventHub: emit(Session::Started)
-    EventHub-->>UI: "세션 시작됨"
-
-    loop 분석/계획/실행 단계
-        Orchestrator->>EventHub: emit(Stage::Progress { message: "..." })
-        EventHub-->>UI: (실시간 상태 메시지 업데이트)
-    end
-```
-
-### 3.2. 사용자 요청에 의한 크롤링 중단 (Cancel)
-
-**가장 중요한 상호작용 중 하나. 사용자가 "중단"을 누르면, 시스템은 즉시 모든 작업을 멈추고 정리 상태로 들어가야 합니다.**
-
-```mermaid
-sequenceDiagram
-    participant UI
-    participant Facade
-    participant State as SharedSessionState
-    participant Task as AsyncTask (실행중)
-
-    UI->>Facade: cancel_crawl()
-    Facade->>State: cancellation_token.store(true)
-
-    Note right of Task: 매 반복/요청마다<br>토큰을 확인!
-    Task->>State: if cancellation_token.load() == true
-    Task->>Task: break loop and cleanup()
-    Task->>EventHub: emit(Task::Cancelled)
-```
-
-**구현 상세:**
+시스템에서 일어나는 모든 일은 `CrawlingCommand`로 정의됩니다. 이는 작업과 제어를 동일한 방식으로 다룰 수 있게 해주는 강력한 추상화입니다.
 
 ```rust
-// in AsyncTask::execute()
+// in new_architecture/command.rs
 
-// 모든 I/O 작업 또는 긴 루프 전에 반드시 체크
-if context.shared_state.is_cancellation_requested() {
-    // 리소스 정리 (e.g., 임시 파일 삭제)
-    self.cleanup().await;
-    return Err(TaskError::Cancelled);
+#[derive(Debug)]
+pub enum CrawlingCommand {
+    // 작업 명령
+    FetchListPage { page: u32 },
+    ParseListPage { page: u32, content: String },
+    SaveProducts { products: Vec<Product> },
+
+    // 제어 명령
+    Pause,          // 현재 진행 중인 작업을 완료하고 대기
+    Resume,         // 일시정지 상태에서 다시 시작
+    Cancel,         // 모든 작업을 즉시 중단하고 큐를 비움
+    Shutdown,       // 큐의 모든 작업을 정상적으로 완료하고 종료
+}
+```
+
+### 2.2. `SessionOrchestrator`: 단순화된 명령 처리기
+
+`Orchestrator`의 역할은 극도로 단순해집니다. **명령 큐에서 명령을 하나씩 꺼내서, `match` 문으로 처리하는 무한 루프**를 실행하는 것이 전부입니다. 더 이상 복잡한 상태 플래그를 모든 하위 작업에 전파하고 확인할 필요가 없습니다.
+
+```rust
+// in new_architecture/orchestrator.rs
+
+pub struct SessionOrchestrator {
+    // ... dependencies
+    cmd_rx: mpsc::Receiver<CrawlingCommand>,
 }
 
-// ... 실제 작업 수행 ...
+impl SessionOrchestrator {
+    pub async fn start_processing_loop(&mut self) -> Result<WorkflowResult> {
+        while let Some(command) = self.cmd_rx.recv().await {
+            match command {
+                CrawlingCommand::FetchListPage { page } => {
+                    // ... 페이지 가져오기 작업 실행 ...
+                }
+                CrawlingCommand::Cancel => {
+                    self.cleanup_all_tasks().await;
+                    self.event_hub.emit(SessionEvent::Cancelled).await;
+                    break; // 루프 종료
+                }
+                CrawlingCommand::Shutdown => {
+                    self.event_hub.emit(SessionEvent::Completed).await;
+                    break; // 루프 종료
+                }
+                // ... 다른 명령 처리 ...
+            }
+        }
+        Ok(WorkflowResult::success())
+    }
+}
+```
+
+### 2.3. `CrawlingPlanner`: 명령 생성기
+
+`CrawlingPlanner`의 역할은 이제 `CrawlingPlan`이라는 데이터 구조를 만드는 것을 넘어, **실행 가능한 `CrawlingCommand`의 전체 시퀀스를 생성하여 큐에 채우는 것**으로 확장됩니다.
+
+```rust
+// in CrawlingPlanner
+
+pub async fn plan_and_queue_tasks(
+    &self,
+    // ... inputs
+    cmd_tx: &mpsc::Sender<CrawlingCommand>
+) -> Result<()> {
+    let plan = self.create_plan(...).await?;
+
+    for page in plan.target_pages {
+        cmd_tx.send(CrawlingCommand::FetchListPage { page }).await?;
+    }
+
+    // 모든 작업이 끝나면 스스로 종료하도록 Shutdown 명령 추가
+    cmd_tx.send(CrawlingCommand::Shutdown).await?;
+
+    Ok(())
+}
 ```
 
 ---
 
-## 4. 최종 제안: 완전한 재작성 기반 새로운 시스템
+## 3. UI 상호작용의 혁신
 
-이 문서는 `re-arch-plan.md`의 아이디어를 기반으로 하되, **점진적 교체가 아닌 완전한 재작성**을 통해 다음과 같은 명확한 개선점을 제시합니다.
+### 3.1. 즉각적인 중단(Cancel) 처리
 
-### 4.1. 왜 완전한 재작성인가?
+사용자가 '중단'을 요청하면, `Facade`는 `CrawlingCommand::Cancel`을 큐에 보냅니다. `Orchestrator`는 진행 중이던 단 하나의 작업만 마치고 바로 다음으로 `Cancel` 명령을 수신하여 모든 것을 중단합니다. 이는 **시스템의 반응성을 극대화**합니다.
 
-**❌ 점진적 교체의 문제점들:**
-- **중간에 버려지는 코드 양산**: 호환성 레이어, 임시 어댑터 등 결국 제거될 코드들
-- **혼란 가중**: 새 시스템과 기존 시스템이 공존하며 발생하는 복잡성
-- **중복 유지보수**: 두 개 시스템을 동시에 관리해야 하는 부담
-- **불완전한 설계**: 기존 시스템과의 호환성 때문에 제약받는 새 아키텍처
+### 3.2. 이벤트 발행의 명확화
 
-**✅ 완전한 재작성의 장점:**
-- **명확한 아키텍처**: 기존 제약 없이 최적의 설계 가능
-- **코드 일관성**: 처음부터 새로운 패턴과 규칙으로 통일
-- **빠른 개발**: 호환성 고려 없이 직진 개발
-- **확실한 전환**: 한 번에 완전히 교체, 혼란 최소화
-
-### 4.2. 새 시스템 완전 독립 구축 전략
-
-```mermaid
-graph LR
-    subgraph "기존 시스템 (그대로 유지)"
-        A1[CrawlingOrchestrator]
-        A2[WorkerPool]
-        A3[기존 UI]
-        A4[기존 DB 스키마]
-    end
-    
-    subgraph "새 시스템 (완전 독립)"
-        B1[CrawlingFacade]
-        B2[SessionOrchestrator]
-        B3[CrawlingPlanner]
-        B4[새 UI]
-        B5[새 스키마/테이블]
-    end
-    
-    subgraph "전환 시점"
-        C1[기능 검증 완료]
-        C2[성능 벤치마크 통과]
-        C3[완전 교체]
-        C4[기존 시스템 제거]
-    end
-    
-    A1 -.-> A1
-    A2 -.-> A2
-    A3 -.-> A3
-    A4 -.-> A4
-    
-    B1 --> B2
-    B2 --> B3
-    B3 --> B4
-    B4 --> B5
-    
-    B1 --> C1
-    C1 --> C2
-    C2 --> C3
-    C3 --> C4
-    
-    style B1 fill:#e3f2fd
-    style C3 fill:#c8e6c9
-    style C4 fill:#ffcdd2
-```
-
-### 4.3. 구현 전략: 독립된 새 모듈
+이벤트는 이제 각 **명령이 처리되기 직전과 직후**에 발행되어, UI가 현재 어떤 명령이 처리되고 있는지 명확하게 알 수 있습니다.
 
 ```rust
-// 기존 시스템은 그대로 두고, 완전히 새로운 모듈 생성
-src-tauri/src/
-├── crawling/              // 기존 시스템 (건드리지 않음)
-│   ├── orchestrator.rs    
-│   ├── worker_pool.rs     
-│   └── ...                
-├── new_crawling/          // 새 시스템 (완전 독립)
-│   ├── facade.rs          // CrawlingFacade
-│   ├── orchestrator.rs    // SessionOrchestrator  
-│   ├── planner.rs         // CrawlingPlanner
-│   ├── events.rs          // EventHub
-│   ├── state.rs           // SharedSessionState
-│   └── ...                
-└── main.rs                // 기존: old 시스템, 전환 후: new 시스템
+// in SessionOrchestrator loop
+
+let command = self.cmd_rx.recv().await;
+
+// 이벤트 발행: "이제 이 명령을 시작합니다"
+self.event_hub.emit(Event::CommandStarted(command.clone())).await;
+
+// ... 명령 실행 ...
+
+// 이벤트 발행: "이 명령이 완료/실패했습니다"
+self.event_hub.emit(Event::CommandFinished(result)).await;
 ```
 
-### 4.4. 전환 계획: 한 번에 완전 교체
+---
 
-**Phase 1 (Week 1-4): 새 시스템 완전 구축**
-- 기존 시스템 건드리지 않고 완전히 독립된 새 시스템 개발
-- 별도 테이블/스키마 사용하여 DB 충돌 방지
-- 별도 UI 컴포넌트로 독립 테스트
+## 4. 최종 실행 계획: Clean Slate & Command-Driven
 
-**Phase 2 (Week 5): 기능 검증 및 성능 테스트**
-- 새 시스템 단독으로 전체 기능 검증
-- 기존 시스템과 성능 비교 테스트
-- 데이터 마이그레이션 도구 준비
+1.  **Phase 0: Core Infrastructure (1주)**
+    *   `CrawlingCommand` Enum 정의
+    *   `EventHub` 및 기본 이벤트 타입 정의
+    *   `SessionOrchestrator`의 핵심 `while let Some(cmd) = ...` 루프 및 `Command Queue` (MPSC 채널) 구현
 
-**Phase 3 (Week 6): 완전 교체**
-- 한 번에 완전히 새 시스템으로 교체
-- 기존 시스템 코드 제거
-- 사용자에게는 "업데이트" 형태로 제공
+2.  **Phase 1: Analysis & Planning (2주)**
+    *   `SiteStatusChecker`, `DatabaseAnalyzer` 구현
+    *   **`CrawlingPlanner` 구현:** 분석 결과를 바탕으로 `CrawlingCommand` 시퀀스를 생성하는 로직 완성
+    *   `CrawlingFacade`에서 분석/계획을 거쳐 `Command Queue`에 명령을 채우는 전체 흐름 연결
 
-### 4.5. 이점 및 리스크 관리
+3.  **Phase 2: Execution & UI (2주)**
+    *   `BatchManager` 및 `AsyncTask` 구현: `Orchestrator`로부터 받은 명령을 실제 수행하는 로직
+    *   UI 컴포넌트 개발: `EventHub`를 구독하여 실시간으로 상태, 진행률, 로그 표시
+    *   UI의 제어 버튼(중단, 일시정지)과 `Facade`의 명령 전송 기능 연동
 
-**이점:**
-1. **명확한 아키텍처**: 기존 제약 없는 최적 설계
-2. **빠른 개발**: 호환성 고려 불필요
-3. **확실한 품질**: 새로운 패턴으로 일관된 코드
-4. **간단한 전환**: 복잡한 마이그레이션 과정 제거
+4.  **Phase 3: Integration & Testing (1주)**
+    *   전체 시스템 통합 테스트 및 E2E 시나리오 검증
+    *   기존 시스템과의 성능 벤치마크
+    *   최종 전환 준비
 
-**리스크 관리:**
-1. **기능 누락 방지**: 기존 시스템 기능 체크리스트 작성
-2. **성능 저하 방지**: 엄격한 성능 벤치마크 기준 설정
-3. **데이터 손실 방지**: 완전한 백업 및 마이그레이션 도구
-4. **롤백 계획**: 문제 발생 시 기존 시스템으로 즉시 복원
+## 5. 결론: 우리가 만들고자 하는 시스템
 
-이 접근 방식을 통해 **중간에 버려지는 코드 없이, 혼란 없이, 명확하고 깨끗한 새 아키텍처**를 구축할 수 있습니다.
+이 문서는 `re-arch-plan.md`의 초기 아이디어에서 출발하여, 수많은 검토와 제안을 거쳐 완성된 최종 청사진입니다. 이 설계는 다음과 같은 시스템을 약속합니다.
+
+*   **단순하고 예측 가능한 시스템:** 복잡한 공유 상태 대신, 중앙 집중화된 명령 큐를 통해 제어 흐름을 단순화했습니다.
+*   **과거의 지혜를 담은 시스템:** `CrawlingPlanner`를 통해 기존의 성공적인 도메인 지식을 체계적으로 계승했습니다.
+*   **사용자와 소통하는 시스템:** UI와의 상호작용을 최우선으로 고려하여, 즉각적인 피드백과 제어가 가능한 구조를 완성했습니다.
+
+이것이 우리가 구축할, 더 안정적이고, 더 효율적이며, 더 사용하기 좋은 새로운 크롤링 시스템의 최종 모습입니다.
