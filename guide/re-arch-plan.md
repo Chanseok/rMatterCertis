@@ -411,7 +411,6 @@ pub use config::{UserConfig, SessionConfig, AppContext};
 #[derive(Debug)]
 pub struct CrawlingFacade {
     event_hub: std::sync::Arc<EventHub>,
-    batch_manager: std::sync::Arc<BatchManager>,
 }
 
 impl CrawlingFacade {
@@ -419,13 +418,9 @@ impl CrawlingFacade {
     pub fn new() -> crate::Result<Self> {
         let event_hub = std::sync::Arc::new(EventHub::new());
         
-        // 기본 배치 설정으로 BatchManager 생성
-        let batch_config = batch::BatchConfig::default();
-        let batch_manager = std::sync::Arc::new(BatchManager::new(batch_config));
-        
         Ok(Self {
             event_hub,
-            batch_manager,
+            // BatchManager는 Planning 단계에서 적응적으로 생성됨
         })
     }
     
@@ -541,7 +536,7 @@ impl SessionOrchestrator {
         
         // 2단계: 계획 수립 단계 (도메인 지식 중심 + 이벤트 발행)
         let planner = CrawlingPlanner::new(self.event_hub.clone());
-        let crawling_plan = planner.create_plan(
+        let crawling_plan = planner.create_comprehensive_plan(
             user_config.crawling.crawl_type.clone(),
             &analysis_result.site_status,
             &analysis_result.db_report,
@@ -568,6 +563,10 @@ impl SessionOrchestrator {
             analysis_result.site_status,
             crawling_plan.clone(),
         );
+
+        // 4단계: Planning 결과를 바탕으로 BatchManager 생성
+        let batch_config = crawling_plan.batch_config.clone();
+        let batch_manager = std::sync::Arc::new(BatchManager::new(batch_config));
         
         // 🎯 실행 단계 시작 이벤트
         self.emit_stage_changed(
@@ -1127,8 +1126,13 @@ graph TD
 pub struct CrawlingPlanner;
 
 impl CrawlingPlanner {
-    /// 수집된 분석 데이터를 바탕으로 최종 크롤링 계획을 생성
-    pub fn create_plan(
+    /// 🎯 3가지 주요 정보를 종합한 포괄적 크롤링 계획 수립
+    /// 
+    /// **종합 판단 요소**:
+    /// 1. 사용자 의도 (CrawlType): 전체/증분/복구
+    /// 2. 사이트 상태 (SiteStatus): 총 페이지 수, 응답 속도, 부하 상태
+    /// 3. DB 상태 (DBStateReport): 기존 데이터, 누락 페이지, 오류 패턴
+    pub async fn create_comprehensive_plan(
         &self,
         user_intent: CrawlType,           // 사용자 의도 (전체/증분/복구)
         site_status: &SiteStatus,         // 사이트 현재 상태  
@@ -1158,7 +1162,11 @@ impl CrawlingPlanner {
             CrawlType::Recovery => {
                 // **도메인 지식 3: 복구 크롤링**
                 // DB 분석 결과 누락된 페이지만을 대상으로 함
-                return Ok(CrawlingPlan::for_recovery(db_report.missing_pages.clone()));
+                return Ok(CrawlingPlan::for_recovery(
+                    db_report.missing_pages.clone(),
+                    site_status,
+                    db_report
+                ));
             }
         };
 
@@ -1166,12 +1174,89 @@ impl CrawlingPlanner {
             return Ok(CrawlingPlan::no_action_needed());
         }
 
+        // 🎯 3가지 정보를 종합하여 최적 BatchConfig 결정
+        let batch_config = self.determine_optimal_batch_config(
+            &strategy,
+            site_status,
+            db_report,
+            end_page - start_page + 1, // 총 작업 페이지 수
+        );
+
         Ok(CrawlingPlan {
             target_pages: (start_page..=end_page).collect(),
             strategy,
             estimated_items: self.estimate_items(start_page, end_page, site_status),
             priority: PlanPriority::Normal,
+            batch_config,
         })
+    }
+
+    /// 🧠 도메인 지식 중심: 3가지 정보 종합으로 최적 배치 설정 결정
+    /// 
+    /// **결정 알고리즘**:
+    /// - 사이트 응답 속도가 느리면 → 작은 배치 크기 + 긴 지연시간
+    /// - DB 오류 패턴이 많으면 → 많은 재시도 + 에러 백오프
+    /// - 대량 작업이면 → 큰 배치 크기로 효율성 확보
+    /// - 복구 작업이면 → 신중한 재시도 정책
+    fn determine_optimal_batch_config(
+        &self,
+        strategy: &CrawlingStrategy,
+        site_status: &SiteStatus,
+        db_report: &DBStateReport,
+        total_pages: u32,
+    ) -> BatchConfig {
+        
+        // 1️⃣ 사이트 상태 기반 기본 배치 크기 결정
+        let base_batch_size = match site_status.average_response_time_ms {
+            0..=500 => 50,      // 빠른 응답: 큰 배치
+            501..=2000 => 20,   // 보통 응답: 중간 배치  
+            _ => 10,            // 느린 응답: 작은 배치
+        };
+
+        // 2️⃣ DB 오류 패턴 기반 재시도 정책 결정
+        let error_rate = db_report.recent_error_count as f32 / db_report.total_attempts.max(1) as f32;
+        let max_retries = match error_rate {
+            0.0..=0.05 => 3,      // 낮은 오류율: 기본 재시도
+            0.05..=0.15 => 5,     // 중간 오류율: 증가된 재시도
+            _ => 8,               // 높은 오류율: 적극적 재시도
+        };
+
+        // 3️⃣ 크롤링 전략별 세부 조정
+        let (adjusted_batch_size, delay_ms) = match strategy {
+            CrawlingStrategy::Full => {
+                // 전체 크롤링: 효율성 우선, 큰 배치
+                (base_batch_size * 2, 1000)
+            }
+            CrawlingStrategy::Incremental => {
+                // 증분 크롤링: 균형 잡힌 접근
+                (base_batch_size, 1500)
+            }
+            CrawlingStrategy::Recovery => {
+                // 복구 크롤링: 신중함 우선, 작은 배치 + 긴 지연
+                (base_batch_size / 2, 3000)
+            }
+            CrawlingStrategy::NoAction => {
+                // 작업 없음: 기본값
+                (1, 1000)
+            }
+        };
+
+        // 4️⃣ 총 작업량 기반 최종 조정
+        let final_batch_size = if total_pages > 1000 {
+            adjusted_batch_size * 2  // 대량 작업: 배치 크기 증가
+        } else if total_pages < 50 {
+            (adjusted_batch_size / 2).max(1)  // 소량 작업: 배치 크기 감소
+        } else {
+            adjusted_batch_size
+        };
+
+        BatchConfig {
+            batch_size: final_batch_size,
+            max_retries,
+            delay_between_batches_ms: delay_ms,
+            timeout_per_request_ms: site_status.average_response_time_ms * 3 + 5000,
+            concurrent_requests: if site_status.server_load_level < 0.7 { 3 } else { 1 },
+        }
     }
 
     /// 페이지 범위와 상태를 기반으로 예상 아이템 수를 계산하는 로직
@@ -1203,6 +1288,9 @@ pub struct CrawlingPlan {
     
     /// 계획 우선순위
     pub priority: PlanPriority,
+    
+    /// 분석 결과를 바탕으로 최적화된 배치 설정
+    pub batch_config: BatchConfig,
 }
 
 impl CrawlingPlan {
@@ -1213,18 +1301,38 @@ impl CrawlingPlan {
             strategy: CrawlingStrategy::NoAction,
             estimated_items: 0,
             priority: PlanPriority::None,
+            batch_config: BatchConfig::minimal(), // 최소한의 기본 설정
         }
     }
     
     /// 복구 크롤링을 위한 계획 (연속되지 않은 페이지들)
-    pub fn for_recovery(missing_pages: Vec<u32>) -> Self {
+    /// 
+    /// **복구 작업 특성**: 신중한 배치 설정 적용
+    /// - 작은 배치 크기로 안정성 확보
+    /// - 높은 재시도 횟수로 복구 완료율 향상
+    /// - 긴 지연 시간으로 사이트 부하 최소화
+    pub fn for_recovery(
+        missing_pages: Vec<u32>,
+        site_status: &SiteStatus,
+        db_report: &DBStateReport
+    ) -> Self {
         let estimated_items = missing_pages.len() as u32 * constants::site::DEFAULT_PRODUCTS_PER_PAGE;
+        
+        // 복구 작업을 위한 신중한 배치 설정
+        let batch_config = BatchConfig {
+            batch_size: 5,  // 복구는 작은 배치로 안전하게
+            max_retries: 8, // 복구는 재시도를 적극적으로
+            delay_between_batches_ms: 5000, // 복구는 긴 지연으로 안전하게
+            timeout_per_request_ms: site_status.average_response_time_ms * 5 + 10000,
+            concurrent_requests: 1, // 복구는 순차적으로
+        };
         
         Self {
             target_pages: missing_pages,
             strategy: CrawlingStrategy::Recovery,
             estimated_items,
             priority: PlanPriority::High, // 복구는 높은 우선순위
+            batch_config,
         }
     }
     
@@ -1261,72 +1369,37 @@ impl CrawlingPlan {
     }
 }
 
-/// 크롤링 전략
-#[derive(Debug, Clone, PartialEq)]
-pub enum CrawlingStrategy {
-    Full,          // 전체 수집
-    Incremental,   // 증분 수집  
-    Recovery,      // 복구 수집
-    NoAction,      // 작업 불필요
+/// 배치 처리 설정
+#[derive(Debug, Clone)]
+pub struct BatchConfig {
+    /// 배치당 처리할 페이지 수
+    pub batch_size: u32,
+    
+    /// 최대 재시도 횟수
+    pub max_retries: u32,
+    
+    /// 배치 간 지연 시간 (밀리초)
+    pub delay_between_batches_ms: u64,
+    
+    /// 요청당 타임아웃 (밀리초)
+    pub timeout_per_request_ms: u64,
+    
+    /// 동시 요청 수
+    pub concurrent_requests: u32,
 }
 
-/// 계획 우선순위
-#[derive(Debug, Clone, PartialEq)]
-pub enum PlanPriority {
-    None,     // 작업 없음
-    Low,      // 낮은 우선순위
-    Normal,   // 일반적인 우선순위
-    High,     // 높은 우선순위 (복구 등)
-    Critical, // 긴급 (시스템 복원 등)
+impl BatchConfig {
+    /// 최소한의 기본 배치 설정 (작업이 없을 때 사용)
+    pub fn minimal() -> Self {
+        Self {
+            batch_size: 1,
+            max_retries: 1,
+            delay_between_batches_ms: 1000,
+            timeout_per_request_ms: 30000,
+            concurrent_requests: 1,
+        }
+    }
 }
-
-/// 사용자 크롤링 의도
-#[derive(Debug, Clone, PartialEq)]
-pub enum CrawlType {
-    Full,        // 전체 크롤링
-    Incremental, // 증분 크롤링 (마지막 위치부터)
-    Recovery,    // 복구 크롤링 (누락된 데이터만)
-}
-
-/// 계획 수립 에러
-#[derive(Debug, thiserror::Error)]
-pub enum PlanningError {
-    #[error("사이트에 접근할 수 없습니다")]
-    SiteNotAccessible,
-    
-    #[error("데이터베이스 상태를 확인할 수 없습니다")]
-    DatabaseStateUnknown,
-    
-    #[error("사용자 설정이 유효하지 않습니다: {reason}")]
-    InvalidUserConfig { reason: String },
-}
-```
-
-#### PreCrawlingAnalyzer 역할 단순화
-
-이제 `PreCrawlingAnalyzer`는 복잡한 의사결정 없이 데이터 수집 + 계획 수립 조정만 담당:
-
-```mermaid
-sequenceDiagram
-    participant SO as SessionOrchestrator
-    participant PCA as PreCrawlingAnalyzer  
-    participant SSC as SiteStatusChecker
-    participant DBA as DatabaseAnalyzer
-    participant Planner as CrawlingPlanner
-
-    SO->>PCA: analyze_and_plan(crawl_type)
-    
-    Note over PCA: 데이터 수집 단계
-    PCA->>SSC: check_site_status_and_scale()
-    SSC-->>PCA: SiteStatus
-    PCA->>DBA: analyze_database_state()
-    DBA-->>PCA: DBStateReport
-    
-    Note over PCA: 의사결정 단계 
-    PCA->>Planner: create_plan(crawl_type, site_status, db_report)
-    Planner-->>PCA: CrawlingPlan
-    
-    PCA-->>SO: Final CrawlingPlan
 ```
 
 ## 4. 기대 효과
@@ -1399,3 +1472,63 @@ self.emit_event(AppEvent::Session(SessionEvent::StageStarted {
 4. **Week 4**: 프로덕션 대시보드로 전체 시스템 모니터링
 
 이 아키텍처 변환을 통해 **사용자는 시스템의 모든 동작을 실시간으로 파악**할 수 있으며, 문제 발생 시 **정확한 위치와 원인을 즉시 식별**할 수 있습니다.
+
+## CrawlingPlanner 중심의 적응적 배치 설정 아키텍처
+
+### 🎯 핵심 개선사항: 디폴트에서 지능형 결정으로
+
+**Before (문제 상황)**:
+```rust
+// ❌ CrawlingFacade 생성 시점에 디폴트 BatchConfig
+let batch_config = batch::BatchConfig::default();
+let batch_manager = std::sync::Arc::new(BatchManager::new(batch_config));
+```
+
+**After (개선된 아키텍처)**:
+```rust
+// ✅ Planning 단계에서 3가지 정보 종합 후 적응적 결정
+let crawling_plan = planner.create_comprehensive_plan(
+    user_config.crawling.crawl_type.clone(),
+    &analysis_result.site_status,      // 1️⃣ 사이트 현재 상태
+    &analysis_result.db_report,        // 2️⃣ DB 과거 데이터  
+).await?;                              // 3️⃣ 사용자 의도
+
+let batch_config = crawling_plan.batch_config.clone(); // 🧠 지능형 결정
+let batch_manager = std::sync::Arc::new(BatchManager::new(batch_config));
+```
+
+### 🧠 CrawlingPlanner의 지능형 배치 결정 알고리즘
+
+**1. 사이트 상태 기반 배치 크기 결정**
+- 빠른 응답 (0-500ms) → 큰 배치 (50개)  
+- 보통 응답 (501-2000ms) → 중간 배치 (20개)
+- 느린 응답 (2000ms+) → 작은 배치 (10개)
+
+**2. DB 오류 패턴 기반 재시도 정책**
+- 낮은 오류율 (0-5%) → 기본 재시도 (3회)
+- 중간 오류율 (5-15%) → 증가 재시도 (5회)  
+- 높은 오류율 (15%+) → 적극 재시도 (8회)
+
+**3. 크롤링 전략별 세부 조정**
+- **전체 크롤링**: 효율성 우선 → 큰 배치 + 짧은 지연
+- **증분 크롤링**: 균형 잡힌 접근 → 중간 배치 + 중간 지연
+- **복구 크롤링**: 신중함 우선 → 작은 배치 + 긴 지연
+
+**4. 총 작업량 기반 최종 조정**
+- 대량 작업 (1000+ 페이지) → 배치 크기 2배 증가
+- 소량 작업 (50 페이지 미만) → 배치 크기 절반 감소
+
+### 📊 실제 적용 사례
+
+```rust
+// 🔍 시나리오: 증분 크롤링, 사이트 응답 1200ms, 오류율 8%
+let optimal_config = BatchConfig {
+    batch_size: 20,           // 중간 응답 속도 기반
+    max_retries: 5,           // 중간 오류율 기반  
+    delay_between_batches_ms: 1500,  // 증분 전략 기반
+    timeout_per_request_ms: 8600,    // 응답시간 * 3 + 5초
+    concurrent_requests: 3,   // 서버 부하 < 0.7 기반
+};
+```
+
+이제 **CrawlingFacade는 단순한 진입점 역할**만 하고, **CrawlingPlanner가 모든 도메인 지식을 활용한 지능형 결정**을 담당하는 명확한 책임 분리가 완성되었습니다.
