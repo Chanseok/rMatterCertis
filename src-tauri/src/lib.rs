@@ -21,8 +21,22 @@ use std::sync::{Arc, RwLock};
 
 // Modern Rust 2024 module declarations - no mod.rs files needed
 
-// 🚀 새로운 아키텍처 모듈 (Phase 1 구현 완료)
-pub mod new_architecture;
+// 🚀 새로운 아키텍처 모듈 (Phase 1 구현 완료) - Modern Rust 2024
+pub mod new_architecture {
+    //! Modern architecture patterns and implementations
+    pub mod actor_system;
+    pub mod channel_types;
+    pub mod system_config;
+    pub mod retry_calculator;
+    
+    // Services module with direct declarations
+    pub mod services {
+        //! Service layer implementations
+        pub mod crawling_integration;
+        pub mod real_crawling_integration;
+        pub mod real_crawling_commands;
+    }
+}
 
 pub mod domain {
     //! Domain module - Core business logic and entities
