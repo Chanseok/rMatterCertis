@@ -49,7 +49,6 @@ pub enum StageError {
     ChannelError { message: String },
     DatabaseError { message: String },
     ResourceExhausted { message: String },
-    ConfigurationError { message: String },
 }
 
 impl std::fmt::Display for StageError {
@@ -62,7 +61,6 @@ impl std::fmt::Display for StageError {
             StageError::ChannelError { message } => write!(f, "Channel error: {}", message),
             StageError::DatabaseError { message } => write!(f, "Database error: {}", message),
             StageError::ResourceExhausted { message } => write!(f, "Resource exhausted: {}", message),
-            StageError::ConfigurationError { message } => write!(f, "Configuration error: {}", message),
         }
     }
 }
@@ -176,7 +174,6 @@ impl RetryCalculator {
             StageError::ValidationError { .. } => false,   // 검증 에러는 재시도 불가
             StageError::ChannelError { .. } => false,      // 채널 에러는 재시도 불가
             StageError::DatabaseError { .. } => true,      // 데이터베이스 에러는 재시도 가능
-            StageError::ConfigurationError { .. } => false, // 설정 에러는 재시도 불가
         }
     }
 
@@ -559,10 +556,10 @@ impl SessionActor {
 
 /// BatchActor - 배치 단위 처리 관리
 pub struct BatchActor {
-    pub batch_id: String,
-    pub config: Arc<SystemConfig>,
-    pub event_tx: mpsc::Sender<AppEvent>,
-    pub stage_actors: Vec<StageActor>,
+    batch_id: String,
+    config: Arc<SystemConfig>,
+    event_tx: mpsc::Sender<AppEvent>,
+    stage_actors: Vec<StageActor>,
 }
 
 impl BatchActor {
@@ -1029,10 +1026,10 @@ impl BatchActor {
 
 /// StageActor - 개별 스테이지 실행 관리
 pub struct StageActor {
-    pub batch_id: String,
-    pub config: Arc<SystemConfig>,
-    pub execution_stats: Arc<Mutex<StageExecutionStats>>,
-    pub crawling_executor: Option<Arc<crate::new_architecture::services::crawling_integration::RealCrawlingStageExecutor>>,
+    batch_id: String,
+    config: Arc<SystemConfig>,
+    execution_stats: Arc<Mutex<StageExecutionStats>>,
+    crawling_executor: Option<Arc<crate::new_architecture::services::crawling_integration::RealCrawlingStageExecutor>>,
 }
 
 impl StageActor {
@@ -1234,10 +1231,9 @@ impl StageActor {
             };
             
             let batch_id = self.batch_id.clone();
-            let stage_type_for_task = stage_type.clone();
             let handle = tokio::spawn(async move {
                 let _permit = permit; // 스코프 종료시 자동 해제
-                Self::process_single_item_with_result(batch_id, &stage_type_for_task, item).await
+                Self::process_single_item_with_result(batch_id, stage_type, item).await
             });
             
             handles.push(handle);
@@ -1294,15 +1290,88 @@ impl StageActor {
             StageResult::Success(success_result)
         }
     }
+                    collection_metrics: Some(CollectionMetrics {
+                        total_items: (successful_items.len() + failed_items.len()) as u32,
+                        successful_items: successful_items.len() as u32,
+                        failed_items: failed_items.len() as u32,
+                        duration_ms: 1000,
+                        avg_response_time_ms: 200,
+                        success_rate: if successful_items.is_empty() && failed_items.is_empty() {
+                            0.0
+                        } else {
+                            successful_items.len() as f64 / (successful_items.len() + failed_items.len()) as f64 * 100.0
+                        },
+                    }),
+                    processing_metrics: None,
+                }
+            }
+            StageType::DetailCollection | StageType::Processing => {
+                StageSuccessResult {
+                    processed_items: successful_items.len() as u32,
+                    stage_duration_ms: 2000,
+                    collection_metrics: None,
+                    processing_metrics: Some(ProcessingMetrics {
+                        total_processed: (successful_items.len() + failed_items.len()) as u32,
+                        successful_saves: successful_items.len() as u32,
+                        failed_saves: failed_items.len() as u32,
+                        duration_ms: 2000,
+                        avg_processing_time_ms: 400,
+                        success_rate: if successful_items.is_empty() && failed_items.is_empty() {
+                            0.0
+                        } else {
+                            successful_items.len() as f64 / (successful_items.len() + failed_items.len()) as f64 * 100.0
+                        },
+                    }),
+                }
+            }
+            _ => {
+                // DataValidation, DatabaseSave 등은 기본 형태로 반환
+                StageSuccessResult {
+                    processed_items: successful_items.len() as u32,
+                    stage_duration_ms: 1000,
+                    collection_metrics: None,
+                    processing_metrics: None,
+                }
+            }
+        };
+        
+        // 결과 분류
+        if successful_items.is_empty() && !failed_items.is_empty() {
+            StageResult::FatalError {
+                error: StageError::ValidationError {
+                    message: format!("All {} items failed", failed_items.len()),
+                },
+                stage_id: self.batch_id.clone(),
+                context: "Complete stage failure".to_string(),
+            }
+        } else if !failed_items.is_empty() {
+            StageResult::PartialSuccess {
+                success_items: success_result,
+                failed_items: failed_items.into_iter().map(|item| {
+                    FailedItem {
+                        item_id: format!("item-{}", item),
+                        error: StageError::ValidationError {
+                            message: "Processing failed".to_string(),
+                        },
+                        retry_count: 0,
+                        last_attempt: std::time::SystemTime::now(),
+                    }
+                }).collect(),
+                stage_id: self.batch_id.clone(),
+            }
+        } else {
+            StageResult::Success(success_result)
+        }
+    }
     
     /// 개별 아이템 처리 (성공 시 아이템 ID, 실패 시 에러 반환)
     async fn process_single_item_with_result(
         _batch_id: String,
-        stage_type: &StageType,
+        stage_type: StageType,
         item: StageItem,
     ) -> Result<u32, u32> {
         // 실제 처리 로직을 시뮬레이션
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        sleep(Duration::from_millis(100)).await;
         
         // 90% 성공률로 시뮬레이션
         if fastrand::f64() < 0.9 {
@@ -1635,7 +1704,6 @@ mod tests {
                 StageError::ChannelError { message } => assert!(error_str.contains(message)),
                 StageError::DatabaseError { message } => assert!(error_str.contains(message)),
                 StageError::ResourceExhausted { message } => assert!(error_str.contains(message)),
-                StageError::ConfigurationError { message } => assert!(error_str.contains(message)),
             }
         }
 

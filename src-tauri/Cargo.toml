@@ -9,6 +9,8 @@ default-run = "matter-certis-v2"
 license = "MIT"
 repository = "https://github.com/Chanseok/rMatterCertis"
 readme = "README.md"
+keywords = ["web-scraping", "crawling", "ecommerce", "automation", "rust"]
+categories = ["web-programming", "data-processing", "automation"]
 
 [workspace]
 resolver = "2"
@@ -80,6 +82,9 @@ tauri-plugin-store = "2"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 
+# 🔄 Type Generation for Frontend
+ts-rs = { version = "8.0", features = ["chrono-impl", "uuid-impl"] }
+
 # ⚡ Async Runtime & Concurrency
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "fs", "time", "signal"] }
 tokio-util = { version = "0.7", features = ["time", "codec"] }
@@ -120,6 +125,7 @@ dirs = "5.0"
 
 # 🎯 Development & Testing Utilities
 lazy_static = "1.4"
+fastrand = "2.0"
 
 [dev-dependencies]
 # 🧪 Testing Infrastructure
@@ -186,18 +192,18 @@ unused_extern_crates = "warn"
 unused_results = "allow"  # 일시적으로 allow로 변경
 
 [lints.clippy]
-# Core Clippy 규칙
-all = "warn"
-pedantic = "warn"
-nursery = "warn"
-cargo = "warn"
+# Core Clippy 규칙 - Modern Rust 2024 스타일 (우선순위 설정)
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
 
 # Modern Rust 2024 엄격한 규칙
-complexity = "warn"
-perf = "warn"
-style = "warn"
-correctness = "warn"
-suspicious = "warn"
+complexity = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
 
 # 모듈 구조 관련 규칙
 module_inception = "warn"          # mod.rs 사용 방지

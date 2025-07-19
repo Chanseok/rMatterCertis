@@ -44,6 +44,8 @@ pub enum ActorCommand {
 /// 스테이지 타입 정의
 #[derive(Debug, Clone)]
 pub enum StageType {
+    Collection,
+    Processing,
     ListCollection,
     DetailCollection,
     DataValidation,
@@ -71,6 +73,9 @@ pub enum AppEvent {
         session_id: String,
         config: BatchConfig,
     },
+    BatchStarted {
+        batch_id: String,
+    },
     BatchCompleted {
         batch_id: String,
         success_count: u32,
@@ -79,6 +84,10 @@ pub enum AppEvent {
         batch_id: String,
         error: String,
         final_failure: bool,
+    },
+    StageCompleted {
+        stage: StageType,
+        result: crate::new_architecture::actor_system::StageResult,
     },
     SessionTimeout {
         session_id: String,

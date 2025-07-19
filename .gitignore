@@ -6,6 +6,9 @@ data
 .local
 *.rlib
 
+#ts-rs
+generated/
+
 # Rust build artifacts
 target/
 *.db

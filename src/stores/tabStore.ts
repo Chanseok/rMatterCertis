@@ -91,6 +91,17 @@ const [tabState, setTabState] = createStore<TabState>({
         text: 'text-slate-700',
         accent: 'from-slate-500 to-gray-500'
       }
+    },
+    {
+      id: 'actorSystem',
+      label: 'Actor System',
+      icon: '🎭',
+      theme: {
+        bg: 'bg-gradient-to-br from-purple-50 to-indigo-50',
+        border: 'border-purple-200',
+        text: 'text-purple-700',
+        accent: 'from-purple-500 to-indigo-500'
+      }
     }
   ],
   expandedSections: {}

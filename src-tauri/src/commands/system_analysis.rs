@@ -112,10 +112,17 @@ async fn perform_site_analysis() -> Result<SiteAnalysisResult, String> {
     let data_extractor = crate::infrastructure::MatterDataExtractor::new()
         .map_err(|e| format!("Failed to create data extractor: {}", e))?;
     
-    let status_checker = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
+    // Create database connection and repository for StatusChecker
+    let database_url = crate::commands::crawling_v4::get_database_url_v4()?;
+    let db_pool = sqlx::SqlitePool::connect(&database_url).await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    let product_repo = std::sync::Arc::new(crate::infrastructure::IntegratedProductRepository::new(db_pool));
+    
+    let status_checker = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
         http_client,
         data_extractor,
         config,
+        product_repo,
     );
     
     // Perform site status check

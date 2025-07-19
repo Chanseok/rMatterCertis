@@ -778,6 +778,171 @@ export class TauriApiService {
       return false;
     }
   }
+
+  // =========================================================================
+  // Actor System Integration (Future Enhancement)
+  // =========================================================================
+
+  /**
+   * Start Actor-based crawling (experimental new architecture)
+   * This method demonstrates how the UI would integrate with the new Actor system
+   */
+  async startActorBasedCrawling(config: {
+    startPage: number;
+    endPage: number;
+    batchSize?: number;
+    concurrencyLimit?: number;
+  }): Promise<string> {
+    try {
+      console.log('🎭 Starting Actor-based crawling (simulated)...', config);
+      
+      // For now, simulate actor system by calling existing crawling with enhanced events
+      const result = await this.startCrawling(config.startPage, config.endPage);
+      
+      // Emit simulated actor events to demonstrate UI integration
+      this.simulateActorSystemEvents(config);
+      
+      return result;
+    } catch (error) {
+      throw new Error(`Failed to start actor-based crawling: ${error}`);
+    }
+  }
+
+  /**
+   * Simulate Actor system events for UI testing
+   * This demonstrates how the real Actor system would emit events
+   */
+  private simulateActorSystemEvents(config: any): void {
+    console.log('🎭 Simulating Actor System events for UI integration...');
+    
+    // Simulate session start
+    setTimeout(() => {
+      // In the real implementation, this would come from SessionActor
+      window.dispatchEvent(new CustomEvent('actor-session-started', {
+        detail: {
+          session_id: 'session-' + Date.now(),
+          total_pages: config.endPage - config.startPage + 1,
+          batch_size: config.batchSize || 10,
+          timestamp: new Date().toISOString()
+        }
+      }));
+    }, 100);
+
+    // Simulate batch processing
+    const totalPages = config.endPage - config.startPage + 1;
+    const batchSize = config.batchSize || 10;
+    const batches = Math.ceil(totalPages / batchSize);
+    
+    for (let i = 0; i < batches; i++) {
+      setTimeout(() => {
+        // Simulate BatchActor events
+        window.dispatchEvent(new CustomEvent('actor-batch-started', {
+          detail: {
+            batch_id: `batch-${i + 1}`,
+            batch_number: i + 1,
+            total_batches: batches,
+            pages_in_batch: Math.min(batchSize, totalPages - i * batchSize),
+            timestamp: new Date().toISOString()
+          }
+        }));
+
+        // Simulate stage events within each batch
+        setTimeout(() => {
+          ['collection', 'processing', 'storage'].forEach((stage, stageIndex) => {
+            setTimeout(() => {
+              window.dispatchEvent(new CustomEvent('actor-stage-completed', {
+                detail: {
+                  batch_id: `batch-${i + 1}`,
+                  stage_name: stage,
+                  stage_index: stageIndex,
+                  success: Math.random() > 0.1, // 90% success rate
+                  items_processed: Math.min(batchSize, totalPages - i * batchSize),
+                  processing_time_ms: 1000 + Math.random() * 2000,
+                  timestamp: new Date().toISOString()
+                }
+              }));
+            }, stageIndex * 500);
+          });
+        }, 200);
+
+        // Simulate batch completion
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('actor-batch-completed', {
+            detail: {
+              batch_id: `batch-${i + 1}`,
+              success: true,
+              total_items_processed: Math.min(batchSize, totalPages - i * batchSize),
+              batch_duration_ms: 2000 + Math.random() * 1000,
+              timestamp: new Date().toISOString()
+            }
+          }));
+        }, 2500);
+
+      }, i * 3000); // Stagger batches
+    }
+
+    // Simulate session completion
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('actor-session-completed', {
+        detail: {
+          session_id: 'session-' + Date.now(),
+          total_pages_processed: totalPages,
+          total_batches: batches,
+          session_duration_ms: batches * 3000,
+          success_rate: 0.95,
+          timestamp: new Date().toISOString()
+        }
+      }));
+    }, batches * 3000 + 1000);
+  }
+
+  /**
+   * Subscribe to Actor system events (for future real implementation)
+   */
+  async subscribeToActorSystemEvents(callbacks: {
+    onSessionStarted?: (data: any) => void;
+    onBatchStarted?: (data: any) => void;
+    onStageCompleted?: (data: any) => void;
+    onBatchCompleted?: (data: any) => void;
+    onSessionCompleted?: (data: any) => void;
+  }): Promise<() => void> {
+    const eventListeners: Array<() => void> = [];
+
+    if (callbacks.onSessionStarted) {
+      const handler = (event: any) => callbacks.onSessionStarted!(event.detail);
+      window.addEventListener('actor-session-started', handler);
+      eventListeners.push(() => window.removeEventListener('actor-session-started', handler));
+    }
+
+    if (callbacks.onBatchStarted) {
+      const handler = (event: any) => callbacks.onBatchStarted!(event.detail);
+      window.addEventListener('actor-batch-started', handler);
+      eventListeners.push(() => window.removeEventListener('actor-batch-started', handler));
+    }
+
+    if (callbacks.onStageCompleted) {
+      const handler = (event: any) => callbacks.onStageCompleted!(event.detail);
+      window.addEventListener('actor-stage-completed', handler);
+      eventListeners.push(() => window.removeEventListener('actor-stage-completed', handler));
+    }
+
+    if (callbacks.onBatchCompleted) {
+      const handler = (event: any) => callbacks.onBatchCompleted!(event.detail);
+      window.addEventListener('actor-batch-completed', handler);
+      eventListeners.push(() => window.removeEventListener('actor-batch-completed', handler));
+    }
+
+    if (callbacks.onSessionCompleted) {
+      const handler = (event: any) => callbacks.onSessionCompleted!(event.detail);
+      window.addEventListener('actor-session-completed', handler);
+      eventListeners.push(() => window.removeEventListener('actor-session-completed', handler));
+    }
+
+    // Return cleanup function
+    return () => {
+      eventListeners.forEach(cleanup => cleanup());
+    };
+  }
 }
 
 // Create a singleton instance for use throughout the application

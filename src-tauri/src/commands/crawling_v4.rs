@@ -2,19 +2,20 @@
 //!
 //! Tauri commands for the new event-driven crawling system.
 //! These commands integrate with the new orchestrator and provide
-//! real    tracing::info!("✅ Step 4: Calculated optimal range: {} to {}", start_page, end_page);time updates to the frontend.
+//! real-time updates to the frontend.
 
 use std::sync::Arc;
 use std::collections::HashMap;
 use tauri::{AppHandle, State, Emitter};
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-use crate::domain::services::crawling_services::{StatusChecker, DatabaseAnalyzer};
+use crate::domain::services::crawling_services::StatusChecker;
 use crate::infrastructure::service_based_crawling_engine::{ServiceBasedBatchCrawlingEngine, BatchCrawlingConfig};
 use crate::infrastructure::crawling_service_impls::CrawlingRangeCalculator;
 use crate::application::shared_state::{SharedStateCache, SiteAnalysisResult, DbAnalysisResult, CalculatedRange};
-use crate::application::crawling_profile::{CrawlingProfile, CrawlingRequest};
+use crate::application::crawling_profile::CrawlingRequest;
 
 /// Global state for the crawling engine v4.0
 pub struct CrawlingEngineState {
@@ -41,7 +42,8 @@ impl MockDatabase {
 }
 
 /// Request payload for starting crawling
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, TS)]
+#[ts(export, export_to = "../src/types/generated/")]
 pub struct StartCrawlingRequest {
     pub start_page: u32,
     pub end_page: u32,
@@ -51,15 +53,18 @@ pub struct StartCrawlingRequest {
 }
 
 /// Response payload for crawling operations
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../src/types/generated/")]
 pub struct CrawlingResponse {
     pub success: bool,
     pub message: String,
+    #[ts(skip)]
     pub data: Option<serde_json::Value>,
 }
 
 /// Real-time statistics payload
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, TS)]
+#[ts(export, export_to = "../src/types/generated/")]
 pub struct SystemStatePayload {
     pub is_running: bool,
     pub uptime_seconds: u64,
@@ -75,7 +80,8 @@ pub struct SystemStatePayload {
     pub timestamp: u64,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, TS)]
+#[ts(export, export_to = "../src/types/generated/")]
 pub struct DetailedStats {
     pub list_pages_fetched: u64,
     pub list_pages_processed: u64,
@@ -88,7 +94,7 @@ pub struct DetailedStats {
 /// Initialize the crawling engine
 #[tauri::command]
 pub async fn init_crawling_engine(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, CrawlingEngineState>,
 ) -> Result<CrawlingResponse, String> {
     tracing::info!("Initializing crawling engine v4.0...");
@@ -373,8 +379,7 @@ pub async fn get_crawling_stats(
         is_healthy: true,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
+            .map_or(0, |d| d.as_secs()), // Modern Rust: map_or instead of unwrap_or_default
     };
     
     Ok(mock_stats)
@@ -845,19 +850,31 @@ async fn start_intelligent_crawling(
         analysis
     };
     
-    // 3. 지능적 범위 계산
+    // 3. 지능적 범위 계산 - 동적 계산
     let app_config = crate::infrastructure::config::AppConfig::default();
-    let page_range_limit = app_config.user.crawling.page_range_limit as u32;
+    let base_page_limit = u32::from(app_config.user.crawling.page_range_limit); // Modern Rust: from() 대신 as 캐스팅
+    
+    // 데이터베이스 크기와 사이트 변화에 따른 동적 범위 계산
+    let adaptive_page_limit = if db_analysis.is_empty {
+        // 첫 크롤링: 보수적으로 시작 (50 페이지)
+        std::cmp::min(base_page_limit, 50)
+    } else if site_analysis.total_pages > (db_analysis.total_products / 20) * 2 {
+        // 사이트가 크게 확장된 경우 (제품 수로 추정): 증가된 범위 크롤링
+        std::cmp::min(base_page_limit * 2, 200)
+    } else {
+        // 정상적인 증분 크롤링
+        base_page_limit
+    };
     
     let (start_page, end_page) = if db_analysis.is_empty {
         // 빈 DB인 경우: 최신 페이지부터 역순으로
         let calculated_end = 1;
-        let calculated_start = std::cmp::min(site_analysis.total_pages, page_range_limit);
+        let calculated_start = std::cmp::min(site_analysis.total_pages, adaptive_page_limit);
         (calculated_start, calculated_end)
     } else {
         // 기존 데이터가 있는 경우: 증분 크롤링
         let last_page = db_analysis.max_page_id.unwrap_or(1) as u32;
-        let calculated_start = std::cmp::min(site_analysis.total_pages, last_page + page_range_limit);
+        let calculated_start = std::cmp::min(site_analysis.total_pages, last_page + adaptive_page_limit);
         let calculated_end = last_page + 1;
         (calculated_start, calculated_end)
     };
@@ -910,13 +927,16 @@ async fn start_verification_crawling(
 ) -> Result<CrawlingResponse, String> {
     tracing::info!("🔍 Starting verification crawling for pages: {:?}", pages);
     
-    let min_page = *pages.iter().min().unwrap();
-    let max_page = *pages.iter().max().unwrap();
+    // Modern Rust: 명시적 에러 처리
+    let min_page = pages.iter().min()
+        .ok_or_else(|| "Cannot find minimum page in empty list".to_string())?;
+    let max_page = pages.iter().max()
+        .ok_or_else(|| "Cannot find maximum page in empty list".to_string())?;
     
     let calculated_range = CalculatedRange::new(
-        min_page,
-        max_page,
-        max_page - min_page + 1, // Total pages being verified
+        *min_page,
+        *max_page,
+        max_page.saturating_sub(*min_page).saturating_add(1), // Total pages being verified
         false, // Verification is not a complete crawl
     );
     
@@ -925,7 +945,7 @@ async fn start_verification_crawling(
     // 검증 모드에서는 특정 페이지들만 크롤링
     // 여기서는 간단히 min~max 범위로 처리하지만, 
     // 실제로는 특정 페이지들만 처리하는 로직 필요
-    execute_crawling_with_range(app, engine_state, max_page, min_page).await
+    execute_crawling_with_range(app, engine_state, *max_page, *min_page).await
 }
 
 /// 공통 크롤링 실행 로직

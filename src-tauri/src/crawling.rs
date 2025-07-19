@@ -62,6 +62,9 @@ pub enum CrawlingEngineError {
     #[error("Database connection error: {0}")]
     DatabaseError(String),
     
+    #[error("Database connection error: {0}")]
+    DatabaseConnectionError(String),
+    
     #[error("Shutdown timeout exceeded")]
     ShutdownTimeout,
 }
@@ -84,44 +87,21 @@ impl CrawlingEngineFactory {
             config.backpressure_threshold,
         ));
         
-        // 3. 워커 풀 생성 (Mock 구현 사용)
-        let worker_pool = WorkerPoolBuilder::new()
-            .with_max_concurrency(config.max_concurrent_requests)
-            .with_list_page_fetcher(Arc::new(workers::ListPageFetcher::new_simple()))
-            .with_list_page_parser(Arc::new(workers::ListPageParser::new_simple()))
-            .with_product_detail_fetcher(Arc::new(workers::ProductDetailFetcher::new_simple()))
-            .with_product_detail_parser(Arc::new(workers::ProductDetailParser::new_simple()))
-            .with_db_saver(Arc::new(workers::MockDbSaver::new_simple()))
-            .build()
-            .map_err(|e| CrawlingEngineError::WorkerPoolError(e.to_string()))?;
+        // 3. 워커 풀 생성 - 현재는 사용되지 않는 Factory 패턴 (주석 처리)
+        // let worker_pool = WorkerPoolBuilder::new()
+        //     .with_max_concurrency(config.max_concurrent_requests)
+        //     .with_list_page_fetcher(Arc::new(workers::ListPageFetcher::new_simple()))
+        //     .with_list_page_parser(Arc::new(workers::ListPageParser::new_simple()))
+        //     .with_product_detail_fetcher(Arc::new(workers::ProductDetailFetcher::new_simple()))
+        //     .with_product_detail_parser(Arc::new(workers::ProductDetailParser::new_simple()))
+        //     .with_db_saver(Arc::new(workers::DbSaver::new(...)))  // 실제 DB 필요
+        //     .build()
+        //     .map_err(|e| CrawlingEngineError::WorkerPoolError(e.to_string()))?;
         
-        // 4. 오케스트레이터 설정 (설정 파일에서 값 사용)
-        let orchestrator_config = OrchestratorConfig {
-            max_global_concurrency: config.max_concurrent_requests,
-            scheduler_interval: Duration::from_millis(100), // 기본값 (설정 필요시 추가)
-            shutdown_timeout: Duration::from_secs(30), // 기본값 (설정 필요시 추가)
-            stats_interval: Duration::from_secs(10), // 기본값 (설정 필요시 추가)
-            auto_retry_enabled: true, // 기본값 (설정 필요시 추가)
-            max_retries: config.max_retries,
-            retry_delay: Duration::from_millis(config.retry_delay_ms),
-            backpressure_enabled: false, // 기본값 (개발 단계에서 비활성화)
-            backpressure_threshold: 1000, // 기본값 (설정 필요시 추가)
-        };
-        
-        // 5. 오케스트레이터 생성
-        let orchestrator = Arc::new(CrawlingOrchestrator::new(
-            Arc::new(worker_pool),
-            queue_manager,
-            shared_state.clone(),
-            orchestrator_config,
-        ));
-        
-        Ok(CrawlingEngine {
-            orchestrator,
-            shared_state,
-            is_running: Arc::new(RwLock::new(false)),
-            config,
-        })
+        // Factory 패턴은 deprecated됨. with_config 또는 with_config_and_db 사용 권장
+        Err(CrawlingEngineError::ConfigurationError(
+            "Factory pattern is deprecated. Use with_config or with_config_and_db instead.".to_string()
+        ))
     }
 }
 
@@ -327,14 +307,20 @@ impl CrawlingEngine {
             config.backpressure_threshold,
         ));
         
-        // 3. 워커 풀 생성 (의존성 주입) - 일단 Mock 유지
+        // 3. 워커 풀 생성 (실제 데이터베이스 연결 사용)
+        let db_saver = Arc::new(workers::DbSaver::new(
+            database_pool,
+            100, // batch_size
+            Duration::from_secs(30), // flush_interval
+        ));
+        
         let worker_pool = WorkerPoolBuilder::new()
             .with_max_concurrency(config.max_concurrent_tasks)
             .with_list_page_fetcher(Arc::new(workers::ListPageFetcher::new_simple()))
             .with_list_page_parser(Arc::new(workers::ListPageParser::new_simple()))
             .with_product_detail_fetcher(Arc::new(workers::ProductDetailFetcher::new_simple()))
             .with_product_detail_parser(Arc::new(workers::ProductDetailParser::new_simple()))
-            .with_db_saver(Arc::new(workers::MockDbSaver::new_simple()))  // Mock 유지
+            .with_db_saver(db_saver)
             .build()
             .map_err(|e| CrawlingEngineError::WorkerPoolError(e.to_string()))?;
         
@@ -371,55 +357,35 @@ impl CrawlingEngine {
         Ok(engine)
     }
 
-    /// 설정을 사용하여 크롤링 엔진을 생성합니다 (Mock DB 사용)
+    /// 설정을 사용하여 크롤링 엔진을 생성합니다 (인메모리 SQLite DB 사용)
     pub async fn with_config(config: CrawlingConfig) -> Result<Self, CrawlingEngineError> {
-        // 1. 공유 상태 초기화
-        let shared_state = Arc::new(SharedState::new(config.clone()));
+        // 개발용 인메모리 SQLite 데이터베이스 연결
+        let database_pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .map_err(|e| CrawlingEngineError::DatabaseConnectionError(e.to_string()))?;
         
-        // 2. 큐 매니저 초기화
-        let queue_manager = Arc::new(QueueManager::new_with_config(
-            config.max_queue_size,
-            config.backpressure_threshold,
-        ));
+        // 테이블 생성 (기본 스키마)
+        sqlx::query(r#"
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                category TEXT,
+                manufacturer TEXT,
+                model TEXT,
+                certification_number TEXT,
+                certification_date TEXT,
+                source_url TEXT NOT NULL,
+                extracted_at TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        "#)
+        .execute(&database_pool)
+        .await
+        .map_err(|e| CrawlingEngineError::DatabaseConnectionError(format!("Failed to create tables: {}", e)))?;
         
-        // 3. 워커 풀 생성 (의존성 주입)
-        let worker_pool = WorkerPoolBuilder::new()
-            .with_max_concurrency(config.max_concurrent_tasks)
-            .with_list_page_fetcher(Arc::new(workers::ListPageFetcher::new_simple()))
-            .with_list_page_parser(Arc::new(workers::ListPageParser::new_simple()))
-            .with_product_detail_fetcher(Arc::new(workers::ProductDetailFetcher::new_simple()))
-            .with_product_detail_parser(Arc::new(workers::ProductDetailParser::new_simple()))
-            .with_db_saver(Arc::new(workers::MockDbSaver::new_simple()))
-            .build()
-            .map_err(|e| CrawlingEngineError::WorkerPoolError(e.to_string()))?;
-        
-        // 4. 오케스트레이터 설정
-        let orchestrator_config = OrchestratorConfig {
-            max_global_concurrency: config.max_concurrent_tasks,
-            scheduler_interval: Duration::from_millis(config.scheduler_interval_ms),
-            shutdown_timeout: Duration::from_secs(config.shutdown_timeout_seconds),
-            stats_interval: Duration::from_secs(config.stats_interval_seconds),
-            auto_retry_enabled: config.auto_retry_enabled,
-            max_retries: config.max_retries,
-            retry_delay: Duration::from_millis(config.retry_delay_ms),
-            backpressure_enabled: config.backpressure_enabled,
-            backpressure_threshold: 1000, // Default value
-        };
-        
-        // 5. 오케스트레이터 생성
-        let orchestrator = Arc::new(CrawlingOrchestrator::new(
-            Arc::new(worker_pool),
-            queue_manager,
-            shared_state.clone(),
-            orchestrator_config,
-        ));
-        
-        Ok(CrawlingEngine {
-            orchestrator,
-            shared_state,
-            is_running: Arc::new(RwLock::new(false)),
-            config,
-        })
+        // 실제 데이터베이스 연결을 사용하여 엔진 생성
+        Self::with_config_and_db(config, database_pool).await
     }
 }
 

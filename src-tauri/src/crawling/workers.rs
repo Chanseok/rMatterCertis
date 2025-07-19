@@ -137,7 +137,7 @@ pub struct WorkerPool {
     list_page_parser: Arc<ListPageParser>,
     product_detail_fetcher: Arc<ProductDetailFetcher>,
     product_detail_parser: Arc<ProductDetailParser>,
-    db_saver: Arc<MockDbSaver>,  // 일단 Mock 유지 (단계적 전환)
+    db_saver: Arc<DbSaver>,  // 구체적 타입으로 변경
     max_total_concurrency: usize,
     metrics: Arc<tokio::sync::RwLock<WorkerPoolMetrics>>,
 }
@@ -149,7 +149,7 @@ impl WorkerPool {
         list_page_parser: Arc<ListPageParser>,
         product_detail_fetcher: Arc<ProductDetailFetcher>,
         product_detail_parser: Arc<ProductDetailParser>,
-        db_saver: Arc<MockDbSaver>,  // 일단 Mock 유지
+        db_saver: Arc<DbSaver>,  // 구체적 타입으로 변경
         max_total_concurrency: usize,
     ) -> Self {
         Self {
@@ -228,7 +228,7 @@ impl WorkerPool {
         &self.product_detail_parser
     }
 
-    pub fn db_saver(&self) -> &Arc<MockDbSaver> {
+    pub fn db_saver(&self) -> &Arc<DbSaver> {
         &self.db_saver
     }
 
@@ -288,7 +288,7 @@ pub struct WorkerPoolBuilder {
     list_page_parser: Option<Arc<ListPageParser>>,
     product_detail_fetcher: Option<Arc<ProductDetailFetcher>>,
     product_detail_parser: Option<Arc<ProductDetailParser>>,
-    db_saver: Option<Arc<MockDbSaver>>,  // 일단 Mock 유지
+    db_saver: Option<Arc<DbSaver>>,  // 구체적 타입으로 변경
 }
 
 impl WorkerPoolBuilder {
@@ -328,7 +328,7 @@ impl WorkerPoolBuilder {
         self
     }
 
-    pub fn with_db_saver(mut self, worker: Arc<MockDbSaver>) -> Self {
+    pub fn with_db_saver(mut self, worker: Arc<DbSaver>) -> Self {
         self.db_saver = Some(worker);
         self
     }
@@ -343,7 +343,7 @@ impl WorkerPoolBuilder {
         let product_detail_parser = self.product_detail_parser
             .ok_or_else(|| WorkerError::ConfigurationError("ProductDetailParser not configured".to_string()))?;
         let db_saver = self.db_saver
-            .ok_or_else(|| WorkerError::ConfigurationError("MockDbSaver not configured".to_string()))?;
+            .ok_or_else(|| WorkerError::ConfigurationError("DbSaver not configured".to_string()))?;
 
         Ok(WorkerPool::new(
             list_page_fetcher,

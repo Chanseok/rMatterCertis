@@ -17,6 +17,7 @@ use crate::infrastructure::{DatabaseConnection, init_logging_with_config};
 use crate::infrastructure::config::{ConfigManager, AppConfig};
 use tracing::{info, error, warn};
 use tauri::Manager;
+use std::sync::{Arc, RwLock};
 
 // Modern Rust 2024 module declarations - no mod.rs files needed
 
@@ -97,8 +98,10 @@ pub mod commands {
     pub mod crawling_v4;
     pub mod modern_crawling;
     pub mod parsing_commands;
+    pub mod simple_actor_test;
     pub mod smart_crawling;
     pub mod system_analysis;
+    pub mod actor_system_monitoring; // Phase C: UI 개선 - Actor 시스템 모니터링 명령어
 }
 
 // Modern Rust 2024 - 명시적 모듈 선언
@@ -193,6 +196,10 @@ pub fn run() {
     // Create shared state cache for stateful backend operations
     let shared_state = crate::application::shared_state::SharedStateCache::new();
     
+    // Create crawling session manager for Actor system integration
+    let session_manager: Arc<RwLock<()>> = Arc::new(RwLock::new(()));
+    // crate::commands::crawling_session_manager::CrawlingSessionManager::new()
+    
     info!("🔧 Building Tauri application...");
     
     let builder = tauri::Builder::default()
@@ -201,12 +208,14 @@ pub fn run() {
         .manage(db)
         .manage(app_state)
         .manage(shared_state)  // SharedState 추가
+        .manage(session_manager)  // CrawlingSessionManager 추가
         .manage(commands::crawling_v4::CrawlingEngineState {
             engine: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
             database: commands::crawling_v4::MockDatabase {
                 connection_status: "Mock Connected".to_string(),
             },
         })
+        .manage(commands::simple_actor_test::ActorSystemState::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
             let broadcaster_handle = app_handle.clone();
@@ -256,15 +265,31 @@ pub fn run() {
             commands::smart_crawling::calculate_crawling_range,
             commands::smart_crawling::get_crawling_progress,
             commands::smart_crawling::get_database_state_for_range_calculation,
-            commands::smart_crawling::demo_prompts6_calculation
+            commands::smart_crawling::demo_prompts6_calculation,
             
-            // New Architecture Test commands (temporarily disabled - compilation issues)
-            // commands::new_arch_test::get_new_arch_config,
-            // commands::new_arch_test::test_new_arch_channels,
-            // commands::new_arch_test::test_new_arch_session_actor,
-            // commands::new_arch_test::test_new_arch_batch_actor,
-            // commands::new_arch_test::test_new_arch_integration,
-            // commands::new_arch_test::test_new_arch_performance
+            // New Architecture Actor System commands (OneShot integration 완료)
+            commands::simple_actor_test::test_new_arch_session_actor,
+            commands::simple_actor_test::test_new_arch_batch_actor,
+            commands::simple_actor_test::test_new_arch_integration,
+            commands::simple_actor_test::test_new_arch_channels,
+            commands::simple_actor_test::test_new_arch_performance,
+            
+            // Real Crawling Integration commands (Option B implementation)
+            new_architecture::services::real_crawling_commands::test_real_crawling_init,
+            new_architecture::services::real_crawling_commands::test_real_site_status,
+            new_architecture::services::real_crawling_commands::test_real_crawling_analysis,
+            new_architecture::services::real_crawling_commands::test_real_page_crawling,
+            new_architecture::services::real_crawling_commands::test_real_oneshot_integration,
+            
+            // Actor System Monitoring commands (Phase C: UI 개선)
+            commands::actor_system_monitoring::get_actor_system_status,
+            commands::actor_system_monitoring::get_actor_system_health,
+            commands::actor_system_monitoring::get_actor_crawling_progress,
+            commands::actor_system_monitoring::get_actor_crawling_config,
+            commands::actor_system_monitoring::start_crawling_session,
+            commands::actor_system_monitoring::pause_crawling_session,
+            commands::actor_system_monitoring::resume_crawling_session,
+            commands::actor_system_monitoring::stop_crawling_session
             
             // TODO: Add other commands as they are implemented
             // Most commands are temporarily disabled for compilation

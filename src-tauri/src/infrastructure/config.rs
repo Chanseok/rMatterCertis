@@ -250,6 +250,13 @@ pub struct AppManagedConfig {
     pub window_state: Option<String>,
 }
 
+impl AppConfig {
+    /// 개발/테스트용 기본 설정 생성
+    pub fn for_development() -> Self {
+        Self::default()
+    }
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {

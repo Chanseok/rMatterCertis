@@ -11,11 +11,14 @@ pub mod config;
 pub mod channels;
 pub mod results;
 pub mod context;
+pub mod actor_system;
+pub mod channel_types;
 
 // 주요 타입들 재익스포트
 pub use config::{SystemConfig, RetryPolicy, ConfigError};
-pub use channels::{ChannelFactory, ActorCommand, AppEvent, StageType};
-pub use results::{StageResult, StageError, ErrorClassifier, RetryCalculator};
+pub use channels::{ChannelFactory, ActorCommand, AppEvent, StageType, types::*};
+pub use channel_types::{StageItem, BatchConfig};
+pub use results::{StageResult, StageError, ErrorClassifier, RetryCalculator, FailedItem};
 pub use context::{IntegratedContext, ContextBuilder, LogLevel};
 
 /// 새 아키텍처의 메인 결과 타입

@@ -11,6 +11,7 @@ import { LocalDBTab } from './tabs/LocalDBTab';
 import { AnalysisTab } from './tabs/AnalysisTab';
 import { LiveProductionTab } from './tabs/LiveProductionTab';
 import { NewArchTestTab } from './tabs/NewArchTestTab';
+import { ActorSystemTab } from './tabs/ActorSystemTab';
 import { tabState } from '../stores/tabStore';
 
 export const AppWithTabs: Component = () => {
@@ -30,6 +31,8 @@ export const AppWithTabs: Component = () => {
         return <AnalysisTab />;
       case 'newArchTest':
         return <NewArchTestTab />;
+      case 'actorSystem':
+        return <ActorSystemTab />;
       default:
         return <StatusTab />;
     }

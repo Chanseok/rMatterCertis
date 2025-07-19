@@ -156,6 +156,17 @@ export const CrawlingProcessDashboard: Component = () => {
   const [batchNodes, setBatchNodes] = createSignal<SimulationNode[]>([]);
   const [stageNodes, setStageNodes] = createSignal<SimulationNode[]>([]);
   
+  // Actor System 상태 관리 (새로운 아키텍처)
+  const [actorSessionActive, setActorSessionActive] = createSignal(false);
+  const [currentSession, setCurrentSession] = createSignal<any>(null);
+  const [activeBatches, setActiveBatches] = createSignal<any[]>([]);
+  const [completedBatches, setCompletedBatches] = createSignal<any[]>([]);
+  const [actorSystemStats, setActorSystemStats] = createSignal({
+    totalPages: 0,
+    processedPages: 0,
+    successRate: 0,
+    averageBatchTime: 0,
+  });
   // 개발용 로그 및 성능 정보
   const [eventLog, setEventLog] = createSignal<string[]>([]);
   const [eventCounts, setEventCounts] = createSignal({
@@ -265,6 +276,27 @@ export const CrawlingProcessDashboard: Component = () => {
   //   setNodes([...nodes(), newNode]);
   //   setLinks([...links(), newLink]);
   // };
+
+  // 테스트용 Actor 시스템 시뮬레이션
+  const testActorSystem = async () => {
+    try {
+      console.log('🎭 Testing Actor System integration...');
+      addLogEntry('ACTOR', 'Starting Actor System test...');
+      
+      // Actor 기반 크롤링 시작 (시뮬레이션)
+      await tauriApi.startActorBasedCrawling({
+        startPage: 1,
+        endPage: 5,
+        batchSize: 2,
+        concurrencyLimit: 3
+      });
+      
+      addLogEntry('ACTOR', 'Actor System test initiated successfully');
+    } catch (error) {
+      console.error('❌ Actor System test failed:', error);
+      addLogEntry('ACTOR', `Test failed: ${error}`);
+    }
+  };
 
   // 테스트용 AtomicTaskEvent 시뮬레이션
   const simulateAtomicTaskEvent = () => {
@@ -376,8 +408,71 @@ export const CrawlingProcessDashboard: Component = () => {
         }
       });
       
+      // Actor 시스템 이벤트 구독 (새로운 아키텍처 테스트)
+      const actorCleanup = await tauriApi.subscribeToActorSystemEvents({
+        onSessionStarted: (data) => {
+          console.log('🎭 Actor Session Started:', data);
+          addLogEntry('ACTOR', `Session ${data.session_id} started - ${data.total_pages} pages`);
+          setActorSessionActive(true);
+          setCurrentSession(data);
+        },
+        
+        onBatchStarted: (data) => {
+          console.log('🎭 Actor Batch Started:', data);
+          addLogEntry('ACTOR', `Batch ${data.batch_number}/${data.total_batches} started - ${data.pages_in_batch} pages`);
+          setActiveBatches(prev => [...prev, data]);
+          
+          // 3D 그래프에 배치 노드 추가
+          if (scene) {
+            const batchNode = createBatchNode(data.batch_number, {
+              x: -30 + data.batch_number * 8,
+              y: Math.sin(data.batch_number * 0.5) * 5,
+              z: Math.cos(data.batch_number * 0.5) * 5
+            });
+            setBatchNodes(prev => [...prev, batchNode]);
+            scene.add(batchNode.mesh);
+            
+            // 센터 노드와 연결
+            const centerNode = nodes().find(n => n.id === 'center');
+            if (centerNode) {
+              const link = createLink(centerNode, batchNode);
+              scene.add(link.line);
+              setLinks(prev => [...prev, link]);
+            }
+          }
+        },
+        
+        onStageCompleted: (data) => {
+          console.log('🎭 Actor Stage Completed:', data);
+          addLogEntry('ACTOR', `Stage ${data.stage_name} in ${data.batch_id}: ${data.success ? 'SUCCESS' : 'FAILED'} (${data.processing_time_ms}ms)`);
+          
+          // 성공률 업데이트
+          setActorSystemStats(prev => ({
+            ...prev,
+            processedPages: prev.processedPages + data.items_processed,
+            successRate: data.success ? Math.min(prev.successRate + 0.1, 1.0) : Math.max(prev.successRate - 0.05, 0.0)
+          }));
+        },
+        
+        onBatchCompleted: (data) => {
+          console.log('🎭 Actor Batch Completed:', data);
+          addLogEntry('ACTOR', `Batch ${data.batch_id} completed - ${data.total_items_processed} items (${data.batch_duration_ms}ms)`);
+          setActiveBatches(prev => prev.filter(b => b.batch_id !== data.batch_id));
+          setCompletedBatches(prev => [...prev, data]);
+        },
+        
+        onSessionCompleted: (data) => {
+          console.log('🎭 Actor Session Completed:', data);
+          addLogEntry('ACTOR', `Session completed - ${data.total_pages_processed} pages, ${data.success_rate}% success`);
+          setActorSessionActive(false);
+          setCurrentSession(null);
+          setActiveBatches([]);
+        }
+      });
+      
       // 정리 함수 등록
       unlisteners.forEach(unlisten => cleanupFunctions.push(unlisten));
+      cleanupFunctions.push(actorCleanup);
     }
   });
 
@@ -427,11 +522,28 @@ export const CrawlingProcessDashboard: Component = () => {
       {/* 메인 3D 캔버스 */}
       <div ref={container} class="w-full h-full absolute top-0 left-0" />
 
-      {/* 테스트용 컨트롤 버튼 */}
-      <div class="absolute top-4 left-4">
+      {/* 테스트용 컨트롤 버튼들 */}
+      <div class="absolute top-4 left-4 flex flex-col gap-2">
         <button onClick={simulateAtomicTaskEvent} class="bg-blue-500 text-white font-bold py-2 px-4 rounded shadow-lg">
           Add Test Process
         </button>
+        <button onClick={testActorSystem} class="bg-purple-500 text-white font-bold py-2 px-4 rounded shadow-lg">
+          🎭 Test Actor System
+        </button>
+      </div>
+
+      {/* Actor 시스템 상태 표시 */}
+      <div class="absolute top-4 right-4 bg-black bg-opacity-50 text-white p-3 rounded-lg text-sm">
+        <div class="flex items-center gap-2 mb-2">
+          <div class={`w-3 h-3 rounded-full ${actorSessionActive() ? 'bg-green-400' : 'bg-gray-500'}`}></div>
+          <span class="font-semibold">Actor System</span>
+        </div>
+        <div class="space-y-1 text-xs">
+          <div>Active Batches: {activeBatches().length}</div>
+          <div>Completed: {completedBatches().length}</div>
+          <div>Success Rate: {(actorSystemStats().successRate * 100).toFixed(1)}%</div>
+          <div>Processed: {actorSystemStats().processedPages} pages</div>
+        </div>
       </div>
 
       {/* 하단 Progress Dock */}
