@@ -19,6 +19,10 @@ use tracing::{info, error, warn};
 use tauri::Manager;
 
 // Modern Rust 2024 module declarations - no mod.rs files needed
+
+// 🚀 새로운 아키텍처 모듈 (Phase 1 구현 완료)
+pub mod new_architecture;
+
 pub mod domain {
     //! Domain module - Core business logic and entities
     pub mod entities;
@@ -253,6 +257,14 @@ pub fn run() {
             commands::smart_crawling::get_crawling_progress,
             commands::smart_crawling::get_database_state_for_range_calculation,
             commands::smart_crawling::demo_prompts6_calculation
+            
+            // New Architecture Test commands (temporarily disabled - compilation issues)
+            // commands::new_arch_test::get_new_arch_config,
+            // commands::new_arch_test::test_new_arch_channels,
+            // commands::new_arch_test::test_new_arch_session_actor,
+            // commands::new_arch_test::test_new_arch_batch_actor,
+            // commands::new_arch_test::test_new_arch_integration,
+            // commands::new_arch_test::test_new_arch_performance
             
             // TODO: Add other commands as they are implemented
             // Most commands are temporarily disabled for compilation

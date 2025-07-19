@@ -10,6 +10,7 @@ import { StatusTab } from './tabs/StatusTab';
 import { LocalDBTab } from './tabs/LocalDBTab';
 import { AnalysisTab } from './tabs/AnalysisTab';
 import { LiveProductionTab } from './tabs/LiveProductionTab';
+import { NewArchTestTab } from './tabs/NewArchTestTab';
 import { tabState } from '../stores/tabStore';
 
 export const AppWithTabs: Component = () => {
@@ -27,6 +28,8 @@ export const AppWithTabs: Component = () => {
         return <LiveProductionTab />;
       case 'analysis':
         return <AnalysisTab />;
+      case 'newArchTest':
+        return <NewArchTestTab />;
       default:
         return <StatusTab />;
     }

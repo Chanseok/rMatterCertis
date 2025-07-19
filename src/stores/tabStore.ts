@@ -80,6 +80,17 @@ const [tabState, setTabState] = createStore<TabState>({
         text: 'text-amber-700',
         accent: 'from-amber-500 to-orange-500'
       }
+    },
+    {
+      id: 'newArchTest',
+      label: '새 아키텍처 테스트',
+      icon: '🏗️',
+      theme: {
+        bg: 'bg-slate-50',
+        border: 'border-slate-200',
+        text: 'text-slate-700',
+        accent: 'from-slate-500 to-gray-500'
+      }
     }
   ],
   expandedSections: {}

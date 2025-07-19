@@ -1,0 +1,78 @@
+# 테스트 환경 설정
+# 빠른 실행과 결정적 동작을 위한 설정
+
+[system]
+max_concurrent_sessions = 2
+session_timeout_secs = 300   # 5분 (테스트용 짧은 시간)
+stage_timeout_secs = 30      # 30초 (빠른 실패)
+cancellation_timeout_secs = 5
+memory_limit_mb = 512        # 테스트 환경에서는 최소한
+
+[retry_policies.list_collection]
+max_attempts = 1             # 테스트에서는 재시도 없음
+base_delay_ms = 100
+max_delay_ms = 1000
+backoff_multiplier = 1.0     # 지연 증가 없음
+jitter_range_ms = 0          # 결정적 동작을 위해 지터 없음
+
+[retry_policies.detail_collection]
+max_attempts = 1
+base_delay_ms = 100
+max_delay_ms = 1000
+backoff_multiplier = 1.0
+jitter_range_ms = 0
+
+[retry_policies.data_validation]
+max_attempts = 1
+base_delay_ms = 50
+max_delay_ms = 500
+backoff_multiplier = 1.0
+jitter_range_ms = 0
+
+[retry_policies.database_save]
+max_attempts = 2             # DB는 한 번 정도 재시도
+base_delay_ms = 100
+max_delay_ms = 1000
+backoff_multiplier = 1.0
+jitter_range_ms = 0
+
+[performance.batch_sizes]
+initial_size = 2             # 작은 테스트 배치
+min_size = 1
+max_size = 5
+auto_adjust_threshold = 0.5
+adjust_multiplier = 1.1
+
+[performance.concurrency]
+max_concurrent_tasks = 5     # 단순한 테스트
+task_queue_size = 10
+
+[performance.concurrency.stage_concurrency_limits]
+list_collection = 1
+detail_collection = 2
+data_validation = 1
+database_save = 1
+batch_processing = 1
+
+[performance.buffers]
+request_buffer_size = 100
+response_buffer_size = 100
+temp_storage_limit_mb = 50
+
+[channels]
+control_buffer_size = 10
+event_buffer_size = 20
+backpressure_threshold = 0.5
+
+[monitoring]
+metrics_interval_secs = 5
+log_level = "TRACE"
+enable_profiling = true
+event_retention_days = 1
+
+[actor]
+session_timeout_secs = 300   # 5분 (테스트 환경)
+stage_timeout_secs = 30      # 30초 (빠른 테스트)
+batch_timeout_secs = 180     # 3분
+max_concurrent_sessions = 2   # 테스트 제한
+max_concurrent_batches = 5
