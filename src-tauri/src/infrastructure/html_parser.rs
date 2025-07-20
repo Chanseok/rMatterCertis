@@ -712,19 +712,6 @@ mod tests {
                         <h3 class="entry-title">Wi-Fi plug 2</h3>
                         <p class="entry-certificate-id">Certificate ID: CSA22060MAT40060-24</p>
                     </div>
-                </div>
-            </a>
-        </article>
-        <article class="post-95714 product type-product">
-            <a href="https://csa-iot.org/csa_product/test-product/">
-                <div class="inner">
-                    <div class="contents">
-                        <p class="entry-company notranslate">Test Company</p>
-                        <h3 class="entry-title">Test Product</h3>
-                    </div>
-                </div>
-            </a>
-        </article>
     </div>
 </div>
 "#;

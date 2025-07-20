@@ -548,7 +548,7 @@ mod tests {
         let shared_state = Arc::new(SharedState::new(config));
 
         // Test with minimal HTML
-        let html = r#"
+        let html = r"
             <html>
                 <body>
                     <table>
@@ -563,7 +563,7 @@ mod tests {
                     </table>
                 </body>
             </html>
-        "#;
+        ";
 
         let task = CrawlingTask::ParseProductDetail {
             task_id: TaskId::new(),

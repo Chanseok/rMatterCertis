@@ -129,12 +129,12 @@ impl ProductSchemaAdapter {
     pub fn device_type_to_application_categories(device_type: &Option<String>) -> Option<String> {
         device_type.as_ref().map(|dt| {
             match dt.as_str() {
-                "Light Bulb" | "Dimmable Light" | "Color Light" => r#"["Light Bulb"]"#.to_string(),
-                "Smart Plug" | "On/Off Plug In Unit" => r#"["Smart Plug"]"#.to_string(),
-                "Door Lock" => r#"["Door Lock"]"#.to_string(),
-                "Thermostat" => r#"["Thermostat"]"#.to_string(),
-                "Motion Sensor" | "Contact Sensor" => r#"["Sensor"]"#.to_string(),
-                _ => format!(r#"["{dt}"]"#),
+                "Light Bulb" | "Dimmable Light" | "Color Light" => r"["Light Bulb"]".to_string(),
+                "Smart Plug" | "On/Off Plug In Unit" => r"["Smart Plug"]".to_string(),
+                "Door Lock" => r"["Door Lock"]".to_string(),
+                "Thermostat" => r"["Thermostat"]".to_string(),
+                "Motion Sensor" | "Contact Sensor" => r"["Sensor"]".to_string(),
+                _ => format!(r"["{dt}"]"),
             }
         })
     }
@@ -192,11 +192,11 @@ mod tests {
     fn test_device_type_mapping() {
         assert_eq!(
             ProductSchemaAdapter::device_type_to_application_categories(&Some("Light Bulb".to_string())),
-            Some(r#"["Light Bulb"]"#.to_string())
+            Some(r"["Light Bulb"]".to_string())
         );
         assert_eq!(
             ProductSchemaAdapter::device_type_to_application_categories(&Some("Smart Plug".to_string())),
-            Some(r#"["Smart Plug"]"#.to_string())
+            Some(r"["Smart Plug"]".to_string())
         );
     }
 }

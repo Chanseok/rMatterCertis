@@ -511,7 +511,7 @@ pub async fn export_database_data(
 
 /// Clear crawling error logs
 #[tauri::command]
-pub async fn clear_crawling_errors(_state: State<'_, AppState>) -> Result<(), String> {
+pub fn clear_crawling_errors(_state: State<'_, AppState>) -> Result<(), String> {
     info!("Clearing crawling error logs");
     
     // TODO: Implement actual error log clearing
@@ -522,7 +522,7 @@ pub async fn clear_crawling_errors(_state: State<'_, AppState>) -> Result<(), St
 
 /// Export crawling results
 #[tauri::command]
-pub async fn export_crawling_results(_state: State<'_, AppState>) -> Result<String, String> {
+pub fn export_crawling_results(_state: State<'_, AppState>) -> Result<String, String> {
     info!("Exporting crawling results");
     
     // TODO: Implement actual results export
@@ -925,7 +925,7 @@ async fn ensure_database_schema_exists(db_pool: &sqlx::SqlitePool) -> Result<(),
         
         // Create products table with complete schema
         let create_result = sqlx::query(
-            r#"
+            r"
             CREATE TABLE IF NOT EXISTS products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT,
@@ -944,7 +944,7 @@ async fn ensure_database_schema_exists(db_pool: &sqlx::SqlitePool) -> Result<(),
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-            "#
+            "
         )
         .execute(db_pool)
         .await;
@@ -1197,7 +1197,7 @@ pub async fn get_products(
     
     // Get products with pagination and proper error handling
     let products = match sqlx::query(
-        r#"
+        r"
         SELECT 
             id,
             name,
@@ -1211,7 +1211,7 @@ pub async fn get_products(
         FROM products 
         ORDER BY created_at DESC 
         LIMIT ? OFFSET ?
-        "#
+        "
     )
     .bind(limit)
     .bind(offset)
@@ -1437,7 +1437,7 @@ pub async fn get_analysis_data(_state: State<'_, AppState>) -> Result<serde_json
     
     // Get category counts (based on company for now) with error handling
     let category_counts = match sqlx::query(
-        r#"
+        r"
         SELECT 
             COALESCE(company, 'Unknown') as category,
             COUNT(*) as count
@@ -1446,7 +1446,7 @@ pub async fn get_analysis_data(_state: State<'_, AppState>) -> Result<serde_json
         GROUP BY company
         ORDER BY count DESC
         LIMIT 10
-        "#
+        "
     )
     .fetch_all(&db_pool)
     .await {
@@ -1467,7 +1467,7 @@ pub async fn get_analysis_data(_state: State<'_, AppState>) -> Result<serde_json
     
     // Get daily stats (last 7 days) with error handling
     let daily_stats = match sqlx::query(
-        r#"
+        r"
         SELECT 
             DATE(created_at) as date,
             COUNT(*) as count
@@ -1475,7 +1475,7 @@ pub async fn get_analysis_data(_state: State<'_, AppState>) -> Result<serde_json
         WHERE created_at >= date('now', '-7 days')
         GROUP BY DATE(created_at)
         ORDER BY date DESC
-        "#
+        "
     )
     .fetch_all(&db_pool)
     .await {

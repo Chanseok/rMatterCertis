@@ -49,10 +49,10 @@ impl SqliteVendorRepository {
 impl VendorRepository for SqliteVendorRepository {
     async fn create(&self, vendor: &Vendor) -> Result<()> {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO vendors (vendor_id, vendor_number, vendor_name, company_legal_name, created_at)
             VALUES ($1, $2, $3, $4, $5)
-            "#
+            "
         )
         .bind(&vendor.id)
         .bind(vendor.vendor_number)
@@ -125,11 +125,11 @@ impl VendorRepository for SqliteVendorRepository {
 
     async fn update(&self, vendor: &Vendor) -> Result<()> {
         sqlx::query(
-            r#"
+            r"
             UPDATE vendors 
             SET vendor_number = $2, vendor_name = $3, company_legal_name = $4
             WHERE vendor_id = $1
-            "#
+            "
         )
         .bind(&vendor.id)
         .bind(vendor.vendor_number)
@@ -154,10 +154,10 @@ impl VendorRepository for SqliteVendorRepository {
         // Use create for INSERT and update for UPDATE
         // For now, just do an INSERT OR REPLACE
         sqlx::query(
-            r#"
+            r"
             INSERT OR REPLACE INTO vendors (vendor_id, vendor_number, vendor_name, company_legal_name, created_at)
             VALUES ($1, $2, $3, $4, $5)
-            "#
+            "
         )
         .bind(&vendor.id)
         .bind(vendor.vendor_number)
@@ -279,10 +279,10 @@ impl ProductRepository for SqliteProductRepository {
     // Basic product operations (Stage 1 collection)
     async fn save_product(&self, product: &Product) -> Result<()> {
         sqlx::query(
-            r#"
+            r"
             INSERT OR REPLACE INTO products (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#
+            "
         )
         .bind(&product.url)
         .bind(&product.manufacturer)
@@ -302,10 +302,10 @@ impl ProductRepository for SqliteProductRepository {
         
         for product in products {
             sqlx::query(
-                r#"
+                r"
                 INSERT OR REPLACE INTO products (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
-                "#
+                "
             )
             .bind(&product.url)
             .bind(&product.manufacturer)
@@ -359,12 +359,12 @@ impl ProductRepository for SqliteProductRepository {
         
         // Get paginated results
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at
             FROM products 
             ORDER BY created_at DESC 
             LIMIT $1 OFFSET $2
-            "#
+            "
         )
         .bind(limit as i64)
         .bind(offset as i64)
@@ -383,7 +383,7 @@ impl ProductRepository for SqliteProductRepository {
         let application_categories_json = serde_json::to_string(&product.application_categories)?;
         
         sqlx::query(
-            r#"
+            r"
             INSERT OR REPLACE INTO matter_products (
                 url, page_id, index_in_page, id, manufacturer, model, device_type,
                 certificate_id, certification_date, software_version, hardware_version,
@@ -391,7 +391,7 @@ impl ProductRepository for SqliteProductRepository {
                 family_id, tis_trp_tested, specification_version, transport_interface,
                 primary_device_type_id, application_categories, created_at, updated_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
-            "#
+            "
         )
         .bind(&product.url)
         .bind(product.page_id)
@@ -430,7 +430,7 @@ impl ProductRepository for SqliteProductRepository {
             let application_categories_json = serde_json::to_string(&product.application_categories)?;
             
             sqlx::query(
-                r#"
+                r"
                 INSERT OR REPLACE INTO matter_products (
                     url, page_id, index_in_page, id, manufacturer, model, device_type,
                     certificate_id, certification_date, software_version, hardware_version,
@@ -438,7 +438,7 @@ impl ProductRepository for SqliteProductRepository {
                     family_id, tis_trp_tested, specification_version, transport_interface,
                     primary_device_type_id, application_categories, created_at, updated_at
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
-                "#
+                "
             )
             .bind(&product.url)
             .bind(product.page_id)
@@ -474,14 +474,14 @@ impl ProductRepository for SqliteProductRepository {
 
     async fn find_matter_product_by_url(&self, url: &str) -> Result<Option<MatterProduct>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
                    certificate_id, certification_date, software_version, hardware_version,
                    vid, pid, family_sku, family_variant_sku, firmware_version,
                    family_id, tis_trp_tested, specification_version, transport_interface,
                    primary_device_type_id, application_categories, created_at, updated_at
             FROM matter_products WHERE url = $1
-            "#
+            "
         )
         .bind(url)
         .fetch_optional(&self.pool)
@@ -504,7 +504,7 @@ impl ProductRepository for SqliteProductRepository {
         
         // Get paginated results
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
                    certificate_id, certification_date, software_version, hardware_version,
                    vid, pid, family_sku, family_variant_sku, firmware_version,
@@ -513,7 +513,7 @@ impl ProductRepository for SqliteProductRepository {
             FROM matter_products 
             ORDER BY created_at DESC 
             LIMIT $1 OFFSET $2
-            "#
+            "
         )
         .bind(limit as i64)
         .bind(offset as i64)
@@ -532,7 +532,7 @@ impl ProductRepository for SqliteProductRepository {
         let search_pattern = format!("%{query}%");
         
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
                    certificate_id, certification_date, software_version, hardware_version,
                    vid, pid, family_sku, family_variant_sku, firmware_version,
@@ -547,7 +547,7 @@ impl ProductRepository for SqliteProductRepository {
                OR pid LIKE $1
             ORDER BY created_at DESC
             LIMIT 100
-            "#
+            "
         )
         .bind(&search_pattern)
         .fetch_all(&self.pool)
@@ -562,7 +562,7 @@ impl ProductRepository for SqliteProductRepository {
 
     async fn find_by_manufacturer(&self, manufacturer: &str) -> Result<Vec<MatterProduct>> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
                    certificate_id, certification_date, software_version, hardware_version,
                    vid, pid, family_sku, family_variant_sku, firmware_version,
@@ -571,7 +571,7 @@ impl ProductRepository for SqliteProductRepository {
             FROM matter_products 
             WHERE manufacturer = $1
             ORDER BY created_at DESC
-            "#
+            "
         )
         .bind(manufacturer)
         .fetch_all(&self.pool)
@@ -586,7 +586,7 @@ impl ProductRepository for SqliteProductRepository {
 
     async fn find_by_device_type(&self, device_type: &str) -> Result<Vec<MatterProduct>> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
                    certificate_id, certification_date, software_version, hardware_version,
                    vid, pid, family_sku, family_variant_sku, firmware_version,
@@ -595,7 +595,7 @@ impl ProductRepository for SqliteProductRepository {
             FROM matter_products 
             WHERE device_type = $1
             ORDER BY created_at DESC
-            "#
+            "
         )
         .bind(device_type)
         .fetch_all(&self.pool)
@@ -610,7 +610,7 @@ impl ProductRepository for SqliteProductRepository {
 
     async fn find_by_vid(&self, vid: &str) -> Result<Vec<MatterProduct>> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
                    certificate_id, certification_date, software_version, hardware_version,
                    vid, pid, family_sku, family_variant_sku, firmware_version,
@@ -619,7 +619,7 @@ impl ProductRepository for SqliteProductRepository {
             FROM matter_products 
             WHERE vid = $1
             ORDER BY created_at DESC
-            "#
+            "
         )
         .bind(vid)
         .fetch_all(&self.pool)
@@ -634,7 +634,7 @@ impl ProductRepository for SqliteProductRepository {
 
     async fn find_by_certification_date_range(&self, start: &str, end: &str) -> Result<Vec<MatterProduct>> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
                    certificate_id, certification_date, software_version, hardware_version,
                    vid, pid, family_sku, family_variant_sku, firmware_version,
@@ -643,7 +643,7 @@ impl ProductRepository for SqliteProductRepository {
             FROM matter_products 
             WHERE certification_date >= $1 AND certification_date <= $2
             ORDER BY certification_date DESC
-            "#
+            "
         )
         .bind(start)
         .bind(end)

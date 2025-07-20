@@ -365,7 +365,7 @@ impl CrawlingEngine {
             .map_err(|e| CrawlingEngineError::DatabaseConnectionError(e.to_string()))?;
         
         // 테이블 생성 (기본 스키마)
-        sqlx::query(r#"
+        sqlx::query(r"
             CREATE TABLE IF NOT EXISTS products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 product_id TEXT NOT NULL UNIQUE,
@@ -379,7 +379,7 @@ impl CrawlingEngine {
                 extracted_at TEXT NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-        "#)
+        ")
         .execute(&database_pool)
         .await
         .map_err(|e| CrawlingEngineError::DatabaseConnectionError(format!("Failed to create tables: {}", e)))?;

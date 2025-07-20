@@ -23,8 +23,8 @@ use crate::domain::services::crawling_services::StatusChecker;
 /// 4. 백엔드가 total_pages, DB 커서 위치를 "기억"하게 됩니다
 #[tauri::command]
 pub async fn analyze_system_status(
-    app: AppHandle,
-    engine_state: State<'_, CrawlingEngineState>,
+    _app: AppHandle,
+    _engine_state: State<'_, CrawlingEngineState>,
     shared_state: State<'_, SharedStateCache>,
 ) -> Result<CrawlingResponse, String> {
     info!("🔍 Starting comprehensive system analysis...");

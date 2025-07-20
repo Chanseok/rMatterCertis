@@ -896,7 +896,7 @@ impl BatchActor {
     }
     
     /// StageSuccessResult에서 URL 목록 추출
-    fn extract_urls_from_stage_result(&self, result: &StageSuccessResult) -> Vec<String> {
+    fn extract_urls_from_stage_result(&self, _result: &StageSuccessResult) -> Vec<String> {
         // 실제 구현에서는 result의 내용을 파싱하여 URL을 추출
         // 현재는 기본값 반환
         vec![
@@ -1393,7 +1393,7 @@ impl StageActor {
     /// 개별 아이템 처리 (성공 시 아이템 ID, 실패 시 에러 반환)
     async fn process_single_item_with_result(
         _batch_id: String,
-        stage_type: &StageType,
+        _stage_type: &StageType,
         item: StageItem,
     ) -> Result<u32, u32> {
         // 실제 처리 로직을 시뮬레이션

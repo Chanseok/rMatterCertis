@@ -312,13 +312,13 @@ pub async fn check_has_next_page(
 
 /// Get current crawler configuration
 #[command]
-pub async fn get_crawler_config() -> Result<ApiResponse<ParsingConfig>, String> {
+pub fn get_crawler_config() -> Result<ApiResponse<ParsingConfig>, String> {
     Ok(ApiResponse::success(ParsingConfig::default()))
 }
 
 /// Health check for crawler service
 #[command]
-pub async fn crawler_health_check() -> Result<ApiResponse<HashMap<String, String>>, String> {
+pub fn crawler_health_check() -> Result<ApiResponse<HashMap<String, String>>, String> {
     let mut health_info = HashMap::new();
     health_info.insert("status".to_string(), "healthy".to_string());
     health_info.insert("service_initialized".to_string(), "true".to_string());

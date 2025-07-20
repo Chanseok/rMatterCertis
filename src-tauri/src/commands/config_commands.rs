@@ -298,7 +298,7 @@ pub async fn get_frontend_config(
 
 /// Get only the site configuration (URLs and domains)
 #[tauri::command]
-pub async fn get_site_config() -> Result<SiteConfig, String> {
+pub fn get_site_config() -> Result<SiteConfig, String> {
     info!("Frontend requesting site configuration");
     
     let site_config = SiteConfig {
@@ -432,21 +432,21 @@ pub async fn update_crawling_settings(
 
 /// Build a URL for a specific page number using the site configuration
 #[tauri::command]
-pub async fn build_page_url(page: u32) -> Result<String, String> {
+pub fn build_page_url(page: u32) -> Result<String, String> {
     let url = utils::matter_products_page_url(page);
     Ok(url)
 }
 
 /// Resolve a relative URL to an absolute URL
 #[tauri::command]
-pub async fn resolve_url(relative_url: String) -> Result<String, String> {
+pub fn resolve_url(relative_url: String) -> Result<String, String> {
     let absolute_url = utils::resolve_url(&relative_url);
     Ok(absolute_url)
 }
 
 /// Get default crawling configuration
 #[tauri::command]
-pub async fn get_default_crawling_config() -> Result<CrawlingSettings, String> {
+pub fn get_default_crawling_config() -> Result<CrawlingSettings, String> {
     info!("Frontend requesting default crawling configuration");
     
     // Use the same defaults as in AppConfig
@@ -471,7 +471,7 @@ pub async fn get_default_crawling_config() -> Result<CrawlingSettings, String> {
 
 /// Get comprehensive crawler configuration including all advanced settings
 #[tauri::command]
-pub async fn get_comprehensive_crawler_config() -> Result<ComprehensiveCrawlerConfig, String> {
+pub fn get_comprehensive_crawler_config() -> Result<ComprehensiveCrawlerConfig, String> {
     info!("Frontend requesting comprehensive crawler configuration");
     
     let config = ComprehensiveCrawlerConfig::default();
@@ -575,7 +575,7 @@ pub async fn reset_config_to_defaults() -> Result<FrontendConfig, String> {
 
 /// Get application data directories info
 #[tauri::command]
-pub async fn get_app_directories() -> Result<AppDirectoriesInfo, String> {
+pub fn get_app_directories() -> Result<AppDirectoriesInfo, String> {
     info!("Frontend requesting app directories info");
     
     let _config_manager = ConfigManager::new()
@@ -614,7 +614,7 @@ pub struct AppDirectoriesInfo {
 
 /// Check if this is the first run of the application
 #[tauri::command]
-pub async fn is_first_run() -> Result<bool, String> {
+pub fn is_first_run() -> Result<bool, String> {
     let config_manager = ConfigManager::new()
         .map_err(|e| format!("Failed to create config manager: {}", e))?;
     
@@ -707,7 +707,7 @@ pub async fn write_frontend_log(entry: LogEntry, state: State<'_, AppState>) -> 
 
 /// Clean up old log files and keep only the latest
 #[tauri::command]
-pub async fn cleanup_logs() -> Result<String, String> {
+pub fn cleanup_logs() -> Result<String, String> {
     use crate::infrastructure::logging::cleanup_logs_keep_latest;
     
     match cleanup_logs_keep_latest() {
@@ -718,7 +718,7 @@ pub async fn cleanup_logs() -> Result<String, String> {
 
 /// Get the current log directory path for frontend reference
 #[tauri::command]
-pub async fn get_log_directory_path() -> Result<String, String> {
+pub fn get_log_directory_path() -> Result<String, String> {
     use crate::infrastructure::logging::get_log_directory;
     let log_dir = get_log_directory();
     Ok(log_dir.to_string_lossy().to_string())
@@ -1098,7 +1098,7 @@ pub async fn load_window_state(app_state: State<'_, AppState>) -> Result<Option<
 
 /// Set window position (Tauri command)
 #[tauri::command]
-pub async fn set_window_position(window: tauri::Window, x: i32, y: i32) -> Result<(), String> {
+pub fn set_window_position(window: tauri::Window, x: i32, y: i32) -> Result<(), String> {
     window.set_position(tauri::LogicalPosition::new(x, y))
         .map_err(|e| format!("Failed to set window position: {}", e))?;
     Ok(())
@@ -1106,7 +1106,7 @@ pub async fn set_window_position(window: tauri::Window, x: i32, y: i32) -> Resul
 
 /// Set window size (Tauri command)
 #[tauri::command]
-pub async fn set_window_size(window: tauri::Window, width: i32, height: i32) -> Result<(), String> {
+pub fn set_window_size(window: tauri::Window, width: i32, height: i32) -> Result<(), String> {
     window.set_size(tauri::LogicalSize::new(width, height))
         .map_err(|e| format!("Failed to set window size: {}", e))?;
     Ok(())
@@ -1114,7 +1114,7 @@ pub async fn set_window_size(window: tauri::Window, width: i32, height: i32) -> 
 
 /// Maximize window (Tauri command)
 #[tauri::command]
-pub async fn maximize_window(window: tauri::Window) -> Result<(), String> {
+pub fn maximize_window(window: tauri::Window) -> Result<(), String> {
     window.maximize()
         .map_err(|e| format!("Failed to maximize window: {}", e))?;
     Ok(())

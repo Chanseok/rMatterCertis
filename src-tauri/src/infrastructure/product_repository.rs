@@ -16,11 +16,11 @@ impl ProductRepository {
     /// Insert or update basic product information from listing page
     pub async fn create_or_update_product(&self, product: &Product) -> Result<()> {
         sqlx::query!(
-            r#"
+            r"
             INSERT OR REPLACE INTO products 
             (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
+            ",
             product.url,
             product.manufacturer,
             product.model,
@@ -38,7 +38,7 @@ impl ProductRepository {
     /// Insert or update detailed product specifications
     pub async fn create_or_update_product_detail(&self, detail: &ProductDetail) -> Result<()> {
         sqlx::query!(
-            r#"
+            r"
             INSERT OR REPLACE INTO product_details 
             (url, pageId, indexInPage, id, manufacturer, model, deviceType,
              certificationId, certificationDate, softwareVersion, hardwareVersion,
@@ -46,7 +46,7 @@ impl ProductRepository {
              tisTrpTested, specificationVersion, transportInterface, 
              primaryDeviceTypeId, applicationCategories)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
+            ",
             detail.url,
             detail.page_id,
             detail.index_in_page,
@@ -79,12 +79,12 @@ impl ProductRepository {
     pub async fn get_products_paginated(&self, page: i32, limit: i32) -> Result<Vec<Product>> {
         let offset = (page - 1) * limit;
         let products = sqlx::query!(
-            r#"
+            r"
             SELECT url, manufacturer, model, certificateId, pageId, indexInPage
             FROM products 
             ORDER BY pageId DESC, indexInPage ASC 
             LIMIT ? OFFSET ?
-            "#,
+            ",
             limit,
             offset
         )
@@ -107,10 +107,10 @@ impl ProductRepository {
     /// Get product with details by URL
     pub async fn get_product_with_details(&self, url: &str) -> Result<Option<ProductWithDetails>> {
         let product_row = sqlx::query!(
-            r#"
+            r"
             SELECT url, manufacturer, model, certificateId, pageId, indexInPage
             FROM products WHERE url = ?
-            "#,
+            ",
             url
         )
         .fetch_optional(&*self.pool)
@@ -127,14 +127,14 @@ impl ProductRepository {
             };
 
             let detail_row = sqlx::query!(
-                r#"
+                r"
                 SELECT url, pageId, indexInPage, id, manufacturer, model, deviceType,
                        certificationId, certificationDate, softwareVersion, hardwareVersion,
                        vid, pid, familySku, familyVariantSku, firmwareVersion, familyId,
                        tisTrpTested, specificationVersion, transportInterface,
                        primaryDeviceTypeId, applicationCategories
                 FROM product_details WHERE url = ?
-                "#,
+                ",
                 url
             )
             .fetch_optional(&*self.pool)
@@ -203,12 +203,12 @@ impl ProductRepository {
 
         // Get total count
         let count_query = format!(
-            r#"
+            r"
             SELECT COUNT(*) as count
             FROM products p
             LEFT JOIN product_details pd ON p.url = pd.url
             {}
-            "#,
+            ",
             where_clause
         );
 
@@ -219,7 +219,7 @@ impl ProductRepository {
 
         // Get products with details
         let products_query = format!(
-            r#"
+            r"
             SELECT p.url, p.manufacturer, p.model, p.certificateId, p.pageId, p.indexInPage,
                    pd.id, pd.deviceType, pd.certificationDate, pd.specificationVersion
             FROM products p
@@ -227,7 +227,7 @@ impl ProductRepository {
             {}
             ORDER BY p.pageId DESC, p.indexInPage ASC
             LIMIT ? OFFSET ?
-            "#,
+            ",
             where_clause
         );
 
@@ -317,13 +317,13 @@ impl ProductRepository {
     /// Get URLs that need detail crawling (products without details)
     pub async fn get_urls_needing_details(&self, limit: i32) -> Result<Vec<String>> {
         let urls = sqlx::query_scalar::<_, String>(
-            r#"
+            r"
             SELECT p.url
             FROM products p
             LEFT JOIN product_details pd ON p.url = pd.url
             WHERE pd.url IS NULL
             LIMIT ?
-            "#
+            "
         )
         .bind(limit)
         .fetch_all(&*self.pool)
@@ -346,10 +346,10 @@ impl VendorRepository {
 
     pub async fn create_vendor(&self, vendor_name: &str, company_legal_name: &str) -> Result<i32> {
         let result = sqlx::query!(
-            r#"
+            r"
             INSERT INTO vendors (vendorName, companyLegalName)
             VALUES (?, ?)
-            "#,
+            ",
             vendor_name,
             company_legal_name
         )

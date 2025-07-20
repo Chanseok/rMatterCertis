@@ -177,7 +177,7 @@ pub async fn start_crawling(
     
     tracing::info!("🔍 Step 1: Getting engine guard...");
     let engine_guard = state.engine.read().await;
-    let engine = engine_guard.as_ref()
+    let _engine = engine_guard.as_ref()
         .ok_or_else(|| "Crawling engine not initialized".to_string())?;
     
     tracing::info!("🔍 Step 2: Engine ready for execution");
@@ -353,7 +353,7 @@ pub async fn get_crawling_stats(
     state: State<'_, CrawlingEngineState>,
 ) -> Result<SystemStatePayload, String> {
     let engine_guard = state.engine.read().await;
-    let engine = engine_guard.as_ref()
+    let _engine = engine_guard.as_ref()
         .ok_or_else(|| "Crawling engine not initialized".to_string())?;
     
     // ServiceBasedBatchCrawlingEngine doesn't have get_stats method
@@ -391,7 +391,7 @@ pub async fn get_system_health(
     state: State<'_, CrawlingEngineState>,
 ) -> Result<CrawlingResponse, String> {
     let engine_guard = state.engine.read().await;
-    let engine = engine_guard.as_ref()
+    let _engine = engine_guard.as_ref()
         .ok_or_else(|| "Crawling engine not initialized".to_string())?;
     
     // ServiceBasedBatchCrawlingEngine doesn't have get_stats method
@@ -416,10 +416,10 @@ pub async fn get_system_health(
 #[tauri::command]
 pub async fn update_crawling_config(
     state: State<'_, CrawlingEngineState>,
-    config: BatchCrawlingConfig,
+    _config: BatchCrawlingConfig,
 ) -> Result<CrawlingResponse, String> {
     let mut engine_guard = state.engine.write().await;
-    let engine = engine_guard.as_mut()
+    let _engine = engine_guard.as_mut()
         .ok_or_else(|| "Crawling engine not initialized".to_string())?;
     
     // ServiceBasedBatchCrawlingEngine doesn't have update_config method
@@ -439,7 +439,7 @@ pub async fn get_crawling_config(
     state: State<'_, CrawlingEngineState>,
 ) -> Result<CrawlingResponse, String> {
     let engine_guard = state.engine.read().await;
-    let engine = engine_guard.as_ref()
+    let _engine = engine_guard.as_ref()
         .ok_or_else(|| "Crawling engine not initialized".to_string())?;
     
     // ServiceBasedBatchCrawlingEngine doesn't have get_config method

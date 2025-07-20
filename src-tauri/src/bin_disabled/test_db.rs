@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     let matter_product = matter_product_use_cases.create_matter_product(CreateMatterProductDto {
         url: "https://example.com/test-product".to_string(),
         page_id: Some(1),
-        json_data: Some(r#"{"device_name": "Test Device", "manufacturer": "Samsung"}"#.to_string()),
+        json_data: Some(r"{"device_name": "Test Device", "manufacturer": "Samsung"}".to_string()),
         vid: Some("0x1234".to_string()),
         pid: Some("0x5678".to_string()),
         device_name: Some("Test Smart Sensor".to_string()),
@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
         certification_date: Some("2024-12-28".to_string()),
         commissioning_method: Some("Standard".to_string()),
         transport_protocol: Some("Thread".to_string()),
-        application_categories: Some(r#"["Security", "Home Automation"]"#.to_string()),
+        application_categories: Some(r"["Security", "Home Automation"]".to_string()),
         clusters_client: Some("[]".to_string()),
         clusters_server: Some("[]".to_string()),
     }).await?;

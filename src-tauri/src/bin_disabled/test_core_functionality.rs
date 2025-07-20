@@ -136,11 +136,11 @@ async fn test_database_operations(db_pool: &SqlitePool) -> Result<()> {
     // Test 1: Save product to database
     info!("💾 Testing product save...");
     let insert_result = sqlx::query!(
-        r#"
+        r"
         INSERT INTO products (
             url, manufacturer, model, certificate_id, page_id, index_in_page
         ) VALUES (?, ?, ?, ?, ?, ?)
-        "#,
+        ",
         test_url,
         test_manufacturer,
         test_model,

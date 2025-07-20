@@ -14,7 +14,7 @@ impl MatterProductRepository {
     /// Insert a new Matter product
     pub async fn create(&self, product: &MatterProduct) -> Result<i64> {
         let id = sqlx::query!(
-            r#"
+            r"
             INSERT INTO matter_products (
                 certificate_id, company_name, product_name, description,
                 firmware_version, hardware_version, specification_version,
@@ -25,7 +25,7 @@ impl MatterProductRepository {
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20
             )
-            "#,
+            ",
             product.certificate_id,
             product.company_name,
             product.product_name,
@@ -58,7 +58,7 @@ impl MatterProductRepository {
     /// Update an existing Matter product
     pub async fn update(&self, product: &MatterProduct) -> Result<()> {
         sqlx::query!(
-            r#"
+            r"
             UPDATE matter_products SET
                 company_name = ?2, product_name = ?3, description = ?4,
                 firmware_version = ?5, hardware_version = ?6, specification_version = ?7,
@@ -68,7 +68,7 @@ impl MatterProductRepository {
                 detail_url = ?17, listing_url = ?18, page_number = ?19, position_in_page = ?20,
                 updated_at = CURRENT_TIMESTAMP
             WHERE certificate_id = ?1
-            "#,
+            ",
             product.certificate_id,
             product.company_name,
             product.product_name,

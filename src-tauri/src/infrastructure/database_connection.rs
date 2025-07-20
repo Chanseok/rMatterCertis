@@ -38,7 +38,7 @@ impl DatabaseConnection {
         }
 
         let pool = SqlitePoolOptions::new()
-            .max_connections(crate::infrastructure::config::defaults::MAX_CONCURRENT_REQUESTS as u32)
+            .max_connections(crate::infrastructure::config::defaults::MAX_CONCURRENT_REQUESTS)
             .connect(database_url)
             .await?;
 

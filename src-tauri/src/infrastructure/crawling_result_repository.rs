@@ -110,13 +110,13 @@ impl CrawlingResultRepository for SqliteCrawlingResultRepository {
         let config_json = serde_json::to_string(&result.config_snapshot)?;
 
         sqlx::query(
-            r#"
+            r"
             INSERT INTO crawling_results (
                 session_id, status, stage, total_pages, products_found, errors_count,
                 started_at, completed_at, execution_time_seconds, config_snapshot, error_details
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#
+            "
         )
         .bind(&result.session_id)
         .bind(status_str)
@@ -137,12 +137,12 @@ impl CrawlingResultRepository for SqliteCrawlingResultRepository {
 
     async fn get_result(&self, session_id: &str) -> Result<Option<CrawlingResult>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT session_id, status, stage, total_pages, products_found, errors_count,
                    started_at, completed_at, execution_time_seconds, config_snapshot, error_details
             FROM crawling_results
             WHERE session_id = ?
-            "#
+            "
         )
         .bind(session_id)
         .fetch_optional(&self.pool)
@@ -157,13 +157,13 @@ impl CrawlingResultRepository for SqliteCrawlingResultRepository {
 
     async fn get_recent_results(&self, limit: u32) -> Result<Vec<CrawlingResult>> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT session_id, status, stage, total_pages, products_found, errors_count,
                    started_at, completed_at, execution_time_seconds, config_snapshot, error_details
             FROM crawling_results
             ORDER BY completed_at DESC
             LIMIT ?
-            "#
+            "
         )
         .bind(limit as i32)
         .fetch_all(&self.pool)
@@ -185,13 +185,13 @@ impl CrawlingResultRepository for SqliteCrawlingResultRepository {
         };
 
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT session_id, status, stage, total_pages, products_found, errors_count,
                    started_at, completed_at, execution_time_seconds, config_snapshot, error_details
             FROM crawling_results
             WHERE status = ?
             ORDER BY completed_at DESC
-            "#
+            "
         )
         .bind(status_str)
         .fetch_all(&self.pool)

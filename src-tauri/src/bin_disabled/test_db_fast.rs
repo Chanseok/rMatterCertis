@@ -110,7 +110,7 @@ async fn fast_product_test(matter_use_cases: &MatterProductUseCases, product_use
     let create_dto = CreateMatterProductDto {
         url: "https://example.com/test-product".to_string(),
         page_id: Some(1),
-        json_data: Some(r#"{"device_name": "Fast Test Product", "manufacturer": "FastTest Corp"}"#.to_string()),
+        json_data: Some(r"{"device_name": "Fast Test Product", "manufacturer": "FastTest Corp"}".to_string()),
         vid: Some("0x1002".to_string()),
         pid: Some("0x0001".to_string()),
         device_name: Some("Fast Test Product".to_string()),
@@ -119,7 +119,7 @@ async fn fast_product_test(matter_use_cases: &MatterProductUseCases, product_use
         certification_date: None,
         commissioning_method: Some("Standard".to_string()),
         transport_protocol: Some("WiFi".to_string()),
-        application_categories: Some(r#"["test"]"#.to_string()),
+        application_categories: Some(r"["test"]".to_string()),
         clusters_client: Some("[]".to_string()),
         clusters_server: Some("[]".to_string()),
     };

@@ -22,7 +22,7 @@ mod tests {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         
         // Create tables
-        sqlx::query(r#"
+        sqlx::query(r"
             CREATE TABLE IF NOT EXISTS products (
                 url TEXT PRIMARY KEY,
                 manufacturer TEXT,
@@ -33,7 +33,7 @@ mod tests {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
-        "#)
+        ")
         .execute(&pool)
         .await
         .unwrap();
@@ -49,10 +49,10 @@ mod tests {
             for index_in_page in 0..=max_index {
                 let url = format!("https://example.com/product/{}/{}", page_id, index_in_page);
                 
-                sqlx::query(r#"
+                sqlx::query(r"
                     INSERT INTO products (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                "#)
+                ")
                 .bind(&url)
                 .bind("Test Manufacturer")
                 .bind("Test Model")

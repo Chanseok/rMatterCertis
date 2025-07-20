@@ -73,7 +73,7 @@ impl DbSaver {
     /// Inserts a single product into the database within a transaction
     async fn insert_product(&self, tx: &mut Transaction<'_, Sqlite>, product: &ProductData) -> Result<(), WorkerError> {
         // Use parameterized query instead of sqlx! macro to avoid compilation-time database dependency
-        let query = r#"
+        let query = r"
             INSERT INTO products (
                 url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -82,7 +82,7 @@ impl DbSaver {
                 model = excluded.model,
                 certificate_id = excluded.certificate_id,
                 updated_at = excluded.updated_at
-        "#;
+        ";
         
         sqlx::query(query)
             .bind(product.source_url.as_str())
@@ -269,7 +269,7 @@ impl Drop for DbSaver {
                         if let Some(mut tx) = tx {
                             for product in &products {
                                 // Use parameterized query instead of sqlx! macro
-                                let query = r#"
+                                let query = r"
                                     INSERT INTO products (
                                         url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
                                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -278,7 +278,7 @@ impl Drop for DbSaver {
                                         model = excluded.model,
                                         certificate_id = excluded.certificate_id,
                                         updated_at = excluded.updated_at
-                                "#;
+                                ";
                                 
                                 let _ = sqlx::query(query)
                                     .bind(product.source_url.as_str())

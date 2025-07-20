@@ -132,7 +132,7 @@ mod tests {
 
     async fn create_test_config() -> Arc<AppConfig> {
         // 테스트용 최소 설정
-        let config_content = r#"
+        let config_content = r"
         [database]
         path = ":memory:"
 
@@ -148,7 +148,7 @@ mod tests {
         [user.retry]
         max_attempts = 3
         base_delay_ms = 100
-        "#;
+        ";
 
         // 임시 설정 파일 생성
         use std::io::Write;

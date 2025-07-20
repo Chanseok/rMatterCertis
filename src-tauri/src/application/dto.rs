@@ -152,8 +152,8 @@ impl From<MatterProduct> for MatterProductResponseDto {
     fn from(product: MatterProduct) -> Self {
         Self {
             url: product.url,
-            page_id: product.page_id.map(|id| id as u32),
-            index_in_page: product.index_in_page.map(|idx| idx as u32),
+            page_id: product.page_id.map(|id| id),
+            index_in_page: product.index_in_page.map(|idx| idx),
             id: product.id,
             manufacturer: product.manufacturer,
             model: product.model,
