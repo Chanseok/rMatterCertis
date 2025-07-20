@@ -2,6 +2,7 @@
 //! 프론트엔드와 백엔드 간의 API 인터페이스
 
 pub mod advanced_engine_api;
+pub mod config_commands;
 
 // 모든 명령어를 한곳에서 export
 pub use advanced_engine_api::{
@@ -9,4 +10,12 @@ pub use advanced_engine_api::{
     start_advanced_crawling,
     get_recent_products,
     get_database_stats,
+};
+
+pub use config_commands::{
+    get_frontend_config,
+    get_site_config,
+    update_logging_settings,
+    update_batch_settings,
+    update_crawling_settings,
 };

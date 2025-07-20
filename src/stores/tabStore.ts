@@ -113,6 +113,17 @@ const [tabState, setTabState] = createStore<TabState>({
         text: 'text-purple-700',
         accent: 'from-purple-500 to-indigo-500'
       }
+    },
+    {
+      id: 'domainDashboard',
+      label: '도메인 대시보드',
+      icon: '🚀',
+      theme: {
+        bg: 'bg-gradient-to-br from-cyan-50 to-blue-50',
+        border: 'border-cyan-200',
+        text: 'text-cyan-700',
+        accent: 'from-cyan-500 to-blue-500'
+      }
     }
   ],
   expandedSections: {}

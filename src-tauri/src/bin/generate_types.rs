@@ -26,6 +26,12 @@ fn main() {
     println!("DuplicateAnalysis: {:?}", std::any::type_name::<DuplicateAnalysis>());
     println!("ProcessingStrategy: {:?}", std::any::type_name::<ProcessingStrategy>());
     println!("CrawlingRangeRecommendation: {:?}", std::any::type_name::<CrawlingRangeRecommendation>());
+    println!("SiteDataChangeStatus: {:?}", std::any::type_name::<SiteDataChangeStatus>());
+    println!("DataDecreaseRecommendation: {:?}", std::any::type_name::<DataDecreaseRecommendation>());
+    println!("RecommendedAction: {:?}", std::any::type_name::<RecommendedAction>());
+    println!("SeverityLevel: {:?}", std::any::type_name::<SeverityLevel>());
+    println!("DuplicateGroup: {:?}", std::any::type_name::<DuplicateGroup>());
+    println!("DuplicateType: {:?}", std::any::type_name::<DuplicateType>());
 
     // Default 생성자로 타입 인스턴스 생성 시도
     let _result = std::panic::catch_unwind(|| {

@@ -39,9 +39,25 @@ export interface TimingConfig {
 }
 
 export interface CrawlingConfigSection {
+  // 크롤링 범위 및 전략 설정
   page_range_limit: number;
+  crawling_mode: 'incremental' | 'gap_filling' | 'integrity_check' | 'full_rebuild' | 'custom_range';
+  auto_adjust_range: boolean;
+  enable_data_validation: boolean;
+  
+  // 사용자 지정 범위 설정
+  custom_page_ranges?: string;
+  
+  // 누락 제품 탐지 및 무결성 검증 설정
+  gap_detection_threshold: number;
+  binary_search_max_depth: number;
+  
+  // 재시도 및 오류 처리
   product_list_retry_count: number;
   product_detail_retry_count: number;
+  error_threshold_percent: number;
+  
+  // 기타 설정
   auto_add_to_local_db: boolean;
   workers: WorkerConfig;
   timing: TimingConfig;
@@ -126,9 +142,25 @@ export const CONFIG_PRESETS: ConfigPreset[] = [
           batch_retry_limit: 2
         },
         crawling: {
-          page_range_limit: 3,
+          // 크롤링 범위 및 전략 설정
+          page_range_limit: 20,
+          crawling_mode: 'incremental' as const,
+          auto_adjust_range: true,
+          enable_data_validation: true,
+          
+          // 사용자 지정 범위 설정
+          custom_page_ranges: '',
+          
+          // 누락 제품 탐지 및 무결성 검증 설정
+          gap_detection_threshold: 5,
+          binary_search_max_depth: 10,
+          
+          // 재시도 및 오류 처리
           product_list_retry_count: 2,
           product_detail_retry_count: 2,
+          error_threshold_percent: 10,
+          
+          // 기타 설정
           auto_add_to_local_db: true,
           workers: {
             list_page_max_concurrent: 5,
@@ -202,9 +234,25 @@ export const CONFIG_PRESETS: ConfigPreset[] = [
           batch_retry_limit: 3
         },
         crawling: {
-          page_range_limit: 20,
+          // 크롤링 범위 및 전략 설정
+          page_range_limit: 50,
+          crawling_mode: 'full_rebuild' as const,
+          auto_adjust_range: false,
+          enable_data_validation: true,
+          
+          // 사용자 지정 범위 설정
+          custom_page_ranges: '',
+          
+          // 누락 제품 탐지 및 무결성 검증 설정
+          gap_detection_threshold: 3,
+          binary_search_max_depth: 15,
+          
+          // 재시도 및 오류 처리
           product_list_retry_count: 3,
           product_detail_retry_count: 3,
+          error_threshold_percent: 5,
+          
+          // 기타 설정
           auto_add_to_local_db: true,
           workers: {
             list_page_max_concurrent: 20,

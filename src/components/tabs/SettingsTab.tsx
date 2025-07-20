@@ -163,6 +163,21 @@ export const SettingsTab: Component = () => {
           transition: border-color 0.2s;
         }
         
+        select {
+          padding: 8px 12px;
+          border: 1px solid #d1d5db;
+          border-radius: 6px;
+          font-size: 14px;
+          transition: border-color 0.2s;
+          background: white;
+        }
+        
+        select:focus {
+          outline: none;
+          border-color: #3b82f6;
+          box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
         input[type="number"]:focus, input[type="text"]:focus {
           outline: none;
           border-color: #3b82f6;
@@ -262,6 +277,92 @@ export const SettingsTab: Component = () => {
 
       <form class={`settings-form ${settingsState.isLoading ? 'loading' : ''}`} onSubmit={e => { e.preventDefault(); handleSave(); }}>
         
+        {/* 크롤링 범위 설정 */}
+        <fieldset>
+          <legend>크롤링 범위 설정</legend>
+          <div class="form-row">
+            <label>페이지 범위 제한
+              <input 
+                type="number" 
+                value={settingsState.getNestedValue('user.crawling.page_range_limit') || 20} 
+                min={1} 
+                max={100} 
+                onInput={e => settingsState.updateNestedField('user.crawling.page_range_limit', +e.currentTarget.value)} 
+              />
+              <small>한 번의 크롤링에서 처리할 최대 페이지 수</small>
+            </label>
+            <label>크롤링 모드
+              <select 
+                value={settingsState.getNestedValue('user.crawling.crawling_mode') || 'incremental'} 
+                onChange={e => settingsState.updateNestedField('user.crawling.crawling_mode', e.currentTarget.value)}
+              >
+                <option value="incremental">증분 업데이트 (기본)</option>
+                <option value="gap_filling">누락 제품 보완</option>
+                <option value="integrity_check">무결성 검증 (Binary Search)</option>
+                <option value="full_rebuild">전체 재구축</option>
+                <option value="custom_range">사용자 지정 범위</option>
+              </select>
+              <small>크롤링 전략: 증분(최신만), 누락보완(빈구멍채우기), 무결성검증(데이터손실탐지), 전체재구축</small>
+            </label>
+          </div>
+          
+          {/* 사용자 지정 범위 모드일 때만 표시 */}
+          {settingsState.getNestedValue('user.crawling.crawling_mode') === 'custom_range' && (
+            <div class="form-row">
+              <label>사용자 지정 페이지 범위
+                <input 
+                  type="text" 
+                  value={settingsState.getNestedValue('user.crawling.custom_page_ranges') || ''} 
+                  placeholder="예: 1-10, 15, 20-25, 30"
+                  onInput={e => settingsState.updateNestedField('user.crawling.custom_page_ranges', e.currentTarget.value)} 
+                />
+                <small>크롤링할 페이지를 지정하세요. 범위(1-10), 단일 페이지(15), 쉼표로 구분</small>
+              </label>
+            </div>
+          )}
+          
+          <div class="form-row">
+            <label>자동 범위 조정
+              <input 
+                type="checkbox" 
+                checked={settingsState.getNestedValue('user.crawling.auto_adjust_range') || true} 
+                onChange={e => settingsState.updateNestedField('user.crawling.auto_adjust_range', e.currentTarget.checked)} 
+              />
+              <small>시스템이 사이트 상태와 데이터 변화에 따라 범위를 자동 조정</small>
+            </label>
+            <label>데이터 검증 활성화
+              <input 
+                type="checkbox" 
+                checked={settingsState.getNestedValue('user.crawling.enable_data_validation') || true} 
+                onChange={e => settingsState.updateNestedField('user.crawling.enable_data_validation', e.currentTarget.checked)} 
+              />
+              <small>수집된 데이터의 유효성을 검증하여 품질 보장</small>
+            </label>
+          </div>
+          <div class="form-row">
+            <label>누락 제품 탐지 임계값
+              <input 
+                type="number" 
+                value={settingsState.getNestedValue('user.crawling.gap_detection_threshold') || 5} 
+                min={1} 
+                max={50} 
+                onInput={e => settingsState.updateNestedField('user.crawling.gap_detection_threshold', +e.currentTarget.value)} 
+              />
+              <small>연속으로 이 개수만큼 누락 시 gap으로 인식</small>
+            </label>
+            <label>Binary Search 최대 깊이
+              <input 
+                type="number" 
+                value={settingsState.getNestedValue('user.crawling.binary_search_max_depth') || 10} 
+                min={3} 
+                max={20} 
+                onInput={e => settingsState.updateNestedField('user.crawling.binary_search_max_depth', +e.currentTarget.value)} 
+              />
+              <small>무결성 검증 시 이진 탐색 최대 반복 횟수</small>
+            </label>
+          </div>
+        </fieldset>
+
         {/* 기본 크롤링 설정 */}
         <fieldset>
           <legend>크롤링 설정</legend>
@@ -332,15 +433,6 @@ export const SettingsTab: Component = () => {
         <fieldset>
           <legend>상세 설정</legend>
           <div class="form-row">
-            <label>페이지 범위 제한
-              <input 
-                type="number" 
-                value={settingsState.getNestedValue('user.crawling.page_range_limit')} 
-                min={1} 
-                max={100} 
-                onInput={e => settingsState.updateNestedField('user.crawling.page_range_limit', +e.currentTarget.value)} 
-              />
-            </label>
             <label>목록 페이지 재시도 횟수
               <input 
                 type="number" 
@@ -358,6 +450,16 @@ export const SettingsTab: Component = () => {
                 max={10} 
                 onInput={e => settingsState.updateNestedField('user.crawling.product_detail_retry_count', +e.currentTarget.value)} 
               />
+            </label>
+            <label>오류 허용 임계값 (%)
+              <input 
+                type="number" 
+                value={settingsState.getNestedValue('user.crawling.error_threshold_percent') || 10} 
+                min={1} 
+                max={50} 
+                onInput={e => settingsState.updateNestedField('user.crawling.error_threshold_percent', +e.currentTarget.value)} 
+              />
+              <small>이 비율 이상 오류 발생 시 크롤링 중단</small>
             </label>
           </div>
           <div class="form-row">

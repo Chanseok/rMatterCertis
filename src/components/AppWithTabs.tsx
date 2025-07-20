@@ -13,6 +13,7 @@ import { AnalysisTab } from './tabs/AnalysisTab';
 import { LiveProductionTab } from './tabs/LiveProductionTab';
 import { NewArchTestTab } from './tabs/NewArchTestTab';
 import { ActorSystemTab } from './tabs/ActorSystemTab';
+import { DomainDashboardTab } from './tabs/DomainDashboardTab';
 import { tabState } from '../stores/tabStore';
 
 export const AppWithTabs: Component = () => {
@@ -36,6 +37,8 @@ export const AppWithTabs: Component = () => {
         return <NewArchTestTab />;
       case 'actorSystem':
         return <ActorSystemTab />;
+      case 'domainDashboard':
+        return <DomainDashboardTab />;
       default:
         return <CrawlingEngineTab />;
     }

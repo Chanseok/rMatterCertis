@@ -232,9 +232,14 @@ pub async fn get_recent_products(
     
     info!("📋 Fetching recent products from real database - page: {}, limit: {}", page, limit);
     
-    // 데이터베이스 연결 생성
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:data/matter_certis.db".to_string());
+    // 데이터베이스 연결 생성 (v4와 동일한 경로 사용)
+    let database_url = match crate::commands::crawling_v4::get_database_url_v4() {
+        Ok(url) => url,
+        Err(e) => {
+            error!("Failed to get database URL: {}", e);
+            return Err(format!("Database URL error: {}", e));
+        }
+    };
     
     let db_connection = match DatabaseConnection::new(&database_url).await {
         Ok(conn) => conn,
@@ -300,9 +305,14 @@ pub async fn get_database_stats(
 ) -> Result<ApiResponse<DatabaseStats>, String> {
     info!("📊 Fetching real database statistics");
     
-    // 데이터베이스 연결 생성
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:data/matter_certis.db".to_string());
+    // 데이터베이스 연결 생성 (v4와 동일한 경로 사용)
+    let database_url = match crate::commands::crawling_v4::get_database_url_v4() {
+        Ok(url) => url,
+        Err(e) => {
+            error!("Failed to get database URL: {}", e);
+            return Err(format!("Database URL error: {}", e));
+        }
+    };
     
     let db_connection = match DatabaseConnection::new(&database_url).await {
         Ok(conn) => conn,
