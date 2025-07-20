@@ -232,11 +232,12 @@ impl ServiceBasedBatchCrawlingEngine {
             status_checker_impl.clone(),
         ));
 
-        // ProductDetailCollector는 별도의 ProductDetailCollectorImpl 사용
-        let product_detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(crate::infrastructure::crawling_service_impls::ProductDetailCollectorImpl::new(
+        // ProductDetailCollector는 ProductListCollectorImpl을 재사용 (trait 구현 추가됨)
+        let product_detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(ProductListCollectorImpl::new(
             Arc::new(tokio::sync::Mutex::new(http_client.clone())),
             Arc::new(data_extractor.clone()),
             detail_collector_config,
+            status_checker_impl,
         ));
 
         // 지능형 범위 계산기 초기화 - Phase 3 Integration
@@ -641,18 +642,9 @@ impl ServiceBasedBatchCrawlingEngine {
         // 이벤트 채널 종료
         drop(event_tx);
         
-        // 이벤트 처리 완료 대기 및 브로드캐스터 복구 (타임아웃 적용)
-        match tokio::time::timeout(std::time::Duration::from_secs(5), event_handler).await {
-            Ok(Ok(broadcaster_opt)) => {
-                self.broadcaster = broadcaster_opt;
-                info!("✅ Event handler completed successfully");
-            },
-            Ok(Err(e)) => {
-                warn!("❌ Event handler failed: {}", e);
-            },
-            Err(_) => {
-                warn!("⏱️ Event handler timed out after 5 seconds, continuing...");
-            }
+        // 이벤트 처리 완료 대기 및 브로드캐스터 복구
+        if let Ok(broadcaster_opt) = event_handler.await {
+            self.broadcaster = broadcaster_opt;
         }
 
         info!("✅ Stage 2 completed: {} product URLs collected from optimized range with TRUE concurrent execution", product_urls.len());
@@ -668,15 +660,6 @@ impl ServiceBasedBatchCrawlingEngine {
     /// Stage 3: 제품 상세정보 수집 (서비스 기반 + 재시도 메커니즘)
     async fn stage3_collect_product_details(&mut self, product_urls: &[ProductUrl]) -> Result<Vec<(Product, ProductDetail)>> {
         info!("Stage 3: Collecting product details using ProductDetailCollector service with retry mechanism");
-        info!("🔍 Processing {} product URLs:", product_urls.len());
-        
-        // 처음 몇 개 URL 로깅으로 확인
-        for (i, url) in product_urls.iter().take(5).enumerate() {
-            info!("  URL {}: {} (page_id: {}, index: {})", i + 1, url.url, url.page_id, url.index_in_page);
-        }
-        if product_urls.len() > 5 {
-            info!("  ... and {} more URLs", product_urls.len() - 5);
-        }
         
         // 취소 확인 - 단계 시작 전
         if let Some(cancellation_token) = &self.config.cancellation_token {
@@ -1143,15 +1126,9 @@ impl ServiceBasedBatchCrawlingEngine {
             // DetailedCrawlingEvent를 기존 이벤트 시스템과 연동
             let progress = match &event {
                 DetailedCrawlingEvent::StageStarted { stage, message } => {
-                    let total_pages = if self.config.end_page >= self.config.start_page {
-                        self.config.end_page - self.config.start_page + 1
-                    } else {
-                        1 // 최소값 보장
-                    };
-                    
                     CrawlingProgress {
                         current: 0,
-                        total: total_pages,
+                        total: self.config.end_page - self.config.start_page + 1,
                         percentage: 0.0,
                         current_stage: match stage.as_str() {
                             "SiteStatus" => CrawlingStage::StatusCheck,
@@ -1169,11 +1146,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         new_items: 0,
                         updated_items: 0,
                         current_batch: Some(1),
-                        total_batches: Some(if self.config.end_page >= self.config.start_page {
-                            self.config.end_page - self.config.start_page + 1
-                        } else {
-                            1
-                        }),
+                        total_batches: Some(self.config.end_page - self.config.start_page + 1),
                         errors: 0,
                         timestamp: chrono::Utc::now(),
                     }

@@ -13,7 +13,9 @@ import type {
   CrawlingSession, 
   DatabaseStats,
   ApiResponse,
-  StartCrawlingRequest
+  StartCrawlingRequest,
+  CrawlingRangeRequest,
+  CrawlingRangeResponse
 } from '../../types/advanced-engine';
 
 export const CrawlingEngineTab: Component = () => {
@@ -29,6 +31,7 @@ export const CrawlingEngineTab: Component = () => {
   const [isPaused, setIsPaused] = createSignal(false);
   const [currentSessionId, setCurrentSessionId] = createSignal<string | null>(null);
   const [dbStats, setDbStats] = createSignal<DatabaseStats | null>(null);
+  const [crawlingRange, setCrawlingRange] = createSignal<CrawlingRangeResponse | null>(null);
 
   // Log helper
   const addLog = (message: string) => {
@@ -49,14 +52,60 @@ export const CrawlingEngineTab: Component = () => {
       // 설정을 로드할 수 없으면 경고 표시
       console.error('설정 로드 실패:', error);
     }
+  };
+
+  // 크롤링 범위 계산
+  const calculateCrawlingRange = async () => {
+    try {
+      addLog('🔍 크롤링 범위 계산 함수 시작...');
+      
+      const siteInfo = siteStatus();
+      if (!siteInfo) {
+        addLog('❌ 크롤링 범위 계산 실패: 사이트 상태 정보 없음');
+        console.warn('siteStatus is null:', siteInfo);
+        return;
+      }
+
+      addLog(`🔍 사이트 정보 확인됨: ${siteInfo.total_pages}페이지, 마지막 페이지 ${siteInfo.products_on_last_page}개 제품`);
+
+      const request: CrawlingRangeRequest = {
+        total_pages_on_site: siteInfo.total_pages,
+        products_on_last_page: siteInfo.products_on_last_page
+      };
+
+      addLog(`🔍 크롤링 범위 계산 중... (총 ${request.total_pages_on_site}페이지, 마지막 페이지 ${request.products_on_last_page}개 제품)`);
+      
+      console.log('Calling calculate_crawling_range with request:', request);
+      
+      const response = await invoke<CrawlingRangeResponse>('calculate_crawling_range', { request });
+      
+      console.log('Response from calculate_crawling_range:', response);
+      
+      if (response?.success && response?.range) {
+        setCrawlingRange(response);
+        const [start_page, end_page] = response.range;
+        const total_pages_to_crawl = start_page - end_page + 1;
+        addLog(`✅ 계산된 크롤링 범위: ${start_page} → ${end_page} (${total_pages_to_crawl} 페이지)`);
+        console.log('Successfully set crawling range:', response);
+      } else {
+        addLog(`❌ 크롤링 범위 계산 실패: ${response?.message || '알 수 없는 오류'}`);
+        console.error('Failed to calculate crawling range:', response);
+      }
+    } catch (error) {
+      addLog(`❌ 크롤링 범위 계산 오류: ${error}`);
+      console.error('크롤링 범위 계산 오류:', error);
+    }
   };  // Initialize and load data
   onMount(async () => {
     addLog('🎯 Advanced Crawling Engine 탭 로드됨');
     
     await loadUserConfig();
-    await checkSiteStatus();
+    await checkSiteStatus(); // 이 함수 내에서 이미 calculateCrawlingRange() 호출됨
     await loadRecentProducts();
     await loadDatabaseStats();
+    
+    // checkSiteStatus() 내에서 이미 호출되므로 중복 호출 방지
+    // await calculateCrawlingRange();
     
     // Tauri 이벤트 리스너 등록
     const unlistenProgress = await listen('crawling-progress', (event) => {
@@ -114,6 +163,11 @@ export const CrawlingEngineTab: Component = () => {
       if (response.success && response.data) {
         setSiteStatus(response.data);
         addLog(`✅ 사이트 상태: ${response.data.total_pages}페이지, ${response.data.estimated_total_products}개 제품 예상`);
+        
+        // 사이트 상태 업데이트 후 크롤링 범위 재계산
+        addLog('🔍 사이트 상태 확인 완료, 크롤링 범위 계산 시작...');
+        console.log('About to call calculateCrawlingRange from checkSiteStatus');
+        await calculateCrawlingRange();
       } else {
         addLog(`❌ 사이트 상태 확인 실패: ${response.error?.message || 'Unknown error'}`);
       }
@@ -616,6 +670,148 @@ export const CrawlingEngineTab: Component = () => {
                       </div>
                     </div>
                   </div>
+                </div>
+              </Show>
+            </div>
+
+            {/* Dynamic Crawling Range Display */}
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-gray-900">🤖 계산된 크롤링 범위</h2>
+                <button
+                  onClick={calculateCrawlingRange}
+                  class="px-3 py-1.5 text-sm bg-green-100 text-green-700 rounded-md hover:bg-green-200"
+                >
+                  다시 계산
+                </button>
+              </div>
+              <Show 
+                when={crawlingRange()} 
+                fallback={
+                  <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <div class="flex items-start space-x-3">
+                      <span class="text-gray-500 text-lg">⏳</span>
+                      <div>
+                        <h3 class="text-sm font-semibold text-gray-800 mb-2">크롤링 범위 계산 중...</h3>
+                        <p class="text-sm text-gray-600">
+                          데이터베이스 분석을 통해 최적의 크롤링 범위를 계산하고 있습니다.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                }
+              >
+                <div class="space-y-4">
+                  {/* 계산 결과 요약 */}
+                  <div class="bg-green-50 border border-green-200 rounded-md p-4">
+                    <h3 class="text-sm font-semibold text-green-800 mb-3">📊 계산 결과</h3>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                      <div class="space-y-2">
+                        <div class="flex justify-between">
+                          <span class="text-green-700">시작 페이지:</span>
+                          <span class="font-medium text-green-800">
+                            {crawlingRange()?.range?.[0] || '-'}
+                          </span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span class="text-green-700">종료 페이지:</span>
+                          <span class="font-medium text-green-800">
+                            {crawlingRange()?.range?.[1] || '-'}
+                          </span>
+                        </div>
+                      </div>
+                      <div class="space-y-2">
+                        <div class="flex justify-between">
+                          <span class="text-green-700">총 크롤링 페이지:</span>
+                          <span class="font-medium text-green-800">
+                            {(() => {
+                              const range = crawlingRange()?.range;
+                              if (range && range.length === 2) {
+                                return range[0] - range[1] + 1;
+                              }
+                              return '-';
+                            })()}페이지
+                          </span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span class="text-green-700">예상 제품 수:</span>
+                          <span class="font-medium text-green-800">
+                            {crawlingRange()?.progress?.total_products || '-'}개
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 상세 메시지 */}
+                  <div class="bg-blue-50 border border-blue-200 rounded-md p-4">
+                    <h3 class="text-sm font-semibold text-blue-800 mb-2">🔍 계산 상세</h3>
+                    <p class="text-sm text-blue-700">
+                      {crawlingRange()?.message || '계산 중...'}
+                    </p>
+                    <Show when={crawlingRange()?.progress?.progress_percentage}>
+                      <div class="mt-2">
+                        <div class="flex justify-between text-xs text-blue-600 mb-1">
+                          <span>분석 진행률</span>
+                          <span>{crawlingRange()?.progress?.progress_percentage?.toFixed(1)}%</span>
+                        </div>
+                        <div class="w-full bg-blue-200 rounded-full h-2">
+                          <div 
+                            class="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                            style={`width: ${crawlingRange()?.progress?.progress_percentage || 0}%`}
+                          ></div>
+                        </div>
+                      </div>
+                    </Show>
+                  </div>
+
+                  {/* 비교 표시 */}
+                  <Show when={userConfig()?.user?.crawling && siteStatus()}>
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-md p-4">
+                      <h3 class="text-sm font-semibold text-yellow-800 mb-3">⚖️ 설정값과 비교</h3>
+                      <div class="text-xs text-yellow-700 space-y-1">
+                        <div class="flex justify-between">
+                          <span>설정된 범위:</span>
+                          <span class="font-medium">
+                            {(() => {
+                              const config = userConfig()?.user?.crawling;
+                              const totalPages = siteStatus()?.total_pages || 485;
+                              const pageLimit = config?.page_range_limit || 6;
+                              const oldestPage = totalPages; // 가장 오래된 (485)
+                              const newestPage = Math.max(1, totalPages - pageLimit + 1); // 상대적으로 최신 (480)
+                              return `${oldestPage} → ${newestPage}`;
+                            })()}
+                          </span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span>계산된 범위:</span>
+                          <span class="font-medium">
+                            {(() => {
+                              const range = crawlingRange()?.range;
+                              if (range && range.length === 2) {
+                                return `${range[0]} → ${range[1]}`;
+                              }
+                              return '-';
+                            })()}
+                          </span>
+                        </div>
+                        <div class="pt-2 text-xs text-yellow-600">
+                          <Show 
+                            when={(() => {
+                              const config = userConfig()?.user?.crawling;
+                              const pageLimit = config?.page_range_limit || 6;
+                              const range = crawlingRange()?.range;
+                              const calculatedPages = range && range.length === 2 ? range[0] - range[1] + 1 : 0;
+                              return calculatedPages !== pageLimit;
+                            })()}
+                            fallback={<span>✅ 설정값과 계산값이 일치합니다.</span>}
+                          >
+                            <span>⚠️ 설정값과 계산값이 다릅니다. DB 분석 결과를 우선 적용합니다.</span>
+                          </Show>
+                        </div>
+                      </div>
+                    </div>
+                  </Show>
                 </div>
               </Show>
             </div>

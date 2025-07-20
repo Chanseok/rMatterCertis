@@ -27,6 +27,9 @@ use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRe
 use crate::infrastructure::config::{AppConfig, CrawlingConfig};
 use crate::infrastructure::config::utils as config_utils;
 
+// 상수 정의
+const DEFAULT_PRODUCTS_PER_PAGE: u32 = 12;
+
 /// 페이지 분석 결과를 캐싱하기 위한 구조체
 #[derive(Debug, Clone)]
 struct PageAnalysisCache {
@@ -166,7 +169,6 @@ impl StatusChecker for StatusCheckerImpl {
               total_pages, response_time_ms, health_score);
 
         // 정확한 제품 수 계산: (마지막 페이지 - 1) * 페이지당 제품 수 + 마지막 페이지 제품 수
-        use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
         let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
         
         let estimated_products = if total_pages > 1 {
@@ -252,7 +254,6 @@ impl StatusChecker for StatusCheckerImpl {
         }
         
         // Calculate pages needed for new products
-        use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
         let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
         let pages_needed = (estimated_new_products as f64 / products_per_page as f64).ceil() as u32;
         let limited_pages = pages_needed.min(self.config.user.max_pages);
@@ -789,7 +790,6 @@ impl StatusCheckerImpl {
             app_managed.last_crawl_product_count = Some(last_page * 12);
             
             // 페이지당 평균 제품 수 업데이트
-            use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
             app_managed.avg_products_per_page = Some(DEFAULT_PRODUCTS_PER_PAGE as f64);
             
             info!("📝 Updated config: last_page={}, timestamp={}", 
@@ -1190,7 +1190,6 @@ impl StatusCheckerImpl {
         _estimated_products: u32,
         data_change_analysis: &DataChangeAnalysis,
     ) -> Result<CrawlingRangeRecommendation> {
-        use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
         let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
         
         // 데이터 변화에 따른 크롤링 전략 결정
@@ -2051,17 +2050,12 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent as usize));
         let mut tasks = Vec::new();
         
-        // Convert to owned vector for use in spawned tasks
-        let owned_product_urls = product_urls.to_vec();
-        
-        for (index, product_url) in owned_product_urls.iter().enumerate() {
+        for product_url in product_urls {
             let http_client = Arc::clone(&self.http_client);
             let data_extractor = Arc::clone(&self.data_extractor);
             let url = product_url.url.clone();
             let permit = Arc::clone(&semaphore);
             let delay = self.config.delay_ms;
-            let page_id = product_url.page_id;
-            let index_in_page = product_url.index_in_page;
             
             let task = tokio::spawn(async move {
                 let _permit = permit.acquire().await.unwrap();
@@ -2073,12 +2067,7 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                 drop(client);
                 
                 let doc = scraper::Html::parse_document(&html);
-                let mut detail = data_extractor.extract_product_detail(&doc, url.clone())?;
-                
-                // Set page_id and index_in_page from ProductUrl
-                detail.page_id = Some(page_id);
-                detail.index_in_page = Some(index_in_page);
-                detail.generate_id(); // Generate ID after setting page_id and index_in_page
+                let detail = data_extractor.extract_product_detail(&doc, url.clone())?;
                 
                 Ok::<ProductDetail, anyhow::Error>(detail)
             });
@@ -2106,34 +2095,25 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
         product_urls: &[ProductUrl],
         cancellation_token: CancellationToken,
     ) -> Result<Vec<ProductDetail>> {
-        info!("🚀 CONCURRENT: Collecting details for {} products with cancellation support (max_concurrent: {})", 
-              product_urls.len(), self.config.max_concurrent);
+        info!("Collecting details for {} products with cancellation support", product_urls.len());
         
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent as usize));
         let mut tasks = Vec::new();
         
-        // Convert to owned vector for use in spawned tasks
-        let owned_product_urls = product_urls.to_vec();
-        
-        for (index, product_url) in owned_product_urls.iter().enumerate() {
+        for product_url in product_urls {
             let http_client = Arc::clone(&self.http_client);
             let data_extractor = Arc::clone(&self.data_extractor);
             let url = product_url.url.clone();
             let permit = Arc::clone(&semaphore);
             let delay = self.config.delay_ms;
             let token = cancellation_token.clone();
-            let page_id = product_url.page_id;
-            let index_in_page = product_url.index_in_page;
             
             let task = tokio::spawn(async move {
-                info!("🔄 Task {}: Starting product detail collection for {}", index, url);
-                
                 if token.is_cancelled() {
                     return Err(anyhow!("Task cancelled"));
                 }
                 
                 let _permit = permit.acquire().await.unwrap();
-                info!("✅ Task {}: Acquired semaphore permit (delay: {}ms)", index, delay);
                 
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_millis(delay)) => {},
@@ -2144,29 +2124,16 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                     return Err(anyhow!("Task cancelled"));
                 }
                 
-                info!("🌐 Task {}: Making HTTP request to {}", index, url);
-                let start_time = std::time::Instant::now();
                 let mut client = http_client.lock().await;
                 let html = client.fetch_html_string(&url).await?;
                 drop(client);
-                let fetch_duration = start_time.elapsed();
-                info!("📥 Task {}: HTTP request completed in {:?}", index, fetch_duration);
                 
                 if token.is_cancelled() {
                     return Err(anyhow!("Task cancelled"));
                 }
                 
-                let parse_start = std::time::Instant::now();
                 let doc = scraper::Html::parse_document(&html);
-                let mut detail = data_extractor.extract_product_detail(&doc, url.clone())?;
-                
-                // Set page_id and index_in_page from ProductUrl
-                detail.page_id = Some(page_id);
-                detail.index_in_page = Some(index_in_page);
-                detail.generate_id(); // Generate ID after setting page_id and index_in_page
-                
-                let parse_duration = parse_start.elapsed();
-                info!("🔍 Task {}: Parsing completed in {:?}", index, parse_duration);
+                let detail = data_extractor.extract_product_detail(&doc, url.clone())?;
                 
                 Ok::<ProductDetail, anyhow::Error>(detail)
             });
@@ -2174,7 +2141,6 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
             tasks.push(task);
         }
         
-        info!("🎯 CONCURRENT: Created {} tasks, waiting for completion...", tasks.len());
         let results = futures::future::join_all(tasks).await;
         let mut details = Vec::new();
         
@@ -2233,17 +2199,77 @@ impl CrawlingRangeCalculator {
         total_pages: u32,
         products_on_last_page: u32,
     ) -> Result<Option<(u32, u32)>> {
-        info!("Calculating optimal crawling range for {} pages with {} products on last page", 
+        info!("🎯 입력 파라미터: total_pages={}, products_on_last_page={}", 
               total_pages, products_on_last_page);
         
-        // 사용자 설정을 존중 - 원본 구성을 유지
-        // 가장 최신 페이지부터 역순으로 크롤링하는 것이 일반적
-        if total_pages > 0 {
-            // 원래 설정을 그대로 유지 (사용자가 설정한 범위 존중)
-            Ok(None) // None을 반환해서 원본 config 범위를 사용하도록 함
-        } else {
-            Ok(None)
+        // 데이터베이스에서 현재 제품 정보 가져오기
+        let all_products = match self.product_repo.get_all_products().await {
+            Ok(products) => {
+                info!("✅ Successfully retrieved {} products from database", products.len());
+                products
+            },
+            Err(e) => {
+                error!("❌ Failed to get products from database: {}", e);
+                Vec::new()
+            }
+        };
+        
+        if all_products.is_empty() {
+            info!("📋 Database is empty - starting from the last page (page {})", total_pages);
+            let end_page = (total_pages.saturating_sub(self.config.user.max_pages - 1)).max(1);
+            return Ok(Some((total_pages, end_page)));
         }
+        
+        // 가장 높은 page_id 찾기 (역순이므로 가장 작은 실제 페이지 번호)
+        let max_page_id = all_products.iter()
+            .filter_map(|p| p.page_id)
+            .max()
+            .unwrap_or(0);
+            
+        info!("🔍 Current max page_id in database: {}", max_page_id);
+        
+        // page_id에서 실제 페이지 번호로 변환
+        // page_id 0 = 485페이지, page_id 1 = 484페이지, ..., page_id 5 = 480페이지
+        let last_crawled_page = total_pages - max_page_id as u32;
+        info!("📍 Last crawled page: {} (page_id: {})", last_crawled_page, max_page_id);
+        
+        // 다음 크롤링할 범위 계산
+        // 현재 페이지의 제품 수집 상태 확인
+        let current_page_products = all_products.iter()
+            .filter(|p| p.page_id == Some(max_page_id))
+            .count();
+        
+        let expected_products_on_current_page = if last_crawled_page == total_pages {
+            // 마지막 페이지 (485페이지)라면 products_on_last_page만큼 있어야 함
+            products_on_last_page as usize
+        } else {
+            // 다른 페이지라면 12개가 있어야 함
+            DEFAULT_PRODUCTS_PER_PAGE as usize
+        };
+        
+        info!("🔍 Current page {} has {}/{} products", 
+              last_crawled_page, current_page_products, expected_products_on_current_page);
+        
+        // 다음 크롤링 시작 페이지 결정
+        let start_page = if current_page_products < expected_products_on_current_page {
+            // 현재 페이지가 완전히 수집되지 않았다면 현재 페이지부터 시작
+            last_crawled_page
+        } else {
+            // 현재 페이지가 완료되었다면 다음 페이지부터 시작
+            if last_crawled_page > 1 {
+                last_crawled_page - 1
+            } else {
+                info!("🏁 All pages have been crawled");
+                return Ok(None);
+            }
+        };
+        
+        // 크롤링 범위 제한 적용
+        let end_page = (start_page.saturating_sub(self.config.user.max_pages - 1)).max(1);
+        
+        info!("✅ Next crawling range: {}페이지 → {}페이지 (역순, 최대 {}페이지)", 
+              start_page, end_page, self.config.user.max_pages);
+        Ok(Some((start_page, end_page)))
     }
 }
 
@@ -2345,11 +2371,19 @@ impl CrawlingRangeCalculator {
         products_on_last_page: u32,
     ) -> Result<crate::domain::events::CrawlingProgress> {
         // 로컬 DB 상태 확인
-        let all_products = self.product_repo.get_all_products().await.unwrap_or_default();
+        let all_products = match self.product_repo.get_all_products().await {
+            Ok(products) => {
+                info!("📊 Successfully retrieved {} products from database", products.len());
+                products
+            },
+            Err(e) => {
+                error!("❌ Failed to get products from database: {}", e);
+                Vec::new()
+            }
+        };
         let saved_products = all_products.len() as u32;
         
         // 총 제품 수 추정
-        use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
         let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
         let total_estimated_products = ((total_pages_on_site - 1) * products_per_page) + products_on_last_page;
         
@@ -2375,6 +2409,17 @@ impl CrawlingRangeCalculator {
                 max_index_in_page = index_in_page;
             }
         }
+        
+        // 실제 페이지 번호로 변환 (page_id 0 = 마지막 페이지)
+        let actual_last_crawled_page = if max_page_id >= 0 {
+            total_pages_on_site - max_page_id as u32
+        } else {
+            0
+        };
+        
+        info!("📊 Progress: {}/{} products ({:.1}%), last crawled page: {} (page_id: {})", 
+              saved_products, total_estimated_products, percentage, 
+              actual_last_crawled_page, max_page_id);
         
         Ok(crate::domain::events::CrawlingProgress {
             current: saved_products,

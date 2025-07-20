@@ -65,11 +65,10 @@ impl IntegratedProductRepository {
             sqlx::query(
                 r"
                 INSERT INTO products 
-                (id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ",
             )
-            .bind(&product.id)
             .bind(&product.url)
             .bind(&product.manufacturer)
             .bind(&product.model)
@@ -169,7 +168,7 @@ impl IntegratedProductRepository {
     pub async fn get_product_by_url(&self, url: &str) -> Result<Option<Product>> {
         let row = sqlx::query(
             r"
-            SELECT id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
+            SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
             FROM products WHERE url = ?
             ",
         )
@@ -317,9 +316,9 @@ impl IntegratedProductRepository {
         // Get paginated results
         let data_query = format!(
             r"
-            SELECT p.id as p_id, p.url, p.manufacturer, p.model, p.certificate_id, p.page_id, p.index_in_page, 
+            SELECT p.url, p.manufacturer, p.model, p.certificate_id, p.page_id, p.index_in_page, 
                    p.created_at as p_created_at, p.updated_at as p_updated_at,
-                   pd.id as pd_id, pd.device_type as pd_device_type, pd.certification_date as pd_certification_date, pd.software_version, pd.hardware_version,
+                   pd.id, pd.device_type as pd_device_type, pd.certification_date as pd_certification_date, pd.software_version, pd.hardware_version,
                    pd.vid, pd.pid, pd.family_sku, pd.family_variant_sku, pd.firmware_version, pd.family_id,
                    pd.tis_trp_tested, pd.specification_version, pd.transport_interface, 
                    pd.primary_device_type_id, pd.application_categories, pd.description,
@@ -345,7 +344,7 @@ impl IntegratedProductRepository {
             .into_iter()
             .map(|row| {
                 let product = Product {
-                    id: row.get("p_id"),
+                    id: row.get("id"),
                     url: row.get("url"),
                     manufacturer: row.get("manufacturer"),
                     model: row.get("model"),
@@ -356,12 +355,12 @@ impl IntegratedProductRepository {
                     updated_at: row.get("p_updated_at"),
                 };
 
-                let details = if row.get::<Option<String>, _>("pd_id").is_some() {
+                let details = if row.get::<Option<String>, _>("id").is_some() {
                     Some(ProductDetail {
                         url: row.get("url"),
                         page_id: row.get("page_id"),
                         index_in_page: row.get("index_in_page"),
-                        id: row.get("pd_id"),
+                        id: row.get("id"),
                         manufacturer: row.get("manufacturer"),
                         model: row.get("model"),
                         device_type: row.get("pd_device_type"),
@@ -700,7 +699,7 @@ impl IntegratedProductRepository {
     pub async fn get_all_products(&self) -> Result<Vec<Product>> {
         let rows = sqlx::query(
             r"
-            SELECT id, url, manufacturer, model, certificate_id, 
+            SELECT url, manufacturer, model, certificate_id, 
                    page_id, index_in_page, created_at, updated_at
             FROM products
             ORDER BY page_id DESC, index_in_page ASC
@@ -712,7 +711,7 @@ impl IntegratedProductRepository {
         let products = rows
             .into_iter()
             .map(|row| Product {
-                id: row.get("id"),
+                id: None, // products 테이블에는 id 컬럼이 없음
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),

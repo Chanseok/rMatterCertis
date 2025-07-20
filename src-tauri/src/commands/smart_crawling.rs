@@ -44,7 +44,24 @@ pub struct CrawlingRangeRequest {
 
 /// Create product repository from database connection
 async fn create_product_repo() -> Result<IntegratedProductRepository, String> {
-    let db_conn = DatabaseConnection::new(".local/dev-database.sqlite").await
+    // 데이터베이스 경로 생성 (macOS 경로에 맞게 수정)
+    let database_url = {
+        let app_data_dir = if cfg!(target_os = "macos") {
+            std::env::var("HOME")
+                .map(|h| format!("{}/Library/Application Support", h))
+                .unwrap_or_else(|_| "./data".to_string())
+        } else {
+            std::env::var("APPDATA")
+                .or_else(|_| std::env::var("HOME").map(|h| format!("{}/.local/share", h)))
+                .unwrap_or_else(|_| "./data".to_string())
+        };
+        let data_dir = format!("{}/matter-certis-v2/database", app_data_dir);
+        format!("sqlite:{}/matter_certis.db", data_dir)
+    };
+    
+    info!("Using database at: {}", database_url);
+    
+    let db_conn = DatabaseConnection::new(&database_url).await
         .map_err(|e| format!("Failed to create database connection: {}", e))?;
     
     let pool = db_conn.pool().clone();
@@ -93,8 +110,13 @@ pub async fn calculate_crawling_range(
 
     let response = match result {
         Some((start_page, end_page)) => {
+            let total_pages = if start_page >= end_page {
+                start_page - end_page + 1
+            } else {
+                end_page - start_page + 1
+            };
             let message = format!("Next crawling range: pages {} to {} (total: {} pages)", 
-                                start_page, end_page, start_page - end_page + 1);
+                                start_page, end_page, total_pages);
             info!("✅ {}", message);
             
             CrawlingRangeResponse {

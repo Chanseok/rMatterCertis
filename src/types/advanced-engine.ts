@@ -96,6 +96,27 @@ export interface StartCrawlingRequest {
   config: AdvancedCrawlingConfig;
 }
 
+// 크롤링 범위 계산 요청
+export interface CrawlingRangeRequest {
+  total_pages_on_site: number;
+  products_on_last_page: number;
+}
+
+// 크롤링 범위 계산 응답
+export interface CrawlingRangeResponse {
+  success: boolean;
+  range?: [number, number]; // [start_page, end_page] 튜플
+  progress: {
+    total_products: number;
+    saved_products: number;
+    progress_percentage: number;
+    max_page_id?: number;
+    max_index_in_page?: number;
+    is_completed: boolean;
+  };
+  message: string;
+}
+
 // Tauri 명령어 타입들
 export interface TauriCommands {
   // Advanced Crawling Engine 사이트 상태 확인
@@ -103,6 +124,9 @@ export interface TauriCommands {
   
   // Advanced Crawling Engine 시작
   start_advanced_crawling(request: StartCrawlingRequest): Promise<ApiResponse<CrawlingSession>>;
+  
+  // 크롤링 범위 계산
+  calculate_crawling_range(request: CrawlingRangeRequest): Promise<ApiResponse<CrawlingRangeResponse>>;
   
   // 최근 제품 목록 조회
   get_recent_products(page?: number, limit?: number): Promise<ApiResponse<ProductPage>>;

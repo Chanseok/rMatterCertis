@@ -123,8 +123,6 @@ pub mod commands {
     pub mod simple_actor_test;
     pub mod actor_system_monitoring;
     pub mod advanced_engine_api;  // 새로운 Advanced Engine API 추가
-    pub mod config_commands;     // Configuration management commands
-    pub mod modern_crawling;     // Modern crawling commands
     
     // Re-export commonly used commands
     pub use crawling_v4::*;
@@ -282,13 +280,6 @@ pub fn run() {
             commands::crawling_v4::emergency_stop,
             commands::crawling_v4::ping_backend,
             commands::crawling_v4::get_app_settings,
-            
-            // Configuration commands
-            commands::config_commands::get_frontend_config,
-            commands::config_commands::get_site_config,
-            commands::config_commands::update_logging_settings,
-            commands::config_commands::update_batch_settings,
-            commands::config_commands::update_crawling_settings,
             
             // Advanced Crawling Engine commands (Phase 4B)
             commands::advanced_engine_api::check_advanced_site_status,
