@@ -13,7 +13,7 @@ import type {
   CrawlingSession, 
   DatabaseStats,
   ApiResponse,
-  StartCrawlingRequest 
+  StartCrawlingRequest
 } from '../../types/advanced-engine';
 
 export const CrawlingEngineTab: Component = () => {
@@ -142,28 +142,32 @@ export const CrawlingEngineTab: Component = () => {
     if (isRunning()) return;
     
     const config = userConfig();
-    if (!config || !config.crawling) {
+    if (!config) {
       addLog('❌ 설정을 먼저 로드해야 합니다');
       return;
     }
 
     try {
       setIsRunning(true);
-      addLog(`🚀 Advanced Crawling Engine 시작 (페이지 ${config.crawling.start_page}-${config.crawling.end_page})`);
       
-      // 시스템이 자동으로 최적화된 설정 생성
-      const optimizedConfig = {
-        start_page: config.crawling.start_page,
-        end_page: config.crawling.end_page,
-        batch_size: 5, // 자동 최적화
-        concurrency: 3, // 사이트 상태 기반 자동 설정
-        delay_ms: 1000, // 서버 안정성 고려 자동 설정
-        retry_max: 3, // 기본값
-        enable_real_time_updates: true // 항상 활성화
-      };
-
+      // 페이지 범위 계산 - 논리적 순서: 가장 오래된(485) → 상대적으로 최신(480)
+      const totalPages = siteStatus()?.total_pages || 485;
+      const pageLimit = config.user?.crawling?.page_range_limit || 6;
+      const startPage = totalPages; // 가장 오래된 (485) - 시작점
+      const endPage = Math.max(1, totalPages - pageLimit + 1); // 상대적으로 최신 (480) - 종료점
+      
+      addLog(`🚀 Advanced Crawling Engine 시작 (${startPage} → ${endPage}, 오래된 제품부터)`);
+      
       const request: StartCrawlingRequest = {
-        config: optimizedConfig
+        config: {
+          start_page: startPage,    // 485 (가장 오래된)
+          end_page: endPage,        // 480 (상대적으로 최신)
+          batch_size: config.user?.batch?.batch_size || 12,
+          concurrency: config.user?.max_concurrent_requests || 3,
+          delay_ms: config.user?.request_delay_ms || 1000,
+          retry_max: config.user?.crawling?.product_list_retry_count || 3,
+          enable_real_time_updates: true
+        }
       };
       
       const response = await invoke<ApiResponse<CrawlingSession>>('start_advanced_crawling', {
@@ -172,7 +176,7 @@ export const CrawlingEngineTab: Component = () => {
       
       if (response.success && response.data) {
         setCurrentSessionId(response.data.session_id);
-        addLog(`✅ 크롤링 세션 시작: ${response.data.session_id} (자동 최적화된 설정 적용)`);
+        addLog(`✅ 크롤링 세션 시작: ${response.data.session_id} (페이지 ${startPage}→${endPage})`);
       } else {
         addLog(`❌ 크롤링 시작 실패: ${response.error?.message || 'Unknown error'}`);
         setIsRunning(false);
@@ -345,7 +349,7 @@ export const CrawlingEngineTab: Component = () => {
                           {(() => {
                             const totalPages = siteStatus()?.total_pages || 485;
                             
-                            // 가장 오래된 제품부터 (마지막 페이지부터)
+                            // 가장 오래된 제품 페이지 (485)
                             return totalPages;
                           })()}
                         </div>
@@ -358,7 +362,7 @@ export const CrawlingEngineTab: Component = () => {
                             const totalPages = siteStatus()?.total_pages || 485;
                             const pageLimit = config?.page_range_limit || 6;
                             
-                            // 상대적으로 최신 제품까지 (역순으로 pageLimit만큼)
+                            // 상대적으로 최신 제품 페이지 (480)
                             return Math.max(1, totalPages - pageLimit + 1);
                           })()}
                         </div>
@@ -402,9 +406,9 @@ export const CrawlingEngineTab: Component = () => {
                               const config = userConfig()?.user?.crawling;
                               const totalPages = siteStatus()?.total_pages || 485;
                               const pageLimit = config?.page_range_limit || 6;
-                              const startPage = totalPages; // 가장 오래된 (485)
-                              const endPage = Math.max(1, totalPages - pageLimit + 1); // 상대적으로 최신 (480)
-                              return `${startPage} → ${endPage}`;
+                              const oldestPage = totalPages; // 가장 오래된 (485)
+                              const newestPage = Math.max(1, totalPages - pageLimit + 1); // 상대적으로 최신 (480)
+                              return `${oldestPage} → ${newestPage} (오래된 순)`;
                             })()}
                           </span>
                         </div>

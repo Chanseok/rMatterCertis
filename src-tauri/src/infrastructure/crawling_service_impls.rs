@@ -2051,12 +2051,17 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent as usize));
         let mut tasks = Vec::new();
         
-        for product_url in product_urls {
+        // Convert to owned vector for use in spawned tasks
+        let owned_product_urls = product_urls.to_vec();
+        
+        for (index, product_url) in owned_product_urls.iter().enumerate() {
             let http_client = Arc::clone(&self.http_client);
             let data_extractor = Arc::clone(&self.data_extractor);
             let url = product_url.url.clone();
             let permit = Arc::clone(&semaphore);
             let delay = self.config.delay_ms;
+            let page_id = product_url.page_id;
+            let index_in_page = product_url.index_in_page;
             
             let task = tokio::spawn(async move {
                 let _permit = permit.acquire().await.unwrap();
@@ -2068,7 +2073,12 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                 drop(client);
                 
                 let doc = scraper::Html::parse_document(&html);
-                let detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                let mut detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                
+                // Set page_id and index_in_page from ProductUrl
+                detail.page_id = Some(page_id);
+                detail.index_in_page = Some(index_in_page);
+                detail.generate_id(); // Generate ID after setting page_id and index_in_page
                 
                 Ok::<ProductDetail, anyhow::Error>(detail)
             });
@@ -2096,25 +2106,34 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
         product_urls: &[ProductUrl],
         cancellation_token: CancellationToken,
     ) -> Result<Vec<ProductDetail>> {
-        info!("Collecting details for {} products with cancellation support", product_urls.len());
+        info!("🚀 CONCURRENT: Collecting details for {} products with cancellation support (max_concurrent: {})", 
+              product_urls.len(), self.config.max_concurrent);
         
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent as usize));
         let mut tasks = Vec::new();
         
-        for product_url in product_urls {
+        // Convert to owned vector for use in spawned tasks
+        let owned_product_urls = product_urls.to_vec();
+        
+        for (index, product_url) in owned_product_urls.iter().enumerate() {
             let http_client = Arc::clone(&self.http_client);
             let data_extractor = Arc::clone(&self.data_extractor);
             let url = product_url.url.clone();
             let permit = Arc::clone(&semaphore);
             let delay = self.config.delay_ms;
             let token = cancellation_token.clone();
+            let page_id = product_url.page_id;
+            let index_in_page = product_url.index_in_page;
             
             let task = tokio::spawn(async move {
+                info!("🔄 Task {}: Starting product detail collection for {}", index, url);
+                
                 if token.is_cancelled() {
                     return Err(anyhow!("Task cancelled"));
                 }
                 
                 let _permit = permit.acquire().await.unwrap();
+                info!("✅ Task {}: Acquired semaphore permit (delay: {}ms)", index, delay);
                 
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_millis(delay)) => {},
@@ -2125,16 +2144,29 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                     return Err(anyhow!("Task cancelled"));
                 }
                 
+                info!("🌐 Task {}: Making HTTP request to {}", index, url);
+                let start_time = std::time::Instant::now();
                 let mut client = http_client.lock().await;
                 let html = client.fetch_html_string(&url).await?;
                 drop(client);
+                let fetch_duration = start_time.elapsed();
+                info!("📥 Task {}: HTTP request completed in {:?}", index, fetch_duration);
                 
                 if token.is_cancelled() {
                     return Err(anyhow!("Task cancelled"));
                 }
                 
+                let parse_start = std::time::Instant::now();
                 let doc = scraper::Html::parse_document(&html);
-                let detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                let mut detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                
+                // Set page_id and index_in_page from ProductUrl
+                detail.page_id = Some(page_id);
+                detail.index_in_page = Some(index_in_page);
+                detail.generate_id(); // Generate ID after setting page_id and index_in_page
+                
+                let parse_duration = parse_start.elapsed();
+                info!("🔍 Task {}: Parsing completed in {:?}", index, parse_duration);
                 
                 Ok::<ProductDetail, anyhow::Error>(detail)
             });
@@ -2142,6 +2174,7 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
             tasks.push(task);
         }
         
+        info!("🎯 CONCURRENT: Created {} tasks, waiting for completion...", tasks.len());
         let results = futures::future::join_all(tasks).await;
         let mut details = Vec::new();
         
@@ -2203,9 +2236,11 @@ impl CrawlingRangeCalculator {
         info!("Calculating optimal crawling range for {} pages with {} products on last page", 
               total_pages, products_on_last_page);
         
-        // 간단한 범위 계산 로직 - 전체 범위 반환
+        // 사용자 설정을 존중 - 원본 구성을 유지
+        // 가장 최신 페이지부터 역순으로 크롤링하는 것이 일반적
         if total_pages > 0 {
-            Ok(Some((1, total_pages)))
+            // 원래 설정을 그대로 유지 (사용자가 설정한 범위 존중)
+            Ok(None) // None을 반환해서 원본 config 범위를 사용하도록 함
         } else {
             Ok(None)
         }
@@ -2214,7 +2249,8 @@ impl CrawlingRangeCalculator {
 
 /// ProductDetail을 Product로 변환하는 헬퍼 함수
 pub fn product_detail_to_product(detail: ProductDetail) -> Product {
-    Product {
+    let mut product = Product {
+        id: detail.id.clone(), // Use detail's id if available
         url: detail.url,
         manufacturer: detail.manufacturer,
         model: detail.model,
@@ -2223,7 +2259,14 @@ pub fn product_detail_to_product(detail: ProductDetail) -> Product {
         index_in_page: detail.index_in_page,
         created_at: detail.created_at,
         updated_at: detail.updated_at,
+    };
+    
+    // Generate ID if not already set
+    if product.id.is_none() {
+        product.generate_id();
     }
+    
+    product
 }
 
 // Additional trait implementations for service-based architecture

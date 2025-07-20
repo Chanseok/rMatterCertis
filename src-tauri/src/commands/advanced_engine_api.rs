@@ -9,30 +9,25 @@ use std::sync::Arc;
 use crate::types::frontend_api::*;
 use crate::commands::crawling_v4::CrawlingEngineState;
 use crate::application::shared_state::SharedStateCache;
+use crate::domain::services::crawling_services::StatusChecker;
 use crate::infrastructure::{
-    AdvancedBatchCrawlingEngine, HttpClient, MatterDataExtractor, 
+    ServiceBasedBatchCrawlingEngine, HttpClient, MatterDataExtractor, 
     IntegratedProductRepository, DatabaseConnection
 };
 use crate::infrastructure::service_based_crawling_engine::BatchCrawlingConfig;
+use crate::infrastructure::config::AppConfig;
 use crate::application::EventEmitter;
 
 /// Advanced Crawling Engine 사이트 상태 확인 (실제 구현)
 #[command]
 pub async fn check_advanced_site_status(
+    app: AppHandle,
     _state: State<'_, CrawlingEngineState>,
     _shared_state: State<'_, SharedStateCache>,
 ) -> Result<ApiResponse<SiteStatusInfo>, String> {
     info!("🌐 Advanced site status check requested");
-    
-    // 실제 크롤링 엔진 인스턴스 생성
-    let http_client = match HttpClient::new() {
-        Ok(client) => client,
-        Err(e) => {
-            error!("Failed to create HTTP client: {}", e);
-            return Err(format!("HTTP client creation failed: {}", e));
-        }
-    };
-    
+
+    // MatterDataExtractor 생성
     let data_extractor = match MatterDataExtractor::new() {
         Ok(extractor) => extractor,
         Err(e) => {
@@ -41,11 +36,20 @@ pub async fn check_advanced_site_status(
         }
     };
     
-    // 데이터베이스 연결 생성
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:data/matter_certis.db".to_string());
+    // HTTP 클라이언트 생성
+    let http_client = match HttpClient::new() {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("Failed to create HTTP client: {:?}", e);
+            return Err(e.to_string());
+        }
+    };
     
-    let db_connection = match DatabaseConnection::new(&database_url).await {
+    // 데이터베이스 연결 생성
+    let database_url = match crate::commands::crawling_v4::get_database_url_v4() {
+        Ok(url) => url,
+        Err(e) => return Err(format!("Failed to get database URL: {}", e)),
+    };    let db_connection = match DatabaseConnection::new(&database_url).await {
         Ok(conn) => conn,
         Err(e) => {
             error!("Database connection failed: {}", e);
@@ -70,19 +74,29 @@ pub async fn check_advanced_site_status(
     };
     
     let session_id = format!("status_check_{}", Uuid::new_v4().simple());
-    let event_emitter = Arc::new(None::<EventEmitter>);
+    let event_emitter = Arc::new(Some(EventEmitter::new(app.clone())));
     
-    let engine = AdvancedBatchCrawlingEngine::new(
-        http_client,
-        data_extractor,
+    // AppConfig 생성
+    let app_config = AppConfig::default();
+    
+    let mut engine = ServiceBasedBatchCrawlingEngine::new(
+        http_client.clone(),
+        data_extractor.clone(),
         product_repo,
         event_emitter,
         config,
-        session_id,
+        session_id.clone(),
+        app_config.clone(),
     );
     
-    // 실제 사이트 상태 확인
-    match engine.stage0_check_site_status().await {
+    // 실제 사이트 상태 확인을 위해 StatusChecker를 별도로 생성
+    let status_checker = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
+        http_client.clone(),
+        data_extractor.clone(),
+        app_config.clone(),
+    );
+    
+    match status_checker.check_site_status().await {
         Ok(site_status) => {
             let site_status_info = SiteStatusInfo {
                 is_accessible: true,
@@ -132,8 +146,10 @@ pub async fn start_advanced_crawling(
     };
     
     // 데이터베이스 연결 생성
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:data/matter_certis.db".to_string());
+    let database_url = match crate::commands::crawling_v4::get_database_url_v4() {
+        Ok(url) => url,
+        Err(e) => return Err(format!("Failed to get database URL: {}", e)),
+    };
     
     let db_connection = match DatabaseConnection::new(&database_url).await {
         Ok(conn) => conn,
@@ -172,14 +188,18 @@ pub async fn start_advanced_crawling(
     // EventEmitter 설정 (앱 핸들을 사용하여 이벤트 발송)
     let event_emitter = Arc::new(Some(EventEmitter::new(app.clone())));
     
-    // Advanced 크롤링 엔진 생성
-    let engine = AdvancedBatchCrawlingEngine::new(
-        http_client,
-        data_extractor,
+    // AppConfig 생성
+    let app_config = AppConfig::default();
+    
+    // Advanced 크롤링 엔진 생성 (ServiceBasedBatchCrawlingEngine 사용)
+    let mut engine = ServiceBasedBatchCrawlingEngine::new(
+        http_client.clone(),
+        data_extractor.clone(),
         product_repo,
         event_emitter,
         config,
         session_id.clone(),
+        app_config.clone(),
     );
     
     // 백그라운드에서 실제 크롤링 실행

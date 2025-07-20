@@ -552,9 +552,17 @@ impl AdvancedBatchCrawlingEngine {
             // DetailedCrawlingEvent를 기존 이벤트 시스템과 연동
             let progress = match &event {
                 DetailedCrawlingEvent::StageStarted { stage, message } => {
+                    let total_pages = if self.config.start_page > self.config.end_page {
+                        // 역순: start_page(485) > end_page(480)
+                        self.config.start_page - self.config.end_page + 1
+                    } else {
+                        // 순차: start_page <= end_page
+                        self.config.end_page - self.config.start_page + 1
+                    };
+                    
                     CrawlingProgress {
                         current: 0,
-                        total: self.config.end_page - self.config.start_page + 1,
+                        total: total_pages,
                         percentage: 0.0,
                         current_stage: match stage.as_str() {
                             "SiteStatus" => CrawlingStage::StatusCheck,
@@ -573,7 +581,7 @@ impl AdvancedBatchCrawlingEngine {
                         new_items: 0,
                         updated_items: 0,
                         current_batch: Some(1),
-                        total_batches: Some(self.config.end_page - self.config.start_page + 1),
+                        total_batches: Some(total_pages),
                         errors: 0,
                         timestamp: chrono::Utc::now(),
                     }

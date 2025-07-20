@@ -65,10 +65,11 @@ impl IntegratedProductRepository {
             sqlx::query(
                 r"
                 INSERT INTO products 
-                (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ",
             )
+            .bind(&product.id)
             .bind(&product.url)
             .bind(&product.manufacturer)
             .bind(&product.model)
@@ -135,7 +136,7 @@ impl IntegratedProductRepository {
         let offset = (page - 1) * limit;
         let rows = sqlx::query(
             r"
-            SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
+            SELECT id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
             FROM products 
             ORDER BY page_id DESC, index_in_page ASC 
             LIMIT ? OFFSET ?
@@ -149,6 +150,7 @@ impl IntegratedProductRepository {
         let products = rows
             .into_iter()
             .map(|row| Product {
+                id: row.get("id"),
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
@@ -167,7 +169,7 @@ impl IntegratedProductRepository {
     pub async fn get_product_by_url(&self, url: &str) -> Result<Option<Product>> {
         let row = sqlx::query(
             r"
-            SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
+            SELECT id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
             FROM products WHERE url = ?
             ",
         )
@@ -177,6 +179,7 @@ impl IntegratedProductRepository {
 
         match row {
             Some(row) => Ok(Some(Product {
+                id: row.get("id"),
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
@@ -314,9 +317,9 @@ impl IntegratedProductRepository {
         // Get paginated results
         let data_query = format!(
             r"
-            SELECT p.url, p.manufacturer, p.model, p.certificate_id, p.page_id, p.index_in_page, 
+            SELECT p.id as p_id, p.url, p.manufacturer, p.model, p.certificate_id, p.page_id, p.index_in_page, 
                    p.created_at as p_created_at, p.updated_at as p_updated_at,
-                   pd.id, pd.device_type as pd_device_type, pd.certification_date as pd_certification_date, pd.software_version, pd.hardware_version,
+                   pd.id as pd_id, pd.device_type as pd_device_type, pd.certification_date as pd_certification_date, pd.software_version, pd.hardware_version,
                    pd.vid, pd.pid, pd.family_sku, pd.family_variant_sku, pd.firmware_version, pd.family_id,
                    pd.tis_trp_tested, pd.specification_version, pd.transport_interface, 
                    pd.primary_device_type_id, pd.application_categories, pd.description,
@@ -342,6 +345,7 @@ impl IntegratedProductRepository {
             .into_iter()
             .map(|row| {
                 let product = Product {
+                    id: row.get("p_id"),
                     url: row.get("url"),
                     manufacturer: row.get("manufacturer"),
                     model: row.get("model"),
@@ -352,12 +356,12 @@ impl IntegratedProductRepository {
                     updated_at: row.get("p_updated_at"),
                 };
 
-                let details = if row.get::<Option<String>, _>("id").is_some() {
+                let details = if row.get::<Option<String>, _>("pd_id").is_some() {
                     Some(ProductDetail {
                         url: row.get("url"),
                         page_id: row.get("page_id"),
                         index_in_page: row.get("index_in_page"),
-                        id: row.get("id"),
+                        id: row.get("pd_id"),
                         manufacturer: row.get("manufacturer"),
                         model: row.get("model"),
                         device_type: row.get("pd_device_type"),
@@ -415,7 +419,8 @@ impl IntegratedProductRepository {
         let is_new = existing_product.is_none();
         
         // 기본 제품 정보 추출
-        let basic_product = Product {
+        let mut basic_product = Product {
+            id: None, // Will be generated in create_or_update_product
             url: url.clone(),
             manufacturer: product_json["manufacturer"].as_str().map(|s| s.to_string()),
             model: product_json["model"].as_str().map(|s| s.to_string()),
@@ -425,6 +430,9 @@ impl IntegratedProductRepository {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
+        
+        // Generate ID based on page_id and index_in_page
+        basic_product.generate_id();
         
         // 기본 제품 정보 저장
         self.create_or_update_product(&basic_product).await?;
@@ -658,7 +666,7 @@ impl IntegratedProductRepository {
     pub async fn get_products_without_details(&self, limit: i32) -> Result<Vec<Product>> {
         let rows = sqlx::query(
             r"
-            SELECT p.url, p.manufacturer, p.model, p.certificate_id, p.page_id, p.index_in_page, p.created_at, p.updated_at
+            SELECT p.id, p.url, p.manufacturer, p.model, p.certificate_id, p.page_id, p.index_in_page, p.created_at, p.updated_at
             FROM products p
             LEFT JOIN product_details pd ON p.url = pd.url
             WHERE pd.url IS NULL
@@ -673,6 +681,7 @@ impl IntegratedProductRepository {
         let products = rows
             .into_iter()
             .map(|row| Product {
+                id: row.get("id"),
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
@@ -691,7 +700,7 @@ impl IntegratedProductRepository {
     pub async fn get_all_products(&self) -> Result<Vec<Product>> {
         let rows = sqlx::query(
             r"
-            SELECT url, manufacturer, model, certificate_id, 
+            SELECT id, url, manufacturer, model, certificate_id, 
                    page_id, index_in_page, created_at, updated_at
             FROM products
             ORDER BY page_id DESC, index_in_page ASC
@@ -703,6 +712,7 @@ impl IntegratedProductRepository {
         let products = rows
             .into_iter()
             .map(|row| Product {
+                id: row.get("id"),
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
@@ -721,7 +731,7 @@ impl IntegratedProductRepository {
     pub async fn get_latest_updated_product(&self) -> Result<Option<Product>> {
         let row = sqlx::query(
             r"
-            SELECT url, manufacturer, model, certificate_id, 
+            SELECT id, url, manufacturer, model, certificate_id, 
                    page_id, index_in_page, created_at, updated_at
             FROM products
             ORDER BY updated_at DESC
@@ -733,6 +743,7 @@ impl IntegratedProductRepository {
 
         if let Some(row) = row {
             Ok(Some(Product {
+                id: row.get("id"),
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),

@@ -15,20 +15,29 @@ impl ProductRepository {
 
     /// Insert or update basic product information from listing page
     pub async fn create_or_update_product(&self, product: &Product) -> Result<()> {
+        // Create a mutable copy to generate ID if needed
+        let mut product_with_id = product.clone();
+        
+        // Generate ID if not already set
+        if product_with_id.id.is_none() {
+            product_with_id.generate_id();
+        }
+        
         sqlx::query!(
             r"
             INSERT OR REPLACE INTO products 
-            (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ",
-            product.url,
-            product.manufacturer,
-            product.model,
-            product.certificate_id,
-            product.page_id,
-            product.index_in_page,
-            product.created_at,
-            product.updated_at
+            product_with_id.id,
+            product_with_id.url,
+            product_with_id.manufacturer,
+            product_with_id.model,
+            product_with_id.certificate_id,
+            product_with_id.page_id,
+            product_with_id.index_in_page,
+            product_with_id.created_at,
+            product_with_id.updated_at
         )
         .execute(&*self.pool)
         .await?;
@@ -37,6 +46,14 @@ impl ProductRepository {
 
     /// Insert or update detailed product specifications
     pub async fn create_or_update_product_detail(&self, detail: &ProductDetail) -> Result<()> {
+        // Create a mutable copy to generate ID if needed
+        let mut detail_with_id = detail.clone();
+        
+        // Generate ID if not already set
+        if detail_with_id.id.is_none() {
+            detail_with_id.generate_id();
+        }
+        
         sqlx::query!(
             r"
             INSERT OR REPLACE INTO product_details 
@@ -47,28 +64,28 @@ impl ProductRepository {
              primaryDeviceTypeId, applicationCategories)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ",
-            detail.url,
-            detail.page_id,
-            detail.index_in_page,
-            detail.id,
-            detail.manufacturer,
-            detail.model,
-            detail.device_type,
-            detail.certificate_id,
-            detail.certification_date,
-            detail.software_version,
-            detail.hardware_version,
-            detail.vid,
-            detail.pid,
-            detail.family_sku,
-            detail.family_variant_sku,
-            detail.firmware_version,
-            detail.family_id,
-            detail.tis_trp_tested,
-            detail.specification_version,
-            detail.transport_interface,
-            detail.primary_device_type_id,
-            detail.application_categories
+            detail_with_id.url,
+            detail_with_id.page_id,
+            detail_with_id.index_in_page,
+            detail_with_id.id,
+            detail_with_id.manufacturer,
+            detail_with_id.model,
+            detail_with_id.device_type,
+            detail_with_id.certificate_id,
+            detail_with_id.certification_date,
+            detail_with_id.software_version,
+            detail_with_id.hardware_version,
+            detail_with_id.vid,
+            detail_with_id.pid,
+            detail_with_id.family_sku,
+            detail_with_id.family_variant_sku,
+            detail_with_id.firmware_version,
+            detail_with_id.family_id,
+            detail_with_id.tis_trp_tested,
+            detail_with_id.specification_version,
+            detail_with_id.transport_interface,
+            detail_with_id.primary_device_type_id,
+            detail_with_id.application_categories
         )
         .execute(&*self.pool)
         .await?;
@@ -80,7 +97,7 @@ impl ProductRepository {
         let offset = (page - 1) * limit;
         let products = sqlx::query!(
             r"
-            SELECT url, manufacturer, model, certificateId, pageId, indexInPage
+            SELECT id, url, manufacturer, model, certificateId, pageId, indexInPage, created_at, updated_at
             FROM products 
             ORDER BY pageId DESC, indexInPage ASC 
             LIMIT ? OFFSET ?
@@ -94,12 +111,15 @@ impl ProductRepository {
         Ok(products
             .into_iter()
             .map(|row| Product {
+                id: row.id,
                 url: row.url,
                 manufacturer: row.manufacturer,
                 model: row.model,
                 certificate_id: row.certificateId,
                 page_id: row.pageId,
                 index_in_page: row.indexInPage,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
             })
             .collect())
     }
@@ -108,7 +128,7 @@ impl ProductRepository {
     pub async fn get_product_with_details(&self, url: &str) -> Result<Option<ProductWithDetails>> {
         let product_row = sqlx::query!(
             r"
-            SELECT url, manufacturer, model, certificateId, pageId, indexInPage
+            SELECT id, url, manufacturer, model, certificateId, pageId, indexInPage, created_at, updated_at
             FROM products WHERE url = ?
             ",
             url
@@ -118,12 +138,15 @@ impl ProductRepository {
 
         if let Some(product_row) = product_row {
             let product = Product {
+                id: product_row.id,
                 url: product_row.url,
                 manufacturer: product_row.manufacturer,
                 model: product_row.model,
                 certificate_id: product_row.certificateId,
                 page_id: product_row.pageId,
                 index_in_page: product_row.indexInPage,
+                created_at: product_row.created_at,
+                updated_at: product_row.updated_at,
             };
 
             let detail_row = sqlx::query!(
@@ -132,7 +155,7 @@ impl ProductRepository {
                        certificationId, certificationDate, softwareVersion, hardwareVersion,
                        vid, pid, familySku, familyVariantSku, firmwareVersion, familyId,
                        tisTrpTested, specificationVersion, transportInterface,
-                       primaryDeviceTypeId, applicationCategories
+                       primaryDeviceTypeId, applicationCategories, created_at, updated_at
                 FROM product_details WHERE url = ?
                 ",
                 url
@@ -163,6 +186,11 @@ impl ProductRepository {
                 transport_interface: row.transportInterface,
                 primary_device_type_id: row.primaryDeviceTypeId,
                 application_categories: row.applicationCategories,
+                description: None, // Not in database yet
+                compliance_document_url: None, // Not in database yet
+                program_type: None, // Not in database yet
+                created_at: row.created_at.unwrap_or_else(|| chrono::Utc::now()),
+                updated_at: row.updated_at.unwrap_or_else(|| chrono::Utc::now()),
             });
 
             Ok(Some(ProductWithDetails { product, details }))

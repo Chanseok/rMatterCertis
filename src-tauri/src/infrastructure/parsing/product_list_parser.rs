@@ -172,6 +172,7 @@ impl ProductListParser {
         let now = chrono::Utc::now();
         
         Ok(Product {
+            id: None, // Will be generated when saved to database
             url,
             manufacturer: Some(brand.trim().to_string()).filter(|s| s != "Unknown" && !s.is_empty()),
             model: Some(model_name.trim().to_string()).filter(|s| !s.is_empty()),

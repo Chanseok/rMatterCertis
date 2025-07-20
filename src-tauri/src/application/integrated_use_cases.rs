@@ -239,7 +239,8 @@ impl IntegratedProductUseCases {
         page_id: Option<i32>,
         index_in_page: Option<i32>,
     ) -> Product {
-        Product {
+        let mut product = Product {
+            id: None, // Will be generated
             url,
             manufacturer,
             model,
@@ -248,7 +249,12 @@ impl IntegratedProductUseCases {
             index_in_page,
             created_at: Utc::now(),
             updated_at: Utc::now(),
-        }
+        };
+        
+        // Generate ID based on page_id and index_in_page
+        product.generate_id();
+        
+        product
     }
 
     /// Create product detail from detailed crawling data

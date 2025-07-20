@@ -293,6 +293,7 @@ impl MatterDataExtractor {
                url, manufacturer, model, certificate_id);
 
         Ok(Product {
+            id: None, // Will be generated when saved to database
             url: url.to_string(),
             manufacturer,
             model,
@@ -429,6 +430,7 @@ impl MatterDataExtractor {
                source_index, source_page_id, source_index, manufacturer, model, certificate_id, page_id, index_in_page);
 
         Ok(Product {
+            id: None, // Will be generated when saved to database
             url,
             manufacturer,
             model,
