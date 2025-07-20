@@ -15,7 +15,6 @@ use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use crate::crawling::tasks::{TaskId, CrawlingTask};
-use crate::domain::CrawlingStatus;
 
 // Export CrawlingStatus for public API
 pub use crate::domain::CrawlingStatus as PublicCrawlingStatus;

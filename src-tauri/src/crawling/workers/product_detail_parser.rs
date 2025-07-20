@@ -6,11 +6,10 @@ use std::sync::Arc;
 use std::time::Instant;
 use async_trait::async_trait;
 use scraper::{Html, Selector};
-use chrono::{DateTime, Utc, NaiveDateTime};
+use chrono::{DateTime, Utc};
 use regex::Regex;
 
 use crate::crawling::{tasks::*, state::*};
-use crate::domain::value_objects::ProductData;
 use super::{Worker, WorkerError};
 
 /// Worker that parses product detail HTML to extract structured data

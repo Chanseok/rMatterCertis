@@ -858,7 +858,7 @@ impl BatchActor {
         
         // 페이지 URL 생성
         let base_url = "https://www.mattercertis.com";
-        let target_url = format!("{}/search?page={}", base_url, page_id);
+        let _target_url = format!("{}/search?page={}", base_url, page_id);
         
         // StageType::ListCollection 실행
         let items = vec![crate::new_architecture::channel_types::StageItem::Page(page_id)];
@@ -909,7 +909,7 @@ impl BatchActor {
     async fn process_batch_legacy(
         &mut self,
         pages: Vec<u32>,
-        batch_size: u32,
+        _batch_size: u32,
         _concurrency_limit: u32,
     ) -> StageResult {
         info!(batch_id = %self.batch_id, pages_count = pages.len(), "Processing batch (legacy mode)");

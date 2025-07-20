@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::Semaphore;
 use tokio::time::{sleep, interval};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn, error, debug};
@@ -601,7 +601,7 @@ pub async fn generate_follow_up_tasks_static(
                 product_url: url.clone(),
             }).collect())
         }
-        TaskOutput::ProductDetailHtml { product_id, html_content, source_url } => {
+        TaskOutput::ProductDetailHtml { product_id: _, html_content, source_url } => {
             // Product detail was fetched, now parse it
             Some(vec![CrawlingTask::ParseProductDetail {
                 task_id: TaskId::new(),

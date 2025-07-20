@@ -142,7 +142,7 @@ impl SystemStateBroadcaster {
     pub async fn create_system_state_snapshot(&self) -> anyhow::Result<SystemStatePayload> {
         let state_cache = self.app_handle.state::<SharedStateCache>();
         let site_analysis = state_cache.site_analysis.read().await;
-        let db_analysis = state_cache.db_analysis.read().await;
+        let _db_analysis = state_cache.db_analysis.read().await;
         let runtime_state = state_cache.runtime_state.read().await;
         
         // 기존 데이터베이스 연결 풀을 애플리케이션 상태에서 가져오기

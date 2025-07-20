@@ -8,9 +8,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 
-use crate::crawling::tasks::{TaskResult, TaskOutput, CrawlingTask, TaskProductData};
+use crate::crawling::tasks::{TaskResult, TaskOutput, CrawlingTask};
 use crate::crawling::state::SharedState;
 use crate::crawling::workers::{Worker, WorkerError};
 

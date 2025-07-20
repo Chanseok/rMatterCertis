@@ -357,7 +357,7 @@ pub async fn get_active_sessions(state: State<'_, AppState>) -> Result<Vec<Strin
 
 /// Get database statistics
 #[tauri::command]
-pub async fn get_database_stats(state: State<'_, AppState>) -> Result<DatabaseStats, String> {
+pub async fn get_databasestats(state: State<'_, AppState>) -> Result<DatabaseStats, String> {
     info!("🔍 Getting real database statistics...");
     
     // Get database URL
@@ -467,7 +467,7 @@ pub async fn optimize_database(state: State<'_, AppState>) -> Result<(), String>
             tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
             
             // Get real stats
-            let stats = get_database_stats(state.clone()).await?;
+            let stats = get_databasestats(state.clone()).await?;
             return Ok(());
         }
     };
@@ -485,7 +485,7 @@ pub async fn optimize_database(state: State<'_, AppState>) -> Result<(), String>
     }
     
     // Get real stats after optimization
-    let stats = get_database_stats(state.clone()).await?;
+    let stats = get_databasestats(state.clone()).await?;
     
     info!("Database optimization completed");
     Ok(())
@@ -703,7 +703,7 @@ pub async fn check_site_status(
 
 /// 재시도 통계 조회 명령어 - INTEGRATED_PHASE2_PLAN Week 1 Day 3-4
 #[tauri::command]
-pub async fn get_retry_stats(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+pub async fn get_retrystats(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     info!("📊 Getting retry statistics");
     
     // Load app config for retry settings
@@ -1262,7 +1262,7 @@ pub async fn get_products(
 
 /// Get database statistics for LocalDB tab
 #[tauri::command]
-pub async fn get_local_db_stats(_state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+pub async fn get_local_dbstats(_state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     info!("Getting local database statistics");
     
     // Get database URL with fallback mechanisms
@@ -1466,7 +1466,7 @@ pub async fn get_analysis_data(_state: State<'_, AppState>) -> Result<serde_json
     };
     
     // Get daily stats (last 7 days) with error handling
-    let daily_stats = match sqlx::query(
+    let dailystats = match sqlx::query(
         r"
         SELECT 
             DATE(created_at) as date,
@@ -1503,7 +1503,7 @@ pub async fn get_analysis_data(_state: State<'_, AppState>) -> Result<serde_json
         "errorRate": error_rate,
         "avgResponseTime": 1.2, // Static for now
         "categoryCounts": category_counts,
-        "dailyStats": daily_stats
+        "dailyStats": dailystats
     }))
 }
 

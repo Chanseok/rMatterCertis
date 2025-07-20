@@ -5,9 +5,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 use async_trait::async_trait;
-use sqlx::{Pool, Sqlite, Postgres, Transaction, Row};
+use sqlx::{Pool, Sqlite, Transaction, Row};
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use crate::crawling::{tasks::*, state::*};
 use crate::domain::value_objects::ProductData;
@@ -307,7 +306,6 @@ impl Drop for DbSaver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::value_objects::ProductData;
 
     #[tokio::test]
     async fn batch_management() {

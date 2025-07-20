@@ -14,7 +14,6 @@ use tokio::time::timeout;
 
 use crate::crawling::{tasks::*, state::*};
 use super::{Worker, WorkerError};
-use crate::domain::ProductData;
 
 /// Worker that fetches HTML content from list pages
 pub struct ListPageFetcher {

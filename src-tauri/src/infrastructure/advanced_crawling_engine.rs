@@ -83,18 +83,18 @@ impl AdvancedBatchCrawlingEngine {
         let app_config = AppConfig::default();
 
         // 기존 서비스 인스턴스 생성
-        let status_checker = Arc::new(StatusCheckerImpl::new(
+        let status_checker: Arc<dyn StatusChecker> = Arc::new(StatusCheckerImpl::new(
             http_client.clone(),
             data_extractor.clone(),
             app_config.clone(),
-        )) as Arc<dyn StatusChecker>;
+        ));
 
         // DatabaseAnalyzer trait 구현을 위한 간단한 래퍼 사용 (trait 구현 추가됨)
-        let database_analyzer = Arc::new(StatusCheckerImpl::new(
+        let database_analyzer: Arc<dyn DatabaseAnalyzer> = Arc::new(StatusCheckerImpl::new(
             http_client.clone(),
             data_extractor.clone(),
             app_config.clone(),
-        )) as Arc<dyn DatabaseAnalyzer>;
+        ));
 
         // status_checker를 ProductListCollectorImpl에 전달하기 위해 concrete type으로 다시 생성
         let status_checker_impl = Arc::new(StatusCheckerImpl::new(
@@ -103,31 +103,31 @@ impl AdvancedBatchCrawlingEngine {
             app_config.clone(),
         ));
 
-        let product_list_collector = Arc::new(ProductListCollectorImpl::new(
+        let product_list_collector: Arc<dyn ProductListCollector> = Arc::new(ProductListCollectorImpl::new(
             Arc::new(tokio::sync::Mutex::new(http_client.clone())),
             Arc::new(data_extractor.clone()),
             collector_config.clone(),
             status_checker_impl.clone(),
-        )) as Arc<dyn ProductListCollector>;
+        ));
 
         // ProductDetailCollector trait 구현을 위한 간단한 래퍼 사용 (trait 구현 추가됨)
-        let product_detail_collector = Arc::new(ProductListCollectorImpl::new(
+        let product_detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(ProductListCollectorImpl::new(
             Arc::new(tokio::sync::Mutex::new(http_client.clone())),
             Arc::new(data_extractor.clone()),
             collector_config.clone(),
             status_checker_impl.clone(),
-        )) as Arc<dyn ProductDetailCollector>;
+        ));
 
         // 새로운 데이터 처리 서비스 인스턴스 생성
-        let deduplication_service = Arc::new(DeduplicationServiceImpl::new(0.85)) as Arc<dyn DeduplicationService>;
-        let validation_service = Arc::new(ValidationServiceImpl::new()) as Arc<dyn ValidationService>;
-        let conflict_resolver = Arc::new(ConflictResolverImpl::new(ResolutionStrategy::KeepMostComplete)) as Arc<dyn ConflictResolver>;
+        let deduplication_service: Arc<dyn DeduplicationService> = Arc::new(DeduplicationServiceImpl::new(0.85));
+        let validation_service: Arc<dyn ValidationService> = Arc::new(ValidationServiceImpl::new());
+        let conflict_resolver: Arc<dyn ConflictResolver> = Arc::new(ConflictResolverImpl::new(ResolutionStrategy::KeepMostComplete));
 
         // 고급 관리 서비스 인스턴스 생성
-        let progress_tracker = Arc::new(BatchProgressTrackerImpl::new()) as Arc<dyn BatchProgressTracker>;
-        let recovery_service = Arc::new(BatchRecoveryServiceImpl::new()) as Arc<dyn BatchRecoveryService>;
+        let progress_tracker: Arc<dyn BatchProgressTracker> = Arc::new(BatchProgressTrackerImpl::new());
+        let recovery_service: Arc<dyn BatchRecoveryService> = Arc::new(BatchRecoveryServiceImpl::new());
         let retry_manager = Arc::new(RetryManagerImpl::new(3, 1000)); // 구체적인 타입
-        let error_classifier = Arc::new(ErrorClassifierImpl::new()) as Arc<dyn ErrorClassifier>;
+        let error_classifier: Arc<dyn ErrorClassifier> = Arc::new(ErrorClassifierImpl::new());
 
         Self {
             status_checker,

@@ -3,7 +3,6 @@
 //! This module implements type-safe task queues using Rust's channel system.
 //! Each queue is designed for specific task types with appropriate backpressure handling.
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock, Semaphore};
@@ -146,7 +145,7 @@ impl TaskQueue {
     
     /// Closes the queue gracefully
     pub async fn close(&self) {
-        drop(&self.sender);
+        let _ = &self.sender;
     }
 }
 

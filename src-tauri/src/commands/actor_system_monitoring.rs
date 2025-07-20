@@ -1,18 +1,13 @@
 //! Actor System 모니터링을 위한 Tauri 명령어들
 //! Phase C: UI 개선 - OneShot Actor 시스템 상태 조회 API
 
-use crate::new_architecture::actor_system::*;
-use crate::new_architecture::services::crawling_integration::CrawlingIntegrationService;
 // use crate::commands::crawling_session_manager::{CrawlingSessionManager, CrawlingSessionStatus};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tauri::State;
 use tracing::{info, warn, error};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use ts_rs::TS;
 use uuid; // UUID 생성을 위해 추가
+use crate::new_architecture::actor_system::BatchPlan;
 
 // 전역 크롤링 상태 관리
 static CRAWLING_SESSION_STATE: std::sync::OnceLock<Mutex<CrawlingSessionState>> = std::sync::OnceLock::new();
@@ -412,7 +407,6 @@ async fn start_real_actor_session() -> Result<String, String> {
         system_config::SystemConfig,
         channel_types::{ActorCommand, AppEvent},
     };
-    use std::sync::Arc;
     use tokio::sync::mpsc;
     
     // 시스템 설정 로드

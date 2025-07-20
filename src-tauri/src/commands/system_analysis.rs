@@ -4,7 +4,7 @@
 //! 사이트 종합 분석 기능을 제공합니다.
 
 use tauri::{AppHandle, State};
-use tracing::{info, warn, error};
+use tracing::info;
 use serde_json;
 
 use crate::commands::crawling_v4::{CrawlingEngineState, CrawlingResponse};

@@ -9,7 +9,6 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -76,7 +75,7 @@ impl CrawlingEngineFactory {
     /// Clean Architecture 기반 엔진 생성
     pub async fn create_engine(
         config: CrawlingConfig,
-        dependencies: CrawlingEngineDependencies,
+        _dependencies: CrawlingEngineDependencies,
     ) -> Result<CrawlingEngine, CrawlingEngineError> {
         // 1. 공유 상태 초기화
         let shared_state = Arc::new(SharedState::new(config.clone()));

@@ -14,7 +14,7 @@ use tracing::info;
 use crate::{
     application::state::AppState,
     infrastructure::config::{AppConfig, ConfigManager, LoggingConfig, csa_iot, utils},
-    commands::modern_crawling::get_database_stats,
+    commands::modern_crawling::get_databasestats,
 };
 
 /// Frontend-friendly configuration structure
@@ -786,7 +786,7 @@ pub async fn get_crawling_status_check(
     info!("Frontend requesting crawling status check");
     
     // Get database stats
-    let db_stats = get_database_stats(state.clone()).await
+    let db_stats = get_databasestats(state.clone()).await
         .map_err(|e| format!("Failed to get database stats: {}", e))?;
     
     // Get current configuration

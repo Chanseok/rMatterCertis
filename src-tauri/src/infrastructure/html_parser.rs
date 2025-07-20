@@ -13,7 +13,6 @@ use tracing::debug;
 use std::sync::{Arc, RwLock};
 use crate::infrastructure::csa_iot;
 use crate::domain::product::{Product, ProductDetail};
-use chrono::{DateTime, Utc};
 
 /// Configuration for CSA-IoT website data extraction
 #[derive(Debug, Clone)]

@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use thiserror::Error;
 use serde::{Deserialize, Serialize};
 
-use crate::crawling::tasks::{TaskId, TaskResult, TaskOutput, CrawlingTask};
+use crate::crawling::tasks::{TaskResult, CrawlingTask};
 use crate::crawling::state::SharedState;
 
 // Re-export for public API (without duplicates)
