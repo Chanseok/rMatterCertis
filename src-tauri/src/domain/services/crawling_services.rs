@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use std::time::Duration;
 use std::any::Any;
 use tokio_util::sync::CancellationToken;
@@ -85,7 +86,8 @@ pub trait ProductDetailCollector: Send + Sync {
 }
 
 /// 크롤링 범위 권장 사항
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export)]
 pub enum CrawlingRangeRecommendation {
     /// 전체 크롤링 권장
     Full,
@@ -96,7 +98,8 @@ pub enum CrawlingRangeRecommendation {
 }
 
 /// 사이트 상태 정보
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct SiteStatus {
     pub is_accessible: bool,
     pub response_time_ms: u64,
@@ -111,7 +114,8 @@ pub struct SiteStatus {
 }
 
 /// 데이터베이스 분석 결과
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct DatabaseAnalysis {
     pub total_products: u32,
     pub unique_products: u32,
@@ -122,7 +126,8 @@ pub struct DatabaseAnalysis {
 }
 
 /// 필드별 분석 정보
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct FieldAnalysis {
     pub missing_company: u32,
     pub missing_model: u32,
@@ -132,7 +137,8 @@ pub struct FieldAnalysis {
 }
 
 /// 중복 데이터 분석
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct DuplicateAnalysis {
     pub total_duplicates: u32,
     pub duplicate_groups: Vec<DuplicateGroup>,
@@ -140,7 +146,8 @@ pub struct DuplicateAnalysis {
 }
 
 /// 중복 그룹 정보
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct DuplicateGroup {
     pub product_ids: Vec<i32>,
     pub duplicate_type: DuplicateType,
@@ -148,7 +155,8 @@ pub struct DuplicateGroup {
 }
 
 /// 중복 타입
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum DuplicateType {
     ExactMatch,
     SimilarModel,
@@ -157,7 +165,8 @@ pub enum DuplicateType {
 }
 
 /// 처리 전략
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct ProcessingStrategy {
     pub recommended_batch_size: u32,
     pub recommended_concurrency: u32,
@@ -167,7 +176,8 @@ pub struct ProcessingStrategy {
 }
 
 /// 사이트 데이터 변화 상태
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export)]
 pub enum SiteDataChangeStatus {
     /// 데이터 증가 - 새로운 제품이 추가됨
     Increased { new_count: u32, previous_count: u32 },
@@ -182,7 +192,8 @@ pub enum SiteDataChangeStatus {
 }
 
 /// 데이터 감소 시 권장 조치사항
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct DataDecreaseRecommendation {
     /// 권장 조치 유형
     pub action_type: RecommendedAction,
@@ -195,7 +206,8 @@ pub struct DataDecreaseRecommendation {
 }
 
 /// 권장 조치 유형
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum RecommendedAction {
     /// 잠시 대기 후 재시도
     WaitAndRetry,
@@ -208,7 +220,8 @@ pub enum RecommendedAction {
 }
 
 /// 심각도 수준
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum SeverityLevel {
     Low,     // 10% 미만 감소
     Medium,  // 10-30% 감소

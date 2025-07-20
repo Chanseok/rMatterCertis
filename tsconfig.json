@@ -15,6 +15,14 @@
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
 
+    /* Path mapping for auto-generated types */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@/types": ["src/types/generated"],
+      "@/types/*": ["src/types/generated/*"]
+    },
+
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,

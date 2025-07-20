@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use chrono::{DateTime, Utc};
 
 /// Product basic information from listing pages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct Product {
     pub url: String,
     pub manufacturer: Option<String>,
@@ -20,7 +22,8 @@ pub struct Product {
 }
 
 /// Detailed product specifications from detail pages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct ProductDetail {
     pub url: String,
     pub page_id: Option<i32>,

@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use std::fmt;
 
 /// URL과 함께 페이지 위치 정보를 담는 구조체
 /// ProductListCollector에서 ProductDetailCollector로 메타데이터를 전달하기 위해 사용
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct ProductUrl {
     /// 제품 상세 페이지 URL
     pub url: String,
