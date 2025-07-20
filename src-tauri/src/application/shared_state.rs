@@ -359,9 +359,8 @@ impl SharedStateCache {
             if !analysis.is_expired(ttl) && analysis.is_valid() {
                 tracing::info!("🎯 Using cached site analysis (age: {:?})", analysis.cached_at.elapsed());
                 return Some(analysis.clone());
-            } else {
-                tracing::warn!("⏰ Site analysis cache expired or invalid (age: {:?})", analysis.cached_at.elapsed());
             }
+            tracing::warn!("⏰ Site analysis cache expired or invalid (age: {:?})", analysis.cached_at.elapsed());
         }
         None
     }
@@ -383,10 +382,10 @@ impl SharedStateCache {
             if !analysis.is_expired(ttl) && analysis.is_valid() {
                 tracing::info!("🎯 Using cached db analysis (age: {:?})", analysis.cached_at.elapsed());
                 return Some(analysis.clone());
-            } else {
-                tracing::warn!("⏰ DB analysis cache expired or invalid (age: {:?})", analysis.cached_at.elapsed());
             }
+            tracing::warn!("⏰ DB analysis cache expired or invalid (age: {:?})", analysis.cached_at.elapsed());
         }
+
         None
     }
 

@@ -4,7 +4,7 @@
 //! the crawling engine to send real-time updates to the frontend.
 
 use crate::domain::events::{CrawlingEvent, CrawlingProgress, CrawlingTaskStatus, DatabaseStats};
-use crate::domain::atomic_events::{AtomicTaskEvent, AtomicEventStats}; // 추가
+use crate::domain::atomic_events::AtomicTaskEvent; // 추가
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, warn};

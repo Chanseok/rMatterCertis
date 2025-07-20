@@ -3,7 +3,7 @@
 //! Fetches individual product detail pages with optimized request handling.
 
 #![allow(missing_docs)]
-#![allow(clippy::unnecessary_qualification)]
+#![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 
 use std::sync::Arc;

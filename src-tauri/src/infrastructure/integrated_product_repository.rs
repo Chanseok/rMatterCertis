@@ -6,7 +6,7 @@
 
 #![allow(clippy::uninlined_format_args)]
 #![allow(missing_docs)]
-#![allow(clippy::unnecessary_qualification)]
+#![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 
 use crate::domain::product::{
@@ -45,11 +45,11 @@ impl IntegratedProductRepository {
         if let Some(existing_product) = existing {
             // Update existing product, preserve created_at
             sqlx::query(
-                r#"
+                r"
                 UPDATE products 
                 SET manufacturer = ?, model = ?, certificate_id = ?, page_id = ?, index_in_page = ?, updated_at = ?
                 WHERE url = ?
-                "#,
+                ",
             )
             .bind(&product.manufacturer)
             .bind(&product.model)
@@ -63,11 +63,11 @@ impl IntegratedProductRepository {
         } else {
             // Insert new product
             sqlx::query(
-                r#"
+                r"
                 INSERT INTO products 
                 (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                "#,
+                ",
             )
             .bind(&product.url)
             .bind(&product.manufacturer)
@@ -87,7 +87,7 @@ impl IntegratedProductRepository {
     /// Insert or update detailed product specifications
     pub async fn create_or_update_product_detail(&self, detail: &ProductDetail) -> Result<()> {
         sqlx::query(
-            r#"
+            r"
             INSERT OR REPLACE INTO product_details 
             (url, page_id, index_in_page, id, manufacturer, model, device_type,
              certificate_id, certification_date, software_version, hardware_version,
@@ -96,7 +96,7 @@ impl IntegratedProductRepository {
              primary_device_type_id, application_categories, description,
              compliance_document_url, program_type, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
+            ",
         )
         .bind(&detail.url)
         .bind(detail.page_id)
@@ -134,12 +134,12 @@ impl IntegratedProductRepository {
     pub async fn get_products_paginated(&self, page: i32, limit: i32) -> Result<Vec<Product>> {
         let offset = (page - 1) * limit;
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
             FROM products 
             ORDER BY page_id DESC, index_in_page ASC 
             LIMIT ? OFFSET ?
-            "#,
+            ",
         )
         .bind(limit)
         .bind(offset)
@@ -166,10 +166,10 @@ impl IntegratedProductRepository {
     /// Get product by URL
     pub async fn get_product_by_url(&self, url: &str) -> Result<Option<Product>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
             FROM products WHERE url = ?
-            "#,
+            ",
         )
         .bind(url)
         .fetch_optional(&*self.pool)
@@ -205,7 +205,7 @@ impl IntegratedProductRepository {
     /// Get product detail by URL
     pub async fn get_product_detail_by_url(&self, url: &str) -> Result<Option<ProductDetail>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
                    certificate_id, certification_date, software_version, hardware_version,
                    vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
@@ -213,7 +213,7 @@ impl IntegratedProductRepository {
                    primary_device_type_id, application_categories, description,
                    compliance_document_url, program_type, created_at, updated_at
             FROM product_details WHERE url = ?
-            "#,
+            ",
         )
         .bind(url)
         .fetch_optional(&*self.pool)
@@ -296,12 +296,12 @@ impl IntegratedProductRepository {
 
         // Get total count
         let count_query = format!(
-            r#"
+            r"
             SELECT COUNT(*) as total
             FROM products p
             LEFT JOIN product_details pd ON p.url = pd.url
             {}
-            "#,
+            ",
             where_clause
         );
 
@@ -313,7 +313,7 @@ impl IntegratedProductRepository {
 
         // Get paginated results
         let data_query = format!(
-            r#"
+            r"
             SELECT p.url, p.manufacturer, p.model, p.certificate_id, p.page_id, p.index_in_page, 
                    p.created_at as p_created_at, p.updated_at as p_updated_at,
                    pd.id, pd.device_type as pd_device_type, pd.certification_date as pd_certification_date, pd.software_version, pd.hardware_version,
@@ -327,7 +327,7 @@ impl IntegratedProductRepository {
             {}
             ORDER BY p.page_id DESC, p.index_in_page ASC
             LIMIT ? OFFSET ?
-            "#,
+            ",
             where_clause
         );
 
@@ -502,11 +502,11 @@ impl IntegratedProductRepository {
         let vendor_id = vendor.vendor_id.max(0); // 새 ID인 경우 자동 생성
         
         sqlx::query(
-            r#"
+            r"
             INSERT INTO vendors 
             (vendor_id, vendor_number, vendor_name, company_legal_name, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
-            "#,
+            ",
         )
         .bind(vendor_id)
         .bind(vendor.vendor_number)
@@ -537,12 +537,12 @@ impl IntegratedProductRepository {
     /// Save crawling result
     pub async fn save_crawling_result(&self, result: &CrawlingResult) -> Result<()> {
         sqlx::query(
-            r#"
+            r"
             INSERT OR REPLACE INTO crawling_results 
             (session_id, status, stage, total_pages, products_found, details_fetched, errors_count,
              started_at, completed_at, execution_time_seconds, config_snapshot, error_details, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
+            ",
         )
         .bind(&result.session_id)
         .bind(&result.status)
@@ -566,13 +566,13 @@ impl IntegratedProductRepository {
     pub async fn get_crawling_results(&self, page: i32, limit: i32) -> Result<Vec<CrawlingResult>> {
         let offset = (page - 1) * limit;
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT session_id, status, stage, total_pages, products_found, details_fetched, errors_count,
                    started_at, completed_at, execution_time_seconds, config_snapshot, error_details, created_at
             FROM crawling_results 
             ORDER BY started_at DESC 
             LIMIT ? OFFSET ?
-            "#,
+            ",
         )
         .bind(limit)
         .bind(offset)
@@ -657,14 +657,14 @@ impl IntegratedProductRepository {
     /// Get products without details (for crawling prioritization)
     pub async fn get_products_without_details(&self, limit: i32) -> Result<Vec<Product>> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT p.url, p.manufacturer, p.model, p.certificate_id, p.page_id, p.index_in_page, p.created_at, p.updated_at
             FROM products p
             LEFT JOIN product_details pd ON p.url = pd.url
             WHERE pd.url IS NULL
             ORDER BY p.page_id DESC, p.index_in_page ASC
             LIMIT ?
-            "#,
+            ",
         )
         .bind(limit)
         .fetch_all(&*self.pool)
@@ -690,12 +690,12 @@ impl IntegratedProductRepository {
     /// Get all products from the database
     pub async fn get_all_products(&self) -> Result<Vec<Product>> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT url, manufacturer, model, certificate_id, 
                    page_id, index_in_page, created_at, updated_at
             FROM products
             ORDER BY page_id DESC, index_in_page ASC
-            "#,
+            ",
         )
         .fetch_all(&*self.pool)
         .await?;
@@ -720,13 +720,13 @@ impl IntegratedProductRepository {
     /// Get the latest updated product
     pub async fn get_latest_updated_product(&self) -> Result<Option<Product>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT url, manufacturer, model, certificate_id, 
                    page_id, index_in_page, created_at, updated_at
             FROM products
             ORDER BY updated_at DESC
             LIMIT 1
-            "#,
+            ",
         )
         .fetch_optional(&*self.pool)
         .await?;
@@ -759,13 +759,13 @@ impl IntegratedProductRepository {
     /// we've crawled in the reverse chronological order.
     pub async fn get_max_page_id_and_index(&self) -> Result<(Option<i32>, Option<i32>)> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT page_id, index_in_page
             FROM products
             WHERE page_id IS NOT NULL AND index_in_page IS NOT NULL
             ORDER BY page_id DESC, index_in_page DESC
             LIMIT 1
-            "#,
+            ",
         )
         .fetch_optional(&*self.pool)
         .await?;
@@ -895,11 +895,11 @@ impl IntegratedProductRepository {
         };
         
         let count: i32 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*) 
             FROM products 
             WHERE page_id >= ? AND page_id <= ?
-            "#,
+            ",
         )
         .bind(start_page_id as i32)
         .bind(end_page_id as i32)

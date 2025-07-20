@@ -6,13 +6,13 @@
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::Mutex;
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
 
 use crate::new_architecture::{
     integrated_context::{IntegratedContext, ContextError},
-    channel_types::{ActorCommand, AppEvent, StageType, StageItem},
+    channel_types::{AppEvent, StageType},
     actor_system::{StageResult, StageSuccessResult, StageError},
     system_config::SystemConfig,
 };

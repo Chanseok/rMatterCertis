@@ -4,7 +4,7 @@
 //! Value objects are defined by their attributes rather than identity.
 
 #![allow(missing_docs)]
-#![allow(clippy::unnecessary_qualification)]
+#![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 
 use serde::{Deserialize, Serialize};

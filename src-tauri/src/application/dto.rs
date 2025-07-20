@@ -3,7 +3,7 @@
 //! Contains DTOs for data exchange between Use Cases and Tauri Commands.
 
 #![allow(missing_docs)]
-#![allow(clippy::unnecessary_qualification)]
+#![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 
 use serde::{Deserialize, Serialize};

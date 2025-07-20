@@ -10,7 +10,7 @@
 
 #![allow(clippy::uninlined_format_args)]
 #![allow(missing_docs)]
-#![allow(clippy::unnecessary_qualification)]
+#![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 
 use crate::infrastructure::{DatabaseConnection, init_logging_with_config};

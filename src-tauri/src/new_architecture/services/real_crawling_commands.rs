@@ -191,7 +191,6 @@ async fn test_small_scale_crawling() -> Result<String> {
 }
 
 async fn test_oneshot_with_real_crawling() -> Result<String> {
-    use crate::new_architecture::services::real_crawling_integration::*;
     use crate::new_architecture::actor_system::StageActor;
     
     let batch_id = "test-real-integration".to_string();

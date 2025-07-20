@@ -9,7 +9,7 @@
 
 #![allow(clippy::uninlined_format_args)]
 #![allow(missing_docs)]
-#![allow(clippy::unnecessary_qualification)]
+#![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 #![allow(clippy::derivable_impls)]
 #![allow(clippy::useless_format)]

@@ -10,7 +10,7 @@ use std::time::Duration;
 use std::any::Any;
 use tokio_util::sync::CancellationToken;
 
-use crate::domain::product::{Product, ProductDetail};
+use crate::domain::product::ProductDetail;
 use crate::domain::product_url::ProductUrl;
 
 /// 사이트 상태 체크 서비스

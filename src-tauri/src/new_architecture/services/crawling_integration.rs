@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot};
+
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn, error, debug};
 use anyhow::Result;
@@ -22,7 +22,7 @@ use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
 use crate::new_architecture::actor_system::{
     StageResult, StageSuccessResult, StageError, CollectionMetrics, ProcessingMetrics,
-    FailedItem, ProductInfo
+    FailedItem
 };
 use crate::new_architecture::channel_types::{StageType, StageItem};
 use crate::new_architecture::system_config::SystemConfig;

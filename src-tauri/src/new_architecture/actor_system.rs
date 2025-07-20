@@ -14,9 +14,9 @@ use uuid::Uuid;
 // 개별 모듈에서 직접 import
 use crate::new_architecture::system_config::{SystemConfig, ConfigError, RetryPolicy};
 use crate::new_architecture::channel_types::{ActorCommand, AppEvent, BatchConfig, StageType, StageItem};
+use crate::infrastructure::config::AppConfig;
 
 // 임시 타입 정의 (컴파일 에러 해결용)
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub enum StageResult {
@@ -407,7 +407,6 @@ impl SessionActor {
                 }
                 Err(_) => {
                     // 타임아웃 - 다음 루프 계속
-                    continue;
                 }
             }
         }
@@ -788,7 +787,7 @@ impl BatchActor {
                     }),
                     processing_metrics: None,
                 },
-                failed_items: failed_items,
+                failed_items,
                 stage_id: self.batch_id.clone(),
             }
         }
@@ -836,7 +835,6 @@ impl BatchActor {
     async fn execute_real_crawling_stage(&self, page_id: u32) -> Result<Vec<String>, StageError> {
         use crate::new_architecture::services::crawling_integration::{RealCrawlingStageExecutor, CrawlingIntegrationService};
         use crate::new_architecture::system_config::SystemConfig;
-        use crate::infrastructure::config::AppConfig;
         
         // 기본 설정 생성
         let system_config = Arc::new(SystemConfig::default());
@@ -1580,7 +1578,6 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot};
-    use crate::infrastructure::config::AppConfig;
 
     #[tokio::test]
     async fn test_basic_oneshot_channel() {

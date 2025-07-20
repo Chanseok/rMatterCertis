@@ -26,7 +26,6 @@ pub mod site {
 
 /// 크롤링 관련 기본 제한값들
 pub mod crawling {
-    use std::time::Duration;
     
     /// 기본 요청 간 딜레이 (밀리초)
     pub const DEFAULT_REQUEST_DELAY_MS: u64 = 1000;
@@ -48,7 +47,6 @@ pub mod crawling {
     
     /// TTL 관련 기본값들
     pub mod ttl {
-        use std::time::Duration;
         
         /// 사이트 분석 결과 TTL (분)
         pub const SITE_ANALYSIS_TTL_MINUTES: u64 = 5;

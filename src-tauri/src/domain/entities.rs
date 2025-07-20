@@ -9,12 +9,11 @@
 //! - Highly testable and maintainable
 
 #![allow(missing_docs)]
-#![allow(clippy::unnecessary_qualification)]
+#![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Unique identifier for domain entities
