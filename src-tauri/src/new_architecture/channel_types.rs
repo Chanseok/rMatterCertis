@@ -42,7 +42,7 @@ pub enum ActorCommand {
 }
 
 /// 스테이지 타입 정의
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum StageType {
     Collection,
     Processing,

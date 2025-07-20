@@ -28,6 +28,9 @@ pub mod new_architecture {
     pub mod channel_types;
     pub mod system_config;
     pub mod retry_calculator;
+    pub mod integrated_context;  // Phase 3: 통합 채널 컨텍스트 추가
+    pub mod task_actor;          // Phase 3: TaskActor 계층 추가
+    pub mod resilience_result;   // Phase 3: 회복탄력성 시스템 추가
     
     // Services module with direct declarations
     pub mod services {

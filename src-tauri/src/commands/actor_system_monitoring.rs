@@ -12,6 +12,7 @@ use tauri::State;
 use tracing::{info, warn, error};
 use std::sync::Mutex;
 use ts_rs::TS;
+use uuid; // UUID 생성을 위해 추가
 
 // 전역 크롤링 상태 관리
 static CRAWLING_SESSION_STATE: std::sync::OnceLock<Mutex<CrawlingSessionState>> = std::sync::OnceLock::new();
@@ -381,48 +382,140 @@ pub async fn get_actor_crawling_config() -> Result<CrawlingConfig, String> {
 pub async fn start_crawling_session() -> Result<String, String> {
     info!("🚀 Starting actor-based crawling session");
     
-    // 상태 업데이트
-    let session_id = format!("session_{}", chrono::Utc::now().timestamp());
-    
-    if let Ok(mut state) = get_session_state().lock() {
-        state.session_id = Some(session_id.clone());
-        state.status = "running".to_string();
-        state.start_time = Some(chrono::Utc::now());
-        state.processed_items = 0;
-        state.total_items = 100; // Mock data
-    }
-    
-    // 백그라운드에서 진행률 시뮬레이션
-    tokio::spawn(async {
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    // 실제 Actor 시스템 시작 (Mock 대신)
+    match start_real_actor_session().await {
+        Ok(session_id) => {
+            info!("✅ Real actor session started: {}", session_id);
             
-            let should_continue = if let Ok(mut state) = get_session_state().lock() {
-                if state.status == "running" && state.processed_items < state.total_items {
-                    state.processed_items += 1;
-                    
-                    // 완료 체크
-                    if state.processed_items >= state.total_items {
-                        state.status = "completed".to_string();
-                        info!("✅ Crawling session completed");
-                        false
-                    } else {
-                        true
-                    }
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-            
-            if !should_continue {
-                break;
+            // 상태 업데이트 (기존 Mock 데이터도 유지)
+            if let Ok(mut state) = get_session_state().lock() {
+                state.session_id = Some(session_id.clone());
+                state.status = "running".to_string();
+                state.start_time = Some(chrono::Utc::now());
+                state.processed_items = 0;
+                state.total_items = 100; // 실제 Actor에서 업데이트될 예정
             }
+            
+            Ok(session_id)
+        }
+        Err(e) => {
+            error!("❌ Failed to start real actor session: {}", e);
+            Err(format!("Failed to start actor session: {}", e))
+        }
+    }
+}
+
+/// 실제 Actor 시스템 세션 시작
+async fn start_real_actor_session() -> Result<String, String> {
+    use crate::new_architecture::{
+        actor_system::{SessionActor, BatchPlan},
+        system_config::SystemConfig,
+        channel_types::{ActorCommand, AppEvent},
+    };
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+    
+    // 시스템 설정 로드
+    let config = Arc::new(SystemConfig::default());
+    
+    // 채널 생성
+    let (command_tx, command_rx) = mpsc::channel(100);
+    let (event_tx, mut event_rx) = mpsc::channel(100);
+    
+    // SessionActor 생성
+    let mut session_actor = SessionActor::new(config.clone(), command_rx, event_tx.clone());
+    let session_id = uuid::Uuid::new_v4().to_string();
+    
+    // 배치 플랜 생성 (테스트용)
+    let batch_plan = BatchPlan {
+        batch_id: uuid::Uuid::new_v4().to_string(),
+        pages: vec![1, 2, 3],
+        config: crate::new_architecture::channel_types::BatchConfig {
+            target_url: "https://example.com".to_string(),
+            max_pages: Some(3),
+        },
+        batch_size: 10,
+        concurrency_limit: 2,
+    };
+    
+    // 백그라운드에서 SessionActor 실행
+    let session_id_clone = session_id.clone();
+    let command_tx_clone = command_tx.clone();
+    tokio::spawn(async move {
+        // Actor 실행 시작
+        info!("🎬 SessionActor starting execution");
+        
+        // ProcessBatch 명령 전송
+        let process_command = ActorCommand::ProcessBatch {
+            pages: batch_plan.pages.clone(),
+            config: batch_plan.config.clone(),
+            batch_size: batch_plan.batch_size,
+            concurrency_limit: batch_plan.concurrency_limit,
+        };
+        
+        if let Err(e) = command_tx_clone.send(process_command).await {
+            error!("❌ Failed to send process batch command: {}", e);
+            return;
+        }
+        
+        // SessionActor 실행
+        if let Err(e) = session_actor.run().await {
+            error!("❌ SessionActor execution failed: {:?}", e);
+        } else {
+            info!("✅ SessionActor execution completed");
         }
     });
     
-    info!("✅ Crawling session started: {}", session_id);
+    // 이벤트 수신 백그라운드 태스크
+    let session_id_clone = session_id.clone();
+    tokio::spawn(async move {
+        info!("📡 Event receiver started for session: {}", session_id_clone);
+        
+        while let Some(event) = event_rx.recv().await {
+            match &event {
+                AppEvent::SessionStarted { session_id, .. } => {
+                    info!("🎯 Session started event: {}", session_id);
+                }
+                AppEvent::BatchStarted { batch_id } => {
+                    info!("📦 Batch started: {}", batch_id);
+                    
+                    // 진행률 업데이트
+                    if let Ok(mut state) = get_session_state().lock() {
+                        state.processed_items += 1;
+                    }
+                }
+                AppEvent::BatchCompleted { batch_id, success_count } => {
+                    info!("✅ Batch completed: {} (success: {})", batch_id, success_count);
+                    
+                    // 진행률 업데이트
+                    if let Ok(mut state) = get_session_state().lock() {
+                        state.processed_items += success_count;
+                        if state.processed_items >= state.total_items {
+                            state.status = "completed".to_string();
+                            info!("🎉 Crawling session completed");
+                        }
+                    }
+                }
+                AppEvent::BatchFailed { batch_id, error, .. } => {
+                    error!("❌ Batch failed: {} - {}", batch_id, error);
+                }
+                AppEvent::StageCompleted { stage, result } => {
+                    info!("🏁 Stage completed: {:?} - {:?}", stage, result);
+                }
+                AppEvent::SessionTimeout { session_id, elapsed } => {
+                    warn!("⏰ Session timeout: {} (elapsed: {:?})", session_id, elapsed);
+                    
+                    if let Ok(mut state) = get_session_state().lock() {
+                        state.status = "timeout".to_string();
+                    }
+                }
+            }
+        }
+        
+        info!("📡 Event receiver finished for session: {}", session_id_clone);
+    });
+    
+    info!("🚀 Actor system session initialized: {}", session_id);
     Ok(session_id)
 }
 

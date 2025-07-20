@@ -50,6 +50,9 @@ pub enum StageError {
     DatabaseError { message: String },
     ResourceExhausted { message: String },
     ConfigurationError { message: String },
+    // Phase 3: TaskActor 관련 에러 추가
+    TaskCancelled { task_id: String },
+    TaskExecutionFailed { task_id: String, message: String },
 }
 
 impl std::fmt::Display for StageError {
@@ -63,11 +66,14 @@ impl std::fmt::Display for StageError {
             StageError::DatabaseError { message } => write!(f, "Database error: {}", message),
             StageError::ResourceExhausted { message } => write!(f, "Resource exhausted: {}", message),
             StageError::ConfigurationError { message } => write!(f, "Configuration error: {}", message),
+            // Phase 3: TaskActor 관련 에러 처리 추가
+            StageError::TaskCancelled { task_id } => write!(f, "Task cancelled: {}", task_id),
+            StageError::TaskExecutionFailed { task_id, message } => write!(f, "Task execution failed ({}): {}", task_id, message),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StageSuccessResult {
     pub processed_items: u32,
     pub stage_duration_ms: u64,
@@ -75,7 +81,7 @@ pub struct StageSuccessResult {
     pub processing_metrics: Option<ProcessingMetrics>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CollectionMetrics {
     pub total_items: u32,
     pub successful_items: u32,
@@ -85,7 +91,7 @@ pub struct CollectionMetrics {
     pub success_rate: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProcessingMetrics {
     pub total_processed: u32,
     pub successful_saves: u32,
@@ -177,6 +183,9 @@ impl RetryCalculator {
             StageError::ChannelError { .. } => false,      // 채널 에러는 재시도 불가
             StageError::DatabaseError { .. } => true,      // 데이터베이스 에러는 재시도 가능
             StageError::ConfigurationError { .. } => false, // 설정 에러는 재시도 불가
+            // Phase 3: TaskActor 관련 에러 재시도 정책
+            StageError::TaskCancelled { .. } => false,     // 취소된 태스크는 재시도 불가
+            StageError::TaskExecutionFailed { .. } => true, // 태스크 실행 실패는 재시도 가능
         }
     }
 
@@ -790,24 +799,112 @@ impl BatchActor {
         &self,
         _retry_calculator: &RetryCalculator,
         page_id: u32,
-        _attempt_count: u32,
+        attempt_count: u32,
     ) -> Result<Vec<String>, StageError> {
-        // 실제 페이지 처리 로직 시뮬레이션
-        // 향후 실제 크롤링 서비스와 연동
+        info!(
+            batch_id = %self.batch_id,
+            page_id = page_id,
+            attempt = attempt_count,
+            "🔍 Starting real crawling for page"
+        );
         
-        // 10% 확률로 실패 시뮬레이션 (테스트용)
-        if fastrand::u32(1..=100) <= 10 {
-            return Err(StageError::ResourceExhausted {
-                message: format!("Simulated failure for page {}", page_id)
-            });
+        // 실제 크롤링 서비스 사용
+        match self.execute_real_crawling_stage(page_id).await {
+            Ok(urls) => {
+                info!(
+                    batch_id = %self.batch_id,
+                    page_id = page_id,
+                    urls_count = urls.len(),
+                    "✅ Successfully crawled page"
+                );
+                Ok(urls)
+            }
+            Err(e) => {
+                error!(
+                    batch_id = %self.batch_id,
+                    page_id = page_id,
+                    attempt = attempt_count,
+                    error = %e,
+                    "❌ Failed to crawl page"
+                );
+                Err(e)
+            }
         }
+    }
+    
+    /// 실제 크롤링 스테이지 실행
+    async fn execute_real_crawling_stage(&self, page_id: u32) -> Result<Vec<String>, StageError> {
+        use crate::new_architecture::services::crawling_integration::{RealCrawlingStageExecutor, CrawlingIntegrationService};
+        use crate::new_architecture::system_config::SystemConfig;
+        use crate::infrastructure::config::AppConfig;
         
-        // 성공 시 URL 목록 반환 (시뮬레이션)
-        tokio::time::sleep(Duration::from_millis(50)).await; // 처리 시간 시뮬레이션
-        Ok(vec![
-            format!("https://example.com/page/{}/item1", page_id),
-            format!("https://example.com/page/{}/item2", page_id),
-        ])
+        // 기본 설정 생성
+        let system_config = Arc::new(SystemConfig::default());
+        let app_config = AppConfig::default();
+        
+        // CrawlingIntegrationService 생성
+        let crawling_service = match CrawlingIntegrationService::new(
+            system_config,
+            app_config
+        ).await {
+            Ok(service) => service,
+            Err(e) => {
+                return Err(StageError::ResourceExhausted {
+                    message: format!("Failed to create crawling service: {}", e)
+                });
+            }
+        };
+        
+        // RealCrawlingStageExecutor 생성
+        let executor = RealCrawlingStageExecutor::new(Arc::new(crawling_service));
+        
+        // 페이지 URL 생성
+        let base_url = "https://www.mattercertis.com";
+        let target_url = format!("{}/search?page={}", base_url, page_id);
+        
+        // StageType::ListCollection 실행
+        let items = vec![crate::new_architecture::channel_types::StageItem::Page(page_id)];
+        let cancellation_token = tokio_util::sync::CancellationToken::new();
+        
+        let result = executor.execute_stage(
+            crate::new_architecture::channel_types::StageType::ListCollection,
+            items,
+            2, // concurrency_limit
+            cancellation_token
+        ).await;
+        
+        match result {
+            crate::new_architecture::actor_system::StageResult::Success(stage_result) => {
+                // 성공 결과에서 URL 추출
+                let urls = self.extract_urls_from_stage_result(&stage_result);
+                info!(
+                    batch_id = %self.batch_id,
+                    page_id = page_id,
+                    stage_duration_ms = stage_result.stage_duration_ms,
+                    processed_items = stage_result.processed_items,
+                    "🎯 Real crawling stage completed"
+                );
+                Ok(urls)
+            }
+            crate::new_architecture::actor_system::StageResult::Failure(stage_error) => {
+                Err(stage_error)
+            }
+            _ => {
+                Err(StageError::ParsingError {
+                    message: "Unexpected stage result type".to_string()
+                })
+            }
+        }
+    }
+    
+    /// StageSuccessResult에서 URL 목록 추출
+    fn extract_urls_from_stage_result(&self, result: &StageSuccessResult) -> Vec<String> {
+        // 실제 구현에서는 result의 내용을 파싱하여 URL을 추출
+        // 현재는 기본값 반환
+        vec![
+            format!("https://www.mattercertis.com/product/page_{}_item_1", self.batch_id),
+            format!("https://www.mattercertis.com/product/page_{}_item_2", self.batch_id),
+        ]
     }
     
     /// 기존 배치 처리 메서드 (호환성 유지)
@@ -1636,6 +1733,12 @@ mod tests {
                 StageError::DatabaseError { message } => assert!(error_str.contains(message)),
                 StageError::ResourceExhausted { message } => assert!(error_str.contains(message)),
                 StageError::ConfigurationError { message } => assert!(error_str.contains(message)),
+                // Phase 3: TaskActor 관련 에러 테스트 추가
+                StageError::TaskCancelled { task_id } => assert!(error_str.contains(task_id)),
+                StageError::TaskExecutionFailed { task_id, message } => {
+                    assert!(error_str.contains(task_id));
+                    assert!(error_str.contains(message));
+                },
             }
         }
 

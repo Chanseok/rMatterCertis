@@ -29,6 +29,10 @@ pub struct SystemConfig {
     pub monitoring: MonitoringSettings,
     pub channels: ChannelSettings,
     pub actor: ActorSettings,
+    
+    // Phase 3 추가: 통합 컨텍스트 관련 설정
+    pub control_buffer_size: Option<usize>,
+    pub event_buffer_size: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -284,6 +288,10 @@ impl SystemConfig {
                 max_concurrent_sessions: 10,
                 max_concurrent_batches: 3,
             },
+            
+            // Phase 3: 통합 컨텍스트 기본값
+            control_buffer_size: Some(100),
+            event_buffer_size: Some(1000),
         }
     }
 
