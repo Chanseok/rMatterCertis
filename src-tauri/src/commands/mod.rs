@@ -1,0 +1,12 @@
+//! Tauri 명령어 모듈
+//! 프론트엔드와 백엔드 간의 API 인터페이스
+
+pub mod advanced_engine_api;
+
+// 모든 명령어를 한곳에서 export
+pub use advanced_engine_api::{
+    check_advanced_site_status,
+    start_advanced_crawling,
+    get_recent_products,
+    get_database_stats,
+};

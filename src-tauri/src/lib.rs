@@ -21,6 +21,12 @@ use std::sync::{Arc, RwLock};
 
 // Modern Rust 2024 module declarations - no mod.rs files needed
 
+// 🎯 TypeScript 연동 타입 (ts-rs 기반)
+pub mod types {
+    //! TypeScript 연동을 위한 타입 정의
+    pub mod frontend_api;
+}
+
 // 🚀 새로운 아키텍처 모듈 (Phase 1 구현 완료) - Modern Rust 2024
 pub mod new_architecture {
     //! Modern architecture patterns and implementations
@@ -110,15 +116,17 @@ pub mod events;
 
 // Modern Rust 2024 - Commands module with direct declarations
 pub mod commands {
-    //! Command handlers for Tauri frontend-backend communication
-    pub mod config_commands;
+    //! Command handlers for Tauri frontend integration
     pub mod crawling_v4;
-    pub mod modern_crawling;
-    pub mod parsing_commands;
-    pub mod simple_actor_test;
-    pub mod smart_crawling;
     pub mod system_analysis;
-    pub mod actor_system_monitoring; // Phase C: UI 개선 - Actor 시스템 모니터링 명령어
+    pub mod smart_crawling;
+    pub mod simple_actor_test;
+    pub mod actor_system_monitoring;
+    pub mod advanced_engine_api;  // 새로운 Advanced Engine API 추가
+    
+    // Re-export commonly used commands
+    pub use crawling_v4::*;
+    pub use advanced_engine_api::*;  // Advanced Engine 명령어 export
 }
 
 // Modern Rust 2024 - 명시적 모듈 선언
@@ -272,6 +280,12 @@ pub fn run() {
             commands::crawling_v4::emergency_stop,
             commands::crawling_v4::ping_backend,
             commands::crawling_v4::get_app_settings,
+            
+            // Advanced Crawling Engine commands (Phase 4B)
+            commands::advanced_engine_api::check_advanced_site_status,
+            commands::advanced_engine_api::start_advanced_crawling,
+            commands::advanced_engine_api::get_recent_products,
+            commands::advanced_engine_api::get_database_stats,
             
             // System Analysis commands (proposal6.md Phase 3)
             commands::system_analysis::analyze_system_status,

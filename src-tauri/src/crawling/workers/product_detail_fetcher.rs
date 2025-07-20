@@ -266,32 +266,28 @@ mod tests {
     }
 
     #[test]
-    fn product_id_extraction() {
-        let fetcher = ProductDetailFetcher::new(
-            10,
-            Duration::from_secs(30),
-            3,
-            Duration::from_millis(1000),
-        ).unwrap();
-
-        // Test ID extraction from different URL patterns
+    fn extract_product_id_tests() {
+        let fetcher = ProductDetailFetcher::new("https://csa-iot.org".to_string());
+        
+        // Test Matter Certis product URLs
         assert_eq!(
-            fetcher.extract_product_id("https://rra.go.kr/ko/license/A_01_01_view.do?id=123456"),
-            Some("123456".to_string())
+            fetcher.extract_product_id("https://csa-iot.org/csa_product/wifi-plug-27/"),
+            Some("wifi-plug-27".to_string())
         );
-
+        
         assert_eq!(
-            fetcher.extract_product_id("https://rra.go.kr/product?prdctNo=789&other=value"),
-            Some("789".to_string())
+            fetcher.extract_product_id("https://csa-iot.org/csa_product/matter-switch-789/"),
+            Some("matter-switch-789".to_string())
         );
-
+        
         assert_eq!(
-            fetcher.extract_product_id("https://rra.go.kr/product?id=456&page=1"),
-            Some("456".to_string())
+            fetcher.extract_product_id("https://csa-iot.org/csa_product/thread-device-456/"),
+            Some("thread-device-456".to_string())
         );
-
+        
+        // Test invalid URLs
         assert_eq!(
-            fetcher.extract_product_id("https://rra.go.kr/no-id-here"),
+            fetcher.extract_product_id("https://csa-iot.org/no-product-here"),
             None
         );
     }

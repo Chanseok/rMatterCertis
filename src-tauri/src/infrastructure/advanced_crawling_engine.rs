@@ -19,11 +19,12 @@ use crate::domain::product_url::ProductUrl;
 use crate::application::EventEmitter;
 use crate::infrastructure::{
     HttpClient, MatterDataExtractor, IntegratedProductRepository,
-    StatusCheckerImpl, ProductListCollectorImpl, 
+    StatusCheckerImpl, ProductListCollectorImpl,
     CollectorConfig,
     DeduplicationServiceImpl, ValidationServiceImpl, ConflictResolverImpl,
     config::AppConfig
 };
+use crate::infrastructure::crawling_service_impls::ProductDetailCollectorImpl;
 use crate::infrastructure::data_processing_service_impls::{
     BatchProgressTrackerImpl, BatchRecoveryServiceImpl, RetryManagerImpl, ErrorClassifierImpl
 };
@@ -110,12 +111,11 @@ impl AdvancedBatchCrawlingEngine {
             status_checker_impl.clone(),
         ));
 
-        // ProductDetailCollector trait 구현을 위한 간단한 래퍼 사용 (trait 구현 추가됨)
-        let product_detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(ProductListCollectorImpl::new(
+        // ProductDetailCollector 전용 구현체 사용
+        let product_detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(ProductDetailCollectorImpl::new(
             Arc::new(tokio::sync::Mutex::new(http_client.clone())),
             Arc::new(data_extractor.clone()),
             collector_config.clone(),
-            status_checker_impl.clone(),
         ));
 
         // 새로운 데이터 처리 서비스 인스턴스 생성

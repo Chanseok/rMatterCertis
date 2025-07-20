@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn parser_creation() {
         let parser = ListPageParser::new(
-            "https://rra.go.kr".to_string(),
+            "https://csa-iot.org".to_string(),
             50
         );
         assert_eq!(parser.worker_name(), "ListPageParser");
@@ -256,37 +256,37 @@ mod tests {
     #[test]
     fn url_normalization() {
         let parser = ListPageParser::new(
-            "https://rra.go.kr".to_string(),
+            "https://csa-iot.org".to_string(),
             50
         );
 
-        // Relative URL
-        let result = parser.normalize_url("/ko/license/A_01_01_view.do?id=123");
+        // Relative URL - Matter Certis product path
+        let result = parser.normalize_url("/csa_product/test-device-123");
         assert!(result.is_ok());
-        assert!(result.unwrap().starts_with("https://rra.go.kr"));
+        assert!(result.unwrap().starts_with("https://csa-iot.org"));
 
         // Absolute URL
-        let result = parser.normalize_url("https://example.com/test");
+        let result = parser.normalize_url("https://csa-iot.org/csa_product/wifi-plug-27");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "https://example.com/test");
+        assert_eq!(result.unwrap(), "https://csa-iot.org/csa_product/wifi-plug-27");
     }
 
     #[test]
     fn url_validation() {
         let parser = ListPageParser::new(
-            "https://rra.go.kr".to_string(),
+            "https://csa-iot.org".to_string(),
             50
         );
 
-        assert!(parser.is_valid_product_url("https://rra.go.kr/ko/license/A_01_01_view.do?id=123"));
-        assert!(parser.is_valid_product_url("/detail/product/456"));
+        assert!(parser.is_valid_product_url("https://csa-iot.org/csa_product/wifi-plug-27"));
+        assert!(parser.is_valid_product_url("/csa_product/matter-device-456"));
         assert!(!parser.is_valid_product_url("https://example.com/other"));
     }
 
     #[test]
     fn number_extraction() {
         let parser = ListPageParser::new(
-            "https://rra.go.kr".to_string(),
+            "https://csa-iot.org".to_string(),
             50
         );
 
@@ -298,19 +298,25 @@ mod tests {
     #[tokio::test]
     async fn task_processing() {
         let parser = ListPageParser::new(
-            "https://rra.go.kr".to_string(),
+            "https://csa-iot.org".to_string(),
             50
         );
 
         let config = CrawlingConfig::default();
         let shared_state = Arc::new(SharedState::new(config));
 
-        // Test with minimal HTML
+        // Test with Matter Certis HTML structure
         let html = r#"
             <html>
                 <body>
-                    <a href="/ko/license/A_01_01_view.do?id=123">Product 1</a>
-                    <a href="/ko/license/A_01_01_view.do?id=456">Product 2</a>
+                    <div class="post-feed">
+                        <article class="type-product">
+                            <a href="/csa_product/wifi-plug-27/">Matter WiFi Plug 27</a>
+                        </article>
+                        <article class="type-product">
+                            <a href="/csa_product/matter-switch-456/">Matter Light Switch 456</a>
+                        </article>
+                    </div>
                 </body>
             </html>
         "#;
@@ -319,7 +325,7 @@ mod tests {
             task_id: TaskId::new(),
             page_number: 1,
             html_content: html.to_string(),
-            source_url: "https://rra.go.kr/page1".to_string(),
+            source_url: "https://csa-iot.org/csa-iot_products/?page=1".to_string(),
         };
 
         let result = parser.process_task(task, shared_state).await;
@@ -327,7 +333,7 @@ mod tests {
 
         if let Ok(TaskResult::Success { output: TaskOutput::ProductUrls(urls), .. }) = result {
             assert_eq!(urls.len(), 2);
-            assert!(urls[0].contains("A_01_01_view.do"));
+            assert!(urls[0].contains("csa_product"));
         }
     }
 }

@@ -120,7 +120,7 @@ impl ListPageFetcher {
     }
 
     fn build_list_page_url(&self, page: u32) -> String {
-        format!("https://rra.go.kr/ko/license/A_01_01_list.do?page={}", page)
+        format!("https://csa-iot.org/csa-iot_products/?page={}", page)
     }
 }
 
@@ -197,7 +197,7 @@ mod tests {
         
         let url = fetcher.build_list_page_url(1);
         assert!(url.contains("page=1"));
-        assert!(url.contains("rra.go.kr"));
+        assert!(url.contains("csa-iot.org"));
     }
 
     #[tokio::test]
