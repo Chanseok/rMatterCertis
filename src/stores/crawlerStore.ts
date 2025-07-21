@@ -10,6 +10,12 @@ import { createSignal, onCleanup } from 'solid-js';
 import { tauriApi } from '../services/tauri-api';
 import { apiAdapter, safeApiCall } from '../platform/tauri';
 import type {
+  Product,
+  ProductDetail,
+  SiteStatus,
+  DatabaseAnalysis
+} from '@/types';
+import type {
   CrawlingProgress,
   CrawlingTaskStatus,
   CrawlingResult,

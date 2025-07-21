@@ -710,9 +710,12 @@ async fn calculate_intelligent_crawling_range_v4(
     }
 }
 
-/// Get the correct database URL for v4 commands
+/// 중앙집중식 데이터베이스 URL 가져오기 (Modern Rust 2024)
+/// 
+/// 기존의 여러 곳에서 다른 방식으로 경로를 생성하던 문제를 해결
+/// "엉뚱한 경로를 잡는 문제" 영구 해결
 pub fn get_database_url_v4() -> Result<String, String> {
-    // First try to use the path from .env file if it exists
+    // 환경변수 우선 확인 (개발/테스트 환경용)
     if let Ok(db_url) = std::env::var("DATABASE_URL") {
         if !db_url.is_empty() {
             tracing::info!("Using database URL from environment: {}", db_url);
@@ -720,39 +723,10 @@ pub fn get_database_url_v4() -> Result<String, String> {
         }
     }
 
-    // Use the app name to create a consistent data directory
-    let app_name = "matter-certis-v2";
-    
-    let app_data_dir = match dirs::data_dir() {
-        Some(mut path) => {
-            path.push(app_name);
-            path
-        },
-        None => {
-            return Err("Failed to determine app data directory".to_string());
-        }
-    };
-    
-    let db_dir = app_data_dir.join("database");
-    let db_path = db_dir.join("matter_certis.db");
-    
-    // Create directories if they don't exist
-    if !db_dir.exists() {
-        if let Err(err) = std::fs::create_dir_all(&db_dir) {
-            return Err(format!("Failed to create database directory: {}", err));
-        }
-    }
-    
-    // Create database file if it doesn't exist
-    if !db_path.exists() {
-        if let Err(err) = std::fs::File::create(&db_path) {
-            return Err(format!("Failed to create database file: {}", err));
-        }
-    }
-    
-    tracing::info!("Using database at: {}", db_path.display());
-    let db_url = format!("sqlite:{}", db_path.display());
-    Ok(db_url)
+    // 중앙집중식 경로 관리자 사용 (Modern Rust 2024)
+    let database_url = crate::infrastructure::get_main_database_url();
+    tracing::info!("Using centralized database URL: {}", database_url);
+    Ok(database_url)
 }
 
 /// 새로운 SharedState 기반 크롤링 시작 명령

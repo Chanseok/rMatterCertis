@@ -4,6 +4,7 @@
 //! web crawling, and external service integrations following the guide's architecture.
 
 pub mod database_connection;
+pub mod database_paths;  // 중앙집중식 데이터베이스 경로 관리 (Modern Rust 2024)
 pub mod integrated_product_repository;
 pub mod html_parser;  // HTML parser with integrated tests
 pub mod simple_http_client;
@@ -31,6 +32,7 @@ pub mod system_broadcaster;  // 실시간 시스템 상태 브로드캐스터
 
 // Re-export commonly used items
 pub use database_connection::DatabaseConnection;
+pub use database_paths::{DatabasePathManager, get_main_database_url, initialize_database_paths};  // 중앙집중식 경로 관리
 pub use integrated_product_repository::IntegratedProductRepository;
 pub use html_parser::MatterDataExtractor;  // HTML parser with integrated tests
 pub use simple_http_client::HttpClient;

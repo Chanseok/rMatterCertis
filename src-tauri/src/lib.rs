@@ -49,6 +49,7 @@ pub mod new_architecture {
         pub mod crawling_integration;
         pub mod real_crawling_integration;
         pub mod real_crawling_commands;
+        pub mod crawling_planner;        // Phase 2: 지능형 계획 수립 시스템 추가
     }
 }
 
@@ -115,6 +116,9 @@ pub mod application {
 }
 
 pub mod infrastructure;
+
+// Re-export commonly used infrastructure items (database_paths 추가)
+pub use infrastructure::database_paths;
 
 // Events module - 실시간 이벤트 시스템
 pub mod events;
@@ -191,28 +195,30 @@ pub fn run() {
     // Initialize runtime for async operations (already created above)
     info!("✅ Tokio runtime initialized successfully");
     
-    // Initialize database connection with proper data directory
-    let db = rt.block_on(async {
-        info!("🔧 Initializing database connection...");
+    // Initialize database paths using the new centralized manager (Modern Rust 2024)
+    rt.block_on(async {
+        info!("🔧 Initializing centralized database path management...");
         
-        // Use the same data directory structure as config
-        let data_dir = match crate::infrastructure::config::ConfigManager::get_app_data_dir() {
-            Ok(dir) => dir.join("database"),
-            Err(_) => {
-                warn!("📁 Using fallback data directory");
-                std::path::PathBuf::from("./data")
+        match crate::infrastructure::initialize_database_paths().await {
+            Ok(()) => {
+                info!("✅ Database paths initialized successfully");
+                let main_url = crate::infrastructure::get_main_database_url();
+                info!("🗄️ Using database: {}", main_url);
+            },
+            Err(e) => {
+                error!("❌ Failed to initialize database paths: {}", e);
+                eprintln!("Critical error: Database path initialization failed");
+                std::process::exit(1);
             }
-        };
-        
-        if !data_dir.exists() {
-            warn!("📁 Database directory does not exist, creating...");
-            std::fs::create_dir_all(&data_dir).expect("Failed to create database directory");
-            info!("✅ Database directory created successfully");
         }
+    });
 
-        // Initialize database with proper path
-        let database_url = format!("sqlite:{}/matter_certis.db", data_dir.to_string_lossy());
-        info!("🗄️ Connecting to database: {}", database_url);
+    // Initialize database connection with centralized path
+    let db = rt.block_on(async {
+        info!("🔧 Establishing database connection...");
+        
+        let database_url = crate::infrastructure::get_main_database_url();
+        info!("� Connecting to: {}", database_url);
         
         let db = DatabaseConnection::new(&database_url).await
             .expect("Failed to initialize database connection");
@@ -220,7 +226,7 @@ pub fn run() {
         info!("🔄 Running database migrations...");
         db.migrate().await.expect("Failed to run database migrations");
         
-        info!("✅ Database initialized successfully");
+        info!("✅ Database connection established successfully");
         db
     });
 

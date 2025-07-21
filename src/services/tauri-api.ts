@@ -562,16 +562,7 @@ export class TauriApiService {
     }
   }
 
-  /**
-   * Get frontend configuration from backend
-   */
-  async getFrontendConfig(): Promise<any> {
-    try {
-      return await invoke<any>('get_frontend_config');
-    } catch (error) {
-      throw new Error(`Failed to get frontend config: ${error}`);
-    }
-  }
+  // ❌ REMOVED: getFrontendConfig - 설정 전송 API 제거 (아키텍처 원칙 준수)
 
   /**
    * Get default crawling configuration

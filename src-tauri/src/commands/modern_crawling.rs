@@ -761,8 +761,12 @@ pub async fn update_user_crawling_preferences(
 }
 
 /// Get the correct database URL for the application
+/// 중앙집중식 데이터베이스 URL 가져오기 (Modern Rust 2024)
+/// 
+/// 기존의 여러 곳에서 다른 방식으로 경로를 생성하던 문제를 해결
+/// "엉뚱한 경로를 잡는 문제" 영구 해결
 fn get_database_url() -> Result<String, String> {
-    // First try to use the path from .env file if it exists
+    // 환경변수 우선 확인 (개발/테스트 환경용)
     if let Ok(db_url) = std::env::var("DATABASE_URL") {
         if !db_url.is_empty() {
             info!("Using database URL from environment: {}", db_url);
@@ -770,100 +774,10 @@ fn get_database_url() -> Result<String, String> {
         }
     }
 
-    // Otherwise, determine appropriate path based on environment
-    #[cfg(debug_assertions)]
-    {
-        // For development, prefer a persistent file in the project's data directory
-        // but fall back to in-memory if there are issues
-        
-        // Use the app name to create a consistent data directory
-        let app_name = "matter-certis-v2";
-        
-        let app_data_dir = match dirs::data_dir() {
-            Some(mut path) => {
-                path.push(app_name);
-                path
-            },
-            None => {
-                warn!("Could not determine app data directory, using in-memory database");
-                return Ok("sqlite::memory:".to_string());
-            }
-        };
-        
-        let db_dir = app_data_dir.join("database");
-        let db_path = db_dir.join("matter_certis.db");
-        
-        // Create directories if they don't exist
-        if !db_dir.exists() {
-            if let Err(err) = std::fs::create_dir_all(&db_dir) {
-                warn!("Failed to create database directory: {}, using in-memory database", err);
-                return Ok("sqlite::memory:".to_string());
-            }
-        }
-        
-        // Create database file if it doesn't exist
-        if !db_path.exists() {
-            if let Err(err) = std::fs::File::create(&db_path) {
-                warn!("Failed to create database file: {}, using in-memory database", err);
-                return Ok("sqlite::memory:".to_string());
-            }
-        }
-        
-        // Ensure the database file or parent directory is writable
-        if db_path.exists() && !is_file_writable(&db_path) {
-            warn!("Database file is not writable, using in-memory database");
-            return Ok("sqlite::memory:".to_string());
-        } else if !db_dir.exists() || !is_dir_writable(&db_dir) {
-            warn!("Database directory is not writable, using in-memory database");
-            return Ok("sqlite::memory:".to_string());
-        }
-        
-        info!("Using development database at: {}", db_path.display());
-        let db_url = format!("sqlite:{}", db_path.display());
-        Ok(db_url)
-    }
-    
-    #[cfg(not(debug_assertions))]
-    {
-        // For production, always use a persistent file in the app data directory
-        let app_name = "matter-certis-v2";
-        
-        let app_data_dir = match dirs::data_dir() {
-            Some(mut path) => {
-                path.push(app_name);
-                path
-            },
-            None => {
-                return Err("Failed to determine app data directory".to_string());
-            }
-        };
-        
-        let db_dir = app_data_dir.join("database");
-        let db_path = db_dir.join("matter_certis.db");
-        
-        // Create directories if they don't exist
-        if !db_dir.exists() {
-            if let Err(err) = std::fs::create_dir_all(&db_dir) {
-                return Err(format!("Failed to create database directory: {}", err));
-            }
-        }
-        
-        // Create database file if it doesn't exist
-        if !db_path.exists() {
-            if let Err(err) = std::fs::File::create(&db_path) {
-                return Err(format!("Failed to create database file: {}", err));
-            }
-        }
-        
-        // Ensure the directory is writable
-        if !is_dir_writable(&db_dir) {
-            return Err("Database directory is not writable".to_string());
-        }
-        
-        info!("Using production database at: {}", db_path.display());
-        let db_url = format!("sqlite:{}", db_path.display());
-        Ok(db_url)
-    }
+    // 중앙집중식 경로 관리자 사용 (Modern Rust 2024)
+    let database_url = crate::infrastructure::get_main_database_url();
+    info!("Using centralized database URL: {}", database_url);
+    Ok(database_url)
 }
 
 // Helper function to check if a file is writable

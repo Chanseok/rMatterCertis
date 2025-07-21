@@ -135,7 +135,7 @@ impl IntegratedProductRepository {
         let offset = (page - 1) * limit;
         let rows = sqlx::query(
             r"
-            SELECT id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
+            SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
             FROM products 
             ORDER BY page_id DESC, index_in_page ASC 
             LIMIT ? OFFSET ?
@@ -149,7 +149,7 @@ impl IntegratedProductRepository {
         let products = rows
             .into_iter()
             .map(|row| Product {
-                id: row.get("id"),
+                id: None,  // products 테이블에는 id 컬럼이 없음
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
@@ -178,7 +178,7 @@ impl IntegratedProductRepository {
 
         match row {
             Some(row) => Ok(Some(Product {
-                id: row.get("id"),
+                id: None,  // products 테이블에는 id 컬럼이 없음
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
@@ -730,7 +730,7 @@ impl IntegratedProductRepository {
     pub async fn get_latest_updated_product(&self) -> Result<Option<Product>> {
         let row = sqlx::query(
             r"
-            SELECT id, url, manufacturer, model, certificate_id, 
+            SELECT url, manufacturer, model, certificate_id, 
                    page_id, index_in_page, created_at, updated_at
             FROM products
             ORDER BY updated_at DESC
@@ -742,7 +742,7 @@ impl IntegratedProductRepository {
 
         if let Some(row) = row {
             Ok(Some(Product {
-                id: row.get("id"),
+                id: None,  // products 테이블에는 id 컬럼이 없음
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
