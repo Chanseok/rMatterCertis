@@ -8,6 +8,11 @@
 //! - No mod.rs files - clean, modern structure
 //! - Direct module declarations following Rust 2024 conventions
 
+#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+#![allow(clippy::module_name_repetitions)] // 모듈명 중복은 도메인 명확성을 위해 허용
+#![allow(clippy::similar_names)] // 유사한 변수명은 의미적 연관성이 있는 경우 허용
+#![allow(clippy::unused_variables)] // 개발 중 임시 변수들 허용
+
 #![allow(clippy::uninlined_format_args)]
 #![allow(missing_docs)]
 #![allow(clippy::unnecessary_operation)]
@@ -117,15 +122,19 @@ pub mod events;
 // Modern Rust 2024 - Commands module with direct declarations
 pub mod commands {
     //! Command handlers for Tauri frontend integration
+    pub mod modern_crawling;
+    pub mod config_commands;
     pub mod crawling_v4;
-    pub mod system_analysis;
     pub mod smart_crawling;
+    pub mod simple_crawling;      // Phase 1: 설정 파일 기반 간단한 크롤링  
     pub mod simple_actor_test;
     pub mod actor_system_monitoring;
+    pub mod system_analysis;      // 시스템 분석 명령어
     pub mod advanced_engine_api;  // 새로운 Advanced Engine API 추가
     
     // Re-export commonly used commands
     pub use crawling_v4::*;
+    pub use simple_crawling::*;   // Phase 1 명령어 export
     pub use advanced_engine_api::*;  // Advanced Engine 명령어 export
 }
 
@@ -280,6 +289,7 @@ pub fn run() {
             commands::crawling_v4::emergency_stop,
             commands::crawling_v4::ping_backend,
             commands::crawling_v4::get_app_settings,
+            commands::crawling_v4::save_app_settings,
             
             // Advanced Crawling Engine commands (Phase 4B)
             commands::advanced_engine_api::check_advanced_site_status,
@@ -297,6 +307,9 @@ pub fn run() {
             commands::smart_crawling::get_crawling_progress,
             commands::smart_crawling::get_database_state_for_range_calculation,
             commands::smart_crawling::demo_prompts6_calculation,
+            
+            // Simple crawling commands (Phase 1 - 즉시 안정화)
+            commands::simple_crawling::start_smart_crawling,
             
             // New Architecture Actor System commands (OneShot integration 완료)
             commands::simple_actor_test::test_new_arch_session_actor,

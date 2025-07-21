@@ -30,7 +30,7 @@ pub async fn start_crawling_v3(
     
     // Load configuration from backend config file
     let app_config = state.get_config().await;
-    info!("📋 설정 로드 완료: max_pages={}", app_config.user.max_pages);
+    info!("📋 설정 로드 완료: max_pages={}", app_config.user.crawling.page_range_limit);
     
     // Calculate intelligent crawling range if not explicitly provided
     let (actual_start_page, actual_end_page) = if start_page.is_some() && end_page.is_some() {
@@ -48,7 +48,7 @@ pub async fn start_crawling_v3(
             Err(e) => {
                 warn!("Failed to calculate intelligent range, using fallback: {}", e);
                 // Fallback: crawl from oldest pages (highest page numbers)
-                let max_pages = app_config.user.max_pages;
+                let max_pages = app_config.user.crawling.page_range_limit;
                 let fallback_start = app_config.app_managed.last_known_max_page.unwrap_or(481);
                 let fallback_end = if fallback_start >= max_pages {
                     fallback_start - max_pages + 1
@@ -741,7 +741,7 @@ pub async fn update_user_crawling_preferences(
     
     config_manager.update_user_config(|user_config| {
         if let Some(pages) = max_pages {
-            user_config.max_pages = pages;
+            user_config.crawling.page_range_limit = pages;
         }
         if let Some(delay) = request_delay_ms {
             user_config.request_delay_ms = delay;
@@ -1115,7 +1115,7 @@ async fn calculate_intelligent_crawling_range(
         },
         crate::domain::services::crawling_services::CrawlingRangeRecommendation::None => {
             // Still crawl a minimal range for verification
-            let verification_pages = 5.min(app_config.user.max_pages);
+            let verification_pages = 5.min(app_config.user.crawling.page_range_limit);
             let start_page = site_status.total_pages;
             let end_page = if start_page >= verification_pages {
                 start_page - verification_pages + 1

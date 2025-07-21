@@ -31,7 +31,7 @@ impl Default for CrawlingConfig {
     fn default() -> Self {
         Self {
             start_url: csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string(),
-            max_pages: crate::infrastructure::config::defaults::MAX_PAGES,
+            max_pages: crate::infrastructure::config::defaults::PAGE_RANGE_LIMIT,
             delay_ms: crate::infrastructure::config::defaults::REQUEST_DELAY_MS,
             max_concurrent: crate::infrastructure::config::defaults::MAX_CONCURRENT_REQUESTS,
             base_url: csa_iot::BASE_URL.to_string(),

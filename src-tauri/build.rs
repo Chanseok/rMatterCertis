@@ -12,7 +12,7 @@ fn main() {
     
     if generated_types_dir.exists() {
         generate_unified_types_index(generated_types_dir).unwrap_or_else(|e| {
-            println!("cargo:warning=Failed to generate unified types index: {}", e);
+            println!("cargo:warning=Failed to generate unified types index: {e}");
         });
     }
 }
@@ -28,9 +28,11 @@ fn generate_unified_types_index(types_dir: &Path) -> std::io::Result<()> {
         
         if let Some(file_name) = path.file_name() {
             if let Some(file_name_str) = file_name.to_str() {
-                if file_name_str.ends_with(".ts") && file_name_str != "index.ts" {
+                if std::path::Path::new(file_name_str)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("ts")) && file_name_str != "index.ts" {
                     let type_name = file_name_str.trim_end_matches(".ts");
-                    exports.push(format!("export type {{ {} }} from './{}';", type_name, type_name));
+                    exports.push(format!("export type {{ {type_name} }} from './{type_name}';"));
                 }
             }
         }

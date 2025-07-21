@@ -495,28 +495,40 @@ pub async fn ping_backend() -> Result<String, String> {
 /// Get application settings
 #[tauri::command]
 pub async fn get_app_settings() -> Result<serde_json::Value, String> {
-    tracing::info!("⚙️ Getting app settings from validated configuration");
+    tracing::info!("⚙️ Getting app settings from configuration file");
     
-    // Load configuration instead of using hardcoded values
+    // Load configuration from file
     let config_manager = crate::infrastructure::config::ConfigManager::new()
         .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
     let app_config = config_manager.load_config().await
         .map_err(|e| format!("Failed to load configuration: {}", e))?;
-    let validated_config = crate::application::validated_crawling_config::ValidatedCrawlingConfig::from_app_config(&app_config);
     
-    // Use configuration-driven settings instead of hardcoded values
-    let settings = serde_json::json!({
-        "page_range_limit": validated_config.page_range_limit,
-        "concurrent_requests": validated_config.max_concurrent_requests,
-        "request_timeout_seconds": validated_config.request_timeout_ms / 1000, // Convert to seconds
-        "max_products_per_page": validated_config.products_per_page,
-        "enable_debug_logging": validated_config.enable_debug_logging,
-        "auto_retry_failed_requests": true, // Default behavior
-        "max_retry_attempts": validated_config.max_retry_attempts,
-        "crawling_delay_ms": validated_config.request_delay_ms
-    });
+    // Return the entire AppConfig as JSON
+    let settings = serde_json::to_value(&app_config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
     
     Ok(settings)
+}
+
+/// Save application settings to config file
+#[tauri::command]
+pub async fn save_app_settings(settings: serde_json::Value) -> Result<String, String> {
+    tracing::info!("⚙️ Saving app settings to configuration file");
+    
+    // Parse the settings as AppConfig
+    let app_config: crate::infrastructure::config::AppConfig = serde_json::from_value(settings)
+        .map_err(|e| format!("Failed to parse settings: {}", e))?;
+    
+    // Load existing config and update it
+    let config_manager = crate::infrastructure::config::ConfigManager::new()
+        .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
+    
+    // Save the new configuration
+    config_manager.save_config(&app_config).await
+        .map_err(|e| format!("Failed to save configuration: {}", e))?;
+    
+    tracing::info!("✅ App settings saved successfully");
+    Ok("Settings saved successfully".to_string())
 }
 
 /// Background task for broadcasting real-time statistics

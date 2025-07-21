@@ -237,6 +237,16 @@ impl ResilienceAnalyzer {
         }
     }
 
+    /// Stage 에러 분석 (테스트용 메서드)
+    pub fn analyze_stage_error(
+        &self,
+        error: &StageError,
+        attempt_count: u32,
+        stage_id: String,
+    ) -> ResilienceStageResult {
+        self.create_recoverable_error(error.clone(), attempt_count, stage_id)
+    }
+
     /// Stage 에러 분석 및 복구 전략 결정
     pub fn create_recoverable_error(
         &self,

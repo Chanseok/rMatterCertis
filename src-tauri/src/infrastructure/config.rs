@@ -37,9 +37,6 @@ pub struct AppConfig {
 /// User-configurable settings that can be changed from the UI
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserConfig {
-    /// Maximum pages to crawl in a single session
-    pub max_pages: u32,
-    
     /// Delay between requests in milliseconds
     pub request_delay_ms: u64,
     
@@ -270,7 +267,6 @@ impl Default for AppConfig {
 impl Default for UserConfig {
     fn default() -> Self {
         Self {
-            max_pages: defaults::MAX_PAGES,
             request_delay_ms: defaults::REQUEST_DELAY_MS,
             max_concurrent_requests: defaults::MAX_CONCURRENT_REQUESTS,
             verbose_logging: false,
@@ -718,9 +714,6 @@ pub mod csa_iot {
 
 /// Default crawling configuration values
 pub mod defaults {
-    /// Default maximum pages to crawl
-    pub const MAX_PAGES: u32 = 10;
-    
     /// Default delay between requests in milliseconds
     pub const REQUEST_DELAY_MS: u64 = 1000;
     

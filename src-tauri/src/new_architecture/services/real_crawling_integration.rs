@@ -256,7 +256,7 @@ mod tests {
 
         // 기본 설정 생성
         let system_config = Arc::new(SystemConfig::default());
-        let app_config = AppConfig::for_test(); // 테스트용 설정
+        let app_config = AppConfig::for_development(); // 개발용 설정 사용
 
         // 크롤링 통합 서비스 생성 시도
         match CrawlingIntegrationService::new(system_config, app_config).await {
@@ -279,7 +279,7 @@ mod tests {
 
         let batch_id = "test-batch-real".to_string();
         let config = Arc::new(SystemConfig::default());
-        let app_config = AppConfig::for_test();
+        let app_config = AppConfig::for_development();
 
         // StageActor 생성 시도
         match StageActor::new_with_real_crawling_service(batch_id.clone(), config, app_config).await {

@@ -267,7 +267,13 @@ mod tests {
 
     #[test]
     fn extract_product_id_tests() {
-        let fetcher = ProductDetailFetcher::new("https://csa-iot.org".to_string());
+        use std::time::Duration;
+        let fetcher = ProductDetailFetcher::new(
+            10, // concurrent_requests
+            Duration::from_secs(30), // request_timeout 
+            3, // max_retries
+            Duration::from_millis(1000), // retry_delay
+        ).expect("Failed to create ProductDetailFetcher");
         
         // Test Matter Certis product URLs
         assert_eq!(

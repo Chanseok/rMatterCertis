@@ -33,7 +33,6 @@ interface SettingsStore {
 // 기본 설정값
 const DEFAULT_SETTINGS: AppConfig = {
   user: {
-    max_pages: 10,
     request_delay_ms: 800,
     max_concurrent_requests: 24,
     verbose_logging: false,
@@ -66,6 +65,16 @@ const DEFAULT_SETTINGS: AppConfig = {
     },
     crawling: {
       page_range_limit: 6,
+      intelligent_mode: {
+        enabled: true,
+        max_range_limit: 1000,
+        override_config_limit: true,
+        site_analysis_ttl_minutes: 5,
+        db_analysis_ttl_minutes: 10,
+        range_calculation_ttl_minutes: 3,
+        min_incremental_pages: 10,
+        max_full_crawl_pages: 500
+      },
       product_list_retry_count: 3,
       product_detail_retry_count: 3,
       auto_add_to_local_db: true,

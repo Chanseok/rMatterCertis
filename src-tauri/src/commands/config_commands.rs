@@ -83,9 +83,6 @@ pub struct FilterParams {
 /// User-configurable crawling settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlingSettings {
-    /// Maximum pages to crawl
-    pub max_pages: u32,
-    
     /// Delay between requests in milliseconds
     pub request_delay_ms: u64,
     
@@ -97,14 +94,14 @@ pub struct CrawlingSettings {
     
     /// Advanced settings
     pub advanced: AdvancedSettings,
+    
+    /// Maximum pages to crawl (moved from top level)
+    pub page_range_limit: u32,
 }
 
 /// User settings (including logging configuration)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserSettings {
-    /// Maximum pages to crawl
-    pub max_pages: u32,
-    
     /// Delay between requests in milliseconds
     pub request_delay_ms: u64,
     
@@ -279,22 +276,8 @@ impl Default for ComprehensiveCrawlerConfig {
     }
 }
 
-/// Get the complete frontend configuration
-#[tauri::command]
-pub async fn get_frontend_config(
-    state: State<'_, AppState>
-) -> Result<FrontendConfig, String> {
-    info!("Frontend requesting complete configuration");
-    
-    let app_config = state.get_config().await;
-    let frontend_config = convert_to_frontend_config(&app_config);
-    
-    info!("Providing frontend config: site={}, crawling_max_pages={}", 
-          frontend_config.site.base_url, 
-          frontend_config.crawling.max_pages);
-    
-    Ok(frontend_config)
-}
+// ❌ REMOVED: get_frontend_config - 설정 전송 API 제거
+// 백엔드는 matter_certis_config.json 파일만 읽고, 프론트엔드로 설정을 전송하지 않음
 
 /// Get only the site configuration (URLs and domains)
 #[tauri::command]
@@ -452,10 +435,10 @@ pub fn get_default_crawling_config() -> Result<CrawlingSettings, String> {
     // Use the same defaults as in AppConfig
     let app_config = crate::infrastructure::config::AppConfig::default();
     let crawling_settings = CrawlingSettings {
-        max_pages: app_config.user.max_pages,
         request_delay_ms: app_config.user.request_delay_ms,
         max_concurrent_requests: app_config.user.max_concurrent_requests,
         verbose_logging: app_config.user.verbose_logging,
+        page_range_limit: app_config.user.crawling.page_range_limit,
         advanced: AdvancedSettings {
             last_page_search_start: app_config.advanced.last_page_search_start,
             max_search_attempts: app_config.advanced.max_search_attempts,
@@ -510,10 +493,10 @@ fn convert_to_frontend_config(app_config: &AppConfig) -> FrontendConfig {
             ],
         },
         crawling: CrawlingSettings {
-            max_pages: app_config.user.max_pages,
             request_delay_ms: app_config.user.request_delay_ms,
             max_concurrent_requests: app_config.user.max_concurrent_requests,
             verbose_logging: app_config.user.verbose_logging,
+            page_range_limit: app_config.user.crawling.page_range_limit,
             advanced: AdvancedSettings {
                 last_page_search_start: app_config.advanced.last_page_search_start,
                 max_search_attempts: app_config.advanced.max_search_attempts,
@@ -524,7 +507,6 @@ fn convert_to_frontend_config(app_config: &AppConfig) -> FrontendConfig {
             },
         },
         user: UserSettings {
-            max_pages: app_config.user.max_pages,
             request_delay_ms: app_config.user.request_delay_ms,
             max_concurrent_requests: app_config.user.max_concurrent_requests,
             verbose_logging: app_config.user.verbose_logging,
@@ -865,7 +847,7 @@ pub async fn get_crawling_status_check(
     };
     
     // Generate smart recommendations based on all available data
-    let user_max_pages = config.user.max_pages;
+    let user_max_pages = config.user.crawling.page_range_limit;
     let actual_max_page = site_status.total_pages.max(50);
     
     // 사용자가 설정한 페이지 제한과 실제 최대 페이지 중 작은 값을 사용
@@ -1131,7 +1113,7 @@ mod tests {
         
         assert_eq!(frontend_config.site.base_url, "https://csa-iot.org");
         assert!(frontend_config.site.products_page_matter_only.contains("p_type%5B%5D=14"));
-        assert_eq!(frontend_config.crawling.max_pages, app_config.user.max_pages);
+        assert_eq!(frontend_config.crawling.page_range_limit, app_config.user.crawling.page_range_limit);
         assert_eq!(frontend_config.app.name, "matter-certis-v2");
     }
     

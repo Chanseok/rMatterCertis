@@ -192,7 +192,7 @@ impl StatusChecker for StatusCheckerImpl {
               
         Ok(SiteStatus {
             is_accessible: true,
-            response_time_ms: response_time_ms,
+            response_time_ms,
             total_pages,
             estimated_products,
             products_on_last_page,
@@ -256,7 +256,7 @@ impl StatusChecker for StatusCheckerImpl {
         // Calculate pages needed for new products
         let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
         let pages_needed = (estimated_new_products as f64 / products_per_page as f64).ceil() as u32;
-        let limited_pages = pages_needed.min(self.config.user.max_pages);
+        let limited_pages = pages_needed.min(self.config.user.crawling.page_range_limit);
         
         info!("📊 Estimated {} new products, recommending {} pages crawl", estimated_new_products, limited_pages);
         Ok(CrawlingRangeRecommendation::Partial(limited_pages))
@@ -355,10 +355,9 @@ impl StatusCheckerImpl {
                 current_page = analysis.max_pagination_page;
                 // 새 페이지로 이동하여 다시 탐색
                 continue;
-            } else {
-                info!("🏁 No higher pages found in pagination, {} appears to be the last page", current_page);
-                break;
             }
+            info!("🏁 No higher pages found in pagination, {} appears to be the last page", current_page);
+            break;
         }
         
         // 4. 최종 검증: 마지막 페이지 확인 및 제품 수 계산
@@ -438,23 +437,22 @@ impl StatusCheckerImpl {
                         info!("✅ Found valid page with products: {} (after {} consecutive empty pages)", 
                               current_page, consecutive_empty_pages);
                         return Ok(current_page);
-                    } else {
-                        consecutive_empty_pages += 1;
-                        warn!("⚠️  Page {} is empty (consecutive: {}/{})", 
-                              current_page, consecutive_empty_pages, MAX_CONSECUTIVE_EMPTY);
+                    }
+                    consecutive_empty_pages += 1;
+                    warn!("⚠️  Page {} is empty (consecutive: {}/{})", 
+                          current_page, consecutive_empty_pages, MAX_CONSECUTIVE_EMPTY);
+                    
+                    // 연속으로 빈 페이지가 3개 이상이면 fatal error
+                    if consecutive_empty_pages >= MAX_CONSECUTIVE_EMPTY {
+                        error!("💥 FATAL ERROR: Found {} consecutive empty pages starting from page {}. This indicates a serious site issue or crawling problem.", 
+                               consecutive_empty_pages, start_page);
                         
-                        // 연속으로 빈 페이지가 3개 이상이면 fatal error
-                        if consecutive_empty_pages >= MAX_CONSECUTIVE_EMPTY {
-                            error!("💥 FATAL ERROR: Found {} consecutive empty pages starting from page {}. This indicates a serious site issue or crawling problem.", 
-                                   consecutive_empty_pages, start_page);
-                            
-                            return Err(anyhow!(
-                                "Fatal error: {} consecutive empty pages detected. Site may be down or pagination structure changed. Last checked pages: {} to {}",
-                                consecutive_empty_pages, 
-                                start_page,
-                                current_page
-                            ));
-                        }
+                        return Err(anyhow!(
+                            "Fatal error: {} consecutive empty pages detected. Site may be down or pagination structure changed. Last checked pages: {} to {}",
+                            consecutive_empty_pages, 
+                            start_page,
+                            current_page
+                        ));
                     }
                 },
                 Err(e) => {
@@ -606,16 +604,15 @@ impl StatusCheckerImpl {
                 // 더 큰 페이지가 있으면 이동
                 current_page = max_page_in_pagination;
                 continue;
-            } else {
-                // 마지막 페이지 도달, 제품 수 확인
-                let test_url = config_utils::matter_products_page_url_simple(current_page);
-                let mut client = self.http_client.lock().await;
-                let html = client.fetch_html_string(&test_url).await?;
-                drop(client); // 락 해제
-                let doc = scraper::Html::parse_document(&html);
-                let products_count = self.count_products(&doc);
-                return Ok((current_page, products_count));
             }
+            // 마지막 페이지 도달, 제품 수 확인
+            let test_url = config_utils::matter_products_page_url_simple(current_page);
+            let mut client = self.http_client.lock().await;
+            let html = client.fetch_html_string(&test_url).await?;
+            drop(client); // 락 해제
+            let doc = scraper::Html::parse_document(&html);
+            let products_count = self.count_products(&doc);
+            return Ok((current_page, products_count));
         }
 
         // 최대 시도 횟수 도달 시 현재 페이지의 제품 수 확인
@@ -2216,7 +2213,7 @@ impl CrawlingRangeCalculator {
         
         if all_products.is_empty() {
             info!("📋 Database is empty - starting from the last page (page {})", total_pages);
-            let end_page = (total_pages.saturating_sub(self.config.user.max_pages - 1)).max(1);
+            let end_page = (total_pages.saturating_sub(self.config.user.crawling.page_range_limit - 1)).max(1);
             return Ok(Some((total_pages, end_page)));
         }
         
@@ -2265,10 +2262,10 @@ impl CrawlingRangeCalculator {
         };
         
         // 크롤링 범위 제한 적용
-        let end_page = (start_page.saturating_sub(self.config.user.max_pages - 1)).max(1);
+        let end_page = (start_page.saturating_sub(self.config.user.crawling.page_range_limit - 1)).max(1);
         
         info!("✅ Next crawling range: {}페이지 → {}페이지 (역순, 최대 {}페이지)", 
-              start_page, end_page, self.config.user.max_pages);
+              start_page, end_page, self.config.user.crawling.page_range_limit);
         Ok(Some((start_page, end_page)))
     }
 }

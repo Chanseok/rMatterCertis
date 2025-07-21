@@ -370,10 +370,10 @@ export const SettingsTab: Component = () => {
             <label>최대 페이지 수
               <input 
                 type="number" 
-                value={settingsState.getNestedValue('user.max_pages')} 
+                value={settingsState.getNestedValue('user.crawling.page_range_limit')} 
                 min={1} 
                 max={1000} 
-                onInput={e => settingsState.updateNestedField('user.max_pages', +e.currentTarget.value)} 
+                onInput={e => settingsState.updateNestedField('user.crawling.page_range_limit', +e.currentTarget.value)} 
               />
             </label>
             <label>요청 지연 시간 (ms)

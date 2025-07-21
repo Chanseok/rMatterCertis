@@ -37,7 +37,7 @@ impl ValidatedCrawlingConfig {
             timeout_seconds: app_config.user.crawling.timing.operation_timeout_seconds
                 .min(60) // Max 60 seconds
                 .max(5), // At least 5 seconds
-            max_pages: Some(app_config.user.max_pages),
+            max_pages: Some(app_config.user.crawling.page_range_limit),
             respect_robots_txt: true, // Default to safe behavior
             user_agent: "rMatterCertis/1.0".to_string(), // Default user agent
             enable_javascript: false, // Default to disabled

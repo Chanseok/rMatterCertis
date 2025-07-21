@@ -19,8 +19,8 @@ import type {
 } from '../../types/advanced-engine';
 
 export const CrawlingEngineTab: Component = () => {
-  // 상태 관리 - Settings에서 설정을 가져와서 읽기 전용으로 표시
-  const [userConfig, setUserConfig] = createSignal<any>(null);
+  // ❌ REMOVED: userConfig - 설정 전송 API 제거로 불필요
+  // const [userConfig, setUserConfig] = createSignal<any>(null);
   const [showAdvancedSettings, setShowAdvancedSettings] = createSignal(false);
   
   const [siteStatus, setSiteStatus] = createSignal<SiteStatusInfo | null>(null);
@@ -39,20 +39,8 @@ export const CrawlingEngineTab: Component = () => {
     setLogs(prev => [...prev.slice(-19), `[${timestamp}] ${message}`]);
   };
 
-  // 설정 로드
-  const loadUserConfig = async () => {
-    try {
-      const response = await invoke<any>('get_frontend_config');
-      if (response) {
-        setUserConfig(response);
-        addLog('✅ 사용자 설정 로드됨');
-      }
-    } catch (error) {
-      addLog(`❌ 설정 로드 실패: ${error}`);
-      // 설정을 로드할 수 없으면 경고 표시
-      console.error('설정 로드 실패:', error);
-    }
-  };
+  // ❌ REMOVED: loadUserConfig - 설정 전송 API 제거로 불필요
+  // 백엔드가 matter_certis_config.json 파일을 자동으로 읽어서 사용
 
   // 크롤링 범위 계산
   const calculateCrawlingRange = async () => {
@@ -99,7 +87,7 @@ export const CrawlingEngineTab: Component = () => {
   onMount(async () => {
     addLog('🎯 Advanced Crawling Engine 탭 로드됨');
     
-    await loadUserConfig();
+    // ❌ REMOVED: await loadUserConfig() - 설정 전송 API 제거
     await checkSiteStatus(); // 이 함수 내에서 이미 calculateCrawlingRange() 호출됨
     await loadRecentProducts();
     await loadDatabaseStats();
@@ -195,49 +183,28 @@ export const CrawlingEngineTab: Component = () => {
   const startCrawling = async () => {
     if (isRunning()) return;
     
-    const config = userConfig();
-    if (!config) {
-      addLog('❌ 설정을 먼저 로드해야 합니다');
-      return;
-    }
+    // ❌ REMOVED: config 의존성 제거 - 백엔드가 matter_certis_config.json 자동 로딩
+    // const config = userConfig();
+    // if (!config) {
+    //   addLog('❌ 설정을 먼저 로드해야 합니다');
+    //   return;
+    // }
 
     try {
       setIsRunning(true);
       
-      // 페이지 범위 계산 - 논리적 순서: 가장 오래된(485) → 상대적으로 최신(480)
-      const totalPages = siteStatus()?.total_pages || 485;
-      const pageLimit = config.user?.crawling?.page_range_limit || 6;
-      const startPage = totalPages; // 가장 오래된 (485) - 시작점
-      const endPage = Math.max(1, totalPages - pageLimit + 1); // 상대적으로 최신 (480) - 종료점
+      addLog(`🚀 Smart Crawling 시작 - 백엔드가 자동으로 최적 범위 계산`);
       
-      addLog(`🚀 Advanced Crawling Engine 시작 (${startPage} → ${endPage}, 오래된 제품부터)`);
+      // ✅ 새로운 방식: 백엔드가 설정 파일을 읽고 자동으로 크롤링 시작
+      const session = await invoke<CrawlingSession>('start_smart_crawling');
       
-      const request: StartCrawlingRequest = {
-        config: {
-          start_page: startPage,    // 485 (가장 오래된)
-          end_page: endPage,        // 480 (상대적으로 최신)
-          batch_size: config.user?.batch?.batch_size || 12,
-          concurrency: config.user?.max_concurrent_requests || 3,
-          delay_ms: config.user?.request_delay_ms || 1000,
-          retry_max: config.user?.crawling?.product_list_retry_count || 3,
-          enable_real_time_updates: true
-        }
-      };
+      setCurrentSessionId(session.session_id);
+      addLog(`✅ 크롤링 세션 시작: ${session.session_id}`);
       
-      const response = await invoke<ApiResponse<CrawlingSession>>('start_advanced_crawling', {
-        request
-      });
-      
-      if (response.success && response.data) {
-        setCurrentSessionId(response.data.session_id);
-        addLog(`✅ 크롤링 세션 시작: ${response.data.session_id} (페이지 ${startPage}→${endPage})`);
-      } else {
-        addLog(`❌ 크롤링 시작 실패: ${response.error?.message || 'Unknown error'}`);
-        setIsRunning(false);
-      }
     } catch (error) {
-      addLog(`❌ 크롤링 시작 오류: ${error}`);
       setIsRunning(false);
+      addLog(`❌ 크롤링 시작 실패: ${error}`);
+      console.error('크롤링 시작 오류:', error);
     }
   };
 

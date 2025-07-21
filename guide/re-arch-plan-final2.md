@@ -11,9 +11,46 @@
 - `unwrap()` 금지, 모든 에러는 `Result<T, E>`로 적절히 처리
 - Clean Code 원칙: 명확한 네이밍, 단일 책임 원칙, 최소 의존성
 
-## 1. 최종 아키텍처 원칙: 제어, 데이터, 이벤트의 완전한 분리
+## 1. 최종 아키텍처 원칙: 설정 파일 기반 완전 분리
 
 > **🦀 Modern Rust 2024 설계 원칙**: 모든 컴포넌트는 타입 안전성, 제로 코스트 추상화, 메모리 안전성을 보장하며, Clippy pedantic 수준의 코드 품질을 유지합니다.
+
+### 1.1. 핵심 아키텍처 원칙: 설정과 실행의 완전한 분리 🎯
+
+**설정 파일 기반 자율 운영 체계**:
+
+**백엔드 (Rust) 역할**:
+- **설정 파일 완전 의존**: `config/*.toml` 파일의 모든 설정값을 읽어 자율적으로 크롤링 계획 수립 및 실행
+- **프론트엔드 독립성**: 프론트엔드로부터 어떤 설정값도 받지 않고 완전 자율 동작
+- **동적 설정 적용**: 파일 시스템 감시를 통해 설정 파일 변경 시 자동으로 새로운 설정 적용
+- **Actor 시스템 자율 제어**: 모든 동시성, 재시도, 배치 크기 등을 설정 파일 기반으로 동적 조정
+
+**프론트엔드 (SolidJS) 역할**:
+- **설정 편집 전용**: `config/*.toml` 파일의 내용만 편집하고 저장하는 순수한 텍스트 에디터 역할
+- **상태 표시 전용**: 백엔드의 크롤링 진행 상황, 결과, 통계만 실시간 표시
+- **설정 전송 금지**: 백엔드로 설정값을 전송하는 모든 API 호출 완전 제거
+- **파일 기반 소통**: 오직 설정 파일 저장을 통해서만 백엔드와 간접 소통
+
+### 1.2. 설정 파일 구조와 역할
+
+```toml
+# config/default.toml - 모든 환경의 기본값
+[system]
+max_concurrent_sessions = 10
+abort_on_database_error = false
+
+[performance.batch_sizes]
+initial_size = 10
+auto_adjust_threshold = 0.8
+
+[retry_policies.list_collection]
+max_attempts = 3
+base_delay_ms = 1000
+```
+
+**설정 우선순위**: `production.toml` > `development.toml` > `default.toml`
+
+### 1.3. 삼중 채널 시스템과 Actor 모델
 
 본 아키텍처는 **계층적 Actor 모델**을 기반으로, Actor 간의 상호작용을 **삼중 채널 시스템**을 통해 명확히 분리하여 복잡성을 제어하고 예측 가능성을 극대화합니다.
 
@@ -27,24 +64,30 @@
 
 ---
 
-## 2. 통합 시스템 아키텍처 다이어그램
+## 2. 통합 시스템 아키텍처 다이어그램: 설정 파일 기반 분리
 
 ```mermaid
 graph TD
-    subgraph UI["UI Layer"]
-        DASH[CrawlingDashboard]
-        CTRL[UserControls]
+    subgraph ConfigFiles["설정 파일 시스템"]
+        DEFAULT["default.toml<br/>기본 설정값"]
+        DEV["development.toml<br/>개발 환경 설정"]
+        PROD["production.toml<br/>운영 환경 설정"]
+    end
+
+    subgraph UI["UI Layer (SolidJS)"]
+        DASH[CrawlingDashboard<br/>상태 표시 전용]
+        EDITOR[ConfigEditor<br/>설정 파일 편집 전용]
     end
 
     subgraph API["API Layer / Facade"]
-        FACADE["<b>CrawlingFacade</b><br/>- Actor 생명주기 관리<br/>- UI 명령을 Actor 명령으로 변환"]
+        FACADE["<b>CrawlingFacade</b><br/>- 설정 파일 기반 자율 운영<br/>- UI는 상태 조회만 가능<br/>- 파라미터 전송 완전 금지"]
     end
 
     subgraph Core["핵심 Actor 시스템"]
-        SESSION["<b>SessionActor</b><br/>- 세션 전체 생명주기 관리<br/>- CrawlingPlanner를 통해 실행 계획 수립<br/>- BatchActor 생성 및 제어"]
-        BATCH["<b>BatchActor</b><br/>- 배치 단위(e.g., 100 페이지) 처리<br/>- StageActor 생성 및 제어<br/>- 적응형 배치 크기/딜레이 조정"]
-        STAGE["<b>StageActor</b><br/>- 단계(e.g., 리스트 수집) 실행<br/>- AsyncTask 생성 및 동시성 관리<br/>- 단계별 재시도/오류 처리"]
-        TASK["<b>AsyncTask</b><br/>- 최소 작업(e.g., 단일 페이지 요청) 수행<br/>- 실제 HTTP 요청, HTML 파싱, DB 저장<br/>- 작업별 상세 이벤트 발행"]
+        SESSION["<b>SessionActor</b><br/>- 설정 파일 기반 세션 관리<br/>- CrawlingPlanner를 통해 실행 계획 수립<br/>- BatchActor 생성 및 제어"]
+        BATCH["<b>BatchActor</b><br/>- 설정 기반 배치 크기 자동 조정<br/>- StageActor 생성 및 제어<br/>- 적응형 배치 크기/딜레이 조정"]
+        STAGE["<b>StageActor</b><br/>- 설정 기반 재시도/타임아웃 제어<br/>- AsyncTask 생성 및 동시성 관리<br/>- 단계별 오류 처리"]
+        TASK["<b>AsyncTask</b><br/>- 설정 기반 요청 제한/딜레이<br/>- HTTP 요청, HTML 파싱, DB 저장<br/>- 작업별 상세 이벤트 발행"]
     end
 
     subgraph Channels["채널 시스템"]
@@ -54,13 +97,23 @@ graph TD
     end
 
     subgraph Support["지원 시스템"]
-        PLANNER["<b>CrawlingPlanner</b><br/>- 사이트/DB 분석<br/>- 크롤링 실행 계획(배치) 수립"]
+        PLANNER["<b>CrawlingPlanner</b><br/>- 설정 파일 기반 계획 수립<br/>- 사이트/DB 분석<br/>- 동적 배치 크기 결정"]
         AGGREGATOR["<b>MetricsAggregator</b><br/>- 이벤트 채널 구독<br/>- 전체 진행률, ETA 등 계산<br/>- 집계된 상태를 다시 이벤트로 발행"]
+        CONFIG_WATCHER["<b>ConfigWatcher</b><br/>- 설정 파일 변경 감지<br/>- 실시간 설정 재로딩<br/>- Actor 시스템에 설정 변경 통지"]
     end
 
-    %% Flows
-    CTRL -- "사용자 입력" --> FACADE
-    FACADE -- "ActorCommand" --> CTRL_CH
+    %% 설정 파일 기반 흐름
+    ConfigFiles -.-> CONFIG_WATCHER
+    CONFIG_WATCHER -.-> FACADE
+    CONFIG_WATCHER -.-> SESSION
+    CONFIG_WATCHER -.-> PLANNER
+
+    %% UI 상호작용 (설정 파일 편집만)
+    EDITOR -- "파일 편집/저장" --> ConfigFiles
+    DASH -- "상태 조회만" --> FACADE
+    
+    %% Actor 제어 흐름
+    FACADE -- "설정 기반 ActorCommand" --> CTRL_CH
     CTRL_CH --> SESSION
     SESSION -- "ActorCommand" --> CTRL_CH
     CTRL_CH --> BATCH
@@ -68,6 +121,7 @@ graph TD
     CTRL_CH --> STAGE
     STAGE -- "spawns" --> TASK
 
+    %% 결과 보고 흐름
     TASK -- "최종 결과" --> DATA_CH
     DATA_CH --> STAGE
     STAGE -- "집계된 결과" --> DATA_CH
@@ -75,129 +129,206 @@ graph TD
     BATCH -- "집계된 결과" --> DATA_CH
     DATA_CH --> SESSION
 
+    %% 이벤트 발행 흐름
     TASK -- "개별 이벤트" --> EVENT_CH
     STAGE -- "단계 이벤트" --> EVENT_CH
     BATCH -- "배치 이벤트" --> EVENT_CH
     SESSION -- "세션 이벤트" --> EVENT_CH
 
+    %% 이벤트 집계 및 UI 업데이트
     EVENT_CH -- "모든 이벤트" --> AGGREGATOR
     AGGREGATOR -- "집계된 상태 이벤트" --> EVENT_CH
     EVENT_CH -- "집계된 상태 이벤트" --> DASH
 
-    SESSION -- "계획 요청" --> PLANNER
+    %% 계획 수립
+    SESSION -- "설정 기반 계획 요청" --> PLANNER
 ```
+
+**핵심 설계 원칙**:
+- **🚫 파라미터 전송 금지**: UI → 백엔드로 설정값 전송하는 모든 API 제거
+- **📁 설정 파일 중심**: 모든 설정은 `config/*.toml` 파일을 통해서만 관리
+- **🔄 자동 재로딩**: 설정 파일 변경 시 백엔드가 자동으로 새 설정 적용
+- **👁️ 상태 표시 전용**: UI는 오직 백엔드 상태만 실시간 표시
 
 ---
 
-## 3. 크롤링 시작 플로우: UI에서 실제 수행까지의 완전한 명세
+## 3. 설정 파일 기반 크롤링 시작 플로우: 완전한 자율 운영
 
 > **🦀 Clean Code 구현 가이드**: 모든 메서드는 단일 책임을 가지며, 함수명은 동작을 명확히 표현해야 합니다. 불필요한 `clone()` 대신 참조를 활용하고, 모든 에러는 명시적으로 처리합니다.
 
-### 3.1. 크롤링 시작 시퀀스: 사용자 액션에서 Actor 활성화까지
+### 3.1. 설정 파일 기반 크롤링 시작 시퀀스: 완전 자율 동작
 
 ```mermaid
 sequenceDiagram
     participant User as 사용자
     participant UI as CrawlingDashboard
+    participant ConfigFile as config/*.toml
+    participant Watcher as ConfigWatcher
     participant Facade as CrawlingFacade
     participant Session as SessionActor
     participant Planner as CrawlingPlanner
     participant Event as EventHub
 
-    Note over User: 사용자가 크롤링 설정 완료 후 시작 버튼 클릭
+    Note over User: 사용자가 설정 편집 후 크롤링 시작
 
-    User->>UI: "크롤링 시작" 버튼 클릭
-    UI->>UI: 사용자 설정 검증 (사이트, 검색어, 범위 등)
+    User->>UI: 설정 편집 탭에서 config/production.toml 수정
+    UI->>ConfigFile: save_config_file("production.toml", new_content)
+    ConfigFile->>Watcher: 파일 변경 이벤트 감지
+    Watcher->>Facade: 새로운 설정 자동 로딩
     
-    alt 설정 검증 실패
-        UI-->>User: 오류 메시지 표시 및 설정 수정 요청
-    else 설정 검증 성공
-        UI->>Facade: start_full_crawl(user_config)
-        Facade->>Facade: UserConfig → ActorCommand 변환
-        Facade->>Session: ActorCommand::StartSession { config }
-        
-        Note over Session: SessionActor 활성화 및 초기화
-        Session->>Event: emit(SessionStarted { session_id, config })
-        Event-->>UI: 실시간 상태 업데이트: "크롤링 세션 시작됨"
-        
-        Session->>Planner: analyze_current_state()
-        Note over Planner: 현재 DB 상태, 사이트 구조 분석
-        Planner-->>Session: AnalysisResult { existing_items, site_structure }
-        
-        Session->>Event: emit(AnalysisCompleted { result })
-        Event-->>UI: "사이트 분석 완료: 기존 X개 아이템, Y개 페이지 예상"
-        
-        Session->>Planner: create_execution_plan(crawl_type, analysis_result)
-        Note over Planner: 최적화된 배치 계획 수립
-        Planner-->>Session: ExecutionPlan { batches: [Batch1, Batch2, ...] }
-        
-        Session->>Event: emit(PlanCreated { total_batches, estimated_duration })
-        Event-->>UI: "실행 계획 수립 완료: Z개 배치, 예상 소요시간 W분"
-        
-        loop 각 배치에 대해
-            Session->>Session: spawn_child(batch_id) → BatchActor 생성
-            Session->>Session: send(ActorCommand::ProcessBatch)
-            Note over Session: 배치별 병렬 실행 시작
-        end
-        
-        Event-->>UI: "크롤링 실행 시작: 모든 배치 활성화됨"
-        UI-->>User: 실시간 진행률 대시보드 표시
+    Note over User: 별도 탭에서 크롤링 시작 (설정값 전송 없음)
+    User->>UI: "크롤링 시작" 버튼 클릭 (파라미터 없음)
+    UI->>Facade: start_smart_crawling() // 📌 설정값 전송 금지
+    
+    Note over Facade: 설정 파일에서 모든 값 자동 로딩
+    Facade->>ConfigFile: 자동으로 config/*.toml 파일 읽기
+    ConfigFile-->>Facade: 병합된 설정값 (prod > dev > default 순)
+    
+    Facade->>Session: ActorCommand::StartSession { /* 설정 없음, 자율 동작 */ }
+    
+    Note over Session: SessionActor가 설정 파일 기반으로 자율 계획 수립
+    Session->>ConfigFile: 배치 크기, 동시성 등 모든 설정 읽기
+    Session->>Event: emit(SessionStarted { session_id })
+    Event-->>UI: 실시간 상태 업데이트: "크롤링 세션 시작됨"
+    
+    Session->>Planner: analyze_and_plan() // 설정 기반 분석
+    Note over Planner: config 파일의 batch_size, retry_policy 등 적용
+    Planner-->>Session: ExecutionPlan { batches, strategy }
+    
+    Session->>Event: emit(PlanCreated { total_batches, config_applied })
+    Event-->>UI: "계획 수립 완료: config 기반 Z개 배치 생성"
+    
+    loop 각 배치에 대해 (설정 기반)
+        Session->>Session: spawn_batch_with_config(batch_plan, current_config)
+        Note over Session: config의 concurrency, timeout 등 자동 적용
     end
+    
+    Event-->>UI: "크롤링 실행 시작: 설정 파일 기반 자율 운영"
+    UI-->>User: 진행률 대시보드 표시 (설정값 표시 없음)
 ```
 
-### 3.2. 사용자 설정 검증 및 변환 로직
+### 3.2. 설정 파일 우선순위와 자동 병합
 
 ```rust
-// src-tauri/src/facades/crawling_facade.rs
+// src-tauri/src/config/mod.rs
 //! 🦀 Modern Rust 2024 Clean Code 준수
-//! - 모든 Result 타입 명시적 처리
-//! - Arc<T> 사용으로 불필요한 clone() 최소화
-//! - Clippy pedantic 수준 적용
+//! - 설정 파일 계층적 병합
+//! - 파일 시스템 감시 기반 자동 재로딩
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UserCrawlingConfig {
-    pub site_url: String,
-    pub search_terms: Vec<String>,
-    pub crawl_depth: u32,
-    pub concurrent_requests: Option<u32>,
-    pub delay_between_requests: Option<u64>,
-    pub output_format: OutputFormat,
-    pub resume_from_existing: bool,
+pub struct MergedConfig {
+    pub system: SystemConfig,
+    pub performance: PerformanceConfig,
+    pub retry_policies: RetryPoliciesConfig,
+    pub actor: ActorConfig,
 }
 
-impl CrawlingFacade {
-    /// 🚀 크롤링 시작: 사용자 설정 검증 → Actor 명령 변환 → 실행
+impl ConfigManager {
+    /// � 설정 파일 계층적 로딩: production > development > default
     /// 
-    /// # Clean Code 원칙
-    /// - 단일 책임: 크롤링 시작만 담당
-    /// - 명시적 에러 처리: unwrap() 사용 금지
-    /// - 참조 활용: 불필요한 clone() 최소화
-    pub async fn start_full_crawl(&self, user_config: UserCrawlingConfig) -> crate::Result<SessionId> {
-        // 1단계: 사용자 설정 검증
-        self.validate_user_config(&user_config).await?;
+    /// # 설정 우선순위
+    /// 1. `config/production.toml` (최고 우선순위)
+    /// 2. `config/development.toml` (중간)
+    /// 3. `config/default.toml` (기본값)
+    pub async fn load_merged_config() -> crate::Result<MergedConfig> {
+        let mut config = Self::load_default_config().await?;
         
-        // 2단계: Actor 시스템용 설정으로 변환 (clone 최소화)
-        let actor_config = self.convert_to_actor_config(&user_config).await?;
+        // 개발 환경 설정 병합 (존재하는 경우)
+        if let Ok(dev_config) = Self::load_development_config().await {
+            config.merge_with(dev_config)?;
+        }
         
-        // 3단계: 새로운 세션 ID 생성
-        let session_id = SessionId::new();
+        // 운영 환경 설정 병합 (최종 우선순위)
+        if let Ok(prod_config) = Self::load_production_config().await {
+            config.merge_with(prod_config)?;
+        }
         
-        // 4단계: SessionActor 생성 및 시작 명령 전송
-        let session_handle = self.actor_manager.spawn_session_actor(
-            &session_id,  // 참조 전달로 clone 방지
-            &actor_config,
-        ).await?;
+        // 설정 검증
+        config.validate()?;
         
-        session_handle.send(ActorCommand::StartSession { 
-            config: actor_config 
-        }).await.map_err(|e| format!("Failed to start session: {}", e))?;
+        info!("📁 설정 파일 로딩 완료: batch_size={}, max_concurrent={}", 
+              config.performance.batch_sizes.initial_size,
+              config.performance.concurrency.max_concurrent_tasks);
         
-        // 5단계: 세션 추적 등록
-        self.active_sessions.write().await.insert(session_id, session_handle);
-        
-        Ok(session_id)
+        Ok(config)
     }
+    
+    /// 🔄 실시간 설정 변경 감지 및 재로딩
+    pub async fn watch_config_changes(&self) -> crate::Result<ConfigChangeReceiver> {
+        let (sender, receiver) = mpsc::channel(100);
+        
+        let mut watcher = notify::RecommendedWatcher::new(
+            move |res: notify::Result<notify::Event>| {
+                if let Ok(event) = res {
+                    if event.kind.is_modify() {
+                        let _ = sender.try_send(ConfigChangeEvent::FileModified);
+                    }
+                }
+            },
+            notify::Config::default(),
+        )?;
+        
+        // config/ 디렉토리 전체 감시
+        watcher.watch(Path::new("config/"), notify::RecursiveMode::NonRecursive)?;
+        
+        Ok(receiver)
+    }
+}
+```
+
+### 3.3. 프론트엔드: 설정 편집 전용 인터페이스
+
+```typescript
+// src/components/ConfigEditor.tsx
+// 🎯 목적: config/*.toml 파일만 편집, 백엔드로 설정값 전송 금지
+
+export const ConfigEditor: Component = () => {
+  const [configContent, setConfigContent] = createSignal<string>('');
+  const [selectedFile, setSelectedFile] = createSignal<string>('production.toml');
+  
+  // ✅ 허용: 설정 파일 편집 및 저장
+  const saveConfigFile = async () => {
+    try {
+      await invoke('save_config_file', {
+        filename: selectedFile(),
+        content: configContent()
+      });
+      
+      addLog(`✅ 설정 파일 저장됨: ${selectedFile()}`);
+      // 백엔드가 자동으로 변경사항 감지하여 재로딩
+    } catch (error) {
+      addLog(`❌ 설정 파일 저장 실패: ${error}`);
+    }
+  };
+  
+  // ❌ 금지: 백엔드로 설정값 직접 전송하는 모든 API 제거
+  // const sendConfigToBackend = async () => { /* 완전 삭제 */ };
+  
+  return (
+    <div class="config-editor">
+      <h3>📁 설정 파일 편집</h3>
+      <p>설정 변경 후 저장하면 백엔드가 자동으로 새 설정을 적용합니다.</p>
+      
+      <select value={selectedFile()} onChange={(e) => setSelectedFile(e.target.value)}>
+        <option value="production.toml">운영 환경 설정</option>
+        <option value="development.toml">개발 환경 설정</option>
+        <option value="default.toml">기본 설정 (읽기 전용)</option>
+      </select>
+      
+      <textarea 
+        value={configContent()}
+        onInput={(e) => setConfigContent(e.target.value)}
+        placeholder="TOML 형식으로 설정을 입력하세요..."
+        rows={20}
+      />
+      
+      <button onClick={saveConfigFile}>
+        💾 설정 파일 저장
+      </button>
+    </div>
+  );
+};
+```
     
     /// 사용자 설정의 유효성 검증
     /// 

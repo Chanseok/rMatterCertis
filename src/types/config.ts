@@ -41,21 +41,20 @@ export interface TimingConfig {
 export interface CrawlingConfigSection {
   // 크롤링 범위 및 전략 설정
   page_range_limit: number;
-  crawling_mode: 'incremental' | 'gap_filling' | 'integrity_check' | 'full_rebuild' | 'custom_range';
-  auto_adjust_range: boolean;
-  enable_data_validation: boolean;
-  
-  // 사용자 지정 범위 설정
-  custom_page_ranges?: string;
-  
-  // 누락 제품 탐지 및 무결성 검증 설정
-  gap_detection_threshold: number;
-  binary_search_max_depth: number;
+  intelligent_mode: {
+    enabled: boolean;
+    max_range_limit: number;
+    override_config_limit: boolean;
+    site_analysis_ttl_minutes: number;
+    db_analysis_ttl_minutes: number;
+    range_calculation_ttl_minutes: number;
+    min_incremental_pages: number;
+    max_full_crawl_pages: number;
+  };
   
   // 재시도 및 오류 처리
   product_list_retry_count: number;
   product_detail_retry_count: number;
-  error_threshold_percent: number;
   
   // 기타 설정
   auto_add_to_local_db: boolean;
@@ -64,7 +63,6 @@ export interface CrawlingConfigSection {
 }
 
 export interface UserConfig {
-  max_pages: number;
   request_delay_ms: number;
   max_concurrent_requests: number;
   verbose_logging: boolean;
@@ -110,7 +108,6 @@ export const CONFIG_PRESETS: ConfigPreset[] = [
     description: '빠른 테스트를 위한 설정',
     config: {
       user: {
-        max_pages: 3,
         request_delay_ms: 1000,
         max_concurrent_requests: 5,
         verbose_logging: true,
@@ -142,25 +139,19 @@ export const CONFIG_PRESETS: ConfigPreset[] = [
           batch_retry_limit: 2
         },
         crawling: {
-          // 크롤링 범위 및 전략 설정
           page_range_limit: 20,
-          crawling_mode: 'incremental' as const,
-          auto_adjust_range: true,
-          enable_data_validation: true,
-          
-          // 사용자 지정 범위 설정
-          custom_page_ranges: '',
-          
-          // 누락 제품 탐지 및 무결성 검증 설정
-          gap_detection_threshold: 5,
-          binary_search_max_depth: 10,
-          
-          // 재시도 및 오류 처리
+          intelligent_mode: {
+            enabled: true,
+            max_range_limit: 1000,
+            override_config_limit: true,
+            site_analysis_ttl_minutes: 5,
+            db_analysis_ttl_minutes: 10,
+            range_calculation_ttl_minutes: 3,
+            min_incremental_pages: 10,
+            max_full_crawl_pages: 500
+          },
           product_list_retry_count: 2,
           product_detail_retry_count: 2,
-          error_threshold_percent: 10,
-          
-          // 기타 설정
           auto_add_to_local_db: true,
           workers: {
             list_page_max_concurrent: 5,
@@ -202,7 +193,6 @@ export const CONFIG_PRESETS: ConfigPreset[] = [
     description: '안정적인 운영을 위한 설정',
     config: {
       user: {
-        max_pages: 100,
         request_delay_ms: 800,
         max_concurrent_requests: 20,
         verbose_logging: false,
@@ -234,25 +224,19 @@ export const CONFIG_PRESETS: ConfigPreset[] = [
           batch_retry_limit: 3
         },
         crawling: {
-          // 크롤링 범위 및 전략 설정
           page_range_limit: 50,
-          crawling_mode: 'full_rebuild' as const,
-          auto_adjust_range: false,
-          enable_data_validation: true,
-          
-          // 사용자 지정 범위 설정
-          custom_page_ranges: '',
-          
-          // 누락 제품 탐지 및 무결성 검증 설정
-          gap_detection_threshold: 3,
-          binary_search_max_depth: 15,
-          
-          // 재시도 및 오류 처리
+          intelligent_mode: {
+            enabled: true,
+            max_range_limit: 1000,
+            override_config_limit: false,
+            site_analysis_ttl_minutes: 10,
+            db_analysis_ttl_minutes: 15,
+            range_calculation_ttl_minutes: 5,
+            min_incremental_pages: 20,
+            max_full_crawl_pages: 1000
+          },
           product_list_retry_count: 3,
           product_detail_retry_count: 3,
-          error_threshold_percent: 5,
-          
-          // 기타 설정
           auto_add_to_local_db: true,
           workers: {
             list_page_max_concurrent: 20,

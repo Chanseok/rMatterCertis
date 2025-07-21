@@ -11,6 +11,7 @@ pub mod modern_crawling;
 pub mod config_commands;
 pub mod crawling_v4;
 pub mod smart_crawling;
+pub mod simple_crawling;        // Phase 1: 설정 파일 기반 간단한 크롤링
 pub mod actor_system_commands;  // 새로운 Actor 시스템 명령어
 pub mod system_analysis;        // 시스템 분석 명령어
 
@@ -19,5 +20,6 @@ pub use modern_crawling::*;
 pub use config_commands::*;
 pub use crawling_v4::*;
 pub use smart_crawling::*;
+pub use simple_crawling::*;
 pub use actor_system_commands::*;
 pub use system_analysis::*;
