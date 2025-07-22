@@ -943,4 +943,46 @@ impl IntegratedProductRepository {
             is_valid: true,
         })
     }
+
+    /// 제품 총 개수 조회 (Backend-Only CRUD 패턴)
+    pub async fn count_products(&self) -> Result<i64> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+            .fetch_one(&*self.pool)
+            .await?;
+        Ok(count)
+    }
+
+    /// 최근 업데이트된 제품들 조회 (Backend-Only CRUD 패턴)
+    pub async fn get_latest_updated_products(&self, limit: u32) -> Result<Vec<Product>> {
+        let offset = 0;
+        let rows = sqlx::query(
+            r"
+            SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, 
+                   created_at, updated_at
+            FROM products 
+            ORDER BY updated_at DESC 
+            LIMIT ?
+            "
+        )
+        .bind(limit as i32)
+        .fetch_all(&*self.pool)
+        .await?;
+        
+        let products = rows
+            .into_iter()
+            .map(|row| Product {
+                id: None,  // products 테이블에는 id 컬럼이 없음
+                url: row.get("url"),
+                manufacturer: row.get("manufacturer"),
+                model: row.get("model"),
+                certificate_id: row.get("certificate_id"),
+                page_id: row.get("page_id"),
+                index_in_page: row.get("index_in_page"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            })
+            .collect();
+        
+        Ok(products)
+    }
 }

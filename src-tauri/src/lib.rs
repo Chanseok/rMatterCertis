@@ -135,11 +135,14 @@ pub mod commands {
     pub mod actor_system_monitoring;
     pub mod system_analysis;      // 시스템 분석 명령어
     pub mod advanced_engine_api;  // 새로운 Advanced Engine API 추가
+    pub mod data_queries;         // Backend-Only CRUD commands (Modern Rust 2024)
     
     // Re-export commonly used commands
     pub use crawling_v4::*;
     pub use simple_crawling::*;   // Phase 1 명령어 export
     pub use advanced_engine_api::*;  // Advanced Engine 명령어 export
+    pub use data_queries::*;      // Backend-Only CRUD 명령어 export
+    pub use config_commands::*;   // Config and window management 명령어 export
 }
 
 // Modern Rust 2024 - 명시적 모듈 선언
@@ -259,6 +262,18 @@ pub fn run() {
         .setup(|app| {
             let app_handle = app.handle().clone();
             let broadcaster_handle = app_handle.clone();
+            let database_handle = app_handle.clone();
+            
+            // Initialize shared database connection pool (Modern Rust 2024 - Backend-Only CRUD)
+            tauri::async_runtime::spawn(async move {
+                let state: tauri::State<application::AppState> = database_handle.state();
+                
+                if let Err(e) = state.initialize_database_pool().await {
+                    error!("❌ Failed to initialize database pool: {}", e);
+                } else {
+                    info!("✅ Shared database connection pool initialized successfully");
+                }
+            });
             
             // Initialize event emitter in background
             tauri::async_runtime::spawn(async move {
@@ -269,6 +284,13 @@ pub fn run() {
                     error!("Failed to initialize event emitter: {}", e);
                 } else {
                     info!("✅ Event emitter initialized successfully");
+                }
+                
+                // Initialize shared database connection pool (Modern Rust 2024 - Backend-Only CRUD)
+                if let Err(e) = state.initialize_database_pool().await {
+                    error!("Failed to initialize database pool: {}", e);
+                } else {
+                    info!("✅ Shared database connection pool initialized successfully");
                 }
             });
             
@@ -316,6 +338,19 @@ pub fn run() {
             
             // Simple crawling commands (Phase 1 - 즉시 안정화)
             commands::simple_crawling::start_smart_crawling,
+            
+            // Backend-Only CRUD commands (Modern Rust 2024 Architecture)
+            commands::data_queries::get_products_page,
+            commands::data_queries::get_latest_products,
+            commands::data_queries::get_crawling_status_v2,
+            commands::data_queries::get_system_status,
+            
+            // Window Management commands (이미 config_commands에 구현됨)
+            commands::config_commands::save_window_state,
+            commands::config_commands::load_window_state,
+            commands::config_commands::set_window_position,
+            commands::config_commands::set_window_size,
+            commands::config_commands::maximize_window,
             
             // New Architecture Actor System commands (OneShot integration 완료)
             commands::simple_actor_test::test_new_arch_session_actor,

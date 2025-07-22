@@ -1011,7 +1011,9 @@ pub async fn get_crawling_status_check(
 }
 
 /// Window state structure for saving/restoring UI state
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// ts-rs를 통해 TypeScript 타입 자동 생성 (Modern Rust 2024 정책)
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export)]
 pub struct WindowState {
     pub position: WindowPosition,
     pub size: WindowSize,
@@ -1020,13 +1022,15 @@ pub struct WindowState {
     pub is_maximized: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export)]
 pub struct WindowPosition {
     pub x: i32,
     pub y: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export)]
 pub struct WindowSize {
     pub width: i32,
     pub height: i32,

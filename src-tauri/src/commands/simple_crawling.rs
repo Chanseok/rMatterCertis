@@ -2,7 +2,6 @@ use tauri::State;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use tracing::info;
-use sqlx::SqlitePool;
 
 use crate::infrastructure::config::ConfigManager;
 use crate::infrastructure::crawling_service_impls::CrawlingRangeCalculator;
@@ -20,7 +19,7 @@ pub struct CrawlingSession {
 
 /// Smart Crawling 시작 - 설정 파일 기반 자동 실행
 #[tauri::command]
-pub async fn start_smart_crawling(_state: State<'_, AppState>) -> Result<CrawlingSession, String> {
+pub async fn start_smart_crawling(state: State<'_, AppState>) -> Result<CrawlingSession, String> {
     // 1. 설정 파일 자동 로딩
     let config_manager = ConfigManager::new()
         .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
@@ -34,16 +33,8 @@ pub async fn start_smart_crawling(_state: State<'_, AppState>) -> Result<Crawlin
     info!("✅ Config loaded successfully: max_pages={}, request_delay={}ms", 
           config.user.crawling.page_range_limit, config.user.request_delay_ms);
 
-        // 2. 데이터베이스 연결 및 레포지터리 생성
-    let database_url = {
-        let app_data_dir = std::env::var("HOME")
-            .map_err(|_| "Failed to get HOME directory".to_string())?;
-        let data_dir = format!("{}/Library/Application Support/matter-certis-v2", app_data_dir);
-        format!("sqlite:{}/matter_certis.db", data_dir)
-    };
-
-    let pool = SqlitePool::connect(&database_url).await
-        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    // 2. 공유 데이터베이스 Pool 사용 (Modern Rust 2024 - Backend-Only CRUD)
+    let pool = state.get_database_pool().await?;
     
     let product_repo = IntegratedProductRepository::new(pool);
 

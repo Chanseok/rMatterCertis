@@ -13,11 +13,15 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use chrono::Utc;
 use tracing::info;
+use sqlx::SqlitePool;
 
 /// Global application state managed by Tauri
 pub struct AppState {
     /// Event emitter for real-time communication with frontend
     pub event_emitter: Arc<RwLock<Option<EventEmitter>>>,
+    
+    /// Shared database connection pool (Modern Rust 2024 - Backend-Only CRUD)
+    pub database_pool: Arc<RwLock<Option<SqlitePool>>>,
     
     /// Integrated crawler manager - 통합 크롤링 매니저 (임시 비활성화)
     // pub crawler_manager: Arc<RwLock<Option<CrawlerManager>>>,
@@ -46,6 +50,7 @@ impl AppState {
     pub fn new(config: crate::infrastructure::config::AppConfig) -> Self {
         Self {
             event_emitter: Arc::new(RwLock::new(None)),
+            database_pool: Arc::new(RwLock::new(None)),
             // crawler_manager: Arc::new(RwLock::new(None)), // 임시 비활성화
             current_session: Arc::new(RwLock::new(None)),
             current_progress: Arc::new(RwLock::new(CrawlingProgress::default())),
@@ -53,6 +58,30 @@ impl AppState {
             config: Arc::new(RwLock::new(config)),
             session_start_time: Arc::new(RwLock::new(None)),
             crawling_cancellation_token: Arc::new(RwLock::new(None)),
+        }
+    }
+    
+    /// Initialize the shared database connection pool (Modern Rust 2024 - Backend-Only CRUD)
+    pub async fn initialize_database_pool(&self) -> Result<(), String> {
+        use crate::infrastructure::database_paths::get_main_database_url;
+        
+        let database_url = get_main_database_url();
+        
+        let pool = SqlitePool::connect(&database_url).await
+            .map_err(|e| format!("Failed to connect to database: {}", e))?;
+        
+        let mut pool_guard = self.database_pool.write().await;
+        *pool_guard = Some(pool);
+        info!("✅ Shared database connection pool initialized");
+        Ok(())
+    }
+    
+    /// Get a cloned database pool for use in commands
+    pub async fn get_database_pool(&self) -> Result<SqlitePool, String> {
+        let pool_guard = self.database_pool.read().await;
+        match pool_guard.as_ref() {
+            Some(pool) => Ok(pool.clone()),
+            None => Err("Database pool not initialized. Call initialize_database_pool() first.".to_string())
         }
     }
     

@@ -4,6 +4,7 @@
 pub mod advanced_engine_api;
 pub mod config_commands;
 pub mod simple_crawling;
+pub mod data_queries;
 
 // 모든 명령어를 한곳에서 export
 pub use advanced_engine_api::{
@@ -23,4 +24,11 @@ pub use config_commands::{
 
 pub use simple_crawling::{
     start_smart_crawling,
+};
+
+pub use data_queries::{
+    get_products_page,
+    get_latest_products,
+    get_crawling_status_v2,
+    get_system_status,
 };

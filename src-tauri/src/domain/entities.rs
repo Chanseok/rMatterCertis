@@ -85,7 +85,8 @@ impl Default for CrawlingSession {
 }
 
 /// Basic product information (Stage 1 collection result)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ts_rs::TS)]
+#[ts(export)]
 pub struct Product {
     pub url: String,                    // Product detail page URL (Primary Key)
     pub manufacturer: Option<String>,   // Manufacturer name
