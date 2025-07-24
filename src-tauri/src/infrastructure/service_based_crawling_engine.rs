@@ -272,6 +272,11 @@ impl ServiceBasedBatchCrawlingEngine {
         self.broadcaster.as_mut()
     }
 
+    /// 지능형 범위 계산 결과를 엔진에 적용
+    pub fn update_range_from_calculation(&mut self, optimal_range: Option<(u32, u32)>) {
+        self.config.update_range_from_calculation(optimal_range);
+    }
+
     /// 4단계 서비스 기반 크롤링 실행
     pub async fn execute(&mut self) -> Result<()> {
         let start_time = Instant::now();

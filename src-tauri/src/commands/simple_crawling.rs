@@ -19,7 +19,10 @@ pub struct CrawlingSession {
 
 /// Smart Crawling 시작 - 설정 파일 기반 자동 실행
 #[tauri::command]
-pub async fn start_smart_crawling(state: State<'_, AppState>) -> Result<CrawlingSession, String> {
+pub async fn start_smart_crawling(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>
+) -> Result<CrawlingSession, String> {
     // 1. 설정 파일 자동 로딩
     let config_manager = ConfigManager::new()
         .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
@@ -62,7 +65,69 @@ pub async fn start_smart_crawling(state: State<'_, AppState>) -> Result<Crawling
             info!("✅ Smart crawling session created: {} (pages {} → {})", 
                   session_id, start_page, end_page);
 
-            // TODO: 실제 크롤링 시작 (Actor 시스템 통합)
+            // 실제 크롤링 시작 - ServiceBasedBatchCrawlingEngine 사용
+            use crate::commands::crawling_v4::{CrawlingEngineState, StartCrawlingRequest, start_crawling, init_crawling_engine};
+            use crate::application::SharedStateCache;
+            use tauri::Manager;
+            
+            // Engine state를 가져와서 크롤링 실행
+            if let Some(engine_state) = app_handle.try_state::<CrawlingEngineState>() {
+                if let Some(shared_cache) = app_handle.try_state::<SharedStateCache>() {
+                    
+                    // 엔진이 초기화되지 않았다면 먼저 초기화
+                    {
+                        let engine_guard = engine_state.engine.read().await;
+                        if engine_guard.is_none() {
+                            drop(engine_guard); // 읽기 락 해제
+                            info!("🔧 Crawling engine not initialized, initializing now...");
+                            
+                            // 엔진 초기화
+                            match init_crawling_engine(app_handle.clone(), engine_state.clone()).await {
+                                Ok(response) => {
+                                    if response.success {
+                                        info!("✅ Crawling engine initialized successfully");
+                                    } else {
+                                        return Err(format!("Failed to initialize crawling engine: {}", response.message));
+                                    }
+                                }
+                                Err(e) => {
+                                    return Err(format!("Failed to initialize crawling engine: {}", e));
+                                }
+                            }
+                        }
+                    }
+                    
+                    info!("🚀 Starting actual crawling with ServiceBasedBatchCrawlingEngine");
+                    
+                    let request = StartCrawlingRequest {
+                        start_page,
+                        end_page,
+                        max_products_per_page: Some(12), // 페이지당 최대 제품 수
+                        concurrent_requests: Some(3),    // 동시 요청 수
+                        request_timeout_seconds: Some(30), // 요청 타임아웃 (초)
+                    };
+                    
+                    // 크롤링 시작
+                    match start_crawling(
+                        app_handle.clone(),
+                        engine_state,
+                        shared_cache,
+                        request
+                    ).await {
+                        Ok(response) => info!("✅ Crawling started successfully: {}", response.message),
+                        Err(e) => {
+                            tracing::error!("❌ Crawling failed to start: {}", e);
+                            return Err(format!("Failed to start crawling: {}", e));
+                        }
+                    }
+                    
+                    info!("🎯 Crawling task initiated for session: {}", session_id);
+                } else {
+                    tracing::warn!("⚠️ SharedStateCache not found - falling back to session-only mode");
+                }
+            } else {
+                tracing::warn!("⚠️ CrawlingEngineState not found - falling back to session-only mode");
+            }
             
             Ok(CrawlingSession {
                 session_id,

@@ -532,7 +532,7 @@ pub async fn save_app_settings(settings: serde_json::Value) -> Result<String, St
 }
 
 /// Background task for broadcasting real-time statistics
-async fn broadcast_real_time_stats(app: AppHandle, _engine: ServiceBasedBatchCrawlingEngine) {
+async fn broadcast_real_time_stats(_app: AppHandle, _engine: ServiceBasedBatchCrawlingEngine) {
     // ServiceBasedBatchCrawlingEngine doesn't have continuous stats
     // This function is not needed for the current implementation
     tracing::info!("Real-time stats broadcasting not implemented for ServiceBasedBatchCrawlingEngine");
@@ -606,7 +606,7 @@ async fn calculate_intelligent_crawling_range_v4(
     };
     
     // Phase 3: Ensure fresh DB analysis (TTL-based)
-    let db_analysis = if let Some(cached_db_analysis) = shared_state.get_valid_db_analysis_async(Some(3)).await {
+    let _db_analysis = if let Some(cached_db_analysis) = shared_state.get_valid_db_analysis_async(Some(3)).await {
         tracing::info!("🎯 Using cached DB analysis");
         cached_db_analysis
     } else {
@@ -970,21 +970,21 @@ async fn execute_crawling_with_range(
     tracing::info!("   📊 Total pages to crawl: {}", total_pages);
     tracing::info!("   🔄 Direction: Reverse (older → newer)");
     
-    // Create batch crawling config
-    let config = BatchCrawlingConfig {
-        start_page: final_start_page,
-        end_page: final_end_page,
-        concurrency: 3,
-        list_page_concurrency: 24, // 설정에서 가져올 값
-        product_detail_concurrency: 10, // 설정에서 가져올 값
-        delay_ms: 1000,
-        batch_size: 10,
-        retry_max: 3,
-        timeout_ms: 30000,
-        cancellation_token: None,
-    };
+    // Update engine with the calculated range
+    tracing::info!("🔧 Updating engine range to: {} -> {}", final_start_page, final_end_page);
+    engine.update_range_from_calculation(Some((final_start_page, final_end_page)));
     
-    tracing::info!("🚀 Starting batch crawling with config: {:?}", config);
+    // Emit crawling start event
+    if let Err(e) = app.emit("crawling-started", serde_json::json!({
+        "start_page": final_start_page,
+        "end_page": final_end_page,
+        "total_pages": total_pages,
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    })) {
+        tracing::warn!("Failed to emit crawling-started event: {}", e);
+    }
+    
+    tracing::info!("🚀 Starting batch crawling execution");
     
     match engine.execute().await {
         Ok(_) => {

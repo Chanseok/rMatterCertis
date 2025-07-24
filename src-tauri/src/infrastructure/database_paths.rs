@@ -44,24 +44,18 @@ impl DatabasePathManager {
     }
     
     /// 앱 데이터 디렉토리 결정 (Modern Rust 2024 방식)
-    fn get_app_data_directory() -> Result<PathBuf> {
-        // 1순위: 플랫폼별 표준 경로 (Tauri v2 독립적)
-        let base_dir = if cfg!(target_os = "macos") {
-            dirs::data_dir()
-                .context("macOS에서 데이터 디렉토리를 찾을 수 없습니다")?
-                .join("matter-certis")
-        } else if cfg!(target_os = "windows") {
-            dirs::data_dir()
-                .context("Windows에서 데이터 디렉토리를 찾을 수 없습니다")?
-                .join("matter-certis")
-        } else {
-            // Linux/Unix
-            dirs::data_dir()
-                .context("Linux에서 데이터 디렉토리를 찾을 수 없습니다")?
-                .join("matter-certis")
-        };
+    pub fn get_app_data_directory() -> Result<PathBuf> {
+        let data_dir = dirs::data_local_dir()
+            .ok_or_else(|| anyhow::anyhow!("Data directory not found"))?
+            .join("matter-certis-v2");
         
-        Ok(base_dir)
+        // Create directory if it doesn't exist
+        if !data_dir.exists() {
+            std::fs::create_dir_all(&data_dir)
+                .with_context(|| format!("Failed to create directory: {}", data_dir.display()))?;
+        }
+        
+        Ok(data_dir)
     }
     
     /// 전역 인스턴스 초기화 (앱 시작 시 한 번만 호출)
