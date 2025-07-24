@@ -934,8 +934,8 @@ async fn start_verification_crawling(
     execute_crawling_with_range(app, engine_state, *max_page, *min_page).await
 }
 
-/// 공통 크롤링 실행 로직
-async fn execute_crawling_with_range(
+/// 공통 크롤링 실행 로직 - 범위 재계산 없이 직접 실행
+pub async fn execute_crawling_with_range(
     app: &AppHandle,
     engine_state: &State<'_, CrawlingEngineState>,
     start_page: u32,

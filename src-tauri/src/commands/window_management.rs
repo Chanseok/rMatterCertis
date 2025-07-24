@@ -42,7 +42,7 @@ impl Default for WindowState {
             position: Position { x: 100, y: 100 },
             size: Size { width: 1200.0, height: 800.0 },
             zoom_level: 1.0,
-            last_active_tab: "settings".to_string(),
+            last_active_tab: "crawlingEngine".to_string(), // 기본값을 크롤링 엔진으로 변경
             is_maximized: false,
         }
     }
@@ -196,7 +196,7 @@ pub async fn get_window_state(app_handle: AppHandle) -> Result<WindowState, Stri
             height: size.height as f64,
         },
         zoom_level: 1.0, // Default zoom level
-        last_active_tab: "settings".to_string(), // Default tab
+        last_active_tab: "crawlingEngine".to_string(), // 기본값을 크롤링 엔진으로 변경
         is_maximized,
     };
     

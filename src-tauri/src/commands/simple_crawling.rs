@@ -23,121 +23,98 @@ pub async fn start_smart_crawling(
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>
 ) -> Result<CrawlingSession, String> {
-    // 1. 설정 파일 자동 로딩
+    let session_id = format!("session_{}", chrono::Utc::now().timestamp());
+    let started_at = chrono::Utc::now().to_rfc3339();
+    
+    info!("🚀 Starting smart crawling session: {} (설정 파일 기반 자율 동작)", session_id);
+    
+    // 🎯 설계 문서 준수: 파라미터 없이 설정 파일만으로 동작
+    // 1. 설정 파일 자동 로딩 (config/*.toml)
     let config_manager = ConfigManager::new()
         .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
     
     let config = config_manager.load_config().await
         .map_err(|e| format!("Failed to load config from file: {}", e))?;
 
-    info!("🚀 Starting smart crawling with {} max pages, {}ms delay", 
+    info!("✅ Config loaded from files: max_pages={}, request_delay={}ms", 
           config.user.crawling.page_range_limit, config.user.request_delay_ms);
 
-    info!("✅ Config loaded successfully: max_pages={}, request_delay={}ms", 
-          config.user.crawling.page_range_limit, config.user.request_delay_ms);
-
-    // 2. 공유 데이터베이스 Pool 사용 (Modern Rust 2024 - Backend-Only CRUD)
-    let pool = state.get_database_pool().await?;
+    // 2. Actor 시스템에 세션 시작 명령 전송 (설계 문서 준수)
+    // TODO: SessionActor → BatchActor → StageActor 계층적 구조 사용
+    // use crate::new_architecture::actor_system::SessionActor;
+    // let session_command = ActorCommand::StartSession { session_id: session_id.clone() };
+    // session_actor.send(session_command).await?;
     
-    let product_repo = IntegratedProductRepository::new(pool);
-
-    // 3. 크롤링 범위 계산
-    let range_calculator = CrawlingRangeCalculator::new(
-        std::sync::Arc::new(product_repo),
-        config.clone(),
-    );
-
-    // 임시로 총 페이지 수와 마지막 페이지 제품 수를 하드코딩 (나중에 사이트 분석으로 대체)
-    let total_pages = 485u32;
-    let products_on_last_page = 11u32;
-
-    let range_result = range_calculator.calculate_next_crawling_range(
-        total_pages,
-        products_on_last_page,
-    ).await
-    .map_err(|e| format!("Failed to calculate crawling range: {}", e))?;
-
-    match range_result {
-        Some((start_page, end_page)) => {
-            let session_id = format!("session_{}", chrono::Utc::now().timestamp());
-            let started_at = chrono::Utc::now().to_rfc3339();
-            
-            info!("✅ Smart crawling session created: {} (pages {} → {})", 
-                  session_id, start_page, end_page);
-
-            // 실제 크롤링 시작 - ServiceBasedBatchCrawlingEngine 사용
-            use crate::commands::crawling_v4::{CrawlingEngineState, StartCrawlingRequest, start_crawling, init_crawling_engine};
-            use crate::application::SharedStateCache;
-            use tauri::Manager;
-            
-            // Engine state를 가져와서 크롤링 실행
-            if let Some(engine_state) = app_handle.try_state::<CrawlingEngineState>() {
-                if let Some(shared_cache) = app_handle.try_state::<SharedStateCache>() {
-                    
-                    // 엔진이 초기화되지 않았다면 먼저 초기화
-                    {
-                        let engine_guard = engine_state.engine.read().await;
-                        if engine_guard.is_none() {
-                            drop(engine_guard); // 읽기 락 해제
-                            info!("🔧 Crawling engine not initialized, initializing now...");
-                            
-                            // 엔진 초기화
-                            match init_crawling_engine(app_handle.clone(), engine_state.clone()).await {
-                                Ok(response) => {
-                                    if response.success {
-                                        info!("✅ Crawling engine initialized successfully");
-                                    } else {
-                                        return Err(format!("Failed to initialize crawling engine: {}", response.message));
-                                    }
-                                }
-                                Err(e) => {
-                                    return Err(format!("Failed to initialize crawling engine: {}", e));
-                                }
-                            }
+    // 3. 임시: 직접 크롤링 실행 (나중에 Actor 시스템으로 교체)
+    info!("⚠️ 임시 구현: Actor 시스템 대신 직접 실행 (추후 설계 문서 준수로 변경 필요)");
+    
+    // ServiceBasedBatchCrawlingEngine 사용 (임시)
+    use crate::commands::crawling_v4::{CrawlingEngineState, execute_crawling_with_range, init_crawling_engine};
+    use tauri::Manager;
+    
+    if let Some(engine_state) = app_handle.try_state::<CrawlingEngineState>() {
+        // 엔진 초기화 확인
+        {
+            let engine_guard = engine_state.engine.read().await;
+            if engine_guard.is_none() {
+                drop(engine_guard);
+                info!("🔧 Initializing crawling engine...");
+                
+                match init_crawling_engine(app_handle.clone(), engine_state.clone()).await {
+                    Ok(response) => {
+                        if !response.success {
+                            return Err(format!("Engine initialization failed: {}", response.message));
                         }
                     }
-                    
-                    info!("🚀 Starting actual crawling with ServiceBasedBatchCrawlingEngine");
-                    
-                    let request = StartCrawlingRequest {
-                        start_page,
-                        end_page,
-                        max_products_per_page: Some(12), // 페이지당 최대 제품 수
-                        concurrent_requests: Some(3),    // 동시 요청 수
-                        request_timeout_seconds: Some(30), // 요청 타임아웃 (초)
-                    };
-                    
-                    // 크롤링 시작
-                    match start_crawling(
-                        app_handle.clone(),
-                        engine_state,
-                        shared_cache,
-                        request
-                    ).await {
-                        Ok(response) => info!("✅ Crawling started successfully: {}", response.message),
-                        Err(e) => {
-                            tracing::error!("❌ Crawling failed to start: {}", e);
-                            return Err(format!("Failed to start crawling: {}", e));
-                        }
-                    }
-                    
-                    info!("🎯 Crawling task initiated for session: {}", session_id);
-                } else {
-                    tracing::warn!("⚠️ SharedStateCache not found - falling back to session-only mode");
+                    Err(e) => return Err(format!("Engine initialization error: {}", e)),
                 }
-            } else {
-                tracing::warn!("⚠️ CrawlingEngineState not found - falling back to session-only mode");
             }
+        }
+        
+        // 임시: 범위 계산 (나중에 CrawlingPlanner로 이동 필요)
+        let pool = state.get_database_pool().await?;
+        let product_repo = IntegratedProductRepository::new(pool);
+        let range_calculator = CrawlingRangeCalculator::new(
+            std::sync::Arc::new(product_repo),
+            config.clone(),
+        );
+        
+        let total_pages = 485u32; // TODO: 사이트 상태 체크에서 가져오기
+        let products_on_last_page = 11u32; // TODO: 사이트 분석에서 가져오기
+        
+        let range_result = range_calculator.calculate_next_crawling_range(
+            total_pages,
+            products_on_last_page,
+        ).await
+        .map_err(|e| format!("Range calculation failed: {}", e))?;
+        
+        if let Some((start_page, end_page)) = range_result {
+            info!("📊 Calculated range: {} → {} (설정 파일 기반)", start_page, end_page);
             
-            Ok(CrawlingSession {
-                session_id,
-                started_at,
-                status: "started".to_string(),
-            })
+            // 🎯 설계 준수: 범위 재계산 없이 직접 실행
+            match execute_crawling_with_range(
+                &app_handle,
+                &engine_state,
+                start_page,
+                end_page
+            ).await {
+                Ok(response) => {
+                    info!("✅ Smart crawling initiated: {}", response.message);
+                }
+                Err(e) => {
+                    return Err(format!("Crawling execution failed: {}", e));
+                }
+            }
+        } else {
+            return Err("No pages to crawl (all up to date)".to_string());
         }
-        None => {
-            info!("🏁 No more pages to crawl");
-            Err("모든 페이지가 이미 크롤링되었습니다.".to_string())
-        }
+    } else {
+        return Err("CrawlingEngineState not available".to_string());
     }
+    
+    Ok(CrawlingSession {
+        session_id,
+        started_at,
+        status: "started".to_string(),
+    })
 }
