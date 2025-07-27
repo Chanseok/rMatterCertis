@@ -24,7 +24,7 @@ use crate::domain::product_url::ProductUrl;
 use crate::application::EventEmitter;
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository, RetryManager};
 use crate::infrastructure::crawling_service_impls::{
-    StatusCheckerImpl, ProductListCollectorImpl,
+    StatusCheckerImpl, DatabaseAnalyzerImpl, ProductListCollectorImpl, ProductDetailCollectorImpl,
     CrawlingRangeCalculator, CollectorConfig, product_detail_to_product
 };
 use crate::infrastructure::config::AppConfig;
@@ -232,12 +232,11 @@ impl ServiceBasedBatchCrawlingEngine {
             status_checker_impl.clone(),
         ));
 
-        // ProductDetailCollector는 ProductListCollectorImpl을 재사용 (trait 구현 추가됨)
-        let product_detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(ProductListCollectorImpl::new(
+        // ProductDetailCollector는 실제 ProductDetailCollectorImpl을 사용
+        let product_detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(ProductDetailCollectorImpl::new(
             Arc::new(tokio::sync::Mutex::new(http_client.clone())),
             Arc::new(data_extractor.clone()),
             detail_collector_config,
-            status_checker_impl,
         ));
 
         // 지능형 범위 계산기 초기화 - Phase 3 Integration
@@ -990,6 +989,7 @@ impl ServiceBasedBatchCrawlingEngine {
 
         let mut new_items = 0;
         let mut updated_items = 0;
+        let mut skipped_items = 0; // 🆕 스킵된 항목 카운트 추가
         let mut errors = 0;
         let total_items = products.len();
 
@@ -1017,20 +1017,18 @@ impl ServiceBasedBatchCrawlingEngine {
                 }
             }
             
-            // 제품이 기존에 존재하는지 확인
-            let existing_product = self.product_repo.get_product_by_url(&product.url).await?;
-            let is_update = existing_product.is_some();
-            
-            // Product와 ProductDetail을 모두 저장
+            // 🎯 지능적 업데이트: 실제 변경사항만 반영
             let product_save_result = self.product_repo.create_or_update_product(&product).await;
             let product_detail_save_result = self.product_detail_repo.create_or_update_product_detail(&product_detail).await;
             
             match (product_save_result, product_detail_save_result) {
-                (Ok(_), Ok(_)) => {
-                    if is_update {
+                (Ok((product_was_updated, product_was_created)), Ok((detail_was_updated, detail_was_created))) => {
+                    if product_was_created || detail_was_created {
+                        new_items += 1;
+                    } else if product_was_updated || detail_was_updated {
                         updated_items += 1;
                     } else {
-                        new_items += 1;
+                        skipped_items += 1; // 🆕 변경사항 없음 - 스킵된 항목으로 카운트
                     }
                     
                     // 🔥 DB 저장 성공 이벤트 발송
@@ -1039,7 +1037,7 @@ impl ServiceBasedBatchCrawlingEngine {
                             item_id.clone(),
                             "product".to_string(),
                             product.url.clone(),
-                            is_update
+                            product_was_updated || detail_was_updated
                         ) {
                             warn!("Failed to emit database-save-success event: {}", e);
                         }
@@ -1114,14 +1112,15 @@ impl ServiceBasedBatchCrawlingEngine {
             }
         }
 
-        let total_processed = new_items + updated_items + errors;
+        let total_processed = new_items + updated_items + skipped_items + errors;
 
         self.emit_detailed_event(DetailedCrawlingEvent::StageCompleted {
             stage: "DatabaseSave".to_string(),
             items_processed: total_processed,
         }).await?;
 
-        info!("Stage 4 completed: {} new, {} updated, {} errors", new_items, updated_items, errors);
+        info!("Stage 4 completed: {} new, {} updated, {} skipped, {} errors", 
+              new_items, updated_items, skipped_items, errors);
         Ok((total_processed, new_items, updated_items, errors))
     }
 

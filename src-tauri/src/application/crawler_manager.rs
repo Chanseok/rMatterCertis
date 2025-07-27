@@ -632,10 +632,49 @@ impl BatchProcessor for ServiceBatchProcessor {
         };
         
         // 새로운 ServiceBasedBatchCrawlingEngine 생성 (cancellation_token 포함)
-        // AppConfig를 기본값으로 생성하되, 중요한 설정들은 config에서 가져옴
-        let mut app_config = crate::infrastructure::config::AppConfig::default();
-        // page_range_limit은 config의 end_page - start_page로 설정
-        app_config.user.crawling.page_range_limit = (config.end_page - config.start_page + 1).min(100);
+        // 사용자 설정을 로드하여 사용자가 설정한 page_range_limit을 존중
+        let mut app_config = match crate::infrastructure::config::ConfigManager::new() {
+            Ok(config_manager) => {
+                match config_manager.load_config().await {
+                    Ok(config) => {
+                        info!("✅ Loaded user configuration with page_range_limit: {}", config.user.crawling.page_range_limit);
+                        config
+                    },
+                    Err(e) => {
+                        warn!("⚠️ Failed to load user config: {}", e);
+                        crate::infrastructure::config::AppConfig::default()
+                    }
+                }
+            },
+            Err(e) => {
+                warn!("⚠️ Failed to create config manager: {}", e);
+                crate::infrastructure::config::AppConfig::default()
+            }
+        };
+        
+        // 지능형 모드가 활성화되고 override_config_limit이 true인 경우에만
+        // 설정값을 조정할 수 있음 (사용자 명시적 허용 하에서만)
+        if app_config.user.crawling.intelligent_mode.enabled 
+           && app_config.user.crawling.intelligent_mode.override_config_limit {
+            let requested_range = config.end_page - config.start_page + 1;
+            let max_allowed = app_config.user.crawling.intelligent_mode.max_range_limit;
+            
+            if requested_range > max_allowed {
+                warn!("🚨 Requested range {} exceeds intelligent mode limit {}, adjusting to {}", 
+                      requested_range, max_allowed, max_allowed);
+                app_config.user.crawling.page_range_limit = max_allowed;
+            } else {
+                // 사용자가 요청한 범위가 허용 범위 내라면 그대로 사용
+                app_config.user.crawling.page_range_limit = requested_range;
+                info!("✅ Using requested range {} (within intelligent mode limits)", requested_range);
+            }
+        } else {
+            // 지능형 모드가 비활성화되었거나 override가 비활성화된 경우
+            // 사용자 설정값을 그대로 유지
+            info!("ℹ️ Using user-configured page_range_limit: {} (intelligent mode override: {})", 
+                  app_config.user.crawling.page_range_limit,
+                  app_config.user.crawling.intelligent_mode.override_config_limit);
+        }
         
         let mut engine = ServiceBasedBatchCrawlingEngine::new(
             self.http_client.clone(),

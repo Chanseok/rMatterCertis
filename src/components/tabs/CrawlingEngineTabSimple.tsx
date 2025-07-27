@@ -1,23 +1,6 @@
 import { createSignal, Show, onMount, For } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-
-interface CrawlingRangeRequest {
-  total_pages_on_site: number;
-  products_on_last_page: number;
-}
-
-interface CrawlingRangeResponse {
-  success: boolean;
-  range?: [number, number];
-  progress: {
-    total_products: number;
-    saved_products: number;
-    progress_percentage: number;
-    max_page_id?: number;
-    max_index_in_page?: number;
-    is_completed: boolean;
-  };
-}
+import { CrawlingRangeRequest, CrawlingRangeResponse } from '../../types/advanced-engine';
 
 export default function CrawlingEngineTabSimple() {
   const [isRunning, setIsRunning] = createSignal(false);
@@ -25,13 +8,28 @@ export default function CrawlingEngineTabSimple() {
   const [statusMessage, setStatusMessage] = createSignal<string>('크롤링 준비 완료');
   const [logs, setLogs] = createSignal<string[]>([]);
 
-  // 크롤링 범위 자동 계산
-  const loadCrawlingRange = async () => {
+  // 크롤링 범위 계산
+  const calculateCrawlingRange = async () => {
+    addLog('📊 크롤링 범위 계산 중...');
+    
     try {
+      // 먼저 사이트 상태를 확인해서 실제 total_pages를 얻습니다
+      addLog('🌐 사이트 상태 확인 중...');
+      const siteStatusResponse = await invoke<any>('check_advanced_site_status');
+      
+      if (!siteStatusResponse?.data) {
+        throw new Error('사이트 상태 확인 실패');
+      }
+      
+      const siteStatus = siteStatusResponse.data;
+      addLog(`✅ 사이트 상태 확인 완료: ${siteStatus.total_pages}페이지, 마지막 페이지 ${siteStatus.products_on_last_page}개 제품`);
+      
       const request: CrawlingRangeRequest = {
-        total_pages_on_site: 485,
-        products_on_last_page: 11,
+        total_pages_on_site: siteStatus.total_pages,
+        products_on_last_page: siteStatus.products_on_last_page,
       };
+      
+      addLog(`📋 크롤링 범위 계산 요청: ${request.total_pages_on_site}페이지, 마지막 페이지 ${request.products_on_last_page}개 제품`);
       
       const response = await invoke<CrawlingRangeResponse>('calculate_crawling_range', { request });
       setCrawlingRange(response);
@@ -43,9 +41,7 @@ export default function CrawlingEngineTabSimple() {
       console.error('크롤링 범위 계산 실패:', error);
       addLog(`❌ 크롤링 범위 계산 실패: ${error}`);
     }
-  };
-
-  // 스마트 크롤링 시작 (Phase 1: 설정 파일 기반)
+  };  // 스마트 크롤링 시작 (Phase 1: 설정 파일 기반)
   const startSmartCrawling = async () => {
     if (isRunning()) return;
     
@@ -74,7 +70,7 @@ export default function CrawlingEngineTabSimple() {
   };
 
   onMount(() => {
-    loadCrawlingRange();
+    calculateCrawlingRange();
   });
 
   return (
@@ -102,7 +98,7 @@ export default function CrawlingEngineTabSimple() {
         <Show when={crawlingRange()}>
           <div class="bg-gray-50 rounded-lg p-4 mb-6">
             <h3 class="text-lg font-semibold text-gray-900 mb-3">📊 계산된 크롤링 범위</h3>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div class="text-center">
                 <div class="text-2xl font-bold text-blue-600">{crawlingRange()?.range?.[0] || 0}</div>
                 <div class="text-sm text-gray-600">시작 페이지</div>
@@ -124,6 +120,63 @@ export default function CrawlingEngineTabSimple() {
                 <div class="text-sm text-gray-600">완료율</div>
               </div>
             </div>
+
+            {/* 사이트 정보 섹션 */}
+            <div class="border-t pt-4">
+              <h4 class="text-md font-medium text-gray-800 mb-3">🌐 사이트 정보</h4>
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                <div class="text-center bg-white rounded p-3 border">
+                  <div class="text-xl font-bold text-blue-600">{crawlingRange()?.site_info?.total_pages || 0}</div>
+                  <div class="text-xs text-gray-600">사이트 총 페이지 수</div>
+                </div>
+                <div class="text-center bg-white rounded p-3 border">
+                  <div class="text-xl font-bold text-green-600">{crawlingRange()?.site_info?.products_on_last_page || 0}</div>
+                  <div class="text-xs text-gray-600">마지막 페이지 제품 수</div>
+                </div>
+                <div class="text-center bg-white rounded p-3 border">
+                  <div class="text-xl font-bold text-purple-600">{crawlingRange()?.site_info?.estimated_total_products || 0}</div>
+                  <div class="text-xs text-gray-600">추정 총 제품 수</div>
+                </div>
+              </div>
+            </div>
+
+            {/* 로컬 DB 정보 섹션 */}
+            <div class="border-t pt-4">
+              <h4 class="text-md font-medium text-gray-800 mb-3">💾 로컬 DB 정보</h4>
+              <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <div class="text-center bg-white rounded p-3 border">
+                  <div class="text-xl font-bold text-indigo-600">{crawlingRange()?.local_db_info?.total_saved_products || 0}</div>
+                  <div class="text-xs text-gray-600">수집한 제품 수</div>
+                </div>
+                <div class="text-center bg-white rounded p-3 border">
+                  <div class="text-xl font-bold text-teal-600">{crawlingRange()?.local_db_info?.last_crawled_page || 'N/A'}</div>
+                  <div class="text-xs text-gray-600">마지막 크롤링 페이지</div>
+                </div>
+                <div class="text-center bg-white rounded p-3 border">
+                  <div class="text-xl font-bold text-pink-600">{crawlingRange()?.local_db_info?.coverage_percentage?.toFixed(1) || 0}%</div>
+                  <div class="text-xs text-gray-600">DB 커버리지</div>
+                </div>
+                <div class="text-center bg-white rounded p-3 border">
+                  <div class="text-xl font-bold text-cyan-600">{crawlingRange()?.crawling_info?.pages_to_crawl || 0}</div>
+                  <div class="text-xs text-gray-600">크롤링할 페이지 수</div>
+                </div>
+              </div>
+            </div>
+
+            {/* 크롤링 전략 정보 */}
+            <div class="border-t pt-4">
+              <h4 class="text-md font-medium text-gray-800 mb-3">🎯 크롤링 전략</h4>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-white rounded p-3 border">
+                  <div class="text-sm text-gray-600">전략</div>
+                  <div class="text-lg font-semibold text-gray-800 capitalize">{crawlingRange()?.crawling_info?.strategy || 'unknown'}</div>
+                </div>
+                <div class="bg-white rounded p-3 border">
+                  <div class="text-sm text-gray-600">예상 신규 제품</div>
+                  <div class="text-lg font-semibold text-gray-800">{crawlingRange()?.crawling_info?.estimated_new_products || 0}</div>
+                </div>
+              </div>
+            </div>
           </div>
         </Show>
 
@@ -142,7 +195,7 @@ export default function CrawlingEngineTabSimple() {
           </button>
           
           <button
-            onClick={loadCrawlingRange}
+            onClick={calculateCrawlingRange}
             disabled={isRunning()}
             class="px-6 py-3 rounded-lg font-medium text-blue-600 border border-blue-600 hover:bg-blue-50 disabled:opacity-50"
           >

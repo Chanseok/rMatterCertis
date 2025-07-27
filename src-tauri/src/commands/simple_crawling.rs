@@ -4,8 +4,6 @@ use ts_rs::TS;
 use tracing::info;
 
 use crate::infrastructure::config::ConfigManager;
-use crate::infrastructure::crawling_service_impls::CrawlingRangeCalculator;
-use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::application::AppState;
 
 /// 크롤링 세션 정보 (간소화)
@@ -29,7 +27,7 @@ pub async fn start_smart_crawling(
     info!("🚀 Starting smart crawling session: {} (설정 파일 기반 자율 동작)", session_id);
     
     // 🎯 설계 문서 준수: 파라미터 없이 설정 파일만으로 동작
-    // 1. 설정 파일 자동 로딩 (config/*.toml)
+    // 1. 설정 파일 자동 로딩 (matter_certis_config.json)
     let config_manager = ConfigManager::new()
         .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
     
@@ -71,42 +69,24 @@ pub async fn start_smart_crawling(
             }
         }
         
-        // 임시: 범위 계산 (나중에 CrawlingPlanner로 이동 필요)
-        let pool = state.get_database_pool().await?;
-        let product_repo = IntegratedProductRepository::new(pool);
-        let range_calculator = CrawlingRangeCalculator::new(
-            std::sync::Arc::new(product_repo),
-            config.clone(),
-        );
+        // 🎯 guide/re-arch-plan-final2.md 설계 준수: 설정 파일 완전 의존
+        // 범위 계산 없이 설정 파일의 page_range_limit 직접 사용
+        let page_range_limit = config.user.crawling.page_range_limit;
+        info!("📊 설정 파일 기반 크롤링 범위: {} 페이지 (설정: page_range_limit)", page_range_limit);
         
-        let total_pages = 485u32; // TODO: 사이트 상태 체크에서 가져오기
-        let products_on_last_page = 11u32; // TODO: 사이트 분석에서 가져오기
-        
-        let range_result = range_calculator.calculate_next_crawling_range(
-            total_pages,
-            products_on_last_page,
-        ).await
-        .map_err(|e| format!("Range calculation failed: {}", e))?;
-        
-        if let Some((start_page, end_page)) = range_result {
-            info!("📊 Calculated range: {} → {} (설정 파일 기반)", start_page, end_page);
-            
-            // 🎯 설계 준수: 범위 재계산 없이 직접 실행
-            match execute_crawling_with_range(
-                &app_handle,
-                &engine_state,
-                start_page,
-                end_page
-            ).await {
-                Ok(response) => {
-                    info!("✅ Smart crawling initiated: {}", response.message);
-                }
-                Err(e) => {
-                    return Err(format!("Crawling execution failed: {}", e));
-                }
+        // ServiceBasedBatchCrawlingEngine으로 직접 실행 (범위 재계산 방지)
+        match execute_crawling_with_range(
+            &app_handle,
+            &engine_state,
+            1, // 시작 페이지는 항상 1
+            page_range_limit // 설정 파일에서 가져온 범위 한도
+        ).await {
+            Ok(response) => {
+                info!("✅ 설정 파일 기반 크롤링 시작: {}", response.message);
             }
-        } else {
-            return Err("No pages to crawl (all up to date)".to_string());
+            Err(e) => {
+                return Err(format!("Crawling execution failed: {}", e));
+            }
         }
     } else {
         return Err("CrawlingEngineState not available".to_string());

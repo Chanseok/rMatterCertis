@@ -71,32 +71,44 @@ impl DbSaver {
 
     /// Inserts a single product into the database within a transaction
     async fn insert_product(&self, tx: &mut Transaction<'_, Sqlite>, product: &ProductData) -> Result<(), WorkerError> {
+        // Generate ID from page_id and index_in_page if available
+        let generated_id = if let (Some(page_id), Some(index_in_page)) = (product.page_id, product.index_in_page) {
+            format!("p{:04}i{:02}", page_id, index_in_page)
+        } else {
+            // Fallback ID if pagination coordinates are not available
+            format!("url_{}", product.source_url.as_str().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect::<String>())
+        };
+
         // Use parameterized query instead of sqlx! macro to avoid compilation-time database dependency
         let query = r"
             INSERT INTO products (
-                url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(url) DO UPDATE SET
+                id = excluded.id,
                 manufacturer = excluded.manufacturer,
                 model = excluded.model,
                 certificate_id = excluded.certificate_id,
+                page_id = excluded.page_id,
+                index_in_page = excluded.index_in_page,
                 updated_at = excluded.updated_at
         ";
         
         sqlx::query(query)
+            .bind(&generated_id)
             .bind(product.source_url.as_str())
             .bind(product.manufacturer.as_deref().unwrap_or(""))
             .bind(product.model.as_deref().unwrap_or(""))
             .bind(product.certification_number.as_deref().unwrap_or(""))
-            .bind(0i32) // page_id - placeholder
-            .bind(0i32) // index_in_page - placeholder  
+            .bind(product.page_id.unwrap_or(0)) // Use actual page_id or fallback to 0
+            .bind(product.index_in_page.unwrap_or(0)) // Use actual index_in_page or fallback to 0
             .bind(product.extracted_at)
             .bind(product.extracted_at)
             .execute(&mut **tx)
             .await
             .map_err(|e| WorkerError::DatabaseError(format!("Failed to insert product: {}", e)))?;
         
-        tracing::info!("Successfully inserted product: {}", product.name);
+        tracing::info!("Successfully inserted product: {} with ID: {}", product.name, generated_id);
         
         Ok(())
     }
@@ -159,13 +171,42 @@ impl DbSaver {
         let validated_url = crate::domain::value_objects::ValidatedUrl::new(task_product.source_url.clone())
             .map_err(|e| WorkerError::InvalidInput(format!("Invalid URL: {}", e)))?;
 
-        // Create the domain product data
-        ProductData::new(
-            task_product.product_id.clone(),
+        // Generate product ID from page_id and index_in_page if available
+        let product_id = if let (Some(page_id), Some(index_in_page)) = (task_product.page_id, task_product.index_in_page) {
+            format!("p{:04}i{:02}", page_id, index_in_page)
+        } else {
+            task_product.product_id.clone()
+        };
+
+        // Create the domain product data with pagination coordinates
+        let mut product_data = ProductData::new(
+            product_id,
             task_product.name.clone(),
             validated_url,
         )
-        .map_err(|e| WorkerError::InvalidInput(format!("Invalid product data: {}", e)))
+        .map_err(|e| WorkerError::InvalidInput(format!("Invalid product data: {}", e)))?
+        .with_category(task_product.category.clone())
+        .with_manufacturer(task_product.manufacturer.clone())
+        .with_model(task_product.model.clone())
+        .with_certification(
+            task_product.certification_number.clone(),
+            task_product.certification_date
+                .as_ref()
+                .and_then(|date_str| chrono::DateTime::parse_from_rfc3339(date_str).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+        );
+
+        // Set pagination coordinates if available
+        if let (Some(page_id), Some(index_in_page)) = (task_product.page_id, task_product.index_in_page) {
+            product_data = product_data.with_pagination_coordinates(page_id, index_in_page);
+        }
+
+        // Add technical details
+        for (key, value) in &task_product.details {
+            product_data.add_technical_detail(key.clone(), value.clone());
+        }
+
+        Ok(product_data)
     }
 }
 
@@ -267,25 +308,33 @@ impl Drop for DbSaver {
                         let tx = pool.begin().await.ok();
                         if let Some(mut tx) = tx {
                             for product in &products {
+                                // Generate fallback ID for cleanup
+                                let cleanup_id = format!("cleanup_{}", product.source_url.as_str().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect::<String>());
+                                
                                 // Use parameterized query instead of sqlx! macro
                                 let query = r"
                                     INSERT INTO products (
-                                        url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                        id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
+                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                                     ON CONFLICT(url) DO UPDATE SET
+                                        id = excluded.id,
                                         manufacturer = excluded.manufacturer,
                                         model = excluded.model,
                                         certificate_id = excluded.certificate_id,
+                                        page_id = excluded.page_id,
+                                        index_in_page = excluded.index_in_page,
                                         updated_at = excluded.updated_at
                                 ";
                                 
                                 let _ = sqlx::query(query)
+                                    .bind(&cleanup_id)
                                     .bind(product.source_url.as_str())
                                     .bind(product.manufacturer.as_deref().unwrap_or(""))
                                     .bind(product.model.as_deref().unwrap_or(""))
                                     .bind(product.certification_number.as_deref().unwrap_or(""))
                                     .bind(0i32) // page_id - placeholder
                                     .bind(0i32) // index_in_page - placeholder
+                                    .bind(product.extracted_at)
                                     .bind(product.extracted_at)
                                     .bind(product.extracted_at)
                                     .execute(tx.as_mut())

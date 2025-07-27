@@ -131,6 +131,9 @@ pub struct ProductData {
     pub source_url: ValidatedUrl,
     pub extracted_at: chrono::DateTime<chrono::Utc>,
     pub confidence_score: f64,
+    // Product position coordinates calculated from pagination context
+    pub page_id: Option<i32>,
+    pub index_in_page: Option<i32>,
 }
 
 impl ProductData {
@@ -164,6 +167,8 @@ impl ProductData {
             source_url,
             extracted_at: chrono::Utc::now(),
             confidence_score: 0.0,
+            page_id: None,
+            index_in_page: None,
         })
     }
 
@@ -200,6 +205,14 @@ impl ProductData {
     #[must_use]
     pub fn with_confidence_score(mut self, score: f64) -> Self {
         self.confidence_score = score.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Sets pagination coordinates (page_id and index_in_page)
+    #[must_use]
+    pub fn with_pagination_coordinates(mut self, page_id: i32, index_in_page: i32) -> Self {
+        self.page_id = Some(page_id);
+        self.index_in_page = Some(index_in_page);
         self
     }
 

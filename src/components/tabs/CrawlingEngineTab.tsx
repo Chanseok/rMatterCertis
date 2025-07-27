@@ -669,9 +669,60 @@ export const CrawlingEngineTab: Component = () => {
                 }
               >
                 <div class="space-y-4">
-                  {/* 계산 결과 요약 */}
+                  {/* 사이트 정보 */}
+                  <div class="bg-blue-50 border border-blue-200 rounded-md p-4">
+                    <h3 class="text-sm font-semibold text-blue-800 mb-3">🌐 사이트 정보</h3>
+                    <div class="grid grid-cols-3 gap-4 text-sm">
+                      <div class="space-y-1">
+                        <span class="text-blue-700 block">총 페이지 수:</span>
+                        <span class="font-medium text-blue-800">
+                          {crawlingRange()?.site_info?.total_pages || '-'}페이지
+                        </span>
+                      </div>
+                      <div class="space-y-1">
+                        <span class="text-blue-700 block">마지막 페이지 제품:</span>
+                        <span class="font-medium text-blue-800">
+                          {crawlingRange()?.site_info?.products_on_last_page || '-'}개
+                        </span>
+                      </div>
+                      <div class="space-y-1">
+                        <span class="text-blue-700 block">추정 총 제품 수:</span>
+                        <span class="font-medium text-blue-800">
+                          {crawlingRange()?.site_info?.estimated_total_products || '-'}개
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 로컬 DB 정보 */}
+                  <div class="bg-purple-50 border border-purple-200 rounded-md p-4">
+                    <h3 class="text-sm font-semibold text-purple-800 mb-3">💾 로컬 데이터베이스 정보</h3>
+                    <div class="grid grid-cols-3 gap-4 text-sm">
+                      <div class="space-y-1">
+                        <span class="text-purple-700 block">수집된 제품 수:</span>
+                        <span class="font-medium text-purple-800">
+                          {crawlingRange()?.local_db_info?.total_saved_products || '-'}개
+                        </span>
+                      </div>
+                      <div class="space-y-1">
+                        <span class="text-purple-700 block">마지막 크롤링 페이지:</span>
+                        <span class="font-medium text-purple-800">
+                          {crawlingRange()?.local_db_info?.last_crawled_page || '-'}페이지
+                        </span>
+                      </div>
+                      <div class="space-y-1">
+                        <span class="text-purple-700 block">수집 진행률:</span>
+                        <span class="font-medium text-purple-800">
+                          {crawlingRange()?.local_db_info?.coverage_percentage ? 
+                            `${crawlingRange()?.local_db_info?.coverage_percentage.toFixed(1)}%` : '-'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 크롤링 계획 */}
                   <div class="bg-green-50 border border-green-200 rounded-md p-4">
-                    <h3 class="text-sm font-semibold text-green-800 mb-3">📊 계산 결과</h3>
+                    <h3 class="text-sm font-semibold text-green-800 mb-3">📋 크롤링 계획</h3>
                     <div class="grid grid-cols-2 gap-4 text-sm">
                       <div class="space-y-2">
                         <div class="flex justify-between">
@@ -686,24 +737,30 @@ export const CrawlingEngineTab: Component = () => {
                             {crawlingRange()?.range?.[1] || '-'}
                           </span>
                         </div>
+                        <div class="flex justify-between">
+                          <span class="text-green-700">크롤링 전략:</span>
+                          <span class="font-medium text-green-800">
+                            {(() => {
+                              const strategy = crawlingRange()?.crawling_info?.strategy;
+                              if (strategy === 'full') return '전체 크롤링';
+                              if (strategy === 'partial') return '부분 크롤링';
+                              if (strategy === 'none') return '완료됨';
+                              return '-';
+                            })()}
+                          </span>
+                        </div>
                       </div>
                       <div class="space-y-2">
                         <div class="flex justify-between">
-                          <span class="text-green-700">총 크롤링 페이지:</span>
+                          <span class="text-green-700">크롤링할 페이지:</span>
                           <span class="font-medium text-green-800">
-                            {(() => {
-                              const range = crawlingRange()?.range;
-                              if (range && range.length === 2) {
-                                return range[0] - range[1] + 1;
-                              }
-                              return '-';
-                            })()}페이지
+                            {crawlingRange()?.crawling_info?.pages_to_crawl || '-'}페이지
                           </span>
                         </div>
                         <div class="flex justify-between">
-                          <span class="text-green-700">예상 제품 수:</span>
+                          <span class="text-green-700">예상 신규 제품:</span>
                           <span class="font-medium text-green-800">
-                            {crawlingRange()?.progress?.total_products || '-'}개
+                            {crawlingRange()?.crawling_info?.estimated_new_products || '-'}개
                           </span>
                         </div>
                       </div>
@@ -711,13 +768,12 @@ export const CrawlingEngineTab: Component = () => {
                   </div>
 
                   {/* 상세 메시지 */}
-                  <div class="bg-blue-50 border border-blue-200 rounded-md p-4">
-                    <h3 class="text-sm font-semibold text-blue-800 mb-2">🔍 계산 상세</h3>
-                    <p class="text-sm text-blue-700">
+                  <div class="bg-gray-50 border border-gray-200 rounded-md p-4">
+                    <h3 class="text-sm font-semibold text-gray-800 mb-2">� 계산 결과</h3>
+                    <p class="text-sm text-gray-700">
                       {crawlingRange()?.message || '계산 중...'}
                     </p>
-                    <Show when={crawlingRange()?.progress?.progress_percentage}>
-                      <div class="mt-2">
+                  </div>
                         <div class="flex justify-between text-xs text-blue-600 mb-1">
                           <span>분석 진행률</span>
                           <span>{crawlingRange()?.progress?.progress_percentage?.toFixed(1)}%</span>

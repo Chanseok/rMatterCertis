@@ -24,8 +24,19 @@ export interface TabState {
 }
 
 const [tabState, setTabState] = createStore<TabState>({
-  activeTab: 'crawlingEngine',
+  activeTab: 'eventDisplay',
   tabs: [
+    {
+      id: 'eventDisplay',
+      label: '이벤트 모니터',
+      icon: '📡',
+      theme: {
+        bg: 'bg-gradient-to-br from-green-50 to-emerald-50',
+        border: 'border-green-200',
+        text: 'text-green-700',
+        accent: 'from-green-500 to-emerald-500'
+      }
+    },
     {
       id: 'crawlingEngine',
       label: '🔬 Advanced Engine',

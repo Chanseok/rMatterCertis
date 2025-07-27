@@ -21,7 +21,35 @@ pub struct CrawlingRangeResponse {
     pub success: bool,
     pub range: Option<(u32, u32)>,
     pub progress: CrawlingProgressInfo,
+    pub site_info: SiteInfo,
+    pub local_db_info: LocalDbInfo,
+    pub crawling_info: CrawlingInfo,
     pub message: String,
+}
+
+/// Site information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteInfo {
+    pub total_pages: u32,
+    pub products_on_last_page: u32,
+    pub estimated_total_products: u32,
+}
+
+/// Local database information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalDbInfo {
+    pub total_saved_products: u32,
+    pub last_crawled_page: Option<u32>,
+    pub last_crawled_page_id: Option<i32>,
+    pub coverage_percentage: f64,
+}
+
+/// Crawling strategy information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlingInfo {
+    pub pages_to_crawl: Option<u32>,
+    pub estimated_new_products: Option<u32>,
+    pub strategy: String, // "full", "partial", "none"
 }
 
 /// Crawling progress information
@@ -108,6 +136,31 @@ pub async fn calculate_crawling_range(
     ).await
     .map_err(|e| format!("Failed to analyze progress: {}", e))?;
 
+    // Calculate site information
+    let estimated_total_products = ((request.total_pages_on_site - 1) * 12) + request.products_on_last_page;
+    let site_info = SiteInfo {
+        total_pages: request.total_pages_on_site,
+        products_on_last_page: request.products_on_last_page,
+        estimated_total_products,
+    };
+
+    // Calculate local DB information
+    let local_db_info = LocalDbInfo {
+        total_saved_products: progress.current,
+        last_crawled_page: if progress.current > 0 {
+            // Convert max_page_id back to actual page number
+            Some(request.total_pages_on_site - (progress.current_batch.unwrap_or(0)))
+        } else {
+            None
+        },
+        last_crawled_page_id: if progress.current > 0 {
+            Some(progress.current_batch.unwrap_or(0) as i32)
+        } else {
+            None
+        },
+        coverage_percentage: progress.percentage,
+    };
+
     let response = match result {
         Some((start_page, end_page)) => {
             let total_pages = if start_page >= end_page {
@@ -115,6 +168,15 @@ pub async fn calculate_crawling_range(
             } else {
                 end_page - start_page + 1
             };
+            
+            let estimated_new_products = total_pages * 12; // 평균 12개 제품/페이지
+            
+            let crawling_info = CrawlingInfo {
+                pages_to_crawl: Some(total_pages),
+                estimated_new_products: Some(estimated_new_products),
+                strategy: "partial".to_string(),
+            };
+            
             let message = format!("Next crawling range: pages {} to {} (total: {} pages)", 
                                 start_page, end_page, total_pages);
             info!("✅ {}", message);
@@ -123,10 +185,19 @@ pub async fn calculate_crawling_range(
                 success: true,
                 range: Some((start_page, end_page)),
                 progress: convert_progress(&progress),
+                site_info,
+                local_db_info,
+                crawling_info,
                 message,
             }
         }
         None => {
+            let crawling_info = CrawlingInfo {
+                pages_to_crawl: Some(0),
+                estimated_new_products: Some(0),
+                strategy: "none".to_string(),
+            };
+            
             let message = "All products have been crawled - no more pages to process".to_string();
             info!("🏁 {}", message);
             
@@ -134,6 +205,9 @@ pub async fn calculate_crawling_range(
                 success: true,
                 range: None,
                 progress: convert_progress(&progress),
+                site_info,
+                local_db_info,
+                crawling_info,
                 message,
             }
         }

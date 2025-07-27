@@ -35,7 +35,12 @@ impl CacheItem for SiteAnalysisResult {
         if !self.is_valid {
             return true;
         }
-        self.cached_at.elapsed() > ttl
+        // analyzed_at (UTC)을 기준으로 만료 확인 (파일 저장/로드 시에도 유지됨)
+        let now = Utc::now();
+        let age = now.signed_duration_since(self.analyzed_at);
+        let ttl_chrono = chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::minutes(5));
+        
+        age > ttl_chrono
     }
     
     fn is_valid(&self) -> bool {
@@ -107,7 +112,12 @@ impl CacheItem for DbAnalysisResult {
         if !self.is_valid {
             return true;
         }
-        self.cached_at.elapsed() > ttl
+        // analyzed_at (UTC)을 기준으로 만료 확인 (파일 저장/로드 시에도 유지됨)
+        let now = Utc::now();
+        let age = now.signed_duration_since(self.analyzed_at);
+        let ttl_chrono = chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::minutes(10));
+        
+        age > ttl_chrono
     }
     
     fn is_valid(&self) -> bool {
@@ -179,7 +189,12 @@ impl CacheItem for CalculatedRange {
         if !self.is_valid {
             return true;
         }
-        self.cached_at.elapsed() > ttl
+        // calculated_at (UTC)을 기준으로 만료 확인 (파일 저장/로드 시에도 유지됨)
+        let now = Utc::now();
+        let age = now.signed_duration_since(self.calculated_at);
+        let ttl_chrono = chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::minutes(3));
+        
+        age > ttl_chrono
     }
     
     fn is_valid(&self) -> bool {
@@ -356,11 +371,21 @@ impl SharedStateCache {
         let guard = self.site_analysis.read().await;
         
         if let Some(ref analysis) = *guard {
+            let now = Utc::now();
+            let age = now.signed_duration_since(analysis.analyzed_at);
+            
             if !analysis.is_expired(ttl) && analysis.is_valid() {
-                tracing::info!("🎯 Using cached site analysis (age: {:?})", analysis.cached_at.elapsed());
+                tracing::info!("🎯 Using cached site analysis (analyzed: {}, age: {} minutes)", 
+                             analysis.analyzed_at.format("%H:%M:%S"), 
+                             age.num_minutes());
                 return Some(analysis.clone());
             }
-            tracing::warn!("⏰ Site analysis cache expired or invalid (age: {:?})", analysis.cached_at.elapsed());
+            tracing::warn!("⏰ Site analysis cache expired or invalid (analyzed: {}, age: {} minutes, TTL: {} minutes)", 
+                          analysis.analyzed_at.format("%H:%M:%S"), 
+                          age.num_minutes(),
+                          ttl_minutes.unwrap_or(5));
+        } else {
+            tracing::info!("📭 No cached site analysis found");
         }
         None
     }

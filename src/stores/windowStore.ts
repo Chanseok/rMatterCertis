@@ -7,12 +7,21 @@ import { createStore } from 'solid-js/store';
 import { invoke } from '@tauri-apps/api/core';
 
 // ts-rs로 생성된 타입들 import (Modern Rust 2024 ts-rs 정책)
-import type { WindowState } from '../types/generated/WindowState';
+import type { WindowState as TauriWindowState } from '../types/generated/WindowState';
 import type { WindowPosition } from '../types/generated/WindowPosition';
 import type { WindowSize } from '../types/generated/WindowSize';
 
+// 내부 상태용 camelCase 타입 정의
+interface InternalWindowState {
+  position: WindowPosition;
+  size: WindowSize;
+  zoomLevel: number;
+  lastActiveTab: string;
+  isMaximized: boolean;
+}
+
 interface WindowStore {
-  state: WindowState;
+  state: InternalWindowState;
   isInitialized: boolean;
   saveState: () => Promise<void>;
   restoreState: () => Promise<void>;
@@ -27,7 +36,7 @@ interface WindowStore {
   resetZoom: () => void;
 }
 
-const DEFAULT_STATE: WindowState = {
+const DEFAULT_STATE: InternalWindowState = {
   position: { x: 100, y: 100 },
   size: { width: 1200, height: 800 },
   zoomLevel: 1.0,
@@ -63,10 +72,19 @@ const [windowState, setWindowState] = createStore<WindowStore>({
   async restoreState() {
     try {
       // Tauri에서 상태 로드 시도
-      const savedState = await invoke<WindowState>('load_window_state');
+      const savedState = await invoke<any>('load_window_state'); // any 타입으로 받아서 변환
       if (savedState) {
-        setWindowState('state', savedState);
-        console.log('🔧 Window state restored from Tauri:', savedState);
+        // snake_case를 camelCase로 변환
+        const convertedState: InternalWindowState = {
+          position: savedState.position,
+          size: savedState.size,
+          zoomLevel: savedState.zoom_level || savedState.zoomLevel || 1.0,
+          lastActiveTab: savedState.last_active_tab || savedState.lastActiveTab || 'settings',
+          isMaximized: savedState.is_maximized || savedState.isMaximized || false
+        };
+        
+        setWindowState('state', convertedState);
+        console.log('🔧 Window state restored from Tauri:', convertedState);
         
         // 윈도우 위치와 크기 적용
         await windowState.applyWindowSettings();
@@ -81,7 +99,7 @@ const [windowState, setWindowState] = createStore<WindowStore>({
     try {
       const savedState = localStorage.getItem('windowState');
       if (savedState) {
-        const parsed = JSON.parse(savedState) as WindowState;
+        const parsed = JSON.parse(savedState) as InternalWindowState;
         setWindowState('state', { ...DEFAULT_STATE, ...parsed });
         console.log('🔧 Window state restored from localStorage:', parsed);
       }

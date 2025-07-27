@@ -114,6 +114,22 @@ export interface CrawlingRangeResponse {
     max_index_in_page?: number;
     is_completed: boolean;
   };
+  site_info: {
+    total_pages: number;
+    products_on_last_page: number;
+    estimated_total_products: number;
+  };
+  local_db_info: {
+    total_saved_products: number;
+    last_crawled_page?: number;
+    last_crawled_page_id?: number;
+    coverage_percentage: number;
+  };
+  crawling_info: {
+    pages_to_crawl?: number;
+    estimated_new_products?: number;
+    strategy: string; // "full", "partial", "none"
+  };
   message: string;
 }
 

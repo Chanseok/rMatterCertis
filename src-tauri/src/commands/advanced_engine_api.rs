@@ -20,11 +20,30 @@ use crate::application::EventEmitter;
 #[command]
 pub async fn check_advanced_site_status(
     _state: State<'_, CrawlingEngineState>,
-    _shared_state: State<'_, SharedStateCache>,
+    shared_state: State<'_, SharedStateCache>,
 ) -> Result<ApiResponse<SiteStatusInfo>, String> {
     info!("🌐 Advanced site status check requested");
     
-    // 실제 크롤링 엔진 인스턴스 생성
+    // 먼저 캐시된 사이트 분석 결과 확인 (5분 TTL)
+    if let Some(cached_analysis) = shared_state.get_valid_site_analysis_async(Some(5)).await {
+        info!("🎯 Using cached site analysis - analyzed: {}, age: {} minutes", 
+             cached_analysis.analyzed_at.format("%H:%M:%S"),
+             chrono::Utc::now().signed_duration_since(cached_analysis.analyzed_at).num_minutes());
+        let site_status_info = SiteStatusInfo {
+            is_accessible: true,
+            response_time_ms: 500, // 기본값 - 캐시된 데이터이므로
+            total_pages: cached_analysis.total_pages,
+            products_on_last_page: cached_analysis.products_on_last_page,
+            estimated_total_products: cached_analysis.estimated_products,
+            health_score: cached_analysis.health_score,
+        };
+        return Ok(ApiResponse::success(site_status_info));
+    }
+    
+    info!("⏰ No valid cached site analysis found - performing fresh site check");
+    info!("🔄 Starting real site status check...");
+    
+    // 캐시가 없거나 만료된 경우, 실제 크롤링 엔진 인스턴스 생성
     let http_client = match HttpClient::new() {
         Ok(client) => client,
         Err(e) => {
@@ -81,9 +100,23 @@ pub async fn check_advanced_site_status(
         session_id,
     );
     
+    info!("🚀 Starting real site analysis...");
+    
     // 실제 사이트 상태 확인
     match engine.stage0_check_site_status().await {
         Ok(site_status) => {
+            info!("✅ Fresh site status check completed - {} pages found", site_status.total_pages);
+            
+            // 새로운 분석 결과를 캐시에 저장
+            let site_analysis = crate::application::shared_state::SiteAnalysisResult::new(
+                site_status.total_pages,
+                site_status.products_on_last_page,
+                site_status.estimated_products,
+                "https://iotready.kr".to_string(), // site_url
+                1.0, // health_score
+            );
+            shared_state.set_site_analysis(site_analysis).await;
+            
             let site_status_info = SiteStatusInfo {
                 is_accessible: true,
                 response_time_ms: 500, // 기본값
@@ -93,7 +126,7 @@ pub async fn check_advanced_site_status(
                 health_score: 1.0,
             };
             
-            info!("✅ Real site status check completed successfully");
+            info!("✅ Fresh site status check completed and cached");
             Ok(ApiResponse::success(site_status_info))
         },
         Err(e) => {

@@ -16,7 +16,8 @@ use crate::domain::product::{
 use crate::domain::session_manager::CrawlingResult;
 use crate::domain::integrated_product::DatabaseStatistics;
 use anyhow::Result;
-use sqlx::{SqlitePool, Row};
+use sqlx::{sqlite::SqlitePool, Row};
+use tracing::{info, debug};
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 
@@ -36,39 +37,69 @@ impl IntegratedProductRepository {
     // ===============================
 
     /// Insert or update basic product information from listing page
-    pub async fn create_or_update_product(&self, product: &Product) -> Result<()> {
+    /// 🎯 지능적 비교: 실제로 변경된 필드가 있을 때만 업데이트
+    /// Returns: (was_updated: bool, was_created: bool)
+    pub async fn create_or_update_product(&self, product: &Product) -> Result<(bool, bool)> {
         let now = chrono::Utc::now();
         
         // Check if product already exists
         let existing = self.get_product_by_url(&product.url).await?;
         
         if let Some(existing_product) = existing {
-            // Update existing product, preserve created_at
-            sqlx::query(
-                r"
-                UPDATE products 
-                SET manufacturer = ?, model = ?, certificate_id = ?, page_id = ?, index_in_page = ?, updated_at = ?
-                WHERE url = ?
-                ",
-            )
-            .bind(&product.manufacturer)
-            .bind(&product.model)
-            .bind(&product.certificate_id)
-            .bind(product.page_id)
-            .bind(product.index_in_page)
-            .bind(now)
-            .bind(&product.url)
-            .execute(&*self.pool)
-            .await?;
+            // 🔍 지능적 비교: 실제 변경사항이 있는지 확인
+            let needs_update = 
+                existing_product.manufacturer != product.manufacturer ||
+                existing_product.model != product.model ||
+                existing_product.certificate_id != product.certificate_id ||
+                existing_product.page_id != product.page_id ||
+                existing_product.index_in_page != product.index_in_page;
+            
+            if needs_update {
+                // 📝 실제 변경사항이 있을 때만 업데이트
+                sqlx::query(
+                    r"
+                    UPDATE products 
+                    SET manufacturer = ?, model = ?, certificate_id = ?, page_id = ?, index_in_page = ?, updated_at = ?
+                    WHERE url = ?
+                    ",
+                )
+                .bind(&product.manufacturer)
+                .bind(&product.model)
+                .bind(&product.certificate_id)
+                .bind(product.page_id)
+                .bind(product.index_in_page)
+                .bind(now)
+                .bind(&product.url)
+                .execute(&*self.pool)
+                .await?;
+                
+                info!("📝 Product updated: {} (changes detected)", product.model.as_deref().unwrap_or("Unknown"));
+                Ok((true, false)) // updated=true, created=false
+            } else {
+                // ✅ 변경사항 없음 - 불필요한 업데이트 스킵
+                debug!("✅ Product unchanged: {} (skipping update)", product.model.as_deref().unwrap_or("Unknown"));
+                Ok((false, false)) // updated=false, created=false
+            }
         } else {
             // Insert new product
+            // Generate ID if not already set
+            let generated_id = product.id.clone().unwrap_or_else(|| {
+                if let (Some(page_id), Some(index_in_page)) = (product.page_id, product.index_in_page) {
+                    format!("p{:04}i{:02}", page_id, index_in_page)
+                } else {
+                    // Fallback ID generation
+                    format!("product_{}", product.url.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect::<String>())
+                }
+            });
+
             sqlx::query(
                 r"
                 INSERT INTO products 
-                (url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ",
             )
+            .bind(&generated_id)  // Add generated_id
             .bind(&product.url)
             .bind(&product.manufacturer)
             .bind(&product.model)
@@ -79,55 +110,134 @@ impl IntegratedProductRepository {
             .bind(now)
             .execute(&*self.pool)
             .await?;
+            
+            info!("🆕 New product created: {}", product.model.as_deref().unwrap_or("Unknown"));
+            Ok((false, true)) // updated=false, created=true
         }
-        
-        Ok(())
     }
 
     /// Insert or update detailed product specifications
-    pub async fn create_or_update_product_detail(&self, detail: &ProductDetail) -> Result<()> {
-        sqlx::query(
-            r"
-            INSERT OR REPLACE INTO product_details 
-            (url, page_id, index_in_page, id, manufacturer, model, device_type,
-             certificate_id, certification_date, software_version, hardware_version,
-             vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
-             tis_trp_tested, specification_version, transport_interface, 
-             primary_device_type_id, application_categories, description,
-             compliance_document_url, program_type, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ",
-        )
-        .bind(&detail.url)
-        .bind(detail.page_id)
-        .bind(detail.index_in_page)
-        .bind(&detail.id)
-        .bind(&detail.manufacturer)
-        .bind(&detail.model)
-        .bind(&detail.device_type)
-        .bind(&detail.certification_id)
-        .bind(&detail.certification_date)
-        .bind(&detail.software_version)
-        .bind(&detail.hardware_version)
-        .bind(detail.vid)
-        .bind(detail.pid)
-        .bind(&detail.family_sku)
-        .bind(&detail.family_variant_sku)
-        .bind(&detail.firmware_version)
-        .bind(&detail.family_id)
-        .bind(&detail.tis_trp_tested)
-        .bind(&detail.specification_version)
-        .bind(&detail.transport_interface)
-        .bind(&detail.primary_device_type_id)
-        .bind(&detail.application_categories)
-        .bind(&detail.description)
-        .bind(&detail.compliance_document_url)
-        .bind(&detail.program_type)
-        .bind(detail.created_at)
-        .bind(detail.updated_at)
-        .execute(&*self.pool)
-        .await?;
-        Ok(())
+    /// 🎯 지능적 비교: 빈 필드 채움 및 실제 변경사항만 업데이트
+    /// Returns: (was_updated: bool, was_created: bool)
+    pub async fn create_or_update_product_detail(&self, detail: &ProductDetail) -> Result<(bool, bool)> {
+        let now = chrono::Utc::now();
+        
+        // 기존 ProductDetail 확인
+        let existing = self.get_product_detail_by_url(&detail.url).await?;
+        
+        if let Some(existing_detail) = existing {
+            // 🔍 지능적 비교: 빈 필드 채우기 + 실제 변경사항 확인
+            let mut updates = Vec::new();
+            let mut binds = Vec::new();
+            
+            // 빈 필드가 있으면 새 데이터로 채우기
+            if existing_detail.device_type.is_none() && detail.device_type.is_some() {
+                updates.push("device_type = ?");
+                binds.push(&detail.device_type);
+            }
+            if existing_detail.certification_date.is_none() && detail.certification_date.is_some() {
+                updates.push("certification_date = ?");
+                binds.push(&detail.certification_date);
+            }
+            if existing_detail.software_version.is_none() && detail.software_version.is_some() {
+                updates.push("software_version = ?");
+                binds.push(&detail.software_version);
+            }
+            if existing_detail.hardware_version.is_none() && detail.hardware_version.is_some() {
+                updates.push("hardware_version = ?");
+                binds.push(&detail.hardware_version);
+            }
+            if existing_detail.description.is_none() && detail.description.is_some() {
+                updates.push("description = ?");
+                binds.push(&detail.description);
+            }
+            
+            // 실제 변경사항 확인 (기존 값과 다른 경우)
+            if existing_detail.manufacturer != detail.manufacturer {
+                updates.push("manufacturer = ?");
+                binds.push(&detail.manufacturer);
+            }
+            if existing_detail.model != detail.model {
+                updates.push("model = ?");
+                binds.push(&detail.model);
+            }
+            
+            if !updates.is_empty() {
+                let query = format!(
+                    "UPDATE product_details SET {}, updated_at = ? WHERE url = ?",
+                    updates.join(", ")
+                );
+                
+                let mut sql_query = sqlx::query(&query);
+                for bind in binds {
+                    sql_query = sql_query.bind(bind);
+                }
+                sql_query = sql_query.bind(now).bind(&detail.url);
+                
+                sql_query.execute(&*self.pool).await?;
+                info!("📝 ProductDetail updated: {} ({} fields)", detail.model.as_deref().unwrap_or("Unknown"), updates.len());
+                Ok((true, false)) // updated=true, created=false
+            } else {
+                debug!("✅ ProductDetail unchanged: {} (skipping update)", detail.model.as_deref().unwrap_or("Unknown"));
+                Ok((false, false)) // updated=false, created=false
+            }
+        } else {
+            // 🆕 새로운 ProductDetail 삽입
+            // Generate ID if not already set
+            let generated_id = detail.id.clone().unwrap_or_else(|| {
+                if let (Some(page_id), Some(index_in_page)) = (detail.page_id, detail.index_in_page) {
+                    format!("p{:04}i{:02}", page_id, index_in_page)
+                } else {
+                    // Fallback ID generation
+                    format!("detail_{}", detail.url.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect::<String>())
+                }
+            });
+
+            sqlx::query(
+                r"
+                INSERT INTO product_details 
+                (url, page_id, index_in_page, id, manufacturer, model, device_type,
+                 certificate_id, certification_date, software_version, hardware_version,
+                 vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
+                 tis_trp_tested, specification_version, transport_interface, 
+                 primary_device_type_id, application_categories, description,
+                 compliance_document_url, program_type, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ",
+            )
+            .bind(&detail.url)
+            .bind(detail.page_id)
+            .bind(detail.index_in_page)
+            .bind(&generated_id)  // Use generated_id instead of detail.id
+            .bind(&detail.manufacturer)
+            .bind(&detail.model)
+            .bind(&detail.device_type)
+            .bind(&detail.certification_id)
+            .bind(&detail.certification_date)
+            .bind(&detail.software_version)
+            .bind(&detail.hardware_version)
+            .bind(detail.vid)
+            .bind(detail.pid)
+            .bind(&detail.family_sku)
+            .bind(&detail.family_variant_sku)
+            .bind(&detail.firmware_version)
+            .bind(&detail.family_id)
+            .bind(detail.tis_trp_tested.clone())
+            .bind(&detail.specification_version)
+            .bind(&detail.transport_interface)
+            .bind(detail.primary_device_type_id.clone())
+            .bind(&detail.application_categories)
+            .bind(&detail.description)
+            .bind(&detail.compliance_document_url)
+            .bind(&detail.program_type)
+            .bind(now)
+            .bind(now)
+            .execute(&*self.pool)
+            .await?;
+            
+            info!("🆕 New ProductDetail created: {}", detail.model.as_deref().unwrap_or("Unknown"));
+            Ok((false, true)) // updated=false, created=true
+        }
     }
 
     /// Get all products with pagination
@@ -806,13 +916,46 @@ impl IntegratedProductRepository {
     /// 1. Get the last saved product's reverse absolute index
     /// 2. Calculate the next product index to crawl
     /// 3. Convert to website page numbers
-    /// 4. Apply crawl page limit
+    /// 4. Apply crawl page limit (respecting user settings)
     pub async fn calculate_next_crawling_range(
         &self,
         total_pages_on_site: u32,
         products_on_last_page: u32,
         crawl_page_limit: u32,
     ) -> Result<Option<(u32, u32)>> {
+        // Load user configuration to respect intelligent mode settings
+        let user_config = match crate::infrastructure::config::ConfigManager::new() {
+            Ok(config_manager) => {
+                match config_manager.load_config().await {
+                    Ok(config) => config,
+                    Err(e) => {
+                        tracing::warn!("⚠️ Failed to load user config: {}", e);
+                        crate::infrastructure::config::AppConfig::default()
+                    }
+                }
+            },
+            Err(e) => {
+                tracing::warn!("⚠️ Failed to create config manager: {}", e);
+                crate::infrastructure::config::AppConfig::default()
+            }
+        };
+        
+        // Determine effective page limit based on user settings
+        let effective_crawl_limit = if user_config.user.crawling.intelligent_mode.enabled 
+                                       && user_config.user.crawling.intelligent_mode.override_config_limit {
+            // In intelligent mode with override enabled, use the minimum of user setting and max limit
+            crawl_page_limit.min(user_config.user.crawling.intelligent_mode.max_range_limit)
+        } else {
+            // Otherwise, use user's configured page_range_limit
+            user_config.user.crawling.page_range_limit
+        };
+        
+        tracing::info!("📊 Range calculation settings: input_limit={}, user_limit={}, intelligent_mode={}, effective_limit={}", 
+                      crawl_page_limit, 
+                      user_config.user.crawling.page_range_limit,
+                      user_config.user.crawling.intelligent_mode.enabled,
+                      effective_crawl_limit);
+        
         // Use site constants for products per page - no more hardcoding!
         let products_per_page = crate::domain::constants::site::PRODUCTS_PER_PAGE as u32;
         // Step 1: Get the last saved product's page_id and index_in_page
@@ -824,12 +967,12 @@ impl IntegratedProductRepository {
         // If no data exists, start from the oldest page (highest page number)
         if max_page_id.is_none() || max_index_in_page.is_none() {
             let start_page = total_pages_on_site;
-            let end_page = if start_page >= crawl_page_limit {
-                start_page - crawl_page_limit + 1
+            let end_page = if start_page >= effective_crawl_limit {
+                start_page - effective_crawl_limit + 1
             } else {
                 1
             };
-            tracing::info!("🆕 No existing data, starting from page {} to {}", start_page, end_page);
+            tracing::info!("🆕 No existing data, starting from page {} to {} (limit: {})", start_page, end_page, effective_crawl_limit);
             return Ok(Some((start_page, end_page)));
         }
 
@@ -861,11 +1004,11 @@ impl IntegratedProductRepository {
         // Formula: targetPageNumber = floor(forwardIndex / productsPerPage) + 1
         let target_page_number = (forward_index / products_per_page) + 1;
         
-        // Step 6: Apply crawl page limit
+        // Step 6: Apply crawl page limit (respecting user settings)
         // Crawling goes from older pages (higher numbers) to newer pages (lower numbers)
         let start_page = target_page_number;
-        let end_page = if start_page >= crawl_page_limit {
-            start_page - crawl_page_limit + 1
+        let end_page = if start_page >= effective_crawl_limit {
+            start_page - effective_crawl_limit + 1
         } else {
             1
         };
@@ -877,7 +1020,7 @@ impl IntegratedProductRepository {
         tracing::info!("  Total products on site: {}", total_products);
         tracing::info!("  Forward index: {}", forward_index);
         tracing::info!("  Target page: {}", target_page_number);
-        tracing::info!("  Crawl range: {} to {} (limit: {})", start_page, end_page, crawl_page_limit);
+        tracing::info!("  Crawl range: {} to {} (effective limit: {})", start_page, end_page, effective_crawl_limit);
         
         Ok(Some((start_page, end_page)))
     }

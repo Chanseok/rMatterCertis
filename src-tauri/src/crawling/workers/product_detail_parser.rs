@@ -77,6 +77,19 @@ impl ProductDetailParser {
         if let Some(country) = country_of_origin.as_ref() {
             details.insert("country_of_origin".to_string(), country.clone());
         }
+        // Add additional extracted fields to details
+        if let Some(ingredients_val) = ingredients {
+            details.insert("ingredients".to_string(), ingredients_val);
+        }
+        if let Some(usage_val) = usage_instructions {
+            details.insert("usage_instructions".to_string(), usage_val);
+        }
+        if let Some(warnings_val) = warnings {
+            details.insert("warnings".to_string(), warnings_val);
+        }
+        if let Some(storage_val) = storage_conditions {
+            details.insert("storage_conditions".to_string(), storage_val);
+        }
 
         // 추가 필드들을 details 맵에 저장
         if let Some(registration_date) = registration_date {
@@ -109,6 +122,8 @@ impl ProductDetailParser {
             details,
             extracted_at: chrono::Utc::now(),
             source_url: source_url.to_string(),
+            page_id: None, // Will be set by caller if available
+            index_in_page: None, // Will be set by caller if available
         })
     }
 
@@ -431,8 +446,9 @@ impl ProductDetailParser {
     }
 
     fn clean_company_name(&self, name: &str) -> String {
-        // Keep company name as is, just trim whitespace
-        name.trim().to_string()
+        // Normalize company name by removing common corporate suffixes variations
+        let cleaned = self.company_name_regex.replace_all(name, "");
+        cleaned.trim().to_string()
     }
 
     fn parse_date(&self, text: &str) -> Option<DateTime<Utc>> {

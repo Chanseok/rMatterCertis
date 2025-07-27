@@ -128,8 +128,9 @@ impl StatusChecker for StatusCheckerImpl {
         
         // 접근성 테스트
         let access_test = {
-            let mut client = self.http_client.lock().await;
-            client.fetch_html_string(&url).await
+            // Create independent HTTP client
+            let client = reqwest::Client::new();
+            client.get(&url).send().await?.text().await
         };
         
         match access_test {
@@ -382,15 +383,21 @@ impl StatusCheckerImpl {
         while current_page >= min_page {
             let test_url = config_utils::matter_products_page_url_simple(current_page);
             
-            let mut client = self.http_client.lock().await;
-            match client.fetch_html_string(&test_url).await {
-                Ok(html) => {
-                    let doc = scraper::Html::parse_document(&html);
-                    if self.has_products_on_page(&doc) {
-                        info!("Found valid page with products: {}", current_page);
-                        return Ok(current_page);
+            // Create independent HTTP client
+            let client = reqwest::Client::new();
+            match client.get(&test_url).send().await {
+                Ok(response) => match response.text().await {
+                    Ok(html) => {
+                        let doc = scraper::Html::parse_document(&html);
+                        if self.has_products_on_page(&doc) {
+                            info!("Found valid page with products: {}", current_page);
+                            return Ok(current_page);
+                        }
+                    },
+                    Err(e) => {
+                        error!("Failed to get HTML for page {}: {}", current_page, e);
                     }
-                },
+                }
                 Err(e) => {
                     warn!("Failed to fetch page {} during downward search: {}", current_page, e);
                 }
@@ -429,30 +436,49 @@ impl StatusCheckerImpl {
             let test_url = config_utils::matter_products_page_url_simple(current_page);
             info!("🔍 Checking page {} (consecutive empty: {})", current_page, consecutive_empty_pages);
             
-            let mut client = self.http_client.lock().await;
-            match client.fetch_html_string(&test_url).await {
-                Ok(html) => {
-                    let doc = scraper::Html::parse_document(&html);
-                    if self.has_products_on_page(&doc) {
-                        info!("✅ Found valid page with products: {} (after {} consecutive empty pages)", 
-                              current_page, consecutive_empty_pages);
-                        return Ok(current_page);
-                    }
-                    consecutive_empty_pages += 1;
-                    warn!("⚠️  Page {} is empty (consecutive: {}/{})", 
-                          current_page, consecutive_empty_pages, MAX_CONSECUTIVE_EMPTY);
-                    
-                    // 연속으로 빈 페이지가 3개 이상이면 fatal error
-                    if consecutive_empty_pages >= MAX_CONSECUTIVE_EMPTY {
-                        error!("💥 FATAL ERROR: Found {} consecutive empty pages starting from page {}. This indicates a serious site issue or crawling problem.", 
-                               consecutive_empty_pages, start_page);
+            // Create independent HTTP client
+            let client = reqwest::Client::new();
+            match client.get(&test_url).send().await {
+                Ok(response) => match response.text().await {
+                    Ok(html) => {
+                        let doc = scraper::Html::parse_document(&html);
+                        if self.has_products_on_page(&doc) {
+                            info!("✅ Found valid page with products: {} (after {} consecutive empty pages)", 
+                                  current_page, consecutive_empty_pages);
+                            return Ok(current_page);
+                        }
+                        consecutive_empty_pages += 1;
+                        warn!("⚠️  Page {} is empty (consecutive: {}/{})", 
+                              current_page, consecutive_empty_pages, MAX_CONSECUTIVE_EMPTY);
                         
-                        return Err(anyhow!(
-                            "Fatal error: {} consecutive empty pages detected. Site may be down or pagination structure changed. Last checked pages: {} to {}",
-                            consecutive_empty_pages, 
-                            start_page,
-                            current_page
-                        ));
+                        // 연속으로 빈 페이지가 3개 이상이면 fatal error
+                        if consecutive_empty_pages >= MAX_CONSECUTIVE_EMPTY {
+                            error!("💥 FATAL ERROR: Found {} consecutive empty pages starting from page {}. This indicates a serious site issue or crawling problem.", 
+                                   consecutive_empty_pages, start_page);
+                            
+                            return Err(anyhow!(
+                                "Fatal error: {} consecutive empty pages detected. Site may be down or pagination structure changed. Last checked pages: {} to {}",
+                                consecutive_empty_pages, 
+                                start_page,
+                                current_page
+                            ));
+                        }
+                    },
+                    Err(e) => {
+                        consecutive_empty_pages += 1;
+                        warn!("❌ Failed to get HTML for page {} during safe downward search: {} (consecutive: {}/{})", 
+                              current_page, e, consecutive_empty_pages, MAX_CONSECUTIVE_EMPTY);
+                        
+                        if consecutive_empty_pages >= MAX_CONSECUTIVE_EMPTY {
+                            error!("💥 FATAL ERROR: {} consecutive failures starting from page {}.", 
+                                   consecutive_empty_pages, start_page);
+                            
+                            return Err(anyhow!(
+                                "Fatal error: {} consecutive failures detected. HTML parsing issues or site problems. Last error: {}",
+                                consecutive_empty_pages, 
+                                e
+                            ));
+                        }
                     }
                 },
                 Err(e) => {
@@ -1017,9 +1043,9 @@ impl StatusCheckerImpl {
         let url = config_utils::matter_products_page_url_simple(page_number);
         
         let (product_count, max_pagination_page, active_page, has_products) = {
-            let mut client = self.http_client.lock().await;
-            let html = client.fetch_html_string(&url).await?;
-            drop(client); // 락 해제
+            // Create independent HTTP client for true concurrency
+            let client = reqwest::Client::new();
+            let html = client.get(&url).send().await?.text().await?;
             
             let doc = scraper::Html::parse_document(&html);
             let product_count = self.count_products(&doc);
@@ -1469,9 +1495,9 @@ impl ProductListCollectorImpl {
                 let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
                 
                 let collect_result = async {
-                    let mut client = http_client.lock().await;
-                    let html = client.fetch_html_string(&url).await?;
-                    drop(client);
+                    // Create independent HTTP client for true concurrency
+                    let client = reqwest::Client::new();
+                    let html = client.get(&url).send().await?.text().await?;
                     
                     let doc = scraper::Html::parse_document(&html);
                     let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
@@ -1528,9 +1554,9 @@ impl ProductListCollectorImpl {
                         info!("🔄 Retrying page {} collection", page);
                         
                         let retry_result = async {
-                            let mut client = http_client.lock().await;
-                            let html = client.fetch_html_string(&url).await?;
-                            drop(client);
+                            // Create independent HTTP client for true concurrency
+                            let client = reqwest::Client::new();
+                            let html = client.get(&url).send().await?.text().await?;
                             
                             let doc = scraper::Html::parse_document(&html);
                             let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
@@ -1720,9 +1746,9 @@ impl ProductListCollector for ProductListCollectorImpl {
                 
                 // 실제 페이지 수집 작업
                 let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
-                let mut client = http_client.lock().await;
-                let html = client.fetch_html_string(&url).await?;
-                drop(client);
+                // Create independent HTTP client for true concurrency
+                let client = reqwest::Client::new();
+                let html = client.get(&url).send().await?.text().await?;
                 
                 let doc = scraper::Html::parse_document(&html);
                 let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
@@ -1794,9 +1820,9 @@ impl ProductListCollector for ProductListCollectorImpl {
         let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page as usize);
         
         let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
-        let mut client = self.http_client.lock().await;
-        let html = client.fetch_html_string(&url).await?;
-        drop(client);
+        // Create independent HTTP client for true concurrency
+        let client = reqwest::Client::new();
+        let html = client.get(&url).send().await?.text().await?;
         
         let doc = scraper::Html::parse_document(&html);
         let url_strings = self.data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
@@ -1891,9 +1917,9 @@ impl ProductListCollector for ProductListCollectorImpl {
                 
                 // 실제 페이지 수집 작업
                 let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
-                let mut client = http_client.lock().await;
-                let html = client.fetch_html_string(&url).await?;
-                drop(client);
+                // Create independent HTTP client for true concurrency
+                let client = reqwest::Client::new();
+                let html = client.get(&url).send().await?.text().await?;
                 
                 // 중간에 취소 확인
                 if token_clone.is_cancelled() {
@@ -2051,20 +2077,30 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
             let http_client = Arc::clone(&self.http_client);
             let data_extractor = Arc::clone(&self.data_extractor);
             let url = product_url.url.clone();
+            let page_id = product_url.page_id;  // Capture page_id
+            let index_in_page = product_url.index_in_page;  // Capture index_in_page
             let permit = Arc::clone(&semaphore);
             let delay = self.config.delay_ms;
             
             let task = tokio::spawn(async move {
                 let _permit = permit.acquire().await.unwrap();
                 
-                tokio::time::sleep(Duration::from_millis(delay)).await;
+                // Remove individual delay - let semaphore handle rate limiting
+                // tokio::time::sleep(Duration::from_millis(delay)).await;
                 
-                let mut client = http_client.lock().await;
-                let html = client.fetch_html_string(&url).await?;
-                drop(client);
+                // Create independent HTTP client for true concurrency
+                let client = reqwest::Client::new();
+                let html = client.get(&url).send().await?.text().await?;
                 
                 let doc = scraper::Html::parse_document(&html);
-                let detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                let mut detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                
+                // 🔥 Set page_id and index_in_page from ProductUrl
+                detail.page_id = Some(page_id);
+                detail.index_in_page = Some(index_in_page);
+                
+                // 🔥 Generate and set id field
+                detail.id = Some(format!("p{:04}i{:02}", page_id, index_in_page));
                 
                 Ok::<ProductDetail, anyhow::Error>(detail)
             });
@@ -2101,6 +2137,8 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
             let http_client = Arc::clone(&self.http_client);
             let data_extractor = Arc::clone(&self.data_extractor);
             let url = product_url.url.clone();
+            let page_id = product_url.page_id;  // Capture page_id
+            let index_in_page = product_url.index_in_page;  // Capture index_in_page
             let permit = Arc::clone(&semaphore);
             let delay = self.config.delay_ms;
             let token = cancellation_token.clone();
@@ -2112,25 +2150,33 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                 
                 let _permit = permit.acquire().await.unwrap();
                 
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_millis(delay)) => {},
-                    _ = token.cancelled() => return Err(anyhow!("Task cancelled during delay")),
-                }
+                // Remove individual delay for true concurrency
+                // tokio::select! {
+                //     _ = tokio::time::sleep(Duration::from_millis(delay)) => {},
+                //     _ = token.cancelled() => return Err(anyhow!("Task cancelled during delay")),
+                // }
                 
                 if token.is_cancelled() {
                     return Err(anyhow!("Task cancelled"));
                 }
                 
-                let mut client = http_client.lock().await;
-                let html = client.fetch_html_string(&url).await?;
-                drop(client);
+                // Create independent HTTP client for true concurrency
+                let client = reqwest::Client::new();
+                let html = client.get(&url).send().await?.text().await?;
                 
                 if token.is_cancelled() {
                     return Err(anyhow!("Task cancelled"));
                 }
                 
                 let doc = scraper::Html::parse_document(&html);
-                let detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                let mut detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                
+                // 🔥 Set page_id and index_in_page from ProductUrl
+                detail.page_id = Some(page_id);
+                detail.index_in_page = Some(index_in_page);
+                
+                // 🔥 Generate and set id field
+                detail.id = Some(format!("p{:04}i{:02}", page_id, index_in_page));
                 
                 Ok::<ProductDetail, anyhow::Error>(detail)
             });
@@ -2199,6 +2245,24 @@ impl CrawlingRangeCalculator {
         info!("🎯 입력 파라미터: total_pages={}, products_on_last_page={}", 
               total_pages, products_on_last_page);
         
+        // 사용자 설정에서 페이지 범위 제한 가져오기
+        let user_page_limit = self.config.user.crawling.page_range_limit;
+        let intelligent_mode = &self.config.user.crawling.intelligent_mode;
+        
+        info!("⚙️ User settings: page_range_limit={}, intelligent_mode.enabled={}, max_range_limit={}", 
+              user_page_limit, intelligent_mode.enabled, intelligent_mode.max_range_limit);
+        
+        // 실제 사용할 페이지 제한 계산
+        let effective_page_limit = if intelligent_mode.enabled && intelligent_mode.override_config_limit {
+            // 지능형 모드에서 override가 허용된 경우, max_range_limit과 user_page_limit 중 작은 값 사용
+            user_page_limit.min(intelligent_mode.max_range_limit)
+        } else {
+            // 일반 모드이거나 override가 비활성화된 경우, 사용자 설정값 그대로 사용
+            user_page_limit
+        };
+        
+        info!("📊 Effective page limit for this crawling: {}", effective_page_limit);
+        
         // 데이터베이스에서 현재 제품 정보 가져오기
         let all_products = match self.product_repo.get_all_products().await {
             Ok(products) => {
@@ -2213,7 +2277,7 @@ impl CrawlingRangeCalculator {
         
         if all_products.is_empty() {
             info!("📋 Database is empty - starting from the last page (page {})", total_pages);
-            let end_page = (total_pages.saturating_sub(self.config.user.crawling.page_range_limit - 1)).max(1);
+            let end_page = (total_pages.saturating_sub(effective_page_limit - 1)).max(1);
             return Ok(Some((total_pages, end_page)));
         }
         
@@ -2261,11 +2325,11 @@ impl CrawlingRangeCalculator {
             }
         };
         
-        // 크롤링 범위 제한 적용
-        let end_page = (start_page.saturating_sub(self.config.user.crawling.page_range_limit - 1)).max(1);
+        // 크롤링 범위 제한 적용 (사용자 설정 존중)
+        let end_page = (start_page.saturating_sub(effective_page_limit - 1)).max(1);
         
         info!("✅ Next crawling range: {}페이지 → {}페이지 (역순, 최대 {}페이지)", 
-              start_page, end_page, self.config.user.crawling.page_range_limit);
+              start_page, end_page, effective_page_limit);
         Ok(Some((start_page, end_page)))
     }
 }

@@ -39,7 +39,8 @@ impl IntegratedProductUseCases {
             return Err(anyhow!("Product URL cannot be empty"));
         }
 
-        self.repo.create_or_update_product(&product).await
+        let (_was_updated, _was_created) = self.repo.create_or_update_product(&product).await?;
+        Ok(())
     }
 
     /// Create or update detailed product information (Stage 2 crawling)
@@ -54,7 +55,8 @@ impl IntegratedProductUseCases {
             return Err(anyhow!("Product must exist before adding details"));
         }
 
-        self.repo.create_or_update_product_detail(&detail).await
+        let (_was_updated, _was_created) = self.repo.create_or_update_product_detail(&detail).await?;
+        Ok(())
     }
 
     /// Get products with pagination

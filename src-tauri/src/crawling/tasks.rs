@@ -150,6 +150,9 @@ pub struct TaskProductData {
     pub details: std::collections::HashMap<String, String>,
     pub extracted_at: chrono::DateTime<chrono::Utc>,
     pub source_url: String,
+    // Product position coordinates calculated from pagination context
+    pub page_id: Option<i32>,
+    pub index_in_page: Option<i32>,
 }
 
 impl TaskProductData {
@@ -167,6 +170,8 @@ impl TaskProductData {
             details: std::collections::HashMap::new(),
             extracted_at: chrono::Utc::now(),
             source_url,
+            page_id: None,
+            index_in_page: None,
         }
     }
     
@@ -201,6 +206,14 @@ impl TaskProductData {
         self
     }
     
+    /// Sets pagination coordinates (page_id and index_in_page)
+    #[must_use]
+    pub fn with_pagination_coordinates(mut self, page_id: i32, index_in_page: i32) -> Self {
+        self.page_id = Some(page_id);
+        self.index_in_page = Some(index_in_page);
+        self
+    }
+    
     /// Adds a key-value pair to the details
     pub fn add_detail(&mut self, key: String, value: String) {
         self.details.insert(key, value);
@@ -212,9 +225,16 @@ impl TaskProductData {
             .as_ref()
             .and_then(|date_str| chrono::DateTime::parse_from_rfc3339(date_str).ok())
             .map(|dt| dt.with_timezone(&chrono::Utc));
+
+        // Generate product ID from page_id and index_in_page if available
+        let product_id = if let (Some(page_id), Some(index_in_page)) = (self.page_id, self.index_in_page) {
+            format!("p{:04}i{:02}", page_id, index_in_page)
+        } else {
+            self.product_id.clone()
+        };
             
-        Ok(ProductData {
-            product_id: self.product_id,
+        let mut product_data = ProductData {
+            product_id,
             name: self.name,
             category: self.category,
             manufacturer: self.manufacturer,
@@ -227,7 +247,11 @@ impl TaskProductData {
             extracted_at: self.extracted_at,
             source_url: ValidatedUrl::new(self.source_url)
                 .map_err(|e| format!("Invalid URL: {}", e))?,
-        })
+            page_id: self.page_id,
+            index_in_page: self.index_in_page,
+        };
+
+        Ok(product_data)
     }
 }
 
