@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use anyhow::{Result, Context};
 use tokio::fs;
-use tracing::{info, debug};
+use tracing::{info, debug, warn};
 
 /// Complete application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,11 +404,33 @@ pub struct ConfigManager {
 impl ConfigManager {
     /// Get the application configuration directory
     pub fn get_config_dir() -> Result<PathBuf> {
+        // Try Application Support directory first (macOS standard)
+        let app_support_dir = dirs::data_dir()
+            .context("Failed to get user data directory")?
+            .join("matter-certis-v2");
+        
+        // Check if config file exists in Application Support
+        let app_support_config = app_support_dir.join("matter_certis_config.json");
+        if app_support_config.exists() {
+            debug!("Using configuration from Application Support: {:?}", app_support_dir);
+            return Ok(app_support_dir);
+        }
+        
+        // Fall back to config directory
         let config_dir = dirs::config_dir()
             .context("Failed to get user config directory")?
             .join("matter-certis-v2");
         
-        Ok(config_dir)
+        // Check if config file exists in config directory
+        let config_config = config_dir.join("matter_certis_config.json");
+        if config_config.exists() {
+            info!("Using configuration from config directory: {:?}", config_dir);
+            return Ok(config_dir);
+        }
+        
+        // If neither exists, prefer Application Support for new installations
+        info!("No existing config found, defaulting to Application Support: {:?}", app_support_dir);
+        Ok(app_support_dir)
     }
     
     /// Create a new configuration manager with automatic setup
@@ -416,7 +438,52 @@ impl ConfigManager {
         let config_dir = Self::get_config_dir()?;
         let config_path = config_dir.join("matter_certis_config.json");
         
+        // Perform migration if needed
+        Self::migrate_config_from_old_location(&config_path)?;
+        
         Ok(Self { config_path })
+    }
+    
+    /// Migrate configuration from old location to new location if needed
+    fn migrate_config_from_old_location(target_config_path: &PathBuf) -> Result<()> {
+        // If target already exists, no migration needed
+        if target_config_path.exists() {
+            return Ok(());
+        }
+        
+        // Check for config in the old .config directory
+        let old_config_dir = dirs::config_dir()
+            .context("Failed to get user config directory")?
+            .join("matter-certis-v2");
+        let old_config_path = old_config_dir.join("matter_certis_config.json");
+        
+        if old_config_path.exists() {
+            info!("Migrating configuration from {:?} to {:?}", old_config_path, target_config_path);
+            
+            // Create target directory if it doesn't exist
+            if let Some(target_dir) = target_config_path.parent() {
+                if !target_dir.exists() {
+                    std::fs::create_dir_all(target_dir)
+                        .context("Failed to create target config directory")?;
+                }
+            }
+            
+            // Copy the config file
+            std::fs::copy(&old_config_path, target_config_path)
+                .context("Failed to copy config file during migration")?;
+            
+            info!("✅ Configuration migration completed successfully");
+            
+            // Optionally, create a backup of the old file and remove it
+            let backup_path = old_config_path.with_extension("json.migrated");
+            if let Err(e) = std::fs::rename(&old_config_path, &backup_path) {
+                warn!("Failed to backup old config file: {}", e);
+            } else {
+                info!("Old config file backed up as: {:?}", backup_path);
+            }
+        }
+        
+        Ok(())
     }
     
     /// Initialize configuration system on first run
@@ -626,7 +693,7 @@ impl ConfigManager {
     }
     
     /// Migrate configuration from older versions
-    pub async fn migrate_config_if_needed(&self, config: &mut AppConfig) -> Result<bool> {
+    pub async fn migrate_config_version(&self, config: &mut AppConfig) -> Result<bool> {
         const CURRENT_VERSION: u32 = 1;
         
         if config.app_managed.config_version < CURRENT_VERSION {

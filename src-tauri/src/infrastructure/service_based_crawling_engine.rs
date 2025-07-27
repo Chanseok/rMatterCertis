@@ -144,6 +144,75 @@ pub enum DetailedCrawlingEvent {
         total_products: u32,
         success_rate: f64,
     },
+    
+    // 🔥 새로운 세분화된 배치 이벤트
+    BatchCreated {
+        batch_id: u32,
+        total_batches: u32,
+        start_page: u32,
+        end_page: u32,
+        description: String,
+    },
+    BatchStarted {
+        batch_id: u32,
+        total_batches: u32,
+        pages_in_batch: u32,
+    },
+    
+    // 🔥 새로운 페이지 재시도 이벤트
+    PageStarted {
+        page: u32,
+        batch_id: u32,
+        url: String,
+    },
+    PageRetryAttempt {
+        page: u32,
+        batch_id: u32,
+        url: String,
+        attempt: u32,
+        max_attempts: u32,
+        reason: String,
+    },
+    PageRetrySuccess {
+        page: u32,
+        batch_id: u32,
+        url: String,
+        final_attempt: u32,
+        products_found: u32,
+    },
+    PageRetryFailed {
+        page: u32,
+        batch_id: u32,
+        url: String,
+        total_attempts: u32,
+        final_error: String,
+    },
+    
+    // 🔥 새로운 제품 재시도 이벤트
+    ProductStarted {
+        url: String,
+        batch_id: u32,
+        product_index: u32,
+        total_products: u32,
+    },
+    ProductRetryAttempt {
+        url: String,
+        batch_id: u32,
+        attempt: u32,
+        max_attempts: u32,
+        reason: String,
+    },
+    ProductRetrySuccess {
+        url: String,
+        batch_id: u32,
+        final_attempt: u32,
+    },
+    ProductRetryFailed {
+        url: String,
+        batch_id: u32,
+        total_attempts: u32,
+        final_error: String,
+    },
 }
 
 /// 서비스 기반 배치 크롤링 엔진
@@ -535,7 +604,28 @@ impl ServiceBasedBatchCrawlingEngine {
     async fn stage2_collect_product_list_optimized(&mut self, start_page: u32, end_page: u32) -> Result<Vec<ProductUrl>> {
         info!("Stage 2: Collecting product list using optimized range {} to {} with TRUE concurrent execution", start_page, end_page);
         
-        // 🔥 배치 생성 이벤트 발송 (UI 연결)
+        // 🔥 새로운 세분화된 배치 생성 이벤트 발송
+        let total_pages = if start_page > end_page {
+            start_page - end_page + 1
+        } else {
+            end_page - start_page + 1
+        };
+        
+        self.emit_detailed_event(DetailedCrawlingEvent::BatchCreated {
+            batch_id: 1,
+            total_batches: 1, // 현재는 단일 배치로 처리
+            start_page,
+            end_page,
+            description: format!("페이지 {}~{} 제품 목록 수집 ({}개 페이지)", start_page, end_page, total_pages),
+        }).await?;
+
+        self.emit_detailed_event(DetailedCrawlingEvent::BatchStarted {
+            batch_id: 1,
+            total_batches: 1,
+            pages_in_batch: total_pages,
+        }).await?;
+        
+        // 🔥 기존 배치 생성 이벤트도 유지 (호환성)
         if let Some(broadcaster) = &mut self.broadcaster {
             if let Err(e) = broadcaster.emit_batch_created(start_page, end_page) {
                 warn!("Failed to emit batch-created event: {}", e);
@@ -565,6 +655,18 @@ impl ServiceBasedBatchCrawlingEngine {
             while let Some((event_type, payload)) = event_rx.recv().await {
                 if let Some(ref mut b) = broadcaster {
                     match event_type.as_str() {
+                        "page-started" => {
+                            if let Ok(detailed_event) = serde_json::from_value::<DetailedCrawlingEvent>(payload) {
+                                // PageStarted 이벤트는 별도 처리하지 않고 로그만 남김
+                                debug!("Page started event received: {:?}", detailed_event);
+                            }
+                        }
+                        "page-retry-attempt" => {
+                            if let Ok(detailed_event) = serde_json::from_value::<DetailedCrawlingEvent>(payload) {
+                                // PageRetryAttempt 이벤트는 별도 처리하지 않고 로그만 남김
+                                debug!("Page retry attempt event received: {:?}", detailed_event);
+                            }
+                        }
                         "page-completed" => {
                             // DetailedCrawlingEvent를 직접 처리 - 기존 브로드캐스터 메서드 사용
                             if let Ok(detailed_event) = serde_json::from_value::<DetailedCrawlingEvent>(payload) {
@@ -613,17 +715,33 @@ impl ServiceBasedBatchCrawlingEngine {
             broadcaster // 소유권 반환
         });
 
-        // 🔥 이벤트 콜백 함수 정의 - PageCompleted 이벤트 발송
+        // 🔥 이벤트 콜백 함수 정의 - 더 상세한 이벤트들 추가
+        let engine_clone = self.session_id.clone();
+        let batch_id = 1u32;
+        
         let event_tx_clone = event_tx.clone();
         let page_callback = move |page_id: u32, url: String, product_count: u32, success: bool| -> Result<()> {
-            // DetailedCrawlingEvent::PageCompleted 이벤트 발송
-            let page_event = DetailedCrawlingEvent::PageCompleted {
+            // 🔥 페이지 시작 이벤트
+            let page_start_event = DetailedCrawlingEvent::PageStarted {
                 page: page_id,
-                products_found: product_count,
+                batch_id,
+                url: url.clone(),
             };
-            let payload = serde_json::to_value(page_event)?;
-            if let Err(e) = event_tx_clone.try_send(("page-completed".to_string(), payload)) {
-                warn!("Failed to send page-completed event: {}", e);
+            let start_payload = serde_json::to_value(page_start_event)?;
+            if let Err(e) = event_tx_clone.try_send(("page-started".to_string(), start_payload)) {
+                warn!("Failed to send page-started event: {}", e);
+            }
+            
+            // 🔥 페이지 완료 이벤트 (성공 시)
+            if success {
+                let page_event = DetailedCrawlingEvent::PageCompleted {
+                    page: page_id,
+                    products_found: product_count,
+                };
+                let payload = serde_json::to_value(page_event)?;
+                if let Err(e) = event_tx_clone.try_send(("page-completed".to_string(), payload)) {
+                    warn!("Failed to send page-completed event: {}", e);
+                }
             }
             
             // 기존 page-crawled 이벤트도 유지
@@ -636,6 +754,28 @@ impl ServiceBasedBatchCrawlingEngine {
 
         let event_tx_clone2 = event_tx.clone();
         let retry_callback = move |item_id: String, item_type: String, url: String, attempt: u32, max_attempts: u32, reason: String| -> Result<()> {
+            // 🔥 페이지 재시도 시도 이벤트
+            if item_type == "page" {
+                let page_num = url.split("page=").nth(1)
+                    .and_then(|s| s.split('&').next())
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(0);
+                
+                let retry_event = DetailedCrawlingEvent::PageRetryAttempt {
+                    page: page_num,
+                    batch_id,
+                    url: url.clone(),
+                    attempt,
+                    max_attempts,
+                    reason: reason.clone(),
+                };
+                let retry_payload = serde_json::to_value(retry_event)?;
+                if let Err(e) = event_tx_clone2.try_send(("page-retry-attempt".to_string(), retry_payload)) {
+                    warn!("Failed to send page-retry-attempt event: {}", e);
+                }
+            }
+            
+            // 기존 재시도 이벤트
             let payload = serde_json::to_value((item_id, item_type, url, attempt, max_attempts, reason))?;
             if let Err(e) = event_tx_clone2.try_send(("retry-attempt".to_string(), payload)) {
                 warn!("Failed to send retry-attempt event: {}", e);
@@ -706,6 +846,17 @@ impl ServiceBasedBatchCrawlingEngine {
         let mut successful_products = Vec::new();
         let mut failed_urls = Vec::new();
 
+        // 🔥 제품별 처리 전에 상세 이벤트들을 발생시키기 위한 로직 추가
+        for (index, product_url) in product_urls.iter().enumerate() {
+            // 🔥 제품 시작 이벤트
+            self.emit_detailed_event(DetailedCrawlingEvent::ProductStarted {
+                url: product_url.to_string(),
+                batch_id: 1,
+                product_index: (index + 1) as u32,
+                total_products: product_urls.len() as u32,
+            }).await?;
+        }
+
         // 항상 취소 토큰을 사용하도록 강제 - 없으면 기본 토큰 생성
         let result = if let Some(cancellation_token) = &self.config.cancellation_token {
             info!("🛑 USING PROVIDED CANCELLATION TOKEN for product detail collection");
@@ -734,9 +885,16 @@ impl ServiceBasedBatchCrawlingEngine {
                     .map(|(index, detail)| {
                         let product = product_detail_to_product(detail.clone());
                         
-                        // 🔥 제품 수집 완료 이벤트 발송 (UI 연결) + ProductProcessed 이벤트
-                        if let Some(broadcaster) = &mut self.broadcaster {
-                            if let Some(product_url) = product_urls.get(index) {
+                        // 🔥 ProductProcessed 이벤트를 직접 발송 (blocking 없이)
+                        if let Some(product_url) = product_urls.get(index) {
+                            let product_processed_event = DetailedCrawlingEvent::ProductProcessed {
+                                url: product_url.to_string(),
+                                success: true,
+                            };
+                            
+                            // emit_detailed_event는 async이므로 바로 호출할 수 없음
+                            // 대신 기존 broadcaster 메서드를 통해 처리
+                            if let Some(broadcaster) = &mut self.broadcaster {
                                 if let Err(e) = broadcaster.emit_product_collected(
                                     product.page_id.map(|id| id as u32).unwrap_or(0),
                                     product.model.clone().unwrap_or_else(|| format!("product-{}", index)),
@@ -744,16 +902,6 @@ impl ServiceBasedBatchCrawlingEngine {
                                     true
                                 ) {
                                     warn!("Failed to emit product-collected event: {}", e);
-                                }
-                                
-                                // 🔥 DetailedCrawlingEvent::ProductProcessed 이벤트 발송 - 기존 메서드 사용
-                                if let Err(e) = broadcaster.emit_product_collected(
-                                    product.page_id.map(|id| id as u32).unwrap_or(0),
-                                    product.model.clone().unwrap_or_else(|| format!("product-{}", index)),
-                                    product_url.to_string(),
-                                    true
-                                ) {
-                                    warn!("Failed to emit product-processed event: {}", e);
                                 }
                             }
                         }
@@ -890,7 +1038,16 @@ impl ServiceBasedBatchCrawlingEngine {
                     
                     info!("🔄 Retrying product detail collection for: {}", url);
                     
-                    // 🔥 재시도 시도 이벤트 발송
+                    // 🔥 ProductRetryAttempt 이벤트 발송
+                    self.emit_detailed_event(DetailedCrawlingEvent::ProductRetryAttempt {
+                        url: url.clone(),
+                        batch_id: 1,
+                        attempt: cycle,
+                        max_attempts: 3,
+                        reason: "Product detail collection failed".to_string(),
+                    }).await.unwrap_or_else(|e| warn!("Failed to emit ProductRetryAttempt event: {}", e));
+                    
+                    // 🔥 재시도 시도 이벤트 발송 (기존 broadcaster)
                     if let Some(broadcaster) = &mut self.broadcaster {
                         if let Err(e) = broadcaster.emit_retry_attempt(
                             item_id.clone(),
@@ -914,7 +1071,14 @@ impl ServiceBasedBatchCrawlingEngine {
                                 info!("✅ Retry successful for: {}", url);
                                 retry_products.push((product, detail));
                                 
-                                // 🔥 재시도 성공 이벤트 발송
+                                // 🔥 ProductRetrySuccess 이벤트 발송
+                                self.emit_detailed_event(DetailedCrawlingEvent::ProductRetrySuccess {
+                                    url: url.clone(),
+                                    batch_id: 1,
+                                    final_attempt: cycle,
+                                }).await.unwrap_or_else(|e| warn!("Failed to emit ProductRetrySuccess event: {}", e));
+                                
+                                // 🔥 재시도 성공 이벤트 발송 (기존 broadcaster)
                                 if let Some(broadcaster) = &mut self.broadcaster {
                                     if let Err(e) = broadcaster.emit_retry_success(
                                         item_id.clone(),
@@ -954,7 +1118,15 @@ impl ServiceBasedBatchCrawlingEngine {
                             ).await {
                                 debug!("Item exceeded retry limit or not retryable: {}", retry_err);
                                 
-                                // 🔥 재시도 최종 실패 이벤트 발송
+                                // 🔥 ProductRetryFailed 이벤트 발송
+                                self.emit_detailed_event(DetailedCrawlingEvent::ProductRetryFailed {
+                                    url: url.clone(),
+                                    batch_id: 1,
+                                    total_attempts: cycle,
+                                    final_error: e.to_string(),
+                                }).await.unwrap_or_else(|e| warn!("Failed to emit ProductRetryFailed event: {}", e));
+                                
+                                // 🔥 재시도 최종 실패 이벤트 발송 (기존 broadcaster)
                                 if let Some(broadcaster) = &mut self.broadcaster {
                                     if let Err(emit_err) = broadcaster.emit_retry_failed(
                                         item_id.clone(),
@@ -1352,6 +1524,207 @@ impl ServiceBasedBatchCrawlingEngine {
                         timestamp: chrono::Utc::now(),
                     }
                 },
+                
+                // 🔥 새로운 배치 관련 이벤트들
+                DetailedCrawlingEvent::BatchCreated { batch_id, total_batches, start_page, end_page, description } => {
+                    CrawlingProgress {
+                        current: *batch_id,
+                        total: *total_batches,
+                        percentage: 0.0,
+                        current_stage: CrawlingStage::ProductList,
+                        current_step: format!("배치 {}/{} 생성: {}", batch_id, total_batches, description),
+                        status: CrawlingStatus::Running,
+                        message: format!("Batch {}/{} created: pages {} to {}", batch_id, total_batches, start_page, end_page),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: 0,
+                        updated_items: 0,
+                        current_batch: Some(*batch_id),
+                        total_batches: Some(*total_batches),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::BatchStarted { batch_id, total_batches, pages_in_batch } => {
+                    CrawlingProgress {
+                        current: *batch_id,
+                        total: *total_batches,
+                        percentage: ((*batch_id - 1) as f64 / *total_batches as f64) * 100.0,
+                        current_stage: CrawlingStage::ProductList,
+                        current_step: format!("배치 {}/{} 시작 ({}개 페이지)", batch_id, total_batches, pages_in_batch),
+                        status: CrawlingStatus::Running,
+                        message: format!("Batch {}/{} started: {} pages", batch_id, total_batches, pages_in_batch),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: 0,
+                        updated_items: 0,
+                        current_batch: Some(*batch_id),
+                        total_batches: Some(*total_batches),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                
+                // 🔥 새로운 페이지 관련 이벤트들 (기본 처리만 제공)
+                DetailedCrawlingEvent::PageStarted { page, batch_id, url: _ } => {
+                    CrawlingProgress {
+                        current: *page,
+                        total: if self.config.start_page > self.config.end_page {
+                            self.config.start_page - self.config.end_page + 1
+                        } else {
+                            self.config.end_page - self.config.start_page + 1
+                        },
+                        percentage: 0.0,
+                        current_stage: CrawlingStage::ProductList,
+                        current_step: format!("페이지 {} 시작 (배치 {})", page, batch_id),
+                        status: CrawlingStatus::Running,
+                        message: format!("Page {} started in batch {}", page, batch_id),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: 0,
+                        updated_items: 0,
+                        current_batch: Some(*batch_id),
+                        total_batches: Some(1),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::PageRetryAttempt { page, batch_id, url: _, attempt, max_attempts, reason } => {
+                    CrawlingProgress {
+                        current: *attempt,
+                        total: *max_attempts,
+                        percentage: (*attempt as f64 / *max_attempts as f64) * 100.0,
+                        current_stage: CrawlingStage::ProductList,
+                        current_step: format!("페이지 {} 재시도 {}/{} (배치 {}) - {}", page, attempt, max_attempts, batch_id, reason),
+                        status: CrawlingStatus::Running,
+                        message: format!("Page {} retry {}/{} in batch {} - {}", page, attempt, max_attempts, batch_id, reason),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: 0,
+                        updated_items: 0,
+                        current_batch: Some(*batch_id),
+                        total_batches: Some(1),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::PageRetrySuccess { page, batch_id, url: _, final_attempt, products_found } => {
+                    CrawlingProgress {
+                        current: *final_attempt,
+                        total: *final_attempt,
+                        percentage: 100.0,
+                        current_stage: CrawlingStage::ProductList,
+                        current_step: format!("페이지 {} 재시도 성공 ({}번째 시도, {}개 제품, 배치 {})", page, final_attempt, products_found, batch_id),
+                        status: CrawlingStatus::Running,
+                        message: format!("Page {} retry succeeded on attempt {} with {} products (batch {})", page, final_attempt, products_found, batch_id),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: *products_found,
+                        updated_items: 0,
+                        current_batch: Some(*batch_id),
+                        total_batches: Some(1),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::PageRetryFailed { page, batch_id, url: _, total_attempts, final_error } => {
+                    CrawlingProgress {
+                        current: *total_attempts,
+                        total: *total_attempts,
+                        percentage: 100.0,
+                        current_stage: CrawlingStage::ProductList,
+                        current_step: format!("페이지 {} 최종 실패 ({}번 재시도 후, 배치 {}) - {}", page, total_attempts, batch_id, final_error),
+                        status: CrawlingStatus::Error,
+                        message: format!("Page {} finally failed after {} attempts (batch {}) - {}", page, total_attempts, batch_id, final_error),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: 0,
+                        updated_items: 0,
+                        current_batch: Some(*batch_id),
+                        total_batches: Some(1),
+                        errors: 1,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                
+                // 🔥 새로운 제품 관련 이벤트들 (기본 처리만 제공)
+                DetailedCrawlingEvent::ProductStarted { url: _, batch_id, product_index, total_products } => {
+                    CrawlingProgress {
+                        current: *product_index,
+                        total: *total_products,
+                        percentage: (*product_index as f64 / *total_products as f64) * 100.0,
+                        current_stage: CrawlingStage::ProductDetails,
+                        current_step: format!("제품 {}/{} 시작 (배치 {})", product_index, total_products, batch_id),
+                        status: CrawlingStatus::Running,
+                        message: format!("Product {}/{} started in batch {}", product_index, total_products, batch_id),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: 0,
+                        updated_items: 0,
+                        current_batch: Some(*batch_id),
+                        total_batches: Some(1),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::ProductRetryAttempt { url: _, batch_id, attempt, max_attempts, reason } => {
+                    CrawlingProgress {
+                        current: *attempt,
+                        total: *max_attempts,
+                        percentage: (*attempt as f64 / *max_attempts as f64) * 100.0,
+                        current_stage: CrawlingStage::ProductDetails,
+                        current_step: format!("제품 재시도 {}/{} (배치 {}) - {}", attempt, max_attempts, batch_id, reason),
+                        status: CrawlingStatus::Running,
+                        message: format!("Product retry {}/{} in batch {} - {}", attempt, max_attempts, batch_id, reason),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: 0,
+                        updated_items: 0,
+                        current_batch: Some(*batch_id),
+                        total_batches: Some(1),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::ProductRetrySuccess { url: _, batch_id, final_attempt } => {
+                    CrawlingProgress {
+                        current: *final_attempt,
+                        total: *final_attempt,
+                        percentage: 100.0,
+                        current_stage: CrawlingStage::ProductDetails,
+                        current_step: format!("제품 재시도 성공 ({}번째 시도, 배치 {})", final_attempt, batch_id),
+                        status: CrawlingStatus::Running,
+                        message: format!("Product retry succeeded on attempt {} (batch {})", final_attempt, batch_id),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: 1,
+                        updated_items: 0,
+                        current_batch: Some(*batch_id),
+                        total_batches: Some(1),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::ProductRetryFailed { url: _, batch_id, total_attempts, final_error } => {
+                    CrawlingProgress {
+                        current: *total_attempts,
+                        total: *total_attempts,
+                        percentage: 100.0,
+                        current_stage: CrawlingStage::ProductDetails,
+                        current_step: format!("제품 최종 실패 ({}번 재시도 후, 배치 {}) - {}", total_attempts, batch_id, final_error),
+                        status: CrawlingStatus::Error,
+                        message: format!("Product finally failed after {} attempts (batch {}) - {}", total_attempts, batch_id, final_error),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: 0,
+                        updated_items: 0,
+                        current_batch: Some(*batch_id),
+                        total_batches: Some(1),
+                        errors: 1,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                
                 DetailedCrawlingEvent::StageCompleted { stage, items_processed } => {
                     CrawlingProgress {
                         current: *items_processed as u32,
@@ -1381,6 +1754,9 @@ impl ServiceBasedBatchCrawlingEngine {
             };
 
             emitter.emit_progress(progress).await?;
+            
+            // 또한 DetailedCrawlingEvent를 직접 전송 (계층적 이벤트 모니터용)
+            emitter.emit_detailed_crawling_event(event.clone()).await?;
         }
         
         debug!("Emitted detailed event: {:?}", event);

@@ -28,8 +28,8 @@ const [tabState, setTabState] = createStore<TabState>({
   tabs: [
     {
       id: 'eventDisplay',
-      label: '이벤트 모니터',
-      icon: '📡',
+      label: '계층적 이벤트 모니터',
+      icon: '🌳',
       theme: {
         bg: 'bg-gradient-to-br from-green-50 to-emerald-50',
         border: 'border-green-200',

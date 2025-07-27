@@ -14,7 +14,7 @@ import { LiveProductionTab } from './tabs/LiveProductionTab';
 import { NewArchTestTab } from './tabs/NewArchTestTab';
 import { ActorSystemTab } from './tabs/ActorSystemTab';
 import { DomainDashboardTab } from './tabs/DomainDashboardTab';
-import { SimpleEventDisplay } from './SimpleEventDisplay';
+import { HierarchicalEventMonitor } from './HierarchicalEventMonitor';
 import { tabState, restoreLastActiveTab } from '../stores/tabStore';
 import { windowState } from '../stores/windowStore';
 
@@ -62,7 +62,7 @@ export const AppWithTabs: Component = () => {
       case 'domainDashboard':
         return <DomainDashboardTab />;
       case 'eventDisplay':
-        return <SimpleEventDisplay />;
+        return <HierarchicalEventMonitor />;
       default:
         return <CrawlingEngineTabSimple />;
     }

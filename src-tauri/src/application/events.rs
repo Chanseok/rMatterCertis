@@ -5,6 +5,7 @@
 
 use crate::domain::events::{CrawlingEvent, CrawlingProgress, CrawlingTaskStatus, DatabaseStats};
 use crate::domain::atomic_events::AtomicTaskEvent; // 추가
+use crate::infrastructure::service_based_crawling_engine::DetailedCrawlingEvent; // 추가
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, warn};
@@ -191,6 +192,27 @@ impl EventEmitter {
     pub async fn emit_completed(&self, result: crate::domain::events::CrawlingResult) -> EventResult {
         let event = CrawlingEvent::Completed(result);
         self.emit_event(event).await
+    }
+
+    /// Emit detailed crawling event for hierarchical event monitor
+    pub async fn emit_detailed_crawling_event(&self, detailed_event: DetailedCrawlingEvent) -> EventResult {
+        // 빠른 경로: 비활성화 검사
+        if !self.is_enabled().await {
+            return Err(EventEmissionError::Disabled);
+        }
+
+        let event_name = "detailed-crawling-event";
+        
+        match self.app_handle.emit(event_name, &detailed_event) {
+            Ok(_) => {
+                debug!("Successfully emitted detailed crawling event: {}", event_name);
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to emit detailed crawling event {}: {}", event_name, e);
+                Err(EventEmissionError::TauriError(e))
+            }
+        }
     }
 
     // =========================================================================

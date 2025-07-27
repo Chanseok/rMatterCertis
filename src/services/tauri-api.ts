@@ -449,6 +449,19 @@ export class TauriApiService {
   }
 
   /**
+   * Subscribe to detailed crawling events (hierarchical event monitor)
+   */
+  async subscribeToDetailedCrawlingEvents(callback: (event: any) => void): Promise<UnlistenFn> {
+    const unlisten = await listen<any>('detailed-crawling-event', (event) => {
+      console.log('[Debug] [TauriApiService] Raw Detailed Event Received:', event.payload);
+      callback(event.payload);
+    });
+    
+    this.eventListeners.set('detailed-crawling-event', unlisten);
+    return unlisten;
+  }
+
+  /**
    * Subscribe to all Live Production Line events with proper typing
    */
   async subscribeToLiveProductionLineEvents(callbacks: {
