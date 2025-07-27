@@ -215,6 +215,27 @@ impl EventEmitter {
         }
     }
 
+    /// Emit detailed crawling event with JSON payload (for TaskLifecycleEvent)
+    pub async fn emit_detailed_crawling_event_json(&self, json_payload: serde_json::Value) -> EventResult {
+        // 빠른 경로: 비활성화 검사
+        if !self.is_enabled().await {
+            return Err(EventEmissionError::Disabled);
+        }
+
+        let event_name = "detailed-crawling-event";
+        
+        match self.app_handle.emit(event_name, &json_payload) {
+            Ok(_) => {
+                debug!("Successfully emitted detailed crawling event JSON: {}", event_name);
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to emit detailed crawling event JSON {}: {}", event_name, e);
+                Err(EventEmissionError::TauriError(e))
+            }
+        }
+    }
+
     // =========================================================================
     // 원자적 태스크 이벤트 (Atomic Task Events) - proposal5.md 구현
     // =========================================================================

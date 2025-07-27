@@ -305,6 +305,26 @@ pub enum CrawlingEvent {
     DatabaseUpdate(DatabaseStats),
     /// Final results notification
     Completed(CrawlingResult),
+    /// 🔥 독립적인 사이트 상태 체크 이벤트 (크롤링 세션과 무관)
+    SiteStatusCheck {
+        is_standalone: bool,  // true면 독립적인 체크, false면 크롤링 세션 내 체크
+        status: SiteCheckStatus,
+        message: String,
+        timestamp: DateTime<Utc>,
+    },
+}
+
+/// 사이트 상태 체크 결과
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SiteCheckStatus {
+    /// 체크 시작
+    Started,
+    /// 체크 중
+    InProgress,
+    /// 체크 성공
+    Success,
+    /// 체크 실패
+    Failed,
 }
 
 impl CrawlingEvent {
@@ -317,6 +337,7 @@ impl CrawlingEvent {
             CrawlingEvent::Error { .. } => "crawling-error",
             CrawlingEvent::DatabaseUpdate(_) => "database-update",
             CrawlingEvent::Completed(_) => "crawling-completed",
+            CrawlingEvent::SiteStatusCheck { .. } => "site-status-check",
         }
     }
 }

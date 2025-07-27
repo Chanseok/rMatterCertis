@@ -19,16 +19,42 @@ use crate::application::EventEmitter;
 /// Advanced Crawling Engine 사이트 상태 확인 (실제 구현)
 #[command]
 pub async fn check_advanced_site_status(
+    app: AppHandle,
     _state: State<'_, CrawlingEngineState>,
     shared_state: State<'_, SharedStateCache>,
 ) -> Result<ApiResponse<SiteStatusInfo>, String> {
     info!("🌐 Advanced site status check requested");
+    
+    // 🔥 독립적인 사이트 상태 체크 시작 이벤트 발송
+    let start_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
+        is_standalone: true,
+        status: crate::domain::events::SiteCheckStatus::Started,
+        message: "사이트 상태 확인을 시작합니다...".to_string(),
+        timestamp: chrono::Utc::now(),
+    };
+    
+    if let Err(e) = app.emit("site-status-check", &start_event) {
+        warn!("Failed to emit site status check start event: {}", e);
+    }
     
     // 먼저 캐시된 사이트 분석 결과 확인 (5분 TTL)
     if let Some(cached_analysis) = shared_state.get_valid_site_analysis_async(Some(5)).await {
         info!("🎯 Using cached site analysis - analyzed: {}, age: {} minutes", 
              cached_analysis.analyzed_at.format("%H:%M:%S"),
              chrono::Utc::now().signed_duration_since(cached_analysis.analyzed_at).num_minutes());
+        
+        // 🔥 캐시 사용 완료 이벤트 발송
+        let cache_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
+            is_standalone: true,
+            status: crate::domain::events::SiteCheckStatus::Success,
+            message: "캐시된 사이트 분석 결과를 사용했습니다".to_string(),
+            timestamp: chrono::Utc::now(),
+        };
+        
+        if let Err(e) = app.emit("site-status-check", &cache_event) {
+            warn!("Failed to emit cached site status event: {}", e);
+        }
+        
         let site_status_info = SiteStatusInfo {
             is_accessible: true,
             response_time_ms: 500, // 기본값 - 캐시된 데이터이므로
@@ -43,11 +69,41 @@ pub async fn check_advanced_site_status(
     info!("⏰ No valid cached site analysis found - performing fresh site check");
     info!("🔄 Starting real site status check...");
     
+    // 🔥 실제 사이트 체크 진행 중 이벤트 발송
+    let progress_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
+        is_standalone: true,
+        status: crate::domain::events::SiteCheckStatus::InProgress,
+        message: "사이트에 접속하여 상태를 확인 중입니다...".to_string(),
+        timestamp: chrono::Utc::now(),
+    };
+    
+    // 🔥 실제 사이트 체크 진행 중 이벤트 발송
+    let progress_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
+        is_standalone: true,
+        status: crate::domain::events::SiteCheckStatus::InProgress,
+        message: "사이트에 접속하여 상태를 확인 중입니다...".to_string(),
+        timestamp: chrono::Utc::now(),
+    };
+    
+    if let Err(e) = app.emit("site-status-check", &progress_event) {
+        warn!("Failed to emit site status progress event: {}", e);
+    }
+    
     // 캐시가 없거나 만료된 경우, 실제 크롤링 엔진 인스턴스 생성
     let http_client = match HttpClient::new() {
         Ok(client) => client,
         Err(e) => {
             error!("Failed to create HTTP client: {}", e);
+            
+            // 🔥 실패 이벤트 발송
+            let failed_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
+                is_standalone: true,
+                status: crate::domain::events::SiteCheckStatus::Failed,
+                message: format!("HTTP 클라이언트 생성 실패: {}", e),
+                timestamp: chrono::Utc::now(),
+            };
+            let _ = app.emit("site-status-check", &failed_event);
+            
             return Err(format!("HTTP client creation failed: {}", e));
         }
     };
@@ -107,6 +163,18 @@ pub async fn check_advanced_site_status(
         Ok(site_status) => {
             info!("✅ Fresh site status check completed - {} pages found", site_status.total_pages);
             
+            // 🔥 성공 이벤트 발송
+            let success_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
+                is_standalone: true,
+                status: crate::domain::events::SiteCheckStatus::Success,
+                message: format!("사이트 상태 확인 완료: {}개 페이지 발견", site_status.total_pages),
+                timestamp: chrono::Utc::now(),
+            };
+            
+            if let Err(e) = app.emit("site-status-check", &success_event) {
+                warn!("Failed to emit site status success event: {}", e);
+            }
+            
             // 새로운 분석 결과를 캐시에 저장
             let site_analysis = crate::application::shared_state::SiteAnalysisResult::new(
                 site_status.total_pages,
@@ -131,6 +199,19 @@ pub async fn check_advanced_site_status(
         },
         Err(e) => {
             error!("Site status check failed: {}", e);
+            
+            // 🔥 실패 이벤트 발송
+            let failed_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
+                is_standalone: true,
+                status: crate::domain::events::SiteCheckStatus::Failed,
+                message: format!("사이트 상태 확인 실패: {}", e),
+                timestamp: chrono::Utc::now(),
+            };
+            
+            if let Err(emit_err) = app.emit("site-status-check", &failed_event) {
+                warn!("Failed to emit site status failed event: {}", emit_err);
+            }
+            
             Err(format!("Site status check error: {}", e))
         }
     }

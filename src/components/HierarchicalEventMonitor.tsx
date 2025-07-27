@@ -28,6 +28,9 @@ interface HierarchicalEvent {
     pageNumber?: number;
     productIndex?: number;
     errorReason?: string;
+    startTime?: number; // 시작 시간 (Unix timestamp)
+    endTime?: number;   // 종료 시간 (Unix timestamp)
+    duration?: number;  // 소요 시간 (milliseconds)
     [key: string]: any;
   };
   children: HierarchicalEvent[];
@@ -128,23 +131,33 @@ const HierarchicalEventMonitor: Component = () => {
 
   // 이벤트를 계층구조에 추가
   const addHierarchicalEvent = (eventData: Partial<HierarchicalEvent>) => {
+    const now = Date.now();
     const newEvent: HierarchicalEvent = {
-      id: eventData.id || `event-${Date.now()}-${Math.random()}`,
+      id: eventData.id || `event-${now}-${Math.random()}`,
       level: eventData.level || 'detail',
       parentId: eventData.parentId,
       timestamp: new Date().toLocaleTimeString('ko-KR', {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit'
-      }),
+      }) + '.' + String(now % 1000).padStart(3, '0'),
       type: eventData.type || 'progress',
       title: eventData.title || 'Unknown Event',
       message: eventData.message || '',
       status: eventData.status || 'pending',
-      metadata: eventData.metadata || {},
+      metadata: {
+        ...eventData.metadata,
+        startTime: eventData.type === 'start' ? now : eventData.metadata?.startTime,
+        endTime: eventData.type === 'complete' || eventData.type === 'success' || eventData.type === 'error' ? now : undefined
+      },
       children: [],
       isExpanded: true,
     };
+
+    // Duration 계산 (완료/성공/실패 이벤트인 경우)
+    if (newEvent.metadata.endTime && newEvent.metadata.startTime) {
+      newEvent.metadata.duration = newEvent.metadata.endTime - newEvent.metadata.startTime;
+    }
 
     setEvents(prev => {
       const newEvents = [...prev];
@@ -273,11 +286,293 @@ const HierarchicalEventMonitor: Component = () => {
   const handleDetailedCrawlingEvent = (detailedEvent: any) => {
     console.log('🔍 DetailedCrawlingEvent 수신:', detailedEvent);
     
-    // DetailedCrawlingEvent를 HierarchicalEvent로 변환
+    // ConcurrencyEvent인지 확인 (새로운 이벤트 구조)
+    if (detailedEvent && typeof detailedEvent === 'object' && detailedEvent.type) {
+      const hierarchicalEvent = convertConcurrencyEventToHierarchical(detailedEvent);
+      if (hierarchicalEvent) {
+        addHierarchicalEvent(hierarchicalEvent);
+        return;
+      }
+    }
+    
+    // 기존 DetailedCrawlingEvent 처리
     const hierarchicalEvent = convertDetailedEventToHierarchical(detailedEvent);
     if (hierarchicalEvent) {
       addHierarchicalEvent(hierarchicalEvent);
     }
+  };
+
+  // 새로운 ConcurrencyEvent를 HierarchicalEvent로 변환
+  const convertConcurrencyEventToHierarchical = (concurrencyEvent: any): Partial<HierarchicalEvent> | null => {
+    if (!concurrencyEvent || typeof concurrencyEvent !== 'object' || !concurrencyEvent.type) {
+      return null;
+    }
+
+    const { type, payload } = concurrencyEvent;
+
+    switch (type) {
+      case 'SessionEvent':
+        const sessionData = payload;
+        const sessionEventType = sessionData.event_type;
+        const metadata = sessionData.metadata || {};
+        
+        switch (sessionEventType) {
+          case 'Started':
+            if (metadata.event_category === 'stage_started') {
+              return {
+                id: `stage-${metadata.stage}-${Date.now()}`,
+                level: 'stage',
+                type: 'start',
+                title: `${metadata.stage} 시작`,
+                message: metadata.stage_message || `${metadata.stage} 단계를 시작합니다`,
+                status: 'running',
+                metadata: { stage: metadata.stage, sessionId: sessionData.session_id }
+              };
+            }
+            return {
+              id: `session-${sessionData.session_id}`,
+              level: 'session',
+              type: 'start',
+              title: '크롤링 세션 시작',
+              message: `세션 ${sessionData.session_id} 시작`,
+              status: 'running',
+              metadata: { sessionId: sessionData.session_id }
+            };
+            
+          case 'Completed':
+            if (metadata.event_category === 'stage_completed') {
+              return {
+                id: `stage-complete-${metadata.stage}-${Date.now()}`,
+                level: 'stage',
+                type: 'complete',
+                title: `${metadata.stage} 완료`,
+                message: `${metadata.items_processed}개 항목 처리 완료`,
+                status: 'success',
+                metadata: { 
+                  stage: metadata.stage, 
+                  itemsProcessed: metadata.items_processed,
+                  sessionId: sessionData.session_id 
+                }
+              };
+            }
+            return {
+              id: `session-complete-${sessionData.session_id}`,
+              level: 'session',
+              type: 'complete',
+              title: '크롤링 세션 완료',
+              message: `세션 ${sessionData.session_id} 완료`,
+              status: 'success',
+              metadata: { sessionId: sessionData.session_id }
+            };
+            
+          case 'Failed':
+            if (metadata.event_category === 'error_occurred') {
+              return {
+                id: `error-${metadata.stage}-${Date.now()}`,
+                level: 'detail',
+                type: 'error',
+                title: '오류 발생',
+                message: `${metadata.stage}에서 오류: ${metadata.error_message}`,
+                status: 'error',
+                metadata: { 
+                  stage: metadata.stage, 
+                  error: metadata.error_message, 
+                  recoverable: metadata.recoverable 
+                }
+              };
+            }
+            break;
+        }
+        break;
+
+      case 'BatchEvent':
+        const batchData = payload;
+        const batchEventType = batchData.event_type;
+        const batchMetadata = batchData.metadata || {};
+        
+        switch (batchEventType) {
+          case 'Created':
+            return {
+              id: `batch-${batchData.batch_id}`,
+              level: 'batch',
+              type: 'start',
+              title: '배치 생성',
+              message: batchMetadata.description || `배치 ${batchData.batch_id} 생성`,
+              status: 'running',
+              metadata: { 
+                batchId: batchData.batch_id,
+                totalBatches: batchMetadata.total_batches,
+                startPage: batchMetadata.start_page,
+                endPage: batchMetadata.end_page
+              }
+            };
+            
+          case 'Started':
+            if (batchMetadata.event_category === 'page_started') {
+              return {
+                id: `page-${batchMetadata.page_number}`,
+                level: 'page',
+                type: 'start',
+                title: `페이지 ${batchMetadata.page_number} 시작`,
+                message: `페이지 ${batchMetadata.page_number} 크롤링 시작`,
+                status: 'running',
+                metadata: { 
+                  pageNumber: batchMetadata.page_number,
+                  pageUrl: batchMetadata.page_url
+                }
+              };
+            }
+            if (batchMetadata.event_category === 'product_started') {
+              return {
+                id: `product-${batchMetadata.product_index}`,
+                level: 'product',
+                type: 'start',
+                title: `제품 ${batchMetadata.product_index} 시작`,
+                message: `제품 상세 정보 수집 시작`,
+                status: 'running',
+                metadata: { 
+                  productIndex: batchMetadata.product_index,
+                  productUrl: batchMetadata.product_url,
+                  totalProducts: batchMetadata.total_products
+                }
+              };
+            }
+            return {
+              id: `batch-start-${batchData.batch_id}`,
+              level: 'batch',
+              type: 'start',
+              title: '배치 시작',
+              message: `배치 ${batchData.batch_id} 실행 시작`,
+              status: 'running',
+              metadata: { 
+                batchId: batchData.batch_id,
+                pagesInBatch: batchMetadata.pages_in_batch
+              }
+            };
+            
+          case 'Completed':
+            if (batchMetadata.event_category === 'page_completed') {
+              return {
+                id: `page-complete-${batchMetadata.page_number}`,
+                level: 'page',
+                type: 'complete',
+                title: `페이지 ${batchMetadata.page_number} 완료`,
+                message: `${batchMetadata.products_found}개 제품 발견`,
+                status: 'success',
+                metadata: { 
+                  pageNumber: batchMetadata.page_number,
+                  productsFound: batchMetadata.products_found
+                }
+              };
+            }
+            if (batchMetadata.event_category === 'product_processed') {
+              return {
+                id: `product-complete-${Date.now()}`,
+                level: 'product',
+                type: batchMetadata.success === 'true' ? 'success' : 'error',
+                title: `제품 처리 ${batchMetadata.success === 'true' ? '성공' : '실패'}`,
+                message: `제품 상세 정보 수집 ${batchMetadata.success === 'true' ? '완료' : '실패'}`,
+                status: batchMetadata.success === 'true' ? 'success' : 'error',
+                metadata: { 
+                  productUrl: batchMetadata.product_url,
+                  success: batchMetadata.success
+                }
+              };
+            }
+            return {
+              id: `batch-complete-${batchData.batch_id}`,
+              level: 'batch',
+              type: 'complete',
+              title: '배치 완료',
+              message: `배치 ${batchData.batch_id} 완료`,
+              status: 'success',
+              metadata: { 
+                batchId: batchData.batch_id,
+                batchNumber: batchMetadata.batch_number,
+                totalBatches: batchMetadata.total_batches
+              }
+            };
+            
+          case 'Failed':
+            return {
+              id: `batch-failed-${batchData.batch_id}`,
+              level: 'batch',
+              type: 'error',
+              title: '배치 실패',
+              message: `배치 ${batchData.batch_id} 실패`,
+              status: 'error',
+              metadata: { batchId: batchData.batch_id }
+            };
+        }
+        break;
+
+      case 'TaskLifecycle':
+        const taskData = payload;
+        const context = taskData.context;
+        const event = taskData.event;
+        
+        // TaskLifecycleEvent 처리
+        const eventStatus = Object.keys(event)[0];
+        const eventDetails = event[eventStatus];
+        
+        switch (eventStatus) {
+          case 'Started':
+            return {
+              id: `task-${context.task_id}`,
+              level: 'detail',
+              type: 'start',
+              title: `Task ${context.task_id} 시작`,
+              message: `Worker ${eventDetails.worker_id}에서 실행 시작`,
+              status: 'running',
+              metadata: { 
+                taskId: context.task_id,
+                workerId: eventDetails.worker_id,
+                retryAttempt: eventDetails.retry_attempt
+              }
+            };
+            
+          case 'Succeeded':
+            return {
+              id: `task-success-${context.task_id}`,
+              level: 'detail',
+              type: 'success',
+              title: `Task ${context.task_id} 성공`,
+              message: `${eventDetails.duration_ms}ms에 ${eventDetails.items_processed}개 항목 처리`,
+              status: 'success',
+              metadata: { 
+                taskId: context.task_id,
+                duration: eventDetails.duration_ms,
+                itemsProcessed: eventDetails.items_processed
+              }
+            };
+            
+          case 'Failed':
+            return {
+              id: `task-failed-${context.task_id}`,
+              level: 'detail',
+              type: 'error',
+              title: `Task ${context.task_id} 실패`,
+              message: `${eventDetails.error_message}`,
+              status: 'error',
+              metadata: { 
+                taskId: context.task_id,
+                errorMessage: eventDetails.error_message,
+                errorCode: eventDetails.error_code
+              }
+            };
+        }
+        break;
+    }
+
+    console.warn('Unknown ConcurrencyEvent:', type, payload);
+    return {
+      level: 'detail',
+      type: 'progress',
+      title: '새로운 이벤트',
+      message: `${type}: ${JSON.stringify(payload)}`,
+      status: 'pending',
+      metadata: { rawEvent: concurrencyEvent }
+    };
   };
 
   // DetailedCrawlingEvent를 HierarchicalEvent로 변환
@@ -444,6 +739,123 @@ const HierarchicalEventMonitor: Component = () => {
           metadata: { stage: eventData.stage, error: eventData.error, recoverable: eventData.recoverable }
         };
 
+      // 🚀 새로운 세분화된 페이지 이벤트들
+      case 'PageCollectionStarted':
+        return {
+          id: `page-collection-${eventData.page}`,
+          level: 'page',
+          type: 'start',
+          title: `페이지 ${eventData.page} 수집 시작`,
+          message: `예상 제품: ${eventData.estimated_products || '알 수 없음'}개`,
+          status: 'running',
+          metadata: { 
+            pageNumber: eventData.page,
+            batchId: eventData.batch_id,
+            pageUrl: eventData.url,
+            estimatedProducts: eventData.estimated_products
+          }
+        };
+
+      case 'PageCollectionCompleted':
+        return {
+          id: `page-collection-complete-${eventData.page}`,
+          level: 'page',
+          type: 'complete',
+          title: `페이지 ${eventData.page} 수집 완료`,
+          message: `${eventData.products_found}개 제품 발견 (${eventData.duration_ms}ms)`,
+          status: 'success',
+          metadata: { 
+            pageNumber: eventData.page,
+            batchId: eventData.batch_id,
+            pageUrl: eventData.url,
+            productsFound: eventData.products_found,
+            duration: eventData.duration_ms
+          }
+        };
+
+      // 🚀 새로운 세분화된 제품 상세 수집 이벤트들
+      case 'ProductDetailCollectionStarted':
+        return {
+          id: `product-detail-collection-${eventData.product_index}`,
+          level: 'product',
+          type: 'start',
+          title: `제품 ${eventData.product_index} 상세 수집 시작`,
+          message: `${eventData.product_index}/${eventData.total_products}`,
+          status: 'running',
+          metadata: { 
+            productIndex: eventData.product_index,
+            totalProducts: eventData.total_products,
+            productUrl: eventData.url,
+            batchId: eventData.batch_id
+          }
+        };
+
+      case 'ProductDetailProcessingStarted':
+        return {
+          id: `product-detail-processing-${eventData.product_index}`,
+          level: 'detail',
+          type: 'start',
+          title: `제품 ${eventData.product_index} 처리 시작`,
+          message: `${eventData.parsing_stage} 단계`,
+          status: 'running',
+          metadata: { 
+            productIndex: eventData.product_index,
+            productUrl: eventData.url,
+            parsingStage: eventData.parsing_stage
+          }
+        };
+
+      case 'ProductDetailCollectionCompleted':
+        return {
+          id: `product-detail-collection-complete-${eventData.product_index}`,
+          level: 'product',
+          type: eventData.success ? 'success' : 'error',
+          title: `제품 ${eventData.product_index} 상세 수집 ${eventData.success ? '완료' : '실패'}`,
+          message: `${eventData.duration_ms}ms, 데이터 추출: ${eventData.data_extracted ? '성공' : '실패'}`,
+          status: eventData.success ? 'success' : 'error',
+          metadata: { 
+            productIndex: eventData.product_index,
+            productUrl: eventData.url,
+            success: eventData.success,
+            duration: eventData.duration_ms,
+            dataExtracted: eventData.data_extracted
+          }
+        };
+
+      // 🚀 새로운 배치 데이터베이스 저장 이벤트들
+      case 'DatabaseBatchSaveStarted':
+        return {
+          id: `db-batch-save-${eventData.batch_id}`,
+          level: 'batch',
+          type: 'start',
+          title: `배치 ${eventData.batch_id} DB 저장 시작`,
+          message: `${eventData.products_count}개 제품을 ${eventData.batch_size}개 단위로 저장`,
+          status: 'running',
+          metadata: { 
+            batchId: eventData.batch_id,
+            productsCount: eventData.products_count,
+            batchSize: eventData.batch_size
+          }
+        };
+
+      case 'DatabaseBatchSaveCompleted':
+        return {
+          id: `db-batch-save-complete-${eventData.batch_id}`,
+          level: 'batch',
+          type: eventData.errors === 0 ? 'success' : 'error',
+          title: `배치 ${eventData.batch_id} DB 저장 ${eventData.errors === 0 ? '완료' : '실패'}`,
+          message: `저장: ${eventData.products_saved}개, 신규: ${eventData.new_items}개, 업데이트: ${eventData.updated_items}개, 오류: ${eventData.errors}개 (${eventData.duration_ms}ms)`,
+          status: eventData.errors === 0 ? 'success' : 'error',
+          metadata: { 
+            batchId: eventData.batch_id,
+            productsSaved: eventData.products_saved,
+            newItems: eventData.new_items,
+            updatedItems: eventData.updated_items,
+            errors: eventData.errors,
+            duration: eventData.duration_ms
+          }
+        };
+
       default:
         console.warn('Unknown DetailedCrawlingEvent type:', eventType, eventData);
         return {
@@ -496,9 +908,16 @@ const HierarchicalEventMonitor: Component = () => {
                 </span>
               </Show>
             </div>
-            <span class="text-xs text-gray-600 whitespace-nowrap ml-2">
-              {event.timestamp}
-            </span>
+            <div class="text-xs text-gray-600 whitespace-nowrap ml-2 text-right">
+              <div>{event.timestamp}</div>
+              <Show when={event.metadata.duration !== undefined}>
+                <div class="text-xs text-blue-600 font-mono">
+                  ⏱ {event.metadata.duration! < 1000 
+                    ? `${event.metadata.duration}ms` 
+                    : `${(event.metadata.duration! / 1000).toFixed(2)}s`}
+                </div>
+              </Show>
+            </div>
           </div>
           <Show when={event.message}>
             <div class="text-sm mt-1 text-gray-700">

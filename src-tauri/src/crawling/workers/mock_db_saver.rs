@@ -120,6 +120,8 @@ mod tests {
             confidence_score: 0.8,
             extracted_at: chrono::Utc::now(),
             source_url: crate::domain::ValidatedUrl::new("https://example.com/test".to_string()).unwrap(),
+            index_in_page: Some(1),
+            page_id: Some(1),
         };
 
         let task_product_data = crate::crawling::tasks::TaskProductData {
@@ -128,6 +130,8 @@ mod tests {
             category: Some("Electronics".to_string()),
             manufacturer: Some("Test Company".to_string()),
             model: None,
+            index_in_page: Some(1),
+            page_id: Some(1),
             certification_number: None,
             certification_date: None,
             details: std::collections::HashMap::new(),

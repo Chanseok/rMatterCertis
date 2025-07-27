@@ -145,6 +145,11 @@ impl SystemStateBroadcaster {
         let _db_analysis = state_cache.db_analysis.read().await;
         let runtime_state = state_cache.runtime_state.read().await;
         
+        // 🔥 애플리케이션 시작 시 강제로 false로 설정하여 잘못된 상태 방지
+        let is_running = runtime_state.is_crawling_active && 
+                        runtime_state.session_target_items.is_some() &&
+                        runtime_state.current_stage.is_some();
+        
         // 기존 데이터베이스 연결 풀을 애플리케이션 상태에서 가져오기
         let db_connection = self.app_handle.state::<DatabaseConnection>();
         let db_repo = IntegratedProductRepository::new(db_connection.pool().clone());
@@ -163,7 +168,7 @@ impl SystemStateBroadcaster {
         let total_products = db_repo.get_product_count().await?;
 
         Ok(SystemStatePayload {
-            is_running: runtime_state.is_crawling_active,
+            is_running, // 🔥 더 엄격한 조건으로 수정됨
             total_pages: site_analysis.as_ref().map(|s| s.total_pages).unwrap_or(0),
             db_total_products: total_products as u64,
             last_db_cursor: last_cursor,
@@ -264,6 +269,9 @@ impl SystemStateBroadcaster {
     /// 백그라운드 브로드캐스트 태스크 시작
     pub async fn start_background_broadcast(mut self) {
         let mut interval = time::interval(Duration::from_secs(2));
+        
+        // 🔥 애플리케이션 시작 시 즉시 브로드캐스트하지 않고 약간의 지연 추가
+        tokio::time::sleep(Duration::from_secs(3)).await;
         
         loop {
             interval.tick().await;
@@ -469,6 +477,12 @@ impl SystemStateBroadcaster {
         };
         
         self.app_handle.emit("batch-progress", &payload)?;
+        Ok(())
+    }
+    
+    /// 🔥 사이트 상태 체크 이벤트 발송 (public 메서드)
+    pub fn emit_site_status_check(&self, event: &crate::domain::events::CrawlingEvent) -> anyhow::Result<()> {
+        self.app_handle.emit("site-status-check", event)?;
         Ok(())
     }
 }
