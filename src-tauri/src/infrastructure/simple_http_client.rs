@@ -120,7 +120,7 @@ impl HttpClient {
             return Err(anyhow!("HTTP error {}: {}", response.status(), url));
         }
         
-        info!("✅ HTTP Response received (HttpClient): {} - Status: {}", url, response.status());
+        // info!("✅ HTTP Response received (HttpClient): {} - Status: {}", url, response.status());
 
         self.last_request_time = Some(Instant::now());
         Ok(response)

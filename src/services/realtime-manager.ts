@@ -7,6 +7,7 @@
 
 import { createSignal, onCleanup } from 'solid-js';
 import { tauriApi } from './tauri-api';
+import { loggingService } from './loggingService';
 import { crawlerStore } from '../stores/crawlerStore';
 import { databaseStore } from '../stores/databaseStore';
 import { uiStore } from '../stores/uiStore';
@@ -243,6 +244,12 @@ class RealtimeManager {
     return tauriApi.subscribeToProgress((progress: CrawlingProgress) => {
       console.log('📊 진행 상황 업데이트:', progress);
       
+      // Backend 이벤트 수신 로깅
+      loggingService.info(
+        `Progress Event: ${progress.current_stage} - ${progress.percentage}% (${progress.current}/${progress.total}) - ${progress.message}`,
+        'RealtimeManager'
+      );
+      
       crawlerStore.setProgress(progress);
       this.updateEventStats('progress');
     });
@@ -254,6 +261,12 @@ class RealtimeManager {
   private async subscribeToTaskEvents(): Promise<() => void> {
     return tauriApi.subscribeToTaskStatus((taskStatus: CrawlingTaskStatus) => {
       console.log('📋 작업 상태 업데이트:', taskStatus);
+      
+      // Backend 작업 상태 이벤트 로깅
+      loggingService.info(
+        `Task Event: ${taskStatus.task_id} - ${taskStatus.status} - ${taskStatus.message || 'No message'}`,
+        'RealtimeManager'
+      );
       
       crawlerStore.updateTaskStatus(taskStatus);
       this.updateEventStats('task');
@@ -267,6 +280,12 @@ class RealtimeManager {
     return tauriApi.subscribeToStageChange((data) => {
       console.log(`🔄 스테이지 변경: ${data.from} → ${data.to}`);
       
+      // Backend 스테이지 변경 이벤트 로깅
+      loggingService.info(
+        `Stage Change Event: ${data.from} → ${data.to} - ${data.message}`,
+        'RealtimeManager'
+      );
+      
       uiStore.showInfo(`${data.message}`, '단계 변경');
       this.updateEventStats('stage');
     });
@@ -278,6 +297,12 @@ class RealtimeManager {
   private async subscribeToErrorEvents(): Promise<() => void> {
     return tauriApi.subscribeToErrors((error) => {
       console.error('❌ 크롤링 에러:', error);
+      
+      // Backend 에러 이벤트 로깅
+      loggingService.error(
+        `Error Event: ${error.message} - Recoverable: ${error.recoverable}`,
+        'RealtimeManager'
+      );
       
       crawlerStore.setError(error.message);
       
@@ -298,6 +323,12 @@ class RealtimeManager {
     return tauriApi.subscribeToDatabaseUpdates((stats: DatabaseStats) => {
       console.log('🗄️ 데이터베이스 통계 업데이트:', stats);
       
+      // Backend 데이터베이스 이벤트 로깅
+      loggingService.info(
+        `Database Event: Total: ${stats.total_products}, Health: ${stats.health_status}, Size: ${stats.storage_size}`,
+        'RealtimeManager'
+      );
+      
       databaseStore.setStats(stats);
       this.updateEventStats('database');
     });
@@ -309,6 +340,12 @@ class RealtimeManager {
   private async subscribeToCompletionEvents(): Promise<() => void> {
     return tauriApi.subscribeToCompletion((result: CrawlingResult) => {
       console.log('🎉 크롤링 완료:', result);
+      
+      // Backend 완료 이벤트 로깅
+      loggingService.info(
+        `Completion Event: Total: ${result.total_processed}, New: ${result.new_items}, Updated: ${result.updated_items}, Errors: ${result.errors}, Duration: ${result.duration_ms}ms`,
+        'RealtimeManager'
+      );
       
       crawlerStore.setResult(result);
       

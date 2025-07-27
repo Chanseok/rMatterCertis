@@ -142,12 +142,17 @@ pub async fn init_crawling_engine(
     
     tracing::info!("🔄 Created configuration-driven BatchCrawlingConfig with cancellation_token");
     
+    // Create EventEmitter for real-time frontend communication
+    tracing::info!("📡 Creating EventEmitter for frontend communication...");
+    let event_emitter = crate::application::events::EventEmitter::new(_app.clone());
+    let event_emitter_arc = Arc::new(Some(event_emitter));
+    
     // Initialize the ServiceBasedBatchCrawlingEngine
     let engine = ServiceBasedBatchCrawlingEngine::new(
         http_client,
         data_extractor,
         product_repo,
-        Arc::new(None), // No event emitter for now
+        event_emitter_arc, // EventEmitter for real-time events
         config,
         uuid::Uuid::new_v4().to_string(),
         app_config,

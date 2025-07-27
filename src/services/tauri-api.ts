@@ -8,6 +8,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { loggingService } from './loggingService';
 import type {
   BackendCrawlerConfig,
   CrawlingProgress,
@@ -255,6 +256,11 @@ export class TauriApiService {
    */
   async subscribeToProgress(callback: (progress: CrawlingProgress) => void): Promise<UnlistenFn> {
     const unlisten = await listen<CrawlingProgress>('crawling-progress', (event) => {
+      // 저수준 이벤트 수신 로깅
+      loggingService.debug(
+        `Raw Event Received: crawling-progress - ${JSON.stringify(event.payload)}`,
+        'TauriApiService'
+      );
       callback(event.payload);
     });
     
@@ -267,6 +273,11 @@ export class TauriApiService {
    */
   async subscribeToTaskStatus(callback: (status: CrawlingTaskStatus) => void): Promise<UnlistenFn> {
     const unlisten = await listen<CrawlingTaskStatus>('crawling-task-update', (event) => {
+      // 저수준 이벤트 수신 로깅
+      loggingService.debug(
+        `Raw Event Received: crawling-task-update - ${JSON.stringify(event.payload)}`,
+        'TauriApiService'
+      );
       callback(event.payload);
     });
     

@@ -122,10 +122,11 @@ export const SimpleEventDisplay: Component = () => {
     try {
       // 크롤링 진행 상황 이벤트 구독
       const progressUnlisten = await tauriApi.subscribeToProgress((progress) => {
+        const percentage = progress.percentage ?? 0;
         addEvent({
           type: 'system',
           title: '진행 상황 업데이트',
-          message: `${progress.current_stage}: ${progress.current}/${progress.total} (${progress.percentage.toFixed(1)}%)`,
+          message: `${progress.current_stage}: ${progress.current}/${progress.total} (${percentage.toFixed(1)}%)`,
           status: 'info'
         });
 

@@ -111,7 +111,7 @@ impl IntegratedProductRepository {
             .execute(&*self.pool)
             .await?;
             
-            info!("🆕 New product created: {}", product.model.as_deref().unwrap_or("Unknown"));
+            // info!("🆕 New product created: {}", product.model.as_deref().unwrap_or("Unknown"));
             Ok((false, true)) // updated=false, created=true
         }
     }

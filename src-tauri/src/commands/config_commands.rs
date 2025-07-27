@@ -1054,7 +1054,7 @@ pub async fn save_window_state(state: WindowState, app_state: State<'_, AppState
     
     config_manager.save_config(&config).await
         .map_err(|e| format!("Failed to save config: {}", e))?;
-    info!("✅ Window state saved successfully");
+    debug!("✅ Window state saved successfully");
     
     // Also update the app state
     app_state.update_config(config).await

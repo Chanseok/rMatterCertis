@@ -565,6 +565,19 @@ impl ServiceBasedBatchCrawlingEngine {
             while let Some((event_type, payload)) = event_rx.recv().await {
                 if let Some(ref mut b) = broadcaster {
                     match event_type.as_str() {
+                        "page-completed" => {
+                            // DetailedCrawlingEvent를 직접 처리 - 기존 브로드캐스터 메서드 사용
+                            if let Ok(detailed_event) = serde_json::from_value::<DetailedCrawlingEvent>(payload) {
+                                match &detailed_event {
+                                    DetailedCrawlingEvent::PageCompleted { page, products_found } => {
+                                        if let Err(e) = b.emit_page_crawled(*page, format!("page-{}", page), *products_found, true) {
+                                            warn!("Failed to emit page-completed as page-crawled event: {}", e);
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            }
+                        }
                         "page-crawled" => {
                             if let Ok(data) = serde_json::from_value::<(u32, String, u32, bool)>(payload) {
                                 if let Err(e) = b.emit_page_crawled(data.0, data.1, data.2, data.3) {
@@ -600,11 +613,22 @@ impl ServiceBasedBatchCrawlingEngine {
             broadcaster // 소유권 반환
         });
 
-        // 🔥 이벤트 콜백 함수 정의
+        // 🔥 이벤트 콜백 함수 정의 - PageCompleted 이벤트 발송
         let event_tx_clone = event_tx.clone();
         let page_callback = move |page_id: u32, url: String, product_count: u32, success: bool| -> Result<()> {
-            let payload = serde_json::to_value((page_id, url, product_count, success))?;
-            if let Err(e) = event_tx_clone.try_send(("page-crawled".to_string(), payload)) {
+            // DetailedCrawlingEvent::PageCompleted 이벤트 발송
+            let page_event = DetailedCrawlingEvent::PageCompleted {
+                page: page_id,
+                products_found: product_count,
+            };
+            let payload = serde_json::to_value(page_event)?;
+            if let Err(e) = event_tx_clone.try_send(("page-completed".to_string(), payload)) {
+                warn!("Failed to send page-completed event: {}", e);
+            }
+            
+            // 기존 page-crawled 이벤트도 유지
+            let legacy_payload = serde_json::to_value((page_id, url, product_count, success))?;
+            if let Err(e) = event_tx_clone.try_send(("page-crawled".to_string(), legacy_payload)) {
                 warn!("Failed to send page-crawled event: {}", e);
             }
             Ok(())
@@ -710,7 +734,7 @@ impl ServiceBasedBatchCrawlingEngine {
                     .map(|(index, detail)| {
                         let product = product_detail_to_product(detail.clone());
                         
-                        // 🔥 제품 수집 완료 이벤트 발송 (UI 연결)
+                        // 🔥 제품 수집 완료 이벤트 발송 (UI 연결) + ProductProcessed 이벤트
                         if let Some(broadcaster) = &mut self.broadcaster {
                             if let Some(product_url) = product_urls.get(index) {
                                 if let Err(e) = broadcaster.emit_product_collected(
@@ -720,6 +744,16 @@ impl ServiceBasedBatchCrawlingEngine {
                                     true
                                 ) {
                                     warn!("Failed to emit product-collected event: {}", e);
+                                }
+                                
+                                // 🔥 DetailedCrawlingEvent::ProductProcessed 이벤트 발송 - 기존 메서드 사용
+                                if let Err(e) = broadcaster.emit_product_collected(
+                                    product.page_id.map(|id| id as u32).unwrap_or(0),
+                                    product.model.clone().unwrap_or_else(|| format!("product-{}", index)),
+                                    product_url.to_string(),
+                                    true
+                                ) {
+                                    warn!("Failed to emit product-processed event: {}", e);
                                 }
                             }
                         }
@@ -1031,7 +1065,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         skipped_items += 1; // 🆕 변경사항 없음 - 스킵된 항목으로 카운트
                     }
                     
-                    // 🔥 DB 저장 성공 이벤트 발송
+                    // 🔥 DB 저장 성공 이벤트 발송 + 상세 진행상황 이벤트
                     if let Some(broadcaster) = &mut self.broadcaster {
                         if let Err(e) = broadcaster.emit_database_save_success(
                             item_id.clone(),
@@ -1040,6 +1074,16 @@ impl ServiceBasedBatchCrawlingEngine {
                             product_was_updated || detail_was_updated
                         ) {
                             warn!("Failed to emit database-save-success event: {}", e);
+                        }
+                        
+                        // 🔥 데이터베이스 저장 진행상황 이벤트 발송 - 기존 메서드 사용
+                        if let Err(e) = broadcaster.emit_database_save_success(
+                            item_id.clone(),
+                            "product".to_string(),
+                            product.url.clone(),
+                            product_was_updated || detail_was_updated
+                        ) {
+                            warn!("Failed to emit database save progress event: {}", e);
                         }
                     }
                     
@@ -1132,7 +1176,11 @@ impl ServiceBasedBatchCrawlingEngine {
                 DetailedCrawlingEvent::StageStarted { stage, message } => {
                     CrawlingProgress {
                         current: 0,
-                        total: self.config.end_page - self.config.start_page + 1,
+                        total: if self.config.start_page > self.config.end_page {
+                            self.config.start_page - self.config.end_page + 1
+                        } else {
+                            self.config.end_page - self.config.start_page + 1
+                        },
                         percentage: 0.0,
                         current_stage: match stage.as_str() {
                             "SiteStatus" => CrawlingStage::StatusCheck,
@@ -1150,12 +1198,186 @@ impl ServiceBasedBatchCrawlingEngine {
                         new_items: 0,
                         updated_items: 0,
                         current_batch: Some(1),
-                        total_batches: Some(self.config.end_page - self.config.start_page + 1),
+                        total_batches: Some(if self.config.start_page > self.config.end_page {
+                            self.config.start_page - self.config.end_page + 1
+                        } else {
+                            self.config.end_page - self.config.start_page + 1
+                        }),
                         errors: 0,
                         timestamp: chrono::Utc::now(),
                     }
                 },
-                _ => return Ok(()), // 다른 이벤트들은 기본 진행률 업데이트를 사용하지 않음
+                DetailedCrawlingEvent::PageCompleted { page, products_found } => {
+                    CrawlingProgress {
+                        current: *page,
+                        total: if self.config.start_page > self.config.end_page {
+                            self.config.start_page - self.config.end_page + 1
+                        } else {
+                            self.config.end_page - self.config.start_page + 1
+                        },
+                        percentage: (*page as f64 / (if self.config.start_page > self.config.end_page {
+                            self.config.start_page - self.config.end_page + 1
+                        } else {
+                            self.config.end_page - self.config.start_page + 1
+                        }) as f64) * 100.0,
+                        current_stage: CrawlingStage::ProductList,
+                        current_step: format!("페이지 {}에서 {}개 제품 발견", page, products_found),
+                        status: CrawlingStatus::Running,
+                        message: format!("Page {} processed: {} products found", page, products_found),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: *products_found,
+                        updated_items: 0,
+                        current_batch: Some(1),
+                        total_batches: Some(if self.config.start_page > self.config.end_page {
+                            self.config.start_page - self.config.end_page + 1
+                        } else {
+                            self.config.end_page - self.config.start_page + 1
+                        }),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::ProductProcessed { url, success } => {
+                    CrawlingProgress {
+                        current: 1,
+                        total: 1,
+                        percentage: if *success { 100.0 } else { 0.0 },
+                        current_stage: CrawlingStage::ProductDetails,
+                        current_step: if *success { 
+                            format!("제품 '{}' 상세정보 수집 완료", url) 
+                        } else { 
+                            format!("제품 '{}' 상세정보 수집 실패", url) 
+                        },
+                        status: if *success { CrawlingStatus::Running } else { CrawlingStatus::Error },
+                        message: format!("Product {}: {}", url, if *success { "success" } else { "failed" }),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: if *success { 1 } else { 0 },
+                        updated_items: 0,
+                        current_batch: Some(1),
+                        total_batches: Some(1),
+                        errors: if *success { 0 } else { 1 },
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::BatchCompleted { batch, total } => {
+                    CrawlingProgress {
+                        current: *batch,
+                        total: *total,
+                        percentage: (*batch as f64 / *total as f64) * 100.0,
+                        current_stage: CrawlingStage::ProductList,
+                        current_step: format!("배치 {}/{} 완료", batch, total),
+                        status: CrawlingStatus::Running,
+                        message: format!("Batch {} of {} completed", batch, total),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: 1,
+                        updated_items: 0,
+                        current_batch: Some(*batch),
+                        total_batches: Some(*total),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::ErrorOccurred { stage, error, recoverable } => {
+                    CrawlingProgress {
+                        current: 0,
+                        total: 1,
+                        percentage: 0.0,
+                        current_stage: match stage.as_str() {
+                            "SiteStatus" => CrawlingStage::StatusCheck,
+                            "DatabaseAnalysis" => CrawlingStage::DatabaseAnalysis,
+                            "ProductList" => CrawlingStage::ProductList,
+                            "ProductDetails" => CrawlingStage::ProductDetails,
+                            "DatabaseSave" => CrawlingStage::DatabaseSave,
+                            _ => CrawlingStage::TotalPages,
+                        },
+                        current_step: format!("오류 발생: {}", error),
+                        status: if *recoverable { CrawlingStatus::Running } else { CrawlingStatus::Error },
+                        message: format!("Error in {}: {} (recoverable: {})", stage, error, recoverable),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: 0,
+                        updated_items: 0,
+                        current_batch: Some(1),
+                        total_batches: Some(1),
+                        errors: 1,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::SessionStarted { session_id, config: _ } => {
+                    CrawlingProgress {
+                        current: 0,
+                        total: if self.config.start_page > self.config.end_page {
+                            self.config.start_page - self.config.end_page + 1
+                        } else {
+                            self.config.end_page - self.config.start_page + 1
+                        },
+                        percentage: 0.0,
+                        current_stage: CrawlingStage::StatusCheck,
+                        current_step: format!("크롤링 세션 {} 시작", session_id),
+                        status: CrawlingStatus::Running,
+                        message: format!("Session {} started", session_id),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: 0,
+                        updated_items: 0,
+                        current_batch: Some(1),
+                        total_batches: Some(if self.config.start_page > self.config.end_page {
+                            self.config.start_page - self.config.end_page + 1
+                        } else {
+                            self.config.end_page - self.config.start_page + 1
+                        }),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::SessionCompleted { session_id, duration, total_products, success_rate } => {
+                    CrawlingProgress {
+                        current: *total_products,
+                        total: *total_products,
+                        percentage: 100.0,
+                        current_stage: CrawlingStage::DatabaseSave,
+                        current_step: format!("세션 {} 완료 ({}초, 성공률: {:.1}%)", session_id, duration.as_secs(), success_rate * 100.0),
+                        status: CrawlingStatus::Completed,
+                        message: format!("Session {} completed: {} products, {:.1}% success rate", session_id, total_products, success_rate * 100.0),
+                        remaining_time: None,
+                        elapsed_time: duration.as_secs(),
+                        new_items: *total_products,
+                        updated_items: 0,
+                        current_batch: Some(1),
+                        total_batches: Some(1),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
+                DetailedCrawlingEvent::StageCompleted { stage, items_processed } => {
+                    CrawlingProgress {
+                        current: *items_processed as u32,
+                        total: *items_processed as u32,
+                        percentage: 100.0,
+                        current_stage: match stage.as_str() {
+                            "SiteStatus" => CrawlingStage::StatusCheck,
+                            "DatabaseAnalysis" => CrawlingStage::DatabaseAnalysis,
+                            "ProductList" => CrawlingStage::ProductList,
+                            "ProductDetails" => CrawlingStage::ProductDetails,
+                            "DatabaseSave" => CrawlingStage::DatabaseSave,
+                            _ => CrawlingStage::TotalPages,
+                        },
+                        current_step: format!("{} 스테이지 완료 ({}개 항목 처리)", stage, items_processed),
+                        status: CrawlingStatus::Completed,
+                        message: format!("Stage {} completed: {} items processed", stage, items_processed),
+                        remaining_time: None,
+                        elapsed_time: 0,
+                        new_items: *items_processed as u32,
+                        updated_items: 0,
+                        current_batch: Some(1),
+                        total_batches: Some(1),
+                        errors: 0,
+                        timestamp: chrono::Utc::now(),
+                    }
+                },
             };
 
             emitter.emit_progress(progress).await?;

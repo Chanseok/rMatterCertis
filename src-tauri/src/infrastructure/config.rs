@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use anyhow::{Result, Context};
 use tokio::fs;
-use tracing::info;
+use tracing::{info, debug};
 
 /// Complete application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -502,7 +502,7 @@ impl ConfigManager {
         // Try to parse as current format first
         match serde_json::from_str::<AppConfig>(&content) {
             Ok(config) => {
-                info!("Loaded configuration from: {:?}", self.config_path);
+                debug!("Loaded configuration from: {:?}", self.config_path);
                 Ok(config)
             }
             Err(parse_error) => {
@@ -590,7 +590,7 @@ impl ConfigManager {
         fs::write(&self.config_path, content).await
             .context("Failed to write configuration file")?;
         
-        info!("Saved configuration to: {:?}", self.config_path);
+        debug!("Saved configuration to: {:?}", self.config_path);
         Ok(())
     }
     

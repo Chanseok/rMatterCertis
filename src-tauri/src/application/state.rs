@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use chrono::Utc;
-use tracing::info;
+use tracing::{info, debug};
 use sqlx::SqlitePool;
 
 /// Global application state managed by Tauri
@@ -272,7 +272,7 @@ impl AppState {
     pub async fn update_config(&self, config: crate::infrastructure::config::AppConfig) -> Result<(), String> {
         let mut config_guard = self.config.write().await;
         *config_guard = config;
-        info!("Application configuration updated");
+        debug!("Application configuration updated");
         Ok(())
     }
     

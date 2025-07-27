@@ -351,6 +351,7 @@ pub fn run() {
             commands::config_commands::set_window_position,
             commands::config_commands::set_window_size,
             commands::config_commands::maximize_window,
+            commands::config_commands::write_frontend_log,
             
             // New Architecture Actor System commands (OneShot integration 완료)
             commands::simple_actor_test::test_new_arch_session_actor,
