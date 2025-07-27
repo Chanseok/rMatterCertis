@@ -128,9 +128,10 @@ impl StatusChecker for StatusCheckerImpl {
         
         // 접근성 테스트
         let access_test = {
-            // Create independent HTTP client
-            let client = reqwest::Client::new();
-            client.get(&url).send().await?.text().await
+            // Use consistent HttpClient instead of raw reqwest
+            let mut client = crate::infrastructure::HttpClient::new()?;
+            let result = client.fetch_response(&url).await?.text().await;
+            result
         };
         
         match access_test {
@@ -383,21 +384,23 @@ impl StatusCheckerImpl {
         while current_page >= min_page {
             let test_url = config_utils::matter_products_page_url_simple(current_page);
             
-            // Create independent HTTP client
-            let client = reqwest::Client::new();
-            match client.get(&test_url).send().await {
-                Ok(response) => match response.text().await {
-                    Ok(html) => {
-                        let doc = scraper::Html::parse_document(&html);
-                        if self.has_products_on_page(&doc) {
-                            info!("Found valid page with products: {}", current_page);
-                            return Ok(current_page);
+            // Use consistent HttpClient
+            let mut client = crate::infrastructure::HttpClient::new()?;
+            match client.fetch_response(&test_url).await {
+                Ok(response) => {
+                    match response.text().await {
+                        Ok(html) => {
+                            let doc = scraper::Html::parse_document(&html);
+                            if self.has_products_on_page(&doc) {
+                                info!("Found valid page with products: {}", current_page);
+                                return Ok(current_page);
+                            }
+                        },
+                        Err(e) => {
+                            error!("Failed to get HTML for page {}: {}", current_page, e);
                         }
-                    },
-                    Err(e) => {
-                        error!("Failed to get HTML for page {}: {}", current_page, e);
                     }
-                }
+                },
                 Err(e) => {
                     warn!("Failed to fetch page {} during downward search: {}", current_page, e);
                 }
@@ -436,9 +439,9 @@ impl StatusCheckerImpl {
             let test_url = config_utils::matter_products_page_url_simple(current_page);
             info!("🔍 Checking page {} (consecutive empty: {})", current_page, consecutive_empty_pages);
             
-            // Create independent HTTP client
-            let client = reqwest::Client::new();
-            match client.get(&test_url).send().await {
+            // Use consistent HttpClient
+            let mut client = crate::infrastructure::HttpClient::new()?;
+            match client.fetch_response(&test_url).await {
                 Ok(response) => match response.text().await {
                     Ok(html) => {
                         let doc = scraper::Html::parse_document(&html);
@@ -711,29 +714,35 @@ impl StatusCheckerImpl {
     async fn check_page_has_products(&self, page: u32) -> Result<bool> {
         let test_url = config_utils::matter_products_page_url_simple(page);
         
-        let mut client = self.http_client.lock().await;
-        match client.fetch_html_string(&test_url).await {
-            Ok(html) => {
-                let doc = scraper::Html::parse_document(&html);
-                
-                // 1. 제품 존재 여부 확인
-                let has_products = self.has_products_on_page(&doc);
-                
-                // 2. 활성 페이지네이션 값 확인 (더 중요한 체크)
-                let active_page = self.get_active_page_number(&doc);
-                
-                // 실제 페이지 번호와 활성 페이지네이션 값이 일치하는지 확인
-                let is_correct_page = active_page == page;
-                
-                if !is_correct_page {
-                    info!("⚠️  Page {} was redirected to page {} (pagination mismatch)", page, active_page);
-                    return Ok(false);
+        // Use consistent HttpClient
+        let mut client = crate::infrastructure::HttpClient::new()?;
+        match client.fetch_response(&test_url).await {
+            Ok(response) => {
+                match response.text().await {
+                    Ok(html) => {
+                        let doc = scraper::Html::parse_document(&html);
+                        
+                        // 1. 제품 존재 여부 확인
+                        let has_products = self.has_products_on_page(&doc);
+                        
+                        // 2. 활성 페이지네이션 값 확인 (더 중요한 체크)
+                        let active_page = self.get_active_page_number(&doc);
+                        
+                        // 실제 페이지 번호와 활성 페이지네이션 값이 일치하는지 확인
+                        let is_correct_page = active_page == page;
+                        
+                        if !is_correct_page {
+                            info!("⚠️  Page {} was redirected to page {} (pagination mismatch)", page, active_page);
+                            return Ok(false);
+                        }
+                        
+                        info!("✅ Page {} verification: has_products={}, active_page={}, is_correct_page={}", 
+                              page, has_products, active_page, is_correct_page);
+                        
+                        Ok(has_products && is_correct_page)
+                    },
+                    Err(_) => Ok(false),
                 }
-                
-                info!("✅ Page {} verification: has_products={}, active_page={}, is_correct_page={}", 
-                      page, has_products, active_page, is_correct_page);
-                
-                Ok(has_products && is_correct_page)
             },
             Err(_) => Ok(false),
         }
@@ -1043,9 +1052,10 @@ impl StatusCheckerImpl {
         let url = config_utils::matter_products_page_url_simple(page_number);
         
         let (product_count, max_pagination_page, active_page, has_products) = {
-            // Create independent HTTP client for true concurrency
-            let client = reqwest::Client::new();
-            let html = client.get(&url).send().await?.text().await?;
+            // Use consistent HttpClient
+            let mut client = crate::infrastructure::HttpClient::new()?;
+            let response = client.fetch_response(&url).await?;
+            let html = response.text().await?;
             
             let doc = scraper::Html::parse_document(&html);
             let product_count = self.count_products(&doc);
@@ -1495,9 +1505,10 @@ impl ProductListCollectorImpl {
                 let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
                 
                 let collect_result = async {
-                    // Create independent HTTP client for true concurrency
-                    let client = reqwest::Client::new();
-                    let html = client.get(&url).send().await?.text().await?;
+                    // Use consistent HttpClient for true concurrency  
+                    let mut client = crate::infrastructure::HttpClient::new()?;
+                    let response = client.fetch_response(&url).await?;
+                    let html = response.text().await?;
                     
                     let doc = scraper::Html::parse_document(&html);
                     let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
@@ -1554,9 +1565,10 @@ impl ProductListCollectorImpl {
                         info!("🔄 Retrying page {} collection", page);
                         
                         let retry_result = async {
-                            // Create independent HTTP client for true concurrency
-                            let client = reqwest::Client::new();
-                            let html = client.get(&url).send().await?.text().await?;
+                            // Use consistent HttpClient for true concurrency
+                            let mut client = crate::infrastructure::HttpClient::new()?;
+                            let response = client.fetch_response(&url).await?;
+                            let html = response.text().await?;
                             
                             let doc = scraper::Html::parse_document(&html);
                             let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
@@ -1746,9 +1758,10 @@ impl ProductListCollector for ProductListCollectorImpl {
                 
                 // 실제 페이지 수집 작업
                 let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
-                // Create independent HTTP client for true concurrency
-                let client = reqwest::Client::new();
-                let html = client.get(&url).send().await?.text().await?;
+                // Use consistent HttpClient for true concurrency
+                let mut client = crate::infrastructure::HttpClient::new()?;
+                let response = client.fetch_response(&url).await?;
+                let html = response.text().await?;
                 
                 let doc = scraper::Html::parse_document(&html);
                 let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
@@ -1820,9 +1833,10 @@ impl ProductListCollector for ProductListCollectorImpl {
         let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page as usize);
         
         let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
-        // Create independent HTTP client for true concurrency
-        let client = reqwest::Client::new();
-        let html = client.get(&url).send().await?.text().await?;
+        // Use consistent HttpClient
+        let mut client = crate::infrastructure::HttpClient::new()?;
+        let response = client.fetch_response(&url).await?;
+        let html = response.text().await?;
         
         let doc = scraper::Html::parse_document(&html);
         let url_strings = self.data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
@@ -1917,9 +1931,10 @@ impl ProductListCollector for ProductListCollectorImpl {
                 
                 // 실제 페이지 수집 작업
                 let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
-                // Create independent HTTP client for true concurrency
-                let client = reqwest::Client::new();
-                let html = client.get(&url).send().await?.text().await?;
+                // Use consistent HttpClient for true concurrency
+                let mut client = crate::infrastructure::HttpClient::new()?;
+                let response = client.fetch_response(&url).await?;
+                let html = response.text().await?;
                 
                 // 중간에 취소 확인
                 if token_clone.is_cancelled() {
@@ -2088,9 +2103,10 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                 // Remove individual delay - let semaphore handle rate limiting
                 // tokio::time::sleep(Duration::from_millis(delay)).await;
                 
-                // Create independent HTTP client for true concurrency
-                let client = reqwest::Client::new();
-                let html = client.get(&url).send().await?.text().await?;
+                // Use consistent HttpClient for true concurrency
+                let mut client = crate::infrastructure::HttpClient::new()?;
+                let response = client.fetch_response(&url).await?;
+                let html = response.text().await?;
                 
                 let doc = scraper::Html::parse_document(&html);
                 let mut detail = data_extractor.extract_product_detail(&doc, url.clone())?;
@@ -2160,9 +2176,10 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                     return Err(anyhow!("Task cancelled"));
                 }
                 
-                // Create independent HTTP client for true concurrency
-                let client = reqwest::Client::new();
-                let html = client.get(&url).send().await?.text().await?;
+                // Use consistent HttpClient with centralized logging
+                let mut client = crate::infrastructure::HttpClient::new()?;
+                let response = client.fetch_response(&url).await?;
+                let html = response.text().await?;
                 
                 if token.is_cancelled() {
                     return Err(anyhow!("Task cancelled"));

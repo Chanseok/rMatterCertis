@@ -65,7 +65,7 @@ fn get_window_state_path() -> Result<PathBuf, Box<dyn std::error::Error + Send +
 /// Save window state to file
 #[tauri::command]
 pub async fn save_window_state(state: WindowState) -> Result<(), String> {
-    info!("💾 Saving window state: {:?}", state);
+    debug!("💾 Saving window state: {:?}", state);
     
     let path = get_window_state_path()
         .map_err(|e| format!("Failed to get window state path: {}", e))?;

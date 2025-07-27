@@ -9,15 +9,15 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use async_trait::async_trait;
-use reqwest::Client;
-use tokio::time::timeout;
+use tokio::time::{timeout, sleep};
+use url::Url;
 
 use crate::crawling::{tasks::*, state::*};
+use crate::infrastructure::HttpClient;
 use super::{Worker, WorkerError};
 
 /// Worker that fetches HTML content from list pages
 pub struct ListPageFetcher {
-    http_client: Client,
     request_timeout: Duration,
     max_retries: u32,
 }
@@ -25,14 +25,7 @@ pub struct ListPageFetcher {
 impl ListPageFetcher {
     /// Creates a new list page fetcher
     pub fn new(request_timeout: Duration, max_retries: u32) -> Result<Self, WorkerError> {
-        let http_client = Client::builder()
-            .timeout(request_timeout)
-            .user_agent("Mozilla/5.0 (compatible; RMatterCertis/2.0)")
-            .build()
-            .map_err(|e| WorkerError::NetworkError(e.to_string()))?;
-
         Ok(Self {
-            http_client,
             request_timeout,
             max_retries,
         })
@@ -42,81 +35,62 @@ impl ListPageFetcher {
     pub fn new_simple() -> Self {
         use crate::infrastructure::config::defaults;
         Self {
-            http_client: reqwest::Client::new(),
             request_timeout: Duration::from_secs(defaults::REQUEST_TIMEOUT_SECONDS),
             max_retries: defaults::MAX_RETRIES,
         }
     }
 
-    async fn fetch_with_retry(
-        &self,
-        url: &str,
-        shared_state: Arc<SharedState>,
-    ) -> Result<String, WorkerError> {
-        let mut last_error = None;
+    pub async fn fetch_page(&self, url: &str) -> Result<String, WorkerError> {
+        let parsed_url = Url::parse(url)
+            .map_err(|e| WorkerError::InvalidInput(format!("Invalid URL '{}': {}", url, e)))?;
         
+        let mut http_client = HttpClient::new()
+            .map_err(|e| WorkerError::NetworkError(e.to_string()))?;
+        
+        let response = http_client
+            .fetch_response(&parsed_url.to_string())
+            .await
+            .map_err(|e| WorkerError::NetworkError(e.to_string()))?;
+
+        if response.status().is_success() {
+            let text = response.text().await
+                .map_err(|e| WorkerError::NetworkError(format!("Failed to read response body: {}", e)))?;
+            Ok(text)
+        } else {
+            Err(WorkerError::NetworkError(
+                format!("HTTP request failed with status: {}", response.status())
+            ))
+        }
+    }
+
+    /// Fetch page with retry logic and rate limiting
+    async fn fetch_with_retry(&self, url: &str, _shared_state: Arc<SharedState>) -> Result<String, WorkerError> {
+        let mut last_error = None;
+
         for attempt in 0..=self.max_retries {
-            if shared_state.is_shutdown_requested() {
-                return Err(WorkerError::Cancelled);
-            }
-
-            // Rate limiting: acquire semaphore permit
-            let _permit = shared_state
-                .http_semaphore
-                .acquire()
-                .await
-                .map_err(|_| WorkerError::Cancelled)?;
-
-            let start_time = Instant::now();
-            
-            match timeout(self.request_timeout, self.http_client.get(url).send()).await {
-                Ok(Ok(response)) => {
-                    let duration = start_time.elapsed();
+            match self.fetch_page(url).await {
+                Ok(content) => {
+                    if attempt > 0 {
+                        tracing::info!("Successfully fetched {} on attempt {}", url, attempt + 1);
+                    }
+                    return Ok(content);
+                }
+                Err(e) => {
+                    last_error = Some(e);
                     
-                    if response.status().is_success() {
-                        match response.text().await {
-                            Ok(html) => {
-                                // Update stats
-                                let mut stats = shared_state.stats.write().await;
-                                stats.record_task_completion("fetch_list_page", duration);
-                                return Ok(html);
-                            }
-                            Err(e) => {
-                                last_error = Some(WorkerError::NetworkError(format!(
-                                    "Failed to read response body: {}", e
-                                )));
-                            }
-                        }
-                    } else {
-                        last_error = Some(WorkerError::NetworkError(format!(
-                            "HTTP error {}: {}", response.status(), url
-                        )));
+                    if attempt < self.max_retries {
+                        let delay = Duration::from_millis(1000) * (2_u32.pow(attempt)); // Exponential backoff
+                        tracing::warn!(
+                            "Failed to fetch {} (attempt {}), retrying in {:?}: {}",
+                            url, attempt + 1, delay, last_error.as_ref().unwrap()
+                        );
+                        sleep(delay).await;
                     }
                 }
-                Ok(Err(e)) => {
-                    last_error = Some(WorkerError::NetworkError(e.to_string()));
-                }
-                Err(_) => {
-                    last_error = Some(WorkerError::Timeout { 
-                        message: format!("Request timeout after {} seconds", self.request_timeout.as_secs())
-                    });
-                }
-            }
-
-            // Wait before retry (exponential backoff)
-            if attempt < self.max_retries {
-                let delay = Duration::from_millis(1000 * (2_u64.pow(attempt)));
-                tokio::time::sleep(delay).await;
             }
         }
 
-        // Update failure stats
-        let mut stats = shared_state.stats.write().await;
-        stats.record_task_failure("fetch_list_page");
-        
-        Err(last_error.unwrap_or_else(|| {
-            WorkerError::NetworkError("Unknown error after all retries".to_string())
-        }))
+        Err(last_error.unwrap_or_else(|| WorkerError::NetworkError("Unknown error during fetch".to_string())))
     }
 
     fn build_list_page_url(&self, page: u32) -> String {
@@ -234,6 +208,8 @@ mod tests {
                 details: std::collections::HashMap::new(),
                 extracted_at: chrono::Utc::now(),
                 source_url: "test".to_string(),
+                page_id: None,
+                index_in_page: None,
             },
         };
 

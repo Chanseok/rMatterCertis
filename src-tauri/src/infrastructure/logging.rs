@@ -232,7 +232,9 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
                     .add_directive("wry=warn".parse().unwrap())
                     
                     // Keep our application logs at the requested level
-                    .add_directive(format!("matter_certis_v2={}", config.level).parse().unwrap());
+                    .add_directive(format!("matter_certis_v2={}", config.level).parse().unwrap())
+                    .add_directive(format!("matter-certis-v2={}", config.level).parse().unwrap())
+                    .add_directive(format!("matter_certis_v2::infrastructure={}", config.level).parse().unwrap());
             }
             
             filter

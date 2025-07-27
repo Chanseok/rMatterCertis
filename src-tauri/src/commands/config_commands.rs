@@ -7,9 +7,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
+use tracing::{info, error, debug};
 use crate::domain::services::crawling_services::StatusChecker;
 use crate::infrastructure::MatterDataExtractor;
-use tracing::info;
 
 use crate::{
     application::state::AppState,
@@ -1039,7 +1039,7 @@ pub struct WindowSize {
 /// Save window state to config file
 #[tauri::command]
 pub async fn save_window_state(state: WindowState, app_state: State<'_, AppState>) -> Result<(), String> {
-    info!("💾 Saving window state: {:?}", state);
+    debug!("💾 Saving window state: {:?}", state);
     
     let config_manager = ConfigManager::new()
         .map_err(|e| format!("Failed to create config manager: {}", e))?;

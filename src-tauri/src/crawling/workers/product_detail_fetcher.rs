@@ -9,16 +9,16 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use async_trait::async_trait;
-use reqwest::Client;
 use tokio::time::sleep;
 use tokio::sync::Semaphore;
+use url::Url;
 
 use crate::crawling::{tasks::*, state::*};
+use crate::infrastructure::HttpClient;
 use super::{Worker, WorkerError};
 
 /// Worker that fetches product detail pages
 pub struct ProductDetailFetcher {
-    client: Client,
     rate_limiter: Arc<Semaphore>,
     #[allow(dead_code)]
     request_timeout: Duration,
@@ -32,22 +32,12 @@ impl ProductDetailFetcher {
         concurrent_requests: usize,
         request_timeout: Duration,
         max_retries: u32,
-        retry_delay: Duration,
     ) -> Result<Self, WorkerError> {
-        let client = Client::builder()
-            .timeout(request_timeout)
-            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-            .cookie_store(true)
-            .gzip(true)
-            .build()
-            .map_err(|e| WorkerError::InitializationError(e.to_string()))?;
-
         Ok(Self {
-            client,
             rate_limiter: Arc::new(Semaphore::new(concurrent_requests)),
             request_timeout,
             max_retries,
-            retry_delay,
+            retry_delay: Duration::from_millis(1000),
         })
     }
 
@@ -55,7 +45,6 @@ impl ProductDetailFetcher {
     pub fn new_simple() -> Self {
         use crate::infrastructure::config::defaults;
         Self {
-            client: Client::new(),
             rate_limiter: Arc::new(Semaphore::new(defaults::PRODUCT_DETAIL_MAX_CONCURRENT)),
             request_timeout: Duration::from_secs(defaults::REQUEST_TIMEOUT_SECONDS),
             max_retries: defaults::MAX_RETRIES,
@@ -98,24 +87,16 @@ impl ProductDetailFetcher {
     }
 
     async fn fetch_page(&self, url: &str) -> Result<String, WorkerError> {
-        let response = self.client
-            .get(url)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("Accept-Encoding", "gzip, deflate")
-            .header("Connection", "keep-alive")
-            .header("Upgrade-Insecure-Requests", "1")
-            .send()
+        let parsed_url = Url::parse(url)
+            .map_err(|e| WorkerError::InvalidInput(format!("Invalid URL '{}': {}", url, e)))?;
+        
+        let mut http_client = HttpClient::new()
+            .map_err(|e| WorkerError::NetworkError(e.to_string()))?;
+        
+        let response = http_client
+            .fetch_response(&parsed_url.to_string())
             .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    WorkerError::TimeoutError(format!("Request timeout for {}", url))
-                } else if e.is_connect() {
-                    WorkerError::NetworkError(format!("Connection error for {}: {}", url, e))
-                } else {
-                    WorkerError::NetworkError(format!("Request failed for {}: {}", url, e))
-                }
-            })?;
+            .map_err(|e| WorkerError::NetworkError(e.to_string()))?;
 
         // Check for HTTP errors
         if !response.status().is_success() {
@@ -259,7 +240,6 @@ mod tests {
             10,
             Duration::from_secs(30),
             3,
-            Duration::from_millis(1000),
         );
         assert!(fetcher.is_ok());
         assert_eq!(fetcher.unwrap().worker_name(), "ProductDetailFetcher");
@@ -272,7 +252,6 @@ mod tests {
             10, // concurrent_requests
             Duration::from_secs(30), // request_timeout 
             3, // max_retries
-            Duration::from_millis(1000), // retry_delay
         ).expect("Failed to create ProductDetailFetcher");
         
         // Test Matter Certis product URLs
@@ -304,7 +283,6 @@ mod tests {
             2, // Only 2 concurrent requests
             Duration::from_secs(30),
             3,
-            Duration::from_millis(100),
         ).unwrap();
 
         // Test that rate limiter allows acquiring permits
@@ -328,7 +306,6 @@ mod tests {
             10,
             Duration::from_secs(30),
             3,
-            Duration::from_millis(1000),
         ).unwrap();
 
         let config = CrawlingConfig::default();

@@ -19,44 +19,44 @@ import type {
 
 export const CrawlingEngineTab: Component = () => {
   // 기본 설정값을 반환하는 더미 함수 (백엔드가 설정 파일을 직접 읽음)
-  // const userConfig = () => ({
-  //   user: {
-  //     crawling: {
-  //       page_range_limit: 6,
-  //       crawling_mode: 'incremental',
-  //       auto_adjust_range: true,
-  //       workers: {
-  //         list_page_max_concurrent: 5,
-  //         product_detail_max_concurrent: 10
-  //       },
-  //       product_list_retry_count: 2,
-  //       product_detail_retry_count: 2,
-  //       error_threshold_percent: 10,
-  //       gap_detection_threshold: 5,
-  //       binary_search_max_depth: 10,
-  //       enable_data_validation: true,
-  //       auto_add_to_local_db: true
-  //     },
-  //     batch: {
-  //       batch_size: 12,
-  //       batch_delay_ms: 1000,
-  //       enable_batch_processing: true
-  //     },
-  //     max_concurrent_requests: 3,
-  //     request_delay_ms: 1000
-  //   },
-  //   advanced: {
-  //     request_timeout_seconds: 30,
-  //     retry_delay_ms: 2000
-  //   }
-  // });
+  const userConfig = () => ({
+    user: {
+      crawling: {
+        page_range_limit: 6,
+        crawling_mode: 'incremental',
+        auto_adjust_range: true,
+        workers: {
+          list_page_max_concurrent: 5,
+          product_detail_max_concurrent: 10
+        },
+        product_list_retry_count: 2,
+        product_detail_retry_count: 2,
+        error_threshold_percent: 10,
+        gap_detection_threshold: 5,
+        binary_search_max_depth: 10,
+        enable_data_validation: true,
+        auto_add_to_local_db: true
+      },
+      batch: {
+        batch_size: 12,
+        batch_delay_ms: 1000,
+        enable_batch_processing: true
+      },
+      max_concurrent_requests: 3,
+      request_delay_ms: 1000
+    },
+    advanced: {
+      request_timeout_seconds: 30,
+      retry_delay_ms: 2000
+    }
+  });
 
   // 더미 함수 - 실제로는 백엔드가 설정 파일을 자동으로 읽음
-  // const loadUserConfig = () => {
-  //   addLog('ℹ️ 백엔드가 설정 파일을 자동으로 읽어 사용합니다');
-  // };
+  const loadUserConfig = () => {
+    addLog('ℹ️ 백엔드가 설정 파일을 자동으로 읽어 사용합니다');
+  };
   
-  // const [showAdvancedSettings, setShowAdvancedSettings] = createSignal(false);
+  const [showAdvancedSettings, setShowAdvancedSettings] = createSignal(false);
   const [siteStatus, setSiteStatus] = createSignal<SiteStatusInfo | null>(null);
   const [progress, setProgress] = createSignal<CrawlingProgressInfo | null>(null);
   const [recentProducts, setRecentProducts] = createSignal<ProductInfo[]>([]);

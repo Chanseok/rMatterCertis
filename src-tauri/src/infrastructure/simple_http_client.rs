@@ -8,7 +8,7 @@ use reqwest::{Client, ClientBuilder, Response};
 use scraper::Html;
 use std::time::Duration;
 use tokio::time::{sleep, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, error};
 
 /// Configuration for HTTP client behavior
 #[derive(Debug, Clone)]
@@ -108,6 +108,7 @@ impl HttpClient {
     pub async fn fetch_response(&mut self, url: &str) -> Result<Response> {
         self.apply_rate_limit().await;
         
+        info!("🌐 HTTP GET (HttpClient): {}", url);
         let response = self.client
             .get(url)
             .send()
@@ -115,8 +116,11 @@ impl HttpClient {
             .map_err(|e| anyhow!("HTTP request failed: {}", e))?;
 
         if !response.status().is_success() {
+            error!("❌ HTTP error {}: {}", response.status(), url);
             return Err(anyhow!("HTTP error {}: {}", response.status(), url));
         }
+        
+        info!("✅ HTTP Response received (HttpClient): {} - Status: {}", url, response.status());
 
         self.last_request_time = Some(Instant::now());
         Ok(response)
@@ -158,7 +162,7 @@ impl HttpClient {
 
     /// Fetch HTML content and return it as a string (Send-compatible)
     pub async fn fetch_html_string(&mut self, url: &str) -> Result<String> {
-        info!("Fetching HTML as string from: {}", url);
+        info!("🔄 Starting HTML fetch: {}", url);
         
         let mut last_error = None;
         
