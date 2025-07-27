@@ -480,9 +480,67 @@ impl SystemStateBroadcaster {
         Ok(())
     }
     
-    /// 🔥 사이트 상태 체크 이벤트 발송 (public 메서드)
+    /// 🔥 새로운 CrawlingEvent 기반 발송 메서드 추가
     pub fn emit_site_status_check(&self, event: &crate::domain::events::CrawlingEvent) -> anyhow::Result<()> {
-        self.app_handle.emit("site-status-check", event)?;
+        self.app_handle.emit(event.event_name(), event)?;
+        Ok(())
+    }
+
+    /// 🔥 세션 이벤트 발송
+    pub fn emit_session_event(&self, session_id: String, event_type: crate::domain::events::SessionEventType, message: String) -> anyhow::Result<()> {
+        let event = crate::domain::events::CrawlingEvent::SessionEvent {
+            session_id,
+            event_type,
+            message,
+            timestamp: chrono::Utc::now(),
+        };
+        self.app_handle.emit(event.event_name(), &event)?;
+        Ok(())
+    }
+
+    /// 🔥 배치 이벤트 발송
+    pub fn emit_batch_event(&self, session_id: String, batch_id: String, stage: crate::domain::events::CrawlingStage, event_type: crate::domain::events::BatchEventType, message: String, metadata: Option<crate::domain::events::BatchMetadata>) -> anyhow::Result<()> {
+        let event = crate::domain::events::CrawlingEvent::BatchEvent {
+            session_id,
+            batch_id,
+            stage,
+            event_type,
+            message,
+            timestamp: chrono::Utc::now(),
+            metadata,
+        };
+        self.app_handle.emit(event.event_name(), &event)?;
+        Ok(())
+    }
+
+    /// 🔥 ProductList 페이지별 이벤트 발송
+    pub fn emit_product_list_page_event(&self, session_id: String, batch_id: String, page_number: u32, event_type: crate::domain::events::PageEventType, message: String, metadata: Option<crate::domain::events::PageMetadata>) -> anyhow::Result<()> {
+        let event = crate::domain::events::CrawlingEvent::ProductListPageEvent {
+            session_id,
+            batch_id,
+            page_number,
+            event_type,
+            message,
+            timestamp: chrono::Utc::now(),
+            metadata,
+        };
+        self.app_handle.emit(event.event_name(), &event)?;
+        Ok(())
+    }
+
+    /// 🔥 제품 상세정보 이벤트 발송
+    pub fn emit_product_detail_event(&self, session_id: String, batch_id: String, product_id: String, product_url: String, event_type: crate::domain::events::ProductEventType, message: String, metadata: Option<crate::domain::events::ProductMetadata>) -> anyhow::Result<()> {
+        let event = crate::domain::events::CrawlingEvent::ProductDetailEvent {
+            session_id,
+            batch_id,
+            product_id,
+            product_url,
+            event_type,
+            message,
+            timestamp: chrono::Utc::now(),
+            metadata,
+        };
+        self.app_handle.emit(event.event_name(), &event)?;
         Ok(())
     }
 }

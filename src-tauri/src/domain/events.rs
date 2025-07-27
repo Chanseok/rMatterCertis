@@ -312,6 +312,44 @@ pub enum CrawlingEvent {
         message: String,
         timestamp: DateTime<Utc>,
     },
+    /// 🔥 크롤링 세션 이벤트
+    SessionEvent {
+        session_id: String,
+        event_type: SessionEventType,
+        message: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// 🔥 배치 이벤트 (각 스테이지별 배치)
+    BatchEvent {
+        session_id: String,
+        batch_id: String,
+        stage: CrawlingStage,
+        event_type: BatchEventType,
+        message: String,
+        timestamp: DateTime<Utc>,
+        metadata: Option<BatchMetadata>,
+    },
+    /// 🔥 ProductList 페이지별 이벤트
+    ProductListPageEvent {
+        session_id: String,
+        batch_id: String,
+        page_number: u32,
+        event_type: PageEventType,
+        message: String,
+        timestamp: DateTime<Utc>,
+        metadata: Option<PageMetadata>,
+    },
+    /// 🔥 제품별 상세 정보 수집 이벤트 (기존 TaskUpdate 보완)
+    ProductDetailEvent {
+        session_id: String,
+        batch_id: String,
+        product_id: String,
+        product_url: String,
+        event_type: ProductEventType,
+        message: String,
+        timestamp: DateTime<Utc>,
+        metadata: Option<ProductMetadata>,
+    },
 }
 
 /// 사이트 상태 체크 결과
@@ -327,6 +365,117 @@ pub enum SiteCheckStatus {
     Failed,
 }
 
+/// 🔥 세션 이벤트 타입
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SessionEventType {
+    /// 크롤링 세션 시작
+    Started,
+    /// 크롤링 세션 완료
+    Completed,
+    /// 크롤링 세션 실패
+    Failed,
+    /// 크롤링 세션 취소
+    Cancelled,
+    /// 크롤링 세션 일시정지
+    Paused,
+    /// 크롤링 세션 재개
+    Resumed,
+}
+
+/// 🔥 배치 이벤트 타입
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BatchEventType {
+    /// 배치 생성됨
+    Created,
+    /// 배치 처리 시작
+    Started,
+    /// 배치 진행 중
+    Progress,
+    /// 배치 완료
+    Completed,
+    /// 배치 실패
+    Failed,
+    /// 배치 재시도
+    Retrying,
+}
+
+/// 🔥 페이지 이벤트 타입
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PageEventType {
+    /// 페이지 처리 시작
+    Started,
+    /// 페이지 처리 중
+    Progress,
+    /// 페이지 처리 완료
+    Completed,
+    /// 페이지 처리 실패
+    Failed,
+    /// 페이지 재시도
+    Retrying,
+}
+
+/// 🔥 제품 이벤트 타입
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ProductEventType {
+    /// 제품 상세정보 수집 시작
+    Started,
+    /// 제품 상세정보 수집 중
+    Progress,
+    /// 제품 상세정보 수집 완료
+    Completed,
+    /// 제품 상세정보 수집 실패
+    Failed,
+    /// 제품 상세정보 수집 재시도
+    Retrying,
+}
+
+/// 🔥 배치 메타데이터
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchMetadata {
+    /// 배치에 포함된 아이템 수
+    pub total_items: u32,
+    /// 처리된 아이템 수
+    pub processed_items: u32,
+    /// 성공한 아이템 수
+    pub successful_items: u32,
+    /// 실패한 아이템 수
+    pub failed_items: u32,
+    /// 처리 시작 시간
+    pub start_time: DateTime<Utc>,
+    /// 예상 완료 시간
+    pub estimated_completion: Option<DateTime<Utc>>,
+}
+
+/// 🔥 페이지 메타데이터
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageMetadata {
+    /// 페이지에서 발견된 제품 수
+    pub products_found: u32,
+    /// 처리된 제품 수
+    pub products_processed: u32,
+    /// 페이지 로드 시간 (밀리초)
+    pub load_time_ms: u64,
+    /// 페이지 크기 (바이트)
+    pub page_size_bytes: u64,
+}
+
+/// 🔥 제품 메타데이터
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProductMetadata {
+    /// 제품명
+    pub product_name: Option<String>,
+    /// 제품 카테고리
+    pub category: Option<String>,
+    /// 인증 번호
+    pub certification_number: Option<String>,
+    /// 처리 시간 (밀리초)
+    pub processing_time_ms: u64,
+    /// 페이지 크기 (바이트)
+    pub page_size_bytes: u64,
+    /// 재시도 횟수
+    pub retry_count: u32,
+}
+
 impl CrawlingEvent {
     /// Get the event type as a string for Tauri event emission
     pub fn event_name(&self) -> &'static str {
@@ -338,6 +487,10 @@ impl CrawlingEvent {
             CrawlingEvent::DatabaseUpdate(_) => "database-update",
             CrawlingEvent::Completed(_) => "crawling-completed",
             CrawlingEvent::SiteStatusCheck { .. } => "site-status-check",
+            CrawlingEvent::SessionEvent { .. } => "session-event",
+            CrawlingEvent::BatchEvent { .. } => "batch-event",
+            CrawlingEvent::ProductListPageEvent { .. } => "product-list-page-event",
+            CrawlingEvent::ProductDetailEvent { .. } => "product-detail-event",
         }
     }
 }

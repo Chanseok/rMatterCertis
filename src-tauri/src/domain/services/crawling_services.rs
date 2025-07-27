@@ -83,6 +83,9 @@ pub trait ProductDetailCollector: Send + Sync {
     
     /// 배치별 제품 수집 (메타데이터 포함)
     async fn collect_product_batch(&self, product_urls: &[ProductUrl]) -> Result<Vec<ProductDetail>>;
+    
+    /// Any 타입으로 다운캐스트하기 위한 메서드
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// 크롤링 범위 권장 사항

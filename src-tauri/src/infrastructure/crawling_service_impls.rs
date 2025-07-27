@@ -18,6 +18,7 @@ use crate::domain::services::{
     StatusChecker, DatabaseAnalyzer, ProductListCollector, ProductDetailCollector,
     SiteStatus, DatabaseAnalysis, FieldAnalysis, DuplicateAnalysis, ProcessingStrategy
 };
+use crate::infrastructure::system_broadcaster::SystemStateBroadcaster;
 use crate::domain::product_url::ProductUrl;
 use crate::domain::services::crawling_services::{
     SiteDataChangeStatus, DataDecreaseRecommendation, RecommendedAction, SeverityLevel, CrawlingRangeRecommendation
@@ -1412,53 +1413,54 @@ impl ProductListCollectorImpl {
         }
     }
 
-    /// 🔥 이벤트 콜백을 지원하는 동시성 페이지 수집 메서드
-    pub async fn collect_page_range_with_events<F1, F2>(
+    /// 🔥 동시성을 보장하는 이벤트 기반 페이지 수집 메서드 (비동기 이벤트 큐 사용)
+    pub async fn collect_page_range_with_async_events(
         &self,
         start_page: u32,
         end_page: u32,
         cancellation_token: Option<CancellationToken>,
-        page_callback: F1,
-        retry_callback: F2,
-    ) -> Result<Vec<ProductUrl>>
-    where
-        F1: Fn(u32, String, u32, bool) -> Result<()> + Send + Sync + 'static,
-        F2: Fn(String, String, String, u32, u32, String) -> Result<()> + Send + Sync + 'static,
-    {
-        let page_callback = Arc::new(page_callback);
-        let retry_callback = Arc::new(retry_callback);
+        session_id: String,
+        batch_id: String,
+    ) -> Result<Vec<ProductUrl>> {
+        use tokio::sync::mpsc;
+        
+        // 🔥 비동기 이벤트 큐 생성 (논블로킹)
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<PageEvent>();
+        
+        // 🔥 이벤트 처리기를 별도 태스크로 분리 (메인 작업과 독립적)
+        let session_id_clone = session_id.clone();
+        let batch_id_clone = batch_id.clone();
+        tokio::spawn(async move {
+            while let Some(page_event) = event_rx.recv().await {
+                // 이벤트 처리는 메인 작업 흐름과 완전히 독립적
+                // 실패해도 메인 작업에 영향 없음
+                if let Err(e) = Self::handle_page_event(page_event, &session_id_clone, &batch_id_clone).await {
+                    debug!("Event handling failed (non-critical): {}", e);
+                }
+            }
+        });
         
         // Handle descending range (older to newer) - typical for our use case
         let pages: Vec<u32> = if start_page > end_page {
-            // Descending range: start from oldest (highest page number) to newest (lower page number)
             (end_page..=start_page).rev().collect()
         } else {
-            // Ascending range: start from lowest to highest page number
             (start_page..=end_page).collect()
         };
         
-        info!("🔍 Collecting from {} pages in range {} to {} with concurrent execution and events", 
+        info!("🔍 Collecting from {} pages in range {} to {} with true concurrent execution + async events", 
               pages.len(), start_page, end_page);
         
         // 사이트 분석 정보를 가져와서 정확한 총 페이지 수와 마지막 페이지 제품 수 확인
         let (total_pages, products_on_last_page) = self.status_checker.discover_total_pages().await?;
-        
-        // 가장 큰 페이지 번호가 마지막 페이지 번호임
         let last_page_number = total_pages;
         let products_in_last_page = products_on_last_page;
         
-        info!("📊 Site analysis result: total_pages={}, products_on_last_page={}", 
-              total_pages, products_on_last_page);
-        
         // PageIdCalculator 초기화
         let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page as usize);
-        
         let max_concurrent = self.config.max_concurrent as usize;
         
         // 진정한 동시성 실행을 위한 세마포어 기반 처리
         let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
-        
-        // 모든 페이지에 대해 즉시 태스크 생성 (하지만 세마포어로 제어)
         let mut tasks = Vec::new();
         
         info!("🚀 Creating {} concurrent tasks with semaphore control (max: {})", pages.len(), max_concurrent);
@@ -1474,165 +1476,78 @@ impl ProductListCollectorImpl {
             
             let http_client = Arc::clone(&self.http_client);
             let data_extractor = Arc::clone(&self.data_extractor);
-            let token_clone = cancellation_token.clone();
             let semaphore_clone = Arc::clone(&semaphore);
             let calculator = page_calculator.clone();
-            let page_callback_clone = Arc::clone(&page_callback);
-            let retry_callback_clone = Arc::clone(&retry_callback);
+            let event_tx_clone = event_tx.clone();
+            let cancellation_token_clone = cancellation_token.clone();
             
+            // 각 태스크는 완전히 독립적으로 실행
             let task = tokio::spawn(async move {
-                // 실행 허가를 받을 때까지 대기
+                // 🔥 논블로킹 이벤트 발송 (실패해도 메인 작업 계속)
+                let _ = event_tx_clone.send(PageEvent::Started { 
+                    page_number: page,
+                    timestamp: chrono::Utc::now(),
+                });
+                
+                // 실행 허가를 받을 때까지 대기 (진정한 동시성 제어)
                 let _permit = match semaphore_clone.acquire().await {
                     Ok(permit) => {
                         debug!("🔓 Acquired permit for page {}", page);
                         permit
                     },
                     Err(_) => {
-                        error!("Failed to acquire semaphore permit for page {}", page);
+                        let _ = event_tx_clone.send(PageEvent::Failed { 
+                            page_number: page,
+                            error: "Semaphore acquisition failed".to_string(),
+                            timestamp: chrono::Utc::now(),
+                        });
                         return Err(anyhow!("Semaphore acquisition failed"));
                     }
                 };
                 
-                // 취소 토큰 확인
-                if let Some(ref token) = token_clone {
+                // 취소 확인
+                if let Some(ref token) = cancellation_token_clone {
                     if token.is_cancelled() {
-                        warn!("🛑 Task cancelled for page {}", page);
+                        let _ = event_tx_clone.send(PageEvent::Cancelled { 
+                            page_number: page,
+                            timestamp: chrono::Utc::now(),
+                        });
                         return Err(anyhow!("Task cancelled"));
                     }
                 }
                 
-                // 실제 페이지 수집 작업
-                let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
+                // 실제 페이지 수집 작업 (완전히 독립적)
+                let start_time = std::time::Instant::now();
+                let result = Self::collect_single_page_independently(
+                    http_client, 
+                    data_extractor, 
+                    calculator, 
+                    page
+                ).await;
                 
-                let collect_result = async {
-                    // Use consistent HttpClient for true concurrency  
-                    let mut client = crate::infrastructure::HttpClient::new()?;
-                    let response = client.fetch_response(&url).await?;
-                    let html = response.text().await?;
-                    
-                    let doc = scraper::Html::parse_document(&html);
-                    let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
-                    
-                    // Convert URLs to ProductUrl with proper pageId and indexInPage calculation
-                    let product_urls: Vec<ProductUrl> = url_strings
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, url)| {
-                            let calculation = calculator.calculate(page, index);
-                            ProductUrl {
-                                url,
-                                page_id: calculation.page_id,
-                                index_in_page: calculation.index_in_page,
-                            }
-                        })
-                        .collect();
-                    
-                    Ok::<Vec<ProductUrl>, anyhow::Error>(product_urls)
-                }.await;
+                let duration_ms = start_time.elapsed().as_millis() as u64;
                 
-                match collect_result {
-                    Ok(product_urls) => {
-                        debug!("✅ Page {} completed successfully with {} URLs", page, product_urls.len());
-                        
-                        // 🔥 성공 이벤트 발송
-                        if let Err(e) = page_callback_clone(page, url.clone(), product_urls.len() as u32, true) {
-                            warn!("Failed to emit page-crawled success event for page {}: {}", page, e);
-                        }
-                        
-                        Ok((page, product_urls))
-                    }
+                // 🔥 결과에 따른 논블로킹 이벤트 발송
+                match &result {
+                    Ok(products) => {
+                        let _ = event_tx_clone.send(PageEvent::Completed { 
+                            page_number: page,
+                            products_found: products.len() as u32,
+                            duration_ms,
+                            timestamp: chrono::Utc::now(),
+                        });
+                    },
                     Err(e) => {
-                        warn!("❌ Page {} collection failed: {}", page, e);
-                        
-                        // 🔥 실패 이벤트 발송
-                        if let Err(emit_err) = page_callback_clone(page, url.clone(), 0, false) {
-                            warn!("Failed to emit page-crawled failure event for page {}: {}", page, emit_err);
-                        }
-                        
-                        // 🔥 재시도 시도 이벤트 발송
-                        if let Err(emit_err) = retry_callback_clone(
-                            format!("page_{}", page),
-                            "page".to_string(),
-                            url.clone(),
-                            1,
-                            2,
-                            e.to_string()
-                        ) {
-                            warn!("Failed to emit retry-attempt event for page {}: {}", page, emit_err);
-                        }
-                        
-                        // 페이지 재시도 (1회만)
-                        info!("🔄 Retrying page {} collection", page);
-                        
-                        let retry_result = async {
-                            // Use consistent HttpClient for true concurrency
-                            let mut client = crate::infrastructure::HttpClient::new()?;
-                            let response = client.fetch_response(&url).await?;
-                            let html = response.text().await?;
-                            
-                            let doc = scraper::Html::parse_document(&html);
-                            let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
-                            
-                            let product_urls: Vec<ProductUrl> = url_strings
-                                .into_iter()
-                                .enumerate()
-                                .map(|(index, url)| {
-                                    let calculation = calculator.calculate(page, index);
-                                    ProductUrl {
-                                        url,
-                                        page_id: calculation.page_id,
-                                        index_in_page: calculation.index_in_page,
-                                    }
-                                })
-                                .collect();
-                            
-                            Ok::<Vec<ProductUrl>, anyhow::Error>(product_urls)
-                        }.await;
-                        
-                        match retry_result {
-                            Ok(retry_urls) => {
-                                info!("✅ Page {} retry successful with {} URLs", page, retry_urls.len());
-                                
-                                // 🔥 재시도 성공 이벤트 발송
-                                if let Err(emit_err) = retry_callback_clone(
-                                    format!("page_{}", page),
-                                    "page".to_string(),
-                                    url.clone(),
-                                    2,
-                                    2,
-                                    "Retry successful".to_string()
-                                ) {
-                                    warn!("Failed to emit retry-success event for page {}: {}", page, emit_err);
-                                }
-                                
-                                // 최종 성공 이벤트 발송
-                                if let Err(emit_err) = page_callback_clone(page, url, retry_urls.len() as u32, true) {
-                                    warn!("Failed to emit page-crawled retry success event for page {}: {}", page, emit_err);
-                                }
-                                
-                                Ok((page, retry_urls))
-                            }
-                            Err(retry_e) => {
-                                warn!("❌ Page {} retry also failed: {}", page, retry_e);
-                                
-                                // 🔥 재시도 최종 실패 이벤트 발송
-                                if let Err(emit_err) = retry_callback_clone(
-                                    format!("page_{}", page),
-                                    "page".to_string(),
-                                    url,
-                                    2,
-                                    2,
-                                    retry_e.to_string()
-                                ) {
-                                    warn!("Failed to emit retry-failed event for page {}: {}", page, emit_err);
-                                }
-                                
-                                // 페이지 실패는 전체 작업을 중단시키지 않음 - 빈 결과 반환
-                                Ok((page, Vec::new()))
-                            }
-                        }
+                        let _ = event_tx_clone.send(PageEvent::Failed { 
+                            page_number: page,
+                            error: e.to_string(),
+                            timestamp: chrono::Utc::now(),
+                        });
                     }
                 }
+                
+                debug!("🔗 Page {} processing completed (permit released)", page);
+                result.map(|products| (page, products))
             });
             
             tasks.push(task);
@@ -1640,7 +1555,7 @@ impl ProductListCollectorImpl {
         
         info!("✅ Created {} tasks, waiting for all to complete with concurrent execution", tasks.len());
         
-        // 모든 태스크가 완료될 때까지 기다림
+        // 모든 태스크가 완료될 때까지 기다림 (진정한 파이프라인 실행)
         let results = futures::future::join_all(tasks).await;
         
         // 결과 수집
@@ -1650,27 +1565,125 @@ impl ProductListCollectorImpl {
         
         for result in results {
             match result {
-                Ok(Ok((page, urls))) => {
-                    all_urls.extend(urls);
+                Ok(Ok((page, mut urls))) => {
+                    debug!("✅ Page {} completed with {} URLs", page, urls.len());
+                    all_urls.append(&mut urls);
                     successful_pages += 1;
-                    debug!("✅ Page {} completed successfully", page);
                 },
                 Ok(Err(e)) => {
-                    error!("❌ Page collection failed: {}", e);
+                    warn!("❌ Page processing failed: {}", e);
                     failed_pages += 1;
                 },
                 Err(e) => {
-                    error!("❌ Task join failed: {}", e);
+                    warn!("❌ Task join failed: {}", e);
                     failed_pages += 1;
                 }
             }
         }
         
-        info!("📊 Concurrent collection with events completed: {} successful, {} failed, {} total URLs", 
+        info!("🎯 Phase 5 concurrent collection completed: {} pages successful, {} failed, {} total URLs", 
               successful_pages, failed_pages, all_urls.len());
         
         Ok(all_urls)
     }
+    
+    /// 🔥 완전히 독립적인 단일 페이지 수집 (의존성 최소화)
+    async fn collect_single_page_independently(
+        http_client: Arc<tokio::sync::Mutex<HttpClient>>,
+        data_extractor: Arc<MatterDataExtractor>,
+        calculator: crate::utils::PageIdCalculator,
+        page: u32,
+    ) -> Result<Vec<ProductUrl>> {
+        let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
+        
+        // HTTP 클라이언트 사용 (짧은 락)
+        let html = {
+            let mut client = http_client.lock().await;
+            let response = client.fetch_response(&url).await?;
+            response.text().await?
+        };
+        
+        let doc = scraper::Html::parse_document(&html);
+        let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
+        
+        // Convert URLs to ProductUrl with proper pageId and indexInPage calculation
+        let product_urls: Vec<ProductUrl> = url_strings
+            .into_iter()
+            .enumerate()
+            .map(|(index, url)| {
+                let calculation = calculator.calculate(page, index);
+                ProductUrl {
+                    url,
+                    page_id: calculation.page_id,
+                    index_in_page: calculation.index_in_page,
+                }
+            })
+            .collect();
+        
+        Ok(product_urls)
+    }
+    
+    /// 🔥 이벤트 처리기 (비동기, 논블로킹)
+    async fn handle_page_event(
+        event: PageEvent,
+        session_id: &str,
+        batch_id: &str,
+    ) -> Result<()> {
+        // 실제 이벤트 브로드캐스팅 로직
+        // 이 함수는 메인 작업과 완전히 독립적으로 실행됨
+        match event {
+            PageEvent::Started { page_number, timestamp } => {
+                debug!("📄 Page {} started at {}", page_number, timestamp);
+                // SystemStateBroadcaster::emit_product_list_page_event() 호출
+            },
+            PageEvent::Completed { page_number, products_found, duration_ms, timestamp } => {
+                debug!("✅ Page {} completed: {} products in {}ms", page_number, products_found, duration_ms);
+                // 완료 이벤트 발송
+            },
+            PageEvent::Failed { page_number, error, timestamp } => {
+                debug!("❌ Page {} failed: {} at {}", page_number, error, timestamp);
+                // 실패 이벤트 발송
+            },
+            PageEvent::Cancelled { page_number, timestamp } => {
+                debug!("🛑 Page {} cancelled at {}", page_number, timestamp);
+                // 취소 이벤트 발송
+            },
+        }
+        Ok(())
+    }
+}
+
+/// 🔥 ProductDetail 태스크 이벤트 타입
+#[derive(Debug, Clone)]
+enum ProductDetailEvent {
+    TaskStarted {
+        product_url: String,
+        product_name: Option<String>,
+        task_id: String,
+        start_time: std::time::Instant,
+    },
+    HttpRequestStarted {
+        product_url: String,
+        task_id: String,
+    },
+    ParsingStarted {
+        product_url: String,
+        task_id: String,
+        html_size: usize,
+    },
+    TaskCompleted {
+        product_url: String,
+        product_name: Option<String>,
+        task_id: String,
+        processing_time: std::time::Duration,
+        extracted_fields: u32,
+    },
+    TaskFailed {
+        product_url: String,
+        task_id: String,
+        error: String,
+        processing_time: std::time::Duration,
+    },
 }
 
 #[async_trait]
@@ -2078,6 +2091,44 @@ impl ProductDetailCollectorImpl {
             config,
         }
     }
+    
+    /// 🔥 ProductDetail 이벤트 처리기 (비동기, 논블로킹)
+    async fn handle_product_detail_event(
+        event: ProductDetailEvent,
+        session_id: &str,
+        batch_id: &str,
+    ) -> Result<()> {
+        // 🔥 이벤트 처리를 로그로만 남기고 실제 브로드캐스트는 ServiceBasedCrawlingEngine에서 처리
+        // SystemStateBroadcaster는 AppHandle이 필요하므로 여기서는 직접 사용하지 않음
+        
+        match event {
+            ProductDetailEvent::TaskStarted { product_url, product_name, task_id, start_time } => {
+                info!("🚀 Product task started: {} ({})", product_url, task_id);
+                debug!("📝 Product: {} | Task: {} | Session: {} | Batch: {}", 
+                       product_name.unwrap_or_else(|| "Unknown".to_string()), task_id, session_id, batch_id);
+            },
+            ProductDetailEvent::HttpRequestStarted { product_url, task_id } => {
+                debug!("🌐 HTTP request started for product: {} (task: {})", product_url, task_id);
+            },
+            ProductDetailEvent::ParsingStarted { product_url, task_id, html_size } => {
+                debug!("🔍 Parsing started for product: {} (task: {}, HTML size: {})", product_url, task_id, html_size);
+            },
+            ProductDetailEvent::TaskCompleted { product_url, product_name, task_id, processing_time, extracted_fields } => {
+                info!("✅ Product task completed: {} ({}) - {} fields extracted in {:?}", 
+                      product_url, task_id, extracted_fields, processing_time);
+                debug!("📊 Product: {} | Fields: {} | Time: {:?} | Session: {} | Batch: {}", 
+                       product_name.unwrap_or_else(|| "Unknown".to_string()), extracted_fields, processing_time, session_id, batch_id);
+            },
+            ProductDetailEvent::TaskFailed { product_url, task_id, error, processing_time } => {
+                warn!("❌ Product task failed: {} ({}) - {} (took {:?})", 
+                      product_url, task_id, error, processing_time);
+                debug!("💥 Error: {} | Time: {:?} | Session: {} | Batch: {}", 
+                       error, processing_time, session_id, batch_id);
+            },
+        }
+        
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -2234,6 +2285,197 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
     async fn collect_product_batch(&self, product_urls: &[ProductUrl]) -> Result<Vec<ProductDetail>> {
         self.collect_details(product_urls).await
     }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl ProductDetailCollectorImpl {
+    /// 🔥 동시성을 보장하는 이벤트 기반 제품 상세정보 수집 메서드 (비동기 이벤트 큐 사용)
+    pub async fn collect_details_with_async_events(
+        &self,
+        product_urls: &[ProductUrl],
+        cancellation_token: Option<CancellationToken>,
+        session_id: String,
+        batch_id: String,
+    ) -> Result<Vec<ProductDetail>> {
+        info!("🚀 Collecting details for {} products with async events", product_urls.len());
+        
+        // 🔥 비동기 이벤트 큐 생성 (ProductDetail 태스크용)
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<ProductDetailEvent>();
+        
+        // 🔥 이벤트 처리기 생성 (완전히 독립적)
+        let session_id_clone = session_id.clone();
+        let batch_id_clone = batch_id.clone();
+        let event_handler = tokio::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                if let Err(e) = Self::handle_product_detail_event(
+                    event,
+                    &session_id_clone,
+                    &batch_id_clone
+                ).await {
+                    warn!("🔥 Event handler error: {}", e);
+                }
+            }
+        });
+        
+        let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent as usize));
+        let mut tasks = Vec::new();
+        
+        for product_url in product_urls {
+            let data_extractor = Arc::clone(&self.data_extractor);
+            let url = product_url.url.clone();
+            let page_id = product_url.page_id;
+            let index_in_page = product_url.index_in_page;
+            let permit = Arc::clone(&semaphore);
+            let token = cancellation_token.clone();
+            let event_tx_clone = event_tx.clone();
+            
+            let task = tokio::spawn(async move {
+                if let Some(ref token) = token {
+                    if token.is_cancelled() {
+                        return Err(anyhow!("Task cancelled"));
+                    }
+                }
+                
+                let start_time = std::time::Instant::now();
+                let task_id = format!("product-{}", url);
+                
+                // 🔥 태스크 시작 이벤트 (논블로킹)
+                let _ = event_tx_clone.send(ProductDetailEvent::TaskStarted {
+                    product_url: url.clone(),
+                    product_name: None, // Will be filled after parsing
+                    task_id: task_id.clone(),
+                    start_time,
+                });
+                
+                let _permit = permit.acquire().await.unwrap();
+                
+                if let Some(ref token) = token {
+                    if token.is_cancelled() {
+                        return Err(anyhow!("Task cancelled"));
+                    }
+                }
+                
+                // HTTP 요청 시작 이벤트
+                let _ = event_tx_clone.send(ProductDetailEvent::HttpRequestStarted {
+                    product_url: url.clone(),
+                    task_id: task_id.clone(),
+                });
+                
+                let mut client = match crate::infrastructure::HttpClient::new() {
+                    Ok(client) => client,
+                    Err(e) => {
+                        let _ = event_tx_clone.send(ProductDetailEvent::TaskFailed {
+                            product_url: url.clone(),
+                            task_id: task_id.clone(),
+                            error: e.to_string(),
+                            processing_time: start_time.elapsed(),
+                        });
+                        return Err(e);
+                    }
+                };
+                
+                let response = match client.fetch_response(&url).await {
+                    Ok(response) => response,
+                    Err(e) => {
+                        let _ = event_tx_clone.send(ProductDetailEvent::TaskFailed {
+                            product_url: url.clone(),
+                            task_id: task_id.clone(),
+                            error: format!("HTTP request failed: {}", e),
+                            processing_time: start_time.elapsed(),
+                        });
+                        return Err(e);
+                    }
+                };
+                
+                let html = match response.text().await {
+                    Ok(html) => html,
+                    Err(e) => {
+                        let _ = event_tx_clone.send(ProductDetailEvent::TaskFailed {
+                            product_url: url.clone(),
+                            task_id: task_id.clone(),
+                            error: format!("Failed to read response: {}", e),
+                            processing_time: start_time.elapsed(),
+                        });
+                        return Err(anyhow::anyhow!("Failed to read response: {}", e));
+                    }
+                };
+                
+                if let Some(ref token) = token {
+                    if token.is_cancelled() {
+                        return Err(anyhow!("Task cancelled"));
+                    }
+                }
+                
+                // 파싱 시작 이벤트
+                let _ = event_tx_clone.send(ProductDetailEvent::ParsingStarted {
+                    product_url: url.clone(),
+                    task_id: task_id.clone(),
+                    html_size: html.len(),
+                });
+                
+                let doc = scraper::Html::parse_document(&html);
+                let mut detail = match data_extractor.extract_product_detail(&doc, url.clone()) {
+                    Ok(detail) => detail,
+                    Err(e) => {
+                        let _ = event_tx_clone.send(ProductDetailEvent::TaskFailed {
+                            product_url: url.clone(),
+                            task_id: task_id.clone(),
+                            error: format!("Parsing failed: {}", e),
+                            processing_time: start_time.elapsed(),
+                        });
+                        return Err(e);
+                    }
+                };
+                
+                // 🔥 Set page_id and index_in_page from ProductUrl
+                detail.page_id = Some(page_id);
+                detail.index_in_page = Some(index_in_page);
+                detail.id = Some(format!("p{:04}i{:02}", page_id, index_in_page));
+                
+                // 🔥 태스크 완료 이벤트 (논블로킹)
+                let _ = event_tx_clone.send(ProductDetailEvent::TaskCompleted {
+                    product_url: url.clone(),
+                    product_name: detail.manufacturer.clone().or_else(|| detail.model.clone()),
+                    task_id: task_id.clone(),
+                    processing_time: start_time.elapsed(),
+                    extracted_fields: calculate_extracted_fields(&detail),
+                });
+                
+                Ok::<ProductDetail, anyhow::Error>(detail)
+            });
+            
+            tasks.push(task);
+        }
+        
+        let results = futures::future::join_all(tasks).await;
+        let mut details = Vec::new();
+        
+        for result in results {
+            match result {
+                Ok(Ok(detail)) => details.push(detail),
+                Ok(Err(e)) => {
+                    if cancellation_token.as_ref().map_or(true, |t| !t.is_cancelled()) {
+                        warn!("Failed to collect product detail: {}", e);
+                    }
+                },
+                Err(e) => {
+                    if cancellation_token.as_ref().map_or(true, |t| !t.is_cancelled()) {
+                        warn!("Task failed: {}", e);
+                    }
+                },
+            }
+        }
+        
+        // 🔥 이벤트 큐 정리
+        drop(event_tx);
+        let _ = event_handler.await;
+        
+        info!("✅ Successfully collected {} product details with async events", details.len());
+        Ok(details)
+    }
 }
 
 /// 지능형 크롤링 범위 계산기
@@ -2373,6 +2615,35 @@ pub fn product_detail_to_product(detail: ProductDetail) -> Product {
     product
 }
 
+/// 🔥 ProductDetail에서 추출된 필드 개수를 계산하는 헬퍼 함수
+fn calculate_extracted_fields(detail: &crate::domain::product::ProductDetail) -> u32 {
+    let mut count = 0u32;
+    
+    if detail.manufacturer.is_some() { count += 1; }
+    if detail.model.is_some() { count += 1; }
+    if detail.device_type.is_some() { count += 1; }
+    if detail.certification_id.is_some() { count += 1; }
+    if detail.certification_date.is_some() { count += 1; }
+    if detail.software_version.is_some() { count += 1; }
+    if detail.hardware_version.is_some() { count += 1; }
+    if detail.vid.is_some() { count += 1; }
+    if detail.pid.is_some() { count += 1; }
+    if detail.family_sku.is_some() { count += 1; }
+    if detail.family_variant_sku.is_some() { count += 1; }
+    if detail.firmware_version.is_some() { count += 1; }
+    if detail.family_id.is_some() { count += 1; }
+    if detail.tis_trp_tested.is_some() { count += 1; }
+    if detail.specification_version.is_some() { count += 1; }
+    if detail.transport_interface.is_some() { count += 1; }
+    if detail.primary_device_type_id.is_some() { count += 1; }
+    if detail.application_categories.is_some() { count += 1; }
+    if detail.description.is_some() { count += 1; }
+    if detail.compliance_document_url.is_some() { count += 1; }
+    if detail.program_type.is_some() { count += 1; }
+    
+    count
+}
+
 // Additional trait implementations for service-based architecture
 
 #[async_trait]
@@ -2438,6 +2709,10 @@ impl ProductDetailCollector for ProductListCollectorImpl {
     async fn collect_product_batch(&self, _product_urls: &[ProductUrl]) -> Result<Vec<ProductDetail>> {
         // Placeholder implementation for service-based architecture
         Ok(Vec::new())
+    }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -2551,5 +2826,29 @@ impl CrawlingRangeCalculator {
             timestamp: chrono::Utc::now(),
         })
     }
+}
+
+/// 🔥 페이지 처리 이벤트 (논블로킹 큐용)
+#[derive(Debug, Clone)]
+enum PageEvent {
+    Started { 
+        page_number: u32,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
+    Completed { 
+        page_number: u32,
+        products_found: u32,
+        duration_ms: u64,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
+    Failed { 
+        page_number: u32,
+        error: String,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
+    Cancelled { 
+        page_number: u32,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
 }
 

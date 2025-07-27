@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use anyhow::{Result, anyhow};
-use tracing::{info, warn, debug};
+use tracing::{info, warn, debug, error};
 use tokio_util::sync::CancellationToken;
 use chrono::Utc;
 
@@ -617,14 +617,23 @@ impl ServiceBasedBatchCrawlingEngine {
         let start_time = Instant::now();
         info!("Starting service-based 4-stage batch crawling for session: {}", self.session_id);
 
-        // 🔥 1. 크롤링 시작 이벤트 발송 (UI 연결)
+        // 🔥 1. 세션 시작 이벤트 (크롤링 버튼 클릭 후에만 발송)
+        if let Some(broadcaster) = &self.broadcaster {
+            let _ = broadcaster.emit_session_event(
+                self.session_id.clone(),
+                crate::domain::events::SessionEventType::Started,
+                "크롤링 세션 시작".to_string(),
+            );
+        }
+
+        // 🔥 2. 기존 크롤링 시작 이벤트도 유지 (호환성)
         if let Some(broadcaster) = &mut self.broadcaster {
             if let Err(e) = broadcaster.emit_crawling_started() {
                 warn!("Failed to emit crawling-started event: {}", e);
             }
         }
 
-        // 🔥 2. 세션 시작 이벤트 (크롤링 버튼 클릭 후 발송)
+        // 🔥 3. 상세 세션 시작 이벤트 (기존 이벤트 시스템)
         self.emit_detailed_event(DetailedCrawlingEvent::SessionStarted {
             session_id: self.session_id.clone(),
             config: self.config.clone(),
@@ -712,6 +721,25 @@ impl ServiceBasedBatchCrawlingEngine {
         // Stage 2: 제품 목록 수집 - 계산된 최적 범위 사용
         let product_urls = self.stage2_collect_product_list_optimized(actual_start_page, actual_end_page).await?;
         
+        // 🔥 Stage 2 결과 검증 및 로깅
+        info!("📊 Stage 2 completed: {} product URLs collected", product_urls.len());
+        if product_urls.is_empty() {
+            warn!("⚠️  No product URLs collected from Stage 2! This will prevent Stage 3 from running.");
+            warn!("   - Start page: {}", actual_start_page);
+            warn!("   - End page: {}", actual_end_page);
+            warn!("   - This might indicate:");
+            warn!("     1. Network issues during product list collection");
+            warn!("     2. Website structure changes");
+            warn!("     3. Anti-bot measures blocking requests");
+            warn!("     4. Pagination calculation errors");
+        } else {
+            info!("✅ Stage 2 successful: {} URLs ready for Stage 3", product_urls.len());
+            // 샘플 URL 로깅 (디버깅용)
+            if !product_urls.is_empty() {
+                info!("📎 Sample URL: {}", product_urls[0]);
+            }
+        }
+        
         // Stage 2 완료 후 취소 확인
         if let Some(cancellation_token) = &self.config.cancellation_token {
             if cancellation_token.is_cancelled() {
@@ -719,6 +747,15 @@ impl ServiceBasedBatchCrawlingEngine {
                 return Err(anyhow!("Crawling session cancelled after product list collection"));
             }
         }
+        
+        // 🔥 Stage 3 진행 전 조건 검사
+        if product_urls.is_empty() {
+            let error_msg = "Cannot proceed to Stage 3: No product URLs collected in Stage 2";
+            error!("🚫 {}", error_msg);
+            return Err(anyhow!(error_msg));
+        }
+        
+        info!("🚀 Proceeding to Stage 3 with {} product URLs", product_urls.len());
         
         // Stage 3: 제품 상세정보 수집
         let products = self.stage3_collect_product_details(&product_urls).await?;
@@ -918,6 +955,41 @@ impl ServiceBasedBatchCrawlingEngine {
         } else {
             end_page - start_page + 1
         };
+
+        let batch_id = format!("productlist-{}-{}", start_page, end_page);
+        
+        // 🔥 배치 생성 이벤트
+        if let Some(broadcaster) = &self.broadcaster {
+            let metadata = crate::domain::events::BatchMetadata {
+                total_items: total_pages,
+                processed_items: 0,
+                successful_items: 0,
+                failed_items: 0,
+                start_time: chrono::Utc::now(),
+                estimated_completion: None,
+            };
+            
+            let _ = broadcaster.emit_batch_event(
+                self.session_id.clone(),
+                batch_id.to_string(),
+                crate::domain::events::CrawlingStage::ProductList,
+                crate::domain::events::BatchEventType::Created,
+                format!("ProductList 배치 생성: 페이지 {}~{} ({}개 페이지)", start_page, end_page, total_pages),
+                Some(metadata),
+            );
+        }
+
+        // 🔥 배치 시작 이벤트
+        if let Some(broadcaster) = &self.broadcaster {
+            let _ = broadcaster.emit_batch_event(
+                self.session_id.clone(),
+                batch_id.to_string(),
+                crate::domain::events::CrawlingStage::ProductList,
+                crate::domain::events::BatchEventType::Started,
+                format!("ProductList 배치 시작: 페이지 {}~{} 수집 중", start_page, end_page),
+                None,
+            );
+        }
         
         self.emit_detailed_event(DetailedCrawlingEvent::BatchCreated {
             batch_id: 1,
@@ -961,8 +1033,43 @@ impl ServiceBasedBatchCrawlingEngine {
         let event_handler = tokio::spawn(async move {
             let mut broadcaster = broadcaster_opt;
             while let Some((event_type, payload)) = event_rx.recv().await {
+                // 🔥 완료 신호 감지 - concurrent 작업이 완료되면 즉시 종료
+                if event_type == "concurrent_phase_completed" {
+                    debug!("Concurrent phase completed - terminating event handler");
+                    break;
+                }
+                
                 if let Some(ref mut b) = broadcaster {
                     match event_type.as_str() {
+                        "page-collection-started" => {
+                            if let Ok(detailed_event) = serde_json::from_value::<DetailedCrawlingEvent>(payload) {
+                                // 새로운 page-collection-started 이벤트 처리
+                                debug!("Page collection started event received: {:?}", detailed_event);
+                                // 기존 브로드캐스터로 변환하여 전송
+                                match &detailed_event {
+                                    DetailedCrawlingEvent::PageCollectionStarted { page, url, .. } => {
+                                        // emit_page_started 메서드가 없으므로 로그로만 처리
+                                        debug!("Page {} collection started for URL: {}", page, url);
+                                    },
+                                    _ => {}
+                                }
+                            }
+                        }
+                        "page-collection-completed" => {
+                            if let Ok(detailed_event) = serde_json::from_value::<DetailedCrawlingEvent>(payload) {
+                                // 새로운 page-collection-completed 이벤트 처리
+                                debug!("Page collection completed event received: {:?}", detailed_event);
+                                // 기존 브로드캐스터로 변환하여 전송
+                                match &detailed_event {
+                                    DetailedCrawlingEvent::PageCollectionCompleted { page, url, products_found, .. } => {
+                                        if let Err(e) = b.emit_page_crawled(*page, url.clone(), *products_found, true) {
+                                            warn!("Failed to emit page-collection-completed as page-crawled event: {}", e);
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            }
+                        }
                         "page-started" => {
                             if let Ok(detailed_event) = serde_json::from_value::<DetailedCrawlingEvent>(payload) {
                                 // PageStarted 이벤트는 별도 처리하지 않고 로그만 남김
@@ -1098,36 +1205,80 @@ impl ServiceBasedBatchCrawlingEngine {
             Ok(())
         };
 
-        // 실제 크롤링 실행 (동시성 유지)
+        // 실제 크롤링 실행 (진정한 동시성 보장)
         let product_urls = if let Some(cancellation_token) = &self.config.cancellation_token {
-            // 기존 동시성 메서드 사용하지만 이벤트 콜백과 함께
+            // 🔥 새로운 비동기 이벤트 메서드 사용 (동시성 보장)
             let collector = self.product_list_collector.clone();
             let collector_impl = collector.as_ref()
                 .as_any()
                 .downcast_ref::<ProductListCollectorImpl>()
                 .ok_or_else(|| anyhow!("Failed to downcast ProductListCollector"))?;
             
-            collector_impl.collect_page_range_with_events(
+            collector_impl.collect_page_range_with_async_events(
                 start_page,
                 end_page,
                 Some(cancellation_token.clone()),
-                page_callback,
-                retry_callback,
+                self.session_id.clone(),
+                batch_id.to_string(),
             ).await?
         } else {
-            // 기존 동시성 메서드 사용
-            self.product_list_collector.collect_page_range(
+            // 🔥 토큰이 없어도 비동기 이벤트 메서드 사용
+            let collector = self.product_list_collector.clone();
+            let collector_impl = collector.as_ref()
+                .as_any()
+                .downcast_ref::<ProductListCollectorImpl>()
+                .ok_or_else(|| anyhow!("Failed to downcast ProductListCollector"))?;
+            
+            collector_impl.collect_page_range_with_async_events(
                 start_page,
                 end_page,
+                None,
+                self.session_id.clone(),
+                batch_id.to_string(),
             ).await.map_err(|e| anyhow!("Product list collection failed: {}", e))?
         };
+
+        // 🔥 배치 완료 이벤트
+        if let Some(broadcaster) = &self.broadcaster {
+            let metadata = crate::domain::events::BatchMetadata {
+                total_items: total_pages,
+                processed_items: total_pages,
+                successful_items: product_urls.len() as u32,
+                failed_items: total_pages.saturating_sub(product_urls.len() as u32),
+                start_time: chrono::Utc::now(), // 실제로는 시작 시간을 저장해야 함
+                estimated_completion: Some(chrono::Utc::now()),
+            };
+            
+            let _ = broadcaster.emit_batch_event(
+                self.session_id.clone(),
+                batch_id.to_string(),
+                crate::domain::events::CrawlingStage::ProductList,
+                crate::domain::events::BatchEventType::Completed,
+                format!("ProductList 배치 완료: {}개 제품 URL 수집", product_urls.len()),
+                Some(metadata),
+            );
+        }
 
         // 이벤트 채널 종료
         drop(event_tx);
         
-        // 이벤트 처리 완료 대기 및 브로드캐스터 복구
-        if let Ok(broadcaster_opt) = event_handler.await {
-            self.broadcaster = broadcaster_opt;
+        // 🔥 이벤트 처리 완료 대기 및 브로드캐스터 복구 (즉시 완료 타임아웃 단축)
+        match tokio::time::timeout(std::time::Duration::from_millis(100), event_handler).await {
+            Ok(Ok(broadcaster_opt)) => {
+                debug!("Event handler completed successfully");
+                self.broadcaster = broadcaster_opt;
+            },
+            Ok(Err(e)) => {
+                warn!("Event handler task failed: {}", e);
+                // 브로드캐스터를 None으로 설정
+                self.broadcaster = None;
+            },
+            Err(_) => {
+                debug!("Event handler processing - force shutdown after concurrent jobs completed");
+                // 🔥 concurrent 작업이 완료되었으므로 이벤트 핸들러를 강제 종료
+                // 브로드캐스터를 None으로 설정
+                self.broadcaster = None;
+            }
         }
 
         info!("✅ Stage 2 completed: {} product URLs collected from optimized range with TRUE concurrent execution", product_urls.len());
@@ -1183,11 +1334,35 @@ impl ServiceBasedBatchCrawlingEngine {
         let result = if let Some(cancellation_token) = &self.config.cancellation_token {
             info!("🛑 USING PROVIDED CANCELLATION TOKEN for product detail collection");
             info!("🛑 Cancellation token is_cancelled: {}", cancellation_token.is_cancelled());
-            self.product_detail_collector.collect_details_with_cancellation(product_urls, cancellation_token.clone()).await
+            
+            // 🔥 이벤트 기반 수집 메서드 사용 (새로운 구현)
+            if let Some(collector_impl) = self.product_detail_collector.as_any().downcast_ref::<ProductDetailCollectorImpl>() {
+                collector_impl.collect_details_with_async_events(
+                    product_urls,
+                    Some(cancellation_token.clone()),
+                    self.session_id.clone(),
+                    self.session_id.clone(), // session_id를 batch_id로도 사용
+                ).await
+            } else {
+                // Fallback to original method
+                self.product_detail_collector.collect_details_with_cancellation(product_urls, cancellation_token.clone()).await
+            }
         } else {
             warn!("⚠️  NO CANCELLATION TOKEN - creating default token for consistent behavior");
             let default_token = CancellationToken::new();
-            self.product_detail_collector.collect_details_with_cancellation(product_urls, default_token).await
+            
+            // 🔥 이벤트 기반 수집 메서드 사용 (새로운 구현)
+            if let Some(collector_impl) = self.product_detail_collector.as_any().downcast_ref::<ProductDetailCollectorImpl>() {
+                collector_impl.collect_details_with_async_events(
+                    product_urls,
+                    Some(default_token.clone()),
+                    self.session_id.clone(),
+                    self.session_id.clone(), // session_id를 batch_id로도 사용
+                ).await
+            } else {
+                // Fallback to original method
+                self.product_detail_collector.collect_details_with_cancellation(product_urls, default_token).await
+            }
         };
 
         match result {
