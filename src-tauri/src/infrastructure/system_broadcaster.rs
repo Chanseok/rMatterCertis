@@ -4,7 +4,6 @@ use tauri::{AppHandle, Manager, Emitter};
 use crate::events::{SystemStatePayload, AtomicTaskEvent, LiveSystemState, BatchInfo, StageInfo, DbCursor};
 use crate::application::shared_state::SharedStateCache;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
-use crate::infrastructure::database_connection::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -150,9 +149,11 @@ impl SystemStateBroadcaster {
                         runtime_state.session_target_items.is_some() &&
                         runtime_state.current_stage.is_some();
         
-        // 기존 데이터베이스 연결 풀을 애플리케이션 상태에서 가져오기
-        let db_connection = self.app_handle.state::<DatabaseConnection>();
-        let db_repo = IntegratedProductRepository::new(db_connection.pool().clone());
+        // Modern Rust 2024: Backend-Only CRUD를 통한 데이터베이스 접근
+        let app_state = self.app_handle.state::<crate::application::state::AppState>();
+        let db_pool = app_state.get_database_pool().await
+            .map_err(|e| anyhow::anyhow!("Failed to get database pool: {}", e))?;
+        let db_repo = IntegratedProductRepository::new(db_pool);
         
         // 최근 제품의 page_id, index_in_page 정보 가져오기
         let last_cursor = if let Some(last_product) = db_repo.get_latest_updated_product().await? {

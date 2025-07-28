@@ -14,10 +14,11 @@
       {
         "title": "rMatterCertis",
         "width": 720,
-        "height": 2200,
-        "center": true,
+        "height": 1200,
+        "center": false,
         "resizable": true,
-        "decorations": true
+        "decorations": true,
+        "visible": false
       }
     ],
     "security": {

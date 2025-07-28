@@ -208,10 +208,11 @@ pub fn run() {
     // Initialize runtime for async operations (already created above)
     info!("✅ Tokio runtime initialized successfully");
     
-    // Initialize database paths using the new centralized manager (Modern Rust 2024)
+    // 🦀 Modern Rust 2024: Single Responsibility Database Initialization
     rt.block_on(async {
-        info!("🔧 Initializing centralized database path management...");
+        info!("🔧 Initializing centralized database system (paths + pool + migrations)...");
         
+        // 1. Initialize database paths using centralized manager
         match crate::infrastructure::initialize_database_paths().await {
             Ok(()) => {
                 info!("✅ Database paths initialized successfully");
@@ -224,20 +225,17 @@ pub fn run() {
                 std::process::exit(1);
             }
         }
-    });
-
-    // Initialize database connection with centralized path
-    let db = rt.block_on(async {
-        info!("🔧 Establishing database connection...");
         
+        // 2. Initialize database connection with migrations
         let database_url = crate::infrastructure::get_main_database_url();
+        info!("🔧 Establishing database connection...");
         info!("� Connecting to: {}", database_url);
         
         let db = DatabaseConnection::new(&database_url).await
             .expect("Failed to initialize database connection");
         
-        info!("🔄 Running database migrations...");
-        db.migrate().await.expect("Failed to run database migrations");
+        info!("🔄 Verifying database schema...");
+        db.migrate().await.expect("Failed to verify database schema");
         
         info!("✅ Database connection established successfully");
         db
@@ -258,7 +256,6 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(db)
         .manage(app_state)
         .manage(shared_state)  // SharedState 추가
         .manage(session_manager)  // CrawlingSessionManager 추가
@@ -271,43 +268,33 @@ pub fn run() {
         .manage(commands::simple_actor_test::ActorSystemState::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
-            let broadcaster_handle = app_handle.clone();
-            let database_handle = app_handle.clone();
             
-            // Initialize shared database connection pool (Modern Rust 2024 - Backend-Only CRUD)
-            tauri::async_runtime::spawn(async move {
-                let state: tauri::State<application::AppState> = database_handle.state();
-                
-                if let Err(e) = state.initialize_database_pool().await {
-                    error!("❌ Failed to initialize database pool: {}", e);
-                } else {
-                    info!("✅ Shared database connection pool initialized successfully");
-                }
-            });
-            
-            // Initialize event emitter in background
+            // 🚀 Single Backend Initialization (Modern Rust 2024 - Backend-Only CRUD)
             tauri::async_runtime::spawn(async move {
                 let state: tauri::State<application::AppState> = app_handle.state();
-                let emitter = application::EventEmitter::new(app_handle.clone());
                 
-                if let Err(e) = state.initialize_event_emitter(emitter).await {
-                    error!("Failed to initialize event emitter: {}", e);
-                } else {
-                    info!("✅ Event emitter initialized successfully");
-                }
+                info!("🔧 Initializing unified backend services...");
                 
-                // Initialize shared database connection pool (Modern Rust 2024 - Backend-Only CRUD)
+                // 1. Initialize database pool (single source of truth)
                 if let Err(e) = state.initialize_database_pool().await {
-                    error!("Failed to initialize database pool: {}", e);
-                } else {
-                    info!("✅ Shared database connection pool initialized successfully");
+                    error!("❌ Failed to initialize database pool: {}", e);
+                    return;
                 }
-            });
-            
-            // Initialize system state broadcaster
-            tauri::async_runtime::spawn(async move {
-                info!("🚀 Starting system state broadcaster...");
-                crate::infrastructure::system_broadcaster::start_system_broadcaster(broadcaster_handle);
+                info!("✅ Database connection pool initialized");
+                
+                // 2. Initialize event emitter
+                let emitter = application::EventEmitter::new(app_handle.clone());
+                if let Err(e) = state.initialize_event_emitter(emitter).await {
+                    error!("❌ Failed to initialize event emitter: {}", e);
+                    return;
+                }
+                info!("✅ Event emitter initialized");
+                
+                // 3. Start system state broadcaster (10s intervals)
+                info!("� Starting system state broadcaster...");
+                crate::infrastructure::system_broadcaster::start_system_broadcaster(app_handle.clone());
+                
+                info!("🎯 Unified backend services initialization complete");
             });
             
             Ok(())
@@ -361,6 +348,7 @@ pub fn run() {
             commands::config_commands::set_window_position,
             commands::config_commands::set_window_size,
             commands::config_commands::maximize_window,
+            commands::config_commands::show_window,
             commands::config_commands::write_frontend_log,
             
             // New Architecture Actor System commands (OneShot integration 완료)

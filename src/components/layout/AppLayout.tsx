@@ -18,15 +18,12 @@ export const AppLayout: Component<AppLayoutProps> = (props) => {
     tabState.tabs.find(tab => tab.id === tabState.activeTab)?.theme
   );
 
-  // 앱 초기화 시 윈도우 상태와 탭 상태 복원
+  // 앱 초기화 시 탭 상태 복원 (윈도우 상태는 AppWithTabs에서 처리)
   onMount(async () => {
     console.log('🚀 Initializing AppLayout...');
     
     try {
-      // 윈도우 상태 복원
-      await windowState.restoreState();
-      
-      // 마지막 활성 탭 복원
+      // 윈도우 상태가 이미 복원되었는지 확인 후 탭 복원
       if (windowState.isInitialized && windowState.state.lastActiveTab) {
         restoreLastActiveTab(windowState.state.lastActiveTab);
         console.log('✅ Restored last active tab:', windowState.state.lastActiveTab);

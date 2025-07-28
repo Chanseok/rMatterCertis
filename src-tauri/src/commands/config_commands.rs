@@ -1074,7 +1074,7 @@ pub async fn load_window_state(app_state: State<'_, AppState>) -> Result<Option<
         let window_state: WindowState = serde_json::from_str(window_state_str)
             .map_err(|e| format!("Failed to deserialize window state: {}", e))?;
         
-        info!("✅ Window state loaded successfully: {:?}", window_state);
+        debug!("✅ Window state loaded successfully: {:?}", window_state);
         return Ok(Some(window_state));
     }
     
@@ -1103,6 +1103,14 @@ pub fn set_window_size(window: tauri::Window, width: i32, height: i32) -> Result
 pub fn maximize_window(window: tauri::Window) -> Result<(), String> {
     window.maximize()
         .map_err(|e| format!("Failed to maximize window: {}", e))?;
+    Ok(())
+}
+
+/// Show window (Tauri command)
+#[tauri::command]
+pub fn show_window(window: tauri::Window) -> Result<(), String> {
+    window.show()
+        .map_err(|e| format!("Failed to show window: {}", e))?;
     Ok(())
 }
 

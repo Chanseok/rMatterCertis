@@ -57,13 +57,13 @@ impl DatabaseConnection {
         sqlx::query("PRAGMA foreign_keys = ON").execute(&self.pool).await?;
         
         // Load and run the integrated schema SQL (003_integrated_schema.sql)
-        info!("📦 Applying integrated schema migration...");
+        info!("📦 Checking database schema (CREATE TABLE IF NOT EXISTS)...");
         let schema_path = std::path::Path::new("migrations/003_integrated_schema.sql");
         
         if schema_path.exists() {
             let schema_sql = fs::read_to_string(schema_path)?;
             sqlx::query(&schema_sql).execute(&self.pool).await?;
-            info!("✅ Applied integrated schema successfully");
+            info!("✅ Database schema verified successfully");
         } else {
             // Fallback to embedded schema if file doesn't exist
             warn!("⚠️ Schema file not found, using embedded schema");
@@ -71,7 +71,7 @@ impl DatabaseConnection {
             // Read schema from embedded file or resources
             let schema_sql = include_str!("../../migrations/003_integrated_schema.sql");
             sqlx::query(schema_sql).execute(&self.pool).await?;
-            info!("✅ Applied embedded integrated schema");
+            info!("✅ Database schema verified with embedded version");
         }
         
         // Check if we need to migrate legacy data
@@ -109,7 +109,7 @@ impl DatabaseConnection {
                 info!("ℹ️ No legacy data to migrate");
             }
         } else {
-            info!("ℹ️ No legacy tables found, fresh installation");
+            info!("ℹ️ No legacy migration needed (modern schema already in use)");
         }
         
         // Report on database status

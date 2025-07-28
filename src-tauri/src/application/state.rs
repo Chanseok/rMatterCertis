@@ -72,7 +72,7 @@ impl AppState {
         
         let mut pool_guard = self.database_pool.write().await;
         *pool_guard = Some(pool);
-        info!("✅ Shared database connection pool initialized");
+        // Note: Log message moved to lib.rs setup to avoid duplication
         Ok(())
     }
     
@@ -106,7 +106,7 @@ impl AppState {
     pub async fn initialize_event_emitter(&self, emitter: EventEmitter) -> Result<(), String> {
         let mut emitter_guard = self.event_emitter.write().await;
         *emitter_guard = Some(emitter);
-        info!("Event emitter initialized");
+        // Note: Log message moved to lib.rs setup to avoid duplication
         Ok(())
     }
     

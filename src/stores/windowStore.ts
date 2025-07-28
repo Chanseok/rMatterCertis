@@ -88,6 +88,10 @@ const [windowState, setWindowState] = createStore<WindowStore>({
         
         // 윈도우 위치와 크기 적용
         await windowState.applyWindowSettings();
+        
+        // 윈도우 표시 (위치 설정 후)
+        await invoke('show_window');
+        
         setWindowState('isInitialized', true);
         return;
       }
