@@ -617,27 +617,36 @@ impl ServiceBasedBatchCrawlingEngine {
         let start_time = Instant::now();
         info!("Starting service-based 4-stage batch crawling for session: {}", self.session_id);
 
-        // 🔥 1. 세션 시작 이벤트 (크롤링 버튼 클릭 후에만 발송)
+        // 🔥 1. 크롤링 세션 시작 이벤트 (사용자가 크롤링 버튼 클릭한 시점)
+        info!("🚀 크롤링 세션 시작: {}", self.session_id);
         if let Some(broadcaster) = &self.broadcaster {
             let _ = broadcaster.emit_session_event(
                 self.session_id.clone(),
                 crate::domain::events::SessionEventType::Started,
-                "크롤링 세션 시작".to_string(),
+                format!("크롤링 세션 시작 (페이지 {}-{})", self.config.start_page, self.config.end_page),
             );
         }
 
-        // 🔥 2. 기존 크롤링 시작 이벤트도 유지 (호환성)
-        if let Some(broadcaster) = &mut self.broadcaster {
-            if let Err(e) = broadcaster.emit_crawling_started() {
-                warn!("Failed to emit crawling-started event: {}", e);
-            }
-        }
-
-        // 🔥 3. 상세 세션 시작 이벤트 (기존 이벤트 시스템)
+        // 🔥 2. 상세 세션 시작 이벤트 (기존 이벤트 시스템 호환성)
         self.emit_detailed_event(DetailedCrawlingEvent::SessionStarted {
             session_id: self.session_id.clone(),
             config: self.config.clone(),
         }).await?;
+
+        // 🔥 3. 사이트 상태 확인 시작 이벤트 (캐시 우선 확인)
+        info!("🔍 사이트 상태 확인 시작 (캐시 우선)");
+        if let Some(broadcaster) = &self.broadcaster {
+            let _ = broadcaster.emit_session_event(
+                self.session_id.clone(),
+                crate::domain::events::SessionEventType::SiteStatusCheck,
+                "사이트 상태 확인 및 캐시 검증 시작".to_string(),
+            );
+        }
+
+        // 🔥 4. StageEvent 발생 - 사이트 상태 확인 시작 (향후 구현)
+        // if let Some(ref emitter) = self.event_emitter.as_ref() {
+        //     // ConcurrencyEvent 발생 코드는 향후 구현
+        // }
 
         // 시작 전 취소 확인
         if let Some(cancellation_token) = &self.config.cancellation_token {
@@ -647,8 +656,14 @@ impl ServiceBasedBatchCrawlingEngine {
             }
         }
 
-        // Stage 0: 사이트 상태 확인
+        // Stage 0: 사이트 상태 확인 (캐시 우선, 필요시 실제 확인)
         let site_status = self.stage0_check_site_status().await?;
+        
+        // 🔥 5. 사이트 상태 확인 완료 이벤트 (향후 구현)
+        info!("✅ 사이트 상태 확인 완료: 총 {}페이지, 접근 가능", site_status.total_pages);
+        // if let Some(ref emitter) = self.event_emitter.as_ref() {
+        //     // ConcurrencyEvent 발생 코드는 향후 구현
+        // }
         
         // Stage 0 완료 후 취소 확인
         if let Some(cancellation_token) = &self.config.cancellation_token {
@@ -705,21 +720,52 @@ impl ServiceBasedBatchCrawlingEngine {
             }
         }
         
-        // 🔥 3. 배치 시작 이벤트 (ProductList 시작 전에 발송)
+        // 🔥 6. 배치 계획 수립 이벤트 (Stage 1 완료 후)
         let total_pages = if actual_start_page > actual_end_page {
             actual_start_page - actual_end_page + 1
         } else {
             actual_end_page - actual_start_page + 1
         };
         
+        let estimated_batches = (total_pages as f32 / 3.0).ceil() as u32; // 3페이지씩 배치
+        info!("📋 배치 계획 수립: 총 {}페이지를 {}개 배치로 분할", total_pages, estimated_batches);
+        
+        if let Some(broadcaster) = &self.broadcaster {
+            let _ = broadcaster.emit_session_event(
+                self.session_id.clone(),
+                crate::domain::events::SessionEventType::BatchPlanning,
+                format!("배치 계획 수립 완료: {}페이지 → {}개 배치", total_pages, estimated_batches),
+            );
+        }
+
+        // 🔥 7. 각 배치별 생성 이벤트 발생
+        for batch_num in 1..=estimated_batches {
+            let start_page_for_batch = actual_start_page + (batch_num - 1) * 3;
+            let end_page_for_batch = std::cmp::min(start_page_for_batch + 2, actual_end_page);
+            
+            self.emit_detailed_event(DetailedCrawlingEvent::BatchCreated {
+                batch_id: batch_num,
+                total_batches: estimated_batches,
+                start_page: start_page_for_batch,
+                end_page: end_page_for_batch,
+                description: format!("배치 {} (페이지 {}-{})", batch_num, start_page_for_batch, end_page_for_batch),
+            }).await?;
+        }
+        
+        // 🔥 8. 배치 시작 이벤트 (실제 크롤링 시작)
         self.emit_detailed_event(DetailedCrawlingEvent::BatchStarted {
             batch_id: 1,
-            total_batches: 1,
+            total_batches: estimated_batches,
             pages_in_batch: total_pages,
         }).await?;
         
         // Stage 2: 제품 목록 수집 - 계산된 최적 범위 사용
-        let product_urls = self.stage2_collect_product_list_optimized(actual_start_page, actual_end_page).await?;
+        let product_urls = self.stage2_collect_product_list_optimized(
+            actual_start_page, 
+            actual_end_page, 
+            site_status.total_pages, 
+            site_status.products_on_last_page
+        ).await?;
         
         // 🔥 Stage 2 결과 검증 및 로깅
         info!("📊 Stage 2 completed: {} product URLs collected", product_urls.len());
@@ -894,7 +940,7 @@ impl ServiceBasedBatchCrawlingEngine {
     }
 
     /// Stage 2: 제품 목록 수집 (서비스 기반)
-    async fn stage2_collect_product_list(&self, total_pages: u32) -> Result<Vec<ProductUrl>> {
+    async fn stage2_collect_product_list(&self, total_pages: u32, products_on_last_page: u32) -> Result<Vec<ProductUrl>> {
         info!("Stage 2: Collecting product list using ProductListCollector service");
         
         // 취소 확인 - 단계 시작 전
@@ -919,13 +965,20 @@ impl ServiceBasedBatchCrawlingEngine {
             // 취소 토큰과 함께 제품 목록 수집 - 개선된 ProductListCollector 사용
             self.product_list_collector.collect_page_range_with_cancellation(
                 self.config.start_page, 
-                effective_end, 
+                effective_end,
+                total_pages,
+                products_on_last_page,
                 cancellation_token.clone()
             ).await?
         } else {
             warn!("⚠️  No cancellation token - using parallel collection without cancellation");
             // 취소 토큰이 없어도 병렬 처리 사용
-            self.product_list_collector.collect_page_range(self.config.start_page, effective_end).await?
+            self.product_list_collector.collect_page_range(
+                self.config.start_page, 
+                effective_end,
+                total_pages,
+                products_on_last_page
+            ).await?
         };
         
         // 취소 확인 - 단계 완료 후
@@ -946,10 +999,10 @@ impl ServiceBasedBatchCrawlingEngine {
     }
 
     /// Stage 2: 제품 목록 수집 (최적화된 범위 사용) - Phase 4 Implementation
-    async fn stage2_collect_product_list_optimized(&mut self, start_page: u32, end_page: u32) -> Result<Vec<ProductUrl>> {
-        info!("Stage 2: Collecting product list using optimized range {} to {} with TRUE concurrent execution", start_page, end_page);
+    async fn stage2_collect_product_list_optimized(&mut self, start_page: u32, end_page: u32, total_pages: u32, products_on_last_page: u32) -> Result<Vec<ProductUrl>> {
+        info!("🔗 Stage 2: ProductList 수집 시작 - 페이지별 병렬 실행 ({}~{})", start_page, end_page);
         
-        // 🔥 새로운 세분화된 배치 생성 이벤트 발송
+        // 🔥 Stage 2 배치 생성 이벤트
         let total_pages = if start_page > end_page {
             start_page - end_page + 1
         } else {
@@ -958,7 +1011,8 @@ impl ServiceBasedBatchCrawlingEngine {
 
         let batch_id = format!("productlist-{}-{}", start_page, end_page);
         
-        // 🔥 배치 생성 이벤트
+        // 🔥 ProductList 배치 생성 이벤트
+        info!("📦 ProductList 배치 생성: {} ({}페이지)", batch_id, total_pages);
         if let Some(broadcaster) = &self.broadcaster {
             let metadata = crate::domain::events::BatchMetadata {
                 total_items: total_pages,
@@ -1832,6 +1886,7 @@ impl ServiceBasedBatchCrawlingEngine {
                     Some(ConcurrencyEvent::SessionEvent {
                         session_id: session_id.clone(),
                         event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Started,
+                        timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("stage".to_string(), "session_initialization".to_string()),
@@ -1843,6 +1898,7 @@ impl ServiceBasedBatchCrawlingEngine {
                     Some(ConcurrencyEvent::SessionEvent {
                         session_id: session_id.clone(),
                         event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Completed,
+                        timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("duration_seconds".to_string(), duration.as_secs().to_string()),
@@ -1858,6 +1914,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         session_id: self.session_id.clone(),
                         batch_id: format!("batch_{}", batch_id),
                         event_type: crate::new_architecture::events::task_lifecycle::BatchEventType::Created,
+                        timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("total_batches".to_string(), total_batches.to_string()),
@@ -1873,6 +1930,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         session_id: self.session_id.clone(),
                         batch_id: format!("batch_{}", batch_id),
                         event_type: crate::new_architecture::events::task_lifecycle::BatchEventType::Started,
+                        timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("total_batches".to_string(), total_batches.to_string()),
@@ -1886,6 +1944,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         session_id: self.session_id.clone(),
                         batch_id: format!("batch_{}", batch),
                         event_type: crate::new_architecture::events::task_lifecycle::BatchEventType::Completed,
+                        timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("batch_number".to_string(), batch.to_string()),
@@ -1899,6 +1958,7 @@ impl ServiceBasedBatchCrawlingEngine {
                     Some(ConcurrencyEvent::SessionEvent {
                         session_id: self.session_id.clone(),
                         event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Started,
+                        timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("stage".to_string(), stage.clone()),
@@ -1912,6 +1972,7 @@ impl ServiceBasedBatchCrawlingEngine {
                     Some(ConcurrencyEvent::SessionEvent {
                         session_id: self.session_id.clone(),
                         event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Completed,
+                        timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("stage".to_string(), stage.clone()),
@@ -1927,6 +1988,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         session_id: self.session_id.clone(),
                         batch_id: format!("batch_{}", batch_id),
                         event_type: crate::new_architecture::events::task_lifecycle::BatchEventType::Started,
+                        timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("page_number".to_string(), page.to_string()),
@@ -1941,6 +2003,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         session_id: self.session_id.clone(),
                         batch_id: "page_batch".to_string(),
                         event_type: crate::new_architecture::events::task_lifecycle::BatchEventType::Completed,
+                        timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("page_number".to_string(), page.to_string()),
@@ -1956,6 +2019,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         session_id: self.session_id.clone(),
                         batch_id: format!("batch_{}", batch_id),
                         event_type: crate::new_architecture::events::task_lifecycle::BatchEventType::Started,
+                        timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("product_url".to_string(), url.clone()),
@@ -1975,6 +2039,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         } else { 
                             crate::new_architecture::events::task_lifecycle::BatchEventType::Failed
                         },
+                        timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("product_url".to_string(), url.clone()),
@@ -1989,6 +2054,7 @@ impl ServiceBasedBatchCrawlingEngine {
                     Some(ConcurrencyEvent::SessionEvent {
                         session_id: self.session_id.clone(),
                         event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Failed,
+                        timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("stage".to_string(), stage.clone()),

@@ -411,10 +411,16 @@ impl CrawlingIntegrationService {
         page: u32,
         max_retries: u32,
     ) -> Result<Vec<ProductUrl>> {
+        // 사이트 상태 확인하여 실제 정보 가져오기
+        let site_status = self.status_checker.check_site_status().await?;
         let mut last_error = None;
         
         for attempt in 0..=max_retries {
-            match self.list_collector.collect_single_page(page).await {
+            match self.list_collector.collect_single_page(
+                page,
+                site_status.total_pages,
+                site_status.products_on_last_page
+            ).await {
                 Ok(urls) => {
                     if attempt > 0 {
                         info!(page = page, attempt = attempt, "Page collection succeeded after retry");

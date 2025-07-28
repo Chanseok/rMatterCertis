@@ -51,19 +51,73 @@ pub trait DatabaseAnalyzer: Send + Sync {
 #[async_trait]
 pub trait ProductListCollector: Send + Sync {
     /// 모든 페이지에서 제품 URL 수집 (메타데이터 포함)
-    async fn collect_all_pages(&self, total_pages: u32) -> Result<Vec<ProductUrl>>;
+    /// 
+    /// # Parameters  
+    /// * `total_pages` - 사이트의 총 페이지 수 (사전 계산된 값)
+    /// * `products_on_last_page` - 마지막 페이지의 제품 수 (사전 계산된 값)
+    async fn collect_all_pages(
+        &self, 
+        total_pages: u32,
+        products_on_last_page: u32
+    ) -> Result<Vec<ProductUrl>>;
     
     /// 페이지 범위에서 제품 URL 수집 (start_page부터 end_page까지, 메타데이터 포함)
-    async fn collect_page_range(&self, start_page: u32, end_page: u32) -> Result<Vec<ProductUrl>>;
+    /// 
+    /// # Parameters
+    /// * `start_page` - 시작 페이지 번호
+    /// * `end_page` - 종료 페이지 번호
+    /// * `total_pages` - 사이트의 총 페이지 수 (사전 계산된 값)
+    /// * `products_on_last_page` - 마지막 페이지의 제품 수 (사전 계산된 값)
+    async fn collect_page_range(
+        &self, 
+        start_page: u32, 
+        end_page: u32,
+        total_pages: u32,
+        products_on_last_page: u32
+    ) -> Result<Vec<ProductUrl>>;
     
     /// 페이지 범위에서 제품 URL 수집 (취소 토큰 지원, 메타데이터 포함)
-    async fn collect_page_range_with_cancellation(&self, start_page: u32, end_page: u32, cancellation_token: CancellationToken) -> Result<Vec<ProductUrl>>;
+    /// 
+    /// # Parameters
+    /// * `start_page` - 시작 페이지 번호
+    /// * `end_page` - 종료 페이지 번호
+    /// * `total_pages` - 사이트의 총 페이지 수 (사전 계산된 값)
+    /// * `products_on_last_page` - 마지막 페이지의 제품 수 (사전 계산된 값)
+    /// * `cancellation_token` - 취소 토큰
+    async fn collect_page_range_with_cancellation(
+        &self, 
+        start_page: u32, 
+        end_page: u32,
+        total_pages: u32,
+        products_on_last_page: u32,
+        cancellation_token: CancellationToken
+    ) -> Result<Vec<ProductUrl>>;
     
     /// 단일 페이지에서 제품 URL 수집 (메타데이터 포함)
-    async fn collect_single_page(&self, page: u32) -> Result<Vec<ProductUrl>>;
+    /// 
+    /// # Parameters
+    /// * `page` - 페이지 번호
+    /// * `total_pages` - 사이트의 총 페이지 수 (사전 계산된 값)
+    /// * `products_on_last_page` - 마지막 페이지의 제품 수 (사전 계산된 값)
+    async fn collect_single_page(
+        &self, 
+        page: u32,
+        total_pages: u32,
+        products_on_last_page: u32
+    ) -> Result<Vec<ProductUrl>>;
     
     /// 배치별 페이지 수집 (메타데이터 포함)
-    async fn collect_page_batch(&self, pages: &[u32]) -> Result<Vec<ProductUrl>>;
+    /// 
+    /// # Parameters
+    /// * `pages` - 수집할 페이지 번호 배열
+    /// * `total_pages` - 사이트의 총 페이지 수 (사전 계산된 값)
+    /// * `products_on_last_page` - 마지막 페이지의 제품 수 (사전 계산된 값)
+    async fn collect_page_batch(
+        &self, 
+        pages: &[u32],
+        total_pages: u32,
+        products_on_last_page: u32
+    ) -> Result<Vec<ProductUrl>>;
     
     /// Any 트레이트 지원을 위한 다운캐스팅
     fn as_any(&self) -> &dyn Any;

@@ -1,6 +1,10 @@
 // TypeScript 타입 생성을 위한 바이너리
-use matter_certis_v2_lib::commands::actor_system_monitoring::*;
-use matter_certis_v2_lib::commands::crawling_v4::*;
+use matter_certis_v2_lib::types::frontend_api::{
+    AdvancedCrawlingConfig, CrawlingProgressInfo
+};
+use matter_certis_v2_lib::commands::crawling_v4::{
+    SystemStatePayload, CrawlingResponse, StartCrawlingRequest as V4StartCrawlingRequest
+};
 use matter_certis_v2_lib::domain::product::*;
 use matter_certis_v2_lib::domain::product_url::*;
 use matter_certis_v2_lib::domain::services::crawling_services::*;
@@ -10,11 +14,11 @@ fn main() {
     // 이 바이너리는 모든 ts(export) 타입들을 참조하여 생성을 강제합니다.
     
     // 명령어 타입들
-    println!("ActorSystemStatus: {:?}", std::any::type_name::<ActorSystemStatus>());
-    println!("CrawlingProgress: {:?}", std::any::type_name::<CrawlingProgress>());
+    println!("AdvancedCrawlingConfig: {:?}", std::any::type_name::<AdvancedCrawlingConfig>());
+    println!("CrawlingProgressInfo: {:?}", std::any::type_name::<CrawlingProgressInfo>());
     println!("SystemStatePayload: {:?}", std::any::type_name::<SystemStatePayload>());
     println!("CrawlingResponse: {:?}", std::any::type_name::<CrawlingResponse>());
-    println!("StartCrawlingRequest: {:?}", std::any::type_name::<StartCrawlingRequest>());
+    println!("V4StartCrawlingRequest: {:?}", std::any::type_name::<V4StartCrawlingRequest>());
     
     // 도메인 타입들
     println!("Product: {:?}", std::any::type_name::<Product>());
@@ -36,11 +40,9 @@ fn main() {
     // Default 생성자로 타입 인스턴스 생성 시도
     let _result = std::panic::catch_unwind(|| {
         // 명령어 타입들
-        let _: Option<ActorSystemStatus> = None;
-        let _: Option<CrawlingProgress> = None;
-        let _: Option<SystemStatePayload> = None;
-        let _: Option<CrawlingResponse> = None;
-        let _: Option<StartCrawlingRequest> = None;
+        let _: Option<AdvancedCrawlingConfig> = None;
+        let _: Option<CrawlingProgressInfo> = None;
+        let _: Option<V4StartCrawlingRequest> = None;
         
         // 도메인 타입들
         let _: Option<Product> = None;

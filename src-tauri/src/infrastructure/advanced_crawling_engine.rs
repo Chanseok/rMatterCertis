@@ -414,7 +414,14 @@ impl AdvancedBatchCrawlingEngine {
         info!("   - Collection order: {}", if start_page > end_page { "oldest first (descending)" } else { "newest first (ascending)" });
         
         // Use page range collection instead of collect_all_pages
-        let product_urls = self.product_list_collector.collect_page_range(start_page, end_page).await?;
+        // 사이트 상태 확인하여 실제 정보 가져오기
+        let site_status = self.status_checker.check_site_status().await?;
+        let product_urls = self.product_list_collector.collect_page_range(
+            start_page, 
+            end_page,
+            site_status.total_pages,
+            site_status.products_on_last_page
+        ).await?;
         
         self.emit_detailed_event(DetailedCrawlingEvent::StageCompleted {
             stage: "ProductList".to_string(),

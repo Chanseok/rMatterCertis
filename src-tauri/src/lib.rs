@@ -369,14 +369,8 @@ pub fn run() {
             new_architecture::services::real_crawling_commands::test_real_oneshot_integration,
             
             // Actor System Monitoring commands (Phase C: UI 개선)
-            commands::actor_system_monitoring::get_actor_system_status,
-            commands::actor_system_monitoring::get_actor_system_health,
-            commands::actor_system_monitoring::get_actor_crawling_progress,
-            commands::actor_system_monitoring::get_actor_crawling_config,
-            commands::actor_system_monitoring::start_crawling_session,
-            commands::actor_system_monitoring::pause_crawling_session,
-            commands::actor_system_monitoring::resume_crawling_session,
-            commands::actor_system_monitoring::stop_crawling_session
+            commands::actor_system_monitoring::start_crawling_session
+            
             
             // TODO: Add other commands as they are implemented
             // Most commands are temporarily disabled for compilation

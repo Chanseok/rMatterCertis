@@ -375,28 +375,94 @@ pub enum ConcurrencyEvent {
     /// `AI` 기반 동시성 분석 결과
     ConcurrencyInsight(ConcurrencyInsight),
     
-    /// 세션 레벨 이벤트
+    /// 세션 레벨 이벤트 (크롤링 버튼 클릭부터 완료까지)
     SessionEvent {
         session_id: String,
         event_type: SessionEventType,
         metadata: HashMap<String, String>,
+        timestamp: DateTime<Utc>,
     },
     
-    /// 배치 레벨 이벤트
+    /// 배치 레벨 이벤트 (배치 생성, 시작, 완료)
     BatchEvent {
         session_id: String,
         batch_id: String,
         event_type: BatchEventType,
         metadata: HashMap<String, String>,
+        timestamp: DateTime<Utc>,
     },
+    
+    /// 스테이지별 작업 이벤트 (ProductList, ProductDetails 구분)
+    StageEvent {
+        session_id: String,
+        batch_id: Option<String>,
+        stage_type: StageType,
+        event_type: TaskLifecycleEvent,
+        metadata: HashMap<String, String>,
+        timestamp: DateTime<Utc>,
+    },
+}
+
+/// 크롤링 세션 계획 정보
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../src/types/generated/")]
+pub struct CrawlingSessionPlan {
+    /// 세션 ID
+    pub session_id: String,
+    /// 총 페이지 수
+    pub total_pages: u32,
+    /// 생성될 배치 수
+    pub total_batches: u32,
+    /// 예상 완료 시간
+    pub estimated_completion_time: DateTime<Utc>,
+    /// 캐시된 사이트 상태
+    pub cached_site_status: Option<SiteStatusInfo>,
+    /// 배치별 페이지 분할 계획
+    pub batch_plans: Vec<BatchPlan>,
+}
+
+/// 배치 계획 정보
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../src/types/generated/")]
+pub struct BatchPlan {
+    /// 배치 ID
+    pub batch_id: String,
+    /// 시작 페이지
+    pub start_page: u32,
+    /// 끝 페이지
+    pub end_page: u32,
+    /// 예상 제품 수
+    pub estimated_products: u32,
+    /// 우선순위
+    pub priority: TaskPriority,
+}
+
+/// 사이트 상태 정보
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../src/types/generated/")]
+pub struct SiteStatusInfo {
+    /// 사이트 접근 가능 여부
+    pub is_accessible: bool,
+    /// 응답 시간 (밀리초)
+    pub response_time_ms: u64,
+    /// 마지막 확인 시간
+    pub last_checked: DateTime<Utc>,
+    /// 총 페이지 수 (캐시된 값)
+    pub total_pages: Option<u32>,
+    /// 캐시 유효성
+    pub cache_valid: bool,
 }
 
 /// 세션 이벤트 유형
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../src/types/generated/")]
 pub enum SessionEventType {
-    /// 세션 시작
+    /// 세션 시작 - 크롤링 버튼 클릭 시점
     Started,
+    /// 캐시 확인 및 사이트 상태 체크
+    SiteStatusCheck,
+    /// 배치 계획 수립 (총 페이지 수, 배치 수 계산)
+    BatchPlanning,
     /// 세션 완료
     Completed,
     /// 세션 실패
@@ -413,14 +479,32 @@ pub enum SessionEventType {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../src/types/generated/")]
 pub enum BatchEventType {
-    /// 배치 생성
+    /// 배치 생성 (계획 단계)
     Created,
-    /// 배치 시작
+    /// 배치 시작 (실제 실행 시작)
     Started,
+    /// 배치 진행 중 (중간 업데이트)
+    InProgress,
     /// 배치 완료
     Completed,
     /// 배치 실패
     Failed,
     /// 배치 재시도
     Retrying,
+}
+
+/// 스테이지별 작업 유형 (ProductList, ProductDetails 구분)
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../src/types/generated/")]
+pub enum StageType {
+    /// 사이트 상태 확인
+    SiteStatusCheck,
+    /// 데이터베이스 분석
+    DatabaseAnalysis,
+    /// 제품 목록 수집 (페이지별 병렬 실행)
+    ProductList { page_number: u32, batch_id: String },
+    /// 제품 상세정보 수집 (제품별 병렬 실행)
+    ProductDetails { product_id: String, batch_id: String },
+    /// 데이터베이스 저장
+    DatabaseSave,
 }

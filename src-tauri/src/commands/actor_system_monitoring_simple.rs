@@ -19,7 +19,7 @@ pub async fn start_crawling_session(
         session_id: session_id.clone(),
         event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Started,
         timestamp: chrono::Utc::now(),
-        metadata: std::collections::HashMap::new(),
+        metadata: Some(std::collections::HashMap::new()),
     };
     
     if let Err(e) = app_handle.emit("concurrency-event", &initial_event) {
@@ -34,7 +34,7 @@ pub async fn start_crawling_session(
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         
         // 실제 크롤링 실행 (State 없이 직접 호출)
-        match execute_crawling_with_state(&app_handle_clone).await {
+        match execute_crawling_without_state().await {
             Ok(_) => {
                 info!("✅ Crawling completed successfully");
                 
@@ -43,7 +43,7 @@ pub async fn start_crawling_session(
                     session_id: session_id_clone.clone(),
                     event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Completed,
                     timestamp: chrono::Utc::now(),
-                    metadata: std::collections::HashMap::new(),
+                    metadata: Some(std::collections::HashMap::new()),
                 };
                 
                 if let Err(e) = app_handle_clone.emit("concurrency-event", &completion_event) {
@@ -60,9 +60,9 @@ pub async fn start_crawling_session(
                     session_id: session_id_clone.clone(),
                     event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Failed,
                     timestamp: chrono::Utc::now(),
-                    metadata: [
+                    metadata: Some([
                         ("error".to_string(), e.to_string())
-                    ].iter().cloned().collect(),
+                    ].iter().cloned().collect()),
                 };
                 
                 if let Err(e) = app_handle_clone.emit("concurrency-event", &failure_event) {
@@ -77,11 +77,11 @@ pub async fn start_crawling_session(
     Ok(session_id)
 }
 
-/// AppHandle을 사용하여 크롤링 실행하는 헬퍼 함수  
-async fn execute_crawling_with_state(app_handle: &tauri::AppHandle) -> Result<(), String> {
-    // 현재는 간단한 성공 응답으로 시뮬레이션
-    info!("🔄 Mock crawling execution started");
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-    info!("✅ Mock crawling execution completed");
-    Ok(())
+/// State 없이 크롤링 실행하는 헬퍼 함수
+async fn execute_crawling_without_state() -> Result<(), String> {
+    // 기본 크롤링 서비스 직접 호출
+    match crate::infrastructure::service_based_crawling_engine::start_complete_crawling().await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("Crawling failed: {}", e))
+    }
 }

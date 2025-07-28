@@ -215,18 +215,18 @@ export const CrawlingEngineTab: Component = () => {
     try {
       setIsRunning(true);
       
-      addLog(`🚀 Smart Crawling 시작 - 백엔드가 자동으로 최적 범위 계산`);
+      addLog(`🚀 Actor System Crawling 시작 - 실시간 이벤트 모니터링`);
       
-      // ✅ 새로운 방식: 백엔드가 설정 파일을 읽고 자동으로 크롤링 시작
-      const session = await invoke<CrawlingSession>('start_smart_crawling');
+      // ✅ Actor 시스템 방식: 실시간 이벤트가 있는 크롤링
+      const sessionId = await invoke<string>('start_crawling_session');
       
-      setCurrentSessionId(session.session_id);
-      addLog(`✅ 크롤링 세션 시작: ${session.session_id}`);
+      setCurrentSessionId(sessionId);
+      addLog(`✅ Actor 시스템 크롤링 세션 시작: ${sessionId}`);
       
     } catch (error) {
       setIsRunning(false);
-      addLog(`❌ 크롤링 시작 실패: ${error}`);
-      console.error('크롤링 시작 오류:', error);
+      addLog(`❌ Actor 시스템 크롤링 시작 실패: ${error}`);
+      console.error('Actor 시스템 크롤링 시작 오류:', error);
     }
   };
 

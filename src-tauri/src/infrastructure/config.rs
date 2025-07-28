@@ -826,8 +826,8 @@ pub mod defaults {
     pub const BACKPRESSURE_THRESHOLD: usize = 1000;
     
     // Worker configuration defaults
-    /// Default maximum concurrent requests for list page fetcher
-    pub const LIST_PAGE_MAX_CONCURRENT: usize = 5;
+    /// Default maximum concurrent requests for list page fetcher - IMPROVED from 5 to 12
+    pub const LIST_PAGE_MAX_CONCURRENT: usize = 12;
     
     /// Default maximum concurrent requests for product detail fetcher  
     pub const PRODUCT_DETAIL_MAX_CONCURRENT: usize = 10;

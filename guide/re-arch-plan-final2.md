@@ -12,6 +12,9 @@
 - 불필요한 `clone()` 최소화, 참조 전달 우선
 - `unwrap()` 금지, 모든 에러는 `Result<T, E>`로 적절히 처리
 - Clean Code 원칙: 명확한 네이밍, 단일 책임 원칙, 최소 의존성
+- **함수형 프로그래밍 원칙**: 가급적 stateless 메서드 작성, 순수 함수 우선, 불변성 추구
+- **명시적 의존성**: 메서드 파라미터로 필요한 모든 데이터를 명시적으로 전달
+- **상태 의존성 최소화**: 내부 캐시나 상태에 의존하는 대신 명시적 파라미터 사용
 - **Backend-Only CRUD**: 모든 데이터베이스 접근을 백엔드 API로 통일 (완료 ✅)
 
 ## 1. 최종 아키텍처 원칙: 설정 파일 기반 완전 분리
@@ -275,11 +278,89 @@ graph TD
 
 ---
 
-## 3. 설정 파일 기반 크롤링 시작 플로우: 완전한 자율 운영
+## 2. 서비스 설계 원칙: Stateless 메서드와 명시적 의존성
+
+> **🦀 함수형 프로그래밍 원칙**: 복잡성을 줄이고 테스트 용이성을 향상시키기 위해 stateless 메서드를 우선적으로 사용합니다.
+
+### 2.1. 서비스 메서드 설계 원칙
+
+**1. 명시적 파라미터 전달 (Explicit Parameters)**:
+```rust
+// ❌ 잘못된 방식: 내부 상태에 의존
+async fn collect_page_range(&self, start_page: u32, end_page: u32) -> Result<Vec<ProductUrl>> {
+    let (total_pages, products_on_last_page) = self.get_cached_site_info().await?; // 상태 의존
+    // ...
+}
+
+// ✅ 올바른 방식: 명시적 파라미터
+async fn collect_page_range(
+    &self, 
+    start_page: u32, 
+    end_page: u32,
+    total_pages: u32,           // 사전 계산된 값을 명시적으로 전달
+    products_on_last_page: u32  // 사전 계산된 값을 명시적으로 전달
+) -> Result<Vec<ProductUrl>> {
+    // 상태 의존성 없음, 순수한 계산 로직
+}
+```
+
+**2. 초기화 순서 의존성 제거**:
+```rust
+// ❌ 잘못된 방식: 초기화 순서에 의존
+collector.initialize_site_info(total_pages, products_on_last_page).await?;
+collector.collect_page_range(1, 10).await?; // initialize_site_info() 호출 필수
+
+// ✅ 올바른 방식: 독립적 실행
+collector.collect_page_range(1, 10, total_pages, products_on_last_page).await?; // 자립적
+```
+
+**3. 애플리케이션 레벨에서 조정**:
+```rust
+// src-tauri/src/application/crawling_facade.rs
+impl CrawlingFacade {
+    pub async fn start_crawling(&self) -> Result<()> {
+        // 1. 사전 분석 (한 번만 실행)
+        let site_status = self.status_checker.check_site_status().await?;
+        let (total_pages, products_on_last_page) = (site_status.total_pages, site_status.products_on_last_page);
+        
+        // 2. 크롤링 범위 계산
+        let range = self.calculate_crawling_range(&site_status).await?;
+        
+        // 3. 계산된 정보를 명시적으로 전달
+        let product_urls = self.product_list_collector
+            .collect_page_range(range.start, range.end, total_pages, products_on_last_page)
+            .await?;
+        
+        // 4. 상세 정보 수집
+        let product_details = self.product_detail_collector
+            .collect_details(&product_urls)
+            .await?;
+        
+        Ok(())
+    }
+}
+```
+
+### 2.2. 설계 원칙의 장점
+
+**테스트 용이성**:
+- 모든 의존성이 명시적이므로 모킹 불필요
+- 순수 함수적 특성으로 단위 테스트 간소화
+
+**유지보수성**:
+- 메서드 시그니처만 봐도 필요한 데이터를 즉시 파악
+- 상태 관리 복잡성 제거
+
+**오류 방지**:
+- 초기화 순서 실수 방지
+- 캐시 무효화 버그 방지
+- 동시성 문제 감소
+
+## 4. 설정 파일 기반 크롤링 시작 플로우: 완전한 자율 운영
 
 > **🦀 Clean Code 구현 가이드**: 모든 메서드는 단일 책임을 가지며, 함수명은 동작을 명확히 표현해야 합니다. 불필요한 `clone()` 대신 참조를 활용하고, 모든 에러는 명시적으로 처리합니다.
 
-### 3.1. 설정 파일 기반 크롤링 시작 시퀀스: 완전 자율 동작
+### 4.1. 설정 파일 기반 크롤링 시작 시퀀스: 완전 자율 동작
 
 ```mermaid
 sequenceDiagram

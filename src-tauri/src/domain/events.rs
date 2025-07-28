@@ -319,6 +319,13 @@ pub enum CrawlingEvent {
         message: String,
         timestamp: DateTime<Utc>,
     },
+    /// 🔥 세션 라이프사이클 이벤트 (UI 표시용)
+    SessionLifecycle {
+        session_id: String,
+        event_type: SessionEventType,
+        message: String,
+        timestamp: DateTime<Utc>,
+    },
     /// 🔥 배치 이벤트 (각 스테이지별 배치)
     BatchEvent {
         session_id: String,
@@ -368,8 +375,12 @@ pub enum SiteCheckStatus {
 /// 🔥 세션 이벤트 타입
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionEventType {
-    /// 크롤링 세션 시작
+    /// 크롤링 세션 시작 (사용자가 크롤링 버튼 클릭)
     Started,
+    /// 사이트 상태 확인 및 캐시 검증
+    SiteStatusCheck,
+    /// 배치 계획 수립 (총 페이지 수, 배치 분할 계획)
+    BatchPlanning,
     /// 크롤링 세션 완료
     Completed,
     /// 크롤링 세션 실패
@@ -491,6 +502,7 @@ impl CrawlingEvent {
             CrawlingEvent::BatchEvent { .. } => "batch-event",
             CrawlingEvent::ProductListPageEvent { .. } => "product-list-page-event",
             CrawlingEvent::ProductDetailEvent { .. } => "product-detail-event",
+            CrawlingEvent::SessionLifecycle { .. } => "session-lifecycle",
         }
     }
 }

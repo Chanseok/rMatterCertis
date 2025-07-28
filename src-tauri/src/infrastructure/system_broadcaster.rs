@@ -358,6 +358,32 @@ impl SystemStateBroadcaster {
         Ok(())
     }
 
+    /// 🔥 세션 이벤트 발송 (크롤링 라이프사이클)
+    pub fn emit_session_event(&self, session_id: String, event_type: crate::domain::events::SessionEventType, message: String) -> anyhow::Result<()> {
+        use crate::domain::events::{CrawlingEvent, SessionEventType};
+        
+        let event_name = match event_type {
+            SessionEventType::Started => "session-started",
+            SessionEventType::SiteStatusCheck => "session-site-status-check", 
+            SessionEventType::BatchPlanning => "session-batch-planning",
+            SessionEventType::Completed => "session-completed",
+            SessionEventType::Failed => "session-failed",
+            SessionEventType::Cancelled => "session-cancelled",
+            SessionEventType::Paused => "session-paused",
+            SessionEventType::Resumed => "session-resumed",
+        };
+        
+        let event = CrawlingEvent::SessionLifecycle {
+            session_id,
+            event_type,
+            message,
+            timestamp: chrono::Utc::now(),
+        };
+        
+        self.app_handle.emit(event_name, &event)?;
+        Ok(())
+    }
+
     /// 크롤링 에러 이벤트 발송
     pub fn emit_crawling_error(&self, error_message: String) -> anyhow::Result<()> {
         let payload = serde_json::json!({
@@ -483,18 +509,6 @@ impl SystemStateBroadcaster {
     /// 🔥 새로운 CrawlingEvent 기반 발송 메서드 추가
     pub fn emit_site_status_check(&self, event: &crate::domain::events::CrawlingEvent) -> anyhow::Result<()> {
         self.app_handle.emit(event.event_name(), event)?;
-        Ok(())
-    }
-
-    /// 🔥 세션 이벤트 발송
-    pub fn emit_session_event(&self, session_id: String, event_type: crate::domain::events::SessionEventType, message: String) -> anyhow::Result<()> {
-        let event = crate::domain::events::CrawlingEvent::SessionEvent {
-            session_id,
-            event_type,
-            message,
-            timestamp: chrono::Utc::now(),
-        };
-        self.app_handle.emit(event.event_name(), &event)?;
         Ok(())
     }
 

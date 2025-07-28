@@ -1688,31 +1688,54 @@ enum ProductDetailEvent {
 
 #[async_trait]
 impl ProductListCollector for ProductListCollectorImpl {
-    async fn collect_page_batch(&self, pages: &[u32]) -> Result<Vec<ProductUrl>> {
+    async fn collect_page_batch(
+        &self, 
+        pages: &[u32],
+        total_pages: u32,
+        products_on_last_page: u32
+    ) -> Result<Vec<ProductUrl>> {
+        info!("🔍 Collecting batch of {} pages with stateless design", pages.len());
+        
         let mut all_urls = Vec::new();
         for &page in pages {
-            match self.collect_page_range(page, page).await {
-                Ok(mut urls) => all_urls.append(&mut urls),
+            match self.collect_single_page(page, total_pages, products_on_last_page).await {
+                Ok(mut urls) => {
+                    all_urls.append(&mut urls);
+                    debug!("✅ Page {} completed with {} URLs", page, urls.len());
+                },
                 Err(e) => {
-                    error!("Failed to collect page {}: {}", page, e);
+                    error!("❌ Failed to collect page {}: {}", page, e);
                     continue;
                 }
             }
         }
+        
+        info!("📊 Batch collection completed: {} total URLs from {} pages", 
+              all_urls.len(), pages.len());
         Ok(all_urls)
     }
     
     fn as_any(&self) -> &dyn Any {
         self
     }
-    async fn collect_all_pages(&self, total_pages: u32) -> Result<Vec<ProductUrl>> {
-        info!("🔍 Collecting from {} pages with parallel processing", total_pages);
+    async fn collect_all_pages(
+        &self, 
+        total_pages: u32,
+        products_on_last_page: u32
+    ) -> Result<Vec<ProductUrl>> {
+        info!("🔍 Collecting from {} pages with stateless parallel processing", total_pages);
         
         // Use the existing parallel implementation from collect_page_range
-        self.collect_page_range(1, total_pages).await
+        self.collect_page_range(1, total_pages, total_pages, products_on_last_page).await
     }
     
-    async fn collect_page_range(&self, start_page: u32, end_page: u32) -> Result<Vec<ProductUrl>> {
+    async fn collect_page_range(
+        &self, 
+        start_page: u32, 
+        end_page: u32,
+        total_pages: u32,
+        products_on_last_page: u32
+    ) -> Result<Vec<ProductUrl>> {
         // Handle descending range (older to newer) - typical for our use case
         let pages: Vec<u32> = if start_page > end_page {
             // Descending range: start from oldest (highest page number) to newest (lower page number)
@@ -1722,21 +1745,15 @@ impl ProductListCollector for ProductListCollectorImpl {
             (start_page..=end_page).collect()
         };
         
-        info!("🔍 Collecting from {} pages in range {} to {} with true concurrent execution", 
+        info!("🔍 Collecting from {} pages in range {} to {} with stateless execution", 
               pages.len(), start_page, end_page);
         
-        // 사이트 분석 정보를 가져와서 정확한 총 페이지 수와 마지막 페이지 제품 수 확인
-        let (total_pages, products_on_last_page) = self.status_checker.discover_total_pages().await?;
-        
-        // 가장 큰 페이지 번호가 마지막 페이지 번호임
-        let last_page_number = total_pages;
-        let products_in_last_page = products_on_last_page;
-        
-        info!("📊 Site analysis result: total_pages={}, products_on_last_page={}", 
+        // ✅ Clean Code: 명시적 파라미터 사용 (상태 의존성 제거)
+        info!("📊 Using explicit parameters: total_pages={}, products_on_last_page={}", 
               total_pages, products_on_last_page);
         
-        // PageIdCalculator 초기화
-        let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page as usize);
+        // PageIdCalculator 초기화 (한 번만 생성)
+        let page_calculator = crate::utils::PageIdCalculator::new(total_pages, products_on_last_page as usize);
         
         let max_concurrent = self.config.max_concurrent as usize;
         
@@ -1753,7 +1770,7 @@ impl ProductListCollector for ProductListCollectorImpl {
             let http_client = Arc::clone(&self.http_client);
             let data_extractor = Arc::clone(&self.data_extractor);
             let semaphore_clone = Arc::clone(&semaphore);
-            let calculator = page_calculator.clone();
+            let calculator = page_calculator.clone();  // PageIdCalculator 클론
             
             // 3. 각 태스크는 세마포어 permit을 획득한 후 실행
             let task = tokio::spawn(async move {
@@ -1769,7 +1786,7 @@ impl ProductListCollector for ProductListCollectorImpl {
                     }
                 };
                 
-                // 실제 페이지 수집 작업
+                // ✅ PageIdCalculator를 사용한 크롤링 및 URL 생성
                 let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
                 // Use consistent HttpClient for true concurrency
                 let mut client = crate::infrastructure::HttpClient::new()?;
@@ -1779,7 +1796,7 @@ impl ProductListCollector for ProductListCollectorImpl {
                 let doc = scraper::Html::parse_document(&html);
                 let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
                 
-                // Convert URLs to ProductUrl with proper pageId and indexInPage calculation
+                // ✅ PageIdCalculator를 사용한 ProductUrl 생성
                 let product_urls: Vec<ProductUrl> = url_strings
                     .into_iter()
                     .enumerate()
@@ -1835,16 +1852,19 @@ impl ProductListCollector for ProductListCollectorImpl {
         Ok(all_urls)
     }
     
-    async fn collect_single_page(&self, page: u32) -> Result<Vec<ProductUrl>> {
-        // 사이트 분석 정보를 먼저 가져오기
-        let (total_pages, products_on_last_page) = self.status_checker.discover_total_pages().await?;
+    async fn collect_single_page(
+        &self, 
+        page: u32,
+        total_pages: u32,
+        products_on_last_page: u32
+    ) -> Result<Vec<ProductUrl>> {
+        // ✅ Clean Code: 명시적 파라미터 사용 (상태 의존성 제거)
         
-        // 가장 큰 페이지 번호가 마지막 페이지 번호임
-        let last_page_number = total_pages;
-        let products_in_last_page = products_on_last_page;
+        info!("📊 Using cached site analysis for single page {}: total_pages={}, products_on_last_page={}", 
+              page, total_pages, products_on_last_page);
         
-        let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page as usize);
-        
+        let page_calculator = crate::utils::PageIdCalculator::new(total_pages, products_on_last_page as usize);
+
         let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
         // Use consistent HttpClient
         let mut client = crate::infrastructure::HttpClient::new()?;
@@ -1854,7 +1874,7 @@ impl ProductListCollector for ProductListCollectorImpl {
         let doc = scraper::Html::parse_document(&html);
         let url_strings = self.data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
         
-        // Convert URLs to ProductUrl with proper pageId and indexInPage calculation
+        // ✅ PageIdCalculator를 사용한 ProductUrl 생성
         let product_urls: Vec<ProductUrl> = url_strings
             .into_iter()
             .enumerate()
@@ -1864,7 +1884,7 @@ impl ProductListCollector for ProductListCollectorImpl {
                     url,
                     page_id: calculation.page_id,
                     index_in_page: calculation.index_in_page,
-                                              }
+                }
             })
             .collect();
         
@@ -1872,7 +1892,14 @@ impl ProductListCollector for ProductListCollectorImpl {
         Ok(product_urls)
     }
     
-    async fn collect_page_range_with_cancellation(&self, start_page: u32, end_page: u32, cancellation_token: CancellationToken) -> Result<Vec<ProductUrl>> {
+    async fn collect_page_range_with_cancellation(
+        &self, 
+        start_page: u32, 
+        end_page: u32,
+        total_pages: u32,
+        products_on_last_page: u32,
+        cancellation_token: CancellationToken
+    ) -> Result<Vec<ProductUrl>> {
         // Handle descending range (older to newer) - typical for our use case
         let pages: Vec<u32> = if start_page > end_page {
             // Descending range: start from oldest (highest page number) to newest (lower page number)
@@ -1882,18 +1909,16 @@ impl ProductListCollector for ProductListCollectorImpl {
             (start_page..=end_page).collect()
         };
         
-        info!("🔍 Collecting from {} pages in range {} to {} with cancellation support", 
+        info!("🔍 Collecting from {} pages in range {} to {} with cancellation support and stateless execution", 
               pages.len(), start_page, end_page);
         
-        // 사이트 분석 정보를 가져와서 정확한 총 페이지 수와 마지막 페이지 제품 수 확인
-        let (total_pages, products_on_last_page) = self.status_checker.discover_total_pages().await?;
+        // ✅ Clean Code: 명시적 파라미터 사용 (상태 의존성 제거)
         
-        // 가장 큰 페이지 번호가 마지막 페이지 번호임
-        let last_page_number = total_pages;
-        let products_in_last_page = products_on_last_page;
-        
-        info!("📊 Site analysis result: total_pages={}, products_on_last_page={}", 
+        info!("📊 Using explicit parameters: total_pages={}, products_on_last_page={}", 
               total_pages, products_on_last_page);
+        
+        // PageIdCalculator 초기화 (한 번만 생성)
+        let page_calculator = crate::utils::PageIdCalculator::new(total_pages, products_on_last_page as usize);
         
         let max_concurrent = self.config.max_concurrent as usize;
         
@@ -1917,10 +1942,7 @@ impl ProductListCollector for ProductListCollectorImpl {
             let data_extractor = Arc::clone(&self.data_extractor);
             let token_clone = cancellation_token.clone();
             let semaphore_clone = Arc::clone(&semaphore);
-            
-            // 사이트 분석 결과를 클로저로 전달
-            let last_page_number_clone = last_page_number;
-            let products_in_last_page_clone = products_in_last_page;
+            let calculator = page_calculator.clone();  // PageIdCalculator 클론
             
             // 3. 각 태스크는 세마포어 permit을 획득한 후 실행
             let task = tokio::spawn(async move {
@@ -1958,15 +1980,12 @@ impl ProductListCollector for ProductListCollectorImpl {
                 let doc = scraper::Html::parse_document(&html);
                 let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
                 
-                // 사이트 분석 결과를 사용하여 정확한 PageIdCalculator 생성
-                let page_calculator = crate::utils::PageIdCalculator::new(last_page_number_clone, products_in_last_page_clone as usize);
-                
-                // Convert URLs to ProductUrl with proper pageId and indexInPage calculation
+                // ✅ PageIdCalculator를 사용한 ProductUrl 생성
                 let product_urls: Vec<ProductUrl> = url_strings
                     .into_iter()
                     .enumerate()
                     .map(|(index, url)| {
-                        let calculation = page_calculator.calculate(page, index);
+                        let calculation = calculator.calculate(page, index);
                         ProductUrl {
                             url,
                             page_id: calculation.page_id,

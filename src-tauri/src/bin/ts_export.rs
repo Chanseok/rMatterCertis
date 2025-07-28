@@ -1,7 +1,13 @@
 // 간단한 ts-rs 통합 테스트
-use matter_certis_v2_lib::commands::actor_system_monitoring::*;
-use matter_certis_v2_lib::commands::crawling_v4::*;
-use matter_certis_v2_lib::commands::config_commands::*;
+use matter_certis_v2_lib::types::frontend_api::{
+    AdvancedCrawlingConfig, CrawlingProgressInfo, ErrorInfo
+};
+use matter_certis_v2_lib::commands::crawling_v4::{
+    SystemStatePayload, CrawlingResponse, StartCrawlingRequest as V4StartCrawlingRequest
+};
+use matter_certis_v2_lib::commands::config_commands::{
+    WindowState, WindowPosition, WindowSize
+};
 use std::path::Path;
 use std::fs;
 use ts_rs::TS;
@@ -17,16 +23,19 @@ fn main() {
     println!("📁 출력 폴더: {:?}", output_dir);
     
     // 각 타입별로 TypeScript 파일 생성
-    export_type::<ActorSystemStatus>(output_dir, "ActorSystemStatus");
-    export_type::<CrawlingProgress>(output_dir, "CrawlingProgress");
+    export_type::<AdvancedCrawlingConfig>(output_dir, "AdvancedCrawlingConfig");
+    export_type::<CrawlingProgressInfo>(output_dir, "CrawlingProgressInfo");
     export_type::<SystemStatePayload>(output_dir, "SystemStatePayload");
     export_type::<CrawlingResponse>(output_dir, "CrawlingResponse");
-    export_type::<StartCrawlingRequest>(output_dir, "StartCrawlingRequest");
+    export_type::<V4StartCrawlingRequest>(output_dir, "StartCrawlingRequest");
     
     // Window Management 타입들 추가
     export_type::<WindowState>(output_dir, "WindowState");
     export_type::<WindowPosition>(output_dir, "WindowPosition");
     export_type::<WindowSize>(output_dir, "WindowSize");
+    
+    // API 관련 타입들
+    export_type::<ErrorInfo>(output_dir, "ErrorInfo");
 
     println!("🎯 TypeScript 타입 생성 완료 - Modern Rust 2024 ts-rs 정책 적용됨");
 }
