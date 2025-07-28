@@ -1,10 +1,16 @@
 use tauri::State;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-use tracing::info;
+use tracing::{info, warn};
+use std::sync::Arc;
 
 use crate::infrastructure::config::ConfigManager;
 use crate::application::AppState;
+use crate::infrastructure::crawling_service_impls::StatusCheckerImpl;
+use crate::infrastructure::{DatabaseConnection, HttpClient, MatterDataExtractor};
+use crate::new_architecture::services::crawling_planner::CrawlingPlanner;
+use crate::new_architecture::config::SystemConfig;
+use crate::domain::services::{StatusChecker, DatabaseAnalyzer};
 
 /// 크롤링 세션 정보 (간소화)
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -24,7 +30,8 @@ pub async fn start_smart_crawling(
     let session_id = format!("session_{}", chrono::Utc::now().timestamp());
     let started_at = chrono::Utc::now().to_rfc3339();
     
-    info!("🚀 Starting smart crawling session: {} (설정 파일 기반 자율 동작)", session_id);
+    info!("🚀 Starting smart crawling session: {} (지능형 분석 기반 자율 동작)", session_id);
+    info!("🔧 [NEW ARCHITECTURE] Using config-based CrawlingPlanner instead of hardcoded values");
     
     // 🎯 설계 문서 준수: 파라미터 없이 설정 파일만으로 동작
     // 1. 설정 파일 자동 로딩 (matter_certis_config.json)
@@ -37,16 +44,49 @@ pub async fn start_smart_crawling(
     info!("✅ Config loaded from files: max_pages={}, request_delay={}ms", 
           config.user.crawling.page_range_limit, config.user.request_delay_ms);
 
-    // 2. Actor 시스템에 세션 시작 명령 전송 (설계 문서 준수)
-    // TODO: SessionActor → BatchActor → StageActor 계층적 구조 사용
-    // use crate::new_architecture::actor_system::SessionActor;
-    // let session_command = ActorCommand::StartSession { session_id: session_id.clone() };
-    // session_actor.send(session_command).await?;
+    // 2. 지능형 분석 시스템 초기화
+    info!("🧠 Initializing intelligent analysis system...");
     
-    // 3. 임시: 직접 크롤링 실행 (나중에 Actor 시스템으로 교체)
-    info!("⚠️ 임시 구현: Actor 시스템 대신 직접 실행 (추후 설계 문서 준수로 변경 필요)");
+    // HTTP 클라이언트 초기화 (파라미터 없이)
+    let http_client = HttpClient::new()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     
-    // ServiceBasedBatchCrawlingEngine 사용 (임시)
+    // 데이터 추출기 초기화 (Result 반환하므로 ? 연산자 사용)
+    let data_extractor = MatterDataExtractor::new()
+        .map_err(|e| format!("Failed to create data extractor: {}", e))?;
+    
+    // StatusChecker 초기화 (StatusChecker와 DatabaseAnalyzer 모두 구현)
+    let status_checker_impl = Arc::new(StatusCheckerImpl::new(
+        http_client,
+        data_extractor,
+        config.clone(),
+    ));
+    
+    let status_checker: Arc<dyn StatusChecker> = status_checker_impl.clone();
+    let database_analyzer: Arc<dyn DatabaseAnalyzer> = status_checker_impl;
+    
+    // SystemConfig 생성 (설정 파일 기반 완전 동작)
+    let system_config = Arc::new(SystemConfig::default()); // 향후 설정 파일에서 로드
+    info!("⚙️ [NEW ARCHITECTURE] SystemConfig initialized with intelligent defaults");
+    
+    // CrawlingPlanner 초기화 (설정 파일 기반)
+    let planner = CrawlingPlanner::new(
+        status_checker,
+        database_analyzer,
+        system_config,
+    );
+    info!("🧠 [NEW ARCHITECTURE] CrawlingPlanner initialized - replacing hardcoded logic");
+    
+    // 3. 지능형 시스템 상태 분석 및 계획 수립
+    info!("🔍 [NEW ARCHITECTURE] Analyzing system state with intelligent CrawlingPlanner...");
+    
+    let (site_status, db_analysis) = planner.analyze_system_state().await
+        .map_err(|e| format!("System analysis failed: {}", e))?;
+    
+    let (range_recommendation, processing_strategy) = planner.determine_crawling_strategy(&site_status, &db_analysis).await
+        .map_err(|e| format!("Strategy determination failed: {}", e))?;
+
+    info!("✅ [NEW ARCHITECTURE] Analysis complete - Range: {:?}, Processing: {:?}", range_recommendation, processing_strategy);    // 4. 계산된 범위로 크롤링 실행 (설정 파일 고정값 대신 지능형 계산 결과 사용)
     use crate::commands::crawling_v4::{CrawlingEngineState, execute_crawling_with_range, init_crawling_engine};
     use tauri::Manager;
     
@@ -69,24 +109,27 @@ pub async fn start_smart_crawling(
             }
         }
         
-        // 🎯 guide/re-arch-plan-final2.md 설계 준수: 설정 파일 완전 의존
-        // 범위 계산 없이 설정 파일의 page_range_limit 직접 사용
-        let page_range_limit = config.user.crawling.page_range_limit;
-        info!("📊 설정 파일 기반 크롤링 범위: {} 페이지 (설정: page_range_limit)", page_range_limit);
+        // 지능형 범위 계산 결과를 실제 페이지 범위로 변환
+        if let Some((start_page, end_page)) = range_recommendation.to_page_range(site_status.total_pages) {
+            info!("📊 지능형 분석 기반 크롤링 범위: {}-{} 페이지 (총 {} 페이지 중)", 
+                  start_page, end_page, site_status.total_pages);
         
-        // ServiceBasedBatchCrawlingEngine으로 직접 실행 (범위 재계산 방지)
-        match execute_crawling_with_range(
-            &app_handle,
-            &engine_state,
-            1, // 시작 페이지는 항상 1
-            page_range_limit // 설정 파일에서 가져온 범위 한도
-        ).await {
-            Ok(response) => {
-                info!("✅ 설정 파일 기반 크롤링 시작: {}", response.message);
+            // ServiceBasedBatchCrawlingEngine으로 지능형 계산 결과로 실행
+            match execute_crawling_with_range(
+                &app_handle,
+                &engine_state,
+                start_page,
+                end_page
+            ).await {
+                Ok(response) => {
+                    info!("✅ 지능형 분석 기반 크롤링 시작: {}", response.message);
+                }
+                Err(e) => {
+                    return Err(format!("Crawling execution failed: {}", e));
+                }
             }
-            Err(e) => {
-                return Err(format!("Crawling execution failed: {}", e));
-            }
+        } else {
+            info!("🛑 분석 결과: 크롤링이 필요하지 않습니다 (CrawlingRangeRecommendation::None)");
         }
     } else {
         return Err("CrawlingEngineState not available".to_string());

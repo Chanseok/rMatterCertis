@@ -66,6 +66,9 @@ pub struct SystemSettings {
     
     /// 검증 오류 시 세션 중단 여부
     pub abort_on_validation_error: Option<bool>,
+    
+    /// 기존 아이템 업데이트 여부
+    pub update_existing_items: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +111,9 @@ pub struct PerformanceSettings {
     
     /// 버퍼 크기 설정
     pub buffers: BufferSettings,
+    
+    /// 중복 제거 설정
+    pub deduplication: DeduplicationSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +132,12 @@ pub struct BatchSizeSettings {
     
     /// 크기 조정 배수
     pub adjust_multiplier: f64,
+    
+    /// 작은 DB용 배치 크기 배수
+    pub small_db_multiplier: f32,
+    
+    /// 큰 사이트용 배치 크기 배수  
+    pub large_site_multiplier: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,6 +150,18 @@ pub struct ConcurrencySettings {
     
     /// 작업 큐 크기
     pub task_queue_size: u32,
+    
+    /// 최소 동시 배치 수
+    pub min_concurrent_batches: u32,
+    
+    /// 최대 동시 배치 수
+    pub max_concurrent_batches: u32,
+    
+    /// 고부하용 동시성 배수
+    pub high_load_multiplier: f32,
+    
+    /// 안정화용 동시성 배수
+    pub stable_load_multiplier: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,6 +174,18 @@ pub struct BufferSettings {
     
     /// 임시 저장소 제한 (MB)
     pub temp_storage_limit_mb: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeduplicationSettings {
+    /// 중복 스킵 임계값 (%)
+    pub skip_threshold_percentage: f64,
+    
+    /// 중복 감지 활성화
+    pub enabled: bool,
+    
+    /// 중복 감지 방식
+    pub detection_method: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -296,6 +332,7 @@ impl SystemConfig {
                 memory_limit_mb: 2048,
                 abort_on_database_error: Some(false),
                 abort_on_validation_error: Some(false),
+                update_existing_items: true,
             },
             retry_policies: RetryPolicies {
                 list_collection: RetryPolicy {
@@ -352,6 +389,8 @@ impl SystemConfig {
                     max_size: 100,
                     auto_adjust_threshold: 0.8,
                     adjust_multiplier: 1.5,
+                    small_db_multiplier: 1.5,
+                    large_site_multiplier: 0.7,
                 },
                 concurrency: ConcurrencySettings {
                     max_concurrent_tasks: 50,
@@ -363,11 +402,20 @@ impl SystemConfig {
                         ("batch_processing".to_string(), 10),
                     ]),
                     task_queue_size: 1000,
+                    min_concurrent_batches: 1,
+                    max_concurrent_batches: 8,
+                    high_load_multiplier: 1.5,
+                    stable_load_multiplier: 0.7,
                 },
                 buffers: BufferSettings {
                     request_buffer_size: 10000,
                     response_buffer_size: 10000,
                     temp_storage_limit_mb: 500,
+                },
+                deduplication: DeduplicationSettings {
+                    skip_threshold_percentage: 5.0,
+                    enabled: true,
+                    detection_method: "content_hash".to_string(),
                 },
             },
             channels: ChannelSettings {

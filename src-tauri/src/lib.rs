@@ -44,6 +44,15 @@ pub mod new_architecture {
     pub mod resilience_result;   // Phase 3: 회복탄력성 시스템 추가
     pub mod events;              // TaskLifecycleEvent 시스템
     
+    // Config module for system-wide configuration
+    pub mod config {
+        //! Configuration management
+        pub mod system_config;
+        
+        // Re-export commonly used types
+        pub use system_config::SystemConfig;
+    }
+    
     // Services module with direct declarations
     pub mod services {
         //! Service layer implementations

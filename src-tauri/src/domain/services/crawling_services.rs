@@ -154,6 +154,18 @@ pub enum CrawlingRangeRecommendation {
     None,
 }
 
+impl CrawlingRangeRecommendation {
+    /// 범위 권장사항을 (시작 페이지, 끝 페이지) 튜플로 변환
+    /// 전체 크롤링의 경우 total_pages가 필요하므로 파라미터로 받음
+    pub fn to_page_range(&self, total_pages: u32) -> Option<(u32, u32)> {
+        match self {
+            CrawlingRangeRecommendation::Full => Some((1, total_pages)),
+            CrawlingRangeRecommendation::Partial(pages) => Some((1, *pages)),
+            CrawlingRangeRecommendation::None => None,
+        }
+    }
+}
+
 /// 사이트 상태 정보
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]

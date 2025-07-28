@@ -133,7 +133,7 @@ impl SystemStateBroadcaster {
         Self {
             app_handle,
             last_broadcast: None,
-            broadcast_interval: Duration::from_secs(2), // 2초마다 브로드캐스트
+            broadcast_interval: Duration::from_secs(10), // 10초마다 브로드캐스트 (반복 실행 방지)
             current_batch_id: None,
         }
     }
@@ -268,10 +268,10 @@ impl SystemStateBroadcaster {
 
     /// 백그라운드 브로드캐스트 태스크 시작
     pub async fn start_background_broadcast(mut self) {
-        let mut interval = time::interval(Duration::from_secs(2));
+        let mut interval = time::interval(Duration::from_secs(10)); // 10초 간격으로 변경
         
         // 🔥 애플리케이션 시작 시 즉시 브로드캐스트하지 않고 약간의 지연 추가
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
         
         loop {
             interval.tick().await;

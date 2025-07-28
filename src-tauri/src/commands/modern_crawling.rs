@@ -538,6 +538,21 @@ pub async fn check_site_status(
     state: State<'_, AppState>,
     _app_handle: AppHandle,
 ) -> Result<serde_json::Value, String> {
+    // 🔍 호출 추적을 위한 로그 추가
+    let caller_info = std::panic::Location::caller();
+    info!("🚨 check_site_status called from: {}:{}", caller_info.file(), caller_info.line());
+    
+    // 🕒 마지막 호출 시간 추적
+    static LAST_CALL: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    {
+        let mut last_call = LAST_CALL.lock().unwrap();
+        if let Some(last) = *last_call {
+            let elapsed = last.elapsed();
+            warn!("⚠️ check_site_status called again after only {:?}", elapsed);
+        }
+        *last_call = Some(std::time::Instant::now());
+    }
+    
     info!("Starting comprehensive site status check with detailed page discovery");
     
     // Get the advanced crawling engine from the state
