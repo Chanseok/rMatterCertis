@@ -16,15 +16,11 @@ use std::sync::OnceLock;
 /// 전역 데이터베이스 경로 관리자 (싱글톤)
 static DATABASE_PATH_MANAGER: OnceLock<DatabasePathManager> = OnceLock::new();
 
-/// 데이터베이스 경로 관리자
+/// 데이터베이스 경로 관리자 (단순화: 메인 DB만 사용)
 #[derive(Debug, Clone)]
 pub struct DatabasePathManager {
     /// 기본 데이터베이스 파일 경로 (절대 경로)
     pub main_database_path: PathBuf,
-    /// 백업 데이터베이스 파일 경로
-    pub backup_database_path: PathBuf,
-    /// 임시/테스트 데이터베이스 경로
-    pub temp_database_path: PathBuf,
     /// 데이터베이스 디렉토리 경로
     pub database_directory: PathBuf,
 }
@@ -37,8 +33,6 @@ impl DatabasePathManager {
         
         Ok(Self {
             main_database_path: database_directory.join("matter_certis.db"),
-            backup_database_path: database_directory.join("backup").join("matter_certis_backup.db"),
-            temp_database_path: database_directory.join("temp").join("temp.db"),
             database_directory,
         })
     }
@@ -77,34 +71,12 @@ impl DatabasePathManager {
         format!("sqlite:{}", self.main_database_path.display())
     }
     
-    /// 백업 데이터베이스 URL 반환
-    pub fn get_backup_database_url(&self) -> String {
-        format!("sqlite:{}", self.backup_database_path.display())
-    }
-    
-    /// 임시 데이터베이스 URL 반환 (테스트용)
-    pub fn get_temp_database_url(&self) -> String {
-        format!("sqlite:{}", self.temp_database_path.display())
-    }
-    
-    /// 모든 필요한 디렉토리 생성
+    /// 필요한 디렉토리 생성 (메인 DB만)
     pub async fn ensure_directories_exist(&self) -> Result<()> {
         // 메인 데이터베이스 디렉토리
         if let Some(parent) = self.main_database_path.parent() {
             tokio::fs::create_dir_all(parent).await
                 .context("메인 데이터베이스 디렉토리 생성 실패")?;
-        }
-        
-        // 백업 디렉토리
-        if let Some(parent) = self.backup_database_path.parent() {
-            tokio::fs::create_dir_all(parent).await
-                .context("백업 데이터베이스 디렉토리 생성 실패")?;
-        }
-        
-        // 임시 디렉토리
-        if let Some(parent) = self.temp_database_path.parent() {
-            tokio::fs::create_dir_all(parent).await
-                .context("임시 데이터베이스 디렉토리 생성 실패")?;
         }
         
         Ok(())
@@ -165,8 +137,6 @@ impl DatabasePathManager {
         
         tracing::info!("✅ 데이터베이스 경로 전체 초기화 완료");
         tracing::info!("📁 메인 DB: {}", self.main_database_path.display());
-        tracing::info!("💾 백업 DB: {}", self.backup_database_path.display());
-        tracing::info!("🧪 임시 DB: {}", self.temp_database_path.display());
         
         Ok(())
     }
@@ -177,16 +147,6 @@ impl DatabasePathManager {
 /// 메인 데이터베이스 URL 가져오기 (가장 자주 사용)
 pub fn get_main_database_url() -> String {
     DatabasePathManager::global().get_main_database_url()
-}
-
-/// 백업 데이터베이스 URL 가져오기
-pub fn get_backup_database_url() -> String {
-    DatabasePathManager::global().get_backup_database_url()
-}
-
-/// 임시 데이터베이스 URL 가져오기 (테스트용)
-pub fn get_temp_database_url() -> String {
-    DatabasePathManager::global().get_temp_database_url()
 }
 
 /// 데이터베이스 전체 초기화 (앱 시작 시 호출)
