@@ -143,6 +143,7 @@ pub mod commands {
     pub mod simple_crawling;      // Phase 1: 설정 파일 기반 간단한 크롤링  
     pub mod simple_actor_test;
     pub mod actor_system_monitoring;
+    pub mod actor_system_commands;    // 🎭 NEW: Actor System commands
     pub mod system_analysis;      // 시스템 분석 명령어
     pub mod advanced_engine_api;  // 새로운 Advanced Engine API 추가
     pub mod data_queries;         // Backend-Only CRUD commands (Modern Rust 2024)
@@ -352,11 +353,13 @@ pub fn run() {
             commands::config_commands::write_frontend_log,
             
             // New Architecture Actor System commands (OneShot integration 완료)
-            commands::simple_actor_test::test_new_arch_session_actor,
-            commands::simple_actor_test::test_new_arch_batch_actor,
-            commands::simple_actor_test::test_new_arch_integration,
             commands::simple_actor_test::test_new_arch_channels,
             commands::simple_actor_test::test_new_arch_performance,
+            
+            // 🎭 NEW ARCHITECTURE: Actor-based crawling commands
+            commands::actor_system_commands::start_actor_based_crawling,
+            commands::actor_system_commands::test_session_actor_basic,
+            commands::actor_system_commands::test_actor_integration_basic,
             
             // Real Crawling Integration commands (Option B implementation)
             new_architecture::services::real_crawling_commands::test_real_crawling_init,

@@ -24,6 +24,12 @@ use crate::infrastructure::{
     MatterDataExtractor,
     IntegratedProductRepository,
 };
+use crate::new_architecture::{
+    actor_system::{SessionActor, ActorError},
+    system_config::SystemConfig,
+    channel_types::{ActorCommand, AppEvent, BatchConfig},
+    integrated_context::{IntegratedContext, IntegratedContextFactory},
+};
 use tauri::AppHandle;
 
 /// 배치 프로세서 트레이트 - 3개 엔진을 통합하는 인터페이스
@@ -57,6 +63,7 @@ pub enum CrawlingEngineType {
     Basic,      // BatchCrawlingEngine
     Service,    // ServiceBasedBatchCrawlingEngine  
     Advanced,   // AdvancedBatchCrawlingEngine
+    Actor,      // 🎯 NEW: ActorBatchProcessor (SessionActor → BatchActor → StageActor)
 }
 
 /// 작업 결과
@@ -346,6 +353,16 @@ impl CrawlerManager {
             CrawlingEngineType::Advanced => {
                 Ok(Arc::new(AdvancedBatchProcessor::new(self.advanced_engine.clone())))
             }
+            CrawlingEngineType::Actor => {
+                info!("🎭 [NEW ARCHITECTURE] Creating ActorBatchProcessor");
+                Ok(Arc::new(ActorBatchProcessor::new(
+                    self.http_client.clone(),
+                    self.data_extractor.clone(),
+                    self.product_repo.clone(),
+                    self.event_emitter.clone(),
+                    self.app_handle.clone(),
+                )))
+            }
         }
     }
     
@@ -590,6 +607,175 @@ impl BatchProcessor for BasicBatchProcessor {
     
     async fn stop(&self) -> Result<()> {
         info!("⏹️ BasicBatchProcessor stopped");
+        Ok(())
+    }
+}
+
+/// 🎯 NEW ARCHITECTURE: Actor 기반 배치 프로세서
+/// guide/re-arch-plan-final2.md의 Actor 모델 기반 구현
+pub struct ActorBatchProcessor {
+    system_config: Arc<SystemConfig>,
+    context_factory: IntegratedContextFactory,
+    http_client: HttpClient,
+    data_extractor: MatterDataExtractor,
+    product_repo: Arc<IntegratedProductRepository>,
+    event_emitter: Arc<RwLock<Option<EventEmitter>>>,
+    app_handle: Option<AppHandle>,
+}
+
+impl ActorBatchProcessor {
+    pub fn new(
+        http_client: HttpClient,
+        data_extractor: MatterDataExtractor,
+        product_repo: Arc<IntegratedProductRepository>,
+        event_emitter: Arc<RwLock<Option<EventEmitter>>>,
+        app_handle: Option<AppHandle>,
+    ) -> Self {
+        let system_config = Arc::new(SystemConfig::default());
+        let context_factory = IntegratedContextFactory::new(system_config.clone());
+        
+        Self {
+            system_config,
+            context_factory,
+            http_client,
+            data_extractor,
+            product_repo,
+            event_emitter,
+            app_handle,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl BatchProcessor for ActorBatchProcessor {
+    async fn execute_task(&self, config: CrawlingConfig) -> Result<TaskResult> {
+        info!("🎭 [NEW ARCHITECTURE] Executing task with ActorBatchProcessor");
+        
+        let start_time = Instant::now();
+        let session_id = format!("actor_session_{}", chrono::Utc::now().timestamp());
+        
+        // 1. 통합 컨텍스트 생성
+        let (session_context, channels) = self.context_factory
+            .create_session_context(session_id.clone())
+            .map_err(|e| anyhow!("Failed to create session context: {}", e))?;
+        
+        info!("✅ [ACTOR] Session context created: {}", session_id);
+        
+        // 2. Actor 시스템 설정에 따른 배치 설정 변환
+        let batch_config = BatchConfig {
+            target_url: "https://csa-iot.org/csa-iot_products/".to_string(),
+            max_pages: Some(config.end_page),
+        };
+        
+        // 3. SessionActor 생성 및 실행
+        let session_actor = SessionActor::new(
+            self.system_config.clone(),
+            channels.control_rx,
+            session_context.event_tx.clone(),
+        );
+        
+        info!("🎭 [ACTOR] SessionActor created, starting execution");
+        
+        // 4. Actor 시스템 실행 (백그라운드)
+        let session_actor_handle = tokio::spawn(async move {
+            match session_actor.run().await {
+                Ok(_) => {
+                    info!("✅ [ACTOR] SessionActor completed successfully");
+                }
+                Err(e) => {
+                    error!("❌ [ACTOR] SessionActor failed: {}", e);
+                }
+            }
+        });
+        
+        // 5. 배치 처리 명령 전송
+        let pages: Vec<u32> = (config.start_page..=config.end_page).collect();
+        let command = ActorCommand::ProcessBatch {
+            pages,
+            config: batch_config,
+            batch_size: config.batch_size,
+            concurrency_limit: config.concurrency,
+        };
+        
+        // 컨텍스트를 통해 명령 전송
+        session_context.send_control_command(command).await
+            .map_err(|e| anyhow!("Failed to send command to SessionActor: {}", e))?;
+        
+        info!("📤 [ACTOR] Batch processing command sent");
+        
+        // 6. 결과 대기 (타임아웃 포함)
+        let timeout_duration = Duration::from_millis(config.timeout_ms);
+        let result = match tokio::time::timeout(timeout_duration, session_actor_handle).await {
+            Ok(Ok(_)) => {
+                info!("✅ [ACTOR] Actor system completed within timeout");
+                TaskResult {
+                    session_id,
+                    items_processed: config.end_page - config.start_page + 1,
+                    items_success: config.end_page - config.start_page + 1,
+                    items_failed: 0,
+                    duration: start_time.elapsed(),
+                    final_status: CrawlingStatus::Completed,
+                }
+            }
+            Ok(Err(e)) => {
+                error!("❌ [ACTOR] Actor system failed: {}", e);
+                TaskResult {
+                    session_id,
+                    items_processed: 0,
+                    items_success: 0,
+                    items_failed: config.end_page - config.start_page + 1,
+                    duration: start_time.elapsed(),
+                    final_status: CrawlingStatus::Error,
+                }
+            }
+            Err(_) => {
+                warn!("⏰ [ACTOR] Actor system timeout after {}ms", config.timeout_ms);
+                TaskResult {
+                    session_id,
+                    items_processed: 0,
+                    items_success: 0,
+                    items_failed: config.end_page - config.start_page + 1,
+                    duration: start_time.elapsed(),
+                    final_status: CrawlingStatus::Timeout,
+                }
+            }
+        };
+        
+        Ok(result)
+    }
+    
+    async fn get_progress(&self) -> CrawlingProgress {
+        CrawlingProgress {
+            current: 0,
+            total: 100,
+            percentage: 0.0,
+            current_stage: CrawlingStage::Processing,
+            status: CrawlingStatus::Running,
+            new_items: 0,
+            updated_items: 0,
+            errors: 0,
+            timestamp: Utc::now().to_rfc3339(),
+            current_step: "ActorBatchProcessor running".to_string(),
+            message: "Using Actor system (SessionActor → BatchActor → StageActor)".to_string(),
+            elapsed_time: 0,
+        }
+    }
+    
+    async fn pause(&self) -> Result<()> {
+        info!("⏸️ ActorBatchProcessor paused");
+        // TODO: Actor 시스템에 일시정지 명령 전송
+        Ok(())
+    }
+    
+    async fn resume(&self) -> Result<()> {
+        info!("▶️ ActorBatchProcessor resumed");
+        // TODO: Actor 시스템에 재개 명령 전송
+        Ok(())
+    }
+    
+    async fn stop(&self) -> Result<()> {
+        info!("⏹️ ActorBatchProcessor stopped");
+        // TODO: Actor 시스템에 중지 명령 전송
         Ok(())
     }
 }
