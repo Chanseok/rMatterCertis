@@ -119,7 +119,7 @@ pub async fn init_crawling_engine(
         .map_err(|e| format!("Database connection failed: {}", e))?;
     
     // Create necessary components
-    let http_client = crate::infrastructure::HttpClient::new()
+    let http_client = crate::infrastructure::HttpClient::create_from_global_config()
         .map_err(|e| format!("HTTP client creation failed: {}", e))?;
     
     let data_extractor = crate::infrastructure::MatterDataExtractor::new()
@@ -576,7 +576,7 @@ async fn calculate_intelligent_crawling_range_v4(
         let config = config_manager.load_config().await
             .map_err(|e| format!("Failed to get config: {}", e))?;
             
-        let http_client = crate::infrastructure::HttpClient::new()
+        let http_client = crate::infrastructure::HttpClient::create_from_global_config()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
         let data_extractor = crate::infrastructure::MatterDataExtractor::new()
             .map_err(|e| format!("Failed to create data extractor: {}", e))?;
@@ -790,7 +790,7 @@ async fn start_intelligent_crawling(
         tracing::info!("🔍 No valid cached site analysis, performing new analysis...");
         
         // 사이트 분석 수행 - 구체적인 구현체 생성
-        let http_client = crate::infrastructure::simple_http_client::HttpClient::new()
+        let http_client = crate::infrastructure::simple_http_client::HttpClient::create_from_global_config()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
         let data_extractor = crate::infrastructure::html_parser::MatterDataExtractor::new()
             .map_err(|e| format!("Failed to create data extractor: {}", e))?;

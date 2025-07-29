@@ -90,7 +90,7 @@ pub async fn check_advanced_site_status(
     }
     
     // 캐시가 없거나 만료된 경우, 실제 크롤링 엔진 인스턴스 생성
-    let http_client = match HttpClient::new() {
+    let http_client = match HttpClient::create_from_global_config() {
         Ok(client) => client,
         Err(e) => {
             error!("Failed to create HTTP client: {}", e);
@@ -229,7 +229,7 @@ pub async fn start_advanced_crawling(
     info!("🚀 Starting real advanced crawling session: {}", session_id);
     
     // 실제 크롤링 엔진 인스턴스 생성
-    let http_client = match HttpClient::new() {
+    let http_client = match HttpClient::create_from_global_config() {
         Ok(client) => client,
         Err(e) => {
             error!("Failed to create HTTP client: {}", e);

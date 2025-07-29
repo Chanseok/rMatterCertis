@@ -48,7 +48,7 @@ pub async fn start_smart_crawling(
     info!("🧠 Initializing intelligent analysis system...");
     
     // HTTP 클라이언트 초기화 (파라미터 없이)
-    let http_client = HttpClient::new()
+    let http_client = HttpClient::create_from_global_config()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     
     // 데이터 추출기 초기화 (Result 반환하므로 ? 연산자 사용)

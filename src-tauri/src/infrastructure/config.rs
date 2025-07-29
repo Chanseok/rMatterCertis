@@ -124,6 +124,15 @@ pub struct WorkerConfig {
     /// Maximum retry attempts
     pub max_retries: u32,
     
+    /// Maximum requests per second for HTTP client (rate limiting)
+    pub max_requests_per_second: u32,
+    
+    /// User agent string for HTTP requests
+    pub user_agent: String,
+    
+    /// Whether to follow redirects in HTTP requests
+    pub follow_redirects: bool,
+    
     /// Batch size for database operations
     pub db_batch_size: usize,
     
@@ -252,6 +261,11 @@ impl AppConfig {
     pub fn for_development() -> Self {
         Self::default()
     }
+    
+    /// HttpClient 생성을 위한 편의 메서드
+    pub fn create_http_client(&self) -> anyhow::Result<crate::infrastructure::simple_http_client::HttpClient> {
+        crate::infrastructure::simple_http_client::HttpClient::from_worker_config(&self.user.crawling.workers)
+    }
 }
 
 impl Default for AppConfig {
@@ -378,6 +392,9 @@ impl Default for WorkerConfig {
             product_detail_max_concurrent: defaults::PRODUCT_DETAIL_MAX_CONCURRENT,
             request_timeout_seconds: defaults::REQUEST_TIMEOUT_SECONDS,
             max_retries: defaults::MAX_RETRIES,
+            max_requests_per_second: defaults::MAX_REQUESTS_PER_SECOND,
+            user_agent: defaults::USER_AGENT.to_string(),
+            follow_redirects: defaults::FOLLOW_REDIRECTS,
             db_batch_size: defaults::DB_BATCH_SIZE,
             db_max_concurrency: defaults::DB_MAX_CONCURRENCY,
         }
@@ -802,6 +819,15 @@ pub mod defaults {
     
     /// Default request timeout in seconds
     pub const REQUEST_TIMEOUT_SECONDS: u64 = 30;
+    
+    /// Default maximum requests per second for HTTP client
+    pub const MAX_REQUESTS_PER_SECOND: u32 = 2;
+    
+    /// Default user agent string for HTTP requests
+    pub const USER_AGENT: &str = "matter-certis-v2/1.0 (Research Tool; +https://github.com/your-repo)";
+    
+    /// Default follow redirects setting
+    pub const FOLLOW_REDIRECTS: bool = true;
     
     /// Default number of products per page (based on actual site analysis)
     pub const DEFAULT_PRODUCTS_PER_PAGE: u32 = 12;

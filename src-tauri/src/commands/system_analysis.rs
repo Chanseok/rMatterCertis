@@ -107,7 +107,7 @@ async fn perform_site_analysis() -> Result<SiteAnalysisResult, String> {
     let config = config_manager.load_config().await
         .map_err(|e| format!("Failed to load configuration: {}", e))?;
         
-    let http_client = crate::infrastructure::HttpClient::new()
+    let http_client = crate::infrastructure::HttpClient::create_from_global_config()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let data_extractor = crate::infrastructure::MatterDataExtractor::new()
         .map_err(|e| format!("Failed to create data extractor: {}", e))?;

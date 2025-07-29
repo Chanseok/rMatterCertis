@@ -150,7 +150,7 @@ pub async fn start_crawling_v3(
     // 실제 배치 크롤링 엔진 백그라운드로 실행
     tokio::spawn(async move {
         // HTTP 클라이언트 및 파서 초기화
-        let http_client = match crate::infrastructure::HttpClient::new() {
+        let http_client = match crate::infrastructure::HttpClient::create_from_global_config() {
             Ok(client) => client,
             Err(e) => {
                 tracing::error!("Failed to create HTTP client: {}", e);
@@ -559,7 +559,7 @@ pub async fn check_site_status(
     let config = state.config.read().await.clone();
     
     // Create a simple HTTP client and necessary components
-    let http_client = crate::infrastructure::HttpClient::new()
+    let http_client = crate::infrastructure::HttpClient::create_from_global_config()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let data_extractor = crate::infrastructure::MatterDataExtractor::new()
         .map_err(|e| format!("Failed to create data extractor: {}", e))?;
@@ -973,7 +973,7 @@ async fn calculate_intelligent_crawling_range(
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
     
     // Create necessary components for range calculation
-    let http_client = crate::infrastructure::HttpClient::new()
+    let http_client = crate::infrastructure::HttpClient::create_from_global_config()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let data_extractor = crate::infrastructure::MatterDataExtractor::new()
         .map_err(|e| format!("Failed to create data extractor: {}", e))?;

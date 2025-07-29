@@ -793,7 +793,7 @@ pub async fn get_crawling_status_check(
     info!("🔍 Initializing real-time site analysis...");
     
     // Create HTTP client and data extractor
-    let http_client = crate::infrastructure::simple_http_client::HttpClient::new()
+    let http_client = crate::infrastructure::simple_http_client::HttpClient::create_from_global_config()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let data_extractor = MatterDataExtractor::new()
         .map_err(|e| format!("Failed to create data extractor: {}", e))?;

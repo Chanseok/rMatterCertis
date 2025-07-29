@@ -46,7 +46,7 @@ impl CrawlingIntegrationService {
     ) -> Result<Self> {
         // 기존 인프라 서비스들 초기화 (기존 패턴 재사용)
         let http_client = Arc::new(tokio::sync::Mutex::new(
-            HttpClient::new()?
+            HttpClient::create_from_global_config()?
         ));
         
         let data_extractor = Arc::new(
@@ -92,7 +92,7 @@ impl CrawlingIntegrationService {
         };
         
         let list_collector: Arc<dyn ProductListCollector> = Arc::new(ProductListCollectorImpl::new(
-            Arc::new(tokio::sync::Mutex::new(HttpClient::new()?)),
+            Arc::new(tokio::sync::Mutex::new(HttpClient::create_from_global_config()?)),
             data_extractor.clone(),
             collector_config.clone(),
             status_checker_impl.clone(),
@@ -100,7 +100,7 @@ impl CrawlingIntegrationService {
         
         // ProductDetailCollector는 ProductListCollectorImpl 재사용 (기존 패턴)
         let detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(ProductListCollectorImpl::new(
-            Arc::new(tokio::sync::Mutex::new(HttpClient::new()?)),
+            Arc::new(tokio::sync::Mutex::new(HttpClient::create_from_global_config()?)),
             data_extractor.clone(),
             collector_config.clone(),
             status_checker_impl.clone(),

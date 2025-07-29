@@ -44,7 +44,7 @@ impl ListPageFetcher {
         let parsed_url = Url::parse(url)
             .map_err(|e| WorkerError::InvalidInput(format!("Invalid URL '{}': {}", url, e)))?;
         
-        let mut http_client = HttpClient::new()
+        let mut http_client = HttpClient::create_from_global_config()
             .map_err(|e| WorkerError::NetworkError(e.to_string()))?;
         
         let response = http_client

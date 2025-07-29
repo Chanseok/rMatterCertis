@@ -18,6 +18,9 @@
 #![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 
+#[cfg(test)]
+mod test_http_client_config;
+
 use crate::infrastructure::{DatabaseConnection, init_logging_with_config};
 use crate::infrastructure::config::{ConfigManager, AppConfig};
 use tracing::{info, error, warn};

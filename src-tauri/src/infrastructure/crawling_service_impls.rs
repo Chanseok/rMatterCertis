@@ -81,6 +81,11 @@ impl StatusCheckerImpl {
         }
     }
 
+    /// 설정에서 HttpClient 생성 (설정 기반)
+    fn create_configured_http_client(&self) -> Result<HttpClient> {
+        HttpClient::from_worker_config(&self.config.user.crawling.workers)
+    }
+
     pub fn with_product_repo(
         http_client: HttpClient,
         data_extractor: MatterDataExtractor,
@@ -132,8 +137,8 @@ impl StatusChecker for StatusCheckerImpl {
         
         // 접근성 테스트
         let access_test = {
-            // Use consistent HttpClient instead of raw reqwest
-            let mut client = crate::infrastructure::HttpClient::new()?;
+            // Use configured HttpClient instead of hardcoded default
+            let mut client = self.create_configured_http_client()?;
             let result = client.fetch_response(&url).await?.text().await;
             result
         };
@@ -439,8 +444,8 @@ impl StatusCheckerImpl {
         while current_page >= min_page {
             let test_url = config_utils::matter_products_page_url_simple(current_page);
             
-            // Use consistent HttpClient
-            let mut client = crate::infrastructure::HttpClient::new()?;
+            // Use configured HttpClient
+            let mut client = self.create_configured_http_client()?;
             match client.fetch_response(&test_url).await {
                 Ok(response) => {
                     match response.text().await {
@@ -494,8 +499,8 @@ impl StatusCheckerImpl {
             let test_url = config_utils::matter_products_page_url_simple(current_page);
             info!("🔍 Checking page {} (consecutive empty: {})", current_page, consecutive_empty_pages);
             
-            // Use consistent HttpClient
-            let mut client = crate::infrastructure::HttpClient::new()?;
+            // Use configured HttpClient
+            let mut client = self.create_configured_http_client()?;
             match client.fetch_response(&test_url).await {
                 Ok(response) => match response.text().await {
                     Ok(html) => {
@@ -769,8 +774,8 @@ impl StatusCheckerImpl {
     async fn check_page_has_products(&self, page: u32) -> Result<bool> {
         let test_url = config_utils::matter_products_page_url_simple(page);
         
-        // Use consistent HttpClient
-        let mut client = crate::infrastructure::HttpClient::new()?;
+        // Use configured HttpClient
+        let mut client = self.create_configured_http_client()?;
         match client.fetch_response(&test_url).await {
             Ok(response) => {
                 match response.text().await {
@@ -1108,7 +1113,7 @@ impl StatusCheckerImpl {
         
         let (product_count, max_pagination_page, active_page, has_products) = {
             // Use consistent HttpClient
-            let mut client = crate::infrastructure::HttpClient::new()?;
+            let mut client = self.create_configured_http_client()?;
             let response = client.fetch_response(&url).await?;
             let html = response.text().await?;
             
@@ -1823,6 +1828,7 @@ impl ProductListCollector for ProductListCollectorImpl {
         for page in pages {
             let http_client = Arc::clone(&self.http_client);
             let data_extractor = Arc::clone(&self.data_extractor);
+            let status_checker = Arc::clone(&self.status_checker);
             let semaphore_clone = Arc::clone(&semaphore);
             let calculator = page_calculator.clone();  // PageIdCalculator 클론
             
@@ -1843,11 +1849,11 @@ impl ProductListCollector for ProductListCollectorImpl {
                 // ✅ PageIdCalculator를 사용한 크롤링 및 URL 생성
                 let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
                 // Use consistent HttpClient for true concurrency
-                let mut client = crate::infrastructure::HttpClient::new()?;
+                let mut client = status_checker.create_configured_http_client()?;
                 let response = client.fetch_response(&url).await?;
-                let html = response.text().await?;
+                let html_string = response.text().await?;
                 
-                let doc = scraper::Html::parse_document(&html);
+                let doc = scraper::Html::parse_document(&html_string);
                 let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
                 
                 // ✅ PageIdCalculator를 사용한 ProductUrl 생성
@@ -1921,11 +1927,11 @@ impl ProductListCollector for ProductListCollectorImpl {
 
         let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
         // Use consistent HttpClient
-        let mut client = crate::infrastructure::HttpClient::new()?;
+        let mut client = self.status_checker.create_configured_http_client()?;
         let response = client.fetch_response(&url).await?;
-        let html = response.text().await?;
+        let html_string = response.text().await?;
         
-        let doc = scraper::Html::parse_document(&html);
+        let doc = scraper::Html::parse_document(&html_string);
         let url_strings = self.data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
         
         // ✅ PageIdCalculator를 사용한 ProductUrl 생성
@@ -1994,6 +2000,7 @@ impl ProductListCollector for ProductListCollectorImpl {
             
             let http_client = Arc::clone(&self.http_client);
             let data_extractor = Arc::clone(&self.data_extractor);
+            let status_checker = Arc::clone(&self.status_checker);
             let token_clone = cancellation_token.clone();
             let semaphore_clone = Arc::clone(&semaphore);
             let calculator = page_calculator.clone();  // PageIdCalculator 클론
@@ -2021,9 +2028,9 @@ impl ProductListCollector for ProductListCollectorImpl {
                 // 실제 페이지 수집 작업
                 let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
                 // Use consistent HttpClient for true concurrency
-                let mut client = crate::infrastructure::HttpClient::new()?;
+                let mut client = status_checker.create_configured_http_client()?;
                 let response = client.fetch_response(&url).await?;
-                let html = response.text().await?;
+                let html_string = response.text().await?;
                 
                 // 중간에 취소 확인
                 if token_clone.is_cancelled() {
@@ -2031,7 +2038,7 @@ impl ProductListCollector for ProductListCollectorImpl {
                     return Err(anyhow!("Task cancelled during processing"));
                 }
                 
-                let doc = scraper::Html::parse_document(&html);
+                let doc = scraper::Html::parse_document(&html_string);
                 let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
                 
                 // ✅ PageIdCalculator를 사용한 ProductUrl 생성
@@ -2228,11 +2235,12 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                 // tokio::time::sleep(Duration::from_millis(delay)).await;
                 
                 // Use consistent HttpClient for true concurrency
-                let mut client = crate::infrastructure::HttpClient::new()?;
-                let response = client.fetch_response(&url).await?;
-                let html = response.text().await?;
+                let mut client_guard = http_client.lock().await;
+                let response = client_guard.fetch_response(&url).await?;
+                drop(client_guard);
+                let html_string = response.text().await?;
                 
-                let doc = scraper::Html::parse_document(&html);
+                let doc = scraper::Html::parse_document(&html_string);
                 let mut detail = data_extractor.extract_product_detail(&doc, url.clone())?;
                 
                 // 🔥 Set page_id and index_in_page from ProductUrl
@@ -2301,15 +2309,16 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                 }
                 
                 // Use consistent HttpClient with centralized logging
-                let mut client = crate::infrastructure::HttpClient::new()?;
-                let response = client.fetch_response(&url).await?;
-                let html = response.text().await?;
+                let mut client_guard = http_client.lock().await;
+                let response = client_guard.fetch_response(&url).await?;
+                drop(client_guard);
+                let html_string = response.text().await?;
                 
                 if token.is_cancelled() {
                     return Err(anyhow!("Task cancelled"));
                 }
                 
-                let doc = scraper::Html::parse_document(&html);
+                let doc = scraper::Html::parse_document(&html_string);
                 let mut detail = data_extractor.extract_product_detail(&doc, url.clone())?;
                 
                 // 🔥 Set page_id and index_in_page from ProductUrl
@@ -2397,6 +2406,7 @@ impl ProductDetailCollectorImpl {
         let mut tasks = Vec::new();
         
         for product_url in product_urls {
+            let http_client = Arc::clone(&self.http_client);
             let data_extractor = Arc::clone(&self.data_extractor);
             let url = product_url.url.clone();
             let page_id = product_url.page_id;
@@ -2437,20 +2447,9 @@ impl ProductDetailCollectorImpl {
                     task_id: task_id.clone(),
                 });
                 
-                let mut client = match crate::infrastructure::HttpClient::new() {
-                    Ok(client) => client,
-                    Err(e) => {
-                        let _ = event_tx_clone.send(ProductDetailEvent::TaskFailed {
-                            product_url: url.clone(),
-                            task_id: task_id.clone(),
-                            error: e.to_string(),
-                            processing_time: start_time.elapsed(),
-                        });
-                        return Err(e);
-                    }
-                };
+                let mut client_guard = http_client.lock().await;
                 
-                let response = match client.fetch_response(&url).await {
+                let response = match client_guard.fetch_response(&url).await {
                     Ok(response) => response,
                     Err(e) => {
                         let _ = event_tx_clone.send(ProductDetailEvent::TaskFailed {

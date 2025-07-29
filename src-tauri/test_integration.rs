@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
     
     // 3. HTTP 클라이언트 및 데이터 추출기 설정
     println!("\n🌐 3. HTTP 클라이언트 설정");
-    let http_client = HttpClient::new();
+    let http_client = HttpClient::create_from_global_config();
     let data_extractor = MatterDataExtractor::new();
     println!("✅ HTTP 클라이언트 및 데이터 추출기 초기화 완료");
     
