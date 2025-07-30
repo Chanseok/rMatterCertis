@@ -92,7 +92,7 @@ impl CrawlingIntegrationService {
         };
         
         let list_collector: Arc<dyn ProductListCollector> = Arc::new(ProductListCollectorImpl::new(
-            Arc::new(tokio::sync::Mutex::new(HttpClient::create_from_global_config()?)),
+            Arc::new(HttpClient::create_from_global_config()?),  // 🔥 Mutex 제거
             data_extractor.clone(),
             collector_config.clone(),
             status_checker_impl.clone(),
@@ -100,7 +100,7 @@ impl CrawlingIntegrationService {
         
         // ProductDetailCollector는 ProductListCollectorImpl 재사용 (기존 패턴)
         let detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(ProductListCollectorImpl::new(
-            Arc::new(tokio::sync::Mutex::new(HttpClient::create_from_global_config()?)),
+            Arc::new(HttpClient::create_from_global_config()?),  // 🔥 Mutex 제거
             data_extractor.clone(),
             collector_config.clone(),
             status_checker_impl.clone(),

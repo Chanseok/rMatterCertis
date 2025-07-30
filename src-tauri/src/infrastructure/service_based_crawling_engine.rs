@@ -562,15 +562,15 @@ impl ServiceBasedBatchCrawlingEngine {
         ));
 
         let product_list_collector: Arc<dyn ProductListCollector> = Arc::new(ProductListCollectorImpl::new(
-            Arc::new(tokio::sync::Mutex::new(http_client.clone())),
+            Arc::new(http_client.clone()),  // 🔥 Mutex 제거 - 페이지 수집도 진정한 동시성
             Arc::new(data_extractor.clone()),
             list_collector_config,
             status_checker_impl.clone(),
         ));
 
-        // ProductDetailCollector는 실제 ProductDetailCollectorImpl을 사용
+        // ProductDetailCollector는 실제 ProductDetailCollectorImpl을 사용 - Mutex 제거로 진정한 동시성
         let product_detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(ProductDetailCollectorImpl::new(
-            Arc::new(tokio::sync::Mutex::new(http_client.clone())),
+            Arc::new(http_client.clone()),  // 🔥 Mutex 제거
             Arc::new(data_extractor.clone()),
             detail_collector_config,
         ));

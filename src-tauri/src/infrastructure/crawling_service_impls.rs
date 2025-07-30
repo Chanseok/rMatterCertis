@@ -1451,7 +1451,7 @@ fn calculate_health_score(response_time: Duration, total_pages: u32) -> f64 {
 
 /// 제품 목록 수집 서비스 구현체
 pub struct ProductListCollectorImpl {
-    http_client: Arc<tokio::sync::Mutex<HttpClient>>,
+    http_client: Arc<HttpClient>,  // 🔥 Mutex 제거 - 페이지 수집도 진정한 동시성 구현
     data_extractor: Arc<MatterDataExtractor>,
     config: CollectorConfig,
     status_checker: Arc<StatusCheckerImpl>,
@@ -1459,7 +1459,7 @@ pub struct ProductListCollectorImpl {
 
 impl ProductListCollectorImpl {
     pub fn new(
-        http_client: Arc<tokio::sync::Mutex<HttpClient>>,
+        http_client: Arc<HttpClient>,  // 🔥 Mutex 제거
         data_extractor: Arc<MatterDataExtractor>,
         config: CollectorConfig,
         status_checker: Arc<StatusCheckerImpl>,
@@ -1648,19 +1648,16 @@ impl ProductListCollectorImpl {
     
     /// 🔥 완전히 독립적인 단일 페이지 수집 (의존성 최소화)
     async fn collect_single_page_independently(
-        http_client: Arc<tokio::sync::Mutex<HttpClient>>,
+        http_client: Arc<HttpClient>,  // 🔥 Mutex 제거 - 페이지 수집도 진정한 동시성
         data_extractor: Arc<MatterDataExtractor>,
         calculator: crate::utils::PageIdCalculator,
         page: u32,
     ) -> Result<Vec<ProductUrl>> {
         let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
         
-        // HTTP 클라이언트 사용 (짧은 락)
-        let html = {
-            let mut client = http_client.lock().await;
-            let response = client.fetch_response(&url).await?;
-            response.text().await?
-        };
+        // 🔥 Mutex 제거 - HTTP 클라이언트 직접 사용으로 진정한 동시성
+        let response = http_client.fetch_response(&url).await?;
+        let html = response.text().await?;
         
         let doc = scraper::Html::parse_document(&html);
         let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
@@ -2154,14 +2151,14 @@ impl DatabaseAnalyzer for DatabaseAnalyzerImpl {
 
 /// 제품 상세정보 수집 서비스 구현체
 pub struct ProductDetailCollectorImpl {
-    http_client: Arc<tokio::sync::Mutex<HttpClient>>,
+    http_client: Arc<HttpClient>,  // 🔥 Mutex 제거 - GlobalRateLimiter가 동시성 관리
     data_extractor: Arc<MatterDataExtractor>,
     config: CollectorConfig,
 }
 
 impl ProductDetailCollectorImpl {
     pub fn new(
-        http_client: Arc<tokio::sync::Mutex<HttpClient>>,
+        http_client: Arc<HttpClient>,  // 🔥 Mutex 제거
         data_extractor: Arc<MatterDataExtractor>,
         config: CollectorConfig,
     ) -> Self {
@@ -2234,10 +2231,8 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                 // Remove individual delay - let semaphore handle rate limiting
                 // tokio::time::sleep(Duration::from_millis(delay)).await;
                 
-                // Use consistent HttpClient for true concurrency
-                let mut client_guard = http_client.lock().await;
-                let response = client_guard.fetch_response(&url).await?;
-                drop(client_guard);
+                // 🔥 Mutex 제거 - 직접 HttpClient 사용으로 진정한 동시성 구현
+                let response = http_client.fetch_response(&url).await?;
                 let html_string = response.text().await?;
                 
                 let doc = scraper::Html::parse_document(&html_string);
@@ -2308,10 +2303,8 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                     return Err(anyhow!("Task cancelled"));
                 }
                 
-                // Use consistent HttpClient with centralized logging
-                let mut client_guard = http_client.lock().await;
-                let response = client_guard.fetch_response(&url).await?;
-                drop(client_guard);
+                // 🔥 Mutex 제거 - HttpClient 직접 사용으로 진정한 동시성
+                let response = http_client.fetch_response(&url).await?;
                 let html_string = response.text().await?;
                 
                 if token.is_cancelled() {
@@ -2447,9 +2440,8 @@ impl ProductDetailCollectorImpl {
                     task_id: task_id.clone(),
                 });
                 
-                let mut client_guard = http_client.lock().await;
-                
-                let response = match client_guard.fetch_response(&url).await {
+                // 🔥 Mutex 제거 - HttpClient 직접 사용
+                let response = match http_client.fetch_response(&url).await {
                     Ok(response) => response,
                     Err(e) => {
                         let _ = event_tx_clone.send(ProductDetailEvent::TaskFailed {

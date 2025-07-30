@@ -1,5 +1,5 @@
 //! HTTP client for web crawling with rate limiting and error handling
-//! 
+//!
 //! This module provides a configurable HTTP client optimized for web crawling
 //! with built-in retry logic, rate limiting, and user agent management.
 
@@ -44,7 +44,7 @@ impl HttpClientConfig {
 impl Default for HttpClientConfig {
     fn default() -> Self {
         Self {
-            max_requests_per_second: 2,
+            max_requests_per_second: 10, // Increased default for better performance
             timeout_seconds: 30,
             max_retries: 3,
             user_agent: "matter-certis-v2/1.0 (Research Tool; +https://github.com/your-repo)".to_string(),
@@ -75,6 +75,8 @@ impl GlobalRateLimiter {
             let semaphore = Arc::new(Semaphore::new(initial_rate as usize));
             let current_rate = Arc::new(Mutex::new(initial_rate));
             
+            info!("🚀 GlobalRateLimiter initialized with {} RPS (Token Bucket)", initial_rate);
+            
             GlobalRateLimiter {
                 semaphore: semaphore.clone(),
                 current_rate: current_rate.clone(),
@@ -88,7 +90,7 @@ impl GlobalRateLimiter {
         
         if *current_rate != max_requests_per_second {
             *current_rate = max_requests_per_second;
-            debug!("Updated global rate limit to {} RPS", max_requests_per_second);
+            info!("🔄 Updated global rate limit to {} RPS", max_requests_per_second);
             
             // Restart token refill task with new rate
             self.start_refill_task(max_requests_per_second).await;
@@ -110,12 +112,15 @@ impl GlobalRateLimiter {
         let semaphore = self.semaphore.clone();
         let refill_interval = Duration::from_millis(1000 / rate as u64);
         
+        info!("🎯 Starting token refill task: {} tokens per second (interval: {:?})", rate, refill_interval);
+        
         let new_handle = tokio::spawn(async move {
             let mut interval = interval(refill_interval);
             loop {
                 interval.tick().await;
                 // Add one permit (token) to the bucket
                 semaphore.add_permits(1);
+                debug!("Token refilled for global rate limiter");
             }
         });
         
@@ -127,17 +132,23 @@ impl GlobalRateLimiter {
         self.update_rate_limit(max_requests_per_second).await;
         
         if max_requests_per_second == 0 {
+            debug!("🔓 No rate limiting applied (max_requests_per_second = 0)");
             return; // No rate limiting
         }
+        
+        debug!("🎫 Attempting to acquire token for HTTP request (rate limit: {} RPS)", max_requests_per_second);
         
         // Acquire a token (permit) from the bucket
         // This will wait if no tokens are available
         let _permit = self.semaphore.acquire().await.unwrap();
-        debug!("Token acquired for HTTP request (rate: {} RPS)", max_requests_per_second);
+        
+        info!("🎫 Token acquired for HTTP request");
+        debug!("🎫 Token acquired for HTTP request (global rate: {} RPS)", max_requests_per_second);
         
         // Permit is automatically released when _permit goes out of scope
     }
 }
+
 
 /// HTTP client with built-in rate limiting and error handling
 /// Now uses shared global rate limiter for better concurrency performance
@@ -150,11 +161,18 @@ pub struct HttpClient {
 impl HttpClient {
     /// 글로벌 설정에서 HttpClient 생성
     pub fn create_from_global_config() -> Result<Self> {
-        use crate::infrastructure::config::ConfigManager;
-        let config_manager = ConfigManager::new()?;
-        // 비동기 함수를 동기적으로 호출하는 것은 권장되지 않지만, 
-        // 테스트와 간단한 경우를 위해 임시로 기본 설정 사용
-        let app_config = crate::infrastructure::config::AppConfig::default();
+        // Load actual configuration from file instead of using defaults
+        let config_manager = crate::infrastructure::config::ConfigManager::new()
+            .map_err(|e| anyhow!("Failed to create config manager: {}", e))?;
+        
+        // Use blocking version to load config synchronously
+        let app_config = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                config_manager.load_config().await
+            })
+        }).map_err(|e| anyhow!("Failed to load config: {}", e))?;
+        
+        info!("🔧 HttpClient using config: max_requests_per_second={}", app_config.user.crawling.workers.max_requests_per_second);
         Self::from_worker_config(&app_config.user.crawling.workers)
     }
 
@@ -330,6 +348,7 @@ impl HttpClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn test_client_creation() {
@@ -357,5 +376,55 @@ mod tests {
         // This might fail in CI without internet, so we just test it doesn't panic
         let result = client.health_check().await;
         println!("Health check result: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_performance() {
+        let rps = 20;
+        let config = HttpClientConfig {
+            max_requests_per_second: rps,
+            timeout_seconds: 5,
+            max_retries: 1,
+            ..Default::default()
+        };
+        let client = HttpClient::with_config(config).unwrap();
+
+        let num_requests = 50;
+        let mut handles = Vec::new();
+
+        let start = Instant::now();
+        for i in 0..num_requests {
+            let client = client.clone();
+            let url = format!("https://httpbin.org/delay/0.1?val={}", i);
+            handles.push(tokio::spawn(async move {
+                client.fetch_response(&url).await
+            }));
+        }
+
+        let results = futures::future::join_all(handles).await;
+        let duration = start.elapsed();
+
+        let successful_requests = results.into_iter().filter(|r| r.is_ok()).count();
+        
+        println!("Rate Limiter Test ({} RPS):", rps);
+        println!("- Executed {} requests in {:.2} seconds.", num_requests, duration.as_secs_f32());
+        println!("- {} requests were successful.", successful_requests);
+
+        let expected_duration_min = (num_requests as f32 / rps as f32) * 0.8; // Allow some bursting
+        let expected_duration_max = (num_requests as f32 / rps as f32) * 1.5; // Allow for network latency
+
+        assert!(successful_requests > 0);
+        assert!(
+            duration.as_secs_f32() > expected_duration_min,
+            "Execution was too fast, rate limiting might not be working. Duration: {:.2}s, Expected Min: {:.2}s",
+            duration.as_secs_f32(),
+            expected_duration_min
+        );
+         assert!(
+            duration.as_secs_f32() < expected_duration_max,
+            "Execution was too slow. Duration: {:.2}s, Expected Max: {:.2}s",
+            duration.as_secs_f32(),
+            expected_duration_max
+        );
     }
 }

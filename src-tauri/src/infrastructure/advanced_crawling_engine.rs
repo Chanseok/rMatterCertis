@@ -105,15 +105,15 @@ impl AdvancedBatchCrawlingEngine {
         ));
 
         let product_list_collector: Arc<dyn ProductListCollector> = Arc::new(ProductListCollectorImpl::new(
-            Arc::new(tokio::sync::Mutex::new(http_client.clone())),
+            Arc::new(http_client.clone()),  // 🔥 Mutex 제거 - 페이지 수집도 진정한 동시성
             Arc::new(data_extractor.clone()),
             collector_config.clone(),
             status_checker_impl.clone(),
         ));
 
-        // ProductDetailCollector 전용 구현체 사용
+        // ProductDetailCollector 전용 구현체 사용 - Mutex 제거로 진정한 동시성 구현
         let product_detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(ProductDetailCollectorImpl::new(
-            Arc::new(tokio::sync::Mutex::new(http_client.clone())),
+            Arc::new(http_client.clone()),  // 🔥 Mutex 제거
             Arc::new(data_extractor.clone()),
             collector_config.clone(),
         ));

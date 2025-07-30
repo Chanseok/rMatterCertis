@@ -821,7 +821,7 @@ pub mod defaults {
     pub const REQUEST_TIMEOUT_SECONDS: u64 = 30;
     
     /// Default maximum requests per second for HTTP client
-    pub const MAX_REQUESTS_PER_SECOND: u32 = 2;
+    pub const MAX_REQUESTS_PER_SECOND: u32 = 50;
     
     /// Default user agent string for HTTP requests
     pub const USER_AGENT: &str = "matter-certis-v2/1.0 (Research Tool; +https://github.com/your-repo)";
