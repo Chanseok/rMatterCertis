@@ -52,7 +52,7 @@ struct PageAnalysisCache {
 /// 사이트 상태 체크 서비스 구현체
 /// PageDiscoveryService와 협력하여 사이트 상태를 종합적으로 분석
 pub struct StatusCheckerImpl {
-    http_client: Arc<tokio::sync::Mutex<HttpClient>>,
+    http_client: Arc<HttpClient>,  // 🔥 Mutex 제거 - 사이트 상태 체크도 진정한 동시성
     data_extractor: Arc<MatterDataExtractor>,
     config: AppConfig,
     /// 페이지 분석 결과 캐시 (페이지 번호 -> 분석 결과)
@@ -73,7 +73,7 @@ impl StatusCheckerImpl {
         // 앱이 사용되면서 실제 마지막 페이지를 학습하고 저장하게 됩니다.
         
         Self {
-            http_client: Arc::new(tokio::sync::Mutex::new(http_client)),
+            http_client: Arc::new(http_client),  // 🔥 Mutex 제거
             data_extractor: Arc::new(data_extractor),
             config,
             page_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -139,7 +139,7 @@ impl StatusChecker for StatusCheckerImpl {
         let access_test = {
             // Use configured HttpClient instead of hardcoded default
             let mut client = self.create_configured_http_client()?;
-            let result = client.fetch_response(&url).await?.text().await;
+            let result = self.http_client.fetch_response(&url).await?.text().await;
             result
         };
         
@@ -446,7 +446,7 @@ impl StatusCheckerImpl {
             
             // Use configured HttpClient
             let mut client = self.create_configured_http_client()?;
-            match client.fetch_response(&test_url).await {
+            match self.http_client.fetch_response(&test_url).await {
                 Ok(response) => {
                     match response.text().await {
                         Ok(html) => {
@@ -501,7 +501,7 @@ impl StatusCheckerImpl {
             
             // Use configured HttpClient
             let mut client = self.create_configured_http_client()?;
-            match client.fetch_response(&test_url).await {
+            match self.http_client.fetch_response(&test_url).await {
                 Ok(response) => match response.text().await {
                     Ok(html) => {
                         let doc = scraper::Html::parse_document(&html);
@@ -658,8 +658,8 @@ impl StatusCheckerImpl {
             let test_url = config_utils::matter_products_page_url_simple(current_page);
             
             let (has_products, max_page_in_pagination) = {
-                let mut client = self.http_client.lock().await;
-                match client.fetch_html_string(&test_url).await {
+                
+                match self.http_client.fetch_html_string(&test_url).await {
                     Ok(html) => {
                         let doc = scraper::Html::parse_document(&html);
                         let has_products = self.has_products_on_page(&doc);
@@ -681,9 +681,9 @@ impl StatusCheckerImpl {
                 // 제품이 없으면 안전성 검사가 포함된 하향 탐색 후 제품 수 확인
                 let last_page = self.find_last_valid_page_with_safety_check(current_page).await?;
                 let test_url = config_utils::matter_products_page_url_simple(last_page);
-                let mut client = self.http_client.lock().await;
-                let html = client.fetch_html_string(&test_url).await?;
-                drop(client); // 락 해제
+                
+                let html = self.http_client.fetch_html_string(&test_url).await?;
+                
                 let doc = scraper::Html::parse_document(&html);
                 let products_count = self.count_products(&doc);
                 return Ok((last_page, products_count));
@@ -696,9 +696,9 @@ impl StatusCheckerImpl {
             }
             // 마지막 페이지 도달, 제품 수 확인
             let test_url = config_utils::matter_products_page_url_simple(current_page);
-            let mut client = self.http_client.lock().await;
-            let html = client.fetch_html_string(&test_url).await?;
-            drop(client); // 락 해제
+            
+            let html = self.http_client.fetch_html_string(&test_url).await?;
+            
             let doc = scraper::Html::parse_document(&html);
             let products_count = self.count_products(&doc);
             return Ok((current_page, products_count));
@@ -706,9 +706,9 @@ impl StatusCheckerImpl {
 
         // 최대 시도 횟수 도달 시 현재 페이지의 제품 수 확인
         let test_url = config_utils::matter_products_page_url_simple(current_page);
-        let mut client = self.http_client.lock().await;
-        let html = client.fetch_html_string(&test_url).await?;
-        drop(client); // 락 해제
+        
+        let html = self.http_client.fetch_html_string(&test_url).await?;
+        
         let doc = scraper::Html::parse_document(&html);
         let products_count = self.count_products(&doc);
         Ok((current_page, products_count))
@@ -732,8 +732,8 @@ impl StatusCheckerImpl {
             let test_url = config_utils::matter_products_page_url_simple(current_page);
             
             let (has_products, max_page_in_pagination) = {
-                let mut client = self.http_client.lock().await;
-                match client.fetch_html_string(&test_url).await {
+                
+                match self.http_client.fetch_html_string(&test_url).await {
                     Ok(html) => {
                         let doc = scraper::Html::parse_document(&html);
                         let has_products = self.has_products_on_page(&doc);
@@ -776,7 +776,7 @@ impl StatusCheckerImpl {
         
         // Use configured HttpClient
         let mut client = self.create_configured_http_client()?;
-        match client.fetch_response(&test_url).await {
+        match self.http_client.fetch_response(&test_url).await {
             Ok(response) => {
                 match response.text().await {
                     Ok(html) => {
@@ -1114,10 +1114,10 @@ impl StatusCheckerImpl {
         let (product_count, max_pagination_page, active_page, has_products) = {
             // Use consistent HttpClient
             let mut client = self.create_configured_http_client()?;
-            let response = client.fetch_response(&url).await?;
-            let html = response.text().await?;
+            let response = self.http_client.fetch_response(&url).await?;
+            let html_string: String = response.text().await?;
             
-            let doc = scraper::Html::parse_document(&html);
+            let doc = scraper::Html::parse_document(&html_string);
             let product_count = self.count_products(&doc);
             let max_pagination_page = self.find_max_page_in_pagination(&doc);
             let active_page = self.get_active_page_number(&doc);
@@ -1657,9 +1657,9 @@ impl ProductListCollectorImpl {
         
         // 🔥 Mutex 제거 - HTTP 클라이언트 직접 사용으로 진정한 동시성
         let response = http_client.fetch_response(&url).await?;
-        let html = response.text().await?;
+        let html_string: String = response.text().await?;
         
-        let doc = scraper::Html::parse_document(&html);
+        let doc = scraper::Html::parse_document(&html_string);
         let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
         
         // Convert URLs to ProductUrl with proper pageId and indexInPage calculation
@@ -1846,9 +1846,8 @@ impl ProductListCollector for ProductListCollectorImpl {
                 // ✅ PageIdCalculator를 사용한 크롤링 및 URL 생성
                 let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
                 // Use consistent HttpClient for true concurrency
-                let mut client = status_checker.create_configured_http_client()?;
-                let response = client.fetch_response(&url).await?;
-                let html_string = response.text().await?;
+                let response = http_client.fetch_response(&url).await?;
+                let html_string: String = response.text().await?;
                 
                 let doc = scraper::Html::parse_document(&html_string);
                 let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
@@ -1924,9 +1923,8 @@ impl ProductListCollector for ProductListCollectorImpl {
 
         let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
         // Use consistent HttpClient
-        let mut client = self.status_checker.create_configured_http_client()?;
-        let response = client.fetch_response(&url).await?;
-        let html_string = response.text().await?;
+        let response = self.http_client.fetch_response(&url).await?;
+        let html_string: String = response.text().await?;
         
         let doc = scraper::Html::parse_document(&html_string);
         let url_strings = self.data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
@@ -2025,9 +2023,8 @@ impl ProductListCollector for ProductListCollectorImpl {
                 // 실제 페이지 수집 작업
                 let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
                 // Use consistent HttpClient for true concurrency
-                let mut client = status_checker.create_configured_http_client()?;
-                let response = client.fetch_response(&url).await?;
-                let html_string = response.text().await?;
+                let response = http_client.fetch_response(&url).await?;
+                let html_string: String = response.text().await?;
                 
                 // 중간에 취소 확인
                 if token_clone.is_cancelled() {
@@ -2214,16 +2211,17 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
         info!("Collecting details for {} products", product_urls.len());
         
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent as usize));
+        let http_client = Arc::clone(&self.http_client);
+        let data_extractor = Arc::clone(&self.data_extractor);
         let mut tasks = Vec::new();
         
         for product_url in product_urls {
-            let http_client = Arc::clone(&self.http_client);
-            let data_extractor = Arc::clone(&self.data_extractor);
+            let http_client_clone = Arc::clone(&http_client);
+            let data_extractor_clone = Arc::clone(&data_extractor);
             let url = product_url.url.clone();
             let page_id = product_url.page_id;  // Capture page_id
             let index_in_page = product_url.index_in_page;  // Capture index_in_page
             let permit = Arc::clone(&semaphore);
-            let delay = self.config.delay_ms;
             
             let task = tokio::spawn(async move {
                 let _permit = permit.acquire().await.unwrap();
@@ -2232,11 +2230,11 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                 // tokio::time::sleep(Duration::from_millis(delay)).await;
                 
                 // 🔥 Mutex 제거 - 직접 HttpClient 사용으로 진정한 동시성 구현
-                let response = http_client.fetch_response(&url).await?;
-                let html_string = response.text().await?;
+                let response = http_client_clone.fetch_response(&url).await?;
+                let html_string: String = response.text().await?;
                 
                 let doc = scraper::Html::parse_document(&html_string);
-                let mut detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                let mut detail = data_extractor_clone.extract_product_detail(&doc, url.clone())?;
                 
                 // 🔥 Set page_id and index_in_page from ProductUrl
                 detail.page_id = Some(page_id);
@@ -2274,11 +2272,13 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
         info!("Collecting details for {} products with cancellation support", product_urls.len());
         
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent as usize));
+        let http_client = Arc::clone(&self.http_client);
+        let data_extractor = Arc::clone(&self.data_extractor);
         let mut tasks = Vec::new();
         
         for product_url in product_urls {
-            let http_client = Arc::clone(&self.http_client);
-            let data_extractor = Arc::clone(&self.data_extractor);
+            let http_client_clone = Arc::clone(&http_client);
+            let data_extractor_clone = Arc::clone(&data_extractor);
             let url = product_url.url.clone();
             let page_id = product_url.page_id;  // Capture page_id
             let index_in_page = product_url.index_in_page;  // Capture index_in_page
@@ -2304,15 +2304,15 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                 }
                 
                 // 🔥 Mutex 제거 - HttpClient 직접 사용으로 진정한 동시성
-                let response = http_client.fetch_response(&url).await?;
-                let html_string = response.text().await?;
+                let response = http_client_clone.fetch_response(&url).await?;
+                let html_string: String = response.text().await?;
                 
                 if token.is_cancelled() {
                     return Err(anyhow!("Task cancelled"));
                 }
                 
                 let doc = scraper::Html::parse_document(&html_string);
-                let mut detail = data_extractor.extract_product_detail(&doc, url.clone())?;
+                let mut detail = data_extractor_clone.extract_product_detail(&doc, url.clone())?;
                 
                 // 🔥 Set page_id and index_in_page from ProductUrl
                 detail.page_id = Some(page_id);
@@ -2396,11 +2396,13 @@ impl ProductDetailCollectorImpl {
         });
         
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent as usize));
+        let http_client = Arc::clone(&self.http_client);
+        let data_extractor = Arc::clone(&self.data_extractor);
         let mut tasks = Vec::new();
         
         for product_url in product_urls {
-            let http_client = Arc::clone(&self.http_client);
-            let data_extractor = Arc::clone(&self.data_extractor);
+            let http_client_clone = Arc::clone(&http_client);
+            let data_extractor_clone = Arc::clone(&data_extractor);
             let url = product_url.url.clone();
             let page_id = product_url.page_id;
             let index_in_page = product_url.index_in_page;
@@ -2441,7 +2443,7 @@ impl ProductDetailCollectorImpl {
                 });
                 
                 // 🔥 Mutex 제거 - HttpClient 직접 사용
-                let response = match http_client.fetch_response(&url).await {
+                let response = match http_client_clone.fetch_response(&url).await {
                     Ok(response) => response,
                     Err(e) => {
                         let _ = event_tx_clone.send(ProductDetailEvent::TaskFailed {
@@ -2481,7 +2483,7 @@ impl ProductDetailCollectorImpl {
                 });
                 
                 let doc = scraper::Html::parse_document(&html);
-                let mut detail = match data_extractor.extract_product_detail(&doc, url.clone()) {
+                let mut detail = match data_extractor_clone.extract_product_detail(&doc, url.clone()) {
                     Ok(detail) => detail,
                     Err(e) => {
                         let _ = event_tx_clone.send(ProductDetailEvent::TaskFailed {

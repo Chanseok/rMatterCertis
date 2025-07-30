@@ -43,7 +43,7 @@ impl Default for BatchCrawlingConfig {
 
 /// 4단계 배치 크롤링 엔진
 pub struct BatchCrawlingEngine {
-    http_client: Arc<tokio::sync::Mutex<HttpClient>>,
+    http_client: Arc<HttpClient>,  // 🔥 Mutex 제거 - GlobalRateLimiter가 동시성 관리
     data_extractor: Arc<MatterDataExtractor>,
     product_repo: Arc<IntegratedProductRepository>,
     event_emitter: Arc<Option<EventEmitter>>,
@@ -61,7 +61,7 @@ impl BatchCrawlingEngine {
         session_id: String,
     ) -> Self {
         Self {
-            http_client: Arc::new(tokio::sync::Mutex::new(http_client)),
+            http_client: Arc::new(http_client),  // 🔥 Mutex 제거
             data_extractor: Arc::new(data_extractor),
             product_repo,
             event_emitter,
@@ -160,8 +160,8 @@ impl BatchCrawlingEngine {
                     let url = format!("{}?page={}", csa_iot::PRODUCTS_PAGE_MATTER_ONLY, page_num);
                     debug!("Fetching page: {}", url);
 
-                    let mut client = http_client.lock().await;
-                    match client.fetch_html_string(&url).await {
+                    // 🔥 Mutex 제거 - 직접 HttpClient 사용으로 진정한 동시성
+                    match http_client.fetch_html_string(&url).await {
                         Ok(html_str) => {
                             match data_extractor.extract_product_urls_from_content(&html_str) {
                                 Ok(urls) => {
@@ -229,8 +229,8 @@ impl BatchCrawlingEngine {
 
                 debug!("Fetching product details: {}", url);
                 
-                let mut client = http_client.lock().await;
-                match client.fetch_html_string(&url).await {
+                // 🔥 Mutex 제거 - 직접 HttpClient 사용으로 진정한 동시성
+                match http_client.fetch_html_string(&url).await {
                     Ok(html_str) => {
                         match data_extractor.extract_product_data(&html_str) {
                             Ok(product) => {
@@ -451,8 +451,8 @@ impl BatchCrawlingEngine {
         let max_retries = self.config.retry_max;
 
         loop {
-            let mut client = self.http_client.lock().await;
-            match client.fetch_html_string(url).await {
+            // 🔥 Mutex 제거 - 직접 HttpClient 사용으로 진정한 동시성
+            match self.http_client.fetch_html_string(url).await {
                 Ok(html) => return Ok(html),
                 Err(e) => {
                     retries += 1;

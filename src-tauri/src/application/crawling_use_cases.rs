@@ -41,7 +41,7 @@ impl Default for CrawlingConfig {
 
 /// High-level crawling use cases
 pub struct CrawlingUseCases {
-    http_client: Arc<Mutex<HttpClient>>,
+    http_client: Arc<HttpClient>,  // 🔥 Mutex 제거 - use case 레벨에서도 진정한 동시성
     data_extractor: Arc<MatterDataExtractor>,
     product_repo: Arc<IntegratedProductRepository>,
     session_manager: Arc<SessionManager>,
@@ -56,7 +56,7 @@ impl CrawlingUseCases {
         session_manager: Arc<SessionManager>,
     ) -> Self {
         Self {
-            http_client: Arc::new(Mutex::new(http_client)),
+            http_client: Arc::new(http_client),  // 🔥 Mutex 제거
             data_extractor: Arc::new(data_extractor),
             product_repo,
             session_manager,
@@ -103,8 +103,8 @@ impl CrawlingUseCases {
         info!("Performing crawling system health check...");
         
         // Test HTTP client
-        let mut http_client = self.http_client.lock().await;
-        http_client.health_check().await?;
+        // 🔥 Mutex 제거 - 직접 HttpClient 사용
+        self.http_client.health_check().await?;
         
         // Test data extractor (basic functionality)
         let _extractor = &self.data_extractor;
