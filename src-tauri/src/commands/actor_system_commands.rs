@@ -11,7 +11,8 @@ use crate::infrastructure::simple_http_client::HttpClient;
 use crate::infrastructure::html_parser::MatterDataExtractor;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::application::AppState;
-use crate::domain::services::{StatusChecker, DatabaseAnalyzer}; // StatusChecker trait 추가
+use crate::domain::services::{StatusChecker, DatabaseAnalyzer}; // 실제 CrawlingPlanner에서 사용
+use crate::infrastructure::config::ConfigManager; // 설정 관리자 추가
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Emitter};
@@ -279,99 +280,154 @@ async fn initialize_real_crawling_engine(
     // 이벤트 방출기 설정 (선택적)
     let event_emitter = Arc::new(None);
     
-    // 🧠 CrawlingPlanner를 통한 지능형 범위 계산
-    info!("🧠 [ACTOR] Using domain-specific intelligent range calculation...");
+    // 🧠 실제 설정 파일 로드 및 CrawlingPlanner 사용
+    info!("🧠 [ACTOR] Loading configuration and using CrawlingPlanner for intelligent analysis...");
     
-    // StatusChecker 생성 (기존 도메인 로직 활용)
-    let status_checker = Arc::new(crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
+    // 실제 앱 설정 로드 (기본값 대신)
+    let config_manager = crate::infrastructure::config::ConfigManager::new()
+        .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
+    let app_config = config_manager.load_config().await
+        .map_err(|e| format!("Failed to load config: {}", e))?;
+    
+    info!("📋 [ACTOR] Configuration loaded: page_range_limit={}, batch_size={}, max_concurrent={}", 
+          app_config.user.crawling.page_range_limit, 
+          app_config.user.batch.batch_size,
+          app_config.user.max_concurrent_requests);
+    
+    // StatusChecker 생성 (실제 설정 사용)
+    let status_checker_impl = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
         http_client.clone(),
         data_extractor.clone(),
-        AppConfig::default(),
+        app_config.clone(),
+    );
+    let status_checker = Arc::new(status_checker_impl);
+    
+    // DatabaseAnalyzer 생성 (실제 DB 분석)
+    let db_analyzer = Arc::new(crate::infrastructure::crawling_service_impls::DatabaseAnalyzerImpl::new(
+        product_repo.clone(),
     ));
     
-    // 사이트 상태 분석 (기존 도메인 로직)
-    let site_status = status_checker.check_site_status().await
-        .map_err(|e| format!("Failed to check site status: {}", e))?;
+    // SystemConfig로 변환 (CrawlingPlanner용)
+    let system_config = Arc::new(crate::new_architecture::config::SystemConfig::default());
     
-    info!("🌐 [ACTOR] Site analysis: {} pages, {} products on last page", 
+    // 🚀 실제 CrawlingPlanner 사용!
+    let crawling_planner = crate::new_architecture::services::crawling_planner::CrawlingPlanner::new(
+        status_checker.clone(),
+        db_analyzer.clone(),
+        system_config.clone(),
+    );
+    
+    // 시스템 상태 분석 (진짜 도메인 로직)
+    let (site_status, db_analysis) = crawling_planner.analyze_system_state().await
+        .map_err(|e| format!("Failed to analyze system state: {}", e))?;
+    
+    info!("🌐 [ACTOR] Real site analysis: {} pages, {} products on last page", 
           site_status.total_pages, site_status.products_on_last_page);
+    info!("💾 [ACTOR] Real DB analysis: {} total products, {} unique products", 
+          db_analysis.total_products, db_analysis.unique_products);
     
-    // 데이터베이스 분석 (기존 도메인 로직)
-    let db_analysis = crate::domain::services::crawling_services::DatabaseAnalysis {
-        total_products: 0, // StatusCheckerImpl에서 실제 DB 조회로 채워짐
-        unique_products: 0,
-        duplicate_count: 0,
-        last_update: Some(chrono::Utc::now()),
-        missing_fields_analysis: crate::domain::services::crawling_services::FieldAnalysis {
-            missing_company: 0,
-            missing_model: 0,
-            missing_matter_version: 0,
-            missing_connectivity: 0,
-            missing_certification_date: 0,
-        },
-        data_quality_score: 0.8,
-    };
-    
-    // 지능형 범위 권장사항 계산 (기존 도메인 로직)
-    let range_recommendation = status_checker
-        .calculate_crawling_range_recommendation(&site_status, &db_analysis)
+    // 🎯 실제 CrawlingPlanner로 지능형 전략 결정
+    let (range_recommendation, processing_strategy) = crawling_planner
+        .determine_crawling_strategy(&site_status, &db_analysis)
         .await
-        .map_err(|e| format!("Failed to calculate crawling range recommendation: {}", e))?;
+        .map_err(|e| format!("Failed to determine crawling strategy: {}", e))?;
     
-    info!("📋 [ACTOR] Domain intelligence recommendation: {:?}", range_recommendation);
+    info!("📋 [ACTOR] CrawlingPlanner recommendation: {:?}", range_recommendation);
+    info!("⚙️ [ACTOR] Processing strategy: batch_size={}, concurrency={}", 
+          processing_strategy.recommended_batch_size, processing_strategy.recommended_concurrency);
     
     // 지능형 범위 권장사항을 실제 페이지 범위로 변환
     let (calculated_start_page, calculated_end_page) = match range_recommendation.to_page_range(site_status.total_pages) {
         Some((start, end)) => {
-            info!("🎯 [ACTOR] Intelligent range: {} to {} (total: {} pages)", start, end, 
-                  if start >= end { start - end + 1 } else { end - start + 1 });
-            (start, end)
+            // 🔄 역순 크롤링으로 변환 (start > end)
+            let reverse_start = if start > end { start } else { end };
+            let reverse_end = if start > end { end } else { start };
+            info!("🎯 [ACTOR] CrawlingPlanner range: {} to {} (reverse crawling)", reverse_start, reverse_end);
+            (reverse_start, reverse_end)
         },
         None => {
             info!("🔍 [ACTOR] No crawling needed, using verification range");
-            let verification_pages = 5;
+            let verification_pages = app_config.user.crawling.page_range_limit.min(5);
             let start = site_status.total_pages;
             let end = if start >= verification_pages { start - verification_pages + 1 } else { 1 };
             (start, end)
         }
     };
     
-    // 사용자 요청과 지능형 권장사항 비교
-    let (final_start_page, final_end_page) = if request.start_page != 0 && request.end_page != 0 {
+    // 🚨 설정 기반 범위 제한 적용 (user.crawling.page_range_limit)
+    let max_allowed_pages = app_config.user.crawling.page_range_limit;
+    let requested_pages = if calculated_start_page >= calculated_end_page {
+        calculated_start_page - calculated_end_page + 1
+    } else {
+        calculated_end_page - calculated_start_page + 1
+    };
+    
+    let (final_start_page, final_end_page) = if requested_pages > max_allowed_pages {
+        info!("⚠️ [ACTOR] CrawlingPlanner requested {} pages, but config limits to {} pages", 
+              requested_pages, max_allowed_pages);
+        // 설정 제한에 맞춰 범위 조정
+        let limited_start = site_status.total_pages;
+        let limited_end = if limited_start >= max_allowed_pages { 
+            limited_start - max_allowed_pages + 1 
+        } else { 
+            1 
+        };
+        info!("🔒 [ACTOR] Range limited by config: {} to {} ({} pages)", 
+              limited_start, limited_end, max_allowed_pages);
+        (limited_start, limited_end)
+    } else if request.start_page != 0 && request.end_page != 0 {
         // 사용자가 명시적으로 범위를 지정한 경우
         info!("👤 [ACTOR] User specified range: {} to {}", request.start_page, request.end_page);
-        info!("🤖 [ACTOR] Intelligent recommendation: {} to {}", calculated_start_page, calculated_end_page);
-        info!("🧠 [ACTOR] Using intelligent recommendation to ensure domain requirements compliance");
-        (calculated_start_page, calculated_end_page)
+        info!("🤖 [ACTOR] CrawlingPlanner recommendation: {} to {}", calculated_start_page, calculated_end_page);
+        
+        // 사용자 범위도 설정 제한 적용
+        let user_pages = if request.start_page >= request.end_page {
+            request.start_page - request.end_page + 1
+        } else {
+            request.end_page - request.start_page + 1
+        };
+        
+        if user_pages <= max_allowed_pages {
+            info!("✅ [ACTOR] Using user range (within config limits)");
+            (request.start_page, request.end_page)
+        } else {
+            info!("⚠️ [ACTOR] User range exceeds config limit, using CrawlingPlanner recommendation");
+            (calculated_start_page, calculated_end_page)
+        }
     } else {
-        // 사용자가 범위를 지정하지 않은 경우 지능형 권장사항 사용
+        // CrawlingPlanner 권장사항 사용
+        info!("🧠 [ACTOR] Using CrawlingPlanner recommendation");
         (calculated_start_page, calculated_end_page)
     };
     
-    // 기본 처리 전략 설정 (CrawlingPlanner 없이 기본값 사용)
-    let recommended_batch_size = request.batch_size.unwrap_or(3);
-    let recommended_concurrency = request.concurrency.unwrap_or(8);
+    // 🎯 설정 기반 처리 전략 사용 (하드코딩 제거)
+    let recommended_batch_size = processing_strategy.recommended_batch_size;
+    let recommended_concurrency = processing_strategy.recommended_concurrency;
     
-    // 배치 크롤링 설정 생성 - 🧠 지능형 권장사항 적용
+    // 배치 크롤링 설정 생성 - 🧠 CrawlingPlanner 권장사항과 설정 파일 기반
     let batch_config = BatchCrawlingConfig {
         start_page: final_start_page,
         end_page: final_end_page,
         concurrency: recommended_concurrency,
         batch_size: recommended_batch_size,
-        delay_ms: request.delay_ms.unwrap_or(500),
-        list_page_concurrency: 3,
-        product_detail_concurrency: recommended_concurrency,
-        retry_max: 3,
-        timeout_ms: 30000, // 30 seconds in milliseconds
-        disable_intelligent_range: false, // 🧠 도메인 로직 사용하므로 false
+        delay_ms: request.delay_ms.unwrap_or(app_config.user.request_delay_ms),
+        list_page_concurrency: app_config.user.crawling.workers.list_page_max_concurrent as u32,
+        product_detail_concurrency: app_config.user.crawling.workers.product_detail_max_concurrent as u32,
+        retry_max: app_config.advanced.retry_attempts,
+        timeout_ms: (app_config.advanced.request_timeout_seconds * 1000) as u64,
+        disable_intelligent_range: false, // 🧠 CrawlingPlanner 사용하므로 false
         cancellation_token: None,
     };
     
-    // 앱 설정 로드 - 도메인 요구사항 준수
-    let app_config = AppConfig::default();
-    
-    info!("🧠 [ACTOR] Using intelligent range: {} to {} (batch_size: {}, concurrency: {})", 
-          final_start_page, final_end_page, recommended_batch_size, recommended_concurrency);
+    info!("🧠 [ACTOR] Final configuration applied:");
+    info!("   📊 Range: {} to {} ({} pages, config limit: {})", 
+          final_start_page, final_end_page, 
+          if final_start_page >= final_end_page { final_start_page - final_end_page + 1 } else { final_end_page - final_start_page + 1 },
+          app_config.user.crawling.page_range_limit);
+    info!("   ⚙️ Processing: batch_size={}, concurrency={}, delay={}ms", 
+          recommended_batch_size, recommended_concurrency, batch_config.delay_ms);
+    info!("   🔧 Workers: list_page={}, product_detail={}, retries={}", 
+          batch_config.list_page_concurrency, batch_config.product_detail_concurrency, batch_config.retry_max);
     
     // ServiceBasedBatchCrawlingEngine 생성
     let crawling_engine = ServiceBasedBatchCrawlingEngine::new(
