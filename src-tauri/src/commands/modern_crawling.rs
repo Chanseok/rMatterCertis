@@ -133,6 +133,7 @@ pub async fn start_crawling_v3(
         batch_size: app_config.user.batch.batch_size,
         retry_max: app_config.advanced.retry_attempts,
         timeout_ms: app_config.advanced.request_timeout_seconds * 1000,
+        disable_intelligent_range: false, // 기본 크롤링에서는 지능형 범위 사용
         cancellation_token,
     };
     

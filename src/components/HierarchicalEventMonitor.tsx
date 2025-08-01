@@ -6,6 +6,7 @@
 
 import { Component, createSignal, createMemo, onMount, onCleanup, For, Show, createEffect } from 'solid-js';
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 
 // 생성된 타입들 import
 import type { ConcurrencyEvent } from '../types/generated/ConcurrencyEvent';
@@ -460,6 +461,54 @@ export const HierarchicalEventMonitor: Component = () => {
     });
   };
 
+  // Actor 시스템 테스트 함수
+  const startActorSystemTest = async () => {
+    try {
+      console.log('🎭 Actor 시스템 테스트 시작');
+      
+      const result = await invoke('start_actor_based_crawling', {
+        request: {
+          start_page: 1,
+          end_page: 3,
+          concurrency: 4,
+          batch_size: 2,
+          delay_ms: 500
+        }
+      });
+      
+      console.log(`✅ Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
+      
+      // 이벤트 모니터에 알림 추가
+      const testEvent: ConcurrencyEvent = {
+        type: 'SessionEvent',
+        payload: {
+          session_id: `test-session-${Date.now()}`,
+          event_type: 'Started',
+          metadata: { message: 'Actor 시스템 테스트 크롤링 시작됨', test: 'true' },
+          timestamp: new Date().toISOString(),
+        }
+      };
+      
+      setEvents(prev => [...prev, testEvent]);
+      
+    } catch (error) {
+      console.error('Actor 시스템 테스트 실패:', error);
+      
+      // 에러 이벤트 추가
+      const errorEvent: ConcurrencyEvent = {
+        type: 'SessionEvent',
+        payload: {
+          session_id: `error-session-${Date.now()}`,
+          event_type: 'Failed',
+          metadata: { message: `Actor 시스템 테스트 실패: ${error}`, error: 'true' },
+          timestamp: new Date().toISOString(),
+        }
+      };
+      
+      setEvents(prev => [...prev, errorEvent]);
+    }
+  };
+
   // 필터링된 트리
   const filteredTree = createMemo(() => {
     const tree = hierarchicalTree();
@@ -590,6 +639,12 @@ export const HierarchicalEventMonitor: Component = () => {
         <div class="flex items-center justify-between">
           <h2 class="text-xl font-bold text-gray-800">계층적 이벤트 모니터</h2>
           <div class="flex items-center space-x-4">
+            <button
+              onClick={startActorSystemTest}
+              class="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors font-medium"
+            >
+              🎭 Actor 시스템 테스트
+            </button>
             <button
               onClick={toggleExpandAll}
               class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"

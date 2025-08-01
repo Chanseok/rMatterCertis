@@ -51,6 +51,7 @@ pub struct BatchCrawlingConfig {
     pub batch_size: u32,
     pub retry_max: u32,
     pub timeout_ms: u64,
+    pub disable_intelligent_range: bool, // 🎭 Actor 시스템용: 지능형 범위 재계산 비활성화
     #[serde(skip)]
     pub cancellation_token: Option<CancellationToken>,
 }
@@ -69,6 +70,7 @@ impl BatchCrawlingConfig {
             batch_size: validated_config.batch_size(),
             retry_max: validated_config.max_retries(),
             timeout_ms: validated_config.request_timeout_ms,
+            disable_intelligent_range: false, // 기본값은 지능형 범위 사용
             cancellation_token: None,
         }
     }
@@ -89,6 +91,7 @@ impl Default for BatchCrawlingConfig {
             batch_size: validated_config.batch_size(),
             retry_max: validated_config.max_retries(),
             timeout_ms: validated_config.request_timeout_ms,
+            disable_intelligent_range: false, // 기본값은 지능형 범위 사용
             cancellation_token: None,
         }
     }
@@ -674,37 +677,45 @@ impl ServiceBasedBatchCrawlingEngine {
         }
         
         // Stage 0.5: 지능형 범위 재계산 및 실제 적용 - Phase 4 Implementation
-        info!("🧠 Stage 0.5: Performing intelligent range recalculation");
-        info!("📊 Site analysis: total_pages={}, products_on_last_page={}", 
-              site_status.total_pages, site_status.products_on_last_page);
-        
-        let optimal_range = self.range_calculator.calculate_next_crawling_range(
-            site_status.total_pages,
-            site_status.products_on_last_page, // ✅ 실제 값 사용 (이전: 하드코딩 10)
-        ).await?;
-        
-        // 계산된 범위를 실제로 적용하여 최종 범위 결정
-        let (actual_start_page, actual_end_page) = if let Some((optimal_start, optimal_end)) = optimal_range {
-            if optimal_start != self.config.start_page || optimal_end != self.config.end_page {
-                info!("💡 Applying intelligent range recommendation: pages {} to {} (original: {} to {})", 
-                      optimal_start, optimal_end, self.config.start_page, self.config.end_page);
-                
-                // 범위 적용 이벤트 발송
-                self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
-                    stage: "Range Optimization Applied".to_string(),
-                    message: format!("Applied optimal range: {} to {} (was: {} to {})", 
-                                   optimal_start, optimal_end, self.config.start_page, self.config.end_page),
-                }).await?;
-                
-                (optimal_start, optimal_end)
-            } else {
-                info!("✅ Current range already optimal: {} to {}", self.config.start_page, self.config.end_page);
-                (self.config.start_page, self.config.end_page)
-            }
-        } else {
-            info!("✅ All products appear to be crawled - using current range for verification: {} to {}", 
+        let (actual_start_page, actual_end_page) = if self.config.disable_intelligent_range {
+            // 🎭 Actor 시스템 모드: 사용자가 지정한 정확한 범위 사용
+            info!("🎭 Actor mode: Using exact user-specified range {} to {} (intelligent range disabled)", 
                   self.config.start_page, self.config.end_page);
             (self.config.start_page, self.config.end_page)
+        } else {
+            // 기존 지능형 범위 재계산 로직
+            info!("🧠 Stage 0.5: Performing intelligent range recalculation");
+            info!("📊 Site analysis: total_pages={}, products_on_last_page={}", 
+                  site_status.total_pages, site_status.products_on_last_page);
+            
+            let optimal_range = self.range_calculator.calculate_next_crawling_range(
+                site_status.total_pages,
+                site_status.products_on_last_page, // ✅ 실제 값 사용 (이전: 하드코딩 10)
+            ).await?;
+            
+            // 계산된 범위를 실제로 적용하여 최종 범위 결정
+            if let Some((optimal_start, optimal_end)) = optimal_range {
+                if optimal_start != self.config.start_page || optimal_end != self.config.end_page {
+                    info!("💡 Applying intelligent range recommendation: pages {} to {} (original: {} to {})", 
+                          optimal_start, optimal_end, self.config.start_page, self.config.end_page);
+                    
+                    // 범위 적용 이벤트 발송
+                    self.emit_detailed_event(DetailedCrawlingEvent::StageStarted {
+                        stage: "Range Optimization Applied".to_string(),
+                        message: format!("Applied optimal range: {} to {} (was: {} to {})", 
+                                       optimal_start, optimal_end, self.config.start_page, self.config.end_page),
+                    }).await?;
+                    
+                    (optimal_start, optimal_end)
+                } else {
+                    info!("✅ Current range already optimal: {} to {}", self.config.start_page, self.config.end_page);
+                    (self.config.start_page, self.config.end_page)
+                }
+            } else {
+                info!("✅ All products appear to be crawled - using current range for verification: {} to {}", 
+                      self.config.start_page, self.config.end_page);
+                (self.config.start_page, self.config.end_page)
+            }
         };
         
         info!("🎯 Final crawling range determined: {} to {}", actual_start_page, actual_end_page);

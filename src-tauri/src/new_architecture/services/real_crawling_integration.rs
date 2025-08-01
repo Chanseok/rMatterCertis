@@ -231,7 +231,7 @@ impl crate::new_architecture::actor_system::BatchActor {
                 },
                 attempts: 0,
                 stage_id: self.batch_id.clone(),
-                suggested_retry_delay: std::time::Duration::from_secs(5),
+                suggested_retry_delay_ms: 5000, // 5초를 밀리초로
             },
         };
         

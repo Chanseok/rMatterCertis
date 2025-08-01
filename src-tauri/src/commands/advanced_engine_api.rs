@@ -141,6 +141,7 @@ pub async fn check_advanced_site_status(
         delay_ms: 1000,
         retry_max: 3,
         timeout_ms: 30000,
+        disable_intelligent_range: false, // Advanced API에서는 지능형 범위 사용
         cancellation_token: None,
     };
     
@@ -270,6 +271,7 @@ pub async fn start_advanced_crawling(
         delay_ms: request.config.delay_ms,
         retry_max: request.config.retry_max,
         timeout_ms: 30000,
+        disable_intelligent_range: false, // Advanced API에서는 지능형 범위 사용
         cancellation_token: None,
     };
     

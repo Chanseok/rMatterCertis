@@ -6,6 +6,7 @@
 
 use tokio::sync::{mpsc, oneshot, broadcast};
 use std::sync::Arc;
+use serde::Serialize;
 use crate::new_architecture::system_config::SystemConfig;
 
 /// 제어 채널: 명령 하향 전달 (MPSC)
@@ -60,14 +61,14 @@ pub enum StageItem {
 }
 
 /// 배치 설정
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BatchConfig {
     pub target_url: String,
     pub max_pages: Option<u32>,
 }
 
 /// 앱 이벤트 정의
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum AppEvent {
     SessionStarted {
         session_id: String,

@@ -41,7 +41,35 @@ export default function CrawlingEngineTabSimple() {
       console.error('크롤링 범위 계산 실패:', error);
       addLog(`❌ 크롤링 범위 계산 실패: ${error}`);
     }
-  };  // 스마트 크롤링 시작 (Phase 1: 설정 파일 기반)
+  };  // Actor 시스템 크롤링 시작 (신규 추가)
+  const startActorCrawling = async () => {
+    if (isRunning()) return;
+    
+    setIsRunning(true);
+    setStatusMessage('🎭 Actor 시스템 크롤링 시작 중...');
+    addLog('🎭 Actor 시스템 크롤링 시작');
+
+    try {
+      const result = await invoke('start_actor_based_crawling', {
+        start_page: 1,
+        end_page: 5,
+        concurrency: 8,
+        batch_size: 3,
+        delay_ms: 100
+      });
+      addLog(`✅ Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
+      setStatusMessage('🎭 Actor 시스템 실행 중');
+      
+    } catch (error) {
+      console.error('Actor 시스템 크롤링 시작 실패:', error);
+      addLog(`❌ Actor 시스템 크롤링 시작 실패: ${error}`);
+      setStatusMessage('크롤링 실패');
+    } finally {
+      setTimeout(() => setIsRunning(false), 3000); // 3초 후 완료로 처리
+    }
+  };
+
+  // 스마트 크롤링 시작 (Phase 1: 설정 파일 기반)
   const startSmartCrawling = async () => {
     if (isRunning()) return;
     
@@ -192,6 +220,18 @@ export default function CrawlingEngineTabSimple() {
             }`}
           >
             {isRunning() ? '크롤링 실행 중...' : '🚀 스마트 크롤링 시작'}
+          </button>
+          
+          <button
+            onClick={startActorCrawling}
+            disabled={isRunning()}
+            class={`px-6 py-3 rounded-lg font-medium text-white ${
+              isRunning() 
+                ? 'bg-gray-400 cursor-not-allowed' 
+                : 'bg-purple-600 hover:bg-purple-700'
+            }`}
+          >
+            {isRunning() ? 'Actor 실행 중...' : '🎭 Actor 시스템 크롤링'}
           </button>
           
           <button

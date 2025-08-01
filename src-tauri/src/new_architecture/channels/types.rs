@@ -82,7 +82,7 @@ pub enum StageItem {
 }
 
 /// 배치 설정
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BatchConfig {
     pub target_url: String,
     pub max_pages: Option<u32>,
@@ -90,7 +90,7 @@ pub struct BatchConfig {
 }
 
 /// 제품 정보 (임시 구조)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProductInfo {
     pub id: String,
     pub name: String,
@@ -98,7 +98,7 @@ pub struct ProductInfo {
 }
 
 /// 앱 이벤트 정의
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum AppEvent {
     /// 세션 시작
     SessionStarted {
@@ -122,7 +122,7 @@ pub enum AppEvent {
     /// 세션 타임아웃
     SessionTimeout {
         session_id: String,
-        elapsed: std::time::Duration,
+        elapsed_ms: u64,
     },
     
     /// 성능 메트릭
@@ -130,7 +130,7 @@ pub enum AppEvent {
         session_id: String,
         metric_type: String,
         value: f64,
-        timestamp: std::time::SystemTime,
+        timestamp_ms: u64,
     },
     
     /// 시스템 상태
@@ -142,7 +142,7 @@ pub enum AppEvent {
 }
 
 /// 스테이지 성공 결과 (임시 구조)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum StageSuccessResult {
     ListCollection {
         collected_urls: Vec<String>,
@@ -161,7 +161,7 @@ pub enum StageSuccessResult {
 }
 
 /// 컬렉션 메트릭 (임시 구조)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CollectionMetrics {
     pub duration_ms: u64,
     pub avg_response_time_ms: u64,
@@ -169,7 +169,7 @@ pub struct CollectionMetrics {
 }
 
 /// 처리 메트릭 (임시 구조)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProcessingMetrics {
     pub duration_ms: u64,
     pub avg_processing_time_ms: u64,

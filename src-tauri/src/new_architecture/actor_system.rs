@@ -11,6 +11,7 @@ use tokio::time::{sleep, timeout};
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
 use futures::future::join_all;
+use serde::Serialize;
 
 // 개별 모듈에서 직접 import
 use crate::new_architecture::system_config::{SystemConfig, ConfigError, RetryPolicy};
@@ -19,7 +20,7 @@ use crate::infrastructure::config::AppConfig;
 
 // 임시 타입 정의 (컴파일 에러 해결용)
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum StageResult {
     Success(StageSuccessResult),
     Failure(StageError),
@@ -27,7 +28,7 @@ pub enum StageResult {
         error: StageError,
         attempts: u32,
         stage_id: String,
-        suggested_retry_delay: Duration,
+        suggested_retry_delay_ms: u64,  // Duration을 u64로 변경
     },
     FatalError {
         error: StageError,
@@ -41,7 +42,7 @@ pub enum StageResult {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum StageError {
     NetworkError { message: String },
     ParsingError { message: String },
@@ -107,12 +108,12 @@ pub struct ProductInfo {
     pub url: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FailedItem {
     pub item_id: String,
     pub error: StageError,
     pub retry_count: u32,
-    pub last_attempt: std::time::SystemTime,
+    pub last_attempt_ms: u64,  // SystemTime을 u64로 변경
 }
 
 /// 재시도 정책 계산기
@@ -633,7 +634,10 @@ impl BatchActor {
                             item_id: page_id.to_string(),
                             error,
                             retry_count: attempt,
-                            last_attempt: std::time::SystemTime::now(),
+                            last_attempt_ms: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as u64,
                         });
                     }
                 }
@@ -831,7 +835,7 @@ impl StageActor {
                     },
                     attempts: 0,
                     stage_id: self.batch_id.clone(),
-                    suggested_retry_delay: Duration::from_secs(10),
+                    suggested_retry_delay_ms: 10000,  // 10초를 밀리초로 변경
                 }
             }
         }
@@ -930,7 +934,10 @@ impl StageActor {
                         item_id: format!("item-{}", item),
                         error: StageError::ValidationError { message: "Processing failed".to_string() },
                         retry_count: 0,
-                        last_attempt: std::time::SystemTime::now(),
+                        last_attempt_ms: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64,
                     }
                 }).collect(),
                 stage_id: self.batch_id.clone(),

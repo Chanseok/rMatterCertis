@@ -6,6 +6,7 @@
 import { Component, createMemo, onMount } from 'solid-js';
 import { AppLayout } from './layout/AppLayout';
 import CrawlingEngineTabSimple from './tabs/CrawlingEngineTabSimple';
+import { CrawlingEngineTab } from './tabs/CrawlingEngineTab';
 import { SettingsTab } from './tabs/SettingsTab';
 import { StatusTab } from './tabs/StatusTab';
 import { LocalDBTab } from './tabs/LocalDBTab';
@@ -44,7 +45,7 @@ export const AppWithTabs: Component = () => {
   const renderTabContent = () => {
     switch (currentTab()) {
       case 'crawlingEngine':
-        return <CrawlingEngineTabSimple />;
+        return <CrawlingEngineTab />;
       case 'settings':
         return <SettingsTab />;
       case 'status':

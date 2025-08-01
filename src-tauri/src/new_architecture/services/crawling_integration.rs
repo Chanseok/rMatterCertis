@@ -222,7 +222,10 @@ impl CrawlingIntegrationService {
                         message: "Page collection failed".to_string(),
                     },
                     retry_count: 0,
-                    last_attempt: std::time::SystemTime::now(),
+                    last_attempt_ms: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
                 }).collect(),
                 stage_id: "list-collection".to_string(),
             }
@@ -330,7 +333,10 @@ impl CrawlingIntegrationService {
                         message: "Product detail collection failed".to_string(),
                     },
                     retry_count: 0,
-                    last_attempt: std::time::SystemTime::now(),
+                    last_attempt_ms: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
                 }).collect(),
                 stage_id: "detail-collection".to_string(),
             }

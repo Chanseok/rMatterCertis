@@ -66,6 +66,7 @@ export const CrawlingEngineTab: Component = () => {
   const [currentSessionId, setCurrentSessionId] = createSignal<string | null>(null);
   const [dbStats, setDbStats] = createSignal<DatabaseStats | null>(null);
   const [crawlingRange, setCrawlingRange] = createSignal<CrawlingRangeResponse | null>(null);
+  const [showSiteStatus, setShowSiteStatus] = createSignal(true);
 
   // Log helper
   const addLog = (message: string) => {
@@ -230,6 +231,33 @@ export const CrawlingEngineTab: Component = () => {
     }
   };
 
+  // Actor 시스템 테스트 함수 추가
+  const startActorSystemTest = async () => {
+    if (isRunning()) return;
+    
+    setIsRunning(true);
+    addLog('🎭 Actor 시스템 크롤링 테스트 시작');
+
+    try {
+      const result = await invoke('start_actor_based_crawling', {
+        request: {
+          start_page: 1,
+          end_page: 5,
+          concurrency: 8,
+          batch_size: 3,
+          delay_ms: 100
+        }
+      });
+      addLog(`✅ Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
+      addLog('🎭 Actor 시스템이 활성화되었습니다. 계층적 이벤트 모니터 탭에서 실시간 상태를 확인하세요.');
+      
+    } catch (error) {
+      console.error('Actor 시스템 크롤링 시작 실패:', error);
+      addLog(`❌ Actor 시스템 크롤링 시작 실패: ${error}`);
+      setIsRunning(false);
+    }
+  };
+
   const pauseCrawling = async () => {
     if (!currentSessionId()) {
       addLog('❌ 활성 세션이 없습니다');
@@ -326,7 +354,15 @@ export const CrawlingEngineTab: Component = () => {
             {/* Site Status */}
             <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <div class="flex items-center justify-between mb-4">
-                <h2 class="text-lg font-semibold text-gray-900">🌐 사이트 상태</h2>
+                <div class="flex items-center space-x-2">
+                  <h2 class="text-lg font-semibold text-gray-900">🌐 사이트 상태</h2>
+                  <button
+                    onClick={() => setShowSiteStatus(!showSiteStatus())}
+                    class="text-gray-500 hover:text-gray-700 transition-colors"
+                  >
+                    {showSiteStatus() ? '🔽' : '▶️'}
+                  </button>
+                </div>
                 <button
                   onClick={checkSiteStatus}
                   class="px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200"
@@ -334,23 +370,132 @@ export const CrawlingEngineTab: Component = () => {
                   새로고침
                 </button>
               </div>
-              <Show
-                when={siteStatus()}
-                fallback={<p class="text-gray-500">사이트 상태를 확인 중...</p>}
-              >
-                <div class="space-y-2 text-sm">
-                  <div class="flex justify-between">
-                    <span class="text-gray-600">접근 가능:</span>
-                    <span class={siteStatus()?.is_accessible ? "text-green-600" : "text-red-600"}>
-                      {siteStatus()?.is_accessible ? "✅ 가능" : "❌ 불가능"}
-                    </span>
+              
+              <Show when={showSiteStatus()}>
+                <Show
+                  when={siteStatus()}
+                  fallback={<p class="text-gray-500">사이트 상태를 확인 중...</p>}
+                >
+                  <div class="space-y-4">
+                    {/* 기본 사이트 정보 */}
+                    <div class="grid grid-cols-2 gap-4">
+                      <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                          <span class="text-gray-600">접근 가능:</span>
+                          <span class={siteStatus()?.is_accessible ? "text-green-600" : "text-red-600"}>
+                            {siteStatus()?.is_accessible ? "✅ 가능" : "❌ 불가능"}
+                          </span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span class="text-gray-600">전체 페이지:</span>
+                          <span class="font-medium">{siteStatus()?.total_pages || 0}</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span class="text-gray-600">예상 제품 수:</span>
+                          <span class="font-medium">{siteStatus()?.estimated_total_products || 0}</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span class="text-gray-600">마지막 페이지 제품:</span>
+                          <span class="font-medium">{siteStatus()?.products_on_last_page || 0}</span>
+                        </div>
+                      </div>
+                      
+                      <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                          <span class="text-gray-600">상태 점수:</span>
+                          <span class={`font-medium ${
+                            (siteStatus()?.health_score || 0) > 0.8 ? 'text-green-600' : 
+                            (siteStatus()?.health_score || 0) > 0.5 ? 'text-yellow-600' : 'text-red-600'
+                          }`}>
+                            {((siteStatus()?.health_score || 0) * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span class="text-gray-600">응답 시간:</span>
+                          <span class="font-medium">{siteStatus()?.response_time_ms || 0}ms</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span class="text-gray-600">마지막 확인:</span>
+                          <span class="font-medium text-xs">방금 전</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 크롤링 범위 정보 */}
+                    <Show when={crawlingRange()?.success}>
+                      <div class="border-t pt-4">
+                        <h3 class="font-medium text-gray-900 mb-2">📊 권장 크롤링 범위</h3>
+                        <div class="bg-blue-50 border border-blue-200 rounded-md p-3">
+                          <div class="flex items-center justify-between">
+                            <span class="text-sm text-blue-700">
+                              페이지 {crawlingRange()?.range?.[0]} → {crawlingRange()?.range?.[1]} 
+                              ({(crawlingRange()?.range?.[0] || 0) - (crawlingRange()?.range?.[1] || 0) + 1}페이지)
+                            </span>
+                            <span class="text-xs text-blue-600 font-mono">
+                              {crawlingRange()?.crawling_info?.strategy || 'auto'}
+                            </span>
+                          </div>
+                          <p class="text-xs text-blue-600 mt-1">
+                            {crawlingRange()?.message || '자동 계산된 최적 범위'}
+                          </p>
+                        </div>
+                      </div>
+                    </Show>
+
+                    {/* 데이터베이스 현황 */}
+                    <Show when={dbStats()}>
+                      <div class="border-t pt-4">
+                        <h3 class="font-medium text-gray-900 mb-2">💾 로컬 데이터베이스</h3>
+                        <div class="grid grid-cols-2 gap-4 text-sm">
+                          <div class="flex justify-between">
+                            <span class="text-gray-600">저장된 제품:</span>
+                            <span class="font-medium">{dbStats()?.total_products || 0}</span>
+                          </div>
+                          <div class="flex justify-between">
+                            <span class="text-gray-600">오늘 추가:</span>
+                            <span class="font-medium">{dbStats()?.products_added_today || 0}</span>
+                          </div>
+                          <div class="flex justify-between">
+                            <span class="text-gray-600">마지막 업데이트:</span>
+                            <span class="font-medium text-xs">
+                              {dbStats()?.last_updated ? 
+                                new Date(dbStats()!.last_updated!).toLocaleDateString() : 
+                                '데이터 없음'
+                              }
+                            </span>
+                          </div>
+                          <div class="flex justify-between">
+                            <span class="text-gray-600">DB 크기:</span>
+                            <span class="font-medium">
+                              {dbStats()?.database_size_bytes ? 
+                                `${(dbStats()!.database_size_bytes / 1024 / 1024).toFixed(1)}MB` : 
+                                '0MB'
+                              }
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </Show>
                   </div>
-                  <div class="flex justify-between">
-                    <span class="text-gray-600">전체 페이지:</span>
-                    <span class="font-medium">{siteStatus()?.total_pages || 0}</span>
-                  </div>
-                </div>
+                </Show>
               </Show>
+            </div>
+
+            {/* Actor System Test Controls */}
+            <div class="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg shadow-sm border border-purple-200 p-6 mb-6">
+              <h2 class="text-lg font-semibold text-purple-900 mb-4">🎭 Actor 시스템 테스트</h2>
+              <div class="space-y-3">
+                <button
+                  onClick={startActorSystemTest}
+                  class="w-full py-2.5 px-4 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium"
+                  disabled={isRunning()}
+                >
+                  🎭 Actor 시스템 크롤링 테스트
+                </button>
+                <p class="text-sm text-purple-700">
+                  계층적 Actor 시스템을 사용한 새로운 크롤링 아키텍처를 테스트합니다.
+                </p>
+              </div>
             </div>
 
             {/* Crawling Controls */}

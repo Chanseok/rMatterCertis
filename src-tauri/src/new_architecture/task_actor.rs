@@ -351,7 +351,7 @@ impl TaskActor {
                         },
                         attempts: 1,
                         stage_id: self.task_id.clone(),
-                        suggested_retry_delay: Duration::from_secs(1),
+                        suggested_retry_delay_ms: 1000, // 1초를 밀리초로
                     }
                 }
             },

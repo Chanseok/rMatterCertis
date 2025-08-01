@@ -64,6 +64,7 @@ async fn main() -> Result<()> {
         list_page_concurrency: 1,
         product_detail_concurrency: 1,
         cancellation_token: None,
+        disable_intelligent_range: false,  // 테스트용으로 기본값 사용
     };
     println!("✅ 소규모 테스트 설정 완료");
     println!("   📌 페이지 범위: 1-1 (첫 페이지만)");
