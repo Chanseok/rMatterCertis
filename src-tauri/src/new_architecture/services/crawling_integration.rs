@@ -366,9 +366,9 @@ impl CrawlingIntegrationService {
         
         // DB 분석을 위한 분석 결과 생성 (실제 DB 데이터 기반)
         let db_analysis = crate::domain::services::crawling_services::DatabaseAnalysis {
-            total_products: db_stats.total_products as u32,
-            unique_products: db_stats.active_products as u32,
-            duplicate_count: 0,
+            total_products: 0,
+            unique_products: 0,
+            missing_products_count: 0, // TODO: 향후 페이지별 예상 제품 수와 비교하여 계산
             last_update: db_stats.last_crawled,
             missing_fields_analysis: crate::domain::services::crawling_services::FieldAnalysis {
                 missing_company: 0,

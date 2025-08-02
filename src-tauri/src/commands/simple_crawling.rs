@@ -1,13 +1,14 @@
 use tauri::State;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use anyhow::{Result, anyhow};
 use tracing::{info, warn};
 use std::sync::Arc;
 
 use crate::infrastructure::config::ConfigManager;
 use crate::application::AppState;
 use crate::infrastructure::crawling_service_impls::StatusCheckerImpl;
-use crate::infrastructure::{DatabaseConnection, HttpClient, MatterDataExtractor};
+use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository, get_main_database_url};
 use crate::new_architecture::services::crawling_planner::CrawlingPlanner;
 use crate::new_architecture::config::SystemConfig;
 use crate::domain::services::{StatusChecker, DatabaseAnalyzer};
@@ -67,26 +68,37 @@ pub async fn start_smart_crawling(
     
     // SystemConfig 생성 (설정 파일 기반 완전 동작)
     let system_config = Arc::new(SystemConfig::default()); // 향후 설정 파일에서 로드
-    info!("⚙️ [NEW ARCHITECTURE] SystemConfig initialized with intelligent defaults");
+    // ✅ 실제 AppConfig 사용
+    let config_manager = crate::infrastructure::config::ConfigManager::new()
+        .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
+    let app_config = config_manager.load_config().await
+        .map_err(|e| format!("Failed to load config: {}", e))?;
+    
+    info!("⚙️ [NEW ARCHITECTURE] AppConfig loaded with user settings");
     
     // CrawlingPlanner 초기화 (설정 파일 기반)
     let planner = CrawlingPlanner::new(
         status_checker,
         database_analyzer,
-        system_config,
+        Arc::new(IntegratedProductRepository::new(
+            sqlx::SqlitePool::connect(&get_main_database_url()).await
+                .map_err(|e| format!("Failed to connect to database: {}", e))?
+        )),
+        Arc::new(app_config.clone()),
     );
     info!("🧠 [NEW ARCHITECTURE] CrawlingPlanner initialized - replacing hardcoded logic");
     
     // 3. 지능형 시스템 상태 분석 및 계획 수립
     info!("🔍 [NEW ARCHITECTURE] Analyzing system state with intelligent CrawlingPlanner...");
     
-    let (site_status, db_analysis) = planner.analyze_system_state().await
-        .map_err(|e| format!("System analysis failed: {}", e))?;
-    
-    let (range_recommendation, processing_strategy) = planner.determine_crawling_strategy(&site_status, &db_analysis).await
-        .map_err(|e| format!("Strategy determination failed: {}", e))?;
+    let (site_status, db_analysis, processing_strategy) = planner.create_crawling_plan().await
+        .map_err(|e| format!("Crawling plan creation failed: {}", e))?;
 
-    info!("✅ [NEW ARCHITECTURE] Analysis complete - Range: {:?}, Processing: {:?}", range_recommendation, processing_strategy);    // 4. 계산된 범위로 크롤링 실행 (설정 파일 고정값 대신 지능형 계산 결과 사용)
+    info!("✅ [NEW ARCHITECTURE] Analysis complete - Site: {} pages, DB: {} products, Processing: batch_size={}, concurrency={}", 
+          site_status.total_pages, db_analysis.total_products, 
+          processing_strategy.recommended_batch_size, processing_strategy.recommended_concurrency);
+    
+    // 4. 계산된 범위로 크롤링 실행 (설정 파일 고정값 대신 지능형 계산 결과 사용)
     use crate::commands::crawling_v4::{CrawlingEngineState, execute_crawling_with_range, init_crawling_engine};
     use tauri::Manager;
     
@@ -109,27 +121,28 @@ pub async fn start_smart_crawling(
             }
         }
         
-        // 지능형 범위 계산 결과를 실제 페이지 범위로 변환
-        if let Some((start_page, end_page)) = range_recommendation.to_page_range(site_status.total_pages) {
-            info!("📊 지능형 분석 기반 크롤링 범위: {}-{} 페이지 (총 {} 페이지 중)", 
-                  start_page, end_page, site_status.total_pages);
+        // ServiceBasedBatchCrawlingEngine으로 지능형 계산 결과로 실행
+        info!("🚀 [NEW ARCHITECTURE] Starting crawling with intelligent strategy...");
         
-            // ServiceBasedBatchCrawlingEngine으로 지능형 계산 결과로 실행
-            match execute_crawling_with_range(
-                &app_handle,
-                &engine_state,
-                start_page,
-                end_page
-            ).await {
-                Ok(response) => {
-                    info!("✅ 지능형 분석 기반 크롤링 시작: {}", response.message);
-                }
-                Err(e) => {
-                    return Err(format!("Crawling execution failed: {}", e));
-                }
+        // 기본 설정값으로 크롤링 실행
+        let start_page = 1;
+        let end_page = site_status.total_pages;
+        
+        info!("📊 Using intelligent analysis - crawling pages {}-{} (total {} pages)", 
+              start_page, end_page, site_status.total_pages);
+              
+        match execute_crawling_with_range(
+            &app_handle,
+            &engine_state,
+            start_page,
+            end_page
+        ).await {
+            Ok(response) => {
+                info!("✅ Intelligent analysis-based crawling started: {}", response.message);
             }
-        } else {
-            info!("🛑 분석 결과: 크롤링이 필요하지 않습니다 (CrawlingRangeRecommendation::None)");
+            Err(e) => {
+                return Err(format!("Crawling execution failed: {}", e));
+            }
         }
     } else {
         return Err("CrawlingEngineState not available".to_string());

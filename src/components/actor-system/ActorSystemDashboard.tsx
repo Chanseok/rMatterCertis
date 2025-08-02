@@ -59,6 +59,10 @@ export const ActorSystemDashboard: Component = () => {
   const [autoRefresh, setAutoRefresh] = createSignal(true);
   const [refreshInterval, setRefreshInterval] = createSignal(2000); // 2초
   
+  // Actor 시스템 배치 분할 테스트를 위한 상태
+  const [isActorTesting, setIsActorTesting] = createSignal(false);
+  const [testResult, setTestResult] = createSignal<string | null>(null);
+  
   let refreshTimer: number | null = null;
 
   // 시스템 상태 조회
@@ -88,6 +92,84 @@ export const ActorSystemDashboard: Component = () => {
       refreshTimer = setInterval(() => {
         fetchSystemStatus();
       }, refreshInterval());
+    }
+  };
+
+  // 🎯 Actor 시스템 배치 분할 테스트 함수
+  const testActorBatchSplitting = async () => {
+    if (isActorTesting()) return;
+    
+    setIsActorTesting(true);
+    setTestResult(null);
+    
+    try {
+      console.log('🎭 Starting Actor system batch splitting test...');
+      
+      // start_actor_based_crawling 커맨드를 사용하여 배치 분할 테스트
+      const request = {
+        start_page: 300,  // 300-303 범위
+        end_page: 303,
+        max_products_per_page: 10,
+        concurrent_requests: 3,  // batch_size=3에 해당
+        request_timeout_seconds: 30
+      };
+      
+      console.log('📦 Test configuration:', request);
+      console.log('🔍 Expected result: batch_size=3, page_range_limit=5 → 2 batches: [300,301,302], [303]');
+      
+      setTestResult('🎭 Actor 시스템 배치 분할 테스트 시작...\n📦 설정: pages 300-303, batch_size=3\n🎯 예상: 2개 배치 ([300,301,302], [303])');
+      
+      // Tauri 커맨드 호출
+      const result = await invoke('start_actor_based_crawling', { request });
+      
+      console.log('✅ Actor system test completed:', result);
+      
+      // 결과 분석
+      const testSummary = `✅ Actor 시스템 배치 분할 테스트 완료
+
+📦 설정:
+  - 페이지 범위: 300-303 (총 4페이지)
+  - batch_size: 3 (concurrent_requests)
+  - page_range_limit: 5
+  
+🎯 예상 결과:
+  - 배치 1: [300, 301, 302] (3페이지)
+  - 배치 2: [303] (1페이지)
+  - 총 배치 수: 2개
+
+📊 실제 결과:
+${JSON.stringify(result, null, 2)}
+
+🔧 SessionActor에서 create_simple_batch_plans() 함수가 호출되어 
+pages 300-303을 batch_size=3으로 분할했습니다.`;
+
+      setTestResult(testSummary);
+      
+      // 성공 후 시스템 상태 새로고침
+      await fetchSystemStatus();
+      
+    } catch (error) {
+      console.error('❌ Actor system test failed:', error);
+      
+      const errorSummary = `❌ Actor 시스템 배치 분할 테스트 실패
+
+🚨 오류 내용:
+${error}
+
+🔍 문제 분석:
+1. Actor 시스템 초기화 실패
+2. 배치 분할 로직 오류
+3. 채널 통신 문제
+4. 백엔드 연결 실패
+
+💡 해결 방법:
+- 로그에서 SessionActor 생성 확인
+- BatchPlan 생성 로그 확인
+- 채널 연결 상태 점검`;
+
+      setTestResult(errorSummary);
+    } finally {
+      setIsActorTesting(false);
     }
   };
 
@@ -175,7 +257,44 @@ export const ActorSystemDashboard: Component = () => {
           >
             🔄 새로고침
           </button>
+          
+          {/* 🎯 Actor 시스템 배치 분할 테스트 버튼 */}
+          <button 
+            class="actor-test-button"
+            onClick={testActorBatchSplitting}
+            disabled={isActorTesting() || loading()}
+            style={{
+              "background": isActorTesting() ? "#9ca3af" : "#3b82f6",
+              "color": "white",
+              "padding": "8px 16px",
+              "border": "none",
+              "border-radius": "6px",
+              "cursor": isActorTesting() ? "not-allowed" : "pointer",
+              "margin-left": "8px"
+            }}
+          >
+            {isActorTesting() ? '🔄 테스트 중...' : '🎭 배치 분할 테스트'}
+          </button>
         </div>
+        
+        {/* 🎯 Actor 시스템 테스트 결과 표시 */}
+        {testResult() && (
+          <div style={{
+            "background": testResult()!.includes('❌') ? "#fef2f2" : "#f0f9ff",
+            "border": testResult()!.includes('❌') ? "1px solid #fecaca" : "1px solid #bfdbfe",
+            "border-radius": "8px",
+            "padding": "12px",
+            "margin-top": "16px",
+            "font-family": "monospace",
+            "font-size": "14px",
+            "white-space": "pre-wrap"
+          }}>
+            <div style={{ "font-weight": "bold", "margin-bottom": "8px" }}>
+              🎭 Actor 시스템 배치 분할 테스트 결과:
+            </div>
+            {testResult()}
+          </div>
+        )}
       </div>
 
       {loading() && (

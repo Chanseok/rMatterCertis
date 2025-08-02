@@ -667,17 +667,28 @@ impl BatchProcessor for ActorBatchProcessor {
             max_pages: Some(config.end_page),
         };
         
-        // 3. SessionActor 생성 및 실행
+        // 3. CrawlingPlanner 생성 (지능형 배치 분할을 위해)
+        let config_for_planner = crate::new_architecture::config::SystemConfig::default();
+        let crawling_planner = Arc::new(
+            crate::new_architecture::services::crawling_planner::CrawlingPlanner::new(
+                Arc::new(config_for_planner)
+            )
+        );
+        
+        info!("🧠 [ACTOR] CrawlingPlanner created for intelligent batch planning");
+        
+        // 4. SessionActor 생성 및 CrawlingPlanner 주입
         let session_actor = SessionActor::new(
             self.system_config.clone(),
             channels.control_rx,
             session_context.event_tx.clone(),
-        );
+        ).with_planner(crawling_planner);
         
-        info!("🎭 [ACTOR] SessionActor created, starting execution");
+        info!("🎭 [ACTOR] SessionActor created with CrawlingPlanner, starting execution");
         
-        // 4. Actor 시스템 실행 (백그라운드)
+        // 4. SessionActor 실행 (백그라운드)
         let session_actor_handle = tokio::spawn(async move {
+            info!("🚀 [ACTOR] SessionActor background task started");
             match session_actor.run().await {
                 Ok(_) => {
                     info!("✅ [ACTOR] SessionActor completed successfully");
@@ -688,20 +699,28 @@ impl BatchProcessor for ActorBatchProcessor {
             }
         });
         
-        // 5. 배치 처리 명령 전송
+        // 5. SessionActor가 준비될 시간을 줌
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        info!("⏳ [ACTOR] Waiting for SessionActor to be ready...");
+        
+        // 6. 배치 처리 명령 전송
         let pages: Vec<u32> = (config.start_page..=config.end_page).collect();
+        info!("📋 [ACTOR] Preparing command: pages {:?}, batch_size {}", pages, config.batch_size);
+        
         let command = ActorCommand::ProcessBatch {
-            pages,
+            pages: pages.clone(),
             config: batch_config,
             batch_size: config.batch_size,
             concurrency_limit: config.concurrency,
         };
         
+        info!("📤 [ACTOR] Sending ProcessBatch command with {} pages", pages.len());
+        
         // 컨텍스트를 통해 명령 전송
         session_context.send_control_command(command).await
             .map_err(|e| anyhow!("Failed to send command to SessionActor: {}", e))?;
         
-        info!("📤 [ACTOR] Batch processing command sent");
+        info!("✅ [ACTOR] Batch processing command sent successfully");
         
         // 6. 결과 대기 (타임아웃 포함)
         let timeout_duration = Duration::from_millis(config.timeout_ms);

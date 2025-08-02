@@ -115,10 +115,21 @@ pub async fn check_advanced_site_status(
             return Err(format!("Data extractor creation failed: {}", e));
         }
     };
-    
-    // 데이터베이스 연결 생성
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:data/matter_certis.db".to_string());
+
+    // 데이터베이스 연결 생성 (올바른 경로 사용)
+    let database_url = {
+        let app_data_dir = if cfg!(target_os = "macos") {
+            std::env::var("HOME")
+                .map(|h| format!("{}/Library/Application Support", h))
+                .unwrap_or_else(|_| "./data".to_string())
+        } else {
+            std::env::var("APPDATA")
+                .or_else(|_| std::env::var("HOME").map(|h| format!("{}/.local/share", h)))
+                .unwrap_or_else(|_| "./data".to_string())
+        };
+        let data_dir = format!("{}/matter-certis-v2/database", app_data_dir);
+        format!("sqlite:{}/matter_certis.db", data_dir)
+    };
     
     let db_connection = match DatabaseConnection::new(&database_url).await {
         Ok(conn) => conn,
@@ -127,9 +138,9 @@ pub async fn check_advanced_site_status(
             return Err(format!("Database connection error: {}", e));
         }
     };
-    
+
     let product_repo = Arc::new(IntegratedProductRepository::new(db_connection.pool().clone()));
-    
+
     // Advanced 크롤링 엔진 생성
     let config = BatchCrawlingConfig {
         start_page: 1,
@@ -246,9 +257,20 @@ pub async fn start_advanced_crawling(
         }
     };
     
-    // 데이터베이스 연결 생성
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:data/matter_certis.db".to_string());
+    // 데이터베이스 연결 생성 (올바른 경로 사용)
+    let database_url = {
+        let app_data_dir = if cfg!(target_os = "macos") {
+            std::env::var("HOME")
+                .map(|h| format!("{}/Library/Application Support", h))
+                .unwrap_or_else(|_| "./data".to_string())
+        } else {
+            std::env::var("APPDATA")
+                .or_else(|_| std::env::var("HOME").map(|h| format!("{}/.local/share", h)))
+                .unwrap_or_else(|_| "./data".to_string())
+        };
+        let data_dir = format!("{}/matter-certis-v2/database", app_data_dir);
+        format!("sqlite:{}/matter_certis.db", data_dir)
+    };
     
     let db_connection = match DatabaseConnection::new(&database_url).await {
         Ok(conn) => conn,

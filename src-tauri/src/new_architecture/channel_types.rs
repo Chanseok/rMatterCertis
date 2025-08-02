@@ -58,6 +58,10 @@ pub enum StageType {
 pub enum StageItem {
     Page(u32),
     Url(String),
+    ProductUrl {
+        url: String,
+        product_id: String,
+    },
 }
 
 /// 배치 설정

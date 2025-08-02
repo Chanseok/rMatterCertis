@@ -158,6 +158,7 @@ impl StatusChecker for StatusCheckerImpl {
                     data_change_status: SiteDataChangeStatus::Inaccessible,
                     decrease_recommendation: None,
                     crawling_range_recommendation: CrawlingRangeRecommendation::None,
+                    calculated_range: None,
                 });
             }
         }
@@ -194,57 +195,8 @@ impl StatusChecker for StatusCheckerImpl {
         // Step 4: 데이터 변화 상태 분석
         let (data_change_status, decrease_recommendation) = self.analyze_data_changes(estimated_products).await;
         
-        // Step 5: 크롤링 범위 권장사항 계산 - 새로운 아키텍처 사용  
+        // Step 5: 크롤링 범위 권장사항 계산 (무한 재귀 방지를 위해 직접 계산)
         info!("🔍 Calculating crawling range recommendation from site status and DB analysis...");
-        info!("🏗️ [NEW ARCHITECTURE] Using SystemConfig-based intelligent strategy instead of hardcoded values");
-        
-        let system_config = Arc::new(SystemConfig::default());
-        info!("✅ [NEW ARCHITECTURE] SystemConfig initialized: batch_sizes.small_db_multiplier={}", 
-              system_config.performance.batch_sizes.small_db_multiplier);
-        info!("✅ [NEW ARCHITECTURE] SystemConfig initialized: concurrency.high_load_multiplier={}", 
-              system_config.performance.concurrency.high_load_multiplier);
-        
-        // CrawlingPlanner 초기화 및 테스트 (캐시된 사이트 상태 사용)
-        let status_checker_arc = Arc::new(StatusCheckerImpl {
-            http_client: self.http_client.clone(),
-            data_extractor: self.data_extractor.clone(),
-            config: self.config.clone(),
-            page_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            product_repo: self.product_repo.clone(),
-        });
-        let db_analyzer_arc = status_checker_arc.clone() as Arc<dyn DatabaseAnalyzer>;
-        let status_checker_for_planner = status_checker_arc.clone() as Arc<dyn StatusChecker>;
-        
-        let crawling_planner = CrawlingPlanner::new(
-            status_checker_for_planner,
-            db_analyzer_arc,
-            system_config,
-        );
-        
-        // 캐시된 사이트 상태를 CrawlingPlanner에 전달 (중복 호출 방지)
-        let cached_site_status = SiteStatus {
-            is_accessible: true,
-            response_time_ms,
-            total_pages,
-            estimated_products,
-            products_on_last_page,
-            last_check_time: chrono::Utc::now(),
-            health_score,
-            data_change_status: data_change_status.clone(),
-            decrease_recommendation: decrease_recommendation.clone(),
-            crawling_range_recommendation: CrawlingRangeRecommendation::Full, // 임시값
-        };
-        
-        // 실제 CrawlingPlanner를 사용해서 분석 시도 (캐시된 데이터 사용)
-        match crawling_planner.analyze_system_state_with_cache(cached_site_status).await {
-            Ok((site_status_new, db_analysis_new)) => {
-                info!("🎉 [NEW ARCHITECTURE] CrawlingPlanner analysis successful! Site pages: {}, DB products: {}", 
-                      site_status_new.total_pages, db_analysis_new.total_products);
-            },
-            Err(e) => {
-                info!("⚠️ [NEW ARCHITECTURE] CrawlingPlanner analysis failed, using fallback: {}", e);
-            }
-        }
         
         let crawling_range_recommendation = self.calculate_crawling_range_recommendation_internal(
             total_pages, 
@@ -263,6 +215,7 @@ impl StatusChecker for StatusCheckerImpl {
             data_change_status,
             decrease_recommendation,
             crawling_range_recommendation,
+            calculated_range: None, // CrawlingPlanner에서 설정됨
         })
     }
 
@@ -1291,9 +1244,24 @@ impl StatusCheckerImpl {
                 info!("📊 Initial crawling - recommending full crawl");
                 return Ok(CrawlingRangeRecommendation::Full);
             },
-            DataChangeAnalysis::Decreased { lost_products, .. } => {
-                warn!("📉 Site data decreased by {} products - recommending full recrawl", lost_products);
-                return Ok(CrawlingRangeRecommendation::Full);
+            DataChangeAnalysis::Decreased { lost_products, change_percentage } => {
+                // 사용자 설정을 항상 존중 - 시스템이 임의로 전체 크롤링을 결정하지 않음
+                warn!("📉 Site data decreased by {} products ({:.1}%) - respecting user settings", 
+                      lost_products, change_percentage);
+                
+                // UI 경고를 위한 로그 출력 (심각도에 따라 다른 로그 레벨 사용)
+                if change_percentage.abs() >= 50.0 {
+                    error!("� CRITICAL: Site data decreased by {:.1}% - UI should show critical warning", change_percentage);
+                } else if change_percentage.abs() >= 30.0 {
+                    error!("⚠️ HIGH: Site data decreased by {:.1}% - UI should show high warning", change_percentage);
+                } else if change_percentage.abs() >= 10.0 {
+                    warn!("⚠️ MEDIUM: Site data decreased by {:.1}% - UI should show medium warning", change_percentage);
+                } else {
+                    info!("ℹ️ LOW: Site data decreased by {:.1}% - UI should show info notice", change_percentage);
+                }
+                
+                // 사용자 설정대로 부분 크롤링 계속 진행
+                info!("✅ Continuing with user-configured partial crawl (respecting user choice)");
             },
             DataChangeAnalysis::Increased { new_products, .. } => {
                 // 새로운 제품이 많이 추가된 경우 부분 크롤링
@@ -2114,7 +2082,7 @@ impl DatabaseAnalyzer for DatabaseAnalyzerImpl {
         Ok(DatabaseAnalysis {
             total_products: total_products as u32,
             unique_products: total_products as u32,
-            duplicate_count: 0,
+            missing_products_count: 0, // TODO: 향후 페이지별 예상 제품 수와 비교하여 계산
             last_update: Some(chrono::Utc::now()),
             missing_fields_analysis: FieldAnalysis {
                 missing_company: 0,
@@ -2588,56 +2556,64 @@ impl CrawlingRangeCalculator {
         
         info!("📊 Effective page limit for this crawling: {}", effective_page_limit);
         
-        // 데이터베이스에서 현재 제품 정보 가져오기
-        let all_products = match self.product_repo.get_all_products().await {
-            Ok(products) => {
-                info!("✅ Successfully retrieved {} products from database", products.len());
-                products
+        // 데이터베이스에서 완료된 제품 상세 정보의 최대 page_id 가져오기
+        // products 테이블과 product_details 테이블이 동기화되지 않을 수 있으므로
+        // 더 안전한 product_details 테이블 기준으로 계산
+        let (max_page_id_opt, max_index_in_page_opt) = match self.product_repo.get_max_page_id_and_index_from_details().await {
+            Ok((page_id, index)) => {
+                info!("✅ Successfully retrieved max page_id from product_details table");
+                (page_id, index)
             },
             Err(e) => {
-                error!("❌ Failed to get products from database: {}", e);
-                Vec::new()
+                error!("❌ Failed to get max page_id from product_details table: {}", e);
+                (None, None)
             }
         };
         
-        if all_products.is_empty() {
-            info!("📋 Database is empty - starting from the last page (page {})", total_pages);
+        if max_page_id_opt.is_none() {
+            info!("📋 No product details found - starting from the last page (page {})", total_pages);
             let end_page = (total_pages.saturating_sub(effective_page_limit - 1)).max(1);
             return Ok(Some((total_pages, end_page)));
         }
         
-        // 가장 높은 page_id 찾기 (역순이므로 가장 작은 실제 페이지 번호)
-        let max_page_id = all_products.iter()
-            .filter_map(|p| p.page_id)
-            .max()
-            .unwrap_or(0);
+        let max_page_id = max_page_id_opt.unwrap_or(0);
+        let _max_index_in_page = max_index_in_page_opt.unwrap_or(0);
             
         info!("🔍 Current max page_id in database: {}", max_page_id);
         
         // page_id에서 실제 페이지 번호로 변환
         // page_id 0 = 485페이지, page_id 1 = 484페이지, ..., page_id 5 = 480페이지
-        let last_crawled_page = total_pages - max_page_id as u32;
+        let last_crawled_page = if max_page_id as u32 >= total_pages {
+            warn!("⚠️ Database page_id ({}) is greater than or equal to total_pages ({}). This suggests a data inconsistency or site structure change.", max_page_id, total_pages);
+            warn!("🔄 Falling back to safe calculation: using page 1 as last crawled page");
+            1
+        } else {
+            total_pages - max_page_id as u32
+        };
         info!("📍 Last crawled page: {} (page_id: {})", last_crawled_page, max_page_id);
         
-        // 다음 크롤링할 범위 계산
-        // 현재 페이지의 제품 수집 상태 확인
-        let current_page_products = all_products.iter()
-            .filter(|p| p.page_id == Some(max_page_id))
-            .count();
+        // 현재 페이지의 완료된 제품 상세 정보 수집 상태 확인
+        let current_page_details_count = match self.product_repo.count_product_details_by_page_id(max_page_id).await {
+            Ok(count) => count as usize,
+            Err(e) => {
+                warn!("⚠️ Failed to count product_details for page_id {}: {}", max_page_id, e);
+                0
+            }
+        };
         
         let expected_products_on_current_page = if last_crawled_page == total_pages {
-            // 마지막 페이지 (485페이지)라면 products_on_last_page만큼 있어야 함
+            // 마지막 페이지라면 products_on_last_page만큼 있어야 함
             products_on_last_page as usize
         } else {
             // 다른 페이지라면 12개가 있어야 함
             DEFAULT_PRODUCTS_PER_PAGE as usize
         };
         
-        info!("🔍 Current page {} has {}/{} products", 
-              last_crawled_page, current_page_products, expected_products_on_current_page);
+        info!("🔍 Current page {} has {}/{} completed product details", 
+              last_crawled_page, current_page_details_count, expected_products_on_current_page);
         
         // 다음 크롤링 시작 페이지 결정
-        let start_page = if current_page_products < expected_products_on_current_page {
+        let start_page = if current_page_details_count < expected_products_on_current_page {
             // 현재 페이지가 완전히 수집되지 않았다면 현재 페이지부터 시작
             last_crawled_page
         } else {
@@ -2719,7 +2695,7 @@ impl DatabaseAnalyzer for StatusCheckerImpl {
         Ok(DatabaseAnalysis {
             total_products: 0,
             unique_products: 0,
-            duplicate_count: 0,
+            missing_products_count: 0, // TODO: 향후 페이지별 예상 제품 수와 비교하여 계산
             missing_fields_analysis: FieldAnalysis {
                 missing_company: 0,
                 missing_model: 0,
@@ -2831,7 +2807,12 @@ impl CrawlingRangeCalculator {
         
         // 실제 페이지 번호로 변환 (page_id 0 = 마지막 페이지)
         let actual_last_crawled_page = if max_page_id >= 0 {
-            total_pages_on_site - max_page_id as u32
+            if max_page_id as u32 >= total_pages_on_site {
+                warn!("⚠️ [DatabaseAnalyzer] Database page_id ({}) is greater than or equal to total_pages ({}). Using fallback.", max_page_id, total_pages_on_site);
+                1  // 안전한 fallback
+            } else {
+                total_pages_on_site - max_page_id as u32
+            }
         } else {
             0
         };

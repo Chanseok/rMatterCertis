@@ -118,6 +118,7 @@ pub mod application {
     pub mod page_discovery_service;
     pub mod parsing_service;
     pub mod validated_crawling_config;  // 검증된 크롤링 설정
+    // pub mod crawler_manager;  // 🚧 임시 비활성화 - 컴파일 문제로 인해
 
     // Re-export commonly used items
     pub use events::EventEmitter;
@@ -126,6 +127,7 @@ pub mod application {
     pub use crawling_profile::{CrawlingProfile, CrawlingRequest};
     pub use page_discovery_service::PageDiscoveryService;
     pub use validated_crawling_config::ValidatedCrawlingConfig;
+    // pub use crawler_manager::{CrawlerManager, CrawlingConfig, CrawlingEngineType}; // 임시 비활성화
 }
 
 pub mod infrastructure;

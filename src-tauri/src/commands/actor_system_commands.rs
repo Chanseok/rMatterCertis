@@ -36,14 +36,14 @@ pub struct ActorSystemResponse {
     pub data: Option<serde_json::Value>,
 }
 
-/// Crawling Request for Actor System
+/// Crawling Request for Actor System - 🧠 CrawlingPlanner 완전 자동 모드
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ActorCrawlingRequest {
-    pub start_page: u32,
-    pub end_page: u32,
-    pub concurrency: Option<u32>,
-    pub batch_size: Option<u32>,
-    pub delay_ms: Option<u64>,
+    pub start_page: Option<u32>,    // 🧠 CrawlingPlanner가 자동 계산
+    pub end_page: Option<u32>,      // 🧠 CrawlingPlanner가 자동 계산
+    pub concurrency: Option<u32>,   // 🧠 CrawlingPlanner가 자동 계산
+    pub batch_size: Option<u32>,    // 🧠 CrawlingPlanner가 자동 계산
+    pub delay_ms: Option<u64>,      // 🧠 CrawlingPlanner가 자동 계산
 }
 
 /// 🎭 NEW ARCHITECTURE: Start Actor-based crawling
@@ -54,13 +54,21 @@ pub async fn start_actor_based_crawling(
 ) -> Result<ActorSystemResponse, String> {
     info!("🎭 [NEW ARCHITECTURE] Starting REAL Actor-based crawling: {:?}", request);
     
+    let start_page = request.start_page.unwrap_or(0);
+    let end_page = request.end_page.unwrap_or(0);
     let batch_size = request.batch_size.unwrap_or(3);
-    let total_pages = request.end_page - request.start_page + 1;
+    let total_pages = if end_page > start_page {
+        end_page - start_page + 1
+    } else if start_page > end_page {
+        start_page - end_page + 1
+    } else {
+        1
+    };
     let batch_count = (total_pages + batch_size - 1) / batch_size; // 올림 계산
     
     info!("✅ [ACTOR] Creating actual SessionActor for real crawling");
     info!("📊 [ACTOR] Pages: {} to {}, Batch size: {}, Expected batches: {}", 
-          request.start_page, request.end_page, batch_size, batch_count);
+          start_page, end_page, batch_size, batch_count);
     
     // 🚀 실제 SessionActor 생성 및 실행
     let system_config = Arc::new(SystemConfig::default());
@@ -90,34 +98,31 @@ pub async fn start_actor_based_crawling(
     };
     let app_handle_for_task = app.clone();
     
-    // 🔥 실제 크롤링 엔진을 사용한 SessionActor 실행 (백그라운드)
+    // 🔥 실제 Actor 시스템 실행 (설계 문서 준수)
     let _session_actor_handle = tokio::spawn(async move {
-        info!("🚀 SessionActor starting execution with REAL crawling engine...");
+        info!("🚀 SessionActor starting execution with PROPER Actor architecture...");
         
-        // 🎯 실제 크롤링 엔진 초기화
-        match initialize_real_crawling_engine(&session_id_for_task, &request_for_task, &app_handle_for_task).await {
-            Ok((mut crawling_engine, analysis_info)) => {
-                info!("✅ Real crawling engine initialized successfully");
-                
-                // 실제 크롤링 엔진 실행
-                match crawling_engine.execute().await {
-                    Ok(()) => {
-                        info!("🎉 Real crawling completed successfully!");
-                    }
-                    Err(e) => {
-                        error!("❌ Real crawling failed: {}", e);
-                    }
-                }
-                
-                // 분석 정보 저장 (나중에 응답에서 사용)
-                // TODO: 분석 정보를 세션에 저장하거나 이벤트로 전달
+        // 🎯 올바른 Actor 시스템 초기화 및 실행
+        match execute_proper_actor_system(&session_id_for_task, &request_for_task, &app_handle_for_task).await {
+            Ok(()) => {
+                info!("🎉 Actor system execution completed successfully!");
             }
             Err(e) => {
-                error!("❌ Failed to initialize real crawling engine: {}", e);
+                error!("❌ Actor system execution failed: {}", e);
                 
-                // 실패 시 시뮬레이션 모드로 폴백
-                info!("🔄 Falling back to simulation mode...");
-                run_simulation_crawling(&request_for_task, request_for_task.batch_size.unwrap_or(3)).await;
+                // 실패 시 기존 엔진으로 폴백
+                info!("🔄 Falling back to ServiceBasedBatchCrawlingEngine...");
+                match initialize_real_crawling_engine(&session_id_for_task, &request_for_task, &app_handle_for_task).await {
+                    Ok((mut crawling_engine, _)) => {
+                        if let Err(e) = crawling_engine.execute().await {
+                            error!("❌ Fallback crawling failed: {}", e);
+                            run_simulation_crawling(&request_for_task, request_for_task.batch_size.unwrap_or(3)).await;
+                        }
+                    }
+                    Err(_) => {
+                        run_simulation_crawling(&request_for_task, request_for_task.batch_size.unwrap_or(3)).await;
+                    }
+                }
             }
         }
         
@@ -129,7 +134,7 @@ pub async fn start_actor_based_crawling(
     // 🔥 이벤트 리스너 실행 (백그라운드) - 실제 이벤트 방출
     let event_tx_clone = event_tx.clone();
     let session_id_for_second_spawn = session_id.clone();
-    let end_page_for_event = request.end_page;
+    let end_page_for_event = end_page;
     let app_handle_for_events = app.clone();
     tokio::spawn(async move {
         // 시작 이벤트 방출 (AppEvent 타입으로)
@@ -156,12 +161,12 @@ pub async fn start_actor_based_crawling(
     // 🔥 실제 Actor 시스템 - 도메인 지능형 시스템과 연결 완료
     info!("🎭 Actor 시스템 INTELLIGENT MODE: 도메인 요구사항 준수");
     info!("📊 요청 범위: {} ~ {} 페이지, 배치크기 {}, 동시성 {}", 
-          request.start_page, request.end_page, batch_size, request.concurrency.unwrap_or(8));
+          start_page, end_page, batch_size, request.concurrency.unwrap_or(8));
     
-    let total_pages = if request.start_page >= request.end_page {
-        request.start_page - request.end_page + 1
+    let total_pages = if start_page >= end_page {
+        start_page - end_page + 1
     } else {
-        request.end_page - request.start_page + 1
+        end_page - start_page + 1
     };
     
     Ok(ActorSystemResponse {
@@ -266,8 +271,8 @@ async fn initialize_real_crawling_engine(
             .clone()
     };
     
-    // IntegratedProductRepository 생성
-    let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
+    // IntegratedProductRepository 생성 (첫 번째)
+    let product_repo = Arc::new(IntegratedProductRepository::new(db_pool.clone()));
     
     // HTTP 클라이언트 생성
     let http_client = HttpClient::create_from_global_config()
@@ -294,11 +299,15 @@ async fn initialize_real_crawling_engine(
           app_config.user.batch.batch_size,
           app_config.user.max_concurrent_requests);
     
-    // StatusChecker 생성 (실제 설정 사용)
-    let status_checker_impl = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
+    // 📦 제품 저장소 생성 (범위 계산을 위한 DB 상태 분석)
+    let product_repo = Arc::new(IntegratedProductRepository::new(db_pool.clone()));
+    
+    // StatusChecker 생성 (실제 설정 사용) - product_repo와 함께 초기화
+    let status_checker_impl = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
         http_client.clone(),
         data_extractor.clone(),
         app_config.clone(),
+        product_repo.clone(),
     );
     let status_checker = Arc::new(status_checker_impl);
     
@@ -307,37 +316,37 @@ async fn initialize_real_crawling_engine(
         product_repo.clone(),
     ));
     
-    // SystemConfig로 변환 (CrawlingPlanner용)
-    let system_config = Arc::new(crate::new_architecture::config::SystemConfig::default());
+    // ✅ 실제 AppConfig 사용 (CrawlingPlanner용)
+    let config_manager = crate::infrastructure::config::ConfigManager::new()
+        .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
+    let app_config = config_manager.load_config().await
+        .map_err(|e| format!("Failed to load config: {}", e))?;
     
-    // 🚀 실제 CrawlingPlanner 사용!
+    // 🚀 실제 CrawlingPlanner 사용! (ServiceBasedBatchCrawlingEngine과 동일한 범위 계산 로직)
     let crawling_planner = crate::new_architecture::services::crawling_planner::CrawlingPlanner::new(
         status_checker.clone(),
         db_analyzer.clone(),
-        system_config.clone(),
+        product_repo.clone(),
+        Arc::new(app_config.clone()),
     );
     
     // 시스템 상태 분석 (진짜 도메인 로직)
-    let (site_status, db_analysis) = crawling_planner.analyze_system_state().await
-        .map_err(|e| format!("Failed to analyze system state: {}", e))?;
+    let (site_status, db_analysis, processing_strategy) = crawling_planner.create_crawling_plan().await
+        .map_err(|e| format!("Failed to create crawling plan: {}", e))?;
     
     info!("🌐 [ACTOR] Real site analysis: {} pages, {} products on last page", 
           site_status.total_pages, site_status.products_on_last_page);
     info!("💾 [ACTOR] Real DB analysis: {} total products, {} unique products", 
           db_analysis.total_products, db_analysis.unique_products);
+    info!("⚙️ [ACTOR] Processing strategy: batch_size={}, concurrency={}", 
+          processing_strategy.recommended_batch_size, processing_strategy.recommended_concurrency);
     
-    // 🎯 실제 CrawlingPlanner로 지능형 전략 결정
-    let (range_recommendation, processing_strategy) = crawling_planner
-        .determine_crawling_strategy(&site_status, &db_analysis)
-        .await
-        .map_err(|e| format!("Failed to determine crawling strategy: {}", e))?;
-    
-    info!("📋 [ACTOR] CrawlingPlanner recommendation: {:?}", range_recommendation);
+    info!("📋 [ACTOR] CrawlingPlanner recommendation: {:?}", site_status.crawling_range_recommendation);
     info!("⚙️ [ACTOR] Processing strategy: batch_size={}, concurrency={}", 
           processing_strategy.recommended_batch_size, processing_strategy.recommended_concurrency);
     
     // 지능형 범위 권장사항을 실제 페이지 범위로 변환
-    let (calculated_start_page, calculated_end_page) = match range_recommendation.to_page_range(site_status.total_pages) {
+    let (calculated_start_page, calculated_end_page) = match site_status.crawling_range_recommendation.to_page_range(site_status.total_pages) {
         Some((start, end)) => {
             // 🔄 역순 크롤링으로 변환 (start > end)
             let reverse_start = if start > end { start } else { end };
@@ -375,21 +384,23 @@ async fn initialize_real_crawling_engine(
         info!("🔒 [ACTOR] Range limited by config: {} to {} ({} pages)", 
               limited_start, limited_end, max_allowed_pages);
         (limited_start, limited_end)
-    } else if request.start_page != 0 && request.end_page != 0 {
+    } else if request.start_page.unwrap_or(0) != 0 && request.end_page.unwrap_or(0) != 0 {
         // 사용자가 명시적으로 범위를 지정한 경우
-        info!("👤 [ACTOR] User specified range: {} to {}", request.start_page, request.end_page);
+        let user_start = request.start_page.unwrap();
+        let user_end = request.end_page.unwrap();
+        info!("👤 [ACTOR] User specified range: {} to {}", user_start, user_end);
         info!("🤖 [ACTOR] CrawlingPlanner recommendation: {} to {}", calculated_start_page, calculated_end_page);
         
         // 사용자 범위도 설정 제한 적용
-        let user_pages = if request.start_page >= request.end_page {
-            request.start_page - request.end_page + 1
+        let user_pages = if user_start >= user_end {
+            user_start - user_end + 1
         } else {
-            request.end_page - request.start_page + 1
+            user_end - user_start + 1
         };
         
         if user_pages <= max_allowed_pages {
             info!("✅ [ACTOR] Using user range (within config limits)");
-            (request.start_page, request.end_page)
+            (user_start, user_end)
         } else {
             info!("⚠️ [ACTOR] User range exceeds config limit, using CrawlingPlanner recommendation");
             (calculated_start_page, calculated_end_page)
@@ -442,7 +453,7 @@ async fn initialize_real_crawling_engine(
     
     // 분석 정보를 JSON으로 구성
     let analysis_info = serde_json::json!({
-        "range_recommendation": format!("{:?}", range_recommendation),
+        "range_recommendation": format!("{:?}", site_status.crawling_range_recommendation),
         "user_requested": {
             "start_page": request.start_page,
             "end_page": request.end_page
@@ -474,12 +485,15 @@ async fn run_simulation_crawling(
 ) {
     info!("🔄 Running simulation crawling as fallback...");
     
+    let start_page = request.start_page.unwrap_or(1);
+    let end_page = request.end_page.unwrap_or(1);
+    
     // 페이지 범위를 배치로 분할
-    let mut current_page = request.start_page;
+    let mut current_page = start_page;
     let mut batch_number = 1;
     
-    while current_page <= request.end_page {
-        let batch_end = std::cmp::min(current_page + batch_size - 1, request.end_page);
+    while current_page <= end_page {
+        let batch_end = std::cmp::min(current_page + batch_size - 1, end_page);
         info!("📦 Processing Batch {}: pages {} to {}", batch_number, current_page, batch_end);
         
         // 배치별 페이지 처리 시뮬레이션
@@ -498,4 +512,178 @@ async fn run_simulation_crawling(
     }
     
     info!("🎉 Simulation crawling completed successfully");
+}
+
+/// 🎭 올바른 Actor 시스템 실행 (설계 문서 준수)
+/// SessionActor → BatchActor → StageActor → AsyncTask 계층 구조 구현
+async fn execute_proper_actor_system(
+    session_id: &str,
+    request: &ActorCrawlingRequest,
+    app_handle: &AppHandle,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    info!("🏗️ [PROPER ACTOR] Starting proper Actor system execution for session: {}", session_id);
+    
+    // 🎯 1단계: 필요한 서비스들 초기화 (기존 코드 참조)
+    let app_state = app_handle.state::<AppState>();
+    let db_pool = {
+        let pool_guard = app_state.database_pool.read().await;
+        pool_guard.as_ref()
+            .ok_or("Database pool not initialized")?
+            .clone()
+    };
+    
+    let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
+    let http_client = HttpClient::create_from_global_config()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let data_extractor = MatterDataExtractor::new()
+        .map_err(|e| format!("Failed to create data extractor: {}", e))?;
+    
+    // 설정 파일 로드
+    let config_manager = crate::infrastructure::config::ConfigManager::new()
+        .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
+    let app_config = config_manager.load_config().await
+        .map_err(|e| format!("Failed to load config: {}", e))?;
+    
+    info!("📋 [PROPER ACTOR] Configuration loaded: page_range_limit={}, batch_size={}", 
+          app_config.user.crawling.page_range_limit, 
+          app_config.user.batch.batch_size);
+    
+    // 🎯 2단계: CrawlingPlanner로 지능형 분석 (기존 코드 참조)
+    let status_checker_impl = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
+        http_client.clone(),
+        data_extractor.clone(),
+        app_config.clone(),
+        product_repo.clone(),
+    );
+    let status_checker = Arc::new(status_checker_impl);
+    
+    let db_analyzer = Arc::new(crate::infrastructure::crawling_service_impls::DatabaseAnalyzerImpl::new(
+        product_repo.clone(),
+    ));
+
+    // ✅ 실제 AppConfig를 사용하여 CrawlingPlanner 생성 (ServiceBasedBatchCrawlingEngine과 동일한 범위 계산)
+    let crawling_planner = Arc::new(crate::new_architecture::services::crawling_planner::CrawlingPlanner::new(
+        status_checker.clone(),
+        db_analyzer.clone(),
+        product_repo.clone(),
+        Arc::new(app_config.clone()),
+    ));
+    
+    // 시스템 상태 분석
+    let (site_status, db_analysis, processing_strategy) = crawling_planner.create_crawling_plan().await
+        .map_err(|e| format!("Failed to create crawling plan: {}", e))?;
+    
+    info!("🌐 [PROPER ACTOR] Site analysis: {} pages, {} products on last page", 
+          site_status.total_pages, site_status.products_on_last_page);
+    info!("💾 [PROPER ACTOR] DB analysis: {} total products", db_analysis.total_products);
+    info!("⚙️ [PROPER ACTOR] Processing strategy: batch_size={}, concurrency={}", 
+          processing_strategy.recommended_batch_size, processing_strategy.recommended_concurrency);
+    
+    // 실제 페이지 범위 계산 (CrawlingPlanner에서 직접 계산)
+    let (calculated_start_page, calculated_end_page) = if let Some((start, end)) = crawling_planner.calculate_actual_crawling_range(&site_status).await
+        .map_err(|e| format!("Failed to calculate actual crawling range: {}", e))? {
+        info!("🎯 [PROPER ACTOR] CrawlingPlanner range: {} to {} (reverse crawling)", start, end);
+        (start, end)
+    } else {
+        info!("🔍 [PROPER ACTOR] No crawling needed, using verification range");
+        let verification_pages = app_config.user.crawling.page_range_limit.min(5);
+        let start = site_status.total_pages;
+        let end = if start >= verification_pages { start - verification_pages + 1 } else { 1 };
+        (start, end)
+    };
+    
+    // 사용자 요청 범위와 CrawlingPlanner 권장사항 조합
+    let (final_start_page, final_end_page) = match (request.start_page, request.end_page) {
+        (Some(start), Some(end)) if start != 0 && end != 0 => {
+            info!("👤 [PROPER ACTOR] Using user specified range: {} to {}", start, end);
+            (start, end)
+        },
+        _ => {
+            info!("🧠 [PROPER ACTOR] Using CrawlingPlanner recommendation: {} to {}", calculated_start_page, calculated_end_page);
+            (calculated_start_page, calculated_end_page)
+        }
+    };
+    
+    // 🎯 4단계: SessionActor 생성 및 실행 (올바른 Actor 계층 구조)
+    let (control_tx, control_rx) = mpsc::channel(100);
+    let (event_tx, _event_rx) = mpsc::channel(500);
+    
+    // SessionActor 생성 및 CrawlingPlanner 주입
+    let session_system_config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
+    let mut session_actor = SessionActor::new(
+        session_system_config,
+        control_rx,
+        event_tx.clone(),
+    ).with_planner(crawling_planner);
+    
+    info!("🎭 [PROPER ACTOR] SessionActor created with CrawlingPlanner integration");
+    
+    // 🎯 5단계: 배치 계획 수립 (올바른 배치 분할)
+    let batch_size = request.batch_size.unwrap_or(processing_strategy.recommended_batch_size);
+    let concurrency_limit = request.concurrency.unwrap_or(processing_strategy.recommended_concurrency);
+    let delay_ms = request.delay_ms.unwrap_or(800); // 기본 지연 시간
+    
+    info!("📊 [PROPER ACTOR] Using batch_size={}, concurrency={}, delay={}ms", 
+          batch_size, concurrency_limit, delay_ms);
+    
+    let total_pages = if final_start_page >= final_end_page {
+        final_start_page - final_end_page + 1
+    } else {
+        final_end_page - final_start_page + 1
+    };
+    
+    info!("📊 [PROPER ACTOR] Batch planning: {} pages with batch_size={}", total_pages, batch_size);
+    
+    // 페이지 벡터 생성 (역순 크롤링)
+    let pages: Vec<u32> = if final_start_page >= final_end_page {
+        (final_end_page..=final_start_page).rev().collect()
+    } else {
+        (final_start_page..=final_end_page).collect()
+    };
+    
+    info!("📋 [PROPER ACTOR] Page sequence: {:?}", pages);
+    
+    // 🎯 6단계: SessionActor가 배치 계획을 수립하고 BatchActor 생성
+    let batch_config = crate::new_architecture::channel_types::BatchConfig {
+        target_url: "https://csa-iot.org".to_string(),
+        max_pages: Some(final_start_page),
+    };
+    
+    // ProcessBatch 명령 전송 (SessionActor가 배치를 올바르게 분할)
+    let command = crate::new_architecture::channel_types::ActorCommand::ProcessBatch {
+        pages,
+        config: batch_config,
+        batch_size,
+        concurrency_limit,
+    };
+    
+    info!("🚀 [PROPER ACTOR] Sending ProcessBatch command to SessionActor");
+    control_tx.send(command).await
+        .map_err(|e| format!("Failed to send command to SessionActor: {}", e))?;
+    
+    // 🎯 7단계: SessionActor 실행 (실제 Actor 계층 구조 동작)
+    info!("⚡ [PROPER ACTOR] Starting SessionActor execution loop");
+    
+    // SessionActor 실행 (타임아웃 설정)
+    let execution_timeout = Duration::from_secs(600); // 10분 타임아웃
+    match tokio::time::timeout(execution_timeout, session_actor.run()).await {
+        Ok(result) => {
+            match result {
+                Ok(()) => {
+                    info!("🎉 [PROPER ACTOR] SessionActor completed successfully");
+                }
+                Err(e) => {
+                    error!("❌ [PROPER ACTOR] SessionActor failed: {}", e);
+                    return Err(format!("SessionActor execution failed: {}", e).into());
+                }
+            }
+        }
+        Err(_) => {
+            error!("⏰ [PROPER ACTOR] SessionActor execution timed out");
+            return Err("SessionActor execution timed out".into());
+        }
+    }
+    
+    info!("✅ [PROPER ACTOR] Proper Actor system execution completed successfully");
+    Ok(())
 }

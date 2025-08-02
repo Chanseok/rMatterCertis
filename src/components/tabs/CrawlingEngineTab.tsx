@@ -231,25 +231,25 @@ export const CrawlingEngineTab: Component = () => {
     }
   };
 
-  // Actor 시스템 테스트 함수 추가
-  const startActorSystemTest = async () => {
+  // Actor 시스템 계산된 범위로 크롤링
+  const startActorSystemWithCalculatedRange = async () => {
     if (isRunning()) return;
     
+    // ✅ CrawlingPlanner가 모든 것을 자동 계산하도록 변경
     setIsRunning(true);
-    addLog('🎭 Actor 시스템 크롤링 테스트 시작');
+    addLog(`🎭 Actor 시스템 크롤링 시작 (CrawlingPlanner 완전 자동 모드)`);
+    addLog(`🧠 CrawlingPlanner가 설정, 사이트 상태, DB 상태를 종합해서 범위와 배치를 자동 계산합니다`);
 
     try {
+      // 🎯 CrawlingPlanner가 모든 계산을 담당하도록 빈 요청 전송
       const result = await invoke('start_actor_based_crawling', {
         request: {
-          start_page: 1,
-          end_page: 5,
-          concurrency: 8,
-          batch_size: 3,
-          delay_ms: 100
+          // 🧠 CrawlingPlanner가 자동으로 모든 값을 계산
+          // 사용자 입력 없이 설정 파일, 사이트 상태, DB 상태를 종합해서 결정
         }
       });
       addLog(`✅ Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
-      addLog('🎭 Actor 시스템이 활성화되었습니다. 계층적 이벤트 모니터 탭에서 실시간 상태를 확인하세요.');
+      addLog('🎭 Actor 시스템이 활성화되었습니다. CrawlingPlanner가 모든 설정을 자동 계산했습니다.');
       
     } catch (error) {
       console.error('Actor 시스템 크롤링 시작 실패:', error);
@@ -481,20 +481,75 @@ export const CrawlingEngineTab: Component = () => {
               </Show>
             </div>
 
-            {/* Actor System Test Controls */}
+            {/* Actor System Controls */}
             <div class="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg shadow-sm border border-purple-200 p-6 mb-6">
-              <h2 class="text-lg font-semibold text-purple-900 mb-4">🎭 Actor 시스템 테스트</h2>
-              <div class="space-y-3">
+              <h2 class="text-lg font-semibold text-purple-900 mb-4">🎭 Actor 시스템 크롤링</h2>
+              <div class="space-y-4">
+                
+                {/* Calculated Range Display */}
+                <Show when={crawlingRange()?.range}>
+                  <div class="bg-purple-100 border border-purple-300 rounded-md p-3">
+                    <div class="text-sm text-purple-800">
+                      <strong>📊 CrawlingPlanner 계산 결과:</strong><br/>
+                      크롤링 범위: <span class="font-mono font-bold">{crawlingRange()?.range?.[0]} → {crawlingRange()?.range?.[1]}</span> 
+                      ({(crawlingRange()?.range?.[0] || 0) - (crawlingRange()?.range?.[1] || 0) + 1} 페이지)<br/>
+                      <span class="text-xs">• 설정, 사이트 상태, DB 상태를 종합하여 자동 계산됨</span>
+                      
+                      {/* Batch Execution Plan */}
+                      <div class="mt-3 pt-3 border-t border-purple-200">
+                        <strong>📦 배치 실행 계획 (batch_size=3):</strong><br/>
+                        <div class="mt-1 space-y-1">
+                          {(() => {
+                            const range = crawlingRange()?.range;
+                            if (!range) return null;
+                            
+                            const [start, end] = range;
+                            const batches = [];
+                            
+                            // 역순 크롤링으로 배치 계산
+                            for (let i = start; i >= end; i -= 3) {
+                              const batchEnd = Math.max(i - 2, end);
+                              const batchPages = [];
+                              for (let j = i; j >= batchEnd; j--) {
+                                batchPages.push(j);
+                              }
+                              batches.push(batchPages);
+                            }
+                            
+                            return batches.map((batch, index) => (
+                              <div class="text-xs font-mono bg-purple-50 px-2 py-1 rounded">
+                                <span class="text-purple-700">Batch {index + 1}:</span> 
+                                <span class="text-purple-900"> [{batch.join(', ')}]</span>
+                                <span class="text-purple-600"> ({batch.length}페이지)</span>
+                              </div>
+                            ));
+                          })()}
+                        </div>
+                        <div class="text-xs text-purple-600 mt-2">
+                          • 총 {(() => {
+                            const range = crawlingRange()?.range;
+                            if (!range) return 0;
+                            const [start, end] = range;
+                            return Math.ceil((start - end + 1) / 3);
+                          })()} 개 배치로 순차 실행
+                          • 각 배치 내에서는 병렬 처리 (concurrency=64)
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </Show>
+
+                {/* Actor System Main Button */}
                 <button
-                  onClick={startActorSystemTest}
-                  class="w-full py-2.5 px-4 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium"
-                  disabled={isRunning()}
+                  onClick={startActorSystemWithCalculatedRange}
+                  class="w-full py-3 px-4 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  disabled={isRunning() || !crawlingRange()?.range}
                 >
-                  🎭 Actor 시스템 크롤링 테스트
-                </button>
-                <p class="text-sm text-purple-700">
-                  계층적 Actor 시스템을 사용한 새로운 크롤링 아키텍처를 테스트합니다.
-                </p>
+                  🎭 Actor 시스템으로 크롤링 시작
+                  <Show when={!crawlingRange()?.range}>
+                    <span class="text-xs block mt-1">(크롤링 범위 계산 필요)</span>
+                  </Show>
+                </button>                
               </div>
             </div>
 

@@ -593,7 +593,7 @@ pub async fn check_site_status(
         Ok(crate::domain::services::crawling_services::DatabaseAnalysis {
             total_products: 0,
             unique_products: 0,
-            duplicate_count: 0,
+            missing_products_count: 0, // TODO: 향후 페이지별 예상 제품 수와 비교하여 계산
             last_update: Some(chrono::Utc::now()),
             missing_fields_analysis: crate::domain::services::crawling_services::FieldAnalysis {
                 missing_company: 0,
@@ -614,7 +614,7 @@ pub async fn check_site_status(
             info!("Site: accessible={}, total_pages={}, estimated_products={}", 
                   site_status.is_accessible, site_status.total_pages, site_status.estimated_products);
             info!("Database: total_products={}, unique_products={}, duplicates={}", 
-                  db_analysis.total_products, db_analysis.unique_products, db_analysis.duplicate_count);
+                  db_analysis.total_products, db_analysis.unique_products, db_analysis.missing_products_count);
             
             // Create comprehensive status object
             let comprehensive_status = serde_json::json!({
@@ -631,7 +631,7 @@ pub async fn check_site_status(
                 "database_analysis": {
                     "total_products": db_analysis.total_products,
                     "unique_products": db_analysis.unique_products,
-                    "duplicate_count": db_analysis.duplicate_count,
+                    "missing_products_count": db_analysis.missing_products_count,
                     "data_quality_score": db_analysis.data_quality_score,
                     "missing_fields": {
                         "company": db_analysis.missing_fields_analysis.missing_company,
@@ -648,8 +648,8 @@ pub async fn check_site_status(
                     } else { 0.0 },
                     "recommended_action": if site_status.estimated_products > db_analysis.total_products {
                         "crawling_needed"
-                    } else if db_analysis.duplicate_count > 0 {
-                        "cleanup_needed"
+                    } else if db_analysis.missing_products_count > 0 {
+                        "missing_products_check_needed"
                     } else {
                         "up_to_date"
                     }
@@ -692,7 +692,7 @@ pub async fn check_site_status(
                 "database_analysis": {
                     "total_products": db_analysis.total_products,
                     "unique_products": db_analysis.unique_products,
-                    "duplicate_count": db_analysis.duplicate_count,
+                    "missing_products_count": db_analysis.missing_products_count,
                     "data_quality_score": db_analysis.data_quality_score
                 }
             });
@@ -999,7 +999,7 @@ async fn calculate_intelligent_crawling_range(
     let db_analysis = crate::domain::services::crawling_services::DatabaseAnalysis {
         total_products: 0,
         unique_products: 0,
-        duplicate_count: 0,
+        missing_products_count: 0, // TODO: 향후 페이지별 예상 제품 수와 비교하여 계산
         last_update: Some(chrono::Utc::now()),
         missing_fields_analysis: crate::domain::services::crawling_services::FieldAnalysis {
             missing_company: 0,

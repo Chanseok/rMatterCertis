@@ -19,8 +19,8 @@ pub async fn test_database_connection() -> Result<String, String> {
             .map_err(|e| format!("Failed to create data directory: {e}"))?;
     }
     
-    // Use relative path for database
-    let database_url = "sqlite:./data/matter_certis.db";
+    // Use centralized database URL
+    let database_url = crate::infrastructure::get_main_database_url();
     println!("📊 Database URL: {database_url}");
     
     match DatabaseConnection::new(database_url).await {
