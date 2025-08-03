@@ -69,8 +69,8 @@ pub async fn start_actor_based_crawling(
     let (event_tx, mut event_rx) = mpsc::channel(500);
     
     // SessionActor 생성
-    let _session_actor = SessionActor::new(format!("session_{}", chrono::Utc::now().timestamp()).as_str())
-        session_id.clone(),
+    let _session_actor = SessionActor::new(
+        format!("session_{}", chrono::Utc::now().timestamp())
     );
     
     let session_id = format!("actor_session_{}", Utc::now().timestamp());
@@ -225,10 +225,8 @@ pub async fn test_actor_integration_basic(
     let (_control_tx, control_rx) = mpsc::channel(100);
     let (event_tx, _event_rx) = mpsc::channel(500);
     
-    let _session_actor = SessionActor::new(format!("session_{}", chrono::Utc::now().timestamp()).as_str())
-        system_config,
-        control_rx,
-        event_tx.clone(),
+    let _session_actor = SessionActor::new(
+        format!("session_{}", chrono::Utc::now().timestamp())
     );
     
     // Test actor system flow
