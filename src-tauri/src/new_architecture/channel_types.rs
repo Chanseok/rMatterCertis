@@ -29,6 +29,8 @@ pub enum ActorCommand {
         config: BatchConfig,
         batch_size: u32,
         concurrency_limit: u32,
+        total_pages: u32,
+        products_on_last_page: u32,
     },
     ExecuteStage {
         stage_type: StageType,
@@ -58,10 +60,6 @@ pub enum StageType {
 pub enum StageItem {
     Page(u32),
     Url(String),
-    ProductUrl {
-        url: String,
-        product_id: String,
-    },
 }
 
 /// 배치 설정

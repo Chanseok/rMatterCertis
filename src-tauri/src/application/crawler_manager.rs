@@ -27,7 +27,7 @@ use crate::infrastructure::{
 use crate::new_architecture::{
     actor_system::{SessionActor, ActorError},
     system_config::SystemConfig,
-    channel_types::{ActorCommand, AppEvent, BatchConfig},
+    channels::types::{ActorCommand, AppEvent, BatchConfig},
     integrated_context::{IntegratedContext, IntegratedContextFactory},
 };
 use tauri::AppHandle;

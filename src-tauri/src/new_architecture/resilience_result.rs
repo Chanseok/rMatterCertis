@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use crate::new_architecture::{
     actor_system::{StageSuccessResult, StageError},
-    channel_types::StageType,
+    channels::types::StageType,
 };
 
 /// 회복탄력성 Stage 결과 시스템

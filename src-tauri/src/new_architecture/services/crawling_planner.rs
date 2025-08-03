@@ -1,191 +1,442 @@
+//! CrawlingPlanner - 지능형 크롤링 계획 수립 시스템
+//! 
+//! Actor 기반 아키텍처에서 크롤링 전략을 수립하고 
+//! 최적화된 실행 계획을 생성하는 모듈입니다.
+
 use std::sync::Arc;
-use anyhow::{Result, anyhow};
-use tracing::{info, warn};
+use serde::{Serialize, Deserialize};
+use ts_rs::TS;
 
-use crate::domain::services::{
-    StatusChecker, DatabaseAnalyzer, ProcessingStrategy
+use crate::domain::services::{StatusChecker, DatabaseAnalyzer};
+use crate::domain::services::crawling_services::{
+    DatabaseAnalysis, ProcessingStrategy, DuplicateAnalysis, 
+    FieldAnalysis, CrawlingRangeRecommendation
 };
-use crate::domain::services::crawling_services::{SiteStatus, DatabaseAnalysis, CrawlingRangeRecommendation};
-use crate::infrastructure::config::AppConfig;
-use crate::infrastructure::crawling_service_impls::CrawlingRangeCalculator;
-use crate::infrastructure::IntegratedProductRepository;
+use super::super::{
+    context::SystemConfig,
+    actors::types::{CrawlingConfig, BatchConfig, ActorError}
+};
 
-/// 크롤링 계획 수립 서비스
-///
-/// 여러 서비스(StatusChecker, DatabaseAnalyzer)의 분석 결과를 종합하여
-/// 최적의 크롤링 전략과 처리 방식을 결정하는 역할을 담당합니다.
+/// 지능형 크롤링 계획 수립자
 /// 
-/// **핵심 원칙**: ServiceBasedBatchCrawlingEngine의 검증된 크롤링 범위 계산 로직을 재사용
+/// 사이트 상태와 데이터베이스 분석을 기반으로 
+/// 최적화된 크롤링 전략을 수립합니다.
 pub struct CrawlingPlanner {
+    /// 상태 확인기
     status_checker: Arc<dyn StatusChecker>,
+    
+    /// 데이터베이스 분석기
     database_analyzer: Arc<dyn DatabaseAnalyzer>,
-    config: Arc<AppConfig>,
-    range_calculator: CrawlingRangeCalculator,
+    
+    /// 시스템 설정
+    config: Arc<SystemConfig>,
 }
 
 impl CrawlingPlanner {
     /// 새로운 CrawlingPlanner 인스턴스를 생성합니다.
     /// 
-    /// **중요**: ServiceBasedBatchCrawlingEngine의 검증된 CrawlingRangeCalculator를 통합
+    /// # Arguments
+    /// * `status_checker` - 사이트 상태 확인기
+    /// * `database_analyzer` - 데이터베이스 분석기
+    /// * `config` - 시스템 설정
+    #[must_use]
     pub fn new(
         status_checker: Arc<dyn StatusChecker>,
         database_analyzer: Arc<dyn DatabaseAnalyzer>,
-        product_repo: Arc<IntegratedProductRepository>,
-        config: Arc<AppConfig>,
+        config: Arc<SystemConfig>,
     ) -> Self {
-        let range_calculator = CrawlingRangeCalculator::new(
-            product_repo,
-            (*config).clone(),
-        );
-
         Self {
             status_checker,
             database_analyzer,
             config,
-            range_calculator,
         }
     }
-
-    /// 사이트 분석 결과를 기반으로 크롤링 계획을 수립합니다.
+    
+    /// 크롤링 계획을 수립합니다.
     /// 
-    /// 반환값:
-    /// - SiteStatus: 사이트 기본 정보
-    /// - DatabaseAnalysis: DB 분석 결과  
-    /// - ProcessingStrategy: 처리 전략
-    pub async fn create_crawling_plan(&self) -> Result<(SiteStatus, DatabaseAnalysis, ProcessingStrategy)> {
-        info!("🎯 [CrawlingPlanner] Creating comprehensive crawling plan...");
-
-        // 1. 기본 분석
-        let site_status = self.status_checker.check_site_status().await?;
-        let db_analysis = self.database_analyzer.analyze_current_state().await?;
-
-        info!("📊 [CrawlingPlanner] Site analysis: {} total pages, {} products in DB", 
-              site_status.total_pages, db_analysis.total_products);
-
-        // 2. 크롤링 전략 결정
-        let (crawling_recommendation, processing_strategy) = self.determine_crawling_strategy(
+    /// # Arguments
+    /// * `crawling_config` - 기본 크롤링 설정
+    /// 
+    /// # Returns
+    /// * `Ok(CrawlingPlan)` - 수립된 크롤링 계획
+    /// * `Err(ActorError)` - 계획 수립 실패
+    pub async fn create_crawling_plan(
+        &self,
+        crawling_config: &CrawlingConfig,
+    ) -> Result<CrawlingPlan, ActorError> {
+        // 1. 사이트 상태 확인
+        let site_status = self.status_checker
+            .check_site_status()
+            .await
+            .map_err(|e| ActorError::CommandProcessingFailed(format!("Site status check failed: {e}")))?;
+        
+        // 2. 데이터베이스 분석
+        let db_analysis = self.database_analyzer
+            .analyze_current_state()
+            .await
+            .map_err(|e| ActorError::CommandProcessingFailed(format!("Database analysis failed: {e}")))?;
+        
+        // 3. 최적화된 계획 수립
+        let plan = self.optimize_crawling_strategy(
+            crawling_config,
             &site_status,
             &db_analysis,
         ).await?;
-
-        info!("✅ [CrawlingPlanner] Plan created successfully");
-
-        Ok((site_status, db_analysis, processing_strategy))
+        
+        Ok(plan)
     }
-
-    /// 사이트 상태와 DB 분석 결과를 바탕으로 최적의 크롤링 전략을 결정합니다.
+    
+    /// 시스템 상태를 분석합니다.
     /// 
-    /// **핵심**: ServiceBasedBatchCrawlingEngine의 검증된 범위 계산 로직을 재사용
+    /// # Returns
+    /// * `Ok((SiteStatus, DatabaseAnalysis))` - 분석된 시스템 상태
+    /// * `Err(ActorError)` - 분석 실패
+    pub async fn analyze_system_state(&self) -> Result<(crate::domain::services::SiteStatus, DatabaseAnalysis), ActorError> {
+        // 사이트 상태 확인
+        let site_status = self.status_checker
+            .check_site_status()
+            .await
+            .map_err(|e| ActorError::CommandProcessingFailed(format!("Site status check failed: {e}")))?;
+        
+        // 데이터베이스 분석
+        let db_analysis = self.database_analyzer
+            .analyze_current_state()
+            .await
+            .map_err(|e| ActorError::CommandProcessingFailed(format!("Database analysis failed: {e}")))?;
+        
+        Ok((site_status, db_analysis))
+    }
+    
+    /// 캐시된 사이트 상태로 시스템 상태를 분석합니다.
     /// 
-    /// 반환값:
-    /// (CrawlingRangeRecommendation, ProcessingStrategy) 튜플
-    async fn determine_crawling_strategy(
-        &self,
-        site_status: &SiteStatus,
-        db_analysis: &DatabaseAnalysis,
-    ) -> Result<(CrawlingRangeRecommendation, ProcessingStrategy)> {
-        info!("🧮 [CrawlingPlanner] Using ServiceBasedBatchCrawlingEngine's proven range calculation logic...");
-
-        // 1. ServiceBasedBatchCrawlingEngine의 검증된 범위 계산 로직 사용
-        let optimal_range = self.range_calculator.calculate_next_crawling_range(
-            site_status.total_pages,
-            site_status.products_on_last_page,
-        ).await?;
-
-        // 2. 범위 추천 결과를 CrawlingRangeRecommendation 형식으로 변환
-        let range_recommendation = match optimal_range {
-            Some((start_page, end_page)) => {
-                info!("🎯 [PROPER ACTOR] CrawlingPlanner range: {} to {} (reverse crawling)", 
-                      start_page, end_page);
-                
-                // 전체 페이지 크롤링인지 확인
-                if start_page == site_status.total_pages && end_page == 1 {
-                    CrawlingRangeRecommendation::Full
-                } else {
-                    // 역순 크롤링이므로 실제 페이지 수는 start_page - end_page + 1
-                    let pages_to_crawl = start_page - end_page + 1;
-                    CrawlingRangeRecommendation::Partial(pages_to_crawl)
-                }
-            },
-            None => {
-                warn!("⚠️ [CrawlingPlanner] No optimal range calculated, using fallback");
-                CrawlingRangeRecommendation::None
-            }
+    /// # Arguments
+    /// * `cached_site_status` - 캐시된 사이트 상태
+    /// 
+    /// # Returns
+    /// * `Ok((SiteStatus, DatabaseAnalysis))` - 분석된 시스템 상태
+    /// * `Err(ActorError)` - 분석 실패
+    pub async fn analyze_system_state_with_cache(&self, cached_site_status: Option<crate::domain::services::SiteStatus>) -> Result<(crate::domain::services::SiteStatus, DatabaseAnalysis), ActorError> {
+        // 캐시된 상태가 있으면 사용, 없으면 새로 확인
+        let site_status = if let Some(cached) = cached_site_status {
+            cached
+        } else {
+            self.status_checker
+                .check_site_status()
+                .await
+                .map_err(|e| ActorError::CommandProcessingFailed(format!("Site status check failed: {e}")))?
         };
-
-        // 3. ProcessingStrategy 결정
-        let processing_strategy = self.determine_processing_strategy_from_config(
-            site_status,
-            db_analysis,
-        ).await?;
-
-        // 4. 범위 정보 로깅 (range_recommendation에 따라 다르게 표시)
-        match &range_recommendation {
-            CrawlingRangeRecommendation::Full => {
-                info!(
-                    "📋 [CrawlingPlanner] Strategy determined: FULL crawling (1→{}), batch_size: {}, concurrency: {}",
-                    site_status.total_pages,
-                    processing_strategy.recommended_batch_size,
-                    processing_strategy.recommended_concurrency
-                );
-            },
-            CrawlingRangeRecommendation::Partial(pages) => {
-                if let Some((start_page, end_page)) = optimal_range {
-                    info!(
-                        "📋 [CrawlingPlanner] Strategy determined: PARTIAL crawling ({}→{}, {} pages), batch_size: {}, concurrency: {}",
-                        start_page, end_page, pages,
-                        processing_strategy.recommended_batch_size,
-                        processing_strategy.recommended_concurrency
-                    );
-                }
-            },
-            CrawlingRangeRecommendation::None => {
-                info!(
-                    "📋 [CrawlingPlanner] Strategy determined: NO crawling needed, batch_size: {}, concurrency: {}",
-                    processing_strategy.recommended_batch_size,
-                    processing_strategy.recommended_concurrency
-                );
+        
+        // 데이터베이스 분석
+        let db_analysis = self.database_analyzer
+            .analyze_current_state()
+            .await
+            .map_err(|e| ActorError::CommandProcessingFailed(format!("Database analysis failed: {e}")))?;
+        
+        Ok((site_status, db_analysis))
+    }
+    
+    /// 크롤링 전략을 결정합니다.
+    /// 
+    /// # Arguments
+    /// * `site_status` - 사이트 상태
+    /// * `db_analysis` - 데이터베이스 분석 결과
+    /// 
+    /// # Returns
+    /// * `Ok((CrawlingRangeRecommendation, ProcessingStrategy))` - 결정된 전략
+    /// * `Err(ActorError)` - 전략 결정 실패
+    pub async fn determine_crawling_strategy(
+        &self,
+        site_status: &crate::domain::services::SiteStatus,
+        db_analysis: &DatabaseAnalysis,
+    ) -> Result<(CrawlingRangeRecommendation, ProcessingStrategy), ActorError> {
+        // 사이트 상태와 DB 분석을 기반으로 크롤링 범위 추천
+        let is_site_healthy = site_status.is_accessible && site_status.health_score > 0.7;
+        let range_recommendation = if is_site_healthy {
+            if db_analysis.total_products > 5000 {
+                CrawlingRangeRecommendation::Partial(50) // 부분 크롤링
+            } else {
+                CrawlingRangeRecommendation::Full // 전체 크롤링
             }
-        }
-
+        } else {
+            CrawlingRangeRecommendation::Partial(20) // 사이트 상태가 좋지 않으면 최소한의 크롤링
+        };
+        
+        // 처리 전략 결정
+        let processing_strategy = ProcessingStrategy {
+            recommended_batch_size: self.calculate_optimal_batch_size(100),
+            recommended_concurrency: self.calculate_optimal_concurrency(),
+            should_skip_duplicates: db_analysis.missing_products_count > 100,
+            should_update_existing: db_analysis.data_quality_score < 0.8,
+            priority_urls: vec![],
+        };
+        
         Ok((range_recommendation, processing_strategy))
     }
-
-    /// 사이트 상태를 기반으로 실제 크롤링 범위를 계산합니다.
-    /// CrawlingRangeCalculator를 직접 사용하여 정확한 범위를 반환합니다.
-    pub async fn calculate_actual_crawling_range(&self, site_status: &SiteStatus) -> Result<Option<(u32, u32)>> {
-        self.range_calculator.calculate_next_crawling_range(
-            site_status.total_pages,
-            site_status.products_on_last_page,
-        ).await
-    }
-
-    /// 설정 파일 기반으로 최적의 처리 전략을 결정합니다.
+    
+    /// 배치 설정을 최적화합니다.
     /// 
-    /// **핵심**: 모든 값을 설정에서 읽되, 현재 상황에 맞게 지능형 조정
-    async fn determine_processing_strategy_from_config(
+    /// # Arguments
+    /// * `base_config` - 기본 배치 설정
+    /// * `total_pages` - 총 페이지 수
+    /// 
+    /// # Returns
+    /// * `BatchConfig` - 최적화된 배치 설정
+    #[must_use]
+    pub fn optimize_batch_config(
         &self,
-        _site_status: &SiteStatus,
-        _db_analysis: &DatabaseAnalysis,
-    ) -> Result<ProcessingStrategy> {
-        info!("⚙️ [CrawlingPlanner] Using user configuration values directly...");
+        base_config: &BatchConfig,
+        total_pages: u32,
+    ) -> BatchConfig {
+        let optimal_batch_size = self.calculate_optimal_batch_size(total_pages);
+        let optimal_concurrency = self.calculate_optimal_concurrency();
         
-        // ✅ 사용자 설정값을 그대로 사용 (임의 변경 금지)
-        let batch_size = self.config.user.batch.batch_size;
-        let concurrency = self.config.user.max_concurrent_requests;
+        BatchConfig {
+            batch_size: optimal_batch_size.min(base_config.batch_size),
+            concurrency_limit: optimal_concurrency.min(base_config.concurrency_limit),
+            batch_delay_ms: self.calculate_optimal_delay(),
+            retry_on_failure: base_config.retry_on_failure,
+        }
+    }
+    
+    /// 크롤링 전략을 최적화합니다.
+    async fn optimize_crawling_strategy(
+        &self,
+        config: &CrawlingConfig,
+        _site_status: &dyn std::any::Any, // SiteStatus trait object workaround
+        _db_analysis: &dyn std::any::Any, // DatabaseAnalysis trait object workaround
+    ) -> Result<CrawlingPlan, ActorError> {
+        // Mock 구현 - 실제로는 site_status와 db_analysis를 기반으로 최적화
+        let total_pages = config.end_page - config.start_page + 1;
         
-        info!("📊 [CrawlingPlanner] Using user settings: batch_size={}, concurrency={}", 
-              batch_size, concurrency);
+        let phases = vec![
+            CrawlingPhase {
+                phase_type: PhaseType::StatusCheck,
+                estimated_duration_secs: 30,
+                priority: 1,
+                pages: vec![], // 상태 확인은 페이지별 처리 없음
+            },
+            CrawlingPhase {
+                phase_type: PhaseType::ListPageCrawling,
+                estimated_duration_secs: (total_pages * 2) as u64, // 페이지당 2초 추정
+                priority: 2,
+                pages: (config.start_page..=config.end_page).collect(),
+            },
+            CrawlingPhase {
+                phase_type: PhaseType::ProductDetailCrawling,
+                estimated_duration_secs: (total_pages * 10) as u64, // 페이지당 10초 추정 (상품 상세)
+                priority: 3,
+                pages: (config.start_page..=config.end_page).collect(),
+            },
+            CrawlingPhase {
+                phase_type: PhaseType::DataValidation,
+                estimated_duration_secs: (total_pages / 2) as u64, // 검증은 빠름
+                priority: 4,
+                pages: vec![],
+            },
+        ];
         
-        // 크롤링 전략 설정 (중복 처리는 DB 레벨에서 자동 처리됨)
-        let should_skip_duplicates = false; // URL이 Primary Key이므로 DB가 자동으로 중복 처리
+        let total_estimated_duration_secs = phases.iter().map(|p| p.estimated_duration_secs).sum();
         
-        Ok(ProcessingStrategy {
-            recommended_batch_size: batch_size,
-            recommended_concurrency: concurrency,
-            should_skip_duplicates,
-            should_update_existing: true, // 기존 제품 정보 업데이트 허용
-            priority_urls: vec![], // 향후 우선순위 URL 기능 구현 시 사용
+        Ok(CrawlingPlan {
+            session_id: format!("crawling_{}", uuid::Uuid::new_v4()),
+            phases,
+            total_estimated_duration_secs,
+            optimization_strategy: OptimizationStrategy::Balanced,
+            created_at: chrono::Utc::now(),
         })
+    }
+    
+    /// 최적 배치 크기를 계산합니다.
+    fn calculate_optimal_batch_size(&self, total_pages: u32) -> u32 {
+        // 총 페이지 수에 따른 적응적 배치 크기
+        match total_pages {
+            1..=50 => 10,
+            51..=200 => 20,
+            201..=1000 => 50,
+            _ => 100,
+        }
+    }
+    
+    /// 최적 동시성 수준을 계산합니다.
+    fn calculate_optimal_concurrency(&self) -> u32 {
+        // 시스템 설정 기반 동시성 계산
+        self.config.crawling.default_concurrency_limit.min(10)
+    }
+    
+    /// 최적 지연 시간을 계산합니다.
+    fn calculate_optimal_delay(&self) -> u64 {
+        // 설정된 지연 시간 사용
+        self.config.crawling.request_delay_ms
+    }
+}
+
+/// 크롤링 계획
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CrawlingPlan {
+    /// 세션 ID
+    pub session_id: String,
+    
+    /// 크롤링 단계들
+    pub phases: Vec<CrawlingPhase>,
+    
+    /// 총 예상 실행 시간 (초)
+    pub total_estimated_duration_secs: u64,
+    
+    /// 최적화 전략
+    pub optimization_strategy: OptimizationStrategy,
+    
+    /// 계획 생성 시간
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// 크롤링 단계
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CrawlingPhase {
+    /// 단계 타입
+    pub phase_type: PhaseType,
+    
+    /// 예상 실행 시간 (초)
+    pub estimated_duration_secs: u64,
+    
+    /// 우선순위 (낮을수록 먼저 실행)
+    pub priority: u32,
+    
+    /// 처리할 페이지 목록
+    pub pages: Vec<u32>,
+}
+
+/// 단계 타입
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum PhaseType {
+    /// 상태 확인
+    StatusCheck,
+    
+    /// 리스트 페이지 크롤링
+    ListPageCrawling,
+    
+    /// 상품 상세 크롤링
+    ProductDetailCrawling,
+    
+    /// 데이터 검증
+    DataValidation,
+    
+    /// 데이터 저장
+    DataSaving,
+}
+
+/// 최적화 전략
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum OptimizationStrategy {
+    /// 속도 우선
+    Speed,
+    
+    /// 안정성 우선
+    Stability,
+    
+    /// 균형
+    Balanced,
+    
+    /// 리소스 절약
+    ResourceEfficient,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    
+    // Mock implementations for testing
+    struct MockStatusChecker;
+    struct MockDatabaseAnalyzer;
+    
+    #[async_trait::async_trait]
+    impl StatusChecker for MockStatusChecker {
+        async fn check_site_status(&self, _url: &str) -> Result<Box<dyn std::any::Any>, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(Box::new("mock_status"))
+        }
+    }
+    
+    #[async_trait::async_trait]
+    impl DatabaseAnalyzer for MockDatabaseAnalyzer {
+        async fn analyze_current_state(&self) -> anyhow::Result<DatabaseAnalysis> {
+            Ok(DatabaseAnalysis {
+                total_products: 0,
+                unique_products: 0,
+                missing_products_count: 0,
+                last_update: Some(chrono::Utc::now()),
+                missing_fields_analysis: FieldAnalysis {
+                    missing_company: 0,
+                    missing_model: 0,
+                    missing_matter_version: 0,
+                    missing_connectivity: 0,
+                    missing_certification_date: 0,
+                },
+                data_quality_score: 1.0,
+            })
+        }
+        
+        async fn recommend_processing_strategy(&self) -> anyhow::Result<ProcessingStrategy> {
+            Ok(ProcessingStrategy::default())
+        }
+        
+        async fn analyze_duplicates(&self) -> anyhow::Result<DuplicateAnalysis> {
+            Ok(DuplicateAnalysis {
+                duplicate_pairs: vec![],
+                total_duplicates: 0,
+                confidence_scores: vec![],
+            })
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_crawling_planner_creation() {
+        let status_checker = Arc::new(MockStatusChecker) as Arc<dyn StatusChecker>;
+        let database_analyzer = Arc::new(MockDatabaseAnalyzer) as Arc<dyn DatabaseAnalyzer>;
+        let config = Arc::new(SystemConfig::default());
+        
+        let planner = CrawlingPlanner::new(status_checker, database_analyzer, config);
+        
+        // 플래너가 생성되었는지 확인
+        assert_eq!(planner.config.crawling.default_concurrency_limit, 10);
+    }
+    
+    #[test]
+    fn test_batch_config_optimization() {
+        let status_checker = Arc::new(MockStatusChecker) as Arc<dyn StatusChecker>;
+        let database_analyzer = Arc::new(MockDatabaseAnalyzer) as Arc<dyn DatabaseAnalyzer>;
+        let config = Arc::new(SystemConfig::default());
+        
+        let planner = CrawlingPlanner::new(status_checker, database_analyzer, config);
+        
+        let base_config = BatchConfig {
+            batch_size: 100,
+            concurrency_limit: 20,
+            batch_delay_ms: 1000,
+            retry_on_failure: true,
+        };
+        
+        let optimized = planner.optimize_batch_config(&base_config, 150);
+        
+        // 최적화된 설정이 기본값보다 작거나 같은지 확인
+        assert!(optimized.batch_size <= base_config.batch_size);
+        assert!(optimized.concurrency_limit <= base_config.concurrency_limit);
+    }
+    
+    #[test]
+    fn test_optimal_batch_size_calculation() {
+        let status_checker = Arc::new(MockStatusChecker) as Arc<dyn StatusChecker>;
+        let database_analyzer = Arc::new(MockDatabaseAnalyzer) as Arc<dyn DatabaseAnalyzer>;
+        let config = Arc::new(SystemConfig::default());
+        
+        let planner = CrawlingPlanner::new(status_checker, database_analyzer, config);
+        
+        assert_eq!(planner.calculate_optimal_batch_size(30), 10);
+        assert_eq!(planner.calculate_optimal_batch_size(100), 20);
+        assert_eq!(planner.calculate_optimal_batch_size(500), 50);
+        assert_eq!(planner.calculate_optimal_batch_size(2000), 100);
     }
 }

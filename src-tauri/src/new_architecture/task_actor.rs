@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::new_architecture::{
     integrated_context::{IntegratedContext, ContextError},
-    channel_types::{AppEvent, StageType},
+    channels::types::{AppEvent, StageType},
     actor_system::{StageResult, StageSuccessResult, StageError},
     system_config::SystemConfig,
 };

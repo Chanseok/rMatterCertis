@@ -36,35 +36,7 @@ pub mod types {
 }
 
 // 🚀 새로운 아키텍처 모듈 (Phase 1 구현 완료) - Modern Rust 2024
-pub mod new_architecture {
-    //! Modern architecture patterns and implementations
-    pub mod actor_system;
-    pub mod channel_types;
-    pub mod system_config;
-    pub mod retry_calculator;
-    pub mod integrated_context;  // Phase 3: 통합 채널 컨텍스트 추가
-    pub mod task_actor;          // Phase 3: TaskActor 계층 추가
-    pub mod resilience_result;   // Phase 3: 회복탄력성 시스템 추가
-    pub mod events;              // TaskLifecycleEvent 시스템
-    
-    // Config module for system-wide configuration
-    pub mod config {
-        //! Configuration management
-        pub mod system_config;
-        
-        // Re-export commonly used types
-        pub use system_config::SystemConfig;
-    }
-    
-    // Services module with direct declarations
-    pub mod services {
-        //! Service layer implementations
-        pub mod crawling_integration;
-        pub mod real_crawling_integration;
-        pub mod real_crawling_commands;
-        pub mod crawling_planner;        // Phase 2: 지능형 계획 수립 시스템 추가
-    }
-}
+pub mod new_architecture;
 
 pub mod domain {
     //! Domain module - Core business logic and entities
@@ -393,3 +365,7 @@ pub fn run() {
     
     info!("👋 Matter Certis v2 application ended");
 }
+
+// Priority 1 검증 테스트 모듈
+#[cfg(test)]
+mod priority1_verification_tests;

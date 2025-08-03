@@ -3,7 +3,7 @@
 
 use crate::new_architecture::{
     system_config::SystemConfig,
-    channel_types::ChannelFactory,
+    channels::types::ChannelFactory,
     actor_system::{SessionActor, BatchActor, StageActor},
 };
 use std::{sync::Arc, time::Instant};

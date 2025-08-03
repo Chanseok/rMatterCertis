@@ -1,6 +1,8 @@
 //! 전체 시스템 설정 통합 관리
 //! Modern Rust 2024: serde, config crate 활용한 설정 시스템
 //! 모든 하드코딩 값을 제거하고 설정 파일 기반으로 완전히 구성 가능한 시스템
+//! 
+//! Actor 시스템 호환성: context.rs의 SystemConfig와 일관성 유지
 
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -9,6 +11,15 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::Duration};
 use thiserror::Error;
+
+// Actor 시스템 호환성: context.rs의 SystemConfig 재사용
+pub use crate::new_architecture::context::{
+    SystemConfig as ActorSystemConfig,
+    CrawlingConfig as ActorCrawlingConfig,
+    PerformanceConfig as ActorPerformanceConfig,
+    DatabaseConfig as ActorDatabaseConfig,
+    LoggingConfig as ActorLoggingConfig,
+};
 
 #[derive(Error, Debug)]
 pub enum ConfigError {

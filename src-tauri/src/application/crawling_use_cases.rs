@@ -5,7 +5,6 @@
 
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::info;
 use uuid::Uuid;
 

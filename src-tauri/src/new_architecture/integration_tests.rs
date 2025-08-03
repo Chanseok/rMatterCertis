@@ -12,7 +12,7 @@ use crate::new_architecture::{
     SystemConfig, ChannelFactory, SessionActor, BatchActor, StageActor,
     ActorCommand, AppEvent, ActorError,
 };
-use crate::new_architecture::channel_types::{BatchConfig, StageType, StageItem};
+use crate::new_architecture::channels::types::{BatchConfig, StageType, StageItem};
 
 /// 시스템 설정 테스트
 #[cfg(test)]

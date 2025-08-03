@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
-use tracing::{info, error, debug};
+use tracing::{info, debug};
 use crate::domain::services::crawling_services::StatusChecker;
 use crate::infrastructure::MatterDataExtractor;
 

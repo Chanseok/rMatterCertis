@@ -84,27 +84,24 @@ impl AdvancedBatchCrawlingEngine {
         let app_config = AppConfig::default();
 
         // 기존 서비스 인스턴스 생성
-        let status_checker: Arc<dyn StatusChecker> = Arc::new(StatusCheckerImpl::with_product_repo(
+        let status_checker: Arc<dyn StatusChecker> = Arc::new(StatusCheckerImpl::new(
             http_client.clone(),
             data_extractor.clone(),
             app_config.clone(),
-            product_repo.clone(),
         ));
 
         // DatabaseAnalyzer trait 구현을 위한 간단한 래퍼 사용 (trait 구현 추가됨)
-        let database_analyzer: Arc<dyn DatabaseAnalyzer> = Arc::new(StatusCheckerImpl::with_product_repo(
+        let database_analyzer: Arc<dyn DatabaseAnalyzer> = Arc::new(StatusCheckerImpl::new(
             http_client.clone(),
             data_extractor.clone(),
             app_config.clone(),
-            product_repo.clone(),
         ));
 
         // status_checker를 ProductListCollectorImpl에 전달하기 위해 concrete type으로 다시 생성
-        let status_checker_impl = Arc::new(StatusCheckerImpl::with_product_repo(
+        let status_checker_impl = Arc::new(StatusCheckerImpl::new(
             http_client.clone(),
             data_extractor.clone(),
             app_config.clone(),
-            product_repo.clone(),
         ));
 
         let product_list_collector: Arc<dyn ProductListCollector> = Arc::new(ProductListCollectorImpl::new(

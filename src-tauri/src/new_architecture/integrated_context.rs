@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use tokio::sync::{mpsc, broadcast};
 use crate::new_architecture::{
-    channel_types::{ActorCommand, AppEvent, ControlChannel, EventChannel},
+    channels::types::{ActorCommand, AppEvent, ControlChannel, EventChannel},
     system_config::SystemConfig,
 };
 
@@ -249,7 +249,7 @@ mod tests {
 
         let event = AppEvent::SessionStarted {
             session_id: "test-session".to_string(),
-            config: crate::new_architecture::channel_types::BatchConfig {
+            config: crate::new_architecture::channels::types::BatchConfig {
                 target_url: "https://test.com".to_string(),
                 max_pages: Some(10),
             },

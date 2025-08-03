@@ -235,21 +235,27 @@ export const CrawlingEngineTab: Component = () => {
   const startActorSystemWithCalculatedRange = async () => {
     if (isRunning()) return;
     
-    // ✅ CrawlingPlanner가 모든 것을 자동 계산하도록 변경
+    const range = crawlingRange()?.range;
+    if (!range) {
+      addLog('❌ 크롤링 범위가 계산되지 않았습니다. 먼저 "크롤링 범위 계산" 버튼을 클릭하세요.');
+      return;
+    }
+    
     setIsRunning(true);
-    addLog(`🎭 Actor 시스템 크롤링 시작 (CrawlingPlanner 완전 자동 모드)`);
-    addLog(`🧠 CrawlingPlanner가 설정, 사이트 상태, DB 상태를 종합해서 범위와 배치를 자동 계산합니다`);
+    addLog(`🎭 Actor 시스템 크롤링 시작: ${range[0]}-${range[1]} 페이지 (CrawlingPlanner 계산 범위)`);
 
     try {
-      // 🎯 CrawlingPlanner가 모든 계산을 담당하도록 빈 요청 전송
       const result = await invoke('start_actor_based_crawling', {
         request: {
-          // 🧠 CrawlingPlanner가 자동으로 모든 값을 계산
-          // 사용자 입력 없이 설정 파일, 사이트 상태, DB 상태를 종합해서 결정
+          start_page: range[1], // 역순 크롤링: 종료 페이지부터 시작
+          end_page: range[0],   // 시작 페이지까지
+          concurrency: 64,
+          batch_size: 3,
+          delay_ms: 100
         }
       });
       addLog(`✅ Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
-      addLog('🎭 Actor 시스템이 활성화되었습니다. CrawlingPlanner가 모든 설정을 자동 계산했습니다.');
+      addLog('🎭 Actor 시스템이 활성화되었습니다. CrawlingPlanner 설정에 따라 배치가 자동 분할됩니다.');
       
     } catch (error) {
       console.error('Actor 시스템 크롤링 시작 실패:', error);

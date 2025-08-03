@@ -172,14 +172,14 @@ async fn test_small_scale_crawling() -> Result<String> {
     ).await;
     
     match result {
-        crate::new_architecture::actor_system::StageResult::Success(success) => {
+        crate::new_architecture::actors::StageResult::Success(success) => {
             Ok(format!(
                 "소량 크롤링 성공 - 처리된 페이지: {}, 실행시간: {}ms",
                 success.processed_items,
                 success.stage_duration_ms
             ))
         }
-        crate::new_architecture::actor_system::StageResult::PartialSuccess { success_items, failed_items, .. } => {
+        crate::new_architecture::actors::StageResult::PartialSuccess { success_items, failed_items, .. } => {
             Ok(format!(
                 "부분 성공 - 성공: {}개, 실패: {}개",
                 success_items.processed_items,
@@ -191,17 +191,20 @@ async fn test_small_scale_crawling() -> Result<String> {
 }
 
 async fn test_oneshot_with_real_crawling() -> Result<String> {
-    use crate::new_architecture::actor_system::StageActor;
+    use crate::new_architecture::actors::StageActor;
     
     let batch_id = "test-real-integration".to_string();
     let system_config = Arc::new(SystemConfig::default());
     let app_config = AppConfig::for_development();
     
     // 실제 크롤링 서비스를 사용하는 StageActor 생성
+    // 기본값 사용: total_pages=494, products_on_last_page=12 (현재 사이트 상태 기준)
     let stage_actor = StageActor::new_with_real_crawling_service(
         batch_id, 
         system_config, 
-        app_config
+        app_config,
+        494,  // total_pages
+        12    // products_on_last_page
     ).await?;
     
     Ok(format!(

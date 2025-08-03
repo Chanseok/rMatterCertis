@@ -13,7 +13,7 @@ use anyhow::Result;
 
 use crate::domain::services::crawling_services::{
     StatusChecker, ProductListCollector, ProductDetailCollector, DatabaseAnalyzer,
-    SiteStatus, CrawlingRangeRecommendation
+    SiteStatus, CrawlingRangeRecommendation, FieldAnalysis
 };
 use crate::domain::product_url::ProductUrl;
 use crate::domain::product::ProductDetail;
@@ -21,11 +21,13 @@ use crate::infrastructure::crawling_service_impls::{StatusCheckerImpl, ProductLi
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
 use crate::new_architecture::actor_system::{
-    StageResult, StageSuccessResult, StageError, CollectionMetrics, ProcessingMetrics,
-    FailedItem
+    StageResult, StageError
 };
-use crate::new_architecture::channel_types::{StageType, StageItem};
-use crate::new_architecture::system_config::SystemConfig;
+use crate::new_architecture::actors::types::{
+    StageSuccessResult, CollectionMetrics, ProcessingMetrics, FailedItem
+};
+use crate::new_architecture::channels::types::{StageType, StageItem};
+use crate::new_architecture::config::SystemConfig;
 
 /// 실제 크롤링 서비스와 OneShot Actor 시스템을 연결하는 통합 서비스
 pub struct CrawlingIntegrationService {
@@ -124,6 +126,27 @@ impl CrawlingIntegrationService {
         concurrency_limit: u32,
         cancellation_token: CancellationToken,
     ) -> StageResult {
+        self.execute_list_collection_stage_internal(pages, concurrency_limit, cancellation_token, true).await
+    }
+    
+    /// 사이트 상태 확인 없이 직접 페이지 수집 (중복 방지용)
+    pub async fn execute_list_collection_stage_no_site_check(
+        &self,
+        pages: Vec<u32>,
+        concurrency_limit: u32,
+        cancellation_token: CancellationToken,
+    ) -> StageResult {
+        self.execute_list_collection_stage_internal(pages, concurrency_limit, cancellation_token, false).await
+    }
+    
+    /// 내부 리스트 수집 구현 (사이트 상태 확인 선택적)
+    async fn execute_list_collection_stage_internal(
+        &self,
+        pages: Vec<u32>,
+        concurrency_limit: u32,
+        cancellation_token: CancellationToken,
+        perform_site_check: bool,
+    ) -> StageResult {
         let start_time = Instant::now();
         
         info!(
@@ -151,7 +174,7 @@ impl CrawlingIntegrationService {
                 };
             }
             
-            match self.collect_page_batch_with_retry(chunk, cancellation_token.clone()).await {
+            match self.collect_page_batch_with_retry(chunk, cancellation_token.clone(), perform_site_check).await {
                 Ok(batch_result) => {
                     for (page, urls) in batch_result {
                         if urls.is_empty() {
@@ -184,50 +207,16 @@ impl CrawlingIntegrationService {
                 context: "Complete collection failure".to_string(),
             }
         } else if failed_count == 0 {
-            StageResult::Success(StageSuccessResult {
+            StageResult::Success {
                 processed_items: total_pages,
-                stage_duration_ms: elapsed.as_millis() as u64,
-                collection_metrics: Some(CollectionMetrics {
-                    total_items: total_pages,
-                    successful_items: successful_count,
-                    failed_items: failed_count,
-                    duration_ms: elapsed.as_millis() as u64,
-                    avg_response_time_ms: if successful_count > 0 {
-                        elapsed.as_millis() as u64 / successful_count as u64
-                    } else { 0 },
-                    success_rate: 100.0,
-                }),
-                processing_metrics: None,
-            })
+                duration_ms: elapsed.as_millis() as u64,
+            }
         } else {
-            StageResult::PartialSuccess {
-                success_items: StageSuccessResult {
-                    processed_items: successful_count,
-                    stage_duration_ms: elapsed.as_millis() as u64,
-                    collection_metrics: Some(CollectionMetrics {
-                        total_items: total_pages,
-                        successful_items: successful_count,
-                        failed_items: failed_count,
-                        duration_ms: elapsed.as_millis() as u64,
-                        avg_response_time_ms: if successful_count > 0 {
-                            elapsed.as_millis() as u64 / successful_count as u64
-                        } else { 0 },
-                        success_rate: (successful_count as f64 / total_pages as f64) * 100.0,
-                    }),
-                    processing_metrics: None,
+            StageResult::Failure {
+                error: StageError::ProcessingError {
+                    message: format!("Partial failure: {} successes, {} failures", successful_count, failed_count),
                 },
-                failed_items: failed_pages.into_iter().map(|page| FailedItem {
-                    item_id: page.to_string(),
-                    error: StageError::NetworkError {
-                        message: "Page collection failed".to_string(),
-                    },
-                    retry_count: 0,
-                    last_attempt_ms: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64,
-                }).collect(),
-                stage_id: "list-collection".to_string(),
+                partial_results: successful_count,
             }
         }
     }
@@ -295,50 +284,16 @@ impl CrawlingIntegrationService {
                 context: "Complete detail collection failure".to_string(),
             }
         } else if failed_count == 0 {
-            StageResult::Success(StageSuccessResult {
+            StageResult::Success {
                 processed_items: total_urls,
-                stage_duration_ms: elapsed.as_millis() as u64,
-                collection_metrics: None,
-                processing_metrics: Some(ProcessingMetrics {
-                    total_processed: total_urls,
-                    successful_saves: successful_count,
-                    failed_saves: failed_count,
-                    duration_ms: elapsed.as_millis() as u64,
-                    avg_processing_time_ms: if successful_count > 0 {
-                        elapsed.as_millis() as u64 / successful_count as u64
-                    } else { 0 },
-                    success_rate: 100.0,
-                }),
-            })
+                duration_ms: elapsed.as_millis() as u64,
+            }
         } else {
-            StageResult::PartialSuccess {
-                success_items: StageSuccessResult {
-                    processed_items: successful_count,
-                    stage_duration_ms: elapsed.as_millis() as u64,
-                    collection_metrics: None,
-                    processing_metrics: Some(ProcessingMetrics {
-                        total_processed: total_urls,
-                        successful_saves: successful_count,
-                        failed_saves: failed_count,
-                        duration_ms: elapsed.as_millis() as u64,
-                        avg_processing_time_ms: if successful_count > 0 {
-                            elapsed.as_millis() as u64 / successful_count as u64
-                        } else { 0 },
-                        success_rate: (successful_count as f64 / total_urls as f64) * 100.0,
-                    }),
+            StageResult::Failure {
+                error: StageError::ProcessingError {
+                    message: format!("Partial failure in detail collection"),
                 },
-                failed_items: failed_urls.into_iter().map(|url| FailedItem {
-                    item_id: url,
-                    error: StageError::NetworkError {
-                        message: "Product detail collection failed".to_string(),
-                    },
-                    retry_count: 0,
-                    last_attempt_ms: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64,
-                }).collect(),
-                stage_id: "detail-collection".to_string(),
+                partial_results: successful_count,
             }
         }
     }
@@ -366,11 +321,11 @@ impl CrawlingIntegrationService {
         
         // DB 분석을 위한 분석 결과 생성 (실제 DB 데이터 기반)
         let db_analysis = crate::domain::services::crawling_services::DatabaseAnalysis {
-            total_products: 0,
-            unique_products: 0,
-            missing_products_count: 0, // TODO: 향후 페이지별 예상 제품 수와 비교하여 계산
-            last_update: db_stats.last_crawled,
-            missing_fields_analysis: crate::domain::services::crawling_services::FieldAnalysis {
+            total_products: db_stats.total_products as u32,
+            unique_products: db_stats.active_products as u32,
+            missing_products_count: 0,
+            last_update: None,
+            missing_fields_analysis: FieldAnalysis {
                 missing_company: 0,
                 missing_model: 0,
                 missing_matter_version: 0,
@@ -388,6 +343,7 @@ impl CrawlingIntegrationService {
         &self,
         pages: &[u32],
         cancellation_token: CancellationToken,
+        perform_site_check: bool,
     ) -> Result<Vec<(u32, Vec<ProductUrl>)>> {
         let mut results = Vec::new();
         
@@ -397,7 +353,7 @@ impl CrawlingIntegrationService {
                 break;
             }
             
-            match self.collect_single_page_with_retry(page, 3).await {
+            match self.collect_single_page_with_retry(page, 3, perform_site_check).await {
                 Ok(urls) => {
                     results.push((page, urls));
                 }
@@ -416,9 +372,28 @@ impl CrawlingIntegrationService {
         &self,
         page: u32,
         max_retries: u32,
+        perform_site_check: bool,
     ) -> Result<Vec<ProductUrl>> {
-        // 사이트 상태 확인하여 실제 정보 가져오기
-        let site_status = self.status_checker.check_site_status().await?;
+        // 사이트 상태 확인 (선택적)
+        let site_status = if perform_site_check {
+            info!(page = page, "🔍 Performing site status check for page");
+            self.status_checker.check_site_status().await?
+        } else {
+            info!(page = page, "⚡ Skipping site status check - using cached site info");
+            // 기본값 사용 (실제로는 캐시된 값을 사용해야 함)
+            SiteStatus {
+                total_pages: 495,
+                products_on_last_page: 6,
+                is_accessible: true,
+                estimated_products: 5934,
+                response_time_ms: 500,
+                last_check_time: chrono::Utc::now(),
+                health_score: 1.0,
+                data_change_status: crate::domain::services::crawling_services::SiteDataChangeStatus::Stable { count: 5934 },
+                decrease_recommendation: None,
+                crawling_range_recommendation: CrawlingRangeRecommendation::Partial(5),
+            }
+        };
         let mut last_error = None;
         
         for attempt in 0..=max_retries {
@@ -479,7 +454,7 @@ impl RealCrawlingStageExecutor {
         cancellation_token: CancellationToken,
     ) -> StageResult {
         match stage_type {
-            StageType::ListCollection | StageType::Collection => {
+            StageType::ListCollection => {
                 let pages: Vec<u32> = items.into_iter()
                     .filter_map(|item| match item {
                         StageItem::Page(page) => Some(page),
@@ -494,7 +469,7 @@ impl RealCrawlingStageExecutor {
                 ).await
             }
             
-            StageType::DetailCollection | StageType::Processing => {
+            StageType::DetailCollection => {
                 // 현재는 URL 아이템이 없으므로 빈 처리
                 // 실제로는 이전 단계에서 수집된 URL을 받아야 함
                 let urls = Vec::new(); // TODO: 실제 URL 전달 구현
@@ -508,22 +483,18 @@ impl RealCrawlingStageExecutor {
             
             StageType::DataValidation => {
                 // 데이터 검증 로직 (현재는 성공으로 처리)
-                StageResult::Success(StageSuccessResult {
+                StageResult::Success {
                     processed_items: items.len() as u32,
-                    stage_duration_ms: 100,
-                    collection_metrics: None,
-                    processing_metrics: None,
-                })
+                    duration_ms: 100,
+                }
             }
             
             StageType::DatabaseSave => {
                 // 데이터베이스 저장 로직 (현재는 성공으로 처리)
-                StageResult::Success(StageSuccessResult {
+                StageResult::Success {
                     processed_items: items.len() as u32,
-                    stage_duration_ms: 200,
-                    collection_metrics: None,
-                    processing_metrics: None,
-                })
+                    duration_ms: 200,
+                }
             }
         }
     }

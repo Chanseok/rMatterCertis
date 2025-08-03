@@ -53,33 +53,16 @@ impl IntegratedProductRepository {
                 existing_product.certificate_id != product.certificate_id ||
                 existing_product.page_id != product.page_id ||
                 existing_product.index_in_page != product.index_in_page;
-
-            // 🔧 ID 일관성 검증: page_id와 index_in_page가 있으면 ID도 올바른지 확인
-            let id_needs_fix = if let (Some(page_id), Some(index_in_page)) = (product.page_id, product.index_in_page) {
-                let expected_id = format!("p{:04}i{:02}", page_id, index_in_page);
-                existing_product.id.as_ref().map_or(true, |id| id != &expected_id)
-            } else {
-                false
-            };
             
-            if needs_update || id_needs_fix {
-                // 📝 실제 변경사항이 있거나 ID 수정이 필요할 때 업데이트
-                let correct_id = if let (Some(page_id), Some(index_in_page)) = (product.page_id, product.index_in_page) {
-                    format!("p{:04}i{:02}", page_id, index_in_page)
-                } else {
-                    existing_product.id.clone().unwrap_or_else(|| {
-                        format!("product_{}", product.url.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect::<String>())
-                    })
-                };
-
+            if needs_update {
+                // 📝 실제 변경사항이 있을 때만 업데이트
                 sqlx::query(
                     r"
                     UPDATE products 
-                    SET id = ?, manufacturer = ?, model = ?, certificate_id = ?, page_id = ?, index_in_page = ?, updated_at = ?
+                    SET manufacturer = ?, model = ?, certificate_id = ?, page_id = ?, index_in_page = ?, updated_at = ?
                     WHERE url = ?
                     ",
                 )
-                .bind(&correct_id)
                 .bind(&product.manufacturer)
                 .bind(&product.model)
                 .bind(&product.certificate_id)
@@ -90,14 +73,7 @@ impl IntegratedProductRepository {
                 .execute(&*self.pool)
                 .await?;
                 
-                if id_needs_fix {
-                    info!("� Product ID corrected: {} -> {} for {}", 
-                          existing_product.id.as_deref().unwrap_or("None"), 
-                          correct_id, 
-                          product.model.as_deref().unwrap_or("Unknown"));
-                } else {
-                    info!("�📝 Product updated: {} (changes detected)", product.model.as_deref().unwrap_or("Unknown"));
-                }
+                info!("📝 Product updated: {} (changes detected)", product.model.as_deref().unwrap_or("Unknown"));
                 Ok((true, false)) // updated=true, created=false
             } else {
                 // ✅ 변경사항 없음 - 불필요한 업데이트 스킵
@@ -151,71 +127,55 @@ impl IntegratedProductRepository {
         
         if let Some(existing_detail) = existing {
             // 🔍 지능적 비교: 빈 필드 채우기 + 실제 변경사항 확인
-            let mut update_parts = Vec::new();
-            let mut params = Vec::new();
-            
-            // 🔧 ID 일관성 검증: page_id와 index_in_page가 있으면 ID도 올바른지 확인
-            let id_needs_fix = if let (Some(page_id), Some(index_in_page)) = (detail.page_id, detail.index_in_page) {
-                let expected_id = format!("p{:04}i{:02}", page_id, index_in_page);
-                existing_detail.id.as_ref().map_or(true, |id| id != &expected_id)
-            } else {
-                false
-            };
-
-            if id_needs_fix {
-                let correct_id = format!("p{:04}i{:02}", 
-                    detail.page_id.unwrap_or(0), 
-                    detail.index_in_page.unwrap_or(0));
-                update_parts.push("id = ?");
-                params.push(correct_id);
-            }
+            let mut updates = Vec::new();
+            let mut binds = Vec::new();
             
             // 빈 필드가 있으면 새 데이터로 채우기
             if existing_detail.device_type.is_none() && detail.device_type.is_some() {
-                update_parts.push("device_type = ?");
-                params.push(detail.device_type.as_ref().unwrap().clone());
+                updates.push("device_type = ?");
+                binds.push(&detail.device_type);
             }
             if existing_detail.certification_date.is_none() && detail.certification_date.is_some() {
-                update_parts.push("certification_date = ?");
-                params.push(detail.certification_date.as_ref().unwrap().clone());
+                updates.push("certification_date = ?");
+                binds.push(&detail.certification_date);
             }
             if existing_detail.software_version.is_none() && detail.software_version.is_some() {
-                update_parts.push("software_version = ?");
-                params.push(detail.software_version.as_ref().unwrap().clone());
+                updates.push("software_version = ?");
+                binds.push(&detail.software_version);
             }
             if existing_detail.hardware_version.is_none() && detail.hardware_version.is_some() {
-                update_parts.push("hardware_version = ?");
-                params.push(detail.hardware_version.as_ref().unwrap().clone());
+                updates.push("hardware_version = ?");
+                binds.push(&detail.hardware_version);
             }
             if existing_detail.description.is_none() && detail.description.is_some() {
-                update_parts.push("description = ?");
-                params.push(detail.description.as_ref().unwrap().clone());
+                updates.push("description = ?");
+                binds.push(&detail.description);
             }
             
             // 실제 변경사항 확인 (기존 값과 다른 경우)
             if existing_detail.manufacturer != detail.manufacturer {
-                update_parts.push("manufacturer = ?");
-                params.push(detail.manufacturer.as_ref().unwrap().clone());
+                updates.push("manufacturer = ?");
+                binds.push(&detail.manufacturer);
             }
             if existing_detail.model != detail.model {
-                update_parts.push("model = ?");
-                params.push(detail.model.as_ref().unwrap().clone());
+                updates.push("model = ?");
+                binds.push(&detail.model);
             }
             
-            if !update_parts.is_empty() {
+            if !updates.is_empty() {
                 let query = format!(
                     "UPDATE product_details SET {}, updated_at = ? WHERE url = ?",
-                    update_parts.join(", ")
+                    updates.join(", ")
                 );
                 
                 let mut sql_query = sqlx::query(&query);
-                for param in &params {
-                    sql_query = sql_query.bind(param);
+                for bind in binds {
+                    sql_query = sql_query.bind(bind);
                 }
                 sql_query = sql_query.bind(now).bind(&detail.url);
                 
                 sql_query.execute(&*self.pool).await?;
-                info!("📝 ProductDetail updated: {} ({} fields)", detail.model.as_deref().unwrap_or("Unknown"), update_parts.len());
+                info!("📝 ProductDetail updated: {} ({} fields)", detail.model.as_deref().unwrap_or("Unknown"), updates.len());
                 Ok((true, false)) // updated=true, created=false
             } else {
                 debug!("✅ ProductDetail unchanged: {} (skipping update)", detail.model.as_deref().unwrap_or("Unknown"));
@@ -285,7 +245,7 @@ impl IntegratedProductRepository {
         let offset = (page - 1) * limit;
         let rows = sqlx::query(
             r"
-            SELECT id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
+            SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
             FROM products 
             ORDER BY page_id DESC, index_in_page ASC 
             LIMIT ? OFFSET ?
@@ -299,7 +259,7 @@ impl IntegratedProductRepository {
         let products = rows
             .into_iter()
             .map(|row| Product {
-                id: row.get("id"),
+                id: None,  // products 테이블에는 id 컬럼이 없음
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
@@ -318,7 +278,7 @@ impl IntegratedProductRepository {
     pub async fn get_product_by_url(&self, url: &str) -> Result<Option<Product>> {
         let row = sqlx::query(
             r"
-            SELECT id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
+            SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
             FROM products WHERE url = ?
             ",
         )
@@ -328,7 +288,7 @@ impl IntegratedProductRepository {
 
         match row {
             Some(row) => Ok(Some(Product {
-                id: row.get("id"),
+                id: None,  // products 테이블에는 id 컬럼이 없음
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
@@ -849,7 +809,7 @@ impl IntegratedProductRepository {
     pub async fn get_all_products(&self) -> Result<Vec<Product>> {
         let rows = sqlx::query(
             r"
-            SELECT id, url, manufacturer, model, certificate_id, 
+            SELECT url, manufacturer, model, certificate_id, 
                    page_id, index_in_page, created_at, updated_at
             FROM products
             ORDER BY page_id DESC, index_in_page ASC
@@ -861,7 +821,7 @@ impl IntegratedProductRepository {
         let products = rows
             .into_iter()
             .map(|row| Product {
-                id: row.get("id"),
+                id: None, // products 테이블에는 id 컬럼이 없음
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
@@ -880,7 +840,7 @@ impl IntegratedProductRepository {
     pub async fn get_latest_updated_product(&self) -> Result<Option<Product>> {
         let row = sqlx::query(
             r"
-            SELECT id, url, manufacturer, model, certificate_id, 
+            SELECT url, manufacturer, model, certificate_id, 
                    page_id, index_in_page, created_at, updated_at
             FROM products
             ORDER BY updated_at DESC
@@ -892,7 +852,7 @@ impl IntegratedProductRepository {
 
         if let Some(row) = row {
             Ok(Some(Product {
-                id: row.get("id"),
+                id: None,  // products 테이블에는 id 컬럼이 없음
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
@@ -939,44 +899,6 @@ impl IntegratedProductRepository {
             tracing::debug!("📊 No products found with page_id and index_in_page");
             Ok((None, None))
         }
-    }
-
-    /// Get the maximum page_id and index_in_page from product_details table
-    /// This is more reliable for crawling range calculation as it represents completed data
-    pub async fn get_max_page_id_and_index_from_details(&self) -> Result<(Option<i32>, Option<i32>)> {
-        let row = sqlx::query(
-            r"
-            SELECT page_id, index_in_page
-            FROM product_details
-            WHERE page_id IS NOT NULL AND index_in_page IS NOT NULL
-            ORDER BY page_id DESC, index_in_page DESC
-            LIMIT 1
-            ",
-        )
-        .fetch_optional(&*self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            let max_page_id: Option<i32> = row.get("page_id");
-            let max_index_in_page: Option<i32> = row.get("index_in_page");
-            tracing::debug!("📊 Found last completed product detail: page_id={:?}, index_in_page={:?}", max_page_id, max_index_in_page);
-            Ok((max_page_id, max_index_in_page))
-        } else {
-            tracing::debug!("📊 No product details found with page_id and index_in_page");
-            Ok((None, None))
-        }
-    }
-
-    /// Get count of product_details for a specific page_id
-    pub async fn count_product_details_by_page_id(&self, page_id: i32) -> Result<i64> {
-        let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM product_details WHERE page_id = ?"
-        )
-        .bind(page_id)
-        .fetch_one(&*self.pool)
-        .await?;
-        
-        Ok(count)
     }
 
     /// Get the count of products stored in the database
@@ -1178,7 +1100,7 @@ impl IntegratedProductRepository {
         let offset = 0;
         let rows = sqlx::query(
             r"
-            SELECT id, url, manufacturer, model, certificate_id, page_id, index_in_page, 
+            SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, 
                    created_at, updated_at
             FROM products 
             ORDER BY updated_at DESC 
@@ -1192,7 +1114,7 @@ impl IntegratedProductRepository {
         let products = rows
             .into_iter()
             .map(|row| Product {
-                id: row.get("id"),
+                id: None,  // products 테이블에는 id 컬럼이 없음
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
@@ -1205,40 +1127,5 @@ impl IntegratedProductRepository {
             .collect();
         
         Ok(products)
-    }
-
-    /// 🔧 데이터베이스 ID 일관성 복구 유틸리티
-    pub async fn fix_id_consistency(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut conn = self.pool.acquire().await?;
-        
-        // Products 테이블의 잘못된 ID들 수정
-        let products_fixed = sqlx::query(
-            "UPDATE products 
-             SET id = printf('p%04di%02d', page_id, index_in_page)
-             WHERE page_id IS NOT NULL 
-               AND index_in_page IS NOT NULL 
-               AND (id IS NULL OR id != printf('p%04di%02d', page_id, index_in_page))"
-        )
-        .execute(&mut *conn)
-        .await?
-        .rows_affected();
-
-        // Product_details 테이블의 잘못된 ID들 수정
-        let details_fixed = sqlx::query(
-            "UPDATE product_details 
-             SET id = printf('p%04di%02d', page_id, index_in_page)
-             WHERE page_id IS NOT NULL 
-               AND index_in_page IS NOT NULL 
-               AND (id IS NULL OR id != printf('p%04di%02d', page_id, index_in_page))"
-        )
-        .execute(&mut *conn)
-        .await?
-        .rows_affected();
-
-        println!("🔧 ID 일관성 복구 완료:");
-        println!("   - Products: {} 레코드 수정", products_fixed);
-        println!("   - Product Details: {} 레코드 수정", details_fixed);
-
-        Ok(())
     }
 }

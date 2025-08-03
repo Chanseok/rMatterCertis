@@ -36,6 +36,8 @@ pub enum ActorCommand {
         config: BatchConfig,
         batch_size: u32,
         concurrency_limit: u32,
+        total_pages: u32,
+        products_on_last_page: u32,
     },
     
     /// 스테이지 실행 명령
@@ -192,7 +194,7 @@ impl ChannelFactory {
     }
     
     /// 설정 기반 이벤트 채널 생성
-    pub fn create_event_channel<T>(&self) -> EventChannel<T> {
+    pub fn create_event_channel<T: Clone>(&self) -> EventChannel<T> {
         let (tx, _) = broadcast::channel(self.config.channels.event_buffer_size);
         tx
     }

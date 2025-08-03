@@ -593,7 +593,7 @@ pub async fn check_site_status(
         Ok(crate::domain::services::crawling_services::DatabaseAnalysis {
             total_products: 0,
             unique_products: 0,
-            missing_products_count: 0, // TODO: 향후 페이지별 예상 제품 수와 비교하여 계산
+            missing_products_count: 0,
             last_update: Some(chrono::Utc::now()),
             missing_fields_analysis: crate::domain::services::crawling_services::FieldAnalysis {
                 missing_company: 0,
@@ -613,7 +613,7 @@ pub async fn check_site_status(
             info!("Site status check completed successfully");
             info!("Site: accessible={}, total_pages={}, estimated_products={}", 
                   site_status.is_accessible, site_status.total_pages, site_status.estimated_products);
-            info!("Database: total_products={}, unique_products={}, duplicates={}", 
+            info!("Database: total_products={}, unique_products={}, missing_products={}", 
                   db_analysis.total_products, db_analysis.unique_products, db_analysis.missing_products_count);
             
             // Create comprehensive status object
@@ -649,7 +649,7 @@ pub async fn check_site_status(
                     "recommended_action": if site_status.estimated_products > db_analysis.total_products {
                         "crawling_needed"
                     } else if db_analysis.missing_products_count > 0 {
-                        "missing_products_check_needed"
+                        "cleanup_needed"
                     } else {
                         "up_to_date"
                     }
@@ -999,7 +999,7 @@ async fn calculate_intelligent_crawling_range(
     let db_analysis = crate::domain::services::crawling_services::DatabaseAnalysis {
         total_products: 0,
         unique_products: 0,
-        missing_products_count: 0, // TODO: 향후 페이지별 예상 제품 수와 비교하여 계산
+        missing_products_count: 0,
         last_update: Some(chrono::Utc::now()),
         missing_fields_analysis: crate::domain::services::crawling_services::FieldAnalysis {
             missing_company: 0,

@@ -157,20 +157,10 @@ pub enum CrawlingRangeRecommendation {
 impl CrawlingRangeRecommendation {
     /// 범위 권장사항을 (시작 페이지, 끝 페이지) 튜플로 변환
     /// 전체 크롤링의 경우 total_pages가 필요하므로 파라미터로 받음
-    /// 반환값: (start_page, end_page) - 역순 크롤링을 위해 start > end
     pub fn to_page_range(&self, total_pages: u32) -> Option<(u32, u32)> {
         match self {
-            CrawlingRangeRecommendation::Full => Some((total_pages, 1)),
-            CrawlingRangeRecommendation::Partial(pages) => {
-                // 역순 크롤링: 최신 페이지부터 지정된 페이지 수만큼
-                let start_page = total_pages;
-                let end_page = if total_pages >= *pages {
-                    total_pages - *pages + 1
-                } else {
-                    1
-                };
-                Some((start_page, end_page))
-            },
+            CrawlingRangeRecommendation::Full => Some((1, total_pages)),
+            CrawlingRangeRecommendation::Partial(pages) => Some((1, *pages)),
             CrawlingRangeRecommendation::None => None,
         }
     }
@@ -190,7 +180,6 @@ pub struct SiteStatus {
     pub data_change_status: SiteDataChangeStatus,
     pub decrease_recommendation: Option<DataDecreaseRecommendation>,
     pub crawling_range_recommendation: CrawlingRangeRecommendation,
-    pub calculated_range: Option<(u32, u32)>, // CrawlingPlanner에서 계산된 실제 범위
 }
 
 /// 데이터베이스 분석 결과
@@ -199,7 +188,7 @@ pub struct SiteStatus {
 pub struct DatabaseAnalysis {
     pub total_products: u32,
     pub unique_products: u32,
-    pub missing_products_count: u32, // 예상 대비 누락된 제품 수
+    pub duplicate_count: u32,
     pub last_update: Option<chrono::DateTime<chrono::Utc>>,
     pub missing_fields_analysis: FieldAnalysis,
     pub data_quality_score: f64, // 0.0 ~ 1.0

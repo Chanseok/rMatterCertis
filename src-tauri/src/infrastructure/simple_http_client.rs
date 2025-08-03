@@ -8,7 +8,7 @@ use reqwest::{Client, ClientBuilder, Response};
 use scraper::Html;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use tokio::time::{sleep, Instant, interval};
+use tokio::time::{sleep, interval};
 use tokio::sync::{Mutex, Semaphore};
 use tracing::{debug, info, warn, error};
 use crate::infrastructure::config::WorkerConfig;

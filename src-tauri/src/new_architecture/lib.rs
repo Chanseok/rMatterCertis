@@ -18,7 +18,7 @@ pub mod events;
 // 주요 타입들 재익스포트
 pub use config::{SystemConfig, RetryPolicy, ConfigError};
 pub use channels::{ChannelFactory, ActorCommand, AppEvent, StageType, types::*};
-pub use channel_types::{StageItem, BatchConfig};
+pub use channels::types::{StageItem, BatchConfig};
 pub use results::{StageResult, StageError, ErrorClassifier, RetryCalculator, FailedItem};
 pub use context::{IntegratedContext, ContextBuilder, LogLevel};
 pub use events::*;

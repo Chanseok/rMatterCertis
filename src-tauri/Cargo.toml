@@ -234,3 +234,7 @@ telemetry = []          # Telemetry and observability
 minimal = []            # Minimal build for CI/CD
 test-utils = []         # Testing utilities
 
+[[bench]]
+name = "shared_service_benchmark"
+harness = false
+
