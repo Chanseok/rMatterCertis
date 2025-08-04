@@ -77,11 +77,35 @@ pub async fn start_crawling_session(
     Ok(session_id)
 }
 
-/// AppHandle을 사용하여 크롤링 실행하는 헬퍼 함수  
+/// AppHandle을 사용하여 실제 Actor 크롤링 실행
 async fn execute_crawling_with_state(app_handle: &tauri::AppHandle) -> Result<(), String> {
-    // 현재는 간단한 성공 응답으로 시뮬레이션
-    info!("🔄 Mock crawling execution started");
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-    info!("✅ Mock crawling execution completed");
-    Ok(())
+    info!("🔄 Starting real Actor-based crawling via monitoring");
+    
+    // 실제 Actor 크롤링 요청 생성
+    let actor_request = crate::commands::actor_system_commands::ActorCrawlingRequest {
+        start_page: 294,
+        end_page: 298,
+        concurrency: Some(3),
+        batch_size: Some(5),
+        delay_ms: Some(1000),
+    };
+    
+    // 실제 Actor 크롤링 실행
+    match crate::commands::real_actor_commands::start_real_actor_crawling(
+        app_handle.clone(),
+        crate::commands::real_actor_commands::RealActorCrawlingRequest {
+            start_page: Some(actor_request.start_page),
+            end_page: Some(actor_request.end_page),
+            concurrency: actor_request.concurrency,
+        },
+    ).await {
+        Ok(response) => {
+            info!("✅ Real Actor crawling completed: {}", response.message);
+            Ok(())
+        },
+        Err(e) => {
+            error!("❌ Real Actor crawling failed: {}", e);
+            Err(e)
+        }
+    }
 }

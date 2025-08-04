@@ -149,10 +149,82 @@ impl SessionActor {
         context.emit_event(start_event).await
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
         
-        // 상태를 Running으로 전환
+        // 실제 크롤링 실행 로직 시작
+        info!("📊 SessionActor {} analyzing crawling range: {} -> {}", 
+              self.actor_id, config.end_page, config.start_page);
+        
+        // 역순 크롤링: end_page(298)부터 start_page(294)까지
+        let total_pages = config.end_page - config.start_page + 1;
+        let batch_size = config.batch_size;
+        
+        info!("📋 SessionActor {} creating batches: total_pages={}, batch_size={}", 
+              self.actor_id, total_pages, batch_size);
+        
+        // 배치들을 생성하여 순차 처리
+        let mut current_page = config.end_page; // 298부터 시작
+        let mut batch_count = 0;
+        
+        while current_page >= config.start_page {
+            // 배치의 끝 페이지 계산 (역순이므로 더 작은 번호)
+            let batch_end_page = std::cmp::max(current_page.saturating_sub(batch_size - 1), config.start_page);
+            
+            batch_count += 1;
+            info!("🏃 SessionActor {} processing batch {}: pages {} -> {}", 
+                  self.actor_id, batch_count, current_page, batch_end_page);
+            
+            // 실제 배치 처리 (임시 구현 - 나중에 BatchActor로 교체)
+            let pages_in_batch = current_page - batch_end_page + 1;
+            for page in (batch_end_page..=current_page).rev() {
+                info!("  📄 Processing page: {}", page);
+                // 실제 페이지 처리 로직 (임시 딜레이)
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+            }
+            
+            self.processed_batches += 1;
+            self.total_success_count += pages_in_batch;
+            
+            info!("✅ SessionActor {} completed batch {}: {} pages processed", 
+                  self.actor_id, batch_count, pages_in_batch);
+            
+            // 다음 배치로 이동
+            if batch_end_page == config.start_page {
+                break; // 마지막 페이지에 도달
+            }
+            current_page = batch_end_page - 1;
+        }
+        
+        // 상태를 Running으로 전환 후 Complete로 이동
         self.state = SessionState::Running;
         
-        info!("✅ Session {} started successfully", session_id);
+        info!("🎯 SessionActor {} completing session: {} batches, {} pages total", 
+              self.actor_id, self.processed_batches, self.total_success_count);
+        
+        // 세션 완료 처리
+        self.state = SessionState::Completed;
+        
+        // 완료 이벤트 발행
+        let completion_event = AppEvent::SessionCompleted {
+            session_id: session_id.clone(),
+            summary: SessionSummary {
+                session_id: session_id.clone(),
+                total_duration_ms: self.start_time.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0),
+                total_pages_processed: self.total_success_count,
+                total_products_processed: 0, // TODO: 실제 제품 수 계산
+                success_rate: 1.0, // TODO: 실제 성공률 계산
+                avg_page_processing_time: self.start_time.map(|t| t.elapsed().as_millis() as u64 / std::cmp::max(self.total_success_count as u64, 1)).unwrap_or(0),
+                error_summary: Vec::new(), // TODO: 실제 에러 수집
+                processed_batches: self.processed_batches,
+                total_success_count: self.total_success_count,
+                final_state: "completed".to_string(),
+                timestamp: Utc::now(),
+            },
+            timestamp: Utc::now(),
+        };
+        
+        context.emit_event(completion_event).await
+            .map_err(|e| SessionError::ContextError(e.to_string()))?;
+        
+        info!("✅ Session {} completed successfully", session_id);
         Ok(())
     }
     

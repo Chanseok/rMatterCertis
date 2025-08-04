@@ -132,6 +132,9 @@ pub mod services;
     pub mod system_analysis;      // 시스템 분석 명령어
     pub mod advanced_engine_api;  // 새로운 Advanced Engine API 추가
     pub mod data_queries;         // Backend-Only CRUD commands (Modern Rust 2024)
+    pub mod unified_crawling;     // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
+    pub mod service_based_reference;  // 🔧 참조용: ServiceBased 크롤링 (구현 완료 후 삭제 예정)
+    pub mod real_actor_commands;  // 🎭 진짜 Actor 시스템 명령어
     
     // Re-export commonly used commands
     pub use crawling_v4::*;
@@ -290,6 +293,15 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
+            commands::unified_crawling::start_unified_crawling,
+            
+            // 🔧 참조용: ServiceBased 크롤링 명령어 (구현 완료 후 삭제 예정)
+            commands::service_based_reference::start_service_based_crawling_reference,
+            
+            // 🎭 진짜 Actor 시스템 명령어
+            commands::real_actor_commands::start_real_actor_crawling,
+            
             // Core v4.0 commands - keeping only the implemented ones
             commands::crawling_v4::init_crawling_engine,
             commands::crawling_v4::start_crawling,
