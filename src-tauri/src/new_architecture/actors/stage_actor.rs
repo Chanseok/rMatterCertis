@@ -14,8 +14,11 @@ use tracing::{info, warn, error, debug};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
+use crate::new_architecture::actors::types::{StageItemResult, StageItemType};
+
 use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
-use super::types::{ActorCommand, AppEvent, StageType, StageItem, StageResult, StageItemResult, StageItemType, ActorError};
+use super::types::{ActorCommand, StageType, StageItem, StageResult, ActorError};
+use crate::new_architecture::channels::types::AppEvent;
 use crate::new_architecture::context::{AppContext, EventEmitter};
 
 /// StageActor: 개별 스테이지 작업의 실행 및 관리
@@ -450,8 +453,14 @@ impl StageActor {
     
     /// 데이터 추출 시뮬레이션 (Phase 3 임시)
     async fn simulate_data_extraction(item: &StageItem) -> Result<(), String> {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        Ok(())
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        
+        // 90% 성공률 시뮬레이션
+        if item.id.chars().last().unwrap_or('0').to_digit(10).unwrap_or(0) < 9 {
+            Ok(())
+        } else {
+            Err("Simulated data extraction error".to_string())
+        }
     }
     
     /// 데이터 검증 시뮬레이션 (Phase 3 임시)
@@ -481,18 +490,6 @@ impl StageActor {
             Ok(())
         } else {
             Err("Simulated status check error".to_string())
-        }
-    }
-    
-    /// 데이터 추출 시뮬레이션 (Phase 3 임시)
-    async fn simulate_data_extraction(item: &StageItem) -> Result<(), String> {
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        
-        // 90% 성공률 시뮬레이션
-        if item.id.chars().last().unwrap_or('0').to_digit(10).unwrap_or(0) < 9 {
-            Ok(())
-        } else {
-            Err("Simulated data extraction error".to_string())
         }
     }
     
@@ -548,7 +545,7 @@ impl Actor for StageActor {
         ActorType::Stage
     }    async fn run(
         &mut self,
-        context: AppContext,
+        mut context: AppContext,
         mut command_rx: mpsc::Receiver<Self::Command>,
     ) -> Result<(), Self::Error> {
         info!("🎯 StageActor {} starting execution loop", self.actor_id);
@@ -597,9 +594,11 @@ impl Actor for StageActor {
                 }
                 
                 // 취소 신호 확인
-                _ = context.cancellation_token.cancelled() => {
-                    warn!("🚫 StageActor {} received cancellation signal", self.actor_id);
-                    break;
+                _ = context.cancellation_token.changed() => {
+                    if *context.cancellation_token.borrow() {
+                        warn!("🚫 StageActor {} received cancellation signal", self.actor_id);
+                        break;
+                    }
                 }
             }
         }
@@ -628,7 +627,7 @@ impl Actor for StageActor {
         };
         
         Ok(ActorHealth {
-            actor_id: self.stage_id.clone(),
+            actor_id: self.stage_id.clone().unwrap_or_default(),
             actor_type: ActorType::Stage,
             status,
             last_activity: Utc::now(),

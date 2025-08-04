@@ -22,7 +22,7 @@ use super::super::{
 /// 
 /// 이 브릿지는 Phase 2에서 기존 검증된 로직을 새로운 Actor 시스템으로
 /// 안전하게 마이그레이션하기 위해 사용됩니다.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ServiceMigrationBridge {
     /// 기존 서비스 엔진에 대한 참조
     legacy_engine: Arc<ServiceBasedBatchCrawlingEngine>,

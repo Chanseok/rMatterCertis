@@ -15,6 +15,7 @@ import { LiveProductionTab } from './tabs/LiveProductionTab';
 import { NewArchTestTab } from './tabs/NewArchTestTab';
 import { ActorSystemTab } from './tabs/ActorSystemTab';
 import { DomainDashboardTab } from './tabs/DomainDashboardTab';
+import { RealtimeDashboardTab } from './tabs/RealtimeDashboardTab';
 import { HierarchicalEventMonitor } from './HierarchicalEventMonitor';
 import { tabState, restoreLastActiveTab } from '../stores/tabStore';
 import { windowState } from '../stores/windowStore';
@@ -62,6 +63,8 @@ export const AppWithTabs: Component = () => {
         return <ActorSystemTab />;
       case 'domainDashboard':
         return <DomainDashboardTab />;
+      case 'realtimeDashboard':
+        return <RealtimeDashboardTab />;
       case 'eventDisplay':
         return <HierarchicalEventMonitor />;
       default:

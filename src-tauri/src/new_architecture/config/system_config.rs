@@ -12,17 +12,25 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::Duration};
 use thiserror::Error;
 
-// Actor 시스템 호환성: context.rs의 SystemConfig 재사용
-pub use crate::new_architecture::context::{
-    SystemConfig as ActorSystemConfig,
-    CrawlingConfig as ActorCrawlingConfig,
-    PerformanceConfig as ActorPerformanceConfig,
-    DatabaseConfig as ActorDatabaseConfig,
-    LoggingConfig as ActorLoggingConfig,
-};
-
 #[derive(Error, Debug)]
-pub enum ConfigError {
+pub enu        
+        assert!(config.validate().is_ok());
+    }
+}
+
+/// 크롤링 설정 (호환성용)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlingSettings {
+    pub max_concurrent_requests: Option<u32>,
+    pub timeout_seconds: Option<u64>,
+}
+
+/// Actor 설정 (호환성용)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActorSettings {
+    pub max_actors: Option<u32>,
+    pub restart_policy: Option<String>,
+}onfigError {
     #[error("Failed to load config from file: {source}")]
     FileLoad {
         #[from]
@@ -53,6 +61,12 @@ pub struct SystemConfig {
     
     /// 채널 크기 설정
     pub channels: ChannelSettings,
+    
+    /// 호환성 필드들 (레거시 지원)
+    pub control_buffer_size: Option<usize>,
+    pub event_buffer_size: Option<usize>,
+    pub crawling: Option<CrawlingSettings>,
+    pub actor: Option<ActorSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

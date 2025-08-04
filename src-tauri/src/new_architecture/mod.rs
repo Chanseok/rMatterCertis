@@ -3,6 +3,8 @@
 
 // 🎯 Phase 1: 핵심 인프라 (새로 구축된 Actor 기반)
 pub mod context;
+pub mod integrated_context; // AppContext와 EventEmitter 제공
+pub mod system_config; // 🔧 SystemConfig 중앙 관리
 pub mod channels;
 pub mod actors;
 pub mod actor_system; // 호환성을 위해 활성화
@@ -18,6 +20,8 @@ pub mod ts_gen;
 
 // Re-exports for compatibility
 pub use context::*;
+pub use integrated_context::*;
+pub use system_config::*; // 🔧 SystemConfig 중앙 export
 pub use channels::*;
 pub use actors::*;
 pub use actor_system::*;

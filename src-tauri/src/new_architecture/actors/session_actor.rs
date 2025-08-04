@@ -14,8 +14,11 @@ use tracing::{info, warn, error, debug};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
+use crate::new_architecture::actors::types::SessionSummary;
+
 use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
-use super::types::{ActorCommand, AppEvent, CrawlingConfig, SessionSummary, ActorError};
+use super::types::{ActorCommand, CrawlingConfig, BatchConfig, StageType, StageItem, StageResult, ActorError};
+use crate::new_architecture::channels::types::AppEvent;
 use crate::new_architecture::context::{AppContext, EventEmitter};
 use crate::new_architecture::migration::ServiceMigrationBridge;
 
@@ -338,7 +341,7 @@ impl Actor for SessionActor {
         ActorType::Session
     }    async fn run(
         &mut self,
-        context: AppContext,
+        mut context: AppContext,
         mut command_rx: mpsc::Receiver<Self::Command>,
     ) -> Result<(), Self::Error> {
         info!("🎬 SessionActor {} starting execution loop", self.actor_id);
@@ -394,9 +397,11 @@ impl Actor for SessionActor {
                 }
                 
                 // 취소 신호 확인
-                _ = context.cancellation_token.cancelled() => {
-                    warn!("🚫 SessionActor {} received cancellation signal", self.actor_id);
-                    break;
+                _ = context.cancellation_token.changed() => {
+                    if *context.cancellation_token.borrow() {
+                        warn!("🚫 SessionActor {} received cancellation signal", self.actor_id);
+                        break;
+                    }
                 }
             }
         }

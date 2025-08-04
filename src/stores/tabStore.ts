@@ -38,6 +38,17 @@ const [tabState, setTabState] = createStore<TabState>({
       }
     },
     {
+      id: 'realtimeDashboard',
+      label: '📊 실시간 차트 대시보드',
+      icon: '📊',
+      theme: {
+        bg: 'bg-gradient-to-br from-pink-50 to-rose-50',
+        border: 'border-pink-200',
+        text: 'text-pink-700',
+        accent: 'from-pink-500 to-rose-500'
+      }
+    },
+    {
       id: 'crawlingEngine',
       label: '🔬 Advanced Engine',
       icon: '🔬',
@@ -136,6 +147,7 @@ const [tabState, setTabState] = createStore<TabState>({
         accent: 'from-cyan-500 to-blue-500'
       }
     }
+    
   ],
   expandedSections: {}
 });

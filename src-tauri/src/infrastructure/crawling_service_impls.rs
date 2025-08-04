@@ -197,7 +197,7 @@ impl StatusChecker for StatusCheckerImpl {
         info!("🔍 Calculating crawling range recommendation from site status and DB analysis...");
         info!("🏗️ [NEW ARCHITECTURE] Using SystemConfig-based intelligent strategy instead of hardcoded values");
         
-        let system_config = Arc::new(NewSystemConfig::default());
+        let system_config = Arc::new(crate::new_architecture::context::SystemConfig::default());
         info!("✅ [NEW ARCHITECTURE] SystemConfig initialized: batch_sizes.small_db_multiplier={}", 
               system_config.performance.batch_sizes.small_db_multiplier);
         info!("✅ [NEW ARCHITECTURE] SystemConfig initialized: concurrency.high_load_multiplier={}", 
@@ -235,7 +235,7 @@ impl StatusChecker for StatusCheckerImpl {
         };
         
         // 실제 CrawlingPlanner를 사용해서 분석 시도 (캐시된 데이터 사용)
-        match crawling_planner.analyze_system_state_with_cache(cached_site_status).await {
+        match crawling_planner.analyze_system_state_with_cache(Some(cached_site_status)).await {
             Ok((site_status_new, db_analysis_new)) => {
                 info!("🎉 [NEW ARCHITECTURE] CrawlingPlanner analysis successful! Site pages: {}, DB products: {}", 
                       site_status_new.total_pages, db_analysis_new.total_products);
@@ -2114,6 +2114,7 @@ impl DatabaseAnalyzer for DatabaseAnalyzerImpl {
             total_products: total_products as u32,
             unique_products: total_products as u32,
             missing_products_count: 0, // duplicate_count를 missing_products_count로 변경
+            duplicate_count: 0,
             last_update: Some(chrono::Utc::now()),
             missing_fields_analysis: FieldAnalysis {
                 missing_company: 0,
@@ -2719,6 +2720,7 @@ impl DatabaseAnalyzer for StatusCheckerImpl {
             total_products: 0,
             unique_products: 0,
             missing_products_count: 0, // duplicate_count를 missing_products_count로 변경
+            duplicate_count: 0,
             missing_fields_analysis: FieldAnalysis {
                 missing_company: 0,
                 missing_model: 0,

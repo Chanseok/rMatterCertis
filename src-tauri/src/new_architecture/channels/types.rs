@@ -9,7 +9,7 @@ use tokio::sync::{mpsc, oneshot, broadcast, watch};
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use crate::new_architecture::config::system_config::SystemConfig;
+use crate::new_architecture::SystemConfig;
 
 /// 제어 채널: 명령 하향 전달 (MPSC)
 pub type ControlChannel<T> = mpsc::Sender<T>;
@@ -89,94 +89,20 @@ pub struct BatchConfig {
     pub target_url: String,
     pub max_pages: Option<u32>,
     pub filters: Vec<String>,
+    pub batch_size: u32,
+    pub concurrency_limit: u32,
+    pub timeout_secs: u64,
+    pub retry_attempts: u32,
 }
 
-/// 제품 정보 (임시 구조)
-#[derive(Debug, Clone, Serialize)]
-pub struct ProductInfo {
-    pub id: String,
-    pub name: String,
-    pub url: String,
-}
+// AppEvent는 actors/types.rs에서 import해서 사용
+pub use crate::new_architecture::actors::types::AppEvent;
 
-/// 앱 이벤트 정의
-#[derive(Debug, Clone, Serialize)]
-pub enum AppEvent {
-    /// 세션 시작
-    SessionStarted {
-        session_id: String,
-        config: BatchConfig,
-    },
-    
-    /// 배치 완료
-    BatchCompleted {
-        batch_id: String,
-        success_result: StageSuccessResult,
-    },
-    
-    /// 배치 실패
-    BatchFailed {
-        batch_id: String,
-        error: String,
-        final_failure: bool,
-    },
-    
-    /// 세션 타임아웃
-    SessionTimeout {
-        session_id: String,
-        elapsed_ms: u64,
-    },
-    
-    /// 성능 메트릭
-    PerformanceMetric {
-        session_id: String,
-        metric_type: String,
-        value: f64,
-        timestamp_ms: u64,
-    },
-    
-    /// 시스템 상태
-    SystemStatus {
-        active_sessions: u32,
-        memory_usage_mb: u64,
-        cpu_usage_percent: f64,
-    },
-}
-
-/// 스테이지 성공 결과 (임시 구조)
-#[derive(Debug, Clone, Serialize)]
-pub enum StageSuccessResult {
-    ListCollection {
-        collected_urls: Vec<String>,
-        total_pages: u32,
-        successful_pages: Vec<u32>,
-        failed_pages: Vec<u32>,
-        collection_metrics: CollectionMetrics,
-    },
-    
-    DetailCollection {
-        processed_products: Vec<ProductInfo>,
-        successful_urls: Vec<String>,
-        failed_urls: Vec<String>,
-        processing_metrics: ProcessingMetrics,
-    },
-}
-
-/// 컬렉션 메트릭 (임시 구조)
-#[derive(Debug, Clone, Serialize)]
-pub struct CollectionMetrics {
-    pub duration_ms: u64,
-    pub avg_response_time_ms: u64,
-    pub success_rate: f64,
-}
-
-/// 처리 메트릭 (임시 구조)
-#[derive(Debug, Clone, Serialize)]
-pub struct ProcessingMetrics {
-    pub duration_ms: u64,
-    pub avg_processing_time_ms: u64,
-    pub success_rate: f64,
-}
+// 타입들을 frontend_api에서 import
+pub use crate::types::frontend_api::ProductInfo;
+pub use crate::new_architecture::actors::types::{
+    StageSuccessResult, CollectionMetrics, ProcessingMetrics
+};
 
 /// 채널 팩토리 - 설정 기반 채널 생성
 pub struct ChannelFactory {

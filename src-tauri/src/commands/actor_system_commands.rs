@@ -5,7 +5,7 @@
 use crate::new_architecture::actors::SessionActor;
 use crate::new_architecture::context::SystemConfig;
 use crate::new_architecture::channels::types::{AppEvent, BatchConfig};
-use crate::new_architecture::actors::types::CrawlingConfig;
+use crate::new_architecture::actors::types::{CrawlingConfig, ActorCommand};
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::service_based_crawling_engine::{ServiceBasedBatchCrawlingEngine, BatchCrawlingConfig};
 use crate::infrastructure::simple_http_client::HttpClient;
@@ -65,7 +65,7 @@ pub async fn start_actor_based_crawling(
     
     // 🚀 실제 SessionActor 생성 및 실행
     let system_config = Arc::new(SystemConfig::default());
-    let (_control_tx, control_rx) = mpsc::channel(100);
+    let (_control_tx, control_rx) = mpsc::channel::<ActorCommand>(100);
     let (event_tx, mut event_rx) = mpsc::channel(500);
     
     // SessionActor 생성
@@ -134,11 +134,15 @@ pub async fn start_actor_based_crawling(
         // 시작 이벤트 방출 (AppEvent 타입으로)
         let session_event = AppEvent::SessionStarted {
             session_id: session_id_for_second_spawn.clone(),
-            config: BatchConfig {
-                batch_size: 20,
+            config: CrawlingConfig {
+                site_url: format!("https://matter.certis.io/device-list/{}", request.start_page),
+                start_page: request.start_page,
+                end_page: request.end_page,
                 concurrency_limit: 5,
+                batch_size: 20,
+                request_delay_ms: 1000,
                 timeout_secs: 300,
-                retry_attempts: 3,
+                max_retries: 3,
             },
             timestamp: chrono::Utc::now(),
         };
@@ -196,8 +200,8 @@ pub async fn test_session_actor_basic(
     info!("🧪 Testing SessionActor...");
     
     let system_config = Arc::new(SystemConfig::default());
-    let (_control_tx, control_rx) = mpsc::channel(100);
-    let (event_tx, _event_rx) = mpsc::channel(500);
+    let (_control_tx, control_rx) = mpsc::channel::<ActorCommand>(100);
+    let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(500);
     
     let _session_actor = SessionActor::new(
         format!("session_{}", chrono::Utc::now().timestamp())
@@ -222,8 +226,8 @@ pub async fn test_actor_integration_basic(
     
     // Integration test - create full system
     let system_config = Arc::new(SystemConfig::default());
-    let (_control_tx, control_rx) = mpsc::channel(100);
-    let (event_tx, _event_rx) = mpsc::channel(500);
+    let (_control_tx, control_rx) = mpsc::channel::<ActorCommand>(100);
+    let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(500);
     
     let _session_actor = SessionActor::new(
         format!("session_{}", chrono::Utc::now().timestamp())
@@ -306,7 +310,7 @@ async fn initialize_real_crawling_engine(
     ));
     
     // SystemConfig로 변환 (CrawlingPlanner용)
-    let system_config = Arc::new(crate::new_architecture::config::SystemConfig::default());
+    let system_config = Arc::new(crate::new_architecture::context::SystemConfig::default());
     
     // 🚀 실제 CrawlingPlanner 사용!
     let crawling_planner = crate::new_architecture::services::crawling_planner::CrawlingPlanner::new(

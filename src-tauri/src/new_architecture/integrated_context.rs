@@ -10,13 +10,20 @@ use crate::new_architecture::{
     channels::types::{ActorCommand, AppEvent, ControlChannel, EventChannel},
     system_config::SystemConfig,
 };
+use crate::application::events::EventEmitter as ApplicationEventEmitter;
 
 /// 취소 채널 타입 정의
 pub type CancellationReceiver = tokio::sync::watch::Receiver<bool>;
 pub type CancellationSender = tokio::sync::watch::Sender<bool>;
 
+/// 애플리케이션 컨텍스트 (AppContext는 IntegratedContext의 별칭)
+pub type AppContext = IntegratedContext;
+
+/// 이벤트 에미터 (EventEmitter는 ApplicationEventEmitter의 별칭)
+pub type EventEmitter = ApplicationEventEmitter;
+
 /// 통합 채널 컨텍스트 - 모든 Actor가 공유하는 통신 인프라
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IntegratedContext {
     /// 세션 식별자
     pub session_id: String,
@@ -34,6 +41,8 @@ pub struct IntegratedContext {
     pub event_tx: EventChannel<AppEvent>,
     /// 취소 신호 수신 채널
     pub cancellation_rx: CancellationReceiver,
+    /// 취소 토큰 (호환성을 위해 추가)
+    pub cancellation_token: CancellationReceiver,
 
     /// 시스템 설정
     pub config: Arc<SystemConfig>,
@@ -55,7 +64,8 @@ impl IntegratedContext {
             task_id: None,
             control_tx,
             event_tx,
-            cancellation_rx,
+            cancellation_rx: cancellation_rx.clone(),
+            cancellation_token: cancellation_rx,
             config,
         }
     }
@@ -92,7 +102,7 @@ impl IntegratedContext {
     }
 
     /// 이벤트 발행
-    pub fn emit_event(&self, event: AppEvent) -> Result<usize, ContextError> {
+    pub async fn emit_event(&self, event: AppEvent) -> Result<usize, ContextError> {
         self.event_tx
             .send(event)
             .map_err(|_| ContextError::EventBroadcastFailed)
@@ -101,6 +111,11 @@ impl IntegratedContext {
     /// 취소 신호 확인
     pub fn is_cancelled(&self) -> bool {
         *self.cancellation_rx.borrow()
+    }
+
+    /// 세션 ID 접근자 메서드
+    pub fn session_id(&self) -> &str {
+        &self.session_id
     }
 
     /// 현재 컨텍스트 경로 문자열 생성
@@ -147,6 +162,20 @@ pub enum ContextError {
 
     #[error("Invalid context state: {message}")]
     InvalidState { message: String },
+}
+
+impl From<ContextError> for crate::new_architecture::actors::types::ActorError {
+    fn from(err: ContextError) -> Self {
+        use crate::new_architecture::actors::types::ActorError;
+        match err {
+            ContextError::ControlChannelSend { message } => ActorError::ChannelError(message),
+            ContextError::EventBroadcastFailed => ActorError::EventBroadcastFailed(
+                "Event broadcast failed".to_string()
+            ),
+            ContextError::Cancelled => ActorError::Cancelled("Operation cancelled".to_string()),
+            ContextError::InvalidState { message } => ActorError::ConfigurationError(message),
+        }
+    }
 }
 
 /// 통합 컨텍스트 팩토리

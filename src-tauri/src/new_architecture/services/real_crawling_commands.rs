@@ -5,16 +5,20 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::sync::Arc;
+use std::time::Duration;
+use serde::{Deserialize, Serialize};
 use tauri::command;
-use tracing::{info, error};
+use tracing::{info, warn, error, debug};
+use chrono::{DateTime, Utc};
 use anyhow::Result;
+use crate::new_architecture::actor_system::StageResult;
 
 use crate::new_architecture::system_config::SystemConfig;
 use crate::new_architecture::services::crawling_integration::CrawlingIntegrationService;
 use crate::infrastructure::config::AppConfig;
 
 /// 실제 크롤링 서비스 초기화 테스트
-#[command]
+#[tauri::command]
 pub async fn test_real_crawling_init() -> Result<String, String> {
     info!("🔧 실제 크롤링 서비스 초기화 테스트 시작");
     
@@ -31,7 +35,7 @@ pub async fn test_real_crawling_init() -> Result<String, String> {
 }
 
 /// 실제 사이트 상태 확인 테스트
-#[command]
+#[tauri::command]
 pub async fn test_real_site_status() -> Result<String, String> {
     info!("🌐 실제 사이트 상태 확인 테스트 시작");
     
@@ -48,7 +52,7 @@ pub async fn test_real_site_status() -> Result<String, String> {
 }
 
 /// 실제 크롤링 범위 분석 테스트
-#[command]
+#[tauri::command]
 pub async fn test_real_crawling_analysis() -> Result<String, String> {
     info!("📊 실제 크롤링 범위 분석 테스트 시작");
     
@@ -65,7 +69,7 @@ pub async fn test_real_crawling_analysis() -> Result<String, String> {
 }
 
 /// 실제 소량 페이지 크롤링 테스트
-#[command]
+#[tauri::command]
 pub async fn test_real_page_crawling() -> Result<String, String> {
     info!("📄 실제 소량 페이지 크롤링 테스트 시작");
     
@@ -82,7 +86,7 @@ pub async fn test_real_page_crawling() -> Result<String, String> {
 }
 
 /// 실제 OneShot Actor 통합 테스트
-#[command]
+#[tauri::command]
 pub async fn test_real_oneshot_integration() -> Result<String, String> {
     info!("🔗 실제 OneShot Actor 통합 테스트 시작");
     
@@ -172,21 +176,22 @@ async fn test_small_scale_crawling() -> Result<String> {
     ).await;
     
     match result {
-        crate::new_architecture::actors::StageResult::Success(success) => {
+        StageResult::Success { processed_items, duration_ms } => {
             Ok(format!(
                 "소량 크롤링 성공 - 처리된 페이지: {}, 실행시간: {}ms",
-                success.processed_items,
-                success.stage_duration_ms
+                processed_items,
+                duration_ms
             ))
         }
-        crate::new_architecture::actors::StageResult::PartialSuccess { success_items, failed_items, .. } => {
-            Ok(format!(
-                "부분 성공 - 성공: {}개, 실패: {}개",
-                success_items.processed_items,
-                failed_items.len()
-            ))
+        StageResult::Failure { error, .. } => {
+            Err(anyhow::anyhow!("크롤링 실행 중 오류: {:?}", error))
         }
-        _ => Ok("크롤링 실행되었으나 예상과 다른 결과".to_string())
+        StageResult::RecoverableError { error, .. } => {
+            Err(anyhow::anyhow!("복구 가능한 오류: {:?}", error))
+        }
+        StageResult::FatalError { error, .. } => {
+            Err(anyhow::anyhow!("치명적 오류: {:?}", error))
+        }
     }
 }
 

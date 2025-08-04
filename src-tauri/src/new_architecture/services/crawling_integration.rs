@@ -323,6 +323,7 @@ impl CrawlingIntegrationService {
         let db_analysis = crate::domain::services::crawling_services::DatabaseAnalysis {
             total_products: db_stats.total_products as u32,
             unique_products: db_stats.active_products as u32,
+            duplicate_count: (db_stats.total_products - db_stats.active_products) as u32,
             missing_products_count: 0,
             last_update: None,
             missing_fields_analysis: FieldAnalysis {

@@ -593,6 +593,7 @@ pub async fn check_site_status(
         Ok(crate::domain::services::crawling_services::DatabaseAnalysis {
             total_products: 0,
             unique_products: 0,
+            duplicate_count: 0,
             missing_products_count: 0,
             last_update: Some(chrono::Utc::now()),
             missing_fields_analysis: crate::domain::services::crawling_services::FieldAnalysis {
@@ -999,6 +1000,7 @@ async fn calculate_intelligent_crawling_range(
     let db_analysis = crate::domain::services::crawling_services::DatabaseAnalysis {
         total_products: 0,
         unique_products: 0,
+        duplicate_count: 0,
         missing_products_count: 0,
         last_update: Some(chrono::Utc::now()),
         missing_fields_analysis: crate::domain::services::crawling_services::FieldAnalysis {

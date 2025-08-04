@@ -19,8 +19,13 @@
     "@tauri-apps/plugin-dialog": "^2.3.0",
     "@tauri-apps/plugin-opener": "^2",
     "@types/three": "^0.178.1",
+    "chart.js": "^4.5.0",
+    "chartjs-adapter-date-fns": "^3.0.0",
     "d3": "^7.9.0",
     "d3-force-3d": "^3.0.6",
+    "date-fns": "^4.1.0",
+    "react-chartjs-2": "^5.3.0",
+    "solid-chartjs": "^1.3.11",
     "solid-js": "^1.9.3",
     "three": "^0.178.0"
   },

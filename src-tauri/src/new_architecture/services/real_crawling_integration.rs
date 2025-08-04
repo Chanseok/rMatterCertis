@@ -65,7 +65,7 @@ impl StageActor {
         result_tx: oneshot::Sender<StageResult>,
         crawling_executor: Arc<RealCrawlingStageExecutor>,
     ) -> Result<(), crate::new_architecture::actors::ActorError> {
-        info!(batch_id = %self.batch_id, "StageActor started with real crawling service");
+        info!(batch_id = ?self.batch_id, "StageActor started with real crawling service");
         
         let mut final_result = StageResult::FatalError {
             error: StageError::ValidationError {
@@ -101,17 +101,17 @@ impl StageActor {
                     break;
                 }
                 _ => {
-                    warn!(batch_id = %self.batch_id, "Unsupported command in stage actor");
+                    warn!(batch_id = ?self.batch_id, "Unsupported command in stage actor");
                 }
             }
         }
         
         // 결과 전송
         if result_tx.send(final_result).is_err() {
-            error!(batch_id = %self.batch_id, "Failed to send stage result");
+            error!(batch_id = ?self.batch_id, "Failed to send stage result");
         }
         
-        info!(batch_id = %self.batch_id, "StageActor with real crawling completed");
+        info!(batch_id = ?self.batch_id, "StageActor with real crawling completed");
         Ok(())
     }
     
@@ -124,7 +124,7 @@ impl StageActor {
         crawling_executor: Arc<RealCrawlingStageExecutor>,
     ) -> StageResult {
         info!(
-            batch_id = %self.batch_id.as_deref().unwrap_or("unknown"),
+            batch_id = ?self.batch_id,
             stage = ?stage_type,
             items_count = items.len(),
             concurrency_limit = concurrency_limit,
@@ -154,7 +154,7 @@ impl crate::new_architecture::actors::BatchActor {
         app_config: AppConfig,
     ) -> StageResult {
         info!(
-            batch_id = %self.batch_id.as_deref().unwrap_or("unknown"), 
+            batch_id = ?self.batch_id, 
             stage = ?stage_type, 
             items_count = items.len(), 
             "Executing stage with real crawling service"
@@ -175,7 +175,7 @@ impl crate::new_architecture::actors::BatchActor {
         };
         
         let integration_service = match CrawlingIntegrationService::new(
-            config_arc, 
+            config_arc.clone(), 
             app_config
         ).await {
             Ok(service) => Arc::new(service),
@@ -254,7 +254,7 @@ impl crate::new_architecture::actors::BatchActor {
             },
             Err(_) => StageResult::RecoverableError {
                 error: StageError::NetworkTimeout {
-                    message: "Stage execution timeout".to_string(),
+                    timeout_secs: 30,
                 },
                 attempts: 0,
                 stage_id: self.batch_id.clone().unwrap_or_else(|| "unknown".to_string()),
@@ -264,7 +264,7 @@ impl crate::new_architecture::actors::BatchActor {
         
         // 8. StageActor 정리
         if let Err(e) = handle.await {
-            warn!(batch_id = %self.batch_id.as_deref().unwrap_or("unknown"), error = %e, "StageActor join failed");
+            warn!(batch_id = ?self.batch_id, error = %e, "StageActor join failed");
         }
         
         result

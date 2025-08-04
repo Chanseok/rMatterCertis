@@ -189,6 +189,7 @@ pub struct DatabaseAnalysis {
     pub total_products: u32,
     pub unique_products: u32,
     pub duplicate_count: u32,
+    pub missing_products_count: u32,  // 누락된 제품 수
     pub last_update: Option<chrono::DateTime<chrono::Utc>>,
     pub missing_fields_analysis: FieldAnalysis,
     pub data_quality_score: f64, // 0.0 ~ 1.0

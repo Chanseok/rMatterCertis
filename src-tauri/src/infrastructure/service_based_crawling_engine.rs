@@ -2694,3 +2694,17 @@ impl ServiceBasedBatchCrawlingEngine {
         }
     }
 }
+
+impl std::fmt::Debug for ServiceBasedBatchCrawlingEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServiceBasedBatchCrawlingEngine")
+            .field("status_checker", &"Arc<dyn StatusChecker>")
+            .field("database_analyzer", &"Arc<dyn DatabaseAnalyzer>") 
+            .field("product_list_collector", &"Arc<dyn ProductListCollector>")
+            .field("product_detail_collector", &"Arc<dyn ProductDetailCollector>")
+            .field("data_processor", &"Arc<dyn DataProcessor>")
+            .field("storage_service", &"Arc<dyn StorageService>")
+            .field("config", &self.config)
+            .finish()
+    }
+}

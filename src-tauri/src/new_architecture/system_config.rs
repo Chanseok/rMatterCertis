@@ -30,9 +30,11 @@ pub struct SystemConfig {
     pub channels: ChannelSettings,
     pub actor: ActorSettings,
     
-    // Phase 3 추가: 통합 컨텍스트 관련 설정
+    /// 호환성 필드들 (레거시 지원)
     pub control_buffer_size: Option<usize>,
     pub event_buffer_size: Option<usize>,
+    pub crawling: Option<CrawlingSettings>,
+    pub legacy_actor: Option<LegacyActorSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +92,7 @@ pub struct BatchSizeSettings {
     pub max_size: u32,
     pub auto_adjust_threshold: f64,
     pub adjust_multiplier: f64,
+    pub small_db_multiplier: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +100,9 @@ pub struct ConcurrencySettings {
     pub max_concurrent_tasks: u32,
     pub stage_concurrency_limits: HashMap<String, u32>,
     pub task_queue_size: u32,
+    pub min_concurrent_batches: u32,
+    pub max_concurrent_batches: u32,
+    pub high_load_multiplier: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,11 +264,15 @@ impl SystemConfig {
                     max_size: 1000,
                     auto_adjust_threshold: 0.8,
                     adjust_multiplier: 1.5,
+                    small_db_multiplier: 1.0,
                 },
                 concurrency: ConcurrencySettings {
                     max_concurrent_tasks: 50,
                     stage_concurrency_limits: stage_limits,
                     task_queue_size: 1000,
+                    min_concurrent_batches: 1,
+                    max_concurrent_batches: 10,
+                    high_load_multiplier: 1.2,
                 },
                 buffers: BufferSettings {
                     request_buffer_size: 8192,
@@ -290,8 +300,19 @@ impl SystemConfig {
             },
             
             // Phase 3: 통합 컨텍스트 기본값
+            // 호환성 필드들
             control_buffer_size: Some(100),
             event_buffer_size: Some(1000),
+            crawling: Some(CrawlingSettings {
+                max_concurrent_requests: Some(10),
+                timeout_seconds: Some(30),
+                default_concurrency_limit: Some(5),
+                request_delay_ms: Some(1000),
+            }),
+            legacy_actor: Some(LegacyActorSettings {
+                max_actors: Some(100),
+                restart_policy: Some("always".to_string()),
+            }),
         }
     }
 
@@ -300,4 +321,20 @@ impl SystemConfig {
         // 테스트에서는 기본 설정 사용
         Ok(Self::default())
     }
+}
+
+/// 크롤링 설정 (호환성용)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlingSettings {
+    pub max_concurrent_requests: Option<u32>,
+    pub timeout_seconds: Option<u64>,
+    pub default_concurrency_limit: Option<u32>,
+    pub request_delay_ms: Option<u64>,
+}
+
+/// Actor 설정 (호환성용)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LegacyActorSettings {
+    pub max_actors: Option<u32>,
+    pub restart_policy: Option<String>,
 }

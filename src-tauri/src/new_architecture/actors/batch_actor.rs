@@ -14,7 +14,8 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
 use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
-use super::types::{ActorCommand, AppEvent, BatchConfig, StageType, StageItem, ActorError};
+use super::types::{ActorCommand, BatchConfig, StageType, StageItem, ActorError};
+use crate::new_architecture::channels::types::AppEvent;
 use crate::new_architecture::context::{AppContext, EventEmitter};
 use crate::new_architecture::migration::ServiceMigrationBridge;
 
@@ -341,7 +342,7 @@ impl Actor for BatchActor {
         ActorType::Batch
     }    async fn run(
         &mut self,
-        context: AppContext,
+        mut context: AppContext,
         mut command_rx: mpsc::Receiver<Self::Command>,
     ) -> Result<(), Self::Error> {
         info!("🔄 BatchActor {} starting execution loop", self.actor_id);
@@ -396,9 +397,12 @@ impl Actor for BatchActor {
                 }
                 
                 // 취소 신호 확인
-                _ = context.cancellation_token.cancelled() => {
-                    warn!("🚫 BatchActor {} received cancellation signal", self.actor_id);
-                    break;
+                _ = context.cancellation_token.changed() => {
+                    // Cancellation 감지
+                    if *context.cancellation_token.borrow() {
+                        warn!("🚫 BatchActor {} received cancellation signal", self.actor_id);
+                        break;
+                    }
                 }
             }
         }

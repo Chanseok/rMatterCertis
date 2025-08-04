@@ -13,7 +13,7 @@ use crate::domain::services::crawling_services::{
     FieldAnalysis, CrawlingRangeRecommendation
 };
 use super::super::{
-    context::SystemConfig,
+    SystemConfig,
     actors::types::{CrawlingConfig, BatchConfig, ActorError}
 };
 
@@ -260,13 +260,20 @@ impl CrawlingPlanner {
     /// 최적 동시성 수준을 계산합니다.
     fn calculate_optimal_concurrency(&self) -> u32 {
         // 시스템 설정 기반 동시성 계산
-        self.config.crawling.default_concurrency_limit.min(10)
+        self.config.crawling
+            .as_ref()
+            .and_then(|c| c.default_concurrency_limit)
+            .unwrap_or(5)
+            .min(10)
     }
     
     /// 최적 지연 시간을 계산합니다.
     fn calculate_optimal_delay(&self) -> u64 {
         // 설정된 지연 시간 사용
-        self.config.crawling.request_delay_ms
+        self.config.crawling
+            .as_ref()
+            .and_then(|c| c.request_delay_ms)
+            .unwrap_or(1000)
     }
 }
 

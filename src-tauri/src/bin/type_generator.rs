@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🎯 Starting TypeScript type generation...");
     
     // 타입 생성 실행
-    ts_gen::generate_typescript_types()?;
+    ts_gen::generate_ts_bindings()?;
     
     println!("✅ All TypeScript types generated successfully!");
     Ok(())

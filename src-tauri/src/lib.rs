@@ -33,6 +33,7 @@ use std::sync::{Arc, RwLock};
 pub mod types {
     //! TypeScript 연동을 위한 타입 정의
     pub mod frontend_api;
+    pub mod dashboard_types;  // 🎨 Phase C: 대시보드 타입
 }
 
 // 🚀 새로운 아키텍처 모듈 (Phase 1 구현 완료) - Modern Rust 2024
@@ -110,8 +111,11 @@ pub use infrastructure::database_paths;
 // Events module - 실시간 이벤트 시스템
 pub mod events;
 
+// Services module - 실시간 대시보드 등
+pub mod services;
+
 // Modern Rust 2024 - Commands module with direct declarations
-pub mod commands {
+    pub mod commands {
     //! Command handlers for Tauri frontend integration
     pub mod modern_crawling;
     pub mod config_commands;
@@ -121,6 +125,10 @@ pub mod commands {
     pub mod simple_actor_test;
     pub mod actor_system_monitoring;
     pub mod actor_system_commands;    // 🎭 NEW: Actor System commands
+    pub mod real_crawling_commands;   // 🚀 Phase C: 실제 크롤링 기능
+    pub mod crawling_test_commands;   // 🧪 Phase C: 크롤링 테스트 도구
+    pub mod performance_commands;     // 🔧 Phase C: 성능 최적화 도구
+    pub mod dashboard_commands;       // 🎨 Phase C: 실시간 대시보드
     pub mod system_analysis;      // 시스템 분석 명령어
     pub mod advanced_engine_api;  // 새로운 Advanced Engine API 추가
     pub mod data_queries;         // Backend-Only CRUD commands (Modern Rust 2024)
@@ -131,9 +139,11 @@ pub mod commands {
     pub use advanced_engine_api::*;  // Advanced Engine 명령어 export
     pub use data_queries::*;      // Backend-Only CRUD 명령어 export
     pub use config_commands::*;   // Config and window management 명령어 export
-}
-
-// Modern Rust 2024 - 명시적 모듈 선언
+    pub use real_crawling_commands::*;  // Phase C 실제 크롤링 명령어 export
+    pub use crawling_test_commands::*;  // Phase C 테스트 명령어 export
+    pub use performance_commands::*;    // Phase C 성능 최적화 명령어 export
+    pub use dashboard_commands::*;      // Phase C 대시보드 명령어 export
+}// Modern Rust 2024 - 명시적 모듈 선언
 pub mod crawling;
 
 // Utilities module
@@ -244,6 +254,8 @@ pub fn run() {
             },
         })
         .manage(commands::simple_actor_test::ActorSystemState::default())
+        .manage(commands::performance_commands::PerformanceOptimizerState::default())
+        .manage(commands::dashboard_commands::DashboardServiceState::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
             
@@ -339,14 +351,43 @@ pub fn run() {
             commands::actor_system_commands::test_actor_integration_basic,
             
             // Real Crawling Integration commands (Option B implementation)
-            new_architecture::services::real_crawling_commands::test_real_crawling_init,
-            new_architecture::services::real_crawling_commands::test_real_site_status,
-            new_architecture::services::real_crawling_commands::test_real_crawling_analysis,
-            new_architecture::services::real_crawling_commands::test_real_page_crawling,
-            new_architecture::services::real_crawling_commands::test_real_oneshot_integration,
+            crate::new_architecture::services::real_crawling_commands::test_real_crawling_init,
+            crate::new_architecture::services::real_crawling_commands::test_real_site_status,
+            crate::new_architecture::services::real_crawling_commands::test_real_crawling_analysis,
+            crate::new_architecture::services::real_crawling_commands::test_real_page_crawling,
+            crate::new_architecture::services::real_crawling_commands::test_real_oneshot_integration,
             
             // Actor System Monitoring commands (Phase C: UI 개선)
-            commands::actor_system_monitoring::start_crawling_session
+            commands::actor_system_monitoring::start_crawling_session,
+            
+            // 🚀 Phase C: Real Crawling Commands (PRODUCTION-READY)
+            commands::real_crawling_commands::execute_real_crawling,
+            commands::real_crawling_commands::get_real_crawling_status,
+            commands::real_crawling_commands::cancel_real_crawling,
+            
+            // 🧪 Phase C: Crawling Test & Development Tools
+            commands::crawling_test_commands::quick_crawling_test,
+            commands::crawling_test_commands::check_site_status_only,
+            commands::crawling_test_commands::crawling_performance_benchmark,
+            
+            // 🔧 Phase C: Performance Optimization Tools
+            commands::performance_commands::init_performance_optimizer,
+            commands::performance_commands::get_current_performance_metrics,
+            commands::performance_commands::get_optimization_recommendation,
+            commands::performance_commands::get_performance_history,
+            commands::performance_commands::clear_performance_history,
+            commands::performance_commands::start_performance_session,
+            commands::performance_commands::end_performance_session,
+            
+            // 🎨 Phase C: Realtime Dashboard Tools
+            commands::dashboard_commands::init_dashboard_service,
+            commands::dashboard_commands::get_dashboard_state,
+            commands::dashboard_commands::get_chart_data,
+            commands::dashboard_commands::start_dashboard_crawling_session,
+            commands::dashboard_commands::update_dashboard_progress,
+            commands::dashboard_commands::complete_dashboard_crawling_session,
+            commands::dashboard_commands::test_dashboard_integration,
+            commands::dashboard_commands::run_dashboard_demo
             
             
             // TODO: Add other commands as they are implemented

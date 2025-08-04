@@ -104,6 +104,12 @@ pub enum StageResult {
         error: StageError,
         partial_results: u32,
     },
+    RecoverableError {
+        error: StageError,
+        attempts: u32,
+        stage_id: String,
+        suggested_retry_delay_ms: u64,
+    },
     FatalError {
         error: StageError,
         stage_id: String,

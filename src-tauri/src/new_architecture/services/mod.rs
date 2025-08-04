@@ -2,5 +2,6 @@ pub mod crawling_planner;
 pub mod crawling_integration;
 pub mod real_crawling_integration;
 pub mod real_crawling_commands;
+pub mod performance_optimizer;  // 🔧 Phase C: 성능 최적화 서비스
 
 pub use crawling_planner::CrawlingPlanner;
