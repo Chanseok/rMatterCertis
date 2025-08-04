@@ -16,7 +16,7 @@ export class DashboardAPI {
    * 대시보드 초기화
    */
   static async initDashboard(): Promise<void> {
-    return invoke('init_realtime_dashboard');
+    return invoke('init_dashboard_service');
   }
 
   /**
@@ -65,6 +65,13 @@ export class DashboardAPI {
    */
   static async dismissAlert(alertId: string): Promise<void> {
     return invoke('dismiss_alert', { alertId });
+  }
+
+  /**
+   * 실시간 메트릭 데이터 조회 (Chart.js용)
+   */
+  static async getRealtimeMetrics(metricType: ChartMetricType): Promise<ChartDataPoint[]> {
+    return invoke('get_chart_data', { metricType });
   }
 
   /**

@@ -163,15 +163,15 @@ const RealtimeChart: Component<RealtimeChartProps> = (props) => {
   const updateChartData = async () => {
     try {
       setError(null);
-      const dataPoints = await DashboardAPI.getChartData(
-        props.metricType,
-        props.timeRangeMinutes || 30
-      );
+      const dataPoints = await DashboardAPI.getRealtimeMetrics(props.metricType);
       
       setRawData(dataPoints);
       
       // Chart.js 데이터 형식으로 변환
-      const labels = dataPoints.map((point: ChartDataPoint) => new Date(point.timestamp));
+      const labels = dataPoints.map((point: ChartDataPoint) => {
+        const timestamp = typeof point.timestamp === 'number' ? point.timestamp * 1000 : new Date(point.timestamp).getTime();
+        return new Date(timestamp);
+      });
       const values = dataPoints.map((point: ChartDataPoint) => point.value);
       
       const color = getChartColor(props.metricType);
@@ -250,6 +250,14 @@ const RealtimeChart: Component<RealtimeChartProps> = (props) => {
 
   // 컴포넌트 마운트 시 초기화
   onMount(async () => {
+    try {
+      // 대시보드 서비스 초기화
+      await DashboardAPI.initDashboard();
+      console.log('✅ Dashboard service initialized for Chart.js');
+    } catch (error) {
+      console.warn('⚠️ Dashboard initialization failed, continuing with mock data:', error);
+    }
+    
     await updateChartData();
     subscribeToMetrics();
     

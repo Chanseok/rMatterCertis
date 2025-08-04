@@ -4,12 +4,14 @@
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State, Emitter};
 use tokio::sync::RwLock;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 
 use crate::services::dashboard_service::RealtimeDashboardService;
 use crate::types::dashboard_types::*;
 use crate::new_architecture::services::performance_optimizer::CrawlingPerformanceOptimizer;
 use crate::new_architecture::config::SystemConfig;
+use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
+use crate::infrastructure::database_connection::DatabaseConnection;
 
 /// 대시보드 서비스 상태 관리
 pub struct DashboardServiceState {
@@ -29,6 +31,16 @@ impl Default for DashboardServiceState {
 pub async fn init_dashboard_service(
     app: AppHandle,
 ) -> Result<String, String> {
+    // 이미 초기화되었는지 확인
+    let dashboard_state = app.state::<DashboardServiceState>();
+    {
+        let service_lock = dashboard_state.service.read().await;
+        if service_lock.is_some() {
+            info!("✅ Dashboard service already initialized");
+            return Ok("Dashboard service already running".to_string());
+        }
+    }
+    
     info!("🎨 Initializing dashboard service");
     
     // 대시보드 설정
@@ -49,11 +61,44 @@ pub async fn init_dashboard_service(
     let system_config = Arc::new(SystemConfig::default());
     let performance_optimizer = Arc::new(CrawlingPerformanceOptimizer::new(system_config));
     
+    // 데이터베이스 연결 생성
+    let database_url = {
+        let app_data_dir = if cfg!(target_os = "macos") {
+            std::env::var("HOME")
+                .map(|h| format!("{}/Library/Application Support", h))
+                .unwrap_or_else(|_| "./data".to_string())
+        } else {
+            std::env::var("APPDATA")
+                .or_else(|_| std::env::var("HOME").map(|h| format!("{}/.local/share", h)))
+                .unwrap_or_else(|_| "./data".to_string())
+        };
+        let data_dir = format!("{}/matter-certis-v2/database", app_data_dir);
+        format!("sqlite:{}/matter_certis.db", data_dir)
+    };
+    
+    // 제품 리포지토리 생성
+    let product_repository = match DatabaseConnection::new(&database_url).await {
+        Ok(db_conn) => {
+            let repo = Arc::new(IntegratedProductRepository::new(db_conn.pool().clone()));
+            info!("✅ Database connection established for dashboard");
+            Some(repo)
+        },
+        Err(e) => {
+            error!("❌ Failed to connect to database for dashboard: {}", e);
+            None
+        }
+    };
+    
     // 대시보드 서비스 생성
-    let dashboard_service = Arc::new(
-        RealtimeDashboardService::new(config)
-            .with_performance_optimizer(performance_optimizer)
-    );
+    let dashboard_service = RealtimeDashboardService::new(config)
+        .with_performance_optimizer(performance_optimizer);
+    
+    // TODO: 나중에 product_repository 연결 구현
+    // if let Some(repo) = product_repository {
+    //     dashboard_service = dashboard_service.with_product_repository(repo);
+    // }
+    
+    let dashboard_service = Arc::new(dashboard_service);
     
     // 서비스 시작
     dashboard_service.start().await;
@@ -87,12 +132,30 @@ pub async fn get_dashboard_state(
 /// 📈 실시간 차트 데이터 조회
 #[tauri::command]
 pub async fn get_chart_data(
+    metric_type: String,
     dashboard_state: State<'_, DashboardServiceState>,
-) -> Result<RealtimeChartData, String> {
+) -> Result<Vec<ChartDataPoint>, String> {
     let service_lock = dashboard_state.service.read().await;
     
     if let Some(service) = service_lock.as_ref() {
-        Ok(service.get_chart_data().await)
+        let chart_data = service.get_chart_data().await;
+        
+        // 메트릭 타입에 따라 해당 데이터 반환
+        let data_points = match metric_type.as_str() {
+            "requests_per_second" => chart_data.processing_speed,
+            "success_rate" => chart_data.success_rate,
+            "response_time" => chart_data.response_time,
+            "memory_usage" => chart_data.memory_usage,
+            "cpu_usage" => chart_data.cpu_usage,
+            "pages_processed" => chart_data.pages_processed,
+            "products_collected" => chart_data.products_collected,
+            _ => {
+                warn!("Unknown metric type: {}", metric_type);
+                chart_data.processing_speed // 기본값
+            }
+        };
+        
+        Ok(data_points)
     } else {
         Err("Dashboard service not initialized".to_string())
     }

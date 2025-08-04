@@ -39,7 +39,7 @@ const [tabState, setTabState] = createStore<TabState>({
     },
     {
       id: 'realtimeDashboard',
-      label: '📊 실시간 차트 대시보드',
+      label: '실시간 차트 대시보드',
       icon: '📊',
       theme: {
         bg: 'bg-gradient-to-br from-pink-50 to-rose-50',
@@ -50,7 +50,7 @@ const [tabState, setTabState] = createStore<TabState>({
     },
     {
       id: 'crawlingEngine',
-      label: '🔬 Advanced Engine',
+      label: 'Advanced Engine',
       icon: '🔬',
       theme: {
         bg: 'bg-gradient-to-br from-blue-50 to-indigo-50',
@@ -154,6 +154,13 @@ const [tabState, setTabState] = createStore<TabState>({
 
 // 액션 함수들
 export const setActiveTab = (tabId: string) => {
+  const previousTab = tabState.activeTab;
+  
+  // 이전 탭에서 리소스 정리
+  if (previousTab && previousTab !== tabId) {
+    cleanupTabResources(previousTab);
+  }
+  
   setTabState('activeTab', tabId);
   
   // windowStore에 마지막 활성 탭 저장
@@ -168,6 +175,39 @@ export const setActiveTab = (tabId: string) => {
     setTimeout(() => {
       tabElement.classList.remove('tab-focus-animation');
     }, 2000);
+  }
+};
+
+// 탭별 리소스 정리 함수
+const cleanupTabResources = (tabId: string) => {
+  switch (tabId) {
+    case 'realtimeDashboard':
+      // Chart.js 대시보드 리소스 정리
+      const chartElements = document.querySelectorAll('.chartjs-render-monitor');
+      chartElements.forEach(element => {
+        // Chart.js 인스턴스 정리
+        const chart = (element as any)?.chart;
+        if (chart && typeof chart.destroy === 'function') {
+          chart.destroy();
+        }
+      });
+      console.log('🧹 Chart.js dashboard resources cleaned up');
+      break;
+    
+    case 'liveProduction':
+      // Live Production 탭 리소스 정리
+      const liveElements = document.querySelectorAll('[data-live-element]');
+      liveElements.forEach(element => {
+        // 이벤트 리스너 제거
+        element.removeEventListener('update', () => {});
+      });
+      console.log('🧹 Live Production resources cleaned up');
+      break;
+    
+    default:
+      // 기본 정리 작업
+      console.log(`🧹 Basic cleanup for tab: ${tabId}`);
+      break;
   }
 };
 

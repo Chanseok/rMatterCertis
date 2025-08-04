@@ -174,7 +174,7 @@ pub struct ChartDataPoint {
     pub label: Option<String>,
 }
 
-/// 실시간 차트 데이터
+/// 실시간 차트 데이터 (Chart.js 연동)
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RealtimeChartData {
@@ -186,6 +186,12 @@ pub struct RealtimeChartData {
     pub success_rate: Vec<ChartDataPoint>,
     /// 메모리 사용량 차트 (MB)
     pub memory_usage: Vec<ChartDataPoint>,
+    /// CPU 사용률 차트 (%)
+    pub cpu_usage: Vec<ChartDataPoint>,
+    /// 처리된 페이지 수 차트
+    pub pages_processed: Vec<ChartDataPoint>,
+    /// 수집된 제품 수 차트
+    pub products_collected: Vec<ChartDataPoint>,
     /// 동시 연결 수 차트
     pub concurrent_connections: Vec<ChartDataPoint>,
 }
