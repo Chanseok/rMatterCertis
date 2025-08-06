@@ -3,9 +3,11 @@
 //! Commands to test and use the Actor system from the UI
 
 use crate::new_architecture::actors::SessionActor;
-use crate::new_architecture::context::SystemConfig;
-use crate::new_architecture::channels::types::{AppEvent, BatchConfig};
-use crate::new_architecture::actors::types::{CrawlingConfig, ActorCommand};
+use crate::new_architecture::context::{SystemConfig, AppContext};
+use crate::new_architecture::channels::types::AppEvent;
+use crate::new_architecture::channels::types::ActorCommand; // 올바른 ActorCommand 사용
+use crate::new_architecture::actors::types::{CrawlingConfig, BatchConfig};
+use crate::new_architecture::actors::traits::Actor;
 use crate::new_architecture::actor_event_bridge::{ActorEventBridge, start_actor_event_bridge};
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::service_based_crawling_engine::{ServiceBasedBatchCrawlingEngine, BatchCrawlingConfig};
@@ -18,7 +20,7 @@ use crate::infrastructure::config::ConfigManager; // 설정 관리자 추가
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Emitter};
-use tokio::sync::{mpsc, broadcast};
+use tokio::sync::{mpsc, broadcast, watch};
 use tokio::time::Duration;
 use tracing::{info, error};
 use chrono::Utc;
@@ -616,6 +618,20 @@ async fn execute_session_actor_with_batches(
     info!("🎭 SessionActor {} starting with range {} to {}, batch_size: {}", 
           session_id, start_page, end_page, batch_size);
     
+    // AppContext 생성에 필요한 채널들 생성
+    let system_config = Arc::new(SystemConfig::default());
+    let (control_tx, _control_rx) = mpsc::channel::<ActorCommand>(100);
+    let (cancellation_tx, cancellation_rx) = watch::channel(false);
+    
+    // AppContext 생성 (실제로는 IntegratedContext::new 호출)
+    let context = Arc::new(AppContext::new(
+        session_id.to_string(),
+        control_tx,
+        actor_event_tx.clone(),
+        cancellation_rx,
+        system_config,
+    ));
+    
     // 페이지 범위를 BatchActor들에게 배분
     let pages: Vec<u32> = if start_page > end_page {
         (end_page..=start_page).rev().collect()
@@ -669,9 +685,9 @@ async fn execute_session_actor_with_batches(
             error!("Failed to send BatchStarted event: {}", e);
         }
         
-        // TODO: 실제 BatchActor 구현 호출
-        // 현재는 시뮬레이션
-        match execute_batch_actor_simulation(&batch_id, page_chunk, actor_event_tx.clone()).await {
+        // ✅ 실제 BatchActor 구현 호출 
+        info!("🚀 About to call execute_real_batch_actor for batch: {}", batch_id);
+        match execute_real_batch_actor(&batch_id, page_chunk, &context).await {
             Ok(()) => {
                 info!("✅ BatchActor {} completed successfully", batch_id);
                 
@@ -690,7 +706,8 @@ async fn execute_session_actor_with_batches(
                 }
             }
             Err(e) => {
-                error!("❌ BatchActor {} failed: {}", batch_id, e);
+                error!("❌ BatchActor {} failed with error: {:?}", batch_id, e);
+                error!("❌ Error details: {}", e);
                 
                 // BatchFailed 이벤트 발송
                 let batch_failed_event = AppEvent::BatchFailed {
@@ -739,6 +756,85 @@ async fn execute_session_actor_with_batches(
     }
     
     info!("🎉 SessionActor {} completed all {} BatchActors successfully", session_id, batch_count);
+    Ok(())
+}
+
+/// 실제 BatchActor 실행
+async fn execute_real_batch_actor(
+    batch_id: &str,
+    pages: &[u32],
+    context: &AppContext,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use crate::new_architecture::actors::{BatchActor, ActorCommand};
+    use crate::new_architecture::actors::traits::Actor;
+    use tokio::sync::mpsc;
+    
+    info!("🎯 BatchActor {} starting REAL processing of {} pages", batch_id, pages.len());
+    info!("🔧 Creating BatchActor instance...");
+    
+    // BatchActor 생성
+    let mut batch_actor = BatchActor::new(batch_id.to_string());
+    info!("✅ BatchActor created successfully");
+    
+    // BatchActor 실행을 위한 채널 생성
+    info!("🔧 Creating communication channels...");
+    let (command_tx, command_rx) = mpsc::channel::<ActorCommand>(100);
+    info!("✅ Channels created successfully");
+    
+    // ProcessBatch 명령 생성
+    info!("🔧 Creating BatchConfig...");
+    let batch_config = BatchConfig {
+        batch_size: pages.len() as u32,
+        concurrency_limit: 5,
+        batch_delay_ms: 1000,
+        retry_on_failure: true,
+        start_page: Some(pages[0]),
+        end_page: Some(pages[pages.len() - 1]),
+    };
+    info!("✅ BatchConfig created: {:?}", batch_config);
+    
+    info!("🔧 Creating ProcessBatch command...");
+    let process_batch_cmd = ActorCommand::ProcessBatch {
+        batch_id: batch_id.to_string(),
+        pages: pages.to_vec(),
+        config: batch_config,
+        batch_size: pages.len() as u32,
+        concurrency_limit: context.config.performance.concurrency.max_concurrent_tasks,
+        total_pages: pages.len() as u32,
+        products_on_last_page: 12, // 기본값
+    };
+    info!("✅ ProcessBatch command created");
+    
+    // BatchActor 실행 태스크 시작
+    info!("🚀 Starting BatchActor task...");
+    let context_clone = context.clone();
+    let batch_task = tokio::spawn(async move {
+        info!("📡 BatchActor.run() starting...");
+        let result = batch_actor.run(context_clone, command_rx).await;
+        info!("📡 BatchActor.run() completed with result: {:?}", result);
+        result
+    });
+    info!("✅ BatchActor task spawned");
+    
+    // ProcessBatch 명령 전송
+    info!("📡 Sending ProcessBatch command...");
+    command_tx.send(process_batch_cmd).await
+        .map_err(|e| format!("Failed to send ProcessBatch command: {}", e))?;
+    info!("✅ ProcessBatch command sent");
+    
+    // Shutdown 명령 전송
+    info!("📡 Sending Shutdown command...");
+    command_tx.send(ActorCommand::Shutdown).await
+        .map_err(|e| format!("Failed to send Shutdown command: {}", e))?;
+    info!("✅ Shutdown command sent");
+    
+    // BatchActor 완료 대기
+    info!("⏳ Waiting for BatchActor completion...");
+    batch_task.await
+        .map_err(|e| format!("BatchActor task failed: {}", e))?
+        .map_err(|e| format!("BatchActor execution failed: {:?}", e))?;
+    
+    info!("✅ BatchActor {} completed REAL processing of {} pages", batch_id, pages.len());
     Ok(())
 }
 

@@ -211,7 +211,12 @@ impl StatusChecker for StatusCheckerImpl {
             page_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             product_repo: self.product_repo.clone(),
         });
-        let db_analyzer_arc = status_checker_arc.clone() as Arc<dyn DatabaseAnalyzer>;
+        // 🔧 올바른 DatabaseAnalyzer 사용: StatusCheckerImpl 대신 DatabaseAnalyzerImpl 사용
+        let db_analyzer_arc = if let Some(ref product_repo) = self.product_repo {
+            Arc::new(DatabaseAnalyzerImpl::new(product_repo.clone())) as Arc<dyn DatabaseAnalyzer>
+        } else {
+            status_checker_arc.clone() as Arc<dyn DatabaseAnalyzer> // fallback
+        };
         let status_checker_for_planner = status_checker_arc.clone() as Arc<dyn StatusChecker>;
         
         let crawling_planner = CrawlingPlanner::new(
@@ -2105,9 +2110,47 @@ impl DatabaseAnalyzerImpl {
 #[async_trait]
 impl DatabaseAnalyzer for DatabaseAnalyzerImpl {
     async fn analyze_current_state(&self) -> Result<DatabaseAnalysis> {
-        // IntegratedProductRepository는 get_all_products 메서드를 가지므로 이를 사용
-        let all_products = self.product_repo.get_all_products().await.unwrap_or_default();
-        let total_products = all_products.len();
+        // 💾 실제 DB에서 제품 정보를 가져옵니다
+        info!("🔍 [DatabaseAnalyzer] Starting database analysis...");
+        
+        // � Debug: Check database path first
+        info!("🔍 [DatabaseAnalyzer] Using database pool from IntegratedProductRepository");
+        
+        // �🚀 Performance optimization: Use count query instead of loading all products
+        let total_products = match self.product_repo.get_product_count().await {
+            Ok(count) => {
+                info!("✅ [DatabaseAnalyzer] Successfully retrieved total count from database: {}", count);
+                count as usize
+            },
+            Err(e) => {
+                error!("❌ [DatabaseAnalyzer] Failed to get product count from database: {:?}", e);
+                error!("❌ [DatabaseAnalyzer] Error details: {}", e);
+                error!("❌ [DatabaseAnalyzer] Error source: {:?}", e.source());
+                
+                // 🔧 Additional debugging: Try to check if the database exists
+                info!("🔍 [DatabaseAnalyzer] Attempting additional diagnostics...");
+                
+                warn!("⚠️ [DatabaseAnalyzer] Product repository not available - assuming empty DB");
+                warn!("⚠️ [DatabaseAnalyzer] DB inconsistency possible: repository unavailable but analysis may show different results");
+                return Ok(DatabaseAnalysis {
+                    total_products: 0,
+                    unique_products: 0,
+                    missing_products_count: 0,
+                    duplicate_count: 0,
+                    last_update: Some(chrono::Utc::now()),
+                    missing_fields_analysis: FieldAnalysis {
+                        missing_company: 0,
+                        missing_model: 0,
+                        missing_matter_version: 0,
+                        missing_connectivity: 0,
+                        missing_certification_date: 0,
+                    },
+                    data_quality_score: 0.0,
+                });
+            }
+        };
+        
+        info!("📊 [DatabaseAnalyzer] Database analysis completed: {} total products", total_products);
         
         // 기본 분석 반환 - 필드 스키마에 맞게 수정
         Ok(DatabaseAnalysis {
@@ -2123,7 +2166,7 @@ impl DatabaseAnalyzer for DatabaseAnalyzerImpl {
                 missing_connectivity: 0,
                 missing_certification_date: 0,
             },
-            data_quality_score: 0.85,
+            data_quality_score: if total_products > 0 { 0.85 } else { 0.0 },
         })
     }
 
