@@ -14,7 +14,7 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
 use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
-use super::types::{ActorCommand, BatchConfig, StageType, StageItem, ActorError};
+use super::types::{ActorCommand, BatchConfig, StageType, StageItem, StageResult, ActorError};
 use crate::new_architecture::channels::types::AppEvent;
 use crate::new_architecture::context::{AppContext, EventEmitter};
 use crate::new_architecture::migration::ServiceMigrationBridge;
@@ -87,6 +87,9 @@ pub enum BatchError {
     
     #[error("Stage processing error: {0}")]
     StageError(String),
+    
+    #[error("Stage processing failed: {stage} - {error}")]
+    StageProcessingFailed { stage: String, error: String },
     
     #[error("Migration bridge error: {0}")]
     MigrationError(String),
@@ -224,20 +227,64 @@ impl BatchActor {
                 }
             }
         } else {
-            // TODO: Phase 3에서 실제 StageActor 기반 처리 구현
-            warn!("No migration bridge available, using placeholder logic");
+            // ✅ 실제 StageActor 기반 처리 구현
+            info!("🎭 Using StageActor-based processing for batch {}", batch_id);
             
-            // 임시: 간단한 처리 시뮬레이션
-            self.success_count = pages.len() as u32;
-            self.completed_pages = self.total_pages;
+            // Stage별 순차 실행: StatusCheck → ListPage → ProductDetail → DataSaving
+            self.state = BatchState::Processing;
+            
+            // Stage 1: 상태 확인 (사이트 접근 가능성, 구조 변경 등)
+            let status_check_result = self.execute_stage(
+                StageType::StatusCheck,
+                pages.clone(),
+                context,
+            ).await?;
+            
+            info!("✅ Stage 1 (StatusCheck) completed: {} success, {} failed", 
+                  status_check_result.successful_items, status_check_result.failed_items);
+            
+            // Stage 2: 리스트 페이지 크롤링 (제품 URL 수집)
+            let list_page_result = self.execute_stage(
+                StageType::ListPageCrawling,
+                pages.clone(),
+                context,
+            ).await?;
+            
+            info!("✅ Stage 2 (ListPageCrawling) completed: {} success, {} failed", 
+                  list_page_result.successful_items, list_page_result.failed_items);
+            
+            // Stage 3: 제품 상세 정보 크롤링 
+            // TODO: 실제로는 Stage 2에서 수집된 제품 URL들을 사용해야 함
+            let detail_result = self.execute_stage(
+                StageType::ProductDetailCrawling,
+                pages.clone(),
+                context,
+            ).await?;
+            
+            info!("✅ Stage 3 (ProductDetailCrawling) completed: {} success, {} failed", 
+                  detail_result.successful_items, detail_result.failed_items);
+            
+            // Stage 4: 데이터 검증 및 저장
+            let saving_result = self.execute_stage(
+                StageType::DataSaving,
+                pages.clone(),
+                context,
+            ).await?;
+            
+            info!("✅ Stage 4 (DataSaving) completed: {} success, {} failed", 
+                  saving_result.successful_items, saving_result.failed_items);
+            
+            // 배치 결과 집계
+            self.success_count = list_page_result.successful_items + detail_result.successful_items;
+            self.completed_pages = pages.len() as u32;
             self.state = BatchState::Completed;
             
             let completion_event = AppEvent::BatchCompleted {
                 batch_id: batch_id.clone(),
                 session_id: context.session_id.clone(),
                 success_count: self.success_count,
-                failed_count: 0,
-                duration: 1000, // Placeholder: 1 second
+                failed_count: list_page_result.failed_items + detail_result.failed_items,
+                duration: self.start_time.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0),
                 timestamp: Utc::now(),
             };
             
@@ -467,5 +514,62 @@ impl Actor for BatchActor {
         }
         
         Ok(())
+    }
+}
+
+impl BatchActor {
+    /// Stage 실행
+    /// 
+    /// # Arguments
+    /// * `stage_type` - 실행할 스테이지 타입
+    /// * `pages` - 처리할 페이지들
+    /// * `context` - Actor 컨텍스트
+    async fn execute_stage(
+        &mut self,
+        stage_type: StageType,
+        pages: Vec<u32>,
+        context: &AppContext,
+    ) -> Result<StageResult, BatchError> {
+        use crate::new_architecture::actors::{StageActor, StageItem, StageItemType};
+        
+        info!("🎯 Executing stage {:?} for {} pages", stage_type, pages.len());
+        
+        // StageActor 생성
+        let mut stage_actor = StageActor::new(format!("stage_{}_{}", stage_type.as_str(), self.actor_id));
+        
+        // ✅ 실제 크롤링 엔진 초기화
+        stage_actor.initialize_default_engines().await
+            .map_err(|e| BatchError::StageProcessingFailed { 
+                stage: stage_type.as_str().to_string(), 
+                error: format!("Failed to initialize crawling engines: {}", e) 
+            })?;
+        
+        // 페이지들을 StageItem으로 변환
+        let items: Vec<StageItem> = pages.into_iter().map(|page| {
+            let url = format!("https://matter.go.kr/portal/aap/list/result.do?MKTAB_CD=A0020102&PAGE={}", page);
+            StageItem {
+                id: format!("page_{}", page),
+                item_type: StageItemType::Page { page_number: page },
+                url,
+                metadata: format!("{{\"page\": {}, \"stage\": \"{}\"}}", page, stage_type.as_str()),
+            }
+        }).collect();
+        
+        // Stage 실행
+        let concurrency_limit = context.config.performance.concurrency.max_concurrent_tasks;
+        let timeout_secs = 300; // 5분 타임아웃 (하드코딩)
+        
+        let stage_name = stage_type.as_str().to_string();
+        
+        stage_actor.execute_stage(
+            stage_type,
+            items,
+            concurrency_limit,
+            timeout_secs,
+            context,
+        ).await.map_err(|e| BatchError::StageProcessingFailed { 
+            stage: stage_name, 
+            error: e.to_string() 
+        })
     }
 }

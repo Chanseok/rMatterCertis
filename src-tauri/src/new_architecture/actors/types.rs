@@ -277,6 +277,19 @@ pub enum StageType {
     DataSaving,
 }
 
+impl StageType {
+    /// StageType을 문자열로 변환
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StageType::StatusCheck => "status_check",
+            StageType::ListPageCrawling => "list_page_crawling",
+            StageType::ProductDetailCrawling => "product_detail_crawling",
+            StageType::DataValidation => "data_validation",
+            StageType::DataSaving => "data_saving",
+        }
+    }
+}
+
 /// 스테이지 아이템
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
