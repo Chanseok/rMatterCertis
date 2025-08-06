@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::types::frontend_api::*;
 use crate::commands::crawling_v4::CrawlingEngineState;
 use crate::application::shared_state::SharedStateCache;
+use crate::application::state::AppState;
 use crate::infrastructure::{
     AdvancedBatchCrawlingEngine, HttpClient, MatterDataExtractor, 
     IntegratedProductRepository, DatabaseConnection
@@ -20,7 +21,7 @@ use crate::application::EventEmitter;
 #[command]
 pub async fn check_advanced_site_status(
     app: AppHandle,
-    _state: State<'_, CrawlingEngineState>,
+    app_state: State<'_, AppState>,
     shared_state: State<'_, SharedStateCache>,
 ) -> Result<ApiResponse<SiteStatusInfo>, String> {
     info!("🌐 Advanced site status check requested");
@@ -116,20 +117,19 @@ pub async fn check_advanced_site_status(
         }
     };
     
-    // 데이터베이스 연결 생성
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:data/matter_certis.db".to_string());
-    
-    let db_connection = match DatabaseConnection::new(&database_url).await {
-        Ok(conn) => conn,
-        Err(e) => {
-            error!("Database connection failed: {}", e);
-            return Err(format!("Database connection error: {}", e));
+    // AppState에서 중앙화된 데이터베이스 풀 가져오기
+    let database_pool = {
+        let pool_guard = app_state.database_pool.read().await;
+        match pool_guard.as_ref() {
+            Some(pool) => pool.clone(),
+            None => {
+                error!("Database pool is not initialized");
+                return Err("Database pool is not available".to_string());
+            }
         }
     };
-    
-    let product_repo = Arc::new(IntegratedProductRepository::new(db_connection.pool().clone()));
-    
+    let product_repo = Arc::new(IntegratedProductRepository::new(database_pool));
+
     // Advanced 크롤링 엔진 생성
     let config = BatchCrawlingConfig {
         start_page: 1,
@@ -223,7 +223,7 @@ pub async fn check_advanced_site_status(
 pub async fn start_advanced_crawling(
     request: StartCrawlingRequest,
     app: AppHandle,
-    _state: State<'_, CrawlingEngineState>,
+    app_state: State<'_, AppState>,
     _shared_state: State<'_, SharedStateCache>,
 ) -> Result<ApiResponse<CrawlingSession>, String> {
     let session_id = format!("advanced_{}", Uuid::new_v4().simple());
@@ -246,20 +246,19 @@ pub async fn start_advanced_crawling(
         }
     };
     
-    // 데이터베이스 연결 생성
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:data/matter_certis.db".to_string());
-    
-    let db_connection = match DatabaseConnection::new(&database_url).await {
-        Ok(conn) => conn,
-        Err(e) => {
-            error!("Database connection failed: {}", e);
-            return Err(format!("Database connection error: {}", e));
+    // AppState에서 중앙화된 데이터베이스 풀 가져오기
+    let database_pool = {
+        let pool_guard = app_state.database_pool.read().await;
+        match pool_guard.as_ref() {
+            Some(pool) => pool.clone(),
+            None => {
+                error!("Database pool is not initialized");
+                return Err("Database pool is not available".to_string());
+            }
         }
     };
-    
-    let product_repo = Arc::new(IntegratedProductRepository::new(db_connection.pool().clone()));
-    
+    let product_repo = Arc::new(IntegratedProductRepository::new(database_pool));
+
     // 프론트엔드 설정을 BatchCrawlingConfig로 변환
     let config = BatchCrawlingConfig {
         start_page: request.config.start_page,
@@ -340,7 +339,7 @@ pub async fn start_advanced_crawling(
 pub async fn get_recent_products(
     page: Option<u32>,
     limit: Option<u32>,
-    _state: State<'_, CrawlingEngineState>,
+    app_state: State<'_, AppState>,
     _shared_state: State<'_, SharedStateCache>,
 ) -> Result<ApiResponse<ProductPage>, String> {
     let page = page.unwrap_or(1);
@@ -348,24 +347,18 @@ pub async fn get_recent_products(
     
     info!("📋 Fetching recent products from real database - page: {}, limit: {}", page, limit);
     
-    // 데이터베이스 연결 생성 (v4와 동일한 경로 사용)
-    let database_url = match crate::commands::crawling_v4::get_database_url_v4() {
-        Ok(url) => url,
-        Err(e) => {
-            error!("Failed to get database URL: {}", e);
-            return Err(format!("Database URL error: {}", e));
+    // AppState에서 중앙화된 데이터베이스 풀 사용
+    let database_pool = {
+        let pool_guard = app_state.database_pool.read().await;
+        match pool_guard.as_ref() {
+            Some(pool) => pool.clone(),
+            None => {
+                error!("Database pool is not initialized");
+                return Err("Database pool is not available".to_string());
+            }
         }
     };
-    
-    let db_connection = match DatabaseConnection::new(&database_url).await {
-        Ok(conn) => conn,
-        Err(e) => {
-            error!("Database connection failed: {}", e);
-            return Err(format!("Database connection error: {}", e));
-        }
-    };
-    
-    let product_repo = IntegratedProductRepository::new(db_connection.pool().clone());
+    let product_repo = IntegratedProductRepository::new(database_pool);
     
     // 실제 데이터베이스에서 제품 목록 조회
     match product_repo.get_products_paginated(page as i32, limit as i32).await {
@@ -416,29 +409,23 @@ pub async fn get_recent_products(
 /// 데이터베이스 통계 조회 (실제 데이터베이스)
 #[command]
 pub async fn get_database_stats(
-    _state: State<'_, CrawlingEngineState>,
+    app_state: State<'_, AppState>,
     _shared_state: State<'_, SharedStateCache>,
 ) -> Result<ApiResponse<DatabaseStats>, String> {
     info!("📊 Fetching real database statistics");
     
-    // 데이터베이스 연결 생성 (v4와 동일한 경로 사용)
-    let database_url = match crate::commands::crawling_v4::get_database_url_v4() {
-        Ok(url) => url,
-        Err(e) => {
-            error!("Failed to get database URL: {}", e);
-            return Err(format!("Database URL error: {}", e));
+    // AppState에서 중앙화된 데이터베이스 풀 사용
+    let database_pool = {
+        let pool_guard = app_state.database_pool.read().await;
+        match pool_guard.as_ref() {
+            Some(pool) => pool.clone(),
+            None => {
+                error!("Database pool is not initialized");
+                return Err("Database pool is not available".to_string());
+            }
         }
     };
-    
-    let db_connection = match DatabaseConnection::new(&database_url).await {
-        Ok(conn) => conn,
-        Err(e) => {
-            error!("Database connection failed: {}", e);
-            return Err(format!("Database connection error: {}", e));
-        }
-    };
-    
-    let product_repo = IntegratedProductRepository::new(db_connection.pool().clone());
+    let product_repo = IntegratedProductRepository::new(database_pool);
     
     // 실제 데이터베이스 통계 조회
     match product_repo.get_database_statistics().await {
