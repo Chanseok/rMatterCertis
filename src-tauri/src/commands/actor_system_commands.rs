@@ -67,7 +67,7 @@ pub async fn start_actor_system_crawling(
     // === Phase 1: 분석 및 계획 (CrawlingPlanner 단일 호출) ===
     info!("🧠 Phase 1: Creating ExecutionPlan with CrawlingPlanner...");
     
-    let execution_plan = create_execution_plan(&app).await
+    let (execution_plan, app_config) = create_execution_plan(&app).await
         .map_err(|e| format!("Failed to create execution plan: {}", e))?;
     
     info!("✅ ExecutionPlan created: {} ranges, {} total pages", 
@@ -97,6 +97,7 @@ pub async fn start_actor_system_crawling(
     
     // ExecutionPlan 기반 실행 (백그라운드)
     let execution_plan_for_task = execution_plan.clone();
+    let app_config_for_task = app_config.clone();
     let actor_event_tx_for_spawn = actor_event_tx.clone();
     let session_id_for_return = execution_plan.session_id.clone();
     
@@ -104,7 +105,7 @@ pub async fn start_actor_system_crawling(
         info!("🚀 SessionActor executing with predefined ExecutionPlan...");
         
         // SessionActor는 더 이상 분석/계획하지 않고 순수 실행만
-        match execute_session_actor_with_execution_plan(execution_plan_for_task, actor_event_tx_for_spawn).await {
+        match execute_session_actor_with_execution_plan(execution_plan_for_task, &app_config_for_task, actor_event_tx_for_spawn).await {
             Ok(()) => {
                 info!("🎉 Actor system crawling completed successfully!");
             }
@@ -212,12 +213,12 @@ async fn initialize_service_based_engine(
     let app_config = config_manager.load_config().await
         .map_err(|e| format!("Failed to load config: {}", e))?;
     
-    // 기본 배치 크롤링 설정 생성 (CrawlingPlanner 없이)
+    // 설정 파일 기반 배치 크롤링 설정 생성
     let batch_config = BatchCrawlingConfig {
         start_page: request.start_page,
         end_page: request.end_page,
-        concurrency: request.concurrency.unwrap_or(8),
-        batch_size: request.batch_size.unwrap_or(3),
+        concurrency: request.concurrency.unwrap_or(app_config.user.crawling.workers.list_page_max_concurrent as u32),
+        batch_size: request.batch_size.unwrap_or(app_config.user.batch.batch_size),
         delay_ms: request.delay_ms.unwrap_or(app_config.user.request_delay_ms),
         list_page_concurrency: app_config.user.crawling.workers.list_page_max_concurrent as u32,
         product_detail_concurrency: app_config.user.crawling.workers.product_detail_max_concurrent as u32,
@@ -505,6 +506,7 @@ async fn execute_session_actor_with_batches(
     start_page: u32,
     end_page: u32,
     batch_size: u32,
+    app_config: &AppConfig,
     actor_event_tx: broadcast::Sender<AppEvent>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("🎭 SessionActor {} starting with range {} to {}, batch_size: {}", 
@@ -536,18 +538,18 @@ async fn execute_session_actor_with_batches(
     
     info!("📊 SessionActor will create {} BatchActors for {} pages", batch_count, total_pages);
     
-    // SessionStarted 이벤트 발송
+    // SessionStarted 이벤트 발송 (설정 파일 기반 값 사용)
     let session_event = AppEvent::SessionStarted {
         session_id: session_id.to_string(),
         config: CrawlingConfig {
             site_url: "https://csa-iot.org/csa-iot_products/".to_string(),
             start_page,
             end_page,
-            concurrency_limit: 5,
+            concurrency_limit: app_config.user.crawling.workers.list_page_max_concurrent as u32,
             batch_size: batch_size,
-            request_delay_ms: 1000,
-            timeout_secs: 300,
-            max_retries: 3,
+            request_delay_ms: app_config.user.request_delay_ms,
+            timeout_secs: app_config.advanced.request_timeout_seconds,
+            max_retries: app_config.advanced.retry_attempts,
         },
         timestamp: chrono::Utc::now(),
     };
@@ -734,7 +736,7 @@ async fn execute_real_batch_actor(
 /// 
 /// 시스템 상태를 종합 분석하여 최적의 실행 계획을 생성합니다.
 /// 이 함수가 호출된 후에는 더 이상 분석/계획 단계가 없습니다.
-async fn create_execution_plan(app: &AppHandle) -> Result<ExecutionPlan, Box<dyn std::error::Error + Send + Sync>> {
+async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppConfig), Box<dyn std::error::Error + Send + Sync>> {
     info!("🧠 Creating ExecutionPlan with single CrawlingPlanner call...");
     
     // 1. 설정 로드
@@ -853,7 +855,7 @@ async fn create_execution_plan(app: &AppHandle) -> Result<ExecutionPlan, Box<dyn
     info!("✅ ExecutionPlan created successfully: {} pages across {} ranges", 
           total_pages, execution_plan.crawling_ranges.len());
     
-    Ok(execution_plan)
+    Ok((execution_plan, app_config))
 }
 
 /// ExecutionPlan 기반 SessionActor 실행 (순수 실행 전용)
@@ -861,6 +863,7 @@ async fn create_execution_plan(app: &AppHandle) -> Result<ExecutionPlan, Box<dyn
 /// SessionActor는 더 이상 분석/계획하지 않고 ExecutionPlan을 충실히 실행합니다.
 async fn execute_session_actor_with_execution_plan(
     execution_plan: ExecutionPlan,
+    app_config: &AppConfig,
     actor_event_tx: broadcast::Sender<AppEvent>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("🎭 Executing SessionActor with predefined ExecutionPlan...");
@@ -869,18 +872,18 @@ async fn execute_session_actor_with_execution_plan(
           execution_plan.batch_size,
           execution_plan.concurrency_limit);
     
-    // 시작 이벤트 방출
+    // 시작 이벤트 방출 (설정 파일 기반 값 사용)
     let session_event = AppEvent::SessionStarted {
         session_id: execution_plan.session_id.clone(),
         config: CrawlingConfig {
             site_url: "https://csa-iot.org/csa-iot_products/".to_string(),
             start_page: execution_plan.crawling_ranges.first().map(|r| r.start_page).unwrap_or(1),
             end_page: execution_plan.crawling_ranges.last().map(|r| r.end_page).unwrap_or(1),
-            concurrency_limit: execution_plan.concurrency_limit,
+            concurrency_limit: app_config.user.crawling.workers.list_page_max_concurrent as u32,
             batch_size: execution_plan.batch_size,
-            request_delay_ms: 1000,
-            timeout_secs: 300,
-            max_retries: 3,
+            request_delay_ms: app_config.user.request_delay_ms,
+            timeout_secs: app_config.advanced.request_timeout_seconds,
+            max_retries: app_config.advanced.retry_attempts,
         },
         timestamp: Utc::now(),
     };
@@ -916,6 +919,7 @@ async fn execute_session_actor_with_execution_plan(
             page_range.start_page,
             page_range.end_page,
             execution_plan.batch_size,
+            app_config,
             actor_event_tx.clone(),
         ).await {
             Ok(()) => {
