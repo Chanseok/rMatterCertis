@@ -196,6 +196,8 @@ impl CrawlingPlanner {
             concurrency_limit: optimal_concurrency.min(base_config.concurrency_limit),
             batch_delay_ms: self.calculate_optimal_delay(),
             retry_on_failure: base_config.retry_on_failure,
+            start_page: base_config.start_page,
+            end_page: base_config.end_page,
         }
     }
     
@@ -225,12 +227,14 @@ impl CrawlingPlanner {
         info!("🔧 CrawlingPlanner page range generation: start={}, end={}, reverse={}, pages={:?}", 
               config.start_page, config.end_page, config.start_page >= config.end_page, page_range);
         
-        // 🔧 batch_size에 따른 배치 분할 로직 구현
+        // 🔧 batch_size에 따른 배치 분할 로직 구현 (5페이지, batch_size=3 → 2개 배치: [3, 2])
         let batch_size = config.batch_size as usize;
         let batched_pages = if batch_size > 0 && page_range.len() > batch_size {
+            // 페이지를 batch_size 단위로 분할
             page_range.chunks(batch_size).map(|chunk| chunk.to_vec()).collect::<Vec<_>>()
         } else {
-            vec![page_range.clone()] // 작은 범위는 하나의 배치로
+            // 페이지 수가 batch_size보다 작거나 같으면 하나의 배치로
+            vec![page_range.clone()]
         };
         
         info!("📋 배치 계획 수립: 총 {}페이지를 {}개 배치로 분할 (batch_size={})", 

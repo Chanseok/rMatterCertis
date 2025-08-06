@@ -91,7 +91,7 @@ async fn execute_crawling_with_state(app_handle: &tauri::AppHandle) -> Result<()
         },
     ).await {
         Ok(response) => {
-            info!("✅ Real Actor crawling completed: {}", response.message);
+            info!("✅ Real Actor crawling completed: {}", response);
             Ok(())
         },
         Err(e) => {

@@ -101,11 +101,21 @@ impl IntegratedContext {
             })
     }
 
-    /// 이벤트 발행
+    /// 이벤트 발행 - Actor 시스템에서 프론트엔드로 직접 전달
+    /// 
+    /// 설계 의도: 각 Actor, Task 레벨에서 독립적으로 이벤트 발행이 가능하게 하여
+    /// 낮은 복잡성의 구현으로도 모든 경우를 다 커버할 수 있도록 함
     pub async fn emit_event(&self, event: AppEvent) -> Result<usize, ContextError> {
-        self.event_tx
+        // 내부 브로드캐스트 채널로 발행 (다른 컴포넌트들이 구독할 수 있도록)
+        let subscriber_count = self.event_tx
             .send(event)
-            .map_err(|_| ContextError::EventBroadcastFailed)
+            .map_err(|_| ContextError::EventBroadcastFailed)?;
+
+        // TODO: ActorEventBridge가 이 이벤트를 받아서 프론트엔드로 전달
+        // 현재는 브로드캐스트 채널에만 발행하고, 
+        // ActorEventBridge가 이를 수신하여 Tauri emit으로 프론트엔드에 전달
+        
+        Ok(subscriber_count)
     }
 
     /// 취소 신호 확인

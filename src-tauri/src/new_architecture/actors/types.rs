@@ -236,6 +236,12 @@ pub struct BatchConfig {
     
     /// 실패 시 재시도 여부
     pub retry_on_failure: bool,
+    
+    /// 시작 페이지 (옵션)
+    pub start_page: Option<u32>,
+    
+    /// 종료 페이지 (옵션)
+    pub end_page: Option<u32>,
 }
 
 impl Default for BatchConfig {
@@ -245,6 +251,8 @@ impl Default for BatchConfig {
             concurrency_limit: 5,
             batch_delay_ms: 500,
             retry_on_failure: true,
+            start_page: None,
+            end_page: None,
         }
     }
 }
@@ -586,8 +594,18 @@ pub enum ActorError {
     #[error("레거시 서비스 오류: {0}")]
     LegacyServiceError(String),
     
+    #[error("데이터베이스 오류: {0}")]
+    DatabaseError(String),
+    
     #[error("알 수 없는 오류: {0}")]
     Unknown(String),
+}
+
+// From 구현들
+impl From<anyhow::Error> for ActorError {
+    fn from(err: anyhow::Error) -> Self {
+        ActorError::CommandProcessingFailed(err.to_string())
+    }
 }
 
 #[cfg(test)]

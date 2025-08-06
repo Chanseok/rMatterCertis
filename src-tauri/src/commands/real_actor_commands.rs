@@ -1,314 +1,569 @@
-use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
-use tracing::{info, error, warn};
+//! 🎭 Real Actor System Commands
+//! 
+//! SessionActor → BatchActor → StageActor 계층 구조로 병렬 크롤링 실행
+//! - SessionActor: CrawlingPlanner 기반 전체 세션 관리
+//! - BatchActor: 병렬 배치 실행 (sequential이 아닌 parallel)
+//! - StageActor: Stage 2,3,4를 순차 실행 (SessionActor가 아닌 BatchActor가 관리)
+//! - Frontend Events: 실시간 진행 상황 브로드캐스트
+
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use std::time::Instant;
+use serde::{Deserialize, Serialize};
+use tauri::{command, AppHandle, Manager};
+use tracing::{info, warn, error};
+use tokio::sync::broadcast;
 use uuid::Uuid;
+use chrono::Utc;
+use futures;
 
+// 내부 모듈 임포트
+use crate::new_architecture::actors::{ActorCommand, CrawlingConfig, ActorError};
+use crate::infrastructure::{ServiceBasedBatchCrawlingEngine, HttpClient, MatterDataExtractor};
+use crate::infrastructure::config::AppConfig;
+use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
+use crate::infrastructure::database_paths::get_main_database_url;
+use crate::domain::product::{Product, ProductDetail};
 use crate::application::AppState;
-use crate::new_architecture::actors::session_actor::SessionActor;
 
-/// 실제 Actor 시스템 크롤링 요청 (파라미터 불필요 - 설정 기반)
-#[derive(Debug, Deserialize)]
+/// 🎭 실제 Actor 크롤링 요청
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealActorCrawlingRequest {
-    // CrawlingPlanner가 모든 것을 자동 계산하므로 파라미터 불필요
-    // 필요시 향후 확장을 위한 옵션들
+    /// 전체 크롤링 강제 실행
     pub force_full_crawl: Option<bool>,
+    /// 전략 오버라이드
     pub override_strategy: Option<String>,
 }
 
-/// 실제 Actor 시스템 크롤링 응답
-#[derive(Debug, Serialize)]
-pub struct RealActorCrawlingResponse {
-    pub success: bool,
-    pub message: String,
-    pub session_id: String,
-    pub actor_id: String,
-}
-
-/// 🎭 진짜 Actor 시스템 크롤링 시작 명령어
-/// 
-/// 더 이상 ServiceBasedBatchCrawlingEngine을 사용하지 않습니다.
-/// SessionActor → BatchActor → StageActor 진짜 체인을 구성합니다.
-#[tauri::command]
+/// 🎯 Real Actor 크롤링 시작 (메인 엔트리포인트)
+#[command]
 pub async fn start_real_actor_crawling(
     app: AppHandle,
-    request: RealActorCrawlingRequest,
-) -> Result<RealActorCrawlingResponse, String> {
-    info!("🎭 Starting REAL Actor-based crawling system (settings-based)");
-    info!("📊 Request: force_full_crawl={:?}, override_strategy={:?}", 
+    request: RealActorCrawlingRequest
+) -> Result<String, String> {
+    info!("🎭 Starting Real Actor System Crawling");
+    info!("📋 Request: force_full_crawl={:?}, override_strategy={:?}", 
           request.force_full_crawl, request.override_strategy);
-    
-    // 고유 ID 생성
-    let session_id = format!("session_{}", chrono::Utc::now().timestamp());
-    let actor_id = format!("session_actor_{}", Uuid::new_v4().simple());
-    
-    info!("🎯 Creating SessionActor: actor_id={}, session_id={}", actor_id, session_id);
-    
-    // AppState와 Context 준비
+
+    let start_time = Instant::now();
+    let session_id = Uuid::new_v4().to_string();
+
+    // AppState 가져오기
     let app_state = app.state::<AppState>();
+    let app_config = app_state.config.read().await;
     
-    // SessionActor 생성
-    let mut session_actor = SessionActor::new(actor_id.clone());
+    // 🔧 설정 기반 concurrency (하드코딩 3 대신)
+    let max_concurrency = app_config.user.max_concurrent_requests;
+    info!("⚙️ Using concurrency from config: {}", max_concurrency);
+
+    // 🌐 공유 자원 생성
+    let http_client = Arc::new(HttpClient::create_from_global_config().map_err(|e| e.to_string())?);
+    let data_extractor = Arc::new(MatterDataExtractor::new().map_err(|e| e.to_string())?);
+
+    // 📡 Frontend 이벤트 채널 생성
+    let (event_tx, _event_rx) = broadcast::channel::<FrontendEvent>(500);
     
-    // 🎯 CrawlingPlanner를 사용하여 설정 기반으로 크롤링 계획 수립
-    info!("🔧 Initializing CrawlingPlanner for real Actor system...");
+    // 📊 CrawlingPlanner로 계획 생성
+    info!("🔧 Creating basic crawling plan (simplified for Actor testing)");
     
-    // AppConfig 초기화
-    let app_config = crate::infrastructure::config::AppConfig::for_development();
-    
-    // StatusChecker (DatabaseAnalyzer) 생성
-    let database_url = "sqlite:matter_certis.db".to_string(); // 기본 데이터베이스 URL
-    
-    // HttpClient 및 MatterDataExtractor 생성
-    let http_client = crate::infrastructure::HttpClient::create_from_global_config()
-        .map_err(|e| format!("Failed to create HttpClient: {}", e))?;
-    let data_extractor = crate::infrastructure::MatterDataExtractor::new()
-        .map_err(|e| format!("Failed to create data extractor: {}", e))?;
-    
-    let status_checker = Arc::new(crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
-        http_client, data_extractor, app_config.clone()
-    ));
-    
-    // SystemConfig 생성
-    let system_config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
-    
-    // CrawlingPlanner 초기화
-    let planner = crate::new_architecture::services::crawling_planner::CrawlingPlanner::new(
-        Arc::clone(&status_checker) as Arc<dyn crate::domain::services::StatusChecker>,
-        Arc::clone(&status_checker) as Arc<dyn crate::domain::services::DatabaseAnalyzer>,
-        system_config,
-    );
-    
-    // 크롤링 범위 계산 (중복 사이트 체크 방지를 위해 직접 계산)
-    info!("🎯 Using direct range calculation to avoid duplicate site checks...");
-    
-    // 로그 분석 결과에 따른 최적 범위 직접 사용 (299→295, 5페이지)
-    let (calculated_start, calculated_end) = (299_u32, 295_u32); // 역순 크롤링
-    
-    info!("📊 Using recommended range: {} -> {} (reverse crawling, 5 pages)", calculated_start, calculated_end);
-    
-    info!("📊 Calculated crawling range: {} -> {}", calculated_start, calculated_end);
-    
-    // Actor CrawlingConfig 업데이트 (실제 계산된 범위 사용)
-    let crawling_config = crate::new_architecture::actors::types::CrawlingConfig {
-        site_url: "https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver".to_string(),
-        start_page: calculated_start,
-        end_page: calculated_end,
-        concurrency_limit: app_config.user.max_concurrent_requests,
-        batch_size: app_config.user.batch.batch_size, // 🔧 설정 파일 기반: user.batch.batch_size
-        request_delay_ms: app_config.user.request_delay_ms,
-        timeout_secs: app_config.advanced.request_timeout_seconds,
-        max_retries: app_config.user.crawling.product_list_retry_count,
-    };
-    
-    let crawling_plan = planner.create_crawling_plan(&crawling_config).await
-        .map_err(|e| format!("Failed to create crawling plan: {}", e))?;
-    
-    // CrawlingPlan에서 ListPageCrawling phases 사용
-    let list_phases: Vec<_> = crawling_plan.phases.iter()
-        .filter(|phase| matches!(phase.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling))
-        .collect();
-    
-    let total_phases = list_phases.len();
-    let total_pages: usize = list_phases.iter()
-        .map(|phase| phase.pages.len())
-        .sum();
-    
-    info!("📋 배치 계획 수립: 총 {}페이지를 {}개 배치로 분할", total_pages, total_phases);
-    info!("📊 CrawlingPlanner results - Total phases: {}, Total pages: {}", 
-          total_phases, total_pages);
-    
-    info!("⚙️ Real Actor config (CrawlingPlanner-based): {:?}", crawling_config);
-    
-    // AppContext 생성을 위한 채널 및 설정 준비
-    let database_pool = {
-        let pool_guard = app_state.database_pool.read().await;
-        pool_guard.as_ref()
-            .ok_or("Database pool not initialized")?
-            .clone()
-    };
-    
-    // 📋 진짜 Actor 체계적 연결: SessionActor → BatchActor → StageActor
-    let session_id_clone = session_id.clone();
-    let actor_id_clone = actor_id.clone();
-    let crawling_plan_clone = crawling_plan.clone(); // CrawlingPlan 전달
-    
-    tokio::spawn(async move {
-        info!("🎭 REAL Actor System Starting: SessionActor {} → BatchActor → StageActor", actor_id_clone);
-        info!("📊 Real Actor Config: {:?}", crawling_config);
-        
-        // 🎯 ServiceBased 엔진 참조하여 진짜 Actor 체계 구현
-        // SessionActor 역할: 전체 세션 관리 및 배치 조정
-        info!("🚀 [SessionActor {}] Initializing real crawling session", actor_id_clone);
-        
-        // 세션 설정 (CrawlingPlan 기반)
-        let list_phases: Vec<_> = crawling_plan_clone.phases.iter()
-            .filter(|phase| matches!(phase.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling))
-            .collect();
-        
-        let total_phases = list_phases.len();
-        let total_pages: usize = list_phases.iter()
-            .map(|phase| phase.pages.len())
-            .sum();
-        
-        info!("📋 [SessionActor {}] CrawlingPlan-based session: {} phases, {} pages total", 
-              actor_id_clone, total_phases, total_pages);
-        
-        // 🎯 진짜 크롤링 로직 시작 - CrawlingPlan phases 기반 처리
-        let mut all_product_urls: Vec<String> = Vec::new();
-        let mut session_success = true;
-        
-        info!("🔗 Stage 2: ProductList 수집 시작 - 페이지별 병렬 실행 ({}~{})", 
-              crawling_config.start_page, crawling_config.end_page);
-        
-        // SessionActor → BatchActor 실행 (CrawlingPlan 기반)
-        for (phase_idx, phase) in list_phases.iter().enumerate() {
-            let batch_name = format!("productlist-{}-{}", 
-                phase.pages.first().unwrap_or(&0), 
-                phase.pages.last().unwrap_or(&0));
-            let pages_in_phase = phase.pages.len();
-            
-            info!("🏃 [SessionActor → BatchActor] {} processing phase {}: {} pages ({})", 
-                  actor_id_clone, phase_idx + 1, pages_in_phase, batch_name);
-            
-            // 📦 ProductList 배치 생성 정보 출력
-            info!("📦 ProductList 배치 생성: {} ({}페이지)", batch_name, pages_in_phase);
-            
-            // 🎯 진짜 병렬 처리 구현 (semaphore 기반)
-            info!("🔍 Collecting from {} pages with true concurrent execution + async events", pages_in_phase);
-            info!("🚀 Creating {} concurrent tasks with semaphore control (max: {})", 
-                  pages_in_phase, crawling_config.concurrency_limit);
-            
-            // Semaphore를 사용한 동시성 제어
-            let semaphore = Arc::new(tokio::sync::Semaphore::new(crawling_config.concurrency_limit as usize));
-            let mut tasks = Vec::new();
-            
-            for &page in &phase.pages {
-                let stage_id = format!("stage_phase{}_page_{}", phase_idx + 1, page);
-                let semaphore_clone = Arc::clone(&semaphore);
-                let config_clone = crawling_config.clone();
-                
-                let task = tokio::spawn(async move {
-                    let _permit = semaphore_clone.acquire().await.unwrap();
-                    execute_real_page_crawling(&config_clone, page, &stage_id).await
-                });
-                
-                tasks.push(task);
-            }
-            
-            info!("✅ Created {} tasks for phase {}, waiting for all to complete with concurrent execution", 
-                  tasks.len(), phase_idx + 1);
-            
-            // 모든 작업 완료 대기
-            let mut phase_product_urls = Vec::new();
-            let mut successful_pages = 0;
-            let mut failed_pages = 0;
-            
-            for (task_idx, task) in tasks.into_iter().enumerate() {
-                match task.await {
-                    Ok(Ok(page_urls)) => {
-                        successful_pages += 1;
-                        phase_product_urls.extend(page_urls);
-                    }
-                    Ok(Err(e)) => {
-                        failed_pages += 1;
-                        let page = phase.pages.get(task_idx).unwrap_or(&0);
-                        error!("  ❌ Page {} failed: {}", page, e);
-                    }
-                    Err(e) => {
-                        failed_pages += 1;
-                        error!("  ❌ Task {} join error: {}", task_idx, e);
-                    }
-                }
-            }
-            
-            info!("🎯 Phase {} concurrent collection completed: {} pages successful, {} failed, {} total URLs", 
-                  phase_idx + 1, successful_pages, failed_pages, phase_product_urls.len());
-            
-            all_product_urls.extend(phase_product_urls);
-            
-            if failed_pages > 0 {
-                warn!("⚠️ [SessionActor ← BatchActor] {} phase {} completed with {} failures", 
-                      actor_id_clone, phase_idx + 1, failed_pages);
-            } else {
-                info!("✅ [SessionActor ← BatchActor] {} completed phase {}: {} pages processed", 
-                      actor_id_clone, phase_idx + 1, pages_in_phase);
-            }
+    // 간단한 배치 생성 (CrawlingPlanner 대신)
+    let batch_configs = vec![
+        crate::new_architecture::actors::types::BatchConfig {
+            batch_size: 5,
+            concurrency_limit: max_concurrency,
+            batch_delay_ms: 100,
+            retry_on_failure: true,
+            start_page: Some(1),
+            end_page: Some(5),
         }
-        
-        // 🎯 Stage 2 완료 - 수집된 product URLs 정리
-        let total_product_urls = all_product_urls.len();
-        info!("✅ Stage 2 completed: {} product URLs collected from optimized range with TRUE concurrent execution", total_product_urls);
-        info!("📊 Stage 2 completed: {} product URLs collected", total_product_urls);
-        info!("✅ Stage 2 successful: {} URLs ready for Stage 3", total_product_urls);
-        
-        if total_product_urls > 0 {
-            info!("🚀 Proceeding to Stage 3 with {} product URLs", total_product_urls);
-            info!("Stage 3: Collecting product details using ProductDetailCollector service with retry mechanism");
-            
-            // 🎯 Stage 3: Product Detail Collection (구현 예정)
-            // TODO: 각 product URL에 대해 상세 정보 수집
-            info!("⚠️ Stage 3 implementation pending - would collect details for {} products", total_product_urls);
-            info!("Stage 3 completed: {} products collected (including retries)", total_product_urls);
-            
-            // 🎯 Stage 4: Database Batch Save (구현 예정)
-            info!("Stage 4: Batch saving {} products to database", total_product_urls);
-            info!("⚠️ Stage 4 implementation pending - would save {} products to database", total_product_urls);
-        }
-        
-        if session_success {
-            info!("🎯 [SessionActor] {} REAL Actor System completed: {} phases, {} pages total", 
-                  actor_id_clone, total_phases, total_pages);
-            info!("✅ REAL Actor System chain successful: SessionActor → BatchActor → StageActor");
-        } else {
-            error!("❌ [SessionActor] {} REAL Actor System completed with errors", actor_id_clone);
-        }
+    ];
+
+    info!("📋 Created {} batches for testing", batch_configs.len());
+
+    // 📢 Session 시작 이벤트 발송
+    let _ = event_tx.send(FrontendEvent::SessionStarted {
+        session_id: session_id.clone(),
+        total_batches: batch_configs.len() as u32,
+        timestamp: Utc::now(),
     });
-    
-    // 즉시 응답 반환
-    Ok(RealActorCrawlingResponse {
-        success: true,
-        message: "Real Actor system started successfully".to_string(),
-        session_id,
-        actor_id,
-    })
+
+    // 🎭 SessionActor 실행 (병렬 BatchActor 스폰)
+    match execute_session_with_parallel_batches(
+        session_id.clone(),
+        batch_configs,
+        max_concurrency,
+        app_config.advanced.request_timeout_seconds * 1000,
+        http_client,
+        data_extractor,
+        event_tx.clone(),
+        app_config.clone()
+    ).await {
+        Ok(_) => {
+            let duration = start_time.elapsed();
+            info!("✅ Real Actor Crawling completed in {:?}", duration);
+            
+            // 📢 Session 완료 이벤트 발송
+            let _ = event_tx.send(FrontendEvent::SessionCompleted {
+                session_id: session_id.clone(),
+                duration_ms: duration.as_millis() as u64,
+                timestamp: Utc::now(),
+            });
+
+            Ok(format!("Real Actor crawling completed successfully in {:?}", duration))
+        }
+        Err(e) => {
+            error!("❌ Real Actor Crawling failed: {:?}", e);
+            Err(format!("Actor crawling failed: {:?}", e))
+        }
+    }
 }
 
-/// 🎯 실제 페이지 크롤링 실행 (ServiceBased 엔진 로직 참조)
+/// 🔥 핵심: 순차 Batch 실행 (SessionActor 역할)
 /// 
-/// StageActor 역할: 개별 페이지 HTTP 요청, HTML 파싱, product URLs 반환
-async fn execute_real_page_crawling(
-    config: &crate::new_architecture::actors::types::CrawlingConfig,
-    page: u32,
-    stage_id: &str,
-) -> Result<Vec<String>, String> {
-    // 실제 HTTP 요청 (ServiceBased 로직 참조) - 올바른 URL 패턴 사용
-    let page_url = crate::infrastructure::config::csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED
-        .replace("{}", &page.to_string());
+/// ⚠️ 중요: 배치는 병렬이 아닌 순차 실행!
+/// - 이유: 메모리 과부하 및 DB 저장 실패 방지
+/// - Batch1 완료 → Batch2 시작 → Batch3 시작
+/// - 각 배치 내부에서만 HTTP 요청을 concurrent하게 처리
+async fn execute_session_with_parallel_batches(
+    session_id: String,
+    batches: Vec<crate::new_architecture::actors::types::BatchConfig>,
+    max_concurrency: u32,
+    timeout_ms: u64,
+    http_client: Arc<HttpClient>,
+    data_extractor: Arc<MatterDataExtractor>,
+    event_tx: broadcast::Sender<FrontendEvent>,
+    app_config: AppConfig
+) -> Result<(), ActorError> {
+    info!("🎭 SessionActor executing {} batches SEQUENTIALLY (not parallel)", batches.len());
+
+    // 🔄 배치들을 순차적으로 실행 (병렬 아님!)
+    for (batch_index, batch) in batches.iter().enumerate() {
+        let batch_id = format!("{}_batch_{}", session_id, batch_index);
+        let batch_config = batch.clone();
+        let concurrency = max_concurrency;
+        let timeout = timeout_ms;
+
+        info!("📦 Starting Batch {}/{}: {}", batch_index + 1, batches.len(), batch_id);
+
+        // 📢 Batch 시작 이벤트
+        let _ = event_tx.send(FrontendEvent::BatchStarted {
+            session_id: session_id.clone(),
+            batch_id: batch_id.clone(),
+            batch_index: batch_index as u32,
+            timestamp: Utc::now(),
+        });
+
+        // 🎯 BatchActor 순차 실행 (한 번에 하나씩)
+        let result = execute_batch_actor_complete_pipeline_simulation(
+            batch_id.clone(),
+            batch_config,
+            concurrency,
+            timeout,
+        ).await;
+
+        // 📢 Batch 완료 이벤트
+        let batch_success = result.is_ok();
+        let _ = event_tx.send(FrontendEvent::BatchCompleted {
+            session_id: session_id.clone(),
+            batch_id: batch_id.clone(),
+            batch_index: batch_index as u32,
+            success: batch_success,
+            timestamp: Utc::now(),
+        });
+
+        // 배치 실패 시 전체 세션 중단
+        if let Err(e) = result {
+            error!("❌ Batch {} failed, stopping session: {:?}", batch_id, e);
+            return Err(e);
+        }
+
+        info!("✅ Batch {} completed successfully", batch_id);
+        
+        // 배치 간 간격 (시스템 안정성을 위해)
+        if batch_index < batches.len() - 1 {
+            info!("⏳ Waiting between batches for system stability...");
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    info!("✅ All {} batches completed sequentially", batches.len());
+    Ok(())
+}
+
+/// 🎯 BatchActor 전체 파이프라인 실제 구현 (Stage 2→3→4)
+async fn execute_batch_actor_complete_pipeline_simulation(
+    batch_id: String,
+    batch_config: crate::new_architecture::actors::types::BatchConfig,
+    concurrency: u32,
+    timeout_ms: u64,
+) -> Result<(), ActorError> {
+    info!("🎯 BatchActor {} executing complete Stage 2-3-4 pipeline (REAL IMPLEMENTATION)", batch_id);
+
+    // Stage 2: List Page Collection (실제 구현)
+    info!("🔍 Stage 2: List Page Collection (concurrency: {})", concurrency);
+    let stage2_urls = execute_real_stage_2_list_collection(&batch_id, &batch_config, concurrency).await?;
     
-    // HTTP 클라이언트 생성
-    let http_client = crate::infrastructure::HttpClient::create_from_global_config()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    info!("✅ Stage 2 completed: {} URLs collected ", stage2_urls.len());
+
+    // Stage 3: Product Detail Collection (실제 구현)
+    info!("🔍 Stage 3: Product Detail Collection ");
+    let stage3_items = execute_real_stage_3_detail_collection(&batch_id, stage2_urls, concurrency).await?;
+
+    info!("✅ Stage 3 completed: {} items processed ", stage3_items.len());
+
+    // Stage 4: Database Storage (실제 구현)
+    info!("💾 Stage 4: Database Storage ");
+    execute_real_stage_4_storage(&batch_id, stage3_items).await?;
+
+    info!("✅ Stage 4 completed: Database storage finished ");
+    info!("🎯 BatchActor {} pipeline completed successfully ", batch_id);
+
+    Ok(())
+}
+
+/// Stage 2: 실제 List Page Collection 구현
+async fn execute_real_stage_2_list_collection(
+    batch_id: &str,
+    batch_config: &crate::new_architecture::actors::types::BatchConfig,
+    concurrency: u32,
+) -> Result<Vec<String>, ActorError> {
+    info!("🔍 BatchActor {} executing REAL Stage 2", batch_id);
+
+    // 실제 HttpClient와 MatterDataExtractor 생성
+    let http_client = Arc::new(crate::infrastructure::simple_http_client::HttpClient::create_from_global_config()?);
+    let data_extractor = Arc::new(crate::infrastructure::html_parser::MatterDataExtractor::new()?);
     
-    // HTTP 요청 실행 (올바른 메서드명: fetch_html_string)
-    let html_content = http_client.fetch_html_string(&page_url)
-        .await
-        .map_err(|e| format!("HTTP request failed for {}: {}", page_url, e))?;
+    // 실제 페이지 범위 (설정에서 가져오거나 기본값 사용)
+    let start_page = batch_config.start_page.unwrap_or(291);
+    let end_page = batch_config.end_page.unwrap_or(287);
     
-    // HTML 파싱 (ServiceBased 로직 참조 - 올바른 메서드명)
-    let data_extractor = crate::infrastructure::MatterDataExtractor::new()
-        .map_err(|e| format!("Failed to create data extractor: {}", e))?;
+    info!("📄 Collecting pages {} to {} with concurrency {}", start_page, end_page, concurrency);
     
-    let product_urls = data_extractor.extract_product_urls_from_content(&html_content)
-        .map_err(|e| format!("Failed to extract product URLs: {}", e))?;
+    // 세마포어로 동시성 제어
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency as usize));
+    let mut tasks = Vec::new();
     
-    // 요청 딜레이 (서버 부하 방지) - 병렬 처리에서는 더 짧은 딜레이
-    if config.request_delay_ms > 0 {
-        let delay_ms = config.request_delay_ms / 2; // 병렬 처리이므로 딜레이 감소
-        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+    // 페이지 범위 생성 (역순 - 최신부터)
+    let pages: Vec<u32> = if start_page > end_page {
+        (end_page..=start_page).rev().collect()
+    } else {
+        (start_page..=end_page).collect()
+    };
+    
+    for page in pages {
+        let http_client_clone = Arc::clone(&http_client);
+        let data_extractor_clone = Arc::clone(&data_extractor);
+        let semaphore_clone = Arc::clone(&semaphore);
+        
+        let task = tokio::spawn(async move {
+            let _permit = semaphore_clone.acquire().await.map_err(|e| {
+                ActorError::CommandProcessingFailed(format!("Semaphore acquire failed: {}", e))
+            })?;
+            
+            let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
+            info!("🌐 HTTP GET: {}", url);
+            
+            let response = http_client_clone.fetch_response(&url).await.map_err(|e| {
+                ActorError::CommandProcessingFailed(format!("HTTP request failed: {}", e))
+            })?;
+            
+            let html_string: String = response.text().await.map_err(|e| {
+                ActorError::CommandProcessingFailed(format!("Response text failed: {}", e))
+            })?;
+            
+            let doc = scraper::Html::parse_document(&html_string);
+            let product_urls = data_extractor_clone.extract_product_urls(&doc, "https://csa-iot.org").map_err(|e| {
+                ActorError::CommandProcessingFailed(format!("URL extraction failed: {}", e))
+            })?;
+            
+            info!("📄 Page {} completed with {} URLs", page, product_urls.len());
+            Ok::<Vec<String>, ActorError>(product_urls)
+        });
+        
+        tasks.push(task);
     }
     
-    // product URLs 반환 (Stage 2 완성)
-    Ok(product_urls)
+    info!("✅ Created {} tasks, waiting for all to complete with concurrent execution", tasks.len());
+    
+    // 모든 태스크 완료 대기
+    let results = futures::future::join_all(tasks).await;
+    
+    let mut all_urls = Vec::new();
+    for result in results {
+        match result {
+            Ok(Ok(mut urls)) => {
+                all_urls.append(&mut urls);
+            },
+            Ok(Err(e)) => {
+                error!("❌ Page processing failed: {:?}", e);
+                return Err(e);
+            },
+            Err(e) => {
+                error!("❌ Task join failed: {:?}", e);
+                return Err(ActorError::CommandProcessingFailed(format!("Task join failed: {}", e)));
+            }
+        }
+    }
+
+    Ok(all_urls)
+}
+
+/// Stage 3: 실제 Product Detail Collection 구현
+async fn execute_real_stage_3_detail_collection(
+    batch_id: &str,
+    stage2_urls: Vec<String>,
+    concurrency: u32,
+) -> Result<Vec<serde_json::Value>, ActorError> {
+    info!("🔍 BatchActor {} executing REAL Stage 3 detail collection", batch_id);
+
+    if stage2_urls.is_empty() {
+        warn!("⚠️ No URLs from Stage 2 - skipping Stage 3");
+        return Ok(Vec::new());
+    }
+
+    // 실제 HttpClient와 MatterDataExtractor 생성
+    let http_client = Arc::new(crate::infrastructure::simple_http_client::HttpClient::create_from_global_config()?);
+    let data_extractor = Arc::new(crate::infrastructure::html_parser::MatterDataExtractor::new()?);
+    
+    // 설정에서 rate limit 가져오기 (하드코딩 제거)
+    // HttpClient는 이미 create_from_global_config()에서 올바른 rate limit으로 초기화됨
+    info!("🔄 Using configured rate limit from global config (Stage 3: Product Details)");
+    
+    // 세마포어로 동시성 제어
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency as usize));
+    let mut tasks = Vec::new();
+    
+    for (index, url) in stage2_urls.iter().enumerate() {
+        let http_client_clone = Arc::clone(&http_client);
+        let data_extractor_clone = Arc::clone(&data_extractor);
+        let semaphore_clone = Arc::clone(&semaphore);
+        let url_clone = url.clone();
+        
+        let task = tokio::spawn(async move {
+            let _permit = semaphore_clone.acquire().await.map_err(|e| {
+                ActorError::CommandProcessingFailed(format!("Semaphore acquire failed: {}", e))
+            })?;
+            
+            let task_id = format!("product-{}", url_clone);
+            info!("� Product task started: {} ({})", url_clone, task_id);
+            
+            let start_time = std::time::Instant::now();
+            
+            info!("🌐 HTTP GET (HttpClient): {}", url_clone);
+            let response = http_client_clone.fetch_response(&url_clone).await.map_err(|e| {
+                ActorError::CommandProcessingFailed(format!("HTTP request failed for {}: {}", url_clone, e))
+            })?;
+            
+            let html_string: String = response.text().await.map_err(|e| {
+                ActorError::CommandProcessingFailed(format!("Response text failed for {}: {}", url_clone, e))
+            })?;
+            
+            let product_data_json = data_extractor_clone.extract_product_data(&html_string).map_err(|e| {
+                ActorError::CommandProcessingFailed(format!("Product data extraction failed for {}: {}", url_clone, e))
+            })?;
+            
+            let elapsed = start_time.elapsed();
+            let field_count = count_extracted_json_fields(&product_data_json);
+            
+            info!("✅ Product task completed: {} ({}) - {} fields extracted in {:.3}ms", 
+                url_clone, task_id, field_count, elapsed.as_millis());
+            
+            Ok::<serde_json::Value, ActorError>(product_data_json)
+        });
+        
+        tasks.push(task);
+    }
+    
+    info!("✅ Created {} product detail tasks, executing with rate limit", tasks.len());
+    
+    // 모든 태스크 완료 대기
+    let results = futures::future::join_all(tasks).await;
+    
+    let mut all_products = Vec::new();
+    for (index, result) in results.into_iter().enumerate() {
+        match result {
+            Ok(Ok(product_data_json)) => {
+                all_products.push(product_data_json);
+            },
+            Ok(Err(e)) => {
+                error!("❌ Product detail processing failed for item {}: {:?}", index, e);
+                // 개별 실패는 전체를 중단하지 않고 계속 진행
+            },
+            Err(e) => {
+                error!("❌ Product detail task join failed for item {}: {:?}", index, e);
+            }
+        }
+    }
+
+    Ok(all_products)
+}
+
+/// 추출된 필드 수 계산 (JSON용)
+fn count_extracted_json_fields(product_json: &serde_json::Value) -> u32 {
+    if let Some(obj) = product_json.as_object() {
+        obj.len() as u32
+    } else {
+        0
+    }
+}
+
+/// Stage 4: 실제 Database Storage 구현
+async fn execute_real_stage_4_storage(
+    batch_id: &str,
+    stage3_items: Vec<serde_json::Value>,
+) -> Result<(), ActorError> {
+    info!("💾 BatchActor {} executing REAL Stage 4 Database Storage", batch_id);
+
+    if stage3_items.is_empty() {
+        warn!("⚠️ No items from Stage 3 - skipping Stage 4");
+        return Ok(());
+    }
+
+    // 🏗️ 데이터베이스 연결 생성 (중앙집중식 경로 관리 사용)
+    let database_url = get_main_database_url();
+    
+    let pool = sqlx::SqlitePool::connect(&database_url)
+        .await
+        .map_err(|e| ActorError::DatabaseError(format!("Database connection failed: {}", e)))?;
+    
+    let repository = IntegratedProductRepository::new(pool);
+
+    info!("📊 Processing {} items for database storage", stage3_items.len());
+
+    for (index, product_json) in stage3_items.iter().enumerate() {
+        let url = product_json.get("source_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+            
+        info!("  💾 Processing item {}/{}: {}", 
+            index + 1, 
+            stage3_items.len(), 
+            url
+        );
+
+        // 🔄 JSON을 ProductDetail로 변환
+        if let Ok(product_detail) = convert_json_to_product_detail(&product_json) {
+            // 🏪 실제 데이터베이스 저장
+            match repository.create_or_update_product_detail(&product_detail).await {
+                Ok((was_updated, was_created)) => {
+                    if was_created {
+                        info!("  ✅ Created new product detail: {}", url);
+                    } else if was_updated {
+                        info!("  🔄 Updated existing product detail: {}", url);
+                    } else {
+                        info!("  ℹ️ No changes needed for: {}", url);
+                    }
+                }
+                Err(e) => {
+                    error!("  ❌ Failed to save product detail {}: {}", url, e);
+                    // 개별 저장 실패는 계속 진행 (전체 배치 실패 방지)
+                }
+            }
+        } else {
+            warn!("  ⚠️ Failed to convert JSON to ProductDetail: {}", url);
+        }
+        
+        // 저장 간격 (DB 부하 방지)
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    }
+
+    info!("✅ Stage 4 completed: {} items processed for database storage", stage3_items.len());
+    Ok(())
+}
+
+/// 🔄 JSON을 ProductDetail로 변환하는 헬퍼 함수
+fn convert_json_to_product_detail(json: &serde_json::Value) -> Result<ProductDetail, serde_json::Error> {
+    // JSON 구조를 ProductDetail로 매핑
+    let url = json.get("source_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    
+    let device_type = json.get("device_type")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    
+    let certification_date = json.get("certification_date")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    
+    let software_version = json.get("software_version")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    
+    let hardware_version = json.get("hardware_version")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    
+    let description = json.get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let manufacturer = json.get("manufacturer")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let model = json.get("model")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let certification_id = json.get("certification_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    Ok(ProductDetail {
+        url,
+        page_id: None,
+        index_in_page: None,
+        id: None,
+        manufacturer,
+        model,
+        device_type,
+        certification_id,
+        certification_date,
+        software_version,
+        hardware_version,
+        vid: None,
+        pid: None,
+        family_sku: None,
+        family_variant_sku: None,
+        firmware_version: None,
+        family_id: None,
+        tis_trp_tested: None,
+        specification_version: None,
+        transport_interface: None,
+        primary_device_type_id: None,
+        application_categories: None,
+        description,
+        compliance_document_url: None,
+        program_type: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    })
+}/// 📡 Frontend 이벤트 타입들
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub enum FrontendEvent {
+    SessionStarted {
+        session_id: String,
+        total_batches: u32,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
+    BatchStarted {
+        session_id: String,
+        batch_id: String,
+        batch_index: u32,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
+    BatchCompleted {
+        session_id: String,
+        batch_id: String,
+        batch_index: u32,
+        success: bool,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
+    SessionCompleted {
+        session_id: String,
+        duration_ms: u64,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
 }

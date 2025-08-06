@@ -3,6 +3,7 @@
 //! This module contains minimal commands for testing the integrated schema
 
 use crate::infrastructure::database_connection::DatabaseConnection;
+use crate::infrastructure::database_paths::get_main_database_url;
 
 // ============================================================================
 // Database Management Commands
@@ -19,11 +20,11 @@ pub async fn test_database_connection() -> Result<String, String> {
             .map_err(|e| format!("Failed to create data directory: {e}"))?;
     }
     
-    // Use relative path for database
-    let database_url = "sqlite:./data/matter_certis.db";
+    // Use centralized database path management
+    let database_url = get_main_database_url();
     println!("📊 Database URL: {database_url}");
     
-    match DatabaseConnection::new(database_url).await {
+    match DatabaseConnection::new(&database_url).await {
         Ok(db) => {
             println!("✅ Database connection successful!");
             match db.migrate().await {

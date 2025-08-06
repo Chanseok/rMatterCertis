@@ -6,6 +6,7 @@ use crate::new_architecture::actors::SessionActor;
 use crate::new_architecture::context::SystemConfig;
 use crate::new_architecture::channels::types::{AppEvent, BatchConfig};
 use crate::new_architecture::actors::types::{CrawlingConfig, ActorCommand};
+use crate::new_architecture::actor_event_bridge::{ActorEventBridge, start_actor_event_bridge};
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::service_based_crawling_engine::{ServiceBasedBatchCrawlingEngine, BatchCrawlingConfig};
 use crate::infrastructure::simple_http_client::HttpClient;
@@ -17,7 +18,7 @@ use crate::infrastructure::config::ConfigManager; // 설정 관리자 추가
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Emitter};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, broadcast};
 use tokio::time::Duration;
 use tracing::{info, error};
 use chrono::Utc;
@@ -71,8 +72,17 @@ pub async fn start_actor_based_crawling(
     // 🚀 실제 SessionActor 생성 및 실행
     let system_config = Arc::new(SystemConfig::default());
     let (_control_tx, control_rx) = mpsc::channel::<ActorCommand>(100);
-    let (event_tx, mut event_rx) = mpsc::channel(500);
     
+    // 🌉 Actor 이벤트 브릿지를 위한 브로드캐스트 채널 생성
+    let (actor_event_tx, actor_event_rx) = broadcast::channel::<AppEvent>(1000);
+    
+    // 🌉 Actor Event Bridge 시작 - Actor 이벤트를 프론트엔드로 자동 전달
+    let bridge_handle = start_actor_event_bridge(app.clone(), actor_event_rx)
+        .await
+        .map_err(|e| format!("Failed to start Actor Event Bridge: {}", e))?;
+    
+    info!("🌉 Actor Event Bridge started successfully");
+
     // SessionActor 생성
     let _session_actor = SessionActor::new(
         format!("session_{}", chrono::Utc::now().timestamp())
@@ -130,13 +140,13 @@ pub async fn start_actor_based_crawling(
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     });
     
-    // 🔥 이벤트 리스너 실행 (백그라운드) - 실제 이벤트 방출
-    let event_tx_clone = event_tx.clone();
+    // 🔥 이벤트 리스너 실행 (백그라운드) - Actor 이벤트를 브로드캐스트 채널로 발행
+    let actor_event_tx_clone = actor_event_tx.clone();
     let session_id_for_second_spawn = session_id.clone();
-    let end_page_for_event = request.end_page;
     let app_handle_for_events = app.clone();
     tokio::spawn(async move {
-        // 시작 이벤트 방출 (AppEvent 타입으로)
+        // 🎯 시작 이벤트 방출 (Actor 시스템의 AppEvent 타입으로)
+        info!("📡 Emitting SessionStarted event through Actor Event Bridge");
         let session_event = AppEvent::SessionStarted {
             session_id: session_id_for_second_spawn.clone(),
             config: CrawlingConfig {
@@ -151,16 +161,28 @@ pub async fn start_actor_based_crawling(
             },
             timestamp: chrono::Utc::now(),
         };
-        let _ = event_tx_clone.send(session_event).await;
         
-        // 이벤트 수신 처리 및 프론트엔드로 방출
-        while let Some(event) = event_rx.recv().await {
-            info!("📨 [ACTOR EVENT] Received: {:?}", event);
-            
-            // 프론트엔드로 이벤트 방출
-            if let Err(e) = app_handle_for_events.emit("actor-event", &event) {
-                error!("Failed to emit actor event to frontend: {}", e);
-            }
+        // Actor Event Bridge를 통해 프론트엔드로 자동 전달
+        if let Err(e) = actor_event_tx_clone.send(session_event) {
+            error!("Failed to send Actor event through bridge: {}", e);
+        } else {
+            info!("✅ Actor event sent through bridge successfully");
+        }
+        
+        // 추가 진행 상황 이벤트들 (시뮬레이션)
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        
+        let progress_event = AppEvent::Progress {
+            session_id: session_id_for_second_spawn.clone(),
+            current_step: 1,
+            total_steps: request.end_page - request.start_page + 1,
+            message: "Starting crawling process...".to_string(),
+            percentage: 10.0,
+            timestamp: chrono::Utc::now(),
+        };
+        
+        if let Err(e) = actor_event_tx_clone.send(progress_event) {
+            error!("Failed to send progress event through bridge: {}", e);
         }
     });
     

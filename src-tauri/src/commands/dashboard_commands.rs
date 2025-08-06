@@ -12,6 +12,7 @@ use crate::new_architecture::services::performance_optimizer::CrawlingPerformanc
 use crate::new_architecture::config::SystemConfig;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::infrastructure::database_connection::DatabaseConnection;
+use crate::infrastructure::database_paths::get_main_database_url;
 
 /// 대시보드 서비스 상태 관리
 pub struct DashboardServiceState {
@@ -61,20 +62,8 @@ pub async fn init_dashboard_service(
     let system_config = Arc::new(SystemConfig::default());
     let performance_optimizer = Arc::new(CrawlingPerformanceOptimizer::new(system_config));
     
-    // 데이터베이스 연결 생성
-    let database_url = {
-        let app_data_dir = if cfg!(target_os = "macos") {
-            std::env::var("HOME")
-                .map(|h| format!("{}/Library/Application Support", h))
-                .unwrap_or_else(|_| "./data".to_string())
-        } else {
-            std::env::var("APPDATA")
-                .or_else(|_| std::env::var("HOME").map(|h| format!("{}/.local/share", h)))
-                .unwrap_or_else(|_| "./data".to_string())
-        };
-        let data_dir = format!("{}/matter-certis-v2/database", app_data_dir);
-        format!("sqlite:{}/matter_certis.db", data_dir)
-    };
+    // 데이터베이스 연결 생성 (중앙집중식 경로 관리 사용)
+    let database_url = get_main_database_url();
     
     // 제품 리포지토리 생성
     let product_repository = match DatabaseConnection::new(&database_url).await {
