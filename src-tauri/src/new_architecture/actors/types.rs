@@ -621,6 +621,55 @@ impl From<anyhow::Error> for ActorError {
     }
 }
 
+/// 실행 계획 - CrawlingPlanner에서 생성되어 SessionActor에게 전달
+/// 
+/// 분석-계획-실행 워크플로우를 명확히 분리하기 위한 핵심 구조체입니다.
+/// CrawlingPlanner가 시스템 상태를 분석하여 생성한 최적의 실행 계획을 담습니다.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExecutionPlan {
+    /// 실행 계획 ID
+    pub plan_id: String,
+    
+    /// 세션 ID
+    pub session_id: String,
+    
+    /// 크롤링 범위 목록 (여러 범위를 순차 처리)
+    pub crawling_ranges: Vec<PageRange>,
+    
+    /// 배치 크기
+    pub batch_size: u32,
+    
+    /// 동시 실행 제한
+    pub concurrency_limit: u32,
+    
+    /// 예상 소요 시간
+    pub estimated_duration_secs: u64,
+    
+    /// 계획 생성 시간
+    pub created_at: DateTime<Utc>,
+    
+    /// 분석 정보 (디버깅용)
+    pub analysis_summary: String,
+}
+
+/// 페이지 범위
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PageRange {
+    /// 시작 페이지
+    pub start_page: u32,
+    
+    /// 끝 페이지
+    pub end_page: u32,
+    
+    /// 이 범위의 예상 제품 수
+    pub estimated_products: u32,
+    
+    /// 역순 크롤링 여부
+    pub reverse_order: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

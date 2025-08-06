@@ -2113,10 +2113,13 @@ impl DatabaseAnalyzer for DatabaseAnalyzerImpl {
         // 💾 실제 DB에서 제품 정보를 가져옵니다
         info!("🔍 [DatabaseAnalyzer] Starting database analysis...");
         
-        // � Debug: Check database path first
+        // 🔧 Debug: IntegratedProductRepository가 올바르게 설정되었는지 확인
         info!("🔍 [DatabaseAnalyzer] Using database pool from IntegratedProductRepository");
         
-        // �🚀 Performance optimization: Use count query instead of loading all products
+        // 🔍 Test database connection first
+        info!("🔍 [DatabaseAnalyzer] Testing database connection...");
+        
+        // 🚀 Performance optimization: Use count query instead of loading all products
         let total_products = match self.product_repo.get_product_count().await {
             Ok(count) => {
                 info!("✅ [DatabaseAnalyzer] Successfully retrieved total count from database: {}", count);
@@ -2126,12 +2129,13 @@ impl DatabaseAnalyzer for DatabaseAnalyzerImpl {
                 error!("❌ [DatabaseAnalyzer] Failed to get product count from database: {:?}", e);
                 error!("❌ [DatabaseAnalyzer] Error details: {}", e);
                 error!("❌ [DatabaseAnalyzer] Error source: {:?}", e.source());
+                error!("❌ [DatabaseAnalyzer] This is the exact error location that generates 'Product repository not available'");
                 
                 // 🔧 Additional debugging: Try to check if the database exists
                 info!("🔍 [DatabaseAnalyzer] Attempting additional diagnostics...");
                 
-                warn!("⚠️ [DatabaseAnalyzer] Product repository not available - assuming empty DB");
-                warn!("⚠️ [DatabaseAnalyzer] DB inconsistency possible: repository unavailable but analysis may show different results");
+                warn!("⚠️  Product repository not available - assuming empty DB");
+                warn!("⚠️  DB inconsistency possible: repository unavailable but analysis may show different results");
                 return Ok(DatabaseAnalysis {
                     total_products: 0,
                     unique_products: 0,

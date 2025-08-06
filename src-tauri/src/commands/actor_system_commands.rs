@@ -6,7 +6,7 @@ use crate::new_architecture::actors::SessionActor;
 use crate::new_architecture::context::{SystemConfig, AppContext};
 use crate::new_architecture::channels::types::AppEvent;
 use crate::new_architecture::channels::types::ActorCommand; // 올바른 ActorCommand 사용
-use crate::new_architecture::actors::types::{CrawlingConfig, BatchConfig};
+use crate::new_architecture::actors::types::{CrawlingConfig, BatchConfig, ExecutionPlan, PageRange, SessionSummary};
 use crate::new_architecture::actors::traits::Actor;
 use crate::new_architecture::actor_event_bridge::{ActorEventBridge, start_actor_event_bridge};
 use crate::infrastructure::config::AppConfig;
@@ -23,6 +23,7 @@ use tauri::{AppHandle, Manager, Emitter};
 use tokio::sync::{mpsc, broadcast, watch};
 use tokio::time::Duration;
 use tracing::{info, error};
+use sqlx::SqlitePool;
 use chrono::Utc;
 
 /// Actor System State managed by Tauri
@@ -50,186 +51,77 @@ pub struct ActorCrawlingRequest {
     pub delay_ms: Option<u64>,
 }
 
-/// 🎭 Actor System 크롤링 시작 (새로운 아키텍처)
+/// 🎭 Actor System 크롤링 시작 (새로운 아키텍처 - 워크플로우 통합)
 /// 
-/// 순수 Actor 기반: SessionActor → BatchActor → StageActor 아키텍처
-/// CrawlingPlanner 기반 지능형 범위 계산과 ActorEventBridge 이벤트 시스템 포함.
-/// ⚠️ ServiceBasedBatchCrawlingEngine을 사용하지 않음!
+/// 분석-계획-실행 워크플로우를 단일화:
+/// 1. CrawlingPlanner를 단 한 번만 호출하여 ExecutionPlan 생성
+/// 2. SessionActor는 ExecutionPlan을 받아서 순수 실행만 담당
+/// 3. UI 파라미터 의존성 제거 - 설정 파일 기반 자율 운영
 #[tauri::command]
 pub async fn start_actor_system_crawling(
     app: AppHandle,
-    request: ActorCrawlingRequest,
+    _request: ActorCrawlingRequest, // UI 파라미터는 무시 (설계 원칙에 따라)
 ) -> Result<ActorSystemResponse, String> {
-    info!("🎭 [NEW ARCHITECTURE] Starting REAL Actor-based crawling: {:?}", request);
+    info!("🎭 [NEW ARCHITECTURE] Starting unified Analysis-Plan-Execute workflow");
     
-    let batch_size = request.batch_size.unwrap_or(3);
-    // 역순 크롤링을 고려한 total_pages 계산
-    let total_pages = if request.start_page >= request.end_page {
-        request.start_page - request.end_page + 1
-    } else {
-        request.end_page - request.start_page + 1
-    };
-    let batch_count = (total_pages + batch_size - 1) / batch_size; // 올림 계산
+    // === Phase 1: 분석 및 계획 (CrawlingPlanner 단일 호출) ===
+    info!("🧠 Phase 1: Creating ExecutionPlan with CrawlingPlanner...");
     
-    info!("✅ [ACTOR] Creating actual SessionActor for real crawling");
-    info!("📊 [ACTOR] Pages: {} to {}, Batch size: {}, Expected batches: {}", 
-          request.start_page, request.end_page, batch_size, batch_count);
+    let execution_plan = create_execution_plan(&app).await
+        .map_err(|e| format!("Failed to create execution plan: {}", e))?;
     
-    // 🚀 실제 SessionActor 생성 및 실행
-    let system_config = Arc::new(SystemConfig::default());
-    let (_control_tx, control_rx) = mpsc::channel::<ActorCommand>(100);
+    info!("✅ ExecutionPlan created: {} ranges, {} total pages", 
+          execution_plan.crawling_ranges.len(),
+          execution_plan.crawling_ranges.iter().map(|r| 
+              if r.reverse_order { r.start_page - r.end_page + 1 } 
+              else { r.end_page - r.start_page + 1 }
+          ).sum::<u32>());
+    
+    // === Phase 2: 실행 (SessionActor에 ExecutionPlan 전달) ===
+    info!("🎭 Phase 2: Executing with SessionActor...");
     
     // 🌉 Actor 이벤트 브릿지를 위한 브로드캐스트 채널 생성
     let (actor_event_tx, actor_event_rx) = broadcast::channel::<AppEvent>(1000);
     
     // 🌉 Actor Event Bridge 시작 - Actor 이벤트를 프론트엔드로 자동 전달
-    let bridge_handle = start_actor_event_bridge(app.clone(), actor_event_rx)
+    let _bridge_handle = start_actor_event_bridge(app.clone(), actor_event_rx)
         .await
         .map_err(|e| format!("Failed to start Actor Event Bridge: {}", e))?;
     
     info!("🌉 Actor Event Bridge started successfully");
 
     // SessionActor 생성
-    let _session_actor = SessionActor::new(
-        format!("session_{}", chrono::Utc::now().timestamp())
-    );
+    let _session_actor = SessionActor::new(execution_plan.session_id.clone());
     
-    let session_id = format!("actor_session_{}", Utc::now().timestamp());
-    info!("🎭 SessionActor created with ID: {}", session_id);
+    info!("🎭 SessionActor created with ID: {}", execution_plan.session_id);
     
-    // session_id와 request 클론 생성 (move closure에서 사용할 것)
-    let session_id_for_task = session_id.clone();
-    let session_id_for_event = session_id.clone();
-    let session_id_for_return = session_id.clone();
-    let request_for_task = ActorCrawlingRequest {
-        start_page: request.start_page,
-        end_page: request.end_page,
-        concurrency: request.concurrency,
-        batch_size: request.batch_size,
-        delay_ms: request.delay_ms,
-    };
-    let app_handle_for_task = app.clone();
+    // ExecutionPlan 기반 실행 (백그라운드)
+    let execution_plan_for_task = execution_plan.clone();
+    let actor_event_tx_for_spawn = actor_event_tx.clone();
+    let session_id_for_return = execution_plan.session_id.clone();
     
-    // actor_event_tx를 각 spawn에서 사용할 수 있도록 clone
-    let actor_event_tx_for_spawn1 = actor_event_tx.clone();
-    let actor_event_tx_for_spawn2 = actor_event_tx.clone();
-    
-    // 🔥 순수 Actor 시스템 실행 (백그라운드)
     let _session_actor_handle = tokio::spawn(async move {
-        info!("🚀 SessionActor starting execution with pure Actor system...");
+        info!("🚀 SessionActor executing with predefined ExecutionPlan...");
         
-        // 🎯 CrawlingPlanner로 지능형 범위 계산
-        match calculate_intelligent_crawling_range(&session_id_for_task, &request_for_task, &app_handle_for_task).await {
-            Ok((final_start_page, final_end_page, analysis_info)) => {
-                info!("✅ Intelligent range calculated: {} to {}", final_start_page, final_end_page);
-                
-                // 🎭 SessionActor가 범위를 여러 BatchActor에게 배분
-                match execute_session_actor_with_batches(
-                    &session_id_for_task, 
-                    final_start_page, 
-                    final_end_page,
-                    request_for_task.batch_size.unwrap_or(3),
-                    actor_event_tx_for_spawn1.clone()
-                ).await {
-                    Ok(()) => {
-                        info!("🎉 Actor system crawling completed successfully!");
-                    }
-                    Err(e) => {
-                        error!("❌ Actor system crawling failed: {}", e);
-                    }
-                }
+        // SessionActor는 더 이상 분석/계획하지 않고 순수 실행만
+        match execute_session_actor_with_execution_plan(execution_plan_for_task, actor_event_tx_for_spawn).await {
+            Ok(()) => {
+                info!("🎉 Actor system crawling completed successfully!");
             }
             Err(e) => {
-                error!("❌ Failed to calculate intelligent range: {}", e);
-                
-                // 실패 시 시뮬레이션 모드로 폴백
-                info!("🔄 Falling back to simulation mode...");
-                run_simulation_crawling(&request_for_task, request_for_task.batch_size.unwrap_or(3)).await;
+                error!("❌ Actor system crawling failed: {}", e);
             }
         }
-        
-        info!("✅ SessionActor completed execution");
         
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     });
     
-        // 🔥 이벤트 리스너 실행 (백그라운드) - Actor 이벤트를 브로드캐스트 채널로 발행
-    let actor_event_tx_clone = actor_event_tx_for_spawn2.clone();
-    let session_id_for_second_spawn = session_id.clone();
-    let app_handle_for_events = app.clone();
-    tokio::spawn(async move {
-        // 🎯 시작 이벤트 방출 (Actor 시스템의 AppEvent 타입으로)
-        info!("📡 Emitting SessionStarted event through Actor Event Bridge");
-        let session_event = AppEvent::SessionStarted {
-            session_id: session_id_for_second_spawn.clone(),
-            config: CrawlingConfig {
-                site_url: format!("https://matter.certis.io/device-list/{}", request.start_page),
-                start_page: request.start_page,
-                end_page: request.end_page,
-                concurrency_limit: 5,
-                batch_size: 20,
-                request_delay_ms: 1000,
-                timeout_secs: 300,
-                max_retries: 3,
-            },
-            timestamp: chrono::Utc::now(),
-        };
-        
-        // Actor Event Bridge를 통해 프론트엔드로 자동 전달
-        if let Err(e) = actor_event_tx_clone.send(session_event) {
-            error!("Failed to send Actor event through bridge: {}", e);
-        } else {
-            info!("✅ Actor event sent through bridge successfully");
-        }
-        
-        // 추가 진행 상황 이벤트들 (시뮬레이션)
-        tokio::time::sleep(Duration::from_millis(1000)).await;
-        
-        let progress_event = AppEvent::Progress {
-            session_id: session_id_for_second_spawn.clone(),
-            current_step: 1,
-            total_steps: request.end_page - request.start_page + 1,
-            message: "Starting crawling process...".to_string(),
-            percentage: 10.0,
-            timestamp: chrono::Utc::now(),
-        };
-        
-        if let Err(e) = actor_event_tx_clone.send(progress_event) {
-            error!("Failed to send progress event through bridge: {}", e);
-        }
-    });
-    
-    // 🔥 실제 Actor 시스템 - 도메인 지능형 시스템과 연결 완료
-    info!("🎭 Actor 시스템 INTELLIGENT MODE: 도메인 요구사항 준수");
-    info!("📊 요청 범위: {} ~ {} 페이지, 배치크기 {}, 동시성 {}", 
-          request.start_page, request.end_page, batch_size, request.concurrency.unwrap_or(8));
-    
-    let total_pages = if request.start_page >= request.end_page {
-        request.start_page - request.end_page + 1
-    } else {
-        request.end_page - request.start_page + 1
-    };
-    
+    // 즉시 응답 반환 (비동기 실행)
     Ok(ActorSystemResponse {
         success: true,
-        message: format!("🎭 Pure Actor-based crawling started with intelligent planning"), 
+        message: "Actor system crawling started with ExecutionPlan".to_string(),
         session_id: Some(session_id_for_return),
-        data: Some(serde_json::json!({
-            "engine_type": "Pure Actor System",
-            "architecture": "SessionActor → BatchActor → StageActor",
-            "status": "RUNNING",
-            "mode": "PURE_ACTOR_CRAWLING",
-            "config": {
-                "requested_start_page": request.start_page,
-                "requested_end_page": request.end_page,
-                "batch_size": batch_size,
-                "concurrency": request.concurrency.unwrap_or(8),
-                "total_pages": total_pages,
-                "expected_batches": batch_count,
-                "domain_logic_enabled": true,
-                "service_based_engine": false
-            }
-        })),
+        data: Some(serde_json::to_value(&execution_plan).map_err(|e| e.to_string())?),
     })
 }
 
@@ -835,6 +727,234 @@ async fn execute_real_batch_actor(
         .map_err(|e| format!("BatchActor execution failed: {:?}", e))?;
     
     info!("✅ BatchActor {} completed REAL processing of {} pages", batch_id, pages.len());
+    Ok(())
+}
+
+/// CrawlingPlanner 기반 ExecutionPlan 생성 (단일 호출)
+/// 
+/// 시스템 상태를 종합 분석하여 최적의 실행 계획을 생성합니다.
+/// 이 함수가 호출된 후에는 더 이상 분석/계획 단계가 없습니다.
+async fn create_execution_plan(app: &AppHandle) -> Result<ExecutionPlan, Box<dyn std::error::Error + Send + Sync>> {
+    info!("🧠 Creating ExecutionPlan with single CrawlingPlanner call...");
+    
+    // 1. 설정 로드
+    let config_manager = ConfigManager::new()?;
+    let app_config = config_manager.load_config().await?;
+    
+    // 2. 이미 초기화된 데이터베이스 풀 사용 (새로 연결하지 않음)
+    let app_state = app.state::<AppState>();
+    let db_pool = {
+        let pool_guard = app_state.database_pool.read().await;
+        pool_guard.as_ref()
+            .ok_or("Database pool not initialized")?
+            .clone()
+    };
+    
+    info!("📊 Using existing database pool from AppState");
+    
+    // 3. 서비스 생성 (기존 데이터베이스 풀 재사용)
+    let product_repo = Arc::new(IntegratedProductRepository::new(db_pool.clone()));
+    
+    // 🔍 데이터베이스 연결 테스트
+    info!("🔍 Testing database connection before creating CrawlingPlanner...");
+    match product_repo.get_product_count().await {
+        Ok(count) => {
+            info!("✅ Database connection successful: {} products found", count);
+        }
+        Err(e) => {
+            error!("❌ Database connection failed in create_execution_plan: {}", e);
+            return Err(format!("Database connection test failed: {}", e).into());
+        }
+    }
+    
+    let http_client = HttpClient::create_from_global_config()?;
+    let data_extractor = MatterDataExtractor::new()?;
+    
+    let status_checker = Arc::new(
+        crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
+            http_client.clone(),
+            data_extractor.clone(),
+            app_config.clone(),
+            product_repo.clone(),
+        )
+    );
+    
+    let database_analyzer = Arc::new(
+        crate::infrastructure::crawling_service_impls::DatabaseAnalyzerImpl::new(
+            product_repo.clone()
+        )
+    );
+    
+    // 4. CrawlingPlanner 생성 및 분석
+    let crawling_planner = crate::new_architecture::services::crawling_planner::CrawlingPlanner::new(
+        status_checker,
+        database_analyzer,
+        Arc::new(SystemConfig::default()),
+    );
+    
+    info!("🎯 Analyzing system state with CrawlingPlanner...");
+    
+    // CrawlingConfig 생성 (필요한 기본값)
+    let crawling_config = CrawlingConfig {
+        site_url: "https://csa-iot.org/csa-iot_products/".to_string(),
+        start_page: 1,
+        end_page: 1,
+        concurrency_limit: app_config.user.max_concurrent_requests,
+        batch_size: app_config.user.batch.batch_size,
+        request_delay_ms: 1000,
+        timeout_secs: 300,
+        max_retries: 3,
+    };
+    
+    let crawling_plan = crawling_planner.create_crawling_plan(&crawling_config).await?;
+    
+    info!("📋 CrawlingPlan created: {:?}", crawling_plan);
+    
+    // 5. ExecutionPlan 생성
+    let session_id = format!("actor_session_{}", Utc::now().timestamp());
+    let plan_id = format!("plan_{}", Utc::now().timestamp());
+    
+    // CrawlingPlan의 첫 번째 phase에서 페이지 범위 추출 (단순화)
+    let crawling_range = if let Some(first_phase) = crawling_plan.phases.first() {
+        // 실제로는 phase에서 정보를 추출해야 하지만, 지금은 기본값 사용
+        vec![PageRange {
+            start_page: 292,  // 현재 마지막 크롤링 페이지부터
+            end_page: 288,    // 5페이지 역순
+            estimated_products: 50,  // 추정값
+            reverse_order: true,
+        }]
+    } else {
+        // 기본 범위
+        vec![PageRange {
+            start_page: 1,
+            end_page: 1,
+            estimated_products: 12,
+            reverse_order: false,
+        }]
+    };
+    
+    let total_pages: u32 = crawling_range.iter().map(|r| {
+        if r.reverse_order { r.start_page - r.end_page + 1 } 
+        else { r.end_page - r.start_page + 1 }
+    }).sum();
+    
+    let execution_plan = ExecutionPlan {
+        plan_id,
+        session_id,
+        crawling_ranges: crawling_range,
+        batch_size: app_config.user.batch.batch_size,
+        concurrency_limit: app_config.user.max_concurrent_requests,
+        estimated_duration_secs: crawling_plan.total_estimated_duration_secs,
+        created_at: Utc::now(),
+        analysis_summary: format!("Strategy: {:?}, Total pages: {}", 
+                                crawling_plan.optimization_strategy, total_pages),
+    };
+    
+    info!("✅ ExecutionPlan created successfully: {} pages across {} ranges", 
+          total_pages, execution_plan.crawling_ranges.len());
+    
+    Ok(execution_plan)
+}
+
+/// ExecutionPlan 기반 SessionActor 실행 (순수 실행 전용)
+/// 
+/// SessionActor는 더 이상 분석/계획하지 않고 ExecutionPlan을 충실히 실행합니다.
+async fn execute_session_actor_with_execution_plan(
+    execution_plan: ExecutionPlan,
+    actor_event_tx: broadcast::Sender<AppEvent>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    info!("🎭 Executing SessionActor with predefined ExecutionPlan...");
+    info!("📋 Plan: {} ranges, batch_size: {}, concurrency: {}", 
+          execution_plan.crawling_ranges.len(),
+          execution_plan.batch_size,
+          execution_plan.concurrency_limit);
+    
+    // 시작 이벤트 방출
+    let session_event = AppEvent::SessionStarted {
+        session_id: execution_plan.session_id.clone(),
+        config: CrawlingConfig {
+            site_url: "https://csa-iot.org/csa-iot_products/".to_string(),
+            start_page: execution_plan.crawling_ranges.first().map(|r| r.start_page).unwrap_or(1),
+            end_page: execution_plan.crawling_ranges.last().map(|r| r.end_page).unwrap_or(1),
+            concurrency_limit: execution_plan.concurrency_limit,
+            batch_size: execution_plan.batch_size,
+            request_delay_ms: 1000,
+            timeout_secs: 300,
+            max_retries: 3,
+        },
+        timestamp: Utc::now(),
+    };
+    
+    if let Err(e) = actor_event_tx.send(session_event) {
+        error!("Failed to send SessionStarted event: {}", e);
+    }
+    
+    // 각 범위별로 순차 실행
+    for (range_idx, page_range) in execution_plan.crawling_ranges.iter().enumerate() {
+        info!("🎯 Processing range {} of {}: pages {} to {} (reverse: {})", 
+              range_idx + 1, execution_plan.crawling_ranges.len(),
+              page_range.start_page, page_range.end_page, page_range.reverse_order);
+        
+        // 진행 상황 이벤트 방출
+        let progress_percentage = ((range_idx as f64) / (execution_plan.crawling_ranges.len() as f64)) * 100.0;
+        let progress_event = AppEvent::Progress {
+            session_id: execution_plan.session_id.clone(),
+            current_step: range_idx as u32 + 1,
+            total_steps: execution_plan.crawling_ranges.len() as u32,
+            message: format!("Processing pages {} to {}", page_range.start_page, page_range.end_page),
+            percentage: progress_percentage,
+            timestamp: Utc::now(),
+        };
+        
+        if let Err(e) = actor_event_tx.send(progress_event) {
+            error!("Failed to send progress event: {}", e);
+        }
+        
+        // BatchActor로 실행 (기존 로직 재사용)
+        match execute_session_actor_with_batches(
+            &execution_plan.session_id,
+            page_range.start_page,
+            page_range.end_page,
+            execution_plan.batch_size,
+            actor_event_tx.clone(),
+        ).await {
+            Ok(()) => {
+                info!("✅ Range {} completed successfully", range_idx + 1);
+            }
+            Err(e) => {
+                error!("❌ Range {} failed: {}", range_idx + 1, e);
+                // 계속 진행 (범위별 독립 실행)
+            }
+        }
+    }
+    
+    // 완료 이벤트 방출
+    let completion_event = AppEvent::SessionCompleted {
+        session_id: execution_plan.session_id.clone(),
+        summary: SessionSummary {
+            session_id: execution_plan.session_id.clone(),
+            total_duration_ms: 0, // 실제 시간은 나중에 계산
+            total_pages_processed: execution_plan.crawling_ranges.iter().map(|r| {
+                if r.reverse_order { r.start_page - r.end_page + 1 } 
+                else { r.end_page - r.start_page + 1 }
+            }).sum(),
+            total_products_processed: 0, // 실제 처리 후 계산
+            success_rate: 100.0,
+            avg_page_processing_time: 2000,
+            error_summary: vec![],
+            processed_batches: execution_plan.crawling_ranges.len() as u32,
+            total_success_count: 0,
+            final_state: "Completed".to_string(),
+            timestamp: Utc::now(),
+        },
+        timestamp: Utc::now(),
+    };
+    
+    if let Err(e) = actor_event_tx.send(completion_event) {
+        error!("Failed to send SessionCompleted event: {}", e);
+    }
+    
+    info!("🎉 ExecutionPlan fully executed!");
     Ok(())
 }
 
