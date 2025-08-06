@@ -363,11 +363,8 @@ pub fn run() {
             commands::actor_system_commands::test_actor_integration_basic,
             
             // Real Crawling Integration commands (Option B implementation)
-            crate::new_architecture::services::real_crawling_commands::test_real_crawling_init,
-            crate::new_architecture::services::real_crawling_commands::test_real_site_status,
-            crate::new_architecture::services::real_crawling_commands::test_real_crawling_analysis,
-            crate::new_architecture::services::real_crawling_commands::test_real_page_crawling,
-            crate::new_architecture::services::real_crawling_commands::test_real_oneshot_integration,
+            // Note: These commands are temporarily disabled due to module restructuring
+            // They will be re-enabled after Phase 2 completion
             
             // Actor System Monitoring commands (Phase C: UI 개선)
             commands::actor_system_monitoring::start_crawling_session,

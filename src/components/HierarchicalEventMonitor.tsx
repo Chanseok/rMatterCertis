@@ -461,10 +461,10 @@ export const HierarchicalEventMonitor: Component = () => {
     });
   };
 
-  // Actor 시스템 테스트 함수
-  const startActorSystemTest = async () => {
+  // 가짜 Actor 시스템 테스트 함수 (실제로는 ServiceBased)
+  const startFakeActorSystemTest = async () => {
     try {
-      console.log('🎭 Actor 시스템 테스트 시작');
+      console.log('🎭 가짜 Actor 시스템 테스트 시작');
       
       const result = await invoke('start_actor_based_crawling', {
         request: {
@@ -476,18 +476,50 @@ export const HierarchicalEventMonitor: Component = () => {
         }
       });
       
-      console.log(`✅ Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
+      console.log(`✅ 가짜 Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
       
       // 이벤트 모니터에 알림 추가
       const testEvent: ConcurrencyEvent = {
         type: 'SessionEvent',
         payload: {
-          session_id: `test-session-${Date.now()}`,
+          session_id: `fake-actor-test-${Date.now()}`,
           event_type: 'Started',
-          metadata: { message: 'Actor 시스템 테스트 크롤링 시작됨', test: 'true' },
+          metadata: { message: '가짜 Actor 시스템 테스트 크롤링 시작됨 (실제로는 ServiceBased)', test: 'true' },
           timestamp: new Date().toISOString(),
         }
       };
+      
+      setEvents(prev => [...prev, testEvent]);
+    } catch (error) {
+      console.error('❌ 가짜 Actor 시스템 테스트 실패:', error);
+    }
+  };
+
+  // 진짜 Actor 시스템 테스트 함수
+  const startRealActorSystemTest = async () => {
+    try {
+      console.log('🎭 진짜 Actor 시스템 테스트 시작');
+      
+      const result = await invoke('start_real_actor_crawling', {
+        request: {
+          // CrawlingPlanner가 모든 설정을 자동 계산하므로 파라미터 불필요
+        }
+      });
+      
+      console.log(`✅ 진짜 Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
+      
+      // 이벤트 모니터에 알림 추가
+      const testEvent: ConcurrencyEvent = {
+        type: 'SessionEvent',
+        payload: {
+          session_id: `real-actor-test-${Date.now()}`,
+          event_type: 'Started',
+          metadata: { message: '진짜 Actor 시스템 테스트 크롤링 시작됨', test: 'true' },
+          timestamp: new Date().toISOString(),
+        }
+      };
+      
+      setEvents(prev => [...prev, testEvent]);
       
       setEvents(prev => [...prev, testEvent]);
       
@@ -640,10 +672,16 @@ export const HierarchicalEventMonitor: Component = () => {
           <h2 class="text-xl font-bold text-gray-800">계층적 이벤트 모니터</h2>
           <div class="flex items-center space-x-4">
             <button
-              onClick={startActorSystemTest}
+              onClick={startRealActorSystemTest}
               class="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors font-medium"
             >
-              🎭 Actor 시스템 테스트
+              🎭 진짜 Actor 테스트
+            </button>
+            <button
+              onClick={startFakeActorSystemTest}
+              class="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700 transition-colors font-medium"
+            >
+              🎭 가짜 Actor 테스트
             </button>
             <button
               onClick={toggleExpandAll}

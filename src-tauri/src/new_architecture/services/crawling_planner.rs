@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use ts_rs::TS;
+use tracing::info;
 
 use crate::domain::services::{StatusChecker, DatabaseAnalyzer};
 use crate::domain::services::crawling_services::{
@@ -79,8 +80,8 @@ impl CrawlingPlanner {
         // 3. 최적화된 계획 수립
         let plan = self.optimize_crawling_strategy(
             crawling_config,
-            &site_status,
-            &db_analysis,
+            Box::new(site_status),
+            Box::new(db_analysis),
         ).await?;
         
         Ok(plan)
@@ -202,38 +203,74 @@ impl CrawlingPlanner {
     async fn optimize_crawling_strategy(
         &self,
         config: &CrawlingConfig,
-        _site_status: &dyn std::any::Any, // SiteStatus trait object workaround
-        _db_analysis: &dyn std::any::Any, // DatabaseAnalysis trait object workaround
+        _site_status: Box<dyn std::any::Any + Send>, // SiteStatus trait object workaround
+        _db_analysis: Box<dyn std::any::Any + Send>, // DatabaseAnalysis trait object workaround
     ) -> Result<CrawlingPlan, ActorError> {
         // Mock 구현 - 실제로는 site_status와 db_analysis를 기반으로 최적화
-        let total_pages = config.end_page - config.start_page + 1;
+        let total_pages = if config.start_page >= config.end_page {
+            config.start_page - config.end_page + 1  // 역순 크롤링
+        } else {
+            config.end_page - config.start_page + 1  // 정순 크롤링
+        };
         
-        let phases = vec![
+        // 🔧 역순 크롤링 지원: start_page >= end_page인 경우 범위를 뒤집어서 생성
+        let page_range: Vec<u32> = if config.start_page >= config.end_page {
+            // 역순: 299, 298, 297, 296, 295
+            (config.end_page..=config.start_page).rev().collect()
+        } else {
+            // 정순: start_page..=end_page
+            (config.start_page..=config.end_page).collect()
+        };
+        
+        info!("🔧 CrawlingPlanner page range generation: start={}, end={}, reverse={}, pages={:?}", 
+              config.start_page, config.end_page, config.start_page >= config.end_page, page_range);
+        
+        // 🔧 batch_size에 따른 배치 분할 로직 구현
+        let batch_size = config.batch_size as usize;
+        let batched_pages = if batch_size > 0 && page_range.len() > batch_size {
+            page_range.chunks(batch_size).map(|chunk| chunk.to_vec()).collect::<Vec<_>>()
+        } else {
+            vec![page_range.clone()] // 작은 범위는 하나의 배치로
+        };
+        
+        info!("📋 배치 계획 수립: 총 {}페이지를 {}개 배치로 분할 (batch_size={})", 
+              page_range.len(), batched_pages.len(), batch_size);
+        
+        // 🎯 각 배치별로 ListPageCrawling phase 생성
+        let mut phases = vec![
             CrawlingPhase {
                 phase_type: PhaseType::StatusCheck,
                 estimated_duration_secs: 30,
                 priority: 1,
                 pages: vec![], // 상태 확인은 페이지별 처리 없음
             },
-            CrawlingPhase {
+        ];
+        
+        // 배치별 ListPageCrawling phases 추가
+        for (batch_idx, batch_pages) in batched_pages.iter().enumerate() {
+            phases.push(CrawlingPhase {
                 phase_type: PhaseType::ListPageCrawling,
-                estimated_duration_secs: (total_pages * 2) as u64, // 페이지당 2초 추정
-                priority: 2,
-                pages: (config.start_page..=config.end_page).collect(),
-            },
+                estimated_duration_secs: (batch_pages.len() * 2) as u64, // 페이지당 2초 추정
+                priority: 2 + batch_idx as u32, // 배치별 우선순위
+                pages: batch_pages.clone(),
+            });
+        }
+        
+        // 나머지 phases 추가
+        phases.extend(vec![
             CrawlingPhase {
                 phase_type: PhaseType::ProductDetailCrawling,
                 estimated_duration_secs: (total_pages * 10) as u64, // 페이지당 10초 추정 (상품 상세)
-                priority: 3,
-                pages: (config.start_page..=config.end_page).collect(),
+                priority: 100, // 높은 우선순위로 마지막에 실행
+                pages: page_range.clone(),
             },
             CrawlingPhase {
                 phase_type: PhaseType::DataValidation,
                 estimated_duration_secs: (total_pages / 2) as u64, // 검증은 빠름
-                priority: 4,
+                priority: 101,
                 pages: vec![],
             },
-        ];
+        ]);
         
         let total_estimated_duration_secs = phases.iter().map(|p| p.estimated_duration_secs).sum();
         

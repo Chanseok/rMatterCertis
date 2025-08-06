@@ -41,13 +41,15 @@ export default function CrawlingEngineTabSimple() {
       console.error('크롤링 범위 계산 실패:', error);
       addLog(`❌ 크롤링 범위 계산 실패: ${error}`);
     }
-  };  // Actor 시스템 크롤링 시작 (신규 추가)
-  const startActorCrawling = async () => {
+  };  
+  
+  // 가짜 Actor 시스템 크롤링 (실제로는 ServiceBased 엔진 사용)
+  const startFakeActorCrawling = async () => {
     if (isRunning()) return;
     
     setIsRunning(true);
-    setStatusMessage('🎭 Actor 시스템 크롤링 시작 중...');
-    addLog('🎭 Actor 시스템 크롤링 시작');
+    setStatusMessage('🎭 가짜 Actor 시스템 크롤링 시작 중...');
+    addLog('🎭 가짜 Actor 시스템 크롤링 시작 (실제로는 ServiceBased 엔진)');
 
     try {
       const result = await invoke('start_actor_based_crawling', {
@@ -57,15 +59,41 @@ export default function CrawlingEngineTabSimple() {
         batch_size: 3,
         delay_ms: 100
       });
-      addLog(`✅ Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
-      setStatusMessage('🎭 Actor 시스템 실행 중');
+      addLog(`✅ 가짜 Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
+      setStatusMessage('🎭 가짜 Actor 시스템 실행 중');
       
     } catch (error) {
-      console.error('Actor 시스템 크롤링 시작 실패:', error);
-      addLog(`❌ Actor 시스템 크롤링 시작 실패: ${error}`);
+      console.error('가짜 Actor 시스템 크롤링 시작 실패:', error);
+      addLog(`❌ 가짜 Actor 시스템 크롤링 시작 실패: ${error}`);
       setStatusMessage('크롤링 실패');
     } finally {
       setTimeout(() => setIsRunning(false), 3000); // 3초 후 완료로 처리
+    }
+  };
+
+  // 진짜 Actor 시스템 크롤링 시작
+  const startRealActorCrawling = async () => {
+    if (isRunning()) return;
+    
+    setIsRunning(true);
+    setStatusMessage('🎭 진짜 Actor 시스템 크롤링 시작 중...');
+    addLog('🎭 진짜 Actor 시스템 크롤링 시작');
+
+    try {
+      const result = await invoke('start_real_actor_crawling', {
+        request: {
+          // CrawlingPlanner가 모든 설정을 자동 계산하므로 파라미터 불필요
+        }
+      });
+      addLog(`✅ 진짜 Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
+      setStatusMessage('🎭 진짜 Actor 시스템 실행 중 (설정 기반)');
+      
+    } catch (error) {
+      console.error('진짜 Actor 시스템 크롤링 시작 실패:', error);
+      addLog(`❌ 진짜 Actor 시스템 크롤링 시작 실패: ${error}`);
+      setStatusMessage('크롤링 실패');
+    } finally {
+      setTimeout(() => setIsRunning(false), 5000); // 5초 후 완료로 처리
     }
   };
 
@@ -223,7 +251,7 @@ export default function CrawlingEngineTabSimple() {
           </button>
           
           <button
-            onClick={startActorCrawling}
+            onClick={startRealActorCrawling}
             disabled={isRunning()}
             class={`px-6 py-3 rounded-lg font-medium text-white ${
               isRunning() 
@@ -231,7 +259,19 @@ export default function CrawlingEngineTabSimple() {
                 : 'bg-purple-600 hover:bg-purple-700'
             }`}
           >
-            {isRunning() ? 'Actor 실행 중...' : '🎭 Actor 시스템 크롤링'}
+            {isRunning() ? '진짜 Actor 실행 중...' : '🎭 진짜 Actor 시스템 크롤링'}
+          </button>
+          
+          <button
+            onClick={startFakeActorCrawling}
+            disabled={isRunning()}
+            class={`px-6 py-3 rounded-lg font-medium text-white ${
+              isRunning() 
+                ? 'bg-gray-400 cursor-not-allowed' 
+                : 'bg-orange-600 hover:bg-orange-700'
+            }`}
+          >
+            {isRunning() ? '가짜 Actor 실행 중...' : '🎭 가짜 Actor 시스템 크롤링'}
           </button>
           
           <button

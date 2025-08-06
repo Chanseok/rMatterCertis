@@ -56,7 +56,12 @@ pub async fn start_actor_based_crawling(
     info!("🎭 [NEW ARCHITECTURE] Starting REAL Actor-based crawling: {:?}", request);
     
     let batch_size = request.batch_size.unwrap_or(3);
-    let total_pages = request.end_page - request.start_page + 1;
+    // 역순 크롤링을 고려한 total_pages 계산
+    let total_pages = if request.start_page >= request.end_page {
+        request.start_page - request.end_page + 1
+    } else {
+        request.end_page - request.start_page + 1
+    };
     let batch_count = (total_pages + batch_size - 1) / batch_size; // 올림 계산
     
     info!("✅ [ACTOR] Creating actual SessionActor for real crawling");

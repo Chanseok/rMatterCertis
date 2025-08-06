@@ -105,7 +105,7 @@ export const ActorSystemDashboard: Component = () => {
     try {
       console.log('🎭 Starting Actor system batch splitting test...');
       
-      // start_actor_based_crawling 커맨드를 사용하여 배치 분할 테스트
+      // start_actor_based_crawling 커맨드를 사용하여 배치 분할 테스트 (가짜 Actor)
       const request = {
         start_page: 300,  // 300-303 범위
         end_page: 303,
@@ -117,9 +117,9 @@ export const ActorSystemDashboard: Component = () => {
       console.log('📦 Test configuration:', request);
       console.log('🔍 Expected result: batch_size=3, page_range_limit=5 → 2 batches: [300,301,302], [303]');
       
-      setTestResult('🎭 Actor 시스템 배치 분할 테스트 시작...\n📦 설정: pages 300-303, batch_size=3\n🎯 예상: 2개 배치 ([300,301,302], [303])');
+      setTestResult('🎭 가짜 Actor 시스템 배치 분할 테스트 시작...\n📦 설정: pages 300-303, batch_size=3\n🎯 예상: 2개 배치 ([300,301,302], [303])');
       
-      // Tauri 커맨드 호출
+      // Tauri 커맨드 호출 (가짜 Actor - 실제로는 ServiceBased)
       const result = await invoke('start_actor_based_crawling', { request });
       
       console.log('✅ Actor system test completed:', result);
@@ -165,6 +165,75 @@ ${error}
 💡 해결 방법:
 - 로그에서 SessionActor 생성 확인
 - BatchPlan 생성 로그 확인
+- 채널 연결 상태 점검`;
+
+      setTestResult(errorSummary);
+    } finally {
+      setIsActorTesting(false);
+    }
+  };
+
+  // 🎯 진짜 Actor 시스템 배치 분할 테스트 함수
+  const testRealActorBatchSplitting = async () => {
+    if (isActorTesting()) return;
+    
+    setIsActorTesting(true);
+    setTestResult(null);
+    
+    try {
+      console.log('🎭 Starting REAL Actor system batch splitting test...');
+      
+      setTestResult('🎭 진짜 Actor 시스템 배치 분할 테스트 시작...\n📦 설정: pages 294-298\n🎯 예상: Actor 로그 확인');
+      
+      // Tauri 커맨드 호출 (진짜 Actor - 설정 기반)
+      const result = await invoke('start_real_actor_crawling', {
+        request: {
+          // CrawlingPlanner가 모든 설정을 자동 계산하므로 파라미터 불필요
+        }
+      });
+      
+      console.log('✅ Real Actor system test completed:', result);
+      
+      // 결과 분석
+      const testSummary = `✅ 진짜 Actor 시스템 배치 분할 테스트 완료
+
+📦 설정:
+  - 페이지 범위: 294-298 (총 5페이지)
+  - concurrency: 5
+  
+🎯 진짜 Actor 시스템 특징:
+  - SessionActor 사용
+  - 실제 Actor 메시지 패싱
+  - 역순 크롤링 (298→294)
+
+📊 실제 결과:
+${JSON.stringify(result, null, 2)}
+
+🔧 SessionActor에서 handle_start_crawling() 메서드가 호출되어 
+실제 Actor 패러다임으로 크롤링을 처리했습니다.`;
+
+      setTestResult(testSummary);
+      
+      // 성공 후 시스템 상태 새로고침
+      await fetchSystemStatus();
+      
+    } catch (error) {
+      console.error('❌ Real Actor system test failed:', error);
+      
+      const errorSummary = `❌ 진짜 Actor 시스템 배치 분할 테스트 실패
+
+🚨 오류 내용:
+${error}
+
+🔍 문제 분석:
+1. 진짜 Actor 시스템 초기화 실패
+2. SessionActor 생성 오류
+3. Actor 메시지 패싱 문제
+4. 백엔드 연결 실패
+
+💡 해결 방법:
+- 로그에서 SessionActor 생성 확인
+- Actor 메시지 로그 확인
 - 채널 연결 상태 점검`;
 
       setTestResult(errorSummary);
@@ -258,13 +327,13 @@ ${error}
             🔄 새로고침
           </button>
           
-          {/* 🎯 Actor 시스템 배치 분할 테스트 버튼 */}
+          {/* 🎯 가짜 Actor 시스템 배치 분할 테스트 버튼 */}
           <button 
             class="actor-test-button"
             onClick={testActorBatchSplitting}
             disabled={isActorTesting() || loading()}
             style={{
-              "background": isActorTesting() ? "#9ca3af" : "#3b82f6",
+              "background": isActorTesting() ? "#9ca3af" : "#f97316",
               "color": "white",
               "padding": "8px 16px",
               "border": "none",
@@ -273,7 +342,25 @@ ${error}
               "margin-left": "8px"
             }}
           >
-            {isActorTesting() ? '🔄 테스트 중...' : '🎭 배치 분할 테스트'}
+            {isActorTesting() ? '🔄 테스트 중...' : '🎭 가짜 Actor 테스트'}
+          </button>
+          
+          {/* 🎯 진짜 Actor 시스템 배치 분할 테스트 버튼 */}
+          <button 
+            class="actor-test-button"
+            onClick={testRealActorBatchSplitting}
+            disabled={isActorTesting() || loading()}
+            style={{
+              "background": isActorTesting() ? "#9ca3af" : "#7c3aed",
+              "color": "white",
+              "padding": "8px 16px",
+              "border": "none",
+              "border-radius": "6px",
+              "cursor": isActorTesting() ? "not-allowed" : "pointer",
+              "margin-left": "8px"
+            }}
+          >
+            {isActorTesting() ? '🔄 테스트 중...' : '🎭 진짜 Actor 테스트'}
           </button>
         </div>
         

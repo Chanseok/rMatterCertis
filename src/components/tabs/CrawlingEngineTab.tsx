@@ -231,35 +231,55 @@ export const CrawlingEngineTab: Component = () => {
     }
   };
 
-  // Actor 시스템 계산된 범위로 크롤링
-  const startActorSystemWithCalculatedRange = async () => {
+  // 가짜 Actor 시스템 크롤링 (실제로는 ServiceBased)
+  const startFakeActorSystemWithCalculatedRange = async () => {
     if (isRunning()) return;
     
-    const range = crawlingRange()?.range;
-    if (!range) {
-      addLog('❌ 크롤링 범위가 계산되지 않았습니다. 먼저 "크롤링 범위 계산" 버튼을 클릭하세요.');
-      return;
-    }
-    
     setIsRunning(true);
-    addLog(`🎭 Actor 시스템 크롤링 시작: ${range[0]}-${range[1]} 페이지 (CrawlingPlanner 계산 범위)`);
+    addLog(`🎭 가짜 Actor 시스템 크롤링 시작 (실제로는 ServiceBased)`);
 
     try {
       const result = await invoke('start_actor_based_crawling', {
         request: {
-          start_page: range[1], // 역순 크롤링: 종료 페이지부터 시작
-          end_page: range[0],   // 시작 페이지까지
+          // 가짜 Actor 시스템도 CrawlingPlanner가 범위를 계산하도록 함
+          // UI에서 범위를 계산할 필요 없음
+          start_page: 298,  // 임시 고정값 (실제로는 백엔드에서 무시됨)
+          end_page: 294,    // 임시 고정값 (실제로는 백엔드에서 무시됨)
           concurrency: 64,
           batch_size: 3,
           delay_ms: 100
         }
       });
-      addLog(`✅ Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
-      addLog('🎭 Actor 시스템이 활성화되었습니다. CrawlingPlanner 설정에 따라 배치가 자동 분할됩니다.');
+      addLog(`✅ 가짜 Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
+      addLog('🎭 가짜 Actor 시스템이 활성화되었습니다 (실제로는 ServiceBased 엔진).');
       
     } catch (error) {
-      console.error('Actor 시스템 크롤링 시작 실패:', error);
-      addLog(`❌ Actor 시스템 크롤링 시작 실패: ${error}`);
+      console.error('가짜 Actor 시스템 크롤링 시작 실패:', error);
+      addLog(`❌ 가짜 Actor 시스템 크롤링 시작 실패: ${error}`);
+      setIsRunning(false);
+    }
+  };
+
+  // 진짜 Actor 시스템 설정 기반 크롤링
+  const startRealActorSystemWithCalculatedRange = async () => {
+    if (isRunning()) return;
+    
+    setIsRunning(true);
+    addLog('🎭 진짜 Actor 시스템 크롤링 시작 (CrawlingPlanner 설정 기반)');
+
+    try {
+      const result = await invoke('start_real_actor_crawling', {
+        request: {
+          // CrawlingPlanner가 모든 설정을 자동 계산하므로 파라미터 불필요
+          // 필요시 override 옵션만 전달
+        }
+      });
+      addLog(`✅ 진짜 Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
+      addLog('🎭 진짜 Actor 시스템이 활성화되었습니다. CrawlingPlanner 설정 기반으로 SessionActor가 실행됩니다.');
+      
+    } catch (error) {
+      console.error('진짜 Actor 시스템 크롤링 시작 실패:', error);
+      addLog(`❌ 진짜 Actor 시스템 크롤링 시작 실패: ${error}`);
       setIsRunning(false);
     }
   };
@@ -545,16 +565,24 @@ export const CrawlingEngineTab: Component = () => {
                   </div>
                 </Show>
 
-                {/* Actor System Main Button */}
+                {/* Real Actor System Main Button */}
                 <button
-                  onClick={startActorSystemWithCalculatedRange}
+                  onClick={startRealActorSystemWithCalculatedRange}
                   class="w-full py-3 px-4 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
-                  disabled={isRunning() || !crawlingRange()?.range}
+                  disabled={isRunning()}
                 >
-                  🎭 Actor 시스템으로 크롤링 시작
-                  <Show when={!crawlingRange()?.range}>
-                    <span class="text-xs block mt-1">(크롤링 범위 계산 필요)</span>
-                  </Show>
+                  🎭 진짜 Actor 시스템으로 크롤링 시작 (설정 기반)
+                  <span class="text-xs block mt-1">CrawlingPlanner가 자동으로 범위와 배치를 계산합니다</span>
+                </button>
+                
+                {/* Fake Actor System Button */}
+                <button
+                  onClick={startFakeActorSystemWithCalculatedRange}
+                  class="w-full py-3 px-4 bg-orange-600 text-white rounded-md hover:bg-orange-700 font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  disabled={isRunning()}
+                >
+                  🎭 가짜 Actor 시스템으로 크롤링 시작 (ServiceBased 엔진)
+                  <span class="text-xs block mt-1">백엔드에서 자동으로 범위를 계산합니다</span>
                 </button>                
               </div>
             </div>
