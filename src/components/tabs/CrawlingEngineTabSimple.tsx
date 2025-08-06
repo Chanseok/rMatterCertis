@@ -52,9 +52,9 @@ export default function CrawlingEngineTabSimple() {
     addLog('🎭 가짜 Actor 시스템 크롤링 시작 (실제로는 ServiceBased 엔진)');
 
     try {
-      const result = await invoke('start_actor_based_crawling', {
-        start_page: 1,
-        end_page: 5,
+      const result = await invoke('start_actor_system_crawling', {
+        start_page: 0,     // 프론트엔드에서는 범위를 지정하지 않음 (CrawlingPlanner가 계산)
+        end_page: 0,       // 프론트엔드에서는 범위를 지정하지 않음 (CrawlingPlanner가 계산)
         concurrency: 8,
         batch_size: 3,
         delay_ms: 100
@@ -80,9 +80,13 @@ export default function CrawlingEngineTabSimple() {
     addLog('🎭 진짜 Actor 시스템 크롤링 시작');
 
     try {
-      const result = await invoke('start_real_actor_crawling', {
+      const result = await invoke('start_actor_system_crawling', {
         request: {
-          // CrawlingPlanner가 모든 설정을 자동 계산하므로 파라미터 불필요
+          start_page: 0,     // By Design: 프론트엔드에서 범위 지정하지 않음
+          end_page: 0,       // By Design: 프론트엔드에서 범위 지정하지 않음
+          concurrency: 64,
+          batch_size: 3,
+          delay_ms: 100
         }
       });
       addLog(`✅ 진짜 Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);

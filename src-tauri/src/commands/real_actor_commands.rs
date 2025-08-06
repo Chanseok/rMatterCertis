@@ -18,12 +18,14 @@ use futures;
 
 // 내부 모듈 임포트
 use crate::new_architecture::actors::{ActorCommand, CrawlingConfig, ActorError};
-use crate::infrastructure::{ServiceBasedBatchCrawlingEngine, HttpClient, MatterDataExtractor};
+use crate::infrastructure::{HttpClient, MatterDataExtractor};
+use crate::infrastructure::service_based_crawling_engine::ServiceBasedBatchCrawlingEngine;
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::infrastructure::database_paths::get_main_database_url;
 use crate::domain::product::{Product, ProductDetail};
 use crate::application::AppState;
+use crate::domain::services::StatusChecker; // StatusChecker trait 임포트
 
 /// 🎭 실제 Actor 크롤링 요청
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,9 +36,12 @@ pub struct RealActorCrawlingRequest {
     pub override_strategy: Option<String>,
 }
 
-/// 🎯 Real Actor 크롤링 시작 (메인 엔트리포인트)
+/// 🎯 Legacy Service-Based 크롤링 시작 (참고용 보존)
+/// 
+/// 이 커맨드는 순수 ServiceBasedBatchCrawlingEngine만 사용하는 레거시 구현입니다.
+/// Actor 시스템 완성 후 제거 예정입니다.
 #[command]
-pub async fn start_real_actor_crawling(
+pub async fn start_legacy_service_based_crawling(
     app: AppHandle,
     request: RealActorCrawlingRequest
 ) -> Result<String, String> {
@@ -62,18 +67,115 @@ pub async fn start_real_actor_crawling(
     // 📡 Frontend 이벤트 채널 생성
     let (event_tx, _event_rx) = broadcast::channel::<FrontendEvent>(500);
     
-    // 📊 CrawlingPlanner로 계획 생성
-    info!("🔧 Creating basic crawling plan (simplified for Actor testing)");
+    // 📊 실제 크롤링 범위 계산
+    info!("🔧 Creating intelligent crawling plan using CrawlingPlanner");
     
-    // 간단한 배치 생성 (CrawlingPlanner 대신)
+    // 🎯 사이트 상태 확인 및 분석
+    let http_client_for_engine = HttpClient::create_from_global_config()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let data_extractor_for_engine = MatterDataExtractor::new()
+        .map_err(|e| format!("Failed to create data extractor: {}", e))?;
+    let product_repo_for_engine = Arc::new(IntegratedProductRepository::new(
+        app_state.database_pool.read().await.as_ref()
+            .ok_or("Database pool not initialized")?.clone()
+    ));
+    
+    let advanced_engine = ServiceBasedBatchCrawlingEngine::new(
+        http_client_for_engine,
+        data_extractor_for_engine,
+        product_repo_for_engine,
+        Arc::new(None), // No event emitter for this case
+        crate::infrastructure::service_based_crawling_engine::BatchCrawlingConfig {
+            start_page: 1,
+            end_page: 5,
+            concurrency: 4,
+            batch_size: 3,
+            delay_ms: 1000,
+            list_page_concurrency: 4,
+            product_detail_concurrency: 8,
+            retry_max: 3,
+            timeout_ms: 60000,
+            disable_intelligent_range: true,
+            cancellation_token: None,
+        },
+        session_id.clone(),
+        app_config.clone(),
+    );
+
+    // 🎯 실제 크롤링 플래너를 사용하여 최적 범위 계산
+    let db_pool = {
+        let pool_guard = app_state.database_pool.read().await;
+        pool_guard.as_ref()
+            .ok_or("Database pool not initialized")?
+            .clone()
+    };
+    
+    // StatusChecker 생성
+    let status_checker_impl = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::new(
+        (*http_client).clone(),
+        (*data_extractor).clone(),
+        app_config.clone(),
+    );
+    let status_checker = Arc::new(status_checker_impl);
+    
+    // 🔍 사이트 분석 수행
+    let site_status = status_checker.check_site_status().await
+        .map_err(|e| format!("Failed to check site status: {}", e))?;
+
+    info!("📊 Site analysis: {} pages, {} products", 
+          site_status.total_pages, site_status.estimated_products);
+    
+    // DatabaseAnalyzer 생성
+    let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
+    let db_analyzer = Arc::new(crate::infrastructure::crawling_service_impls::DatabaseAnalyzerImpl::new(
+        product_repo.clone(),
+    ));
+    
+    let crawling_planner = crate::new_architecture::services::crawling_planner::CrawlingPlanner::new(
+        status_checker.clone(),
+        db_analyzer.clone(),
+        Arc::new(crate::new_architecture::context::SystemConfig::default()),
+    );
+
+    // 🔍 다음 크롤링 범위 계산 (실제 사이트 정보 사용)
+    let (site_status, db_analysis) = crawling_planner.analyze_system_state().await
+        .map_err(|e| format!("Failed to analyze system state: {}", e))?;
+    
+    let (range_recommendation, processing_strategy) = crawling_planner
+        .determine_crawling_strategy(&site_status, &db_analysis)
+        .await
+        .map_err(|e| format!("Failed to determine crawling strategy: {}", e))?;
+
+    info!("📊 Calculated crawling strategy: {:?}", range_recommendation);
+    info!("⚙️ Processing strategy: batch_size={}, concurrency={}", 
+          processing_strategy.recommended_batch_size, processing_strategy.recommended_concurrency);
+
+    // � CrawlingRangeRecommendation을 실제 페이지 범위로 변환
+    let (start_page, end_page) = match range_recommendation.to_page_range(site_status.total_pages) {
+        Some((s, e)) => {
+            // 역순 크롤링으로 변환 (최신 페이지부터)
+            if s > e { (s, e) } else { (e, s) }
+        },
+        None => {
+            // 크롤링이 필요 없는 경우 최신 5페이지만 확인
+            let verification_pages = 5;
+            let start = site_status.total_pages;
+            let end = if start >= verification_pages { start - verification_pages + 1 } else { 1 };
+            (start, end)
+        }
+    };
+
+    info!("📊 Final page range: {} to {}", start_page, end_page);
+
+    // �🏗️ 계산된 범위로 배치 생성
     let batch_configs = vec![
         crate::new_architecture::actors::types::BatchConfig {
-            batch_size: 5,
+            batch_size: (start_page - end_page + 1).min(5), // 최대 5페이지씩
             concurrency_limit: max_concurrency,
             batch_delay_ms: 100,
             retry_on_failure: true,
-            start_page: Some(1),
-            end_page: Some(5),
+            start_page: Some(start_page),
+            end_page: Some(end_page),
         }
     ];
 

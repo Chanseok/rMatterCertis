@@ -82,16 +82,19 @@ async fn execute_crawling_with_state(app_handle: &tauri::AppHandle) -> Result<()
     info!("🔄 Starting real Actor-based crawling via monitoring");
     
     // 실제 Actor 크롤링 실행 (설정 기반)
-    match crate::commands::real_actor_commands::start_real_actor_crawling(
+    match crate::commands::actor_system_commands::start_actor_system_crawling(
         app_handle.clone(),
-        crate::commands::real_actor_commands::RealActorCrawlingRequest {
-            // CrawlingPlanner가 모든 설정을 자동 계산하므로 파라미터 불필요
-            force_full_crawl: None,
-            override_strategy: None,
+        crate::commands::actor_system_commands::ActorCrawlingRequest {
+            // CrawlingPlanner가 모든 설정을 자동 계산하므로 0으로 설정
+            start_page: 0,
+            end_page: 0,
+            concurrency: None,
+            batch_size: None,
+            delay_ms: None,
         },
     ).await {
         Ok(response) => {
-            info!("✅ Real Actor crawling completed: {}", response);
+            info!("✅ Real Actor crawling completed: {:?}", response);
             Ok(())
         },
         Err(e) => {

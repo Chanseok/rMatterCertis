@@ -299,8 +299,8 @@ pub fn run() {
             // 🔧 참조용: ServiceBased 크롤링 명령어 (구현 완료 후 삭제 예정)
             commands::service_based_reference::start_service_based_crawling_reference,
             
-            // 🎭 진짜 Actor 시스템 명령어
-            commands::real_actor_commands::start_real_actor_crawling,
+            // 🎭 Legacy Service-Based 크롤링 (참고용 보존, 추후 제거 예정)
+            commands::real_actor_commands::start_legacy_service_based_crawling,
             
             // Core v4.0 commands - keeping only the implemented ones
             commands::crawling_v4::init_crawling_engine,
@@ -357,8 +357,8 @@ pub fn run() {
             commands::simple_actor_test::test_new_arch_channels,
             commands::simple_actor_test::test_new_arch_performance,
             
-            // 🎭 NEW ARCHITECTURE: Actor-based crawling commands
-            commands::actor_system_commands::start_actor_based_crawling,
+            // 🎭 Actor System 크롤링 (메인 개발 브랜치)
+            commands::actor_system_commands::start_actor_system_crawling,
             commands::actor_system_commands::test_session_actor_basic,
             commands::actor_system_commands::test_actor_integration_basic,
             

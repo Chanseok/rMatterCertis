@@ -239,12 +239,11 @@ export const CrawlingEngineTab: Component = () => {
     addLog(`🎭 가짜 Actor 시스템 크롤링 시작 (실제로는 ServiceBased)`);
 
     try {
-      const result = await invoke('start_actor_based_crawling', {
+      const result = await invoke('start_actor_system_crawling', {
         request: {
-          // 가짜 Actor 시스템도 CrawlingPlanner가 범위를 계산하도록 함
-          // UI에서 범위를 계산할 필요 없음
-          start_page: 298,  // 임시 고정값 (실제로는 백엔드에서 무시됨)
-          end_page: 294,    // 임시 고정값 (실제로는 백엔드에서 무시됨)
+          // 🧠 CrawlingPlanner가 모든 범위를 자동 계산하므로 0으로 설정 (By Design)
+          start_page: 0,
+          end_page: 0,
           concurrency: 64,
           batch_size: 3,
           delay_ms: 100
@@ -268,10 +267,15 @@ export const CrawlingEngineTab: Component = () => {
     addLog('🎭 진짜 Actor 시스템 크롤링 시작 (CrawlingPlanner 설정 기반)');
 
     try {
-      const result = await invoke('start_real_actor_crawling', {
+      const result = await invoke('start_actor_system_crawling', {
         request: {
-          // CrawlingPlanner가 모든 설정을 자동 계산하므로 파라미터 불필요
+          // 🧠 CrawlingPlanner가 모든 설정을 자동 계산하므로 파라미터 불필요
           // 필요시 override 옵션만 전달
+          start_page: 0,     // By Design: 프론트엔드에서 범위 지정하지 않음
+          end_page: 0,       // By Design: 프론트엔드에서 범위 지정하지 않음  
+          concurrency: 64,
+          batch_size: 3,
+          delay_ms: 100
         }
       });
       addLog(`✅ 진짜 Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);

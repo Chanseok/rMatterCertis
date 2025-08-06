@@ -120,7 +120,7 @@ export const ActorSystemDashboard: Component = () => {
       setTestResult('🎭 가짜 Actor 시스템 배치 분할 테스트 시작...\n📦 설정: pages 300-303, batch_size=3\n🎯 예상: 2개 배치 ([300,301,302], [303])');
       
       // Tauri 커맨드 호출 (가짜 Actor - 실제로는 ServiceBased)
-      const result = await invoke('start_actor_based_crawling', { request });
+      const result = await invoke('start_actor_system_crawling', { request });
       
       console.log('✅ Actor system test completed:', result);
       

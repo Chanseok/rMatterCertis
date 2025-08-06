@@ -466,7 +466,7 @@ export const HierarchicalEventMonitor: Component = () => {
     try {
       console.log('🎭 가짜 Actor 시스템 테스트 시작');
       
-      const result = await invoke('start_actor_based_crawling', {
+      const result = await invoke('start_actor_system_crawling', {
         request: {
           start_page: 1,
           end_page: 3,
