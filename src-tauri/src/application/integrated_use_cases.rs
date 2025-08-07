@@ -269,7 +269,7 @@ impl IntegratedProductUseCases {
             manufacturer: None,
             model: None,
             device_type: None,
-            certification_id: None,
+            certificate_id: None,
             certification_date: None,
             software_version: None,
             hardware_version: None,

@@ -136,11 +136,11 @@ impl DataQualityAnalyzer {
             });
         }
 
-        if product.certification_id.as_ref().map_or(true, |s| s.trim().is_empty()) {
-            missing_fields.push("certification_id".to_string());
+        if product.certificate_id.as_ref().map_or(true, |s| s.trim().is_empty()) {
+            missing_fields.push("certificate_id".to_string());
             issues.push(QualityIssue {
                 severity: IssueSeverity::Warning,
-                field_name: "certification_id".to_string(),
+                field_name: "certificate_id".to_string(),
                 issue_type: IssueType::MissingRequired,
                 product_url: product.url.clone(),
             });
@@ -213,7 +213,7 @@ impl DataQualityAnalyzer {
                 let percentage = (*count as f32 / report.total_products as f32) * 100.0;
                 let impact = if matches!(field.as_str(), "manufacturer" | "model") {
                     "🔴 CRITICAL (blocks identification)"
-                } else if matches!(field.as_str(), "certification_id" | "device_type") {
+                } else if matches!(field.as_str(), "certificate_id" | "device_type") {
                     "🟡 HIGH (affects searchability)"
                 } else if matches!(field.as_str(), "vid" | "pid") {
                     "🟠 MEDIUM (Matter standard compliance)"
@@ -240,7 +240,7 @@ impl DataQualityAnalyzer {
             // Important fields analysis  
             println!("      🟡 IMPORTANT FIELDS:");
             self.analyze_field("device_type", &sample_product.device_type);
-            self.analyze_field("certification_id", &sample_product.certification_id);
+            self.analyze_field("certificate_id", &sample_product.certificate_id);
             
             // Matter-specific fields
             println!("      🟠 MATTER COMPLIANCE FIELDS:");

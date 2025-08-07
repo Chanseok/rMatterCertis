@@ -2713,7 +2713,7 @@ pub fn product_detail_to_product(detail: ProductDetail) -> Product {
         url: detail.url,
         manufacturer: detail.manufacturer,
         model: detail.model,
-        certificate_id: detail.certification_id,
+        certificate_id: detail.certificate_id,
         page_id: detail.page_id,
         index_in_page: detail.index_in_page,
         created_at: detail.created_at,
@@ -2735,7 +2735,7 @@ fn calculate_extracted_fields(detail: &crate::domain::product::ProductDetail) ->
     if detail.manufacturer.is_some() { count += 1; }
     if detail.model.is_some() { count += 1; }
     if detail.device_type.is_some() { count += 1; }
-    if detail.certification_id.is_some() { count += 1; }
+    if detail.certificate_id.is_some() { count += 1; }
     if detail.certification_date.is_some() { count += 1; }
     if detail.software_version.is_some() { count += 1; }
     if detail.hardware_version.is_some() { count += 1; }

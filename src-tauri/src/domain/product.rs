@@ -33,7 +33,7 @@ pub struct ProductDetail {
     pub manufacturer: Option<String>,
     pub model: Option<String>,
     pub device_type: Option<String>,
-    pub certification_id: Option<String>,
+    pub certificate_id: Option<String>,
     pub certification_date: Option<String>,
     pub software_version: Option<String>,
     pub hardware_version: Option<String>,
@@ -78,7 +78,7 @@ pub struct Vendor {
 pub struct ProductSearchCriteria {
     pub manufacturer: Option<String>,
     pub device_type: Option<String>,
-    pub certification_id: Option<String>,
+    pub certificate_id: Option<String>,
     pub specification_version: Option<String>,
     pub program_type: Option<String>,
     pub page: Option<i32>,

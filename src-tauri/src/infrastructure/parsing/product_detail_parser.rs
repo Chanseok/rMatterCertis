@@ -160,7 +160,7 @@ impl ContextualParser for ProductDetailParser {
             manufacturer,
             model: Some(model),
             device_type,
-            certification_id: certification_data.get("certification_id").cloned(),
+            certificate_id: certification_data.get("certification_id").cloned(),
             certification_date: certification_data.get("certification_date").cloned(),
             software_version: certification_data.get("software_version").cloned(),
             hardware_version: certification_data.get("hardware_version").cloned(),
