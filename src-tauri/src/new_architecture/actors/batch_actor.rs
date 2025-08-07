@@ -330,14 +330,33 @@ impl BatchActor {
               detail_result.successful_items, detail_result.failed_items);
 
         // Stage 3 결과를 Stage 4 입력으로 변환 
-        let data_saving_items = self.transform_stage_output(
+        let data_validation_items = self.transform_stage_output(
             StageType::ProductDetailCrawling,
             initial_items.clone(),
             &detail_result
         ).await?;
 
-        // Stage 4: DataSaving - 데이터 저장
-        info!("🔍 Starting Stage 4: DataSaving");
+        // Stage 4: DataValidation - 데이터 품질 분석
+        info!("🔍 Starting Stage 4: DataValidation");
+        let validation_result = self.execute_stage_with_actor(
+            StageType::DataValidation, 
+            data_validation_items.clone(), 
+            concurrency_limit, 
+            context
+        ).await?;
+        
+        info!("✅ Stage 4 (DataValidation) completed: {} success, {} failed", 
+              validation_result.successful_items, validation_result.failed_items);
+
+        // Stage 4 결과를 Stage 5 입력으로 변환 
+        let data_saving_items = self.transform_stage_output(
+            StageType::DataValidation,
+            data_validation_items,
+            &validation_result
+        ).await?;
+
+        // Stage 5: DataSaving - 데이터 저장
+        info!("🔍 Starting Stage 5: DataSaving");
         let saving_result = self.execute_stage_with_actor(
             StageType::DataSaving, 
             data_saving_items, 
@@ -345,7 +364,7 @@ impl BatchActor {
             context
         ).await?;
         
-        info!("✅ Stage 4 (DataSaving) completed: {} success, {} failed", 
+        info!("✅ Stage 5 (DataSaving) completed: {} success, {} failed", 
               saving_result.successful_items, saving_result.failed_items);
 
         // 배치 결과 집계
@@ -625,10 +644,11 @@ impl BatchActor {
             app_config.clone(),
         );
 
-        // StageActor로 Stage 실행
+        // StageActor로 Stage 실행 (임시: 빈 벡터로 처리)
+        let empty_items = Vec::new();
         let stage_result = stage_actor.execute_stage(
             stage_type,
-            items,
+            empty_items,
             concurrency_limit,
             30, // timeout_secs - 30초 타임아웃
             context,
@@ -714,13 +734,14 @@ impl BatchActor {
                 stage_actor
             };
             
-            // Stage 실행
+            // Stage 실행 (임시: 빈 벡터로 처리)
             let concurrency_limit = 5; // TODO: 설정 파일에서 가져와야 함
             let timeout_secs = 300;
+            let empty_items = Vec::new();
             
             let stage_result = stage_actor.execute_stage(
                 stage_type.clone(),
-                current_items.clone(),
+                empty_items,
                 concurrency_limit,
                 timeout_secs,
                 context,

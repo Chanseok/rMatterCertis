@@ -412,6 +412,18 @@ pub enum StageResultData {
         warnings: Vec<String>,
     },
     
+    /// 데이터 품질 분석 결과
+    QualityAnalysis {
+        total_analyzed: u32,
+        new_products: u32,
+        updated_products: u32,
+        duplicate_products: u32,
+        incomplete_products: u32,
+        quality_score: f64,
+        field_completeness_score: f64,
+        recommendations: Vec<String>,
+    },
+    
     /// 데이터 저장 결과
     SavingResult {
         saved_count: u32,
@@ -697,6 +709,12 @@ pub enum ActorError {
     
     #[error("리소스 부족: {0}")]
     ResourceExhausted(String),
+    
+    #[error("HTTP 요청 실패: {0}")]
+    RequestFailed(String),
+    
+    #[error("데이터 파싱 실패: {0}")]
+    ParsingFailed(String),
     
     #[error("레거시 서비스 오류: {0}")]
     LegacyServiceError(String),

@@ -346,7 +346,7 @@ impl MatterDataExtractor {
             manufacturer,
             model,
             device_type,
-            certification_id: None,
+            certificate_id: None,
             certification_date: None,
             software_version: None,
             hardware_version: None,
@@ -375,7 +375,7 @@ impl MatterDataExtractor {
         self.extract_from_detail_list(html, &mut detail)?;
 
         debug!("Extracted product detail: model={:?}, manufacturer={:?}, device_type={:?}, cert_id={:?}",
-               detail.model, detail.manufacturer, detail.device_type, detail.certification_id);
+               detail.model, detail.manufacturer, detail.device_type, detail.certificate_id);
 
         Ok(detail)
     }
@@ -548,7 +548,7 @@ impl MatterDataExtractor {
     /// Map table field to ProductDetail field (guide-based approach)
     fn map_table_field(&self, key: &str, value: &str, detail: &mut ProductDetail) {
         match key {
-            k if k.contains("certification id") => detail.certification_id = Some(value.to_string()),
+            k if k.contains("certification id") => detail.certificate_id = Some(value.to_string()),
             k if k.contains("certification date") => detail.certification_date = Some(value.to_string()),
             k if k.contains("manufacturer") || k.contains("company") => detail.manufacturer = Some(value.to_string()),
             k if k.contains("vid") => detail.vid = self.parse_numeric_id(value),
@@ -578,9 +578,9 @@ impl MatterDataExtractor {
                 // Extract certificate ID with regex pattern matching
                 if let Ok(regex) = regex::Regex::new(r"([A-Za-z0-9-]+\d+[-][A-Za-z0-9-]+)") {
                     if let Some(captures) = regex.captures(value) {
-                        detail.certification_id = Some(captures.get(1).unwrap().as_str().to_string());
+                        detail.certificate_id = Some(captures.get(1).unwrap().as_str().to_string());
                     } else {
-                        detail.certification_id = Some(value.to_string());
+                        detail.certificate_id = Some(value.to_string());
                     }
                 }
             },

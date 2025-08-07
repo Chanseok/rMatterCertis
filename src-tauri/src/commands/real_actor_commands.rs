@@ -620,7 +620,7 @@ fn convert_json_to_product_detail(json: &serde_json::Value) -> Result<ProductDet
         manufacturer,
         model,
         device_type,
-        certification_id,
+        certificate_id: certification_id,
         certification_date,
         software_version,
         hardware_version,

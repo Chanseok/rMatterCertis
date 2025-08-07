@@ -81,6 +81,60 @@ pub enum StageItem {
     Url(String),
     Product(ProductInfo),
     ValidationTarget(String),
+    // 새로운 파이프라인 타입들 추가
+    ProductList(ProductList),
+    ProductUrls(ProductUrls),
+    ProductDetails(ProductDetails),
+    ValidatedProducts(ValidatedProducts),
+}
+
+/// 제품 목록 (Stage 2 ListPageCrawling 결과)
+#[derive(Debug, Clone)]
+pub struct ProductList {
+    pub products: Vec<ProductInfo>,
+    pub page_number: u32,
+    pub total_count: Option<u32>,
+}
+
+/// 제품 URL 목록 (Stage 2 ProductUrlExtraction 결과)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProductUrls {
+    pub urls: Vec<String>,
+    pub batch_id: Option<String>,
+}
+
+/// 제품 상세 정보 목록 (Stage 3 ProductDetailCrawling 결과)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProductDetails {
+    pub products: Vec<crate::domain::product::ProductDetail>,
+    pub source_urls: Vec<String>,
+    pub extraction_stats: ExtractionStats,
+}
+
+/// 검증된 제품 목록 (Stage 4 DataValidation 결과)  
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidatedProducts {
+    pub products: Vec<crate::domain::product::ProductDetail>,
+    pub validation_report: Option<crate::new_architecture::services::data_quality_analyzer::DataQualityReport>,
+    pub storage_recommendation: StorageRecommendation,
+}
+
+/// 데이터 추출 통계
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractionStats {
+    pub attempted: u32,
+    pub successful: u32,
+    pub failed: u32,
+    pub empty_responses: u32,
+}
+
+/// 저장 권장도
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum StorageRecommendation {
+    HighlyRecommended,
+    ConditionallyRecommended,
+    ReviewRequired,
+    NotRecommended,
 }
 
 /// 배치 설정

@@ -212,7 +212,7 @@ impl IntegratedProductRepository {
             .bind(&detail.manufacturer)
             .bind(&detail.model)
             .bind(&detail.device_type)
-            .bind(&detail.certification_id)
+            .bind(&detail.certificate_id)
             .bind(&detail.certification_date)
             .bind(&detail.software_version)
             .bind(&detail.hardware_version)
@@ -340,7 +340,7 @@ impl IntegratedProductRepository {
                 manufacturer: row.get("manufacturer"),
                 model: row.get("model"),
                 device_type: row.get("device_type"),
-                certification_id: row.get("certificate_id"),
+                certificate_id: row.get("certificate_id"),
                 certification_date: row.get("certification_date"),
                 software_version: row.get("software_version"),
                 hardware_version: row.get("hardware_version"),
@@ -381,7 +381,7 @@ impl IntegratedProductRepository {
             bind_values.push(format!("%{}%", device_type));
         }
 
-        if let Some(certificate_id) = &criteria.certification_id {
+        if let Some(certificate_id) = &criteria.certificate_id {
             conditions.push("p.certificate_id LIKE ?");
             bind_values.push(format!("%{}%", certificate_id));
         }
@@ -474,7 +474,7 @@ impl IntegratedProductRepository {
                         manufacturer: row.get("manufacturer"),
                         model: row.get("model"),
                         device_type: row.get("pd_device_type"),
-                        certification_id: row.get("certificate_id"),
+                        certificate_id: row.get("certificate_id"),
                         certification_date: row.get("pd_certification_date"),
                         software_version: row.get("software_version"),
                         hardware_version: row.get("hardware_version"),
@@ -559,7 +559,7 @@ impl IntegratedProductRepository {
                 manufacturer: basic_product.manufacturer.clone(),
                 model: basic_product.model.clone(),
                 device_type: product_json["device_type"].as_str().map(|s| s.to_string()),
-                certification_id: basic_product.certificate_id.clone(),
+                certificate_id: basic_product.certificate_id.clone(),
                 certification_date: product_json["certification_date"].as_str().map(|s| s.to_string()),
                 software_version: product_json["software_version"].as_str().map(|s| s.to_string()),
                 hardware_version: product_json["hardware_version"].as_str().map(|s| s.to_string()),
