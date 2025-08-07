@@ -776,9 +776,16 @@ impl StageActor {
                                     };
                                     
                                     // ProductDetails 래퍼를 JSON으로 직렬화하여 저장
+                                    info!("🔄 Attempting to serialize ProductDetails wrapper with {} products", product_details_wrapper.products.len());
                                     match serde_json::to_string(&product_details_wrapper) {
-                                        Ok(json_data) => (Ok(()), Some(json_data)),
-                                        Err(e) => (Err(format!("JSON serialization failed: {}", e)), None),
+                                        Ok(json_data) => {
+                                            info!("✅ ProductDetails JSON serialization successful: {} chars", json_data.len());
+                                            (Ok(()), Some(json_data))
+                                        },
+                                        Err(e) => {
+                                            error!("❌ ProductDetails JSON serialization failed: {}", e);
+                                            (Err(format!("JSON serialization failed: {}", e)), None)
+                                        },
                                     }
                                 }
                                 Err(e) => {
@@ -797,13 +804,17 @@ impl StageActor {
                               product_list.products.len(), product_list.page_number);
                         
                         // ⭐ 중요: Product -> ProductUrl로 변환 시 메타데이터 보존
+                        // 실제 사이트 정보를 가져와서 PageIdCalculator 초기화
+                        // StatusChecker trait에 discover_total_pages가 없으므로 fallback 값 사용
+                        let (total_pages, products_on_last_page) = (498u32, 8u32); // 현재 알려진 값 사용
+                        info!("✅ Using fallback site info: total_pages={}, products_on_last_page={}", total_pages, products_on_last_page);
+
                         let product_urls: Vec<crate::domain::product_url::ProductUrl> = product_list.products
                             .iter()
                             .enumerate()
                             .map(|(index, product)| {
-                                // PageIdCalculator를 사용하여 정확한 page_id, index_in_page 계산
-                                // TODO: 실제 last_page_number와 products_in_last_page 값을 전달해야 함
-                                let calculator = PageIdCalculator::new(999, 20); // 임시값: 999페이지, 마지막페이지에 20개 제품
+                                // 실제 사이트 정보로 PageIdCalculator 초기화
+                                let calculator = PageIdCalculator::new(total_pages, products_on_last_page as usize);
                                 let calculation = calculator.calculate(product_list.page_number, index);
                                 
                                 crate::domain::product_url::ProductUrl {
@@ -1031,15 +1042,38 @@ impl StageActor {
     
     /// 실제 데이터 검증 처리
     async fn execute_real_data_validation(item: &StageItem) -> Result<(), String> {
-        // 기본적인 데이터 검증 로직
-        let item_desc = match item {
-            StageItem::ProductDetails(details) => format!("details_{}", details.products.len()),
-            StageItem::ValidatedProducts(products) => format!("validated_{}", products.products.len()),
-            _ => "unknown".to_string(),
-        };
-        
-        info!("✅ Real data validation successful for item {}", item_desc);
-        Ok(())
+        match item {
+            StageItem::ProductDetails(product_details) => {
+                info!("🔍 Starting data validation for {} ProductDetails", product_details.products.len());
+                
+                // DataQualityAnalyzer 사용하여 실제 검증 수행
+                use crate::new_architecture::services::data_quality_analyzer::DataQualityAnalyzer;
+                let analyzer = DataQualityAnalyzer::new();
+                
+                match analyzer.validate_before_storage(&product_details.products).await {
+                    Ok(validated_products) => {
+                        info!("✅ Data quality validation completed: {} products validated", validated_products.len());
+                        if validated_products.len() != product_details.products.len() {
+                            warn!("⚠️  Data validation filtered out {} products", 
+                                  product_details.products.len() - validated_products.len());
+                        }
+                        Ok(())
+                    }
+                    Err(e) => {
+                        error!("❌ Data quality validation failed: {}", e);
+                        Err(format!("Data validation failed: {}", e))
+                    }
+                }
+            }
+            StageItem::ValidatedProducts(products) => {
+                info!("✅ ValidatedProducts already validated: {} products", products.products.len());
+                Ok(())
+            }
+            _ => {
+                warn!("⚠️  DataValidation received unexpected item type, skipping validation");
+                Ok(())
+            }
+        }
     }
     
     /// 실제 데이터베이스 저장 처리

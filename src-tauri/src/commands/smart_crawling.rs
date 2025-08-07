@@ -24,7 +24,27 @@ pub struct CrawlingRangeResponse {
     pub site_info: SiteInfo,
     pub local_db_info: LocalDbInfo,
     pub crawling_info: CrawlingInfo,
+    pub batch_plan: BatchPlan, // CrawlingPlanner가 계산한 배치 계획 추가
     pub message: String,
+}
+
+/// CrawlingPlanner가 계산한 배치 계획 정보
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchPlan {
+    pub batch_size: u32,
+    pub total_batches: u32,
+    pub concurrency_limit: u32,
+    pub batches: Vec<BatchInfo>,
+    pub execution_strategy: String, // "concurrent", "sequential", "mixed"
+    pub estimated_duration_seconds: u32,
+}
+
+/// 개별 배치 정보
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchInfo {
+    pub batch_id: u32,
+    pub pages: Vec<u32>,
+    pub estimated_products: u32,
 }
 
 /// Site information
@@ -177,6 +197,9 @@ pub async fn calculate_crawling_range(
                 strategy: "partial".to_string(),
             };
             
+            // CrawlingPlanner 기반 배치 계획 생성
+            let batch_plan = create_batch_plan(start_page, end_page).await;
+            
             let message = format!("Next crawling range: pages {} to {} (total: {} pages)", 
                                 start_page, end_page, total_pages);
             info!("✅ {}", message);
@@ -188,6 +211,7 @@ pub async fn calculate_crawling_range(
                 site_info,
                 local_db_info,
                 crawling_info,
+                batch_plan,
                 message,
             }
         }
@@ -196,6 +220,16 @@ pub async fn calculate_crawling_range(
                 pages_to_crawl: Some(0),
                 estimated_new_products: Some(0),
                 strategy: "none".to_string(),
+            };
+            
+            // 빈 배치 계획
+            let batch_plan = BatchPlan {
+                batch_size: 0,
+                total_batches: 0,
+                concurrency_limit: 0,
+                batches: vec![],
+                execution_strategy: "none".to_string(),
+                estimated_duration_seconds: 0,
             };
             
             let message = "All products have been crawled - no more pages to process".to_string();
@@ -208,12 +242,54 @@ pub async fn calculate_crawling_range(
                 site_info,
                 local_db_info,
                 crawling_info,
+                batch_plan,
                 message,
             }
         }
     };
 
     Ok(response)
+}
+
+/// CrawlingPlanner 기반 배치 계획 생성
+async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
+    // 설정에서 batch_size 가져오기
+    let app_config = crate::infrastructure::config::AppConfig::for_development();
+    let batch_size = app_config.user.batch.batch_size;
+    let concurrency_limit = 5; // 기본값
+    
+    // 페이지 범위 계산
+    let pages: Vec<u32> = if start_page >= end_page {
+        (end_page..=start_page).rev().collect() // 역순 크롤링
+    } else {
+        (start_page..=end_page).collect()
+    };
+    
+    let total_pages = pages.len() as u32;
+    let total_batches = (total_pages + batch_size - 1) / batch_size; // 올림 계산
+    
+    // 배치 분할
+    let mut batches = Vec::new();
+    for (batch_id, chunk) in pages.chunks(batch_size as usize).enumerate() {
+        let batch_info = BatchInfo {
+            batch_id: batch_id as u32,
+            pages: chunk.to_vec(),
+            estimated_products: chunk.len() as u32 * 12, // 평균 12개/페이지
+        };
+        batches.push(batch_info);
+    }
+    
+    // 예상 실행 시간 (각 페이지당 2초 + 네트워크 지연)
+    let estimated_duration_seconds = total_pages * 2 + (total_batches * batch_size) / concurrency_limit;
+    
+    BatchPlan {
+        batch_size,
+        total_batches,
+        concurrency_limit,
+        batches,
+        execution_strategy: "concurrent".to_string(),
+        estimated_duration_seconds,
+    }
 }
 
 /// Get current crawling progress

@@ -319,7 +319,7 @@ impl BatchActor {
         info!("🔍 Starting Stage 3: ProductDetailCrawling");
         let detail_result = self.execute_stage_with_actor(
             StageType::ProductDetailCrawling, 
-            product_detail_items, 
+            product_detail_items.clone(), 
             concurrency_limit, 
             context
         ).await?;
@@ -330,7 +330,7 @@ impl BatchActor {
         // Stage 3 결과를 Stage 4 입력으로 변환 
         let data_validation_items = self.transform_stage_output(
             StageType::ProductDetailCrawling,
-            initial_items.clone(),
+            product_detail_items,
             &detail_result
         ).await?;
 
@@ -841,12 +841,29 @@ impl BatchActor {
                 let mut total_products_collected = 0;
                 
                 for (item_index, item) in input_items.iter().enumerate() {
+                    let item_type_name = match item {
+                        StageItem::Page(page) => format!("Page({})", page),
+                        StageItem::Url(url) => format!("Url({})", url),
+                        StageItem::Product(_) => "Product".to_string(),
+                        StageItem::ValidationTarget(_) => "ValidationTarget".to_string(),
+                        StageItem::ProductList(_) => "ProductList".to_string(),
+                        StageItem::ProductUrls(urls) => format!("ProductUrls({} URLs)", urls.urls.len()),
+                        StageItem::ProductDetails(details) => format!("ProductDetails({} products)", details.products.len()),
+                        StageItem::ValidatedProducts(_) => "ValidatedProducts".to_string(),
+                    };
+                    info!("🔍 Checking item {} of type: {}", item_index, item_type_name);
+                    
                     if let StageItem::ProductUrls(_product_urls) = item {
                         // stage_result에서 해당 아이템의 실행 결과 확인
+                        info!("🔍 Looking for stage result at index {}", item_index);
                         if let Some(stage_item_result) = stage_result.details.get(item_index) {
+                            info!("🔍 Found stage result: success={}, collected_data_present={}", 
+                                  stage_item_result.success, 
+                                  stage_item_result.collected_data.is_some());
                             if stage_item_result.success {
                                 // 실제 수집된 ProductDetails 데이터가 있는지 확인
                                 if let Some(collected_data_json) = &stage_item_result.collected_data {
+                                    info!("🔄 Attempting to parse ProductDetails JSON: {} chars", collected_data_json.len());
                                     // JSON에서 ProductDetails를 파싱
                                     match serde_json::from_str::<crate::new_architecture::channels::types::ProductDetails>(collected_data_json) {
                                         Ok(product_details_wrapper) => {
@@ -860,19 +877,21 @@ impl BatchActor {
                                             }
                                         }
                                         Err(e) => {
-                                            warn!("⚠️  Failed to parse ProductDetails from collected data: {}", e);
-                                            warn!("⚠️  Raw collected data: {}", collected_data_json);
+                                            error!("❌ Failed to parse ProductDetails from collected data: {}", e);
+                                            error!("📄 Raw collected data preview: {}", &collected_data_json[..collected_data_json.len().min(200)]);
                                         }
                                     }
                                 } else {
-                                    warn!("⚠️  ProductDetailCrawling succeeded but no collected data available");
+                                    warn!("⚠️  ProductDetailCrawling succeeded but no collected data available for item {}", item_index);
                                 }
                             } else {
-                                warn!("⚠️  ProductUrls failed in ProductDetailCrawling stage, skipping");
+                                warn!("⚠️  ProductUrls failed in ProductDetailCrawling stage, skipping item {}", item_index);
                             }
                         } else {
                             warn!("⚠️  No stage result found for ProductUrls item (item index {})", item_index);
                         }
+                    } else {
+                        info!("🔍 Skipping non-ProductUrls item at index {}", item_index);
                     }
                 }
                 

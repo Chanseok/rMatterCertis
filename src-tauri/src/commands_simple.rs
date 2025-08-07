@@ -47,8 +47,9 @@ pub async fn test_database_connection() -> Result<String, String> {
 
 #[tauri::command(async)]
 pub async fn get_database_info() -> Result<String, String> {
-    // Static database info since we're not using the managed state here
-    let info = "Database: SQLite\nLocation: ./data/matter_certis.db\nStatus: Available\nSchema: Integrated v3".to_string();
+    let database_url = get_main_database_url();
+    let location = database_url.strip_prefix("sqlite:").unwrap_or(&database_url);
+    let info = format!("Database: SQLite\nLocation: {}\nStatus: Available\nSchema: Integrated v3", location);
     
     Ok(info)
 }

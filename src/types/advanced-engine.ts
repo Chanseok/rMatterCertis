@@ -130,6 +130,19 @@ export interface CrawlingRangeResponse {
     estimated_new_products?: number;
     strategy: string; // "full", "partial", "none"
   };
+  // CrawlingPlanner가 계산한 배치 계획 추가
+  batch_plan: {
+    batch_size: number;
+    total_batches: number;
+    concurrency_limit: number;
+    batches: Array<{
+      batch_id: number;
+      pages: number[];
+      estimated_products: number;
+    }>;
+    execution_strategy: string; // "concurrent", "sequential", "mixed"
+    estimated_duration_seconds: number;
+  };
   message: string;
 }
 

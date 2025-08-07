@@ -682,16 +682,20 @@ async fn execute_real_batch_actor(
     
     // IntegratedProductRepository 생성
     use crate::infrastructure::DatabaseConnection;
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:matter_certis.db".to_string());
+    let database_url = crate::infrastructure::database_paths::get_main_database_url();
+    info!("🔧 Using database URL: {}", database_url);
     let db_connection = DatabaseConnection::new(&database_url).await
         .map_err(|e| format!("Failed to create DatabaseConnection: {}", e))?;
     let product_repo = Arc::new(IntegratedProductRepository::new(db_connection.pool().clone()));
-    info!("✅ IntegratedProductRepository created");
+    info!("✅ IntegratedProductRepository created with centralized database path");
     
     // AppConfig 생성
     let app_config = AppConfig::for_development();
     info!("✅ AppConfig loaded");
+    
+    // AppConfig에서 실제 batch_size 미리 추출 (app_config이 move되기 전에)
+    let user_batch_size = app_config.user.batch.batch_size;
+    info!("📊 Using batch_size from config: {}", user_batch_size);
     
     // BatchActor를 실제 서비스들과 함께 생성
     let mut batch_actor = BatchActor::new_with_services(
@@ -711,8 +715,9 @@ async fn execute_real_batch_actor(
     
     // ProcessBatch 명령 생성
     info!("🔧 Creating BatchConfig...");
+    
     let batch_config = BatchConfig {
-        batch_size: pages.len() as u32,
+        batch_size: user_batch_size,
         concurrency_limit: 5,
         batch_delay_ms: 1000,
         retry_on_failure: true,
@@ -726,7 +731,7 @@ async fn execute_real_batch_actor(
         batch_id: batch_id.to_string(),
         pages: pages.to_vec(),
         config: batch_config,
-        batch_size: pages.len() as u32,
+        batch_size: user_batch_size,
         concurrency_limit: context.config.performance.concurrency.max_concurrent_tasks,
         total_pages: pages.len() as u32,
         products_on_last_page: 12, // 기본값

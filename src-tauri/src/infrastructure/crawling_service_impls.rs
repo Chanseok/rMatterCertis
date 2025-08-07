@@ -2662,7 +2662,13 @@ impl CrawlingRangeCalculator {
         
         // page_id에서 실제 페이지 번호로 변환
         // page_id 0 = 485페이지, page_id 1 = 484페이지, ..., page_id 5 = 480페이지
-        let last_crawled_page = total_pages - max_page_id as u32;
+        // Overflow 방지: max_page_id가 total_pages보다 클 수 있음 (사이트 변경 등)
+        let last_crawled_page = if max_page_id as u32 >= total_pages {
+            warn!("⚠️  Database max_page_id ({}) >= total_pages ({}), assuming no valid crawled pages", max_page_id, total_pages);
+            0 // 유효한 크롤링된 페이지가 없다고 간주
+        } else {
+            total_pages - max_page_id as u32
+        };
         info!("📍 Last crawled page: {} (page_id: {})", last_crawled_page, max_page_id);
         
         // 다음 크롤링할 범위 계산

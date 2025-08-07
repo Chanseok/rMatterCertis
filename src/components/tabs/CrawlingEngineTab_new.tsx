@@ -4,6 +4,7 @@
  */
 
 import { Component, createSignal, onMount, Show, For } from 'solid-js';
+import { tauriApi } from '../../services/tauri-api';
 
 interface CrawlingConfig {
   start_page: number;
@@ -32,11 +33,11 @@ interface Product {
 }
 
 export const CrawlingEngineTab: Component = () => {
-  // State management
+  // State management - 초기값은 설정에서 로드
   const [config, setConfig] = createSignal<CrawlingConfig>({
     start_page: 1,
     end_page: 1,
-    batch_size: 3,
+    batch_size: 10, // 기본값은 10, 설정에서 로드됨
     concurrency: 1,
     delay_ms: 2000
   });
@@ -46,6 +47,23 @@ export const CrawlingEngineTab: Component = () => {
   const [recentProducts, setRecentProducts] = createSignal<Product[]>([]);
   const [logs, setLogs] = createSignal<string[]>([]);
   const [siteStatus, setSiteStatus] = createSignal<any>(null);
+
+  // 설정 로드 함수
+  const loadConfigFromBackend = async () => {
+    try {
+      const backendConfig = await tauriApi.getComprehensiveCrawlerConfig();
+      console.log('📋 Loaded config from backend:', backendConfig);
+      
+      setConfig(prev => ({
+        ...prev,
+        batch_size: backendConfig.batch_size,
+        concurrency: backendConfig.concurrency,
+        delay_ms: backendConfig.delay_ms
+      }));
+    } catch (error) {
+      console.error('❌ Failed to load config from backend:', error);
+    }
+  };
 
   // Mock Tauri API for development
   const invoke = async (command: string, args?: any) => {
@@ -102,6 +120,7 @@ export const CrawlingEngineTab: Component = () => {
 
   // Initialize and load data
   onMount(async () => {
+    await loadConfigFromBackend(); // 설정 먼저 로드
     await checkSiteStatus();
     await loadRecentProducts();
   });

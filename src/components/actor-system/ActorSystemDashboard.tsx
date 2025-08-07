@@ -5,6 +5,7 @@
 
 import { Component, createSignal, onMount, onCleanup, For } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
+import { tauriApi } from '../../services/tauri-api';
 import './ActorSystemDashboard.css';
 
 // Actor 시스템 상태 타입 정의
@@ -105,19 +106,25 @@ export const ActorSystemDashboard: Component = () => {
     try {
       console.log('🎭 Starting Actor system batch splitting test...');
       
+      // 실제 설정 파일에서 batch_size 가져오기
+      const backendConfig = await tauriApi.getComprehensiveCrawlerConfig();
+      const actualBatchSize = backendConfig.batch_size;
+      
+      console.log('📋 Loaded batch_size from config:', actualBatchSize);
+      
       // start_actor_based_crawling 커맨드를 사용하여 배치 분할 테스트 (가짜 Actor)
       const request = {
         start_page: 300,  // 300-303 범위
         end_page: 303,
         max_products_per_page: 10,
-        concurrent_requests: 3,  // batch_size=3에 해당
+        concurrent_requests: actualBatchSize,  // 설정 파일에서 가져온 실제 batch_size 사용
         request_timeout_seconds: 30
       };
       
       console.log('📦 Test configuration:', request);
-      console.log('🔍 Expected result: batch_size=3, page_range_limit=5 → 2 batches: [300,301,302], [303]');
+      console.log(`🔍 Expected result: batch_size=${actualBatchSize}, page_range_limit=5 → batches based on actual config`);
       
-      setTestResult('🎭 가짜 Actor 시스템 배치 분할 테스트 시작...\n📦 설정: pages 300-303, batch_size=3\n🎯 예상: 2개 배치 ([300,301,302], [303])');
+      setTestResult(`🎭 Actor 시스템 배치 분할 테스트 시작...\n📦 설정: pages 300-303, batch_size=${actualBatchSize}\n🎯 설정 파일에서 읽어온 실제 batch_size 사용`);
       
       // Tauri 커맨드 호출 (가짜 Actor - 실제로는 ServiceBased)
       const result = await invoke('start_actor_system_crawling', { request });
@@ -129,13 +136,12 @@ export const ActorSystemDashboard: Component = () => {
 
 📦 설정:
   - 페이지 범위: 300-303 (총 4페이지)
-  - batch_size: 3 (concurrent_requests)
+  - batch_size: ${actualBatchSize} (설정 파일에서 로드)
   - page_range_limit: 5
   
 🎯 예상 결과:
-  - 배치 1: [300, 301, 302] (3페이지)
-  - 배치 2: [303] (1페이지)
-  - 총 배치 수: 2개
+  - 실제 batch_size=${actualBatchSize}를 사용한 배치 분할
+  - 설정 파일 기반으로 동적 계산
 
 📊 실제 결과:
 ${JSON.stringify(result, null, 2)}

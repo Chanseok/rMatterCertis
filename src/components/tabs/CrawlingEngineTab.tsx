@@ -6,6 +6,7 @@
 import { Component, createSignal, onMount, onCleanup, Show, For } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { tauriApi } from '../../services/tauri-api';
 import type { 
   CrawlingProgressInfo, 
   SiteStatusInfo, 
@@ -67,11 +68,23 @@ export const CrawlingEngineTab: Component = () => {
   const [dbStats, setDbStats] = createSignal<DatabaseStats | null>(null);
   const [crawlingRange, setCrawlingRange] = createSignal<CrawlingRangeResponse | null>(null);
   const [showSiteStatus, setShowSiteStatus] = createSignal(true);
+  const [batchSize, setBatchSize] = createSignal(3); // 기본값 3, 실제 설정에서 로드됨
 
   // Log helper
   const addLog = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
     setLogs(prev => [...prev.slice(-19), `[${timestamp}] ${message}`]);
+  };
+
+  // 설정 로드
+  const loadConfig = async () => {
+    try {
+      const backendConfig = await tauriApi.getComprehensiveCrawlerConfig();
+      setBatchSize(backendConfig.batch_size);
+      addLog(`📋 설정 로드 완료: batch_size=${backendConfig.batch_size}`);
+    } catch (error) {
+      addLog(`❌ 설정 로드 실패: ${error}`);
+    }
   };
 
   // 크롤링 범위 계산
@@ -267,14 +280,19 @@ export const CrawlingEngineTab: Component = () => {
     addLog('🎭 진짜 Actor 시스템 크롤링 시작 (CrawlingPlanner 설정 기반)');
 
     try {
+      // 먼저 배치 플랜을 계산해서 설정값을 가져옵니다
+      const crawlingRange = await invoke('calculate_crawling_range') as CrawlingRangeResponse;
+      const configBasedBatchSize = crawlingRange?.batch_plan?.batch_size || 9; // 기본값 9
+      
+      addLog(`📋 설정 기반 배치 크기: ${configBasedBatchSize}`);
+      
       const result = await invoke('start_actor_system_crawling', {
         request: {
-          // 🧠 CrawlingPlanner가 모든 설정을 자동 계산하므로 파라미터 불필요
-          // 필요시 override 옵션만 전달
+          // 🧠 CrawlingPlanner 설정을 기반으로 한 값들 사용
           start_page: 0,     // By Design: 프론트엔드에서 범위 지정하지 않음
           end_page: 0,       // By Design: 프론트엔드에서 범위 지정하지 않음  
           concurrency: 64,
-          batch_size: 3,
+          batch_size: configBasedBatchSize, // 설정파일에서 읽은 값 사용
           delay_ms: 100
         }
       });
@@ -527,47 +545,44 @@ export const CrawlingEngineTab: Component = () => {
                       
                       {/* Batch Execution Plan */}
                       <div class="mt-3 pt-3 border-t border-purple-200">
-                        <strong>📦 배치 실행 계획 (batch_size=3):</strong><br/>
+                        <strong>📦 배치 실행 계획 (batch_size={crawlingRange()?.batch_plan?.batch_size || 'N/A'}):</strong><br/>
                         <div class="mt-1 space-y-1">
                           {(() => {
-                            const range = crawlingRange()?.range;
-                            if (!range) return null;
+                            const batchPlan = crawlingRange()?.batch_plan;
+                            if (!batchPlan || !batchPlan.batches.length) return null;
                             
-                            const [start, end] = range;
-                            const batches = [];
-                            
-                            // 역순 크롤링으로 배치 계산
-                            for (let i = start; i >= end; i -= 3) {
-                              const batchEnd = Math.max(i - 2, end);
-                              const batchPages = [];
-                              for (let j = i; j >= batchEnd; j--) {
-                                batchPages.push(j);
-                              }
-                              batches.push(batchPages);
-                            }
-                            
-                            return batches.map((batch, index) => (
+                            return batchPlan.batches.map((batch) => (
                               <div class="text-xs font-mono bg-purple-50 px-2 py-1 rounded">
-                                <span class="text-purple-700">Batch {index + 1}:</span> 
-                                <span class="text-purple-900"> [{batch.join(', ')}]</span>
-                                <span class="text-purple-600"> ({batch.length}페이지)</span>
+                                <span class="text-purple-700">Batch {batch.batch_id + 1}:</span> 
+                                <span class="text-purple-900"> [{batch.pages.join(', ')}]</span>
+                                <span class="text-purple-600"> ({batch.pages.length}페이지, ~{batch.estimated_products}제품)</span>
                               </div>
                             ));
                           })()}
                         </div>
-                        <div class="text-xs text-purple-600 mt-2">
-                          • 총 {(() => {
-                            const range = crawlingRange()?.range;
-                            if (!range) return 0;
-                            const [start, end] = range;
-                            return Math.ceil((start - end + 1) / 3);
-                          })()} 개 배치로 순차 실행
-                          • 각 배치 내에서는 병렬 처리 (concurrency=64)
-                        </div>
+                        
+                        {/* 추가 배치 계획 정보 */}
+                        {crawlingRange()?.batch_plan && (
+                          <div class="mt-2 text-xs text-purple-600">
+                            <div>• 총 배치 수: {crawlingRange()!.batch_plan.total_batches}개</div>
+                            <div>• 동시 실행 제한: {crawlingRange()!.batch_plan.concurrency_limit}</div>
+                            <div>• 실행 전략: {crawlingRange()!.batch_plan.execution_strategy}</div>
+                            <div>• 예상 소요 시간: {Math.floor(crawlingRange()!.batch_plan.estimated_duration_seconds / 60)}분</div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
                 </Show>
+
+                {/* Debug: Batch Plan Calculation Button */}
+                <button
+                  onClick={calculateCrawlingRange}
+                  class="w-full py-2 px-4 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-medium text-sm"
+                >
+                  🔍 크롤링 범위 및 배치 플랜 계산
+                  <span class="text-xs block mt-1">설정파일 batch_size=9로 배치 플랜을 생성합니다</span>
+                </button>
 
                 {/* Real Actor System Main Button */}
                 <button

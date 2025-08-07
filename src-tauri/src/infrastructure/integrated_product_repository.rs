@@ -183,6 +183,24 @@ impl IntegratedProductRepository {
             }
         } else {
             // 🆕 새로운 ProductDetail 삽입
+            // ✅ Foreign Key 제약 해결: products 테이블에 먼저 기본 정보 삽입
+            let basic_product = Product {
+                url: detail.url.clone(),
+                manufacturer: detail.manufacturer.clone(),
+                model: detail.model.clone(),
+                certificate_id: detail.certificate_id.clone(),
+                page_id: detail.page_id,
+                index_in_page: detail.index_in_page,
+                id: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            };
+            
+            // 기본 제품 정보 삽입 (UPSERT 방식)
+            self.create_or_update_product(&basic_product).await.map_err(|e| {
+                anyhow::anyhow!("Failed to create/update basic product info: {}", e)
+            })?;
+            
             // Generate ID if not already set
             let generated_id = detail.id.clone().unwrap_or_else(|| {
                 if let (Some(page_id), Some(index_in_page)) = (detail.page_id, detail.index_in_page) {
