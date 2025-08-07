@@ -322,6 +322,7 @@ pub enum StageItemType {
     ProductUrls { 
         urls: Vec<String>  // 간단히 URL 문자열 리스트로 변경
     },
+    SiteCheck,  // 사이트 상태 확인용 아이템 타입
 }
 
 /// 스테이지 결과

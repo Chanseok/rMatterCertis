@@ -14,8 +14,8 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
 use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
-use super::types::{ActorCommand, BatchConfig, StageType, StageItem, StageItemType, StageItemResult, StageResult, ActorError};
-use crate::new_architecture::channels::types::AppEvent;
+use super::types::{ActorCommand, BatchConfig, StageType, StageItemType, StageItemResult, StageResult, ActorError};
+use crate::new_architecture::channels::types::{AppEvent, StageItem, ProductUrls};  // enum 버전의 StageItem과 ProductUrls 사용
 use crate::new_architecture::context::{AppContext, EventEmitter};
 use crate::new_architecture::actors::StageActor;
 
@@ -255,28 +255,18 @@ impl BatchActor {
         info!("🎭 Using real StageActor-based processing for batch {}", batch_id);
         
         // 초기 Stage Items 생성 - 페이지 기반 아이템들
-        let mut initial_items: Vec<StageItem> = pages.iter().map(|&page_number| {
-            StageItem {
-                id: format!("page_{}", page_number),
-                item_type: StageItemType::Page { page_number },
-                url: format!("https://example.com/page/{}", page_number), // 실제 사이트 URL로 교체 필요
-                metadata: serde_json::json!({
-                    "page_number": page_number,
-                    "batch_id": batch_id
-                }).to_string(),
-            }
+        let initial_items: Vec<StageItem> = pages.iter().map(|&page_number| {
+            StageItem::Page(page_number)
         }).collect();
 
         // Stage 1: StatusCheck - 사이트 상태 확인
         info!("🔍 Starting Stage 1: StatusCheck");
+        // StatusCheck는 사이트 전체 상태를 확인하므로 특별한 URL 아이템으로 처리
+        let status_check_items = vec![StageItem::Url("https://csa-iot.org/csa-iot_products/".to_string())];
+        
         let status_check_result = self.execute_stage_with_actor(
             StageType::StatusCheck, 
-            vec![initial_items.get(0).cloned().unwrap_or_else(|| StageItem {
-                id: "status_check".to_string(),
-                item_type: StageItemType::Page { page_number: 1 },
-                url: "https://example.com".to_string(),
-                metadata: "{}".to_string(),
-            })], 
+            status_check_items, 
             concurrency_limit, 
             context
         ).await?;
@@ -284,11 +274,19 @@ impl BatchActor {
         info!("✅ Stage 1 (StatusCheck) completed: {} success, {} failed", 
               status_check_result.successful_items, status_check_result.failed_items);
 
-        // Stage 실패 시 파이프라인 중단 검증
-        if status_check_result.successful_items == 0 {
-            error!("❌ Stage 1 (StatusCheck) failed completely - aborting pipeline");
-            self.state = BatchState::Failed { error: "StatusCheck stage failed completely".to_string() };
-            return Err(BatchError::StageExecutionFailed("StatusCheck stage failed completely".to_string()));
+        // StatusCheck 스테이지는 사이트 접근성 확인이므로 특별 처리
+        // 성공적으로 완료되었다면 (처리된 아이템이 있다면) 다음 단계로 진행
+        if status_check_result.processed_items == 0 {
+            error!("❌ Stage 1 (StatusCheck) failed completely - no status check performed");
+            self.state = BatchState::Failed { error: "StatusCheck stage failed - no status check performed".to_string() };
+            return Err(BatchError::StageExecutionFailed("StatusCheck stage failed - no status check performed".to_string()));
+        }
+        
+        // StatusCheck에서 사이트 접근 불가능한 경우에만 중단
+        if status_check_result.failed_items > 0 && status_check_result.successful_items == 0 {
+            error!("❌ Stage 1 (StatusCheck) failed completely - site is not accessible");
+            self.state = BatchState::Failed { error: "StatusCheck stage failed - site is not accessible".to_string() };
+            return Err(BatchError::StageExecutionFailed("StatusCheck stage failed - site is not accessible".to_string()));
         }
 
         // Stage 2: ListPageCrawling - ProductURL 수집
@@ -670,7 +668,8 @@ impl BatchActor {
         pages: Vec<u32>,
         context: &AppContext,
     ) -> Result<StageResult, BatchError> {
-        use crate::new_architecture::actors::{StageActor, StageItem, StageItemType};
+        use crate::new_architecture::actors::{StageActor, StageItemType};
+        use crate::new_architecture::channels::types::StageItem;
         
         info!("� Starting Stage pipeline processing for {} pages", pages.len());
         
@@ -684,13 +683,7 @@ impl BatchActor {
         
         // 초기 입력: 페이지들을 StageItem으로 변환
         let mut current_items: Vec<StageItem> = pages.into_iter().map(|page| {
-            let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
-            StageItem {
-                id: format!("page_{}", page),
-                item_type: StageItemType::Page { page_number: page },
-                url,
-                metadata: format!("{{\"page\": {}, \"batch\": \"{}\"}}", page, self.actor_id),
-            }
+            StageItem::Page(page)
         }).collect();
         
         let mut final_result = StageResult {
@@ -788,7 +781,7 @@ impl BatchActor {
                 let mut total_urls_collected = 0;
                 
                 for (item_index, item) in input_items.iter().enumerate() {
-                    if let StageItemType::Page { page_number } = item.item_type {
+                    if let StageItem::Page(page_number) = item {
                         // stage_result에서 해당 페이지의 실행 결과 확인
                         if let Some(stage_item_result) = stage_result.details.get(item_index) {
                             if stage_item_result.success {
@@ -805,15 +798,12 @@ impl BatchActor {
                                             if !url_strings.is_empty() {
                                                 total_urls_collected += url_strings.len();
                                                 
-                                                transformed_items.push(StageItem {
-                                                    id: format!("product_urls_page_{}", page_number),
-                                                    item_type: StageItemType::ProductUrls { urls: url_strings.clone() },
-                                                    url: item.url.clone(),
-                                                    metadata: format!(
-                                                        "{{\"source_page\": {}, \"url_count\": {}, \"collected_from_real_crawling\": true}}", 
-                                                        page_number, url_strings.len()
-                                                    ),
-                                                });
+                                                let product_urls = ProductUrls {
+                                                    urls: url_strings.clone(),
+                                                    batch_id: Some(self.actor_id.clone()),
+                                                };
+                                                
+                                                transformed_items.push(StageItem::ProductUrls(product_urls));
                                                 
                                                 info!("✅ Extracted {} ProductURLs from page {}", url_strings.len(), page_number);
                                             } else {

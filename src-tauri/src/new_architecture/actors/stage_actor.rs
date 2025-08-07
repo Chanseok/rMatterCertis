@@ -929,7 +929,7 @@ impl StageActor {
         // StageItem을 StageItemType으로 변환하는 헬퍼 함수
         let item_type = match &item {
             StageItem::Page(page_num) => StageItemType::Page { page_number: *page_num },
-            StageItem::Url(url) => StageItemType::Url { url_type: "product_detail".to_string() },
+            StageItem::Url(url) => StageItemType::Url { url_type: "site_check".to_string() },
             StageItem::Product(product) => StageItemType::Url { url_type: "product".to_string() },
             StageItem::ProductList(_) => StageItemType::ProductUrls { urls: vec![] },
             StageItem::ProductUrls(urls) => StageItemType::ProductUrls { urls: urls.urls.clone() },
@@ -949,7 +949,7 @@ impl StageActor {
             Err(error) => {
                 let error_item_type = match &item {
                     StageItem::Page(page_num) => StageItemType::Page { page_number: *page_num },
-                    StageItem::Url(url) => StageItemType::Url { url_type: "product_detail".to_string() },
+                    StageItem::Url(url) => StageItemType::Url { url_type: "site_check".to_string() },
                     StageItem::Product(product) => StageItemType::Url { url_type: "product".to_string() },
                     StageItem::ProductList(_) => StageItemType::ProductUrls { urls: vec![] },
                     StageItem::ProductUrls(urls) => StageItemType::ProductUrls { urls: urls.urls.clone() },
