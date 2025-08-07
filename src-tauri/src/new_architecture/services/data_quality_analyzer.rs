@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use crate::domain::product::ProductDetail;
 use std::fmt;
+use tracing::{info, warn, error};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataQualityReport {
@@ -181,34 +182,34 @@ impl DataQualityAnalyzer {
         
         // 🚨 CRITICAL: 데이터 수집 실패 진단
         if report.total_products == 0 {
-            println!("🚨 CRITICAL DATA COLLECTION FAILURE:");
-            println!("  📊 Total products analyzed: {}", report.total_products);
-            println!("  💥 ROOT CAUSE: No product data was extracted from the pipeline");
-            println!("  🔍 LIKELY ISSUES:");
-            println!("    1. 🔗 Data pipeline break: Stage 3 (ProductDetailCrawling) → Stage 4 (DataValidation)");
-            println!("    2. 📦 Wrong item type received: Expected ProductUrls, got Page type");
-            println!("    3. 🌐 Network/parsing issues during product detail extraction");
-            println!("    4. 🏗️ Stage transformation logic not working properly");
-            println!("  🛠️  IMMEDIATE ACTIONS NEEDED:");
-            println!("    - Check if Stage 3 successfully collected ProductDetails");
-            println!("    - Verify data flow between stages");
-            println!("    - Fix stage item type transformation (Page → ProductUrls)");
-            println!("  💾 Storage Recommendation: 🔴 NOT RECOMMENDED - No data to store");
+            error!("🚨 CRITICAL DATA COLLECTION FAILURE:");
+            error!("  📊 Total products analyzed: {}", report.total_products);
+            error!("  💥 ROOT CAUSE: No product data was extracted from the pipeline");
+            error!("  🔍 LIKELY ISSUES:");
+            error!("    1. 🔗 Data pipeline break: Stage 3 (ProductDetailCrawling) → Stage 4 (DataValidation)");
+            error!("    2. 📦 Wrong item type received: Expected ProductUrls, got Page type");
+            error!("    3. 🌐 Network/parsing issues during product detail extraction");
+            error!("    4. 🏗️ Stage transformation logic not working properly");
+            error!("  🛠️  IMMEDIATE ACTIONS NEEDED:");
+            error!("    - Check if Stage 3 successfully collected ProductDetails");
+            error!("    - Verify data flow between stages");
+            error!("    - Fix stage item type transformation (Page → ProductUrls)");
+            error!("  💾 Storage Recommendation: 🔴 NOT RECOMMENDED - No data to store");
             return Ok(Vec::new());
         }
 
         // Log quality report for actual data
-        println!("🔍 Data Quality Analysis Report:");
-        println!("  📊 Total products analyzed: {}", report.total_products);
-        println!("  ✅ Complete products: {} ({:.1}%)", 
+        info!("🔍 Data Quality Analysis Report:");
+        info!("  📊 Total products analyzed: {}", report.total_products);
+        info!("  ✅ Complete products: {} ({:.1}%)", 
                  report.complete_products, 
                  if report.total_products > 0 { (report.complete_products as f32 / report.total_products as f32) * 100.0 } else { 0.0 });
-        println!("  ⚠️  Incomplete products: {}", report.incomplete_products);
-        println!("  📈 Overall quality score: {:.2}%", report.quality_score);
+        info!("  ⚠️  Incomplete products: {}", report.incomplete_products);
+        info!("  📈 Overall quality score: {:.2}%", report.quality_score);
         
         // 🔍 상세 필드 분석 및 로컬 DB 비교
         if !report.missing_fields.is_empty() {
-            println!("  📋 Missing field frequency (compared to ideal product structure):");
+            info!("  📋 Missing field frequency (compared to ideal product structure):");
             for (field, count) in &report.missing_fields {
                 let percentage = (*count as f32 / report.total_products as f32) * 100.0;
                 let impact = if matches!(field.as_str(), "manufacturer" | "model") {
@@ -220,48 +221,48 @@ impl DataQualityAnalyzer {
                 } else {
                     "🟢 LOW (optional metadata)"
                 };
-                println!("    - {}: {} products ({:.1}%) {}", 
+                info!("    - {}: {} products ({:.1}%) {}", 
                          field, count, percentage, impact);
             }
         }
         
         // 🔍 특정 제품 사례 상세 분석
         if !products.is_empty() {
-            println!("  🔬 DETAILED EXAMPLE ANALYSIS:");
+            info!("  🔬 DETAILED EXAMPLE ANALYSIS:");
             let sample_product = &products[0];
-            println!("    📄 Sample Product: {}", sample_product.url.split('/').last().unwrap_or("Unknown"));
-            println!("    🏷️  Field Completeness Analysis:");
+            info!("    📄 Sample Product: {}", sample_product.url.split('/').last().unwrap_or("Unknown"));
+            info!("    🏷️  Field Completeness Analysis:");
             
             // Critical fields analysis
-            println!("      🔴 CRITICAL FIELDS:");
+            info!("      🔴 CRITICAL FIELDS:");
             self.analyze_field("manufacturer", &sample_product.manufacturer);
             self.analyze_field("model", &sample_product.model);
             
             // Important fields analysis  
-            println!("      🟡 IMPORTANT FIELDS:");
+            info!("      🟡 IMPORTANT FIELDS:");
             self.analyze_field("device_type", &sample_product.device_type);
             self.analyze_field("certificate_id", &sample_product.certificate_id);
             
             // Matter-specific fields
-            println!("      🟠 MATTER COMPLIANCE FIELDS:");
-            println!("        - vid: {} {}", 
+            info!("      🟠 MATTER COMPLIANCE FIELDS:");
+            info!("        - vid: {} {}", 
                 if sample_product.vid.is_some() { "✅ Present" } else { "❌ Missing" },
                 sample_product.vid.map_or("(required for Matter device identification)".to_string(), |v| format!("(value: {})", v))
             );
-            println!("        - pid: {} {}", 
+            info!("        - pid: {} {}", 
                 if sample_product.pid.is_some() { "✅ Present" } else { "❌ Missing" },
                 sample_product.pid.map_or("(required for Matter device identification)".to_string(), |v| format!("(value: {})", v))
             );
             
             // Additional metadata
-            println!("      🟢 OPTIONAL METADATA:");
+            info!("      🟢 OPTIONAL METADATA:");
             self.analyze_field("specification_version", &sample_product.specification_version);
             self.analyze_field("transport_interface", &sample_product.transport_interface);
             self.analyze_field("certification_date", &sample_product.certification_date);
         }
         
         if !report.issues.is_empty() {
-            println!("  🚨 Quality issues by severity:");
+            warn!("  🚨 Quality issues by severity:");
             let mut critical_count = 0;
             let mut warning_count = 0;
             let mut info_count = 0;
@@ -275,19 +276,19 @@ impl DataQualityAnalyzer {
             }
             
             if critical_count > 0 {
-                println!("    🔴 Critical issues: {} (blocks database storage)", critical_count);
+                error!("    🔴 Critical issues: {} (blocks database storage)", critical_count);
             }
             if warning_count > 0 {
-                println!("    🟡 Warning issues: {} (reduces data usability)", warning_count);
+                warn!("    🟡 Warning issues: {} (reduces data usability)", warning_count);
             }
             if info_count > 0 {
-                println!("    🔵 Info issues: {} (minor concerns)", info_count);
+                info!("    🔵 Info issues: {} (minor concerns)", info_count);
             }
             
             // Show first few issues as examples
-            println!("  📝 Sample issues (first 5):");
+            info!("  📝 Sample issues (first 5):");
             for (i, issue) in report.issues.iter().take(5).enumerate() {
-                println!("    {}. {} {} in '{}' for product: {}", 
+                warn!("    {}. {} {} in '{}' for product: {}", 
                     i + 1,
                     match issue.severity {
                         IssueSeverity::Critical => "🔴 CRITICAL",
@@ -305,7 +306,7 @@ impl DataQualityAnalyzer {
                 );
             }
             if report.issues.len() > 5 {
-                println!("    ... and {} more issues", report.issues.len() - 5);
+                info!("    ... and {} more issues", report.issues.len() - 5);
             }
         }
         
@@ -318,7 +319,7 @@ impl DataQualityAnalyzer {
             "🔴 NOT RECOMMENDED - Low quality data, fix critical issues first"
         };
         
-        println!("  💾 Storage Recommendation: {}", storage_recommendation);
+        info!("  💾 Storage Recommendation: {}", storage_recommendation);
         
         // Filter out products with critical issues if needed
         // For now, return all products but log the assessment
@@ -329,7 +330,7 @@ impl DataQualityAnalyzer {
     fn analyze_field(&self, field_name: &str, field_value: &Option<String>) {
         match field_value {
             Some(value) if !value.trim().is_empty() => {
-                println!("        - {}: ✅ Present ('{}')", field_name, 
+                info!("        - {}: ✅ Present ('{}')", field_name, 
                     if value.len() > 50 { 
                         format!("{}...", &value[..47]) 
                     } else { 
@@ -338,10 +339,10 @@ impl DataQualityAnalyzer {
                 );
             }
             Some(value) if value.trim().is_empty() => {
-                println!("        - {}: ⚠️  Empty (present but no content)", field_name);
+                warn!("        - {}: ⚠️  Empty (present but no content)", field_name);
             }
             Some(value) => {
-                println!("        - {}: ✅ Present ('{}')", field_name, 
+                info!("        - {}: ✅ Present ('{}')", field_name, 
                     if value.len() > 50 { 
                         format!("{}...", &value[..47]) 
                     } else { 
@@ -350,7 +351,7 @@ impl DataQualityAnalyzer {
                 );
             }
             None => {
-                println!("        - {}: ❌ Missing (critical for product identification)", field_name);
+                warn!("        - {}: ❌ Missing (critical for product identification)", field_name);
             }
         }
     }

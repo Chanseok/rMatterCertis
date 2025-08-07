@@ -834,10 +834,61 @@ impl BatchActor {
                 Ok(transformed_items)
             }
             StageType::ProductDetailCrawling => {
-                // ProductDetailCrawling → DataSaving: ProductUrls 아이템 그대로 전달
-                // (실제로는 ProductDetail 데이터로 변환되어야 하지만, 현재는 간소화)
+                // ProductDetailCrawling → DataValidation: collected_data에서 ProductDetails 추출
+                info!("🔄 ProductDetailCrawling → DataValidation: extracting ProductDetails from collected data");
+                
+                let mut transformed_items = Vec::new();
+                let mut total_products_collected = 0;
+                
+                for (item_index, item) in input_items.iter().enumerate() {
+                    if let StageItem::ProductUrls(_product_urls) = item {
+                        // stage_result에서 해당 아이템의 실행 결과 확인
+                        if let Some(stage_item_result) = stage_result.details.get(item_index) {
+                            if stage_item_result.success {
+                                // 실제 수집된 ProductDetails 데이터가 있는지 확인
+                                if let Some(collected_data_json) = &stage_item_result.collected_data {
+                                    // JSON에서 ProductDetails를 파싱
+                                    match serde_json::from_str::<crate::new_architecture::channels::types::ProductDetails>(collected_data_json) {
+                                        Ok(product_details_wrapper) => {
+                                            if !product_details_wrapper.products.is_empty() {
+                                                let product_count = product_details_wrapper.products.len();
+                                                total_products_collected += product_count;
+                                                transformed_items.push(StageItem::ProductDetails(product_details_wrapper));
+                                                info!("✅ Extracted {} ProductDetails from ProductUrls", product_count);
+                                            } else {
+                                                warn!("⚠️  ProductDetailCrawling succeeded but no ProductDetails were collected");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!("⚠️  Failed to parse ProductDetails from collected data: {}", e);
+                                            warn!("⚠️  Raw collected data: {}", collected_data_json);
+                                        }
+                                    }
+                                } else {
+                                    warn!("⚠️  ProductDetailCrawling succeeded but no collected data available");
+                                }
+                            } else {
+                                warn!("⚠️  ProductUrls failed in ProductDetailCrawling stage, skipping");
+                            }
+                        } else {
+                            warn!("⚠️  No stage result found for ProductUrls item (item index {})", item_index);
+                        }
+                    }
+                }
+                
+                info!("✅ Transformed {} ProductUrls items to {} ProductDetails items ({} total products)", 
+                      input_items.len(), transformed_items.len(), total_products_collected);
+                
+                if transformed_items.is_empty() {
+                    warn!("⚠️  No ProductDetails were extracted - all ProductUrls may have failed");
+                }
+                
+                Ok(transformed_items)
+            }
+            StageType::DataValidation => {
+                // DataValidation → DataSaving: ProductDetails 아이템 그대로 전달  
                 let item_count = input_items.len();
-                info!("🔄 ProductDetailCrawling → DataSaving: passing {} ProductUrls items", item_count);
+                info!("🔄 DataValidation → DataSaving: passing {} ProductDetails items", item_count);
                 Ok(input_items)
             }
             StageType::DataSaving => {
