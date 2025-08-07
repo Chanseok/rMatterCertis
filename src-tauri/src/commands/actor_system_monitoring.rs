@@ -1,5 +1,4 @@
-use serde::{Deserialize, Serialize};
-use tracing::{info, warn, error};
+use tracing::{info, error};
 use tauri::Emitter;
 use tauri::State;
 use crate::application::AppState;

@@ -6,7 +6,6 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use tokio::sync::{mpsc, oneshot, broadcast, watch};
-use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::new_architecture::SystemConfig;

@@ -18,14 +18,14 @@ pub mod events;
 // 🔄 Phase 4: 타입 동기화 및 ts-rs 통합 (새로 추가)
 pub mod ts_gen;
 
-// Re-exports for compatibility
-pub use context::*;
-pub use integrated_context::*;
-pub use system_config::*; // 🔧 SystemConfig 중앙 export
-pub use channels::*;
-pub use actors::*;
-pub use actor_system::*;
-pub use actor_event_bridge::*; // Actor Event Bridge export
-pub use services::*;
-pub use config::*;
+// Re-exports for compatibility - 명시적 export로 ambiguous glob 문제 해결
+pub use context::{AppContext};
+pub use integrated_context::{IntegratedContext};
+ // 🔧 SystemConfig 중앙 export
+pub use channels::types::{AppEvent, StageItem as ChannelStageItem};
+pub use actors::{SessionActor, BatchActor, StageActor, ActorCommand, ActorError, BatchConfig, StageType, StageResult};
+pub use actor_system::{ActorSystem};
+pub use actor_event_bridge::{ActorEventBridge}; // Actor Event Bridge export
+pub use services::{CrawlingPlanner, PerformanceOptimizer, RealCrawlingIntegration};
+pub use config::{SystemConfig};
 pub use events::*;

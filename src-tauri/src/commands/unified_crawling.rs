@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
-use tracing::{info, error};
+use tauri::AppHandle;
+use tracing::info;
 use chrono;
 
 /// 통합 크롤링 요청 구조체

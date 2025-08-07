@@ -1,13 +1,13 @@
 use tauri::State;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-use tracing::{info, warn};
+use tracing::info;
 use std::sync::Arc;
 
 use crate::infrastructure::config::ConfigManager;
 use crate::application::AppState;
 use crate::infrastructure::crawling_service_impls::StatusCheckerImpl;
-use crate::infrastructure::{DatabaseConnection, HttpClient, MatterDataExtractor};
+use crate::infrastructure::{HttpClient, MatterDataExtractor};
 use crate::new_architecture::services::crawling_planner::CrawlingPlanner;
 use crate::new_architecture::context::SystemConfig;
 use crate::domain::services::{StatusChecker, DatabaseAnalyzer};

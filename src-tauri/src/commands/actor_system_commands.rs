@@ -7,23 +7,21 @@ use crate::new_architecture::context::{SystemConfig, AppContext};
 use crate::new_architecture::channels::types::AppEvent;
 use crate::new_architecture::channels::types::ActorCommand; // 올바른 ActorCommand 사용
 use crate::new_architecture::actors::types::{CrawlingConfig, BatchConfig, ExecutionPlan, PageRange, SessionSummary};
-use crate::new_architecture::actors::traits::Actor;
-use crate::new_architecture::actor_event_bridge::{ActorEventBridge, start_actor_event_bridge};
+use crate::new_architecture::actor_event_bridge::start_actor_event_bridge;
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::service_based_crawling_engine::{ServiceBasedBatchCrawlingEngine, BatchCrawlingConfig};
 use crate::infrastructure::simple_http_client::HttpClient;
 use crate::infrastructure::html_parser::MatterDataExtractor;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::application::AppState;
-use crate::domain::services::{StatusChecker, DatabaseAnalyzer}; // 실제 CrawlingPlanner에서 사용
+ // 실제 CrawlingPlanner에서 사용
 use crate::infrastructure::config::ConfigManager; // 설정 관리자 추가
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, Emitter};
+use tauri::{AppHandle, Manager};
 use tokio::sync::{mpsc, broadcast, watch};
 use tokio::time::Duration;
 use tracing::{info, error};
-use sqlx::SqlitePool;
 use chrono::Utc;
 
 /// Actor System State managed by Tauri

@@ -10,8 +10,7 @@ use tracing::info;
 
 use crate::domain::services::{StatusChecker, DatabaseAnalyzer};
 use crate::domain::services::crawling_services::{
-    DatabaseAnalysis, ProcessingStrategy, DuplicateAnalysis, 
-    FieldAnalysis, CrawlingRangeRecommendation
+    DatabaseAnalysis, ProcessingStrategy, CrawlingRangeRecommendation
 };
 use super::super::{
     SystemConfig,

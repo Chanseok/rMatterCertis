@@ -25,7 +25,6 @@ use crate::domain::services::crawling_services::{
 };
 use crate::domain::product::{Product, ProductDetail};
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
-use crate::new_architecture::config::SystemConfig as NewSystemConfig;
 use crate::new_architecture::services::crawling_planner::CrawlingPlanner;
 use crate::infrastructure::config::{AppConfig, CrawlingConfig};
 use crate::infrastructure::config::utils as config_utils;
@@ -137,7 +136,7 @@ impl StatusChecker for StatusCheckerImpl {
         // 접근성 테스트
         let access_test = {
             // Use configured HttpClient instead of hardcoded default
-            let mut client = self.create_configured_http_client()?;
+            let client = self.create_configured_http_client()?;
             let result = self.http_client.fetch_response(&url).await?.text().await;
             result
         };
@@ -212,12 +211,12 @@ impl StatusChecker for StatusCheckerImpl {
             product_repo: self.product_repo.clone(),
         });
         // 🔧 올바른 DatabaseAnalyzer 사용: StatusCheckerImpl 대신 DatabaseAnalyzerImpl 사용
-        let db_analyzer_arc = if let Some(ref product_repo) = self.product_repo {
-            Arc::new(DatabaseAnalyzerImpl::new(product_repo.clone())) as Arc<dyn DatabaseAnalyzer>
+        let db_analyzer_arc: Arc<dyn DatabaseAnalyzer> = if let Some(ref product_repo) = self.product_repo {
+            Arc::new(DatabaseAnalyzerImpl::new(product_repo.clone()))
         } else {
-            status_checker_arc.clone() as Arc<dyn DatabaseAnalyzer> // fallback
+            status_checker_arc.clone() // fallback
         };
-        let status_checker_for_planner = status_checker_arc.clone() as Arc<dyn StatusChecker>;
+        let status_checker_for_planner: Arc<dyn StatusChecker> = status_checker_arc.clone();
         
         let crawling_planner = CrawlingPlanner::new(
             status_checker_for_planner,
@@ -449,7 +448,7 @@ impl StatusCheckerImpl {
             let test_url = config_utils::matter_products_page_url_simple(current_page);
             
             // Use configured HttpClient
-            let mut client = self.create_configured_http_client()?;
+            let client = self.create_configured_http_client()?;
             match self.http_client.fetch_response(&test_url).await {
                 Ok(response) => {
                     match response.text().await {
@@ -504,7 +503,7 @@ impl StatusCheckerImpl {
             info!("🔍 Checking page {} (consecutive empty: {})", current_page, consecutive_empty_pages);
             
             // Use configured HttpClient
-            let mut client = self.create_configured_http_client()?;
+            let client = self.create_configured_http_client()?;
             match self.http_client.fetch_response(&test_url).await {
                 Ok(response) => match response.text().await {
                     Ok(html) => {
@@ -779,7 +778,7 @@ impl StatusCheckerImpl {
         let test_url = config_utils::matter_products_page_url_simple(page);
         
         // Use configured HttpClient
-        let mut client = self.create_configured_http_client()?;
+        let client = self.create_configured_http_client()?;
         match self.http_client.fetch_response(&test_url).await {
             Ok(response) => {
                 match response.text().await {
@@ -1117,7 +1116,7 @@ impl StatusCheckerImpl {
         
         let (product_count, max_pagination_page, active_page, has_products) = {
             // Use consistent HttpClient
-            let mut client = self.create_configured_http_client()?;
+            let client = self.create_configured_http_client()?;
             let response = self.http_client.fetch_response(&url).await?;
             let html_string: String = response.text().await?;
             

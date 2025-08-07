@@ -17,13 +17,13 @@ use chrono::Utc;
 use futures;
 
 // 내부 모듈 임포트
-use crate::new_architecture::actors::{ActorCommand, CrawlingConfig, ActorError};
+use crate::new_architecture::actors::ActorError;
 use crate::infrastructure::{HttpClient, MatterDataExtractor};
 use crate::infrastructure::service_based_crawling_engine::ServiceBasedBatchCrawlingEngine;
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::infrastructure::database_paths::get_main_database_url;
-use crate::domain::product::{Product, ProductDetail};
+use crate::domain::product::ProductDetail;
 use crate::application::AppState;
 use crate::domain::services::StatusChecker; // StatusChecker trait 임포트
 

@@ -4,9 +4,8 @@
 use std::sync::Arc;
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::{RwLock, broadcast};
-use tokio::time::{interval, Duration};
-use tracing::{info, warn, error, debug};
-use chrono::{DateTime, Utc};
+use tracing::{info, warn};
+use chrono::Utc;
 use uuid::Uuid;
 
 use crate::types::dashboard_types::*;

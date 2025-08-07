@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::RwLock;
-use tracing::{info, error};
+use tracing::info;
 
 use crate::new_architecture::services::performance_optimizer::{
     CrawlingPerformanceOptimizer, CrawlingPerformanceMetrics, OptimizationRecommendation

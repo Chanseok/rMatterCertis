@@ -233,7 +233,7 @@ impl TaskProductData {
             self.product_id.clone()
         };
             
-        let mut product_data = ProductData {
+        let product_data = ProductData {
             product_id,
             name: self.name,
             category: self.category,

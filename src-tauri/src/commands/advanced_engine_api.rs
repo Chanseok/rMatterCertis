@@ -7,12 +7,11 @@ use uuid::Uuid;
 use std::sync::Arc;
 
 use crate::types::frontend_api::*;
-use crate::commands::crawling_v4::CrawlingEngineState;
 use crate::application::shared_state::SharedStateCache;
 use crate::application::state::AppState;
 use crate::infrastructure::{
     AdvancedBatchCrawlingEngine, HttpClient, MatterDataExtractor, 
-    IntegratedProductRepository, DatabaseConnection
+    IntegratedProductRepository
 };
 use crate::infrastructure::service_based_crawling_engine::BatchCrawlingConfig;
 use crate::application::EventEmitter;

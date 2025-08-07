@@ -7,16 +7,15 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::{mpsc, Semaphore};
 use tracing::{info, warn, error, debug};
-use uuid::Uuid;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 
 use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
-use super::types::{ActorCommand, BatchConfig, StageType, StageItemType, StageItemResult, StageResult, ActorError};
+use super::types::{ActorCommand, BatchConfig, StageType, StageResult, ActorError};
 use crate::new_architecture::channels::types::{AppEvent, StageItem, ProductUrls};  // enum 버전의 StageItem과 ProductUrls 사용
-use crate::new_architecture::context::{AppContext, EventEmitter};
+use crate::new_architecture::context::AppContext;
 use crate::new_architecture::actors::StageActor;
 
 // 실제 서비스 imports 추가
@@ -203,15 +202,15 @@ impl BatchActor {
     /// * `pages` - 처리할 페이지 번호 리스트
     /// * `config` - 배치 설정
     /// * `context` - Actor 컨텍스트
-    async fn handle_process_batch(
+    async fn process_list_page_batch(
         &mut self,
-        batch_id: String,
+        stage_type: StageType,
         pages: Vec<u32>,
         config: BatchConfig,
-        batch_size: u32,
+        _batch_size: u32,
         concurrency_limit: u32,
-        total_pages: u32,
-        products_on_last_page: u32,
+        _total_pages: u32,
+        _products_on_last_page: u32,
         context: &AppContext,
     ) -> Result<(), BatchError> {
         // 상태 검증
@@ -414,6 +413,7 @@ impl BatchActor {
     /// 
     /// # Arguments
     /// * `batch_id` - 검증할 배치 ID
+    #[allow(dead_code)]
     fn validate_batch(&self, batch_id: &str) -> Result<(), BatchError> {
         match &self.batch_id {
             Some(current_id) if current_id == batch_id => Ok(()),
@@ -661,13 +661,14 @@ impl BatchActor {
     /// * `stage_type` - 실행할 스테이지 타입 (현재는 사용하지 않음 - 순차 실행)
     /// * `pages` - 처리할 페이지들
     /// * `context` - Actor 컨텍스트
+    #[allow(dead_code)]
     async fn execute_stage(
         &mut self,
         _stage_type: StageType, // 파이프라인에서는 모든 Stage 순차 실행
         pages: Vec<u32>,
         context: &AppContext,
     ) -> Result<StageResult, BatchError> {
-        use crate::new_architecture::actors::{StageActor, StageItemType};
+        use crate::new_architecture::actors::StageActor;
         use crate::new_architecture::channels::types::StageItem;
         
         info!("� Starting Stage pipeline processing for {} pages", pages.len());

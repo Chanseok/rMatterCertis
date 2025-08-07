@@ -23,9 +23,6 @@ use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRe
 use crate::new_architecture::actor_system::{
     StageResult, StageError
 };
-use crate::new_architecture::actors::types::{
-    StageSuccessResult, CollectionMetrics, ProcessingMetrics, FailedItem
-};
 use crate::new_architecture::channels::types::{StageType, StageItem};
 use crate::new_architecture::config::SystemConfig;
 

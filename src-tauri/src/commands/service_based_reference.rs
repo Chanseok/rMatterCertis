@@ -6,7 +6,7 @@ use crate::infrastructure::service_based_crawling_engine::{ServiceBasedBatchCraw
 use crate::infrastructure::simple_http_client::HttpClient;
 use crate::infrastructure::html_parser::MatterDataExtractor;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
-use crate::infrastructure::config::{AppConfig, ConfigManager};
+use crate::infrastructure::config::ConfigManager;
 use crate::application::{AppState, EventEmitter};
 
 /// ServiceBased 크롤링 요청 구조체 (참조용)

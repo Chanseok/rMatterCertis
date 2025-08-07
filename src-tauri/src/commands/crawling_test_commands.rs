@@ -4,18 +4,16 @@
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-use tauri::{AppHandle, Manager, Emitter};
+use tauri::{AppHandle, Manager};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn, error};
-use chrono::{DateTime, Utc};
 
 use crate::new_architecture::services::crawling_integration::{
     CrawlingIntegrationService, RealCrawlingStageExecutor
 };
 use crate::new_architecture::config::SystemConfig;
 use crate::new_architecture::channels::types::{StageType, StageItem};
-use crate::new_architecture::actor_system::{StageResult, StageError};
-use crate::infrastructure::config::{AppConfig, ConfigManager};
+use crate::new_architecture::actor_system::StageResult;
 use crate::application::AppState;
 
 /// 간단한 크롤링 테스트 요청

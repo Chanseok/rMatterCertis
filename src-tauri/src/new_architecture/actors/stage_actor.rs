@@ -12,23 +12,19 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 
-use crate::new_architecture::actors::types::{StageItemResult, StageItemType, StageResultData};
+use crate::new_architecture::actors::types::{StageItemResult, StageItemType};
 
 use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
 use super::types::{ActorCommand, StageType, StageResult, ActorError};
-use crate::new_architecture::channels::types::{AppEvent, StageItem, ProductList, ProductUrls, ProductDetails, ValidatedProducts};
-use crate::new_architecture::context::{AppContext, EventEmitter};
+use crate::new_architecture::channels::types::{AppEvent, StageItem};
+use crate::new_architecture::context::AppContext;
 
 // 실제 서비스 imports - ServiceBasedBatchCrawlingEngine 패턴 참조
 use crate::domain::services::{StatusChecker, ProductListCollector, ProductDetailCollector};
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
 use crate::infrastructure::config::AppConfig;
-use crate::domain::value_objects::ProductData;
-use crate::domain::product_url::ProductUrl;
-use crate::domain::integrated_product::ProductDetail;
-use crate::new_architecture::services::data_quality_analyzer::DataQualityAnalyzer;
 use crate::infrastructure::crawling_service_impls::{StatusCheckerImpl, ProductListCollectorImpl, ProductDetailCollectorImpl};
 use crate::infrastructure::CollectorConfig;
 
@@ -220,12 +216,12 @@ impl StageActor {
             app_config.clone(),
         ));
         
-        let product_list_collector = Some(Arc::new(ProductListCollectorImpl::new(
+        let product_list_collector: Option<Arc<dyn ProductListCollector>> = Some(Arc::new(ProductListCollectorImpl::new(
             Arc::new(http_client_inner.clone()),
             Arc::new(data_extractor_inner.clone()),
             list_collector_config.clone(),
             status_checker_for_list,
-        )) as Arc<dyn ProductListCollector>);
+        )));
         
         // ProductDetailCollector 생성
         let detail_collector_config = CollectorConfig {
@@ -238,11 +234,11 @@ impl StageActor {
             retry_max: app_config.user.crawling.workers.max_retries,
         };
         
-        let product_detail_collector = Some(Arc::new(ProductDetailCollectorImpl::new(
+        let product_detail_collector: Option<Arc<dyn ProductDetailCollector>> = Some(Arc::new(ProductDetailCollectorImpl::new(
             Arc::new(http_client_inner.clone()),
             Arc::new(data_extractor_inner.clone()),
             detail_collector_config,
-        )) as Arc<dyn ProductDetailCollector>);
+        )));
         
         Self {
             actor_id,
@@ -310,7 +306,7 @@ impl StageActor {
     
     /// 실제 서비스 초기화 - guide/re-arch-plan-final2.md 설계 기반
     /// ServiceBasedBatchCrawlingEngine 패턴 참조하되 Actor 모델에 맞게 구현
-    pub async fn initialize_real_services(&mut self, context: &AppContext) -> Result<(), StageError> {
+    pub async fn initialize_real_services(&mut self, _context: &AppContext) -> Result<(), StageError> {
         info!("🎯 [ACTOR] Initializing real services for StageActor: {}", self.actor_id);
         
         // AppConfig 로드 (설정 파일에서)
@@ -703,7 +699,7 @@ impl StageActor {
         item: StageItem,
         status_checker: Option<Arc<dyn StatusChecker>>,
         product_list_collector: Option<Arc<dyn ProductListCollector>>,
-        product_detail_collector: Option<Arc<dyn ProductDetailCollector>>,
+        _product_detail_collector: Option<Arc<dyn ProductDetailCollector>>,
         product_repo: Option<Arc<IntegratedProductRepository>>,
     ) -> Result<StageItemResult, StageError> {
         let start_time = Instant::now();
@@ -929,8 +925,8 @@ impl StageActor {
         // StageItem을 StageItemType으로 변환하는 헬퍼 함수
         let item_type = match &item {
             StageItem::Page(page_num) => StageItemType::Page { page_number: *page_num },
-            StageItem::Url(url) => StageItemType::Url { url_type: "site_check".to_string() },
-            StageItem::Product(product) => StageItemType::Url { url_type: "product".to_string() },
+            StageItem::Url(_url) => StageItemType::Url { url_type: "site_check".to_string() },
+            StageItem::Product(_product) => StageItemType::Url { url_type: "product".to_string() },
             StageItem::ProductList(_) => StageItemType::ProductUrls { urls: vec![] },
             StageItem::ProductUrls(urls) => StageItemType::ProductUrls { urls: urls.urls.clone() },
             _ => StageItemType::Url { url_type: "unknown".to_string() },
@@ -949,8 +945,8 @@ impl StageActor {
             Err(error) => {
                 let error_item_type = match &item {
                     StageItem::Page(page_num) => StageItemType::Page { page_number: *page_num },
-                    StageItem::Url(url) => StageItemType::Url { url_type: "site_check".to_string() },
-                    StageItem::Product(product) => StageItemType::Url { url_type: "product".to_string() },
+                    StageItem::Url(_url) => StageItemType::Url { url_type: "site_check".to_string() },
+                    StageItem::Product(_product) => StageItemType::Url { url_type: "product".to_string() },
                     StageItem::ProductList(_) => StageItemType::ProductUrls { urls: vec![] },
                     StageItem::ProductUrls(urls) => StageItemType::ProductUrls { urls: urls.urls.clone() },
                     _ => StageItemType::Url { url_type: "unknown".to_string() },

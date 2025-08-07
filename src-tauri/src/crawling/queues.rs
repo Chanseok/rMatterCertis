@@ -9,7 +9,7 @@ use tokio::sync::{mpsc, RwLock, Semaphore};
 use tokio::time::timeout;
 use serde::{Deserialize, Serialize};
 
-use crate::crawling::tasks::{CrawlingTask, TaskId};
+use crate::crawling::tasks::CrawlingTask;
 
 /// Queue configuration parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]

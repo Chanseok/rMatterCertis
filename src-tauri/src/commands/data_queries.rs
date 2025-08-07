@@ -2,7 +2,7 @@ use tauri::State;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use tracing::{info, error};
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
 
 use crate::application::AppState;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;

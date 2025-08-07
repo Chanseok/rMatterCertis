@@ -6,20 +6,17 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, broadcast};
-use tokio::time::timeout;
+use tokio::sync::mpsc;
 use tracing::{info, warn, error, debug};
-use uuid::Uuid;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 
 use crate::new_architecture::actors::types::SessionSummary;
 
 use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
-use super::types::{ActorCommand, CrawlingConfig, BatchConfig, StageType, StageItem, StageResult, ActorError};
+use super::types::{ActorCommand, CrawlingConfig, ActorError};
 use crate::new_architecture::channels::types::AppEvent;
-use crate::new_architecture::context::{AppContext, EventEmitter};
+use crate::new_architecture::context::AppContext;
 
 /// SessionActor: 크롤링 세션의 전체 생명주기 관리
 /// 

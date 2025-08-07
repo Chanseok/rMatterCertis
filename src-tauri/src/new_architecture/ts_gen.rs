@@ -2,9 +2,7 @@
 //! 
 //! Phase 4: ts-rs를 활용한 자동 타입 생성
 
-use std::path::Path;
 
-use ts_rs::TS;
 
 /// TypeScript 바인딩 생성 함수
 /// 프론트엔드와 백엔드 간 타입 동기화를 위해 TS 파일을 생성합니다.

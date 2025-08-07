@@ -2,11 +2,10 @@
 //! Phase C: 실시간 성능 모니터링 및 자동 최적화
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-use tracing::{info, warn, debug};
+use tracing::{info, debug};
 
 use crate::new_architecture::config::SystemConfig;
 
@@ -229,7 +228,7 @@ impl CrawlingPerformanceOptimizer {
         
         // 응답 시간 기반 판단
         let target_response_time = 1000.0; // 1초 목표
-        let max_concurrency = self.config.performance.concurrency.max_concurrent_tasks as u32;
+        let max_concurrency = self.config.performance.concurrency.max_concurrent_tasks;
         
         if avg_response_time_ms > target_response_time * 2.0 {
             // 너무 느림, 동시성 감소 권장
@@ -251,8 +250,8 @@ impl CrawlingPerformanceOptimizer {
         throughput_rps: f64,
         current_concurrency: u32,
     ) -> u32 {
-        let min_concurrency = self.config.performance.concurrency.min_concurrent_batches as u32;
-        let max_concurrency = self.config.performance.concurrency.max_concurrent_batches as u32;
+        let min_concurrency = self.config.performance.concurrency.min_concurrent_batches;
+        let max_concurrency = self.config.performance.concurrency.max_concurrent_batches;
         
         // 성공률이 낮으면 동시성 감소
         if success_rate < 0.9 {

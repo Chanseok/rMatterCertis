@@ -126,7 +126,7 @@ impl ActorEventBridge {
                     timestamp: chrono::Utc::now(),
                 })
             }
-            AppEvent::SessionCompleted { session_id, summary, .. } => {
+            AppEvent::SessionCompleted {  summary, .. } => {
                 let result = crate::domain::events::CrawlingResult {
                     total_processed: summary.total_pages_processed,
                     new_items: summary.total_pages_processed, // TODO: 실제 새 아이템 수
@@ -148,7 +148,7 @@ impl ActorEventBridge {
                 };
                 Some(CrawlingEvent::Completed(result))
             }
-            AppEvent::Progress { session_id, current_step, total_steps, percentage, message, .. } => {
+            AppEvent::Progress {  current_step, total_steps, percentage, message, .. } => {
                 let progress = crate::domain::events::CrawlingProgress {
                     current: *current_step,
                     total: *total_steps,

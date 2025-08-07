@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use async_trait::async_trait;
-use tokio::time::{timeout, sleep};
+use tokio::time::sleep;
 use url::Url;
 
 use crate::crawling::{tasks::*, state::*};
@@ -44,7 +44,7 @@ impl ListPageFetcher {
         let parsed_url = Url::parse(url)
             .map_err(|e| WorkerError::InvalidInput(format!("Invalid URL '{}': {}", url, e)))?;
         
-        let mut http_client = HttpClient::create_from_global_config()
+        let http_client = HttpClient::create_from_global_config()
             .map_err(|e| WorkerError::NetworkError(e.to_string()))?;
         
         let response = http_client

@@ -5,7 +5,6 @@
 
 use serde::{Serialize, Deserialize};
 use ts_rs::TS;
-use std::time::Duration;
 use chrono::{DateTime, Utc};
 
 // 도메인 객체 import 추가
