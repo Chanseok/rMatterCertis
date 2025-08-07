@@ -15,6 +15,18 @@ use crate::new_architecture::services::crawling_integration::{
 };
 use crate::infrastructure::config::AppConfig;
 
+/// 실제 크롤링 통합 서비스
+pub struct RealCrawlingIntegration {
+    config: Arc<SystemConfig>,
+    app_config: AppConfig,
+}
+
+impl RealCrawlingIntegration {
+    pub fn new(config: Arc<SystemConfig>, app_config: AppConfig) -> Self {
+        Self { config, app_config }
+    }
+}
+
 /// StageActor 확장: 실제 크롤링 서비스 실행 기능
 impl StageActor {
     /// 실제 크롤링 서비스를 사용하는 새로운 StageActor 생성

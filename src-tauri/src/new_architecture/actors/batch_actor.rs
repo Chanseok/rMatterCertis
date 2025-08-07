@@ -204,6 +204,7 @@ impl BatchActor {
     /// * `context` - Actor 컨텍스트
     async fn process_list_page_batch(
         &mut self,
+        batch_id: String,
         stage_type: StageType,
         pages: Vec<u32>,
         config: BatchConfig,
@@ -502,8 +503,9 @@ impl Actor for BatchActor {
                                     total_pages, 
                                     products_on_last_page 
                                 } => {
-                                    if let Err(e) = self.handle_process_batch(
+                                    if let Err(e) = self.process_list_page_batch(
                                         batch_id, 
+                                        StageType::ListPageCrawling, // stage_type 추가
                                         pages, 
                                         config, 
                                         batch_size, 

@@ -8,7 +8,8 @@
 use std::sync::Arc;
 use tokio::sync::watch;
 use crate::new_architecture::{
-    SystemConfig, RetryPolicy,
+    SystemConfig,
+    config::RetryPolicy,
     channels::types::{ControlChannel, EventChannel, ActorCommand, AppEvent},
 };
 
@@ -189,7 +190,7 @@ impl ContextBuilder {
     }
     
     /// 설정 검증
-    pub fn validate_config(&self) -> Result<(), crate::new_architecture::ConfigError> {
+    pub fn validate_config(&self) -> Result<(), crate::new_architecture::config::ConfigError> {
         self.config.validate()
     }
 }

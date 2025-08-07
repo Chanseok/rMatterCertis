@@ -339,3 +339,6 @@ impl CrawlingPerformanceOptimizer {
         info!("🧹 Performance history cleared");
     }
 }
+
+/// Type alias for compatibility
+pub type PerformanceOptimizer = CrawlingPerformanceOptimizer;

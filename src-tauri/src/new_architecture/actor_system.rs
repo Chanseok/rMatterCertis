@@ -41,6 +41,18 @@ impl BatchActor {
     }
 }
 
+// ActorSystem - 기존 코드 호환성
+#[derive(Debug, Clone)]
+pub struct ActorSystem {
+    pub system_id: String,
+}
+
+impl ActorSystem {
+    pub fn new(system_id: String) -> Self {
+        Self { system_id }
+    }
+}
+
 // ActorError - 기존 코드 호환성
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActorError {
