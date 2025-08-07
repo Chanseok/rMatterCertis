@@ -790,23 +790,19 @@ impl BatchActor {
                                 if let Some(collected_data_json) = &stage_item_result.collected_data {
                                     // JSON에서 ProductURL들을 파싱
                                     match serde_json::from_str::<Vec<crate::domain::product_url::ProductUrl>>(collected_data_json) {
-                                        Ok(product_urls) => {
-                                            // ProductURL들을 String으로 변환
-                                            let url_strings: Vec<String> = product_urls.iter()
-                                                .map(|product_url| product_url.url.clone())
-                                                .collect();
+                                        Ok(product_urls_vec) => {
                                             
-                                            if !url_strings.is_empty() {
-                                                total_urls_collected += url_strings.len();
+                                            if !product_urls_vec.is_empty() {
+                                                total_urls_collected += product_urls_vec.len();
                                                 
                                                 let product_urls = ProductUrls {
-                                                    urls: url_strings.clone(),
+                                                    urls: product_urls_vec.clone(),
                                                     batch_id: Some(self.actor_id.clone()),
                                                 };
                                                 
                                                 transformed_items.push(StageItem::ProductUrls(product_urls));
                                                 
-                                                info!("✅ Extracted {} ProductURLs from page {}", url_strings.len(), page_number);
+                                                info!("✅ Extracted {} ProductURLs from page {}", product_urls_vec.len(), page_number);
                                             } else {
                                                 warn!("⚠️  Page {} crawling succeeded but no ProductURLs were collected", page_number);
                                             }

@@ -26,6 +26,7 @@ use crate::domain::services::{StatusChecker, ProductListCollector, ProductDetail
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::crawling_service_impls::{StatusCheckerImpl, ProductListCollectorImpl, ProductDetailCollectorImpl};
+use crate::utils::PageIdCalculator;
 use crate::infrastructure::CollectorConfig;
 
 /// StageActor: 개별 스테이지 작업의 실행 및 관리
@@ -699,7 +700,7 @@ impl StageActor {
         item: StageItem,
         status_checker: Option<Arc<dyn StatusChecker>>,
         product_list_collector: Option<Arc<dyn ProductListCollector>>,
-        _product_detail_collector: Option<Arc<dyn ProductDetailCollector>>,
+        product_detail_collector: Option<Arc<dyn ProductDetailCollector>>,
         product_repo: Option<Arc<IntegratedProductRepository>>,
     ) -> Result<StageItemResult, StageError> {
         let start_time = Instant::now();
@@ -748,138 +749,115 @@ impl StageActor {
                 }
             }
             StageType::ProductDetailCrawling => {
-                // Stage 2 (ListPageCrawling)의 결과를 받아서 ProductUrls로 변환
-                info!("🔍 ProductDetailCrawling: converting ProductList to ProductUrls from item {}", item_id);
+                // Stage 2의 결과로 받은 ProductUrls에서 실제 제품 상세 정보 수집
+                info!("🔍 ProductDetailCrawling: processing ProductUrls from item {}", item_id);
                 
-                let product_urls = match &item {
+                match &item {
+                    StageItem::ProductUrls(product_urls) => {
+                        info!("📋 Processing {} product URLs for detail crawling", product_urls.urls.len());
+                        
+                        if let Some(collector) = &self.product_detail_collector {
+                            // 실제 ProductDetailCollector를 사용하여 상세 정보 수집
+                            match Self::execute_real_product_detail_processing(product_urls, Arc::clone(collector)).await {
+                                Ok(product_details) => {
+                                    info!("✅ Successfully collected {} product details", product_details.len());
+                                    
+                                    // ProductDetails 래퍼 생성
+                                    use crate::new_architecture::channels::types::{ProductDetails, ExtractionStats};
+                                    let product_details_wrapper = ProductDetails {
+                                        products: product_details.clone(),
+                                        source_urls: product_urls.urls.clone(),
+                                        extraction_stats: ExtractionStats {
+                                            attempted: product_urls.urls.len() as u32,
+                                            successful: product_details.len() as u32,
+                                            failed: (product_urls.urls.len() - product_details.len()) as u32,
+                                            empty_responses: 0, // 현재는 0으로 설정
+                                        },
+                                    };
+                                    
+                                    // ProductDetails 래퍼를 JSON으로 직렬화하여 저장
+                                    match serde_json::to_string(&product_details_wrapper) {
+                                        Ok(json_data) => (Ok(()), Some(json_data)),
+                                        Err(e) => (Err(format!("JSON serialization failed: {}", e)), None),
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("❌ Product detail crawling failed: {}", e);
+                                    (Err(e), None)
+                                }
+                            }
+                        } else {
+                            error!("❌ ProductDetailCollector not available");
+                            (Err("ProductDetailCollector not available".to_string()), None)
+                        }
+                    }
                     StageItem::ProductList(product_list) => {
-                        info!("📋 Converting {} products from page {} to URLs", 
+                        // Legacy: ProductList에서 ProductUrl 객체 변환하여 처리
+                        info!("📋 Converting {} products from page {} to ProductUrls for detail crawling", 
                               product_list.products.len(), product_list.page_number);
                         
-                        // ProductList에서 URL들을 추출하여 ProductUrls 생성
-                        let urls: Vec<String> = product_list.products
+                        // ⭐ 중요: Product -> ProductUrl로 변환 시 메타데이터 보존
+                        let product_urls: Vec<crate::domain::product_url::ProductUrl> = product_list.products
                             .iter()
-                            .map(|product| product.url.clone())
+                            .enumerate()
+                            .map(|(index, product)| {
+                                // PageIdCalculator를 사용하여 정확한 page_id, index_in_page 계산
+                                // TODO: 실제 last_page_number와 products_in_last_page 값을 전달해야 함
+                                let calculator = PageIdCalculator::new(999, 20); // 임시값: 999페이지, 마지막페이지에 20개 제품
+                                let calculation = calculator.calculate(product_list.page_number, index);
+                                
+                                crate::domain::product_url::ProductUrl {
+                                    url: product.url.clone(),
+                                    page_id: calculation.page_id,
+                                    index_in_page: calculation.index_in_page,
+                                }
+                            })
                             .collect();
                         
-                        // ProductUrls 구조체 생성
-                        use crate::new_architecture::channels::types::ProductUrls;
-                        ProductUrls {
-                            urls,
-                            batch_id: Some(format!("batch_{}", product_list.page_number)),
+                        if let Some(collector) = &self.product_detail_collector {
+                            use crate::new_architecture::channels::types::ProductUrls;
+                            let product_urls_wrapper = ProductUrls {
+                                urls: product_urls, // ProductUrl 객체들 직접 저장
+                                batch_id: Some(format!("batch_{}", product_list.page_number)),
+                            };
+                            
+                            match Self::execute_real_product_detail_processing(&product_urls_wrapper, Arc::clone(collector)).await {
+                                Ok(product_details) => {
+                                    info!("✅ Successfully collected {} product details", product_details.len());
+                                    match serde_json::to_string(&product_details) {
+                                        Ok(json_data) => (Ok(()), Some(json_data)),
+                                        Err(e) => (Err(format!("JSON serialization failed: {}", e)), None),
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("❌ Product detail crawling failed: {}", e);
+                                    (Err(e), None)
+                                }
+                            }
+                        } else {
+                            error!("❌ ProductDetailCollector not available");
+                            (Err("ProductDetailCollector not available".to_string()), None)
                         }
                     }
                     other => {
                         warn!("⚠️ ProductDetailCrawling stage received unexpected item type: {:?}", other);
-                        use crate::new_architecture::channels::types::ProductUrls;
-                        ProductUrls {
-                            urls: Vec::new(),
-                            batch_id: None,
-                        }
+                        (Err("Unexpected item type for ProductDetailCrawling".to_string()), None)
                     }
-                };
-                
-                info!("✅ Generated ProductUrls with {} URLs for next stage", product_urls.urls.len());
-                
-                // ProductUrls를 JSON으로 직렬화하여 전달
-                match serde_json::to_string(&product_urls) {
-                    Ok(json_data) => (Ok(()), Some(json_data)),
-                    Err(e) => (Err(format!("JSON serialization failed: {}", e)), None),
                 }
             }
             StageType::DataValidation => {
-                // 실제 수집된 데이터에서 ProductDetail 추출 및 검증
-                info!("🔍 DataValidation: extracting and validating ProductDetails from item {}", item_id);
+                // Stage 3 (ProductDetailCrawling)에서 수집된 ProductDetail들을 검증
+                info!("🔍 DataValidation: validating ProductDetails from item {}", item_id);
                 
                 let product_details: Vec<crate::domain::product::ProductDetail> = match &item {
-                    StageItem::ProductUrls(product_urls) => {
-                        info!("📋 Processing {} product URLs for data validation", product_urls.urls.len());
-                        
-                        // ProductUrls에서 실제 ProductDetail 추출
-                        let mut details = Vec::new();
-                        
-                        // Repository와 collector가 사용 가능한지 확인
-                        if product_repo.is_some() && product_list_collector.is_some() {
-                            // 실제 HTML에서 제품 정보 추출
-                            for url_string in &product_urls.urls {
-                                match self.extract_product_detail_from_url(url_string).await {
-                                    Ok(detail) => {
-                                        details.push(detail);
-                                    }
-                                    Err(e) => {
-                                        warn!("❌ Failed to extract product detail from {}: {:?}", url_string, e);
-                                        // 실패한 경우 빈 ProductDetail 생성하여 로그에 표시
-                                        use crate::domain::product::ProductDetail;
-                                        details.push(ProductDetail {
-                                            url: url_string.clone(),
-                                            page_id: None,
-                                            index_in_page: None,
-                                            id: None,
-                                            manufacturer: None,
-                                            model: None,
-                                            device_type: None,
-                                            certificate_id: None,
-                                            certification_date: None,
-                                            software_version: None,
-                                            hardware_version: None,
-                                            firmware_version: None,
-                                            specification_version: None,
-                                            vid: None,
-                                            pid: None,
-                                            family_sku: None,
-                                            family_variant_sku: None,
-                                            family_id: None,
-                                            tis_trp_tested: None,
-                                            transport_interface: None,
-                                            primary_device_type_id: None,
-                                            application_categories: None,
-                                            description: None,
-                                            compliance_document_url: None,
-                                            program_type: Some("Matter".to_string()),
-                                            created_at: chrono::Utc::now(),
-                                            updated_at: chrono::Utc::now(),
-                                        });
-                                    }
-                                }
-                            }
-                        } else {
-                            warn!("⚠️ Repository or collector not available for real data extraction");
-                            // 서비스가 없는 경우 빈 ProductDetail들 생성
-                            for url_string in &product_urls.urls {
-                                use crate::domain::product::ProductDetail;
-                                details.push(ProductDetail {
-                                    url: url_string.clone(),
-                                    page_id: None,
-                                    index_in_page: None,
-                                    id: None,
-                                    manufacturer: None,
-                                    model: None,
-                                    device_type: None,
-                                    certificate_id: None,
-                                    certification_date: None,
-                                    software_version: None,
-                                    hardware_version: None,
-                                    firmware_version: None,
-                                    specification_version: None,
-                                    vid: None,
-                                    pid: None,
-                                    family_sku: None,
-                                    family_variant_sku: None,
-                                    family_id: None,
-                                    tis_trp_tested: None,
-                                    transport_interface: None,
-                                    primary_device_type_id: None,
-                                    application_categories: None,
-                                    description: None,
-                                    compliance_document_url: None,
-                                    program_type: Some("Matter".to_string()),
-                                    created_at: chrono::Utc::now(),
-                                    updated_at: chrono::Utc::now(),
-                                });
-                            }
-                        }
-                        
-                        details
+                    // Stage 3에서 ProductDetails 데이터를 받음
+                    StageItem::ProductDetails(product_details_wrapper) => {
+                        info!("📋 Processing ProductDetails with {} products", product_details_wrapper.products.len());
+                        product_details_wrapper.products.clone()
+                    }
+                    StageItem::ProductUrls(_product_urls) => {
+                        warn!("⚠️ DataValidation received ProductUrls instead of ProductDetails - Stage 3 may have failed");
+                        Vec::new()
                     }
                     other => {
                         warn!("⚠️ DataValidation stage received unexpected item type: {:?}", other);
@@ -928,7 +906,7 @@ impl StageActor {
             StageItem::Url(_url) => StageItemType::Url { url_type: "site_check".to_string() },
             StageItem::Product(_product) => StageItemType::Url { url_type: "product".to_string() },
             StageItem::ProductList(_) => StageItemType::ProductUrls { urls: vec![] },
-            StageItem::ProductUrls(urls) => StageItemType::ProductUrls { urls: urls.urls.clone() },
+            StageItem::ProductUrls(urls) => StageItemType::ProductUrls { urls: urls.urls.iter().map(|u| u.url.clone()).collect() },
             _ => StageItemType::Url { url_type: "unknown".to_string() },
         };
         
@@ -948,7 +926,7 @@ impl StageActor {
                     StageItem::Url(_url) => StageItemType::Url { url_type: "site_check".to_string() },
                     StageItem::Product(_product) => StageItemType::Url { url_type: "product".to_string() },
                     StageItem::ProductList(_) => StageItemType::ProductUrls { urls: vec![] },
-                    StageItem::ProductUrls(urls) => StageItemType::ProductUrls { urls: urls.urls.clone() },
+                    StageItem::ProductUrls(urls) => StageItemType::ProductUrls { urls: urls.urls.iter().map(|u| u.url.clone()).collect() },
                     _ => StageItemType::Url { url_type: "unknown".to_string() },
                 };
                 
@@ -1026,49 +1004,27 @@ impl StageActor {
     
     /// 실제 제품 상세 처리
     async fn execute_real_product_detail_processing(
-        item: &StageItem,
+        product_urls: &crate::new_architecture::channels::types::ProductUrls,
         product_detail_collector: Arc<dyn ProductDetailCollector>,
     ) -> Result<Vec<crate::domain::product::ProductDetail>, String> {
-        match item {
-            StageItem::ProductUrls(product_urls) => {
-                // URL 문자열을 ProductURL 객체로 변환
-                let product_url_objects: Vec<crate::domain::product_url::ProductUrl> = product_urls.urls
-                    .iter()
-                    .enumerate()
-                    .map(|(index, url)| crate::domain::product_url::ProductUrl::new(url.clone(), index as i32, 0))
-                    .collect();
+        info!("🎯 Processing {} product URLs for detail crawling", product_urls.urls.len());
+        
+        // ProductUrls 구조체에서 ProductUrl 객체들을 직접 사용
+        match product_detail_collector.collect_details(&product_urls.urls).await {
+            Ok(details) => {
+                info!("✅ Real product detail processing successful: {} details collected", details.len());
                 
-                info!("🎯 Processing {} product URLs for detail crawling", product_url_objects.len());
+                // 수집된 ProductDetail들을 로그로 확인
+                for (index, detail) in details.iter().enumerate() {
+                    debug!("  📄 Collected detail {}: {} (page_id: {:?}, index: {:?})", 
+                           index + 1, detail.url, detail.page_id, detail.index_in_page);
+                }
                 
-                match product_detail_collector.collect_details(&product_url_objects).await {
-                    Ok(details) => {
-                        info!("✅ Real product detail processing successful: {} details collected", details.len());
-                        Ok(details)
-                    }
-                    Err(e) => {
-                        warn!("❌ Real product detail processing failed: {}", e);
-                        Err(format!("Product detail processing failed: {}", e))
-                    }
-                }
+                Ok(details)
             }
-            StageItem::Url(url) => {
-                // 단일 URL 처리를 위한 fallback
-                warn!("⚠️ Single URL processing not fully implemented, using placeholder");
-                let sample_urls = vec![crate::domain::product_url::ProductUrl::new(url.clone(), 1, 0)];
-                match product_detail_collector.collect_details(&sample_urls).await {
-                    Ok(details) => {
-                        info!("✅ Fallback product detail processing successful: {} details collected", details.len());
-                        Ok(details)
-                    }
-                    Err(e) => {
-                        warn!("❌ Fallback product detail processing failed: {}", e);
-                        Err(format!("Product detail processing failed: {}", e))
-                    }
-                }
-            }
-            _ => {
-                warn!("⚠️ Unsupported item type for product detail processing");
-                Ok(vec![]) // 다른 타입은 빈 벡터 반환
+            Err(e) => {
+                warn!("❌ Real product detail processing failed: {}", e);
+                Err(format!("Product detail processing failed: {}", e))
             }
         }
     }
@@ -1089,22 +1045,39 @@ impl StageActor {
     /// 실제 데이터베이스 저장 처리
     async fn execute_real_database_storage(
         item: &StageItem,
-        _product_repo: Arc<IntegratedProductRepository>,
+        product_repo: Arc<IntegratedProductRepository>,
     ) -> Result<(), String> {
         // 실제 데이터베이스 저장 로직 - ServiceBasedBatchCrawlingEngine 패턴 참조
         match item {
-            StageItem::ProductDetails(details) => {
-                info!("💾 Saving {} product details to database", details.products.len());
+            StageItem::ProductDetails(product_details_wrapper) => {
+                // Stage 4 (DataValidation)에서 검증된 ProductDetail 데이터를 받음
+                let product_details = &product_details_wrapper.products;
+                info!("💾 Saving {} validated product details to database", product_details.len());
+                        
+                if product_details.is_empty() {
+                    info!("ℹ️ No product details to save");
+                    return Ok(());
+                }
                 
-                // TODO: 실제 제품 데이터 저장 구현
-                // 현재는 로그만 출력
+                // 실제 데이터베이스에 저장
+                for detail in product_details {
+                    match product_repo.create_or_update_product_detail(&detail).await {
+                        Ok(_) => {
+                            debug!("✅ Successfully saved product: {}", detail.url);
+                        }
+                        Err(e) => {
+                            error!("❌ Failed to save product {}: {}", detail.url, e);
+                            return Err(format!("Database save failed: {}", e));
+                        }
+                    }
+                }
+                
+                info!("✅ Successfully saved all product details to database");
                 Ok(())
             }
             StageItem::ValidatedProducts(products) => {
                 info!("💾 Saving {} validated products to database", products.products.len());
-                
-                // TODO: 실제 제품 데이터 저장 구현  
-                // 현재는 로그만 출력
+                // Legacy support - ValidatedProducts 받는 경우
                 Ok(())
             }
             _ => {

@@ -98,7 +98,7 @@ pub struct ProductList {
 /// 제품 URL 목록 (Stage 2 ProductUrlExtraction 결과)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProductUrls {
-    pub urls: Vec<String>,
+    pub urls: Vec<crate::domain::product_url::ProductUrl>,
     pub batch_id: Option<String>,
 }
 
@@ -106,7 +106,7 @@ pub struct ProductUrls {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProductDetails {
     pub products: Vec<crate::domain::product::ProductDetail>,
-    pub source_urls: Vec<String>,
+    pub source_urls: Vec<crate::domain::product_url::ProductUrl>,
     pub extraction_stats: ExtractionStats,
 }
 
