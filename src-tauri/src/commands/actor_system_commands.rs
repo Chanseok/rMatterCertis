@@ -664,11 +664,47 @@ async fn execute_real_batch_actor(
     use tokio::sync::mpsc;
     
     info!("🎯 BatchActor {} starting REAL processing of {} pages", batch_id, pages.len());
-    info!("🔧 Creating BatchActor instance...");
+    info!("🔧 Creating BatchActor instance with real services...");
     
-    // BatchActor 생성
-    let mut batch_actor = BatchActor::new(batch_id.to_string());
-    info!("✅ BatchActor created successfully");
+    // 🔥 Phase 1: 실제 서비스들 생성 및 주입
+    use crate::infrastructure::{HttpClient, MatterDataExtractor};
+    use crate::infrastructure::config::AppConfig;
+    use crate::infrastructure::IntegratedProductRepository;
+    use std::sync::Arc;
+    
+    // HttpClient 생성
+    let http_client = Arc::new(HttpClient::create_from_global_config()
+        .map_err(|e| format!("Failed to create HttpClient: {}", e))?);
+    info!("✅ HttpClient created");
+    
+    // MatterDataExtractor 생성  
+    let data_extractor = Arc::new(MatterDataExtractor::new()
+        .map_err(|e| format!("Failed to create MatterDataExtractor: {}", e))?);
+    info!("✅ MatterDataExtractor created");
+    
+    // IntegratedProductRepository 생성
+    use crate::infrastructure::DatabaseConnection;
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "sqlite:matter_certis.db".to_string());
+    let db_connection = DatabaseConnection::new(&database_url).await
+        .map_err(|e| format!("Failed to create DatabaseConnection: {}", e))?;
+    let product_repo = Arc::new(IntegratedProductRepository::new(db_connection.pool().clone()));
+    info!("✅ IntegratedProductRepository created");
+    
+    // AppConfig 생성
+    let app_config = AppConfig::for_development();
+    info!("✅ AppConfig loaded");
+    
+    // BatchActor를 실제 서비스들과 함께 생성
+    let mut batch_actor = BatchActor::new_with_services(
+        batch_id.to_string(),
+        batch_id.to_string(), // batch_id도 같이 전달
+        http_client,
+        data_extractor,
+        product_repo,
+        app_config,
+    );
+    info!("✅ BatchActor created successfully with real services");
     
     // BatchActor 실행을 위한 채널 생성
     info!("🔧 Creating communication channels...");

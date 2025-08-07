@@ -20,7 +20,6 @@ use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
 use super::types::{ActorCommand, CrawlingConfig, BatchConfig, StageType, StageItem, StageResult, ActorError};
 use crate::new_architecture::channels::types::AppEvent;
 use crate::new_architecture::context::{AppContext, EventEmitter};
-use crate::new_architecture::migration::ServiceMigrationBridge;
 
 /// SessionActor: 크롤링 세션의 전체 생명주기 관리
 /// 
@@ -43,8 +42,6 @@ pub struct SessionActor {
     processed_batches: u32,
     /// 총 성공 아이템 수
     total_success_count: u32,
-    /// ServiceBased 로직 브릿지 (Phase 2 호환성)
-    migration_bridge: Option<Arc<ServiceMigrationBridge>>,
 }
 
 /// 세션 상태 열거형
@@ -76,9 +73,6 @@ pub enum SessionError {
     
     #[error("Context communication error: {0}")]
     ContextError(String),
-    
-    #[error("Migration bridge error: {0}")]
-    MigrationError(String),
 }
 
 impl SessionActor {
@@ -97,17 +91,7 @@ impl SessionActor {
             start_time: None,
             processed_batches: 0,
             total_success_count: 0,
-            migration_bridge: None,
         }
-    }
-    
-    /// ServiceMigrationBridge 설정 (Phase 2 호환성)
-    /// 
-    /// # Arguments
-    /// * `bridge` - 마이그레이션 브릿지
-    pub fn with_migration_bridge(mut self, bridge: Arc<ServiceMigrationBridge>) -> Self {
-        self.migration_bridge = Some(bridge);
-        self
     }
     
     /// 세션 시작 처리

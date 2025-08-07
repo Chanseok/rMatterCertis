@@ -14,10 +14,14 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
 use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
-use super::types::{ActorCommand, BatchConfig, StageType, StageItem, StageResult, ActorError};
+use super::types::{ActorCommand, BatchConfig, StageType, StageItem, StageItemType, StageItemResult, StageResult, ActorError};
 use crate::new_architecture::channels::types::AppEvent;
 use crate::new_architecture::context::{AppContext, EventEmitter};
-use crate::new_architecture::migration::ServiceMigrationBridge;
+use crate::new_architecture::actors::StageActor;
+
+// 실제 서비스 imports 추가
+use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
+use crate::infrastructure::config::AppConfig;
 
 /// BatchActor: 배치 단위의 크롤링 작업 관리
 /// 
@@ -26,7 +30,6 @@ use crate::new_architecture::migration::ServiceMigrationBridge;
 /// - StageActor들의 조정 및 스케줄링
 /// - 배치 레벨 이벤트 발행
 /// - 동시성 제어 및 리소스 관리
-#[derive(Debug)]
 pub struct BatchActor {
     /// Actor 고유 식별자
     actor_id: String,
@@ -46,10 +49,38 @@ pub struct BatchActor {
     failure_count: u32,
     /// 동시성 제어용 세마포어
     concurrency_limiter: Option<Arc<Semaphore>>,
-    /// ServiceBased 로직 브릿지 (Phase 2 호환성)
-    migration_bridge: Option<Arc<ServiceMigrationBridge>>,
     /// 설정 (OneShot 호환성)
     pub config: Option<Arc<crate::new_architecture::config::SystemConfig>>,
+    
+    // 🔥 Phase 1: 실제 서비스 의존성 추가
+    /// HTTP 클라이언트
+    http_client: Option<Arc<HttpClient>>,
+    /// 데이터 추출기
+    data_extractor: Option<Arc<MatterDataExtractor>>,
+    /// 제품 레포지토리
+    product_repo: Option<Arc<IntegratedProductRepository>>,
+    /// 앱 설정
+    app_config: Option<AppConfig>,
+}
+
+// Debug 수동 구현 (의존성들이 Debug를 구현하지 않아서)
+impl std::fmt::Debug for BatchActor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BatchActor")
+            .field("actor_id", &self.actor_id)
+            .field("batch_id", &self.batch_id)
+            .field("state", &self.state)
+            .field("start_time", &self.start_time)
+            .field("total_pages", &self.total_pages)
+            .field("completed_pages", &self.completed_pages)
+            .field("success_count", &self.success_count)
+            .field("failure_count", &self.failure_count)
+            .field("has_http_client", &self.http_client.is_some())
+            .field("has_data_extractor", &self.data_extractor.is_some())
+            .field("has_product_repo", &self.product_repo.is_some())
+            .field("has_app_config", &self.app_config.is_some())
+            .finish()
+    }
 }
 
 /// 배치 상태 열거형
@@ -91,12 +122,15 @@ pub enum BatchError {
     #[error("Stage processing failed: {stage} - {error}")]
     StageProcessingFailed { stage: String, error: String },
     
-    #[error("Migration bridge error: {0}")]
-    MigrationError(String),
+    #[error("Stage execution failed: {0}")]
+    StageExecutionFailed(String),
+    
+    #[error("Service not available: {0}")]
+    ServiceNotAvailable(String),
 }
 
 impl BatchActor {
-    /// 새로운 BatchActor 인스턴스 생성
+    /// 새로운 BatchActor 인스턴스 생성 (기본)
     /// 
     /// # Arguments
     /// * `actor_id` - Actor 고유 식별자
@@ -114,18 +148,52 @@ impl BatchActor {
             success_count: 0,
             failure_count: 0,
             concurrency_limiter: None,
-            migration_bridge: None,
             config: None,
+            // 새로 추가된 필드들 초기화
+            http_client: None,
+            data_extractor: None,
+            product_repo: None,
+            app_config: None,
         }
     }
     
-    /// ServiceMigrationBridge 설정 (Phase 2 호환성)
+    /// 🔥 Phase 1: 실제 서비스들과 함께 BatchActor 생성
     /// 
     /// # Arguments
-    /// * `bridge` - 마이그레이션 브릿지
-    pub fn with_migration_bridge(mut self, bridge: Arc<ServiceMigrationBridge>) -> Self {
-        self.migration_bridge = Some(bridge);
-        self
+    /// * `actor_id` - Actor 고유 식별자
+    /// * `batch_id` - 배치 ID
+    /// * `http_client` - HTTP 클라이언트
+    /// * `data_extractor` - 데이터 추출기
+    /// * `product_repo` - 제품 레포지토리
+    /// * `app_config` - 앱 설정
+    /// 
+    /// # Returns
+    /// * `Self` - 서비스가 주입된 BatchActor 인스턴스
+    pub fn new_with_services(
+        actor_id: String,
+        batch_id: String,
+        http_client: Arc<HttpClient>,
+        data_extractor: Arc<MatterDataExtractor>,
+        product_repo: Arc<IntegratedProductRepository>,
+        app_config: AppConfig,
+    ) -> Self {
+        Self {
+            actor_id,
+            batch_id: Some(batch_id),
+            state: BatchState::Idle,
+            start_time: None,
+            total_pages: 0,
+            completed_pages: 0,
+            success_count: 0,
+            failure_count: 0,
+            concurrency_limiter: None,
+            config: None,
+            // 실제 서비스 의존성 주입
+            http_client: Some(http_client),
+            data_extractor: Some(data_extractor),
+            product_repo: Some(product_repo),
+            app_config: Some(app_config),
+        }
     }
     
     /// 배치 처리 시작
@@ -183,114 +251,119 @@ impl BatchActor {
         // 상태를 Processing으로 전환
         self.state = BatchState::Processing;
         
-        // Phase 2 호환성: ServiceMigrationBridge 사용
-        if let Some(bridge) = &self.migration_bridge {
-            match bridge.execute_batch_crawling(pages, config).await {
-                Ok(result) => {
-                    self.success_count = result.processed_items;
-                    self.completed_pages = self.total_pages;
-                    self.state = BatchState::Completed;
-                    
-                    // 완료 이벤트 발행
-                    let completion_event = AppEvent::BatchCompleted {
-                        batch_id: batch_id.clone(),
-                        session_id: context.session_id.clone(),
-                        success_count: self.success_count,
-                        failed_count: self.failure_count,
-                        duration: result.duration_ms,
-                        timestamp: Utc::now(),
-                    };
-                    
-                    context.emit_event(completion_event).await
-                        .map_err(|e| BatchError::ContextError(e.to_string()))?;
-                    
-                    info!("✅ Batch {} completed successfully with {} items", 
-                          batch_id, self.success_count);
-                }
-                Err(e) => {
-                    let error_msg = format!("Migration bridge error: {}", e);
-                    self.state = BatchState::Failed { error: error_msg.clone() };
-                    
-                    // 실패 이벤트 발행
-                    let failure_event = AppEvent::BatchFailed {
-                        batch_id: batch_id.clone(),
-                        session_id: context.session_id.clone(),
-                        error: error_msg.clone(),
-                        final_failure: true,
-                        timestamp: Utc::now(),
-                    };
-                    
-                    context.emit_event(failure_event).await
-                        .map_err(|e| BatchError::ContextError(e.to_string()))?;
-                    
-                    return Err(BatchError::MigrationError(error_msg));
-                }
+        // 실제 StageActor 기반 처리 구현
+        info!("🎭 Using real StageActor-based processing for batch {}", batch_id);
+        
+        // 초기 Stage Items 생성 - 페이지 기반 아이템들
+        let mut initial_items: Vec<StageItem> = pages.iter().map(|&page_number| {
+            StageItem {
+                id: format!("page_{}", page_number),
+                item_type: StageItemType::Page { page_number },
+                url: format!("https://example.com/page/{}", page_number), // 실제 사이트 URL로 교체 필요
+                metadata: serde_json::json!({
+                    "page_number": page_number,
+                    "batch_id": batch_id
+                }).to_string(),
             }
-        } else {
-            // ✅ 실제 StageActor 기반 처리 구현
-            info!("🎭 Using StageActor-based processing for batch {}", batch_id);
-            
-            // Stage별 순차 실행: StatusCheck → ListPage → ProductDetail → DataSaving
-            self.state = BatchState::Processing;
-            
-            // Stage 1: 상태 확인 (사이트 접근 가능성, 구조 변경 등)
-            let status_check_result = self.execute_stage(
-                StageType::StatusCheck,
-                pages.clone(),
-                context,
-            ).await?;
-            
-            info!("✅ Stage 1 (StatusCheck) completed: {} success, {} failed", 
-                  status_check_result.successful_items, status_check_result.failed_items);
-            
-            // Stage 2: 리스트 페이지 크롤링 (제품 URL 수집)
-            let list_page_result = self.execute_stage(
-                StageType::ListPageCrawling,
-                pages.clone(),
-                context,
-            ).await?;
-            
-            info!("✅ Stage 2 (ListPageCrawling) completed: {} success, {} failed", 
-                  list_page_result.successful_items, list_page_result.failed_items);
-            
-            // Stage 3: 제품 상세 정보 크롤링 
-            // TODO: 실제로는 Stage 2에서 수집된 제품 URL들을 사용해야 함
-            let detail_result = self.execute_stage(
-                StageType::ProductDetailCrawling,
-                pages.clone(),
-                context,
-            ).await?;
-            
-            info!("✅ Stage 3 (ProductDetailCrawling) completed: {} success, {} failed", 
-                  detail_result.successful_items, detail_result.failed_items);
-            
-            // Stage 4: 데이터 검증 및 저장
-            let saving_result = self.execute_stage(
-                StageType::DataSaving,
-                pages.clone(),
-                context,
-            ).await?;
-            
-            info!("✅ Stage 4 (DataSaving) completed: {} success, {} failed", 
-                  saving_result.successful_items, saving_result.failed_items);
-            
-            // 배치 결과 집계
-            self.success_count = list_page_result.successful_items + detail_result.successful_items;
-            self.completed_pages = pages.len() as u32;
-            self.state = BatchState::Completed;
-            
-            let completion_event = AppEvent::BatchCompleted {
-                batch_id: batch_id.clone(),
-                session_id: context.session_id.clone(),
-                success_count: self.success_count,
-                failed_count: list_page_result.failed_items + detail_result.failed_items,
-                duration: self.start_time.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0),
-                timestamp: Utc::now(),
-            };
-            
-            context.emit_event(completion_event).await
-                .map_err(|e| BatchError::ContextError(e.to_string()))?;
+        }).collect();
+
+        // Stage 1: StatusCheck - 사이트 상태 확인
+        info!("🔍 Starting Stage 1: StatusCheck");
+        let status_check_result = self.execute_stage_with_actor(
+            StageType::StatusCheck, 
+            vec![initial_items.get(0).cloned().unwrap_or_else(|| StageItem {
+                id: "status_check".to_string(),
+                item_type: StageItemType::Page { page_number: 1 },
+                url: "https://example.com".to_string(),
+                metadata: "{}".to_string(),
+            })], 
+            concurrency_limit, 
+            context
+        ).await?;
+        
+        info!("✅ Stage 1 (StatusCheck) completed: {} success, {} failed", 
+              status_check_result.successful_items, status_check_result.failed_items);
+
+        // Stage 실패 시 파이프라인 중단 검증
+        if status_check_result.successful_items == 0 {
+            error!("❌ Stage 1 (StatusCheck) failed completely - aborting pipeline");
+            self.state = BatchState::Failed { error: "StatusCheck stage failed completely".to_string() };
+            return Err(BatchError::StageExecutionFailed("StatusCheck stage failed completely".to_string()));
         }
+
+        // Stage 2: ListPageCrawling - ProductURL 수집
+        info!("🔍 Starting Stage 2: ListPageCrawling");
+        let list_page_result = self.execute_stage_with_actor(
+            StageType::ListPageCrawling, 
+            initial_items.clone(), 
+            concurrency_limit, 
+            context
+        ).await?;
+        
+        info!("✅ Stage 2 (ListPageCrawling) completed: {} success, {} failed", 
+              list_page_result.successful_items, list_page_result.failed_items);
+
+        // Stage 실패 시 파이프라인 중단 검증
+        if list_page_result.successful_items == 0 {
+            error!("❌ Stage 2 (ListPageCrawling) failed completely - aborting pipeline");
+            self.state = BatchState::Failed { error: "ListPageCrawling stage failed completely".to_string() };
+            return Err(BatchError::StageExecutionFailed("ListPageCrawling stage failed completely".to_string()));
+        }
+
+        // Stage 2 결과를 Stage 3 입력으로 변환
+        let product_detail_items = self.transform_stage_output(
+            StageType::ListPageCrawling,
+            initial_items.clone(),
+            &list_page_result
+        ).await?;
+
+        // Stage 3: ProductDetailCrawling - 상품 상세 정보 수집
+        info!("🔍 Starting Stage 3: ProductDetailCrawling");
+        let detail_result = self.execute_stage_with_actor(
+            StageType::ProductDetailCrawling, 
+            product_detail_items, 
+            concurrency_limit, 
+            context
+        ).await?;
+        
+        info!("✅ Stage 3 (ProductDetailCrawling) completed: {} success, {} failed", 
+              detail_result.successful_items, detail_result.failed_items);
+
+        // Stage 3 결과를 Stage 4 입력으로 변환 
+        let data_saving_items = self.transform_stage_output(
+            StageType::ProductDetailCrawling,
+            initial_items.clone(),
+            &detail_result
+        ).await?;
+
+        // Stage 4: DataSaving - 데이터 저장
+        info!("🔍 Starting Stage 4: DataSaving");
+        let saving_result = self.execute_stage_with_actor(
+            StageType::DataSaving, 
+            data_saving_items, 
+            concurrency_limit, 
+            context
+        ).await?;
+        
+        info!("✅ Stage 4 (DataSaving) completed: {} success, {} failed", 
+              saving_result.successful_items, saving_result.failed_items);
+
+        // 배치 결과 집계
+        self.success_count = saving_result.successful_items;
+        self.completed_pages = pages.len() as u32;
+        self.state = BatchState::Completed;
+        
+        let completion_event = AppEvent::BatchCompleted {
+            batch_id: batch_id.clone(),
+            session_id: context.session_id.clone(),
+            success_count: self.success_count,
+            failed_count: saving_result.failed_items,
+            duration: self.start_time.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0),
+            timestamp: Utc::now(),
+        };
+        
+        context.emit_event(completion_event).await
+            .map_err(|e| BatchError::ContextError(e.to_string()))?;
         
         Ok(())
     }
@@ -518,58 +591,253 @@ impl Actor for BatchActor {
 }
 
 impl BatchActor {
-    /// Stage 실행
+    /// 개별 Stage를 StageActor로 실행
     /// 
     /// # Arguments
     /// * `stage_type` - 실행할 스테이지 타입
+    /// * `items` - 처리할 아이템들
+    /// * `concurrency_limit` - 동시 실행 제한
+    /// * `context` - Actor 컨텍스트
+    async fn execute_stage_with_actor(
+        &self,
+        stage_type: StageType,
+        items: Vec<StageItem>,
+        concurrency_limit: u32,
+        context: &AppContext,
+    ) -> Result<StageResult, BatchError> {
+        // 서비스 의존성이 있는지 확인
+        let http_client = self.http_client.as_ref()
+            .ok_or_else(|| BatchError::ServiceNotAvailable("HttpClient not initialized".to_string()))?;
+        let data_extractor = self.data_extractor.as_ref()
+            .ok_or_else(|| BatchError::ServiceNotAvailable("MatterDataExtractor not initialized".to_string()))?;
+        let product_repo = self.product_repo.as_ref()
+            .ok_or_else(|| BatchError::ServiceNotAvailable("IntegratedProductRepository not initialized".to_string()))?;
+        let app_config = self.app_config.as_ref()
+            .ok_or_else(|| BatchError::ServiceNotAvailable("AppConfig not initialized".to_string()))?;
+
+        // StageActor 생성 (실제 서비스들과 함께)
+        let mut stage_actor = StageActor::new_with_services(
+            format!("stage_{}_{}", stage_type.as_str(), self.actor_id),
+            self.batch_id.clone().unwrap_or_default(),
+            Arc::clone(http_client),
+            Arc::clone(data_extractor),
+            Arc::clone(product_repo),
+            app_config.clone(),
+        );
+
+        // StageActor로 Stage 실행
+        let stage_result = stage_actor.execute_stage(
+            stage_type,
+            items,
+            concurrency_limit,
+            30, // timeout_secs - 30초 타임아웃
+            context,
+        ).await
+        .map_err(|e| BatchError::StageExecutionFailed(format!("Stage execution failed: {}", e)))?;
+
+        Ok(stage_result)
+    }
+
+    /// Stage 파이프라인 실행 - Stage 간 데이터 전달 구현
+    /// 
+    /// # Arguments
+    /// * `stage_type` - 실행할 스테이지 타입 (현재는 사용하지 않음 - 순차 실행)
     /// * `pages` - 처리할 페이지들
     /// * `context` - Actor 컨텍스트
     async fn execute_stage(
         &mut self,
-        stage_type: StageType,
+        _stage_type: StageType, // 파이프라인에서는 모든 Stage 순차 실행
         pages: Vec<u32>,
         context: &AppContext,
     ) -> Result<StageResult, BatchError> {
         use crate::new_architecture::actors::{StageActor, StageItem, StageItemType};
         
-        info!("🎯 Executing stage {:?} for {} pages", stage_type, pages.len());
+        info!("� Starting Stage pipeline processing for {} pages", pages.len());
         
-        // StageActor 생성
-        let mut stage_actor = StageActor::new(format!("stage_{}_{}", stage_type.as_str(), self.actor_id));
+        // Stage 실행 순서 정의
+        let stages = vec![
+            StageType::StatusCheck,
+            StageType::ListPageCrawling, 
+            StageType::ProductDetailCrawling,
+            StageType::DataSaving,
+        ];
         
-        // ✅ 실제 크롤링 엔진 초기화
-        stage_actor.initialize_default_engines().await
-            .map_err(|e| BatchError::StageProcessingFailed { 
-                stage: stage_type.as_str().to_string(), 
-                error: format!("Failed to initialize crawling engines: {}", e) 
-            })?;
-        
-        // 페이지들을 StageItem으로 변환
-        let items: Vec<StageItem> = pages.into_iter().map(|page| {
-            let url = format!("https://matter.go.kr/portal/aap/list/result.do?MKTAB_CD=A0020102&PAGE={}", page);
+        // 초기 입력: 페이지들을 StageItem으로 변환
+        let mut current_items: Vec<StageItem> = pages.into_iter().map(|page| {
+            let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
             StageItem {
                 id: format!("page_{}", page),
                 item_type: StageItemType::Page { page_number: page },
                 url,
-                metadata: format!("{{\"page\": {}, \"stage\": \"{}\"}}", page, stage_type.as_str()),
+                metadata: format!("{{\"page\": {}, \"batch\": \"{}\"}}", page, self.actor_id),
             }
         }).collect();
         
-        // Stage 실행
-        let concurrency_limit = context.config.performance.concurrency.max_concurrent_tasks;
-        let timeout_secs = 300; // 5분 타임아웃 (하드코딩)
+        let mut final_result = StageResult {
+            processed_items: 0,
+            successful_items: 0, 
+            failed_items: 0,
+            duration_ms: 0,
+            details: vec![],
+        };
         
-        let stage_name = stage_type.as_str().to_string();
+        // Stage 파이프라인 실행
+        for (stage_idx, stage_type) in stages.iter().enumerate() {
+            info!("🎯 Executing stage {} for {} items", stage_type.as_str(), current_items.len());
+            
+            // 🔥 Phase 1: 실제 서비스와 함께 StageActor 생성
+            let mut stage_actor = if let (Some(http_client), Some(data_extractor), Some(product_repo), Some(app_config)) = 
+                (&self.http_client, &self.data_extractor, &self.product_repo, &self.app_config) {
+                
+                info!("✅ Creating StageActor with real services");
+                StageActor::new_with_services(
+                    format!("stage_{}_{}", stage_type.as_str().to_lowercase(), self.actor_id),
+                    self.batch_id.clone().unwrap_or_default(),
+                    Arc::clone(http_client),
+                    Arc::clone(data_extractor),
+                    Arc::clone(product_repo),
+                    app_config.clone(),
+                )
+            } else {
+                warn!("⚠️  Creating StageActor without services - falling back to basic initialization");
+                let mut stage_actor = StageActor::new(
+                    format!("stage_{}_{}", stage_type.as_str().to_lowercase(), self.actor_id),
+                );
+                
+                // 기존 방식으로 서비스 초기화 시도
+                stage_actor.initialize_real_services(context).await
+                    .map_err(|e| BatchError::StageProcessingFailed { 
+                        stage: stage_type.as_str().to_string(), 
+                        error: format!("Failed to initialize real services: {}", e) 
+                    })?;
+                    
+                stage_actor
+            };
+            
+            // Stage 실행
+            let concurrency_limit = 5; // TODO: 설정 파일에서 가져와야 함
+            let timeout_secs = 300;
+            
+            let stage_result = stage_actor.execute_stage(
+                stage_type.clone(),
+                current_items.clone(),
+                concurrency_limit,
+                timeout_secs,
+                context,
+            ).await.map_err(|e| BatchError::StageProcessingFailed { 
+                stage: stage_type.as_str().to_string(),
+                error: format!("Stage execution failed: {:?}", e)
+            })?;
+            
+            info!("✅ Stage {} ({}) completed: {} success, {} failed", 
+                  stage_idx + 1, stage_type.as_str(), stage_result.successful_items, stage_result.failed_items);
+            
+            // 최종 결과 누적
+            final_result.processed_items += stage_result.processed_items;
+            final_result.successful_items += stage_result.successful_items;
+            final_result.failed_items += stage_result.failed_items;
+            final_result.duration_ms += stage_result.duration_ms;
+            
+            // 다음 Stage를 위한 입력 데이터 변환
+            current_items = self.transform_stage_output(stage_type.clone(), current_items, &stage_result).await?;
+        }
         
-        stage_actor.execute_stage(
-            stage_type,
-            items,
-            concurrency_limit,
-            timeout_secs,
-            context,
-        ).await.map_err(|e| BatchError::StageProcessingFailed { 
-            stage: stage_name, 
-            error: e.to_string() 
-        })
+        info!("✅ All stages completed in pipeline");
+        Ok(final_result)
+    }
+    
+    /// Stage 출력을 다음 Stage 입력으로 변환
+    async fn transform_stage_output(
+        &self, 
+        completed_stage: StageType, 
+        input_items: Vec<StageItem>,
+        stage_result: &StageResult
+    ) -> Result<Vec<StageItem>, BatchError> {
+        match completed_stage {
+            StageType::StatusCheck => {
+                // StatusCheck → ListPageCrawling: Page 아이템 그대로 전달
+                info!("🔄 StatusCheck → ListPageCrawling: passing {} Page items", input_items.len());
+                Ok(input_items)
+            }
+            StageType::ListPageCrawling => {
+                // ListPageCrawling → ProductDetailCrawling: 실제 수집된 ProductUrls 사용
+                info!("🔄 ListPageCrawling → ProductDetailCrawling: extracting ProductUrls from collected data");
+                
+                let mut transformed_items = Vec::new();
+                let mut total_urls_collected = 0;
+                
+                for (item_index, item) in input_items.iter().enumerate() {
+                    if let StageItemType::Page { page_number } = item.item_type {
+                        // stage_result에서 해당 페이지의 실행 결과 확인
+                        if let Some(stage_item_result) = stage_result.details.get(item_index) {
+                            if stage_item_result.success {
+                                // 실제 수집된 데이터가 있는지 확인
+                                if let Some(collected_data_json) = &stage_item_result.collected_data {
+                                    // JSON에서 ProductURL들을 파싱
+                                    match serde_json::from_str::<Vec<crate::domain::product_url::ProductUrl>>(collected_data_json) {
+                                        Ok(product_urls) => {
+                                            // ProductURL들을 String으로 변환
+                                            let url_strings: Vec<String> = product_urls.iter()
+                                                .map(|product_url| product_url.url.clone())
+                                                .collect();
+                                            
+                                            if !url_strings.is_empty() {
+                                                total_urls_collected += url_strings.len();
+                                                
+                                                transformed_items.push(StageItem {
+                                                    id: format!("product_urls_page_{}", page_number),
+                                                    item_type: StageItemType::ProductUrls { urls: url_strings.clone() },
+                                                    url: item.url.clone(),
+                                                    metadata: format!(
+                                                        "{{\"source_page\": {}, \"url_count\": {}, \"collected_from_real_crawling\": true}}", 
+                                                        page_number, url_strings.len()
+                                                    ),
+                                                });
+                                                
+                                                info!("✅ Extracted {} ProductURLs from page {}", url_strings.len(), page_number);
+                                            } else {
+                                                warn!("⚠️  Page {} crawling succeeded but no ProductURLs were collected", page_number);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!("⚠️  Failed to parse collected data for page {}: {}", page_number, e);
+                                            warn!("⚠️  Raw collected data: {}", collected_data_json);
+                                        }
+                                    }
+                                } else {
+                                    warn!("⚠️  Page {} succeeded but no collected data available", page_number);
+                                }
+                            } else {
+                                warn!("⚠️  Page {} failed in ListPageCrawling stage, skipping URL extraction", page_number);
+                            }
+                        } else {
+                            warn!("⚠️  No stage result found for page {} (item index {})", page_number, item_index);
+                        }
+                    }
+                }
+                
+                info!("✅ Transformed {} Page items to {} ProductUrls items ({} total URLs)", 
+                      input_items.len(), transformed_items.len(), total_urls_collected);
+                
+                if transformed_items.is_empty() {
+                    warn!("⚠️  No ProductURLs were extracted - all pages may have failed or returned no data");
+                }
+                
+                Ok(transformed_items)
+            }
+            StageType::ProductDetailCrawling => {
+                // ProductDetailCrawling → DataSaving: ProductUrls 아이템 그대로 전달
+                // (실제로는 ProductDetail 데이터로 변환되어야 하지만, 현재는 간소화)
+                let item_count = input_items.len();
+                info!("🔄 ProductDetailCrawling → DataSaving: passing {} ProductUrls items", item_count);
+                Ok(input_items)
+            }
+            StageType::DataSaving => {
+                // DataSaving은 마지막 단계이므로 변환 불필요
+                info!("🔄 DataSaving completed - pipeline finished");
+                Ok(input_items)
+            }
+            _ => Ok(input_items)
+        }
     }
 }

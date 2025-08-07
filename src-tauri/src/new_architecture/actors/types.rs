@@ -8,6 +8,10 @@ use ts_rs::TS;
 use std::time::Duration;
 use chrono::{DateTime, Utc};
 
+// 도메인 객체 import 추가
+use crate::domain::product_url::ProductUrl;
+use crate::domain::integrated_product::ProductDetail;
+
 /// Actor 간 통신을 위한 통합 명령 타입
 /// 
 /// 시스템의 모든 Actor가 이해할 수 있는 공통 명령 인터페이스입니다.
@@ -311,8 +315,13 @@ pub struct StageItem {
 #[ts(export)]
 pub enum StageItemType {
     Page { page_number: u32 },
-    Product { product_id: String },
+    Product { 
+        page_number: u32
+    },
     Url { url_type: String },
+    ProductUrls { 
+        urls: Vec<String>  // 간단히 URL 문자열 리스트로 변경
+    },
 }
 
 /// 스테이지 결과
@@ -355,6 +364,91 @@ pub struct StageItemResult {
     
     /// 재시도 횟수
     pub retry_count: u32,
+    
+    /// 수집된 데이터 (JSON 문자열)
+    /// ListPageCrawling: ProductURL들의 JSON 배열
+    /// ProductDetailCrawling: ProductDetail들의 JSON 배열
+    /// DataSaving: 저장된 데이터의 메타정보
+    pub collected_data: Option<String>,
+}
+
+// =============================================================================
+// 🔥 Phase 2: 도메인 객체 직접 반환을 위한 새로운 타입 정의
+// =============================================================================
+
+/// 스테이지 결과 데이터
+/// 
+/// JSON 직렬화 대신 타입 안전한 도메인 객체를 직접 반환합니다.
+/// 이는 성능 향상과 타입 안전성을 동시에 제공합니다.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum StageResultData {
+    /// 상태 확인 결과
+    StatusCheck {
+        site_available: bool,
+        total_pages: Option<u32>,
+        last_page_products: Option<u32>,
+        response_time_ms: u64,
+    },
+    
+    /// 리스트 페이지 크롤링 결과 - ProductUrl 직접 반환
+    ProductUrls {
+        urls: Vec<ProductUrl>,
+        page_number: u32,
+        total_found: u32,
+    },
+    
+    /// 상품 상세 크롤링 결과 - ProductDetail 직접 반환
+    ProductDetails {
+        details: Vec<ProductDetail>,
+        successful_count: u32,
+        failed_count: u32,
+    },
+    
+    /// 데이터 검증 결과
+    ValidationResult {
+        validated_count: u32,
+        error_count: u32,
+        warnings: Vec<String>,
+    },
+    
+    /// 데이터 저장 결과
+    SavingResult {
+        saved_count: u32,
+        duplicates_found: u32,
+        database_id_range: Option<(i64, i64)>, // (min_id, max_id)
+    },
+    
+    /// 빈 결과 (처리할 데이터 없음)
+    Empty,
+}
+
+/// 개선된 스테이지 아이템 결과
+/// 
+/// collected_data를 StageResultData로 교체하여 타입 안전성 향상
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct EnhancedStageItemResult {
+    /// 아이템 ID
+    pub item_id: String,
+    
+    /// 아이템 타입
+    pub item_type: StageItemType,
+    
+    /// 성공 여부
+    pub success: bool,
+    
+    /// 에러 메시지 (실패 시)
+    pub error: Option<String>,
+    
+    /// 처리 시간
+    pub duration_ms: u64,
+    
+    /// 재시도 횟수
+    pub retry_count: u32,
+    
+    /// 수집된 데이터 - 타입 안전한 도메인 객체 직접 반환
+    pub collected_data: Option<StageResultData>,
 }
 
 /// 세션 요약
@@ -738,9 +832,11 @@ mod tests {
             details: vec![
                 StageItemResult {
                     item_id: "item1".to_string(),
+                    item_type: StageItemType::Url { url_type: "test".to_string() },
                     success: true,
                     error: None,
                     duration_ms: 500,
+                    retry_count: 0,
                 }
             ],
         };

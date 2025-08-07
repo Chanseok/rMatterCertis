@@ -26,35 +26,40 @@
 **설정 파일 기반 자율 운영 체계**:
 
 **백엔드 (Rust) 역할**:
-- **설정 파일 완전 의존**: `config/*.toml` 파일의 모든 설정값을 읽어 자율적으로 크롤링 계획 수립 및 실행
+- **설정 파일 완전 의존**: `~/Library/Application Support/matter-certis-v2/matter_certis_config.json` 파일의 모든 설정값을 읽어 자율적으로 크롤링 계획 수립 및 실행
 - **프론트엔드 독립성**: 프론트엔드로부터 어떤 설정값도 받지 않고 완전 자율 동작
 - **동적 설정 적용**: 파일 시스템 감시를 통해 설정 파일 변경 시 자동으로 새로운 설정 적용
 - **Actor 시스템 자율 제어**: 모든 동시성, 재시도, 배치 크기 등을 설정 파일 기반으로 동적 조정
 
 **프론트엔드 (SolidJS) 역할**:
-- **설정 편집 전용**: `config/*.toml` 파일의 내용만 편집하고 저장하는 순수한 텍스트 에디터 역할
+- **설정 편집 전용**: `matter_certis_config.json` 파일의 내용만 편집하고 저장하는 순수한 설정 에디터 역할
 - **상태 표시 전용**: 백엔드의 크롤링 진행 상황, 결과, 통계만 실시간 표시
 - **설정 전송 금지**: 백엔드로 설정값을 전송하는 모든 API 호출 완전 제거
 - **파일 기반 소통**: 오직 설정 파일 저장을 통해서만 백엔드와 간접 소통
 
 ### 1.2. 설정 파일 구조와 역할
 
-```toml
-# config/default.toml - 모든 환경의 기본값
-[system]
-max_concurrent_sessions = 10
-abort_on_database_error = false
-
-[performance.batch_sizes]
-initial_size = 10
-auto_adjust_threshold = 0.8
-
-[retry_policies.list_collection]
-max_attempts = 3
-base_delay_ms = 1000
+```json
+# ~/Library/Application Support/matter-certis-v2/matter_certis_config.json - JSON 설정 파일
+{
+  "user": {
+    "crawling": {
+      "page_range_limit": 5,
+      "intelligent_mode": {
+        "enabled": true,
+        "max_range_limit": 1000
+      }
+    },
+    "batch": {
+      "batch_size": 10,
+      "enable_batch_processing": true
+    }
+  }
+}
 ```
 
-**설정 우선순위**: `production.toml` > `development.toml` > `default.toml`
+**설정 파일 경로**: `~/Library/Application Support/matter-certis-v2/matter_certis_config.json`
+**데이터베이스 경로**: `~/Library/Application Support/matter-certis-v2/database/`
 
 ### 1.3. Backend-Only CRUD 패턴: 데이터베이스 접근 완전 분리 🦀
 
@@ -65,7 +70,7 @@ base_delay_ms = 1000
 **✅ 허용되는 패턴 (Recommended)**:
 - **Frontend → Tauri Commands → Backend Repository → Database**: 모든 데이터 접근은 백엔드 API를 통해서만 수행
 - **공유 연결 풀**: AppState가 관리하는 단일 SqlitePool을 모든 백엔드 컴포넌트가 공유
-- **중앙화된 데이터베이스 경로 관리**: `infrastructure::database_paths` 모듈을 통한 일관된 경로 관리
+- **중앙화된 데이터베이스 경로 관리**: `~/Library/Application Support/matter-certis-v2/database/` 디렉토리를 통한 일관된 경로 관리
 - **타입 안전 API**: ts-rs를 통한 TypeScript 타입 자동 생성으로 프론트엔드-백엔드 간 타입 안전성 보장
 
 **❌ 금지되는 패턴 (Deprecated)**:
@@ -117,7 +122,7 @@ pub async fn get_products_page(
    
    impl AppState {
        pub async fn initialize_database_pool(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-           let database_url = crate::infrastructure::get_main_database_url();
+           let database_url = "sqlite:///Users/chanseok/Library/Application Support/matter-certis-v2/database/matter_certis.db";
            let pool = SqlitePool::connect(&database_url).await?;
            self.database_pool.set(pool).map_err(|_| "Database pool already initialized")?;
            Ok(())
@@ -180,14 +185,12 @@ pub async fn get_products_page(
 ```mermaid
 graph TD
     subgraph ConfigFiles["설정 파일 시스템"]
-        DEFAULT["default.toml<br/>기본 설정값"]
-        DEV["development.toml<br/>개발 환경 설정"]
-        PROD["production.toml<br/>운영 환경 설정"]
+        CONFIG["<b>matter_certis_config.json</b><br/>~/Library/Application Support/matter-certis-v2/<br/>- UserConfig (사용자 설정)<br/>- AdvancedConfig (고급 설정)<br/>- AppManagedConfig (앱 관리 설정)"]
     end
 
     subgraph UI["UI Layer (SolidJS)"]
         DASH[CrawlingDashboard<br/>상태 표시 전용]
-        EDITOR[ConfigEditor<br/>설정 파일 편집 전용]
+        EDITOR[ConfigEditor<br/>JSON 설정 파일 편집 전용]
     end
 
     subgraph API["API Layer / Facade"]
@@ -205,7 +208,7 @@ graph TD
     subgraph DataLayer["Backend-Only 데이터 레이어"]
         REPOSITORY["<b>IntegratedProductRepository</b><br/>- AppState 공유 연결 풀 사용<br/>- 모든 데이터베이스 작업 중앙화<br/>- Modern Rust 2024 패턴"]
         DB_POOL["<b>SqlitePool (Shared)</b><br/>- AppState에서 관리<br/>- OnceLock 기반 초기화<br/>- 연결 재사용으로 성능 최적화"]
-        DATABASE["<b>SQLite Database</b><br/>- 중앙화된 경로 관리<br/>- 자동 마이그레이션<br/>- 트랜잭션 지원"]
+        DATABASE["<b>SQLite Database</b><br/>- ~/Library/Application Support/matter-certis-v2/database/<br/>- 자동 마이그레이션<br/>- 트랜잭션 지원"]
     end
 
     subgraph Channels["채널 시스템"]
@@ -221,13 +224,13 @@ graph TD
     end
 
     %% 설정 파일 기반 흐름
-    ConfigFiles -.-> CONFIG_WATCHER
+    CONFIG -.-> CONFIG_WATCHER
     CONFIG_WATCHER -.-> FACADE
     CONFIG_WATCHER -.-> SESSION
     CONFIG_WATCHER -.-> PLANNER
 
     %% UI 상호작용 (설정 파일 편집만)
-    EDITOR -- "파일 편집/저장" --> ConfigFiles
+    EDITOR -- "JSON 파일 편집/저장" --> CONFIG
     DASH -- "상태 조회만" --> FACADE
     DASH -- "Backend-Only 데이터 조회" --> DATA_API
     
@@ -271,7 +274,7 @@ graph TD
 
 **핵심 설계 원칙**:
 - **🚫 파라미터 전송 금지**: UI → 백엔드로 설정값 전송하는 모든 API 제거
-- **📁 설정 파일 중심**: 모든 설정은 `config/*.toml` 파일을 통해서만 관리
+- **📁 설정 파일 중심**: 모든 설정은 `matter_certis_config.json` 파일을 통해서만 관리
 - **🔄 자동 재로딩**: 설정 파일 변경 시 백엔드가 자동으로 새 설정 적용
 - **👁️ 상태 표시 전용**: UI는 오직 백엔드 상태만 실시간 표시
 - **🦀 Backend-Only CRUD**: 모든 데이터베이스 접근은 백엔드 API를 통해서만 수행, 공유 연결 풀로 성능 최적화
@@ -366,7 +369,7 @@ impl CrawlingFacade {
 sequenceDiagram
     participant User as 사용자
     participant UI as CrawlingDashboard
-    participant ConfigFile as config/*.toml
+    participant ConfigFile as matter_certis_config.json
     participant Watcher as ConfigWatcher
     participant Facade as CrawlingFacade
     participant Session as SessionActor
@@ -375,8 +378,8 @@ sequenceDiagram
 
     Note over User: 사용자가 설정 편집 후 크롤링 시작
 
-    User->>UI: 설정 편집 탭에서 config/production.toml 수정
-    UI->>ConfigFile: save_config_file("production.toml", new_content)
+    User->>UI: 설정 편집 탭에서 matter_certis_config.json 수정
+    UI->>ConfigFile: save_config_file("matter_certis_config.json", new_content)
     ConfigFile->>Watcher: 파일 변경 이벤트 감지
     Watcher->>Facade: 새로운 설정 자동 로딩
     
@@ -385,8 +388,8 @@ sequenceDiagram
     UI->>Facade: start_smart_crawling() // 📌 설정값 전송 금지
     
     Note over Facade: 설정 파일에서 모든 값 자동 로딩
-    Facade->>ConfigFile: 자동으로 config/*.toml 파일 읽기
-    ConfigFile-->>Facade: 병합된 설정값 (prod > dev > default 순)
+    Facade->>ConfigFile: 자동으로 matter_certis_config.json 파일 읽기
+    ConfigFile-->>Facade: JSON 설정값 (user, advanced, app_managed 구조)
     
     Facade->>Session: ActorCommand::StartSession { /* 설정 없음, 자율 동작 */ }
     
@@ -400,11 +403,11 @@ sequenceDiagram
     Planner-->>Session: ExecutionPlan { batches, strategy }
     
     Session->>Event: emit(PlanCreated { total_batches, config_applied })
-    Event-->>UI: "계획 수립 완료: config 기반 Z개 배치 생성"
+    Event-->>UI: "계획 수립 완료: JSON 설정 기반 Z개 배치 생성"
     
     loop 각 배치에 대해 (설정 기반)
         Session->>Session: spawn_batch_with_config(batch_plan, current_config)
-        Note over Session: config의 concurrency, timeout 등 자동 적용
+        Note over Session: JSON 설정의 concurrency, timeout 등 자동 적용
     end
     
     Event-->>UI: "크롤링 실행 시작: 설정 파일 기반 자율 운영"
@@ -428,31 +431,24 @@ pub struct MergedConfig {
 }
 
 impl ConfigManager {
-    /// � 설정 파일 계층적 로딩: production > development > default
+    /// JSON 설정 파일 로딩: matter_certis_config.json
     /// 
-    /// # 설정 우선순위
-    /// 1. `config/production.toml` (최고 우선순위)
-    /// 2. `config/development.toml` (중간)
-    /// 3. `config/default.toml` (기본값)
-    pub async fn load_merged_config() -> crate::Result<MergedConfig> {
-        let mut config = Self::load_default_config().await?;
+    /// # 설정 구조
+    /// - UserConfig: 사용자가 편집 가능한 설정
+    /// - AdvancedConfig: 고급 사용자 설정  
+    /// - AppManagedConfig: 앱이 자동 관리하는 설정
+    pub async fn load_app_config() -> crate::Result<AppConfig> {
+        let config_path = Self::get_config_file_path().await?;
         
-        // 개발 환경 설정 병합 (존재하는 경우)
-        if let Ok(dev_config) = Self::load_development_config().await {
-            config.merge_with(dev_config)?;
-        }
+        let config_content = tokio::fs::read_to_string(&config_path).await
+            .map_err(|e| format!("Failed to read config file: {}", e))?;
+            
+        let config: AppConfig = serde_json::from_str(&config_content)
+            .map_err(|e| format!("Failed to parse JSON config: {}", e))?;
         
-        // 운영 환경 설정 병합 (최종 우선순위)
-        if let Ok(prod_config) = Self::load_production_config().await {
-            config.merge_with(prod_config)?;
-        }
-        
-        // 설정 검증
-        config.validate()?;
-        
-        info!("📁 설정 파일 로딩 완료: batch_size={}, max_concurrent={}", 
-              config.performance.batch_sizes.initial_size,
-              config.performance.concurrency.max_concurrent_tasks);
+        info!("📁 JSON 설정 파일 로딩 완료: batch_size={}, max_concurrent={}", 
+              config.user.batch.batch_size,
+              config.user.crawling.workers.list_page_max_concurrent);
         
         Ok(config)
     }
@@ -472,8 +468,9 @@ impl ConfigManager {
             notify::Config::default(),
         )?;
         
-        // config/ 디렉토리 전체 감시
-        watcher.watch(Path::new("config/"), notify::RecursiveMode::NonRecursive)?;
+        // ~/Library/Application Support/matter-certis-v2/ 디렉토리 감시
+        let config_dir = Self::get_app_support_dir().await?;
+        watcher.watch(&config_dir, notify::RecursiveMode::NonRecursive)?;
         
         Ok(receiver)
     }
@@ -484,21 +481,19 @@ impl ConfigManager {
 
 ```typescript
 // src/components/ConfigEditor.tsx
-// 🎯 목적: config/*.toml 파일만 편집, 백엔드로 설정값 전송 금지
+// 🎯 목적: matter_certis_config.json 파일만 편집, 백엔드로 설정값 전송 금지
 
 export const ConfigEditor: Component = () => {
   const [configContent, setConfigContent] = createSignal<string>('');
-  const [selectedFile, setSelectedFile] = createSignal<string>('production.toml');
   
-  // ✅ 허용: 설정 파일 편집 및 저장
+  // ✅ 허용: JSON 설정 파일 편집 및 저장
   const saveConfigFile = async () => {
     try {
       await invoke('save_config_file', {
-        filename: selectedFile(),
         content: configContent()
       });
       
-      addLog(`✅ 설정 파일 저장됨: ${selectedFile()}`);
+      addLog(`✅ 설정 파일 저장됨: matter_certis_config.json`);
       // 백엔드가 자동으로 변경사항 감지하여 재로딩
     } catch (error) {
       addLog(`❌ 설정 파일 저장 실패: ${error}`);
@@ -513,21 +508,15 @@ export const ConfigEditor: Component = () => {
       <h3>📁 설정 파일 편집</h3>
       <p>설정 변경 후 저장하면 백엔드가 자동으로 새 설정을 적용합니다.</p>
       
-      <select value={selectedFile()} onChange={(e) => setSelectedFile(e.target.value)}>
-        <option value="production.toml">운영 환경 설정</option>
-        <option value="development.toml">개발 환경 설정</option>
-        <option value="default.toml">기본 설정 (읽기 전용)</option>
-      </select>
-      
       <textarea 
         value={configContent()}
         onInput={(e) => setConfigContent(e.target.value)}
-        placeholder="TOML 형식으로 설정을 입력하세요..."
+        placeholder="JSON 형식으로 설정을 입력하세요..."
         rows={20}
       />
       
       <button onClick={saveConfigFile}>
-        💾 설정 파일 저장
+        💾 설정 파일 저장 (matter_certis_config.json)
       </button>
     </div>
   );
@@ -2455,7 +2444,7 @@ cargo run --release --bin recovery_benchmark
   - `get_latest_updated_products()` - 최신 업데이트 제품 조회
 - ✅ `lib.rs` 통합 등록 및 초기화 로직 완료
 - ✅ TypeScript 타입 정의 (TS trait) 구현 완료
-- ✅ 중앙화된 데이터베이스 경로 관리 (infrastructure::database_paths) 적용 완료
+- ✅ 중앙화된 데이터베이스 경로 관리 (~Library/Application Support/matter-certis-v2/database/) 적용 완료
 - ✅ Modern Rust 2024 컴파일 검증 통과 (0 errors, 51 warnings)
 
 **🔄 다음 단계 (Frontend Migration)**:
