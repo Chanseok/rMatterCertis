@@ -642,11 +642,10 @@ impl BatchActor {
             app_config.clone(),
         );
 
-        // StageActor로 Stage 실행 (임시: 빈 벡터로 처리)
-        let empty_items = Vec::new();
+        // StageActor로 Stage 실행 (실제 items 전달)
         let stage_result = stage_actor.execute_stage(
             stage_type,
-            empty_items,
+            items,
             concurrency_limit,
             30, // timeout_secs - 30초 타임아웃
             context,
@@ -727,14 +726,13 @@ impl BatchActor {
                 stage_actor
             };
             
-            // Stage 실행 (임시: 빈 벡터로 처리)
+            // Stage 실행 (실제 current_items 전달)
             let concurrency_limit = 5; // TODO: 설정 파일에서 가져와야 함
             let timeout_secs = 300;
-            let empty_items = Vec::new();
             
             let stage_result = stage_actor.execute_stage(
                 stage_type.clone(),
-                empty_items,
+                current_items.clone(),
                 concurrency_limit,
                 timeout_secs,
                 context,
