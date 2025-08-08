@@ -14,7 +14,7 @@
 
 use anyhow::{Result, anyhow};
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::{
     layer::SubscriberExt,
@@ -192,6 +192,10 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
         cleanup_old_logs(&log_dir, &config)?;
     }
 
+    // Concise startup mode (config or ENV override)
+    let concise_env = std::env::var("MC_CONCISE_STARTUP").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    let concise_startup = concise_env.unwrap_or(config.concise_startup);
+
     // Set up environment filter with configurable module filtering
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| {
@@ -235,6 +239,15 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
                     .add_directive(format!("matter_certis_v2={}", config.level).parse().unwrap())
                     .add_directive(format!("matter-certis-v2={}", config.level).parse().unwrap())
                     .add_directive(format!("matter_certis_v2::infrastructure={}", config.level).parse().unwrap());
+            }
+
+            // Concise startup: additionally downshift some verbose modules at boot
+            if concise_startup {
+                filter = filter
+                    .add_directive("sqlx=error".parse().unwrap())
+                    .add_directive("reqwest=warn".parse().unwrap())
+                    .add_directive("hyper=warn".parse().unwrap())
+                    .add_directive("tokio=warn".parse().unwrap());
             }
             
             filter
@@ -362,24 +375,41 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
         }
     }
 
-    info!("Logging system initialized");
-    info!("Log directory: {:?}", log_dir);
-    info!("Log level: {}", config.level);
-    info!("JSON format: {}", config.json_format);
-    info!("Console output: {}", config.console_output);
-    
-    // Log filter optimization info
-    if !config.level.to_lowercase().contains("trace") {
-        info!("SQL and verbose logs suppressed (use TRACE level to see all logs)");
-        info!("Optimized filters: sqlx=warn, reqwest=info, tokio=info, tauri=info");
+    if concise_startup {
+        // Compact one-liner startup summary
+        info!(
+            "🚀 Startup: level={}, concise=on, outputs={{console:{},file:{}}}, dir={:?}",
+            config.level, config.console_output, config.file_output, log_dir
+        );
+        debug!(
+            "Startup details: separate_frontend_backend={}, file_strategy={}, json={}, cleanup={}, keep_latest={}, max_files={}",
+            config.separate_frontend_backend,
+            config.file_naming_strategy,
+            config.json_format,
+            config.auto_cleanup_logs,
+            config.keep_only_latest,
+            config.max_files
+        );
     } else {
-        info!("TRACE level active - all logs including SQL queries will be shown");
+        info!("Logging system initialized");
+        info!("Log directory: {:?}", log_dir);
+        info!("Log level: {}", config.level);
+        info!("JSON format: {}", config.json_format);
+        info!("Console output: {}", config.console_output);
+        
+        // Log filter optimization info
+        if !config.level.to_lowercase().contains("trace") {
+            info!("SQL and verbose logs suppressed (use TRACE level to see all logs)");
+            info!("Optimized filters: sqlx=warn, reqwest=info, tokio=info, tauri=info");
+        } else {
+            info!("TRACE level active - all logs including SQL queries will be shown");
+        }
+        info!("File output: {}", config.file_output);
+        info!("Separate frontend/backend logs: {}", config.separate_frontend_backend);
+        info!("File naming strategy: {}", config.file_naming_strategy);
+        info!("Auto cleanup: {}", config.auto_cleanup_logs);
+        info!("Keep only latest: {}", config.keep_only_latest);
     }
-    info!("File output: {}", config.file_output);
-    info!("Separate frontend/backend logs: {}", config.separate_frontend_backend);
-    info!("File naming strategy: {}", config.file_naming_strategy);
-    info!("Auto cleanup: {}", config.auto_cleanup_logs);
-    info!("Keep only latest: {}", config.keep_only_latest);
 
     // Handle frontend logging setup
     if config.file_output {

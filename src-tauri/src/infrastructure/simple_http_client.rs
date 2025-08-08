@@ -156,6 +156,8 @@ impl GlobalRateLimiter {
 pub struct HttpClient {
     client: Client,
     config: HttpClientConfig,
+    /// Optional context label for provenance in logs (e.g., "BatchActor", "Stage:List")
+    context_label: Option<String>,
 }
 
 impl HttpClient {
@@ -173,7 +175,7 @@ impl HttpClient {
         }).map_err(|e| anyhow!("Failed to load config: {}", e))?;
         
         info!("🔧 HttpClient using config: max_requests_per_second={}", app_config.user.crawling.workers.max_requests_per_second);
-        Self::from_worker_config(&app_config.user.crawling.workers)
+    Self::from_worker_config(&app_config.user.crawling.workers)
     }
 
     /// Create a new HTTP client from WorkerConfig
@@ -200,7 +202,19 @@ impl HttpClient {
         Ok(Self {
             client,
             config,
+            context_label: None,
         })
+    }
+
+    /// Set a human-readable context label for logging provenance (returns self for chaining)
+    pub fn with_context_label(mut self, label: &str) -> Self {
+        self.context_label = Some(label.to_string());
+        self
+    }
+
+    /// Update the context label after construction
+    pub fn set_context_label(&mut self, label: &str) {
+        self.context_label = Some(label.to_string());
     }
 
     /// Fetch HTML content from a URL with automatic retry and rate limiting
@@ -212,6 +226,11 @@ impl HttpClient {
         for attempt in 1..=self.config.max_retries {
             // Apply global rate limiting
             let rate_limiter = GlobalRateLimiter::get_instance();
+            if let Some(label) = &self.context_label {
+                info!("⚖️ Applying rate limit {} RPS (source: {})", self.config.max_requests_per_second, label);
+            } else {
+                info!("⚖️ Applying rate limit {} RPS", self.config.max_requests_per_second);
+            }
             rate_limiter.apply_rate_limit(self.config.max_requests_per_second).await;
             
             match self.fetch_html_once(url).await {
@@ -238,6 +257,11 @@ impl HttpClient {
     /// Fetch raw response from a URL
     pub async fn fetch_response(&self, url: &str) -> Result<Response> {
         let rate_limiter = GlobalRateLimiter::get_instance();
+        if let Some(label) = &self.context_label {
+            info!("⚖️ Applying rate limit {} RPS (source: {})", self.config.max_requests_per_second, label);
+        } else {
+            info!("⚖️ Applying rate limit {} RPS", self.config.max_requests_per_second);
+        }
         rate_limiter.apply_rate_limit(self.config.max_requests_per_second).await;
         
         info!("🌐 HTTP GET (HttpClient): {}", url);
@@ -264,6 +288,11 @@ impl HttpClient {
 
         for attempt in 1..=self.config.max_retries {
             let rate_limiter = GlobalRateLimiter::get_instance();
+            if let Some(label) = &self.context_label {
+                info!("⚖️ Applying rate limit {} RPS (source: {})", self.config.max_requests_per_second, label);
+            } else {
+                info!("⚖️ Applying rate limit {} RPS", self.config.max_requests_per_second);
+            }
             rate_limiter.apply_rate_limit(self.config.max_requests_per_second).await;
 
             info!("🌐 HTTP GET (attempt {}/{}) : {}", attempt, self.config.max_retries, url);
@@ -359,6 +388,11 @@ impl HttpClient {
         for attempt in 1..=self.config.max_retries {
             // Apply global rate limiting
             let rate_limiter = GlobalRateLimiter::get_instance();
+            if let Some(label) = &self.context_label {
+                info!("⚖️ Applying rate limit {} RPS (source: {})", self.config.max_requests_per_second, label);
+            } else {
+                info!("⚖️ Applying rate limit {} RPS", self.config.max_requests_per_second);
+            }
             rate_limiter.apply_rate_limit(self.config.max_requests_per_second).await;
             
             match self.fetch_html_string_once(url).await {

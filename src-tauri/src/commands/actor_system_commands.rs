@@ -552,7 +552,8 @@ async fn execute_session_actor_with_batches(
             site_url: "https://csa-iot.org/csa-iot_products/".to_string(),
             start_page,
             end_page,
-            concurrency_limit: app_config.user.crawling.workers.list_page_max_concurrent as u32,
+            // Align with global max concurrency to avoid mixed values in logs
+            concurrency_limit: app_config.user.max_concurrent_requests,
             batch_size: batch_size,
             request_delay_ms: app_config.user.request_delay_ms,
             timeout_secs: app_config.advanced.request_timeout_seconds,
@@ -682,9 +683,12 @@ async fn execute_real_batch_actor(
     use std::sync::Arc;
     
     // HttpClient 생성
-    let http_client = Arc::new(HttpClient::create_from_global_config()
-        .map_err(|e| format!("Failed to create HttpClient: {}", e))?);
-    info!("✅ HttpClient created");
+    let http_client = Arc::new(
+        HttpClient::create_from_global_config()
+            .map_err(|e| format!("Failed to create HttpClient: {}", e))?
+            .with_context_label(&format!("BatchActor:{}", batch_id))
+    );
+    info!("✅ HttpClient created (labeled)");
     
     // MatterDataExtractor 생성  
     let data_extractor = Arc::new(MatterDataExtractor::new()
@@ -731,7 +735,8 @@ async fn execute_real_batch_actor(
     
     let batch_config = BatchConfig {
         batch_size: user_batch_size,
-        concurrency_limit: app_config.user.crawling.workers.list_page_max_concurrent as u32,
+        // Use the app-level max concurrency for batch execution to match plan/session
+        concurrency_limit: app_config.user.max_concurrent_requests,
         batch_delay_ms: 1000,
         retry_on_failure: true,
         start_page: Some(pages[0]),
@@ -745,7 +750,7 @@ async fn execute_real_batch_actor(
         pages: pages.to_vec(),
         config: batch_config,
         batch_size: user_batch_size,
-    concurrency_limit: app_config.user.crawling.workers.list_page_max_concurrent as u32,
+        concurrency_limit: app_config.user.max_concurrent_requests,
         total_pages: site_status.total_pages,
         products_on_last_page: site_status.products_on_last_page,
     };
@@ -821,7 +826,7 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
         }
     }
     
-    let http_client = HttpClient::create_from_global_config()?;
+    let http_client = HttpClient::create_from_global_config()?.with_context_label("Planner");
     let data_extractor = MatterDataExtractor::new()?;
     
     let status_checker = Arc::new(
@@ -947,7 +952,7 @@ async fn execute_session_actor_with_execution_plan(
     actor_event_tx: broadcast::Sender<AppEvent>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("🎭 Executing SessionActor with predefined ExecutionPlan...");
-    info!("📋 Plan: {} batches, batch_size: {}, concurrency: {}", 
+    info!("📋 Plan: {} batches, batch_size: {}, effective_concurrency: {}", 
           execution_plan.crawling_ranges.len(),
           execution_plan.batch_size,
           execution_plan.concurrency_limit);
@@ -959,7 +964,8 @@ async fn execute_session_actor_with_execution_plan(
             site_url: "https://csa-iot.org/csa-iot_products/".to_string(),
             start_page: execution_plan.crawling_ranges.first().map(|r| r.start_page).unwrap_or(1),
             end_page: execution_plan.crawling_ranges.last().map(|r| r.end_page).unwrap_or(1),
-            concurrency_limit: app_config.user.crawling.workers.list_page_max_concurrent as u32,
+            // Use the plan's concurrency as the effective session concurrency
+            concurrency_limit: execution_plan.concurrency_limit,
             batch_size: execution_plan.batch_size,
             request_delay_ms: app_config.user.request_delay_ms,
             timeout_secs: app_config.advanced.request_timeout_seconds,

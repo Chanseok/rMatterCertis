@@ -22,7 +22,9 @@ use matter_certis_v2_lib::infrastructure::crawling_service_impls::StatusCheckerI
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_logging();
+    // Use infrastructure logging so concise_startup and ENV overrides apply
+    let _ = matter_certis_v2_lib::infrastructure::logging::init_logging();
+    info!("concise_startup_env={:?}", std::env::var("MC_CONCISE_STARTUP").ok());
     // Expect MC_SKIP_DB_SAVE to be set by the environment to avoid DB writes
     info!("MC_SKIP_DB_SAVE={:?}", std::env::var("MC_SKIP_DB_SAVE").ok());
 
@@ -44,7 +46,8 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Real services
-    let http_client = Arc::new(HttpClient::create_from_global_config()?);
+    // Label the client so rate-limit provenance appears in logs
+    let http_client = Arc::new(HttpClient::create_from_global_config()?.with_context_label("BatchActor:sanity"));
     let data_extractor = Arc::new(MatterDataExtractor::new()?);
     // Initialize database paths and schema (prevents global manager panic and ensures tables)
     database_paths::initialize_database_paths().await?;
@@ -135,15 +138,4 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn init_logging() {
-    use tracing_subscriber::EnvFilter;
-    let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| {
-        // Verbose logs for sanity run
-        "info,matter_certis_v2_lib=info,matter-certis-v2=info,reqwest=warn,sqlx=warn".to_string()
-    });
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::new(filter))
-        .with_target(false)
-        .with_line_number(true)
-        .try_init();
-}
+// Note: using infrastructure logging; local init removed

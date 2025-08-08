@@ -179,37 +179,52 @@ pub struct BatchConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
     /// Log level: "error", "warn", "info", "debug", "trace"
+    #[serde(default)]
     pub level: String,
     
     /// Enable JSON formatted logs
+    #[serde(default)]
     pub json_format: bool,
     
     /// Enable console output
+    #[serde(default)]
     pub console_output: bool,
     
     /// Enable file output
+    #[serde(default)]
     pub file_output: bool,
     
     /// Use separate log files for frontend and backend (true) or unified log file (false)
+    #[serde(default)]
     pub separate_frontend_backend: bool,
     
     /// Log file naming strategy: "unified", "separated", "timestamped"
+    #[serde(default)]
     pub file_naming_strategy: String,
     
     /// Maximum log file size in MB (for rotation)
+    #[serde(default)]
     pub max_file_size_mb: u64,
     
     /// Number of log files to keep (older files will be deleted)
+    #[serde(default)]
     pub max_files: u32,
     
     /// Enable automatic log cleanup on startup
+    #[serde(default)]
     pub auto_cleanup_logs: bool,
     
     /// Keep only the most recent log file (delete all others)
+    #[serde(default)]
     pub keep_only_latest: bool,
     
     /// Module-specific log level filters (e.g., "sqlx": "warn", "reqwest": "info")
+    #[serde(default)]
     pub module_filters: std::collections::HashMap<String, String>,
+
+    /// Concise startup mode: minimize startup-time logs to essentials
+    #[serde(default)]
+    pub concise_startup: bool,
 }
 
 /// Hidden/Advanced settings that are in config file but not exposed in UI
@@ -315,6 +330,7 @@ impl Default for LoggingConfig {
                 filters.insert("matter_certis_v2".to_string(), "info".to_string());
                 filters
             },
+            concise_startup: true,
         }
     }
 }

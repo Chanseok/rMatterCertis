@@ -108,7 +108,14 @@ impl DbSaver {
             .await
             .map_err(|e| WorkerError::DatabaseError(format!("Failed to insert product: {}", e)))?;
         
-        tracing::info!("Successfully inserted product: {} with ID: {}", product.name, generated_id);
+        // Concise visibility for domain coordinates persistence
+        tracing::info!(
+            "Successfully inserted product: {} with ID: {} (page_id={}, index_in_page={})",
+            product.name,
+            generated_id,
+            product.page_id.unwrap_or(0),
+            product.index_in_page.unwrap_or(0)
+        );
         
         Ok(())
     }

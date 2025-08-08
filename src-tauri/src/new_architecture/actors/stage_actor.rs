@@ -838,7 +838,7 @@ impl StageActor {
                                     // 지수 백오프: base * 2^(attempt-1)
                                     // Note: use checked_shl to avoid panics for large shifts
                                     let factor = 1u64
-                                        .checked_shl((attempt - 1) as u32)
+                                        .checked_shl(attempt - 1)
                                         .unwrap_or(u64::MAX);
                                     let exp = base_delay_ms.saturating_mul(factor);
                                     let capped = std::cmp::min(exp, max_delay_ms);
@@ -1294,7 +1294,47 @@ impl StageActor {
                         }
                     }
                 }
-                
+                // 📊 저장 요약 (page_id, index_in_page 범위)
+                let page_ids: Vec<i32> = product_details
+                    .iter()
+                    .filter_map(|d| d.page_id)
+                    .collect();
+                let indices: Vec<i32> = product_details
+                    .iter()
+                    .filter_map(|d| d.index_in_page)
+                    .collect();
+
+                if !page_ids.is_empty() || !indices.is_empty() {
+                    let (min_page, max_page) = (
+                        page_ids.iter().min().copied(),
+                        page_ids.iter().max().copied(),
+                    );
+                    let (min_idx, max_idx) = (
+                        indices.iter().min().copied(),
+                        indices.iter().max().copied(),
+                    );
+
+                    // 고유 페이지 수 계산
+                    let unique_pages = {
+                        use std::collections::BTreeSet;
+                        let set: BTreeSet<i32> = page_ids.iter().copied().collect();
+                        set.len()
+                    };
+
+                    info!(
+                        "🧾 DataSaving summary: items={}, pages_unique={}, page_id_range={:?}, index_in_page_range={:?}",
+                        product_details.len(),
+                        unique_pages,
+                        min_page.zip(max_page),
+                        min_idx.zip(max_idx)
+                    );
+                } else {
+                    info!(
+                        "🧾 DataSaving summary: items={}, no coordinate data present",
+                        product_details.len()
+                    );
+                }
+
                 info!("✅ Successfully saved all product details to database");
                 Ok(())
             }

@@ -236,6 +236,20 @@ impl BatchActor {
             pages.len(),
             if pages.is_empty() { None } else { Some((pages.first().copied(), pages.last().copied())) }
         );
+
+        // 계획 대비 적용 값 검증 로그 (plan vs applied)
+        let planned_range = (config.start_page, config.end_page);
+        let applied_range = if pages.is_empty() {
+            None
+        } else {
+            Some((pages.first().copied(), pages.last().copied()))
+        };
+        info!(
+            "🧭 [Batch PLAN/APPLIED] planned={:?} applied={:?} count={}",
+            planned_range,
+            applied_range,
+            pages.len()
+        );
         
         // 상태 초기화
         self.batch_id = Some(batch_id.clone());
