@@ -1010,7 +1010,7 @@ impl ServiceBasedBatchCrawlingEngine {
     }
 
     /// Stage 2: 제품 목록 수집 (최적화된 범위 사용) - Phase 4 Implementation
-    async fn stage2_collect_product_list_optimized(&mut self, start_page: u32, end_page: u32, total_pages: u32, products_on_last_page: u32) -> Result<Vec<ProductUrl>> {
+    async fn stage2_collect_product_list_optimized(&mut self, start_page: u32, end_page: u32, _total_pages: u32, _products_on_last_page: u32) -> Result<Vec<ProductUrl>> {
         info!("🔗 Stage 2: ProductList 수집 시작 - 페이지별 병렬 실행 ({}~{})", start_page, end_page);
         
         // 🔥 Stage 2 배치 생성 이벤트
@@ -1199,8 +1199,8 @@ impl ServiceBasedBatchCrawlingEngine {
         let _engine_clone = self.session_id.clone();
         let batch_id = 1u32;
         
-        let event_tx_clone = event_tx.clone();
-        let page_callback = move |page_id: u32, url: String, product_count: u32, success: bool| -> Result<()> {
+    let event_tx_clone = event_tx.clone();
+    let _page_callback = move |page_id: u32, url: String, product_count: u32, success: bool| -> Result<()> {
             let start_time = std::time::Instant::now();
             
             // � 새로운 세분화된 페이지 수집 시작 이벤트
@@ -1240,7 +1240,7 @@ impl ServiceBasedBatchCrawlingEngine {
         };
 
         let event_tx_clone2 = event_tx.clone();
-        let retry_callback = move |item_id: String, item_type: String, url: String, attempt: u32, max_attempts: u32, reason: String| -> Result<()> {
+    let _retry_callback = move |item_id: String, item_type: String, url: String, attempt: u32, max_attempts: u32, reason: String| -> Result<()> {
             // 🔥 페이지 재시도 시도 이벤트
             if item_type == "page" {
                 let page_num = url.split("page=").nth(1)
@@ -1373,9 +1373,10 @@ impl ServiceBasedBatchCrawlingEngine {
             message: format!("{}개 제품의 상세정보를 수집하는 중... (재시도 지원)", product_urls.len()),
         }).await?;
 
-        // 초기 시도 - cancellation token 사용
-        let mut successful_products = Vec::new();
-        let mut failed_urls = Vec::new();
+    // 초기 시도 - cancellation token 사용
+    let mut successful_products = Vec::new();
+    // Explicit type to satisfy compiler; kept underscore as it's only for debug scaffolding
+    let mut _failed_urls: Vec<ProductUrl> = Vec::new();
 
         // � 제품별 처리 전에 새로운 세분화된 이벤트들을 발생시키기 위한 로직 추가
         for (index, product_url) in product_urls.iter().enumerate() {
@@ -1452,7 +1453,7 @@ impl ServiceBasedBatchCrawlingEngine {
                             // 처리 시간 시뮬레이션 (실제로는 수집 시작부터 측정해야 함)
                             let duration_ms = 500 + (index as u64 * 50); // 시뮬레이션된 처리 시간
                             
-                            let completion_event = DetailedCrawlingEvent::ProductDetailCollectionCompleted {
+                            let _completion_event = DetailedCrawlingEvent::ProductDetailCollectionCompleted {
                                 url: product_url.to_string(),
                                 product_index: (index + 1) as u32,
                                 success: true,
@@ -1508,7 +1509,7 @@ impl ServiceBasedBatchCrawlingEngine {
                 }
                 
                 warn!("❌ Initial collection failed: {}", e);
-                failed_urls = product_urls.to_vec();
+                let failed_urls = product_urls.to_vec();
                 
                 // 🔥 실패한 제품들 실패 이벤트 발송 (UI 연결)
                 for (index, url) in failed_urls.iter().enumerate() {
@@ -1560,7 +1561,7 @@ impl ServiceBasedBatchCrawlingEngine {
         successful_products.extend(retry_products);
         
         // 🔥 각 제품별 수집 완료 이벤트 발송 (모든 수집이 완료된 후)
-        for (index, (product, detail)) in successful_products.iter().enumerate() {
+    for (index, (_product, detail)) in successful_products.iter().enumerate() {
             if let Some(product_url) = product_urls.get(index) {
                 let duration_ms = 500 + (index as u64 * 50); // 시뮬레이션된 처리 시간
                 
@@ -2352,7 +2353,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         current_stage: CrawlingStage::ProductList,
                         current_step: format!("페이지 {} 재시도 {}/{} (배치 {}) - {}", page, attempt, max_attempts, batch_id, reason),
                         status: CrawlingStatus::Running,
-                        message: format!("Page {} retry {}/{} in batch {} - {}", page, attempt, max_attempts, batch_id, reason),
+                        message: format!("Page {} attempt {}/{} in batch {} - {}", page, attempt, max_attempts, batch_id, reason),
                         remaining_time: None,
                         elapsed_time: 0,
                         new_items: 0,
@@ -2371,7 +2372,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         current_stage: CrawlingStage::ProductList,
                         current_step: format!("페이지 {} 재시도 성공 ({}번째 시도, {}개 제품, 배치 {})", page, final_attempt, products_found, batch_id),
                         status: CrawlingStatus::Running,
-                        message: format!("Page {} retry succeeded on attempt {} with {} products (batch {})", page, final_attempt, products_found, batch_id),
+                        message: format!("Page attempt succeeded on attempt {} with {} products (batch {})", final_attempt, products_found, batch_id),
                         remaining_time: None,
                         elapsed_time: 0,
                         new_items: *products_found,
@@ -2430,7 +2431,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         current_stage: CrawlingStage::ProductDetails,
                         current_step: format!("제품 재시도 {}/{} (배치 {}) - {}", attempt, max_attempts, batch_id, reason),
                         status: CrawlingStatus::Running,
-                        message: format!("Product retry {}/{} in batch {} - {}", attempt, max_attempts, batch_id, reason),
+                        message: format!("Product attempt {}/{} in batch {} - {}", attempt, max_attempts, batch_id, reason),
                         remaining_time: None,
                         elapsed_time: 0,
                         new_items: 0,
@@ -2449,7 +2450,7 @@ impl ServiceBasedBatchCrawlingEngine {
                         current_stage: CrawlingStage::ProductDetails,
                         current_step: format!("제품 재시도 성공 ({}번째 시도, 배치 {})", final_attempt, batch_id),
                         status: CrawlingStatus::Running,
-                        message: format!("Product retry succeeded on attempt {} (batch {})", final_attempt, batch_id),
+                        message: format!("Product attempt succeeded on attempt {} (batch {})", final_attempt, batch_id),
                         remaining_time: None,
                         elapsed_time: 0,
                         new_items: 1,

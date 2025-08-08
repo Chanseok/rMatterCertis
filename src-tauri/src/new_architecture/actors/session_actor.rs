@@ -330,8 +330,9 @@ impl SessionActor {
     ) -> Result<(), SessionError> {
         use crate::new_architecture::actors::traits::Actor;
 
-        // AppConfig 로드(개발 기본값)
-        let app_config = AppConfig::for_development();
+    // AppConfig 로드(개발 기본값)
+    let app_config = AppConfig::for_development();
+    let config_concurrency = app_config.user.crawling.workers.list_page_max_concurrent as u32;
 
         let mut batch_actor = BatchActor::new_with_services(
             batch_id.to_string(),
@@ -339,7 +340,7 @@ impl SessionActor {
             Arc::clone(http_client),
             Arc::clone(data_extractor),
             Arc::clone(product_repo),
-            app_config,
+            app_config.clone(),
         );
 
         let (tx, rx) = mpsc::channel::<super::types::ActorCommand>(100);
@@ -351,9 +352,10 @@ impl SessionActor {
         });
 
         // 배치 설정 및 명령 전송
+    // Use config-driven concurrency
         let batch_config = BatchConfig {
             batch_size: pages.len() as u32,
-            concurrency_limit: 5,
+            concurrency_limit: config_concurrency,
             batch_delay_ms: 1000,
             retry_on_failure: true,
             start_page: pages.first().copied(),
@@ -364,7 +366,7 @@ impl SessionActor {
             pages: pages.to_vec(),
             config: batch_config,
             batch_size: pages.len() as u32,
-            concurrency_limit: 5,
+            concurrency_limit: config_concurrency,
             total_pages: site_status.total_pages,
             products_on_last_page: site_status.products_on_last_page,
         };

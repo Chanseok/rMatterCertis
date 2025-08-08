@@ -849,7 +849,7 @@ impl StageActor {
                                     } else { 0 };
                                     let delay = capped.saturating_add(jitter);
                                     warn!(
-                                        "🔁 ListPageCrawling retry {}/{} after {}ms (reason: {})",
+                                        "🔁 ListPageCrawling attempt {}/{} after {}ms (reason: {})",
                                         attempt,
                                         max_retries,
                                         delay,
@@ -871,11 +871,12 @@ impl StageActor {
             }
             StageType::ProductDetailCrawling => {
                 // Stage 2의 결과로 받은 ProductUrls에서 실제 제품 상세 정보 수집
-                info!("🔍 ProductDetailCrawling: processing ProductUrls from item {}", item_id);
-                
+        info!("🔍 ProductDetailCrawling: processing ProductUrls from item {}", item_id);
+
                 match &item {
                     StageItem::ProductUrls(product_urls) => {
-                        info!("📋 Processing {} product URLs for detail crawling", product_urls.urls.len());
+            // Compact: log once at start of detail crawling for this item
+            info!("📋 Detail crawling for {} product URLs", product_urls.urls.len());
                         
                         if let Some(collector) = &self.product_detail_collector {
                             // 실제 ProductDetailCollector를 사용하여 상세 정보 수집
@@ -897,10 +898,10 @@ impl StageActor {
                                     };
                                     
                                     // ProductDetails 래퍼를 JSON으로 직렬화하여 저장
-                                    info!("🔄 Attempting to serialize ProductDetails wrapper with {} products", product_details_wrapper.products.len());
+                    debug!("Serializing ProductDetails wrapper with {} products", product_details_wrapper.products.len());
                                     match serde_json::to_string(&product_details_wrapper) {
                                         Ok(json_data) => {
-                                            info!("✅ ProductDetails JSON serialization successful: {} chars", json_data.len());
+                        debug!("ProductDetails JSON serialization successful: {} chars", json_data.len());
                                             (Ok(()), Some(json_data), 0)
                                         },
                                         Err(e) => {
@@ -1206,7 +1207,7 @@ impl StageActor {
         product_urls: &crate::new_architecture::channels::types::ProductUrls,
         product_detail_collector: Arc<dyn ProductDetailCollector>,
     ) -> Result<Vec<crate::domain::product::ProductDetail>, String> {
-        info!("🎯 Processing {} product URLs for detail crawling", product_urls.urls.len());
+    debug!("Processing {} product URLs for detail crawling", product_urls.urls.len());
         
         // ProductUrls 구조체에서 ProductUrl 객체들을 직접 사용
         match product_detail_collector.collect_details(&product_urls.urls).await {

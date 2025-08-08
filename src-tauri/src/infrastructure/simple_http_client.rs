@@ -266,7 +266,7 @@ impl HttpClient {
             let rate_limiter = GlobalRateLimiter::get_instance();
             rate_limiter.apply_rate_limit(self.config.max_requests_per_second).await;
 
-            info!("🌐 HTTP GET (retry {}/{}): {}", attempt, self.config.max_retries, url);
+            info!("🌐 HTTP GET (attempt {}/{}) : {}", attempt, self.config.max_retries, url);
             match self.client.get(url).send().await {
                 Ok(resp) => {
                     let status = resp.status();

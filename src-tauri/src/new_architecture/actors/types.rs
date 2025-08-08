@@ -279,7 +279,7 @@ impl Default for BatchConfig {
     fn default() -> Self {
         Self {
             batch_size: 20,
-            concurrency_limit: 5,
+            concurrency_limit: 3,
             batch_delay_ms: 500,
             retry_on_failure: true,
             start_page: None,

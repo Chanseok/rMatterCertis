@@ -98,7 +98,9 @@ async fn main() -> anyhow::Result<()> {
         site_url: "https://example.com".into(),
         start_page: 498,
         end_page: 487,
-        concurrency_limit: 5,
+    // For this standalone sanity binary, use an explicit small concurrency.
+    // The main app path uses config-driven values.
+    concurrency_limit: 3,
         batch_size: 9,
         request_delay_ms: 1000,
         timeout_secs: 30,

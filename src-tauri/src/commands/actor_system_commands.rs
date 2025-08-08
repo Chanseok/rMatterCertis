@@ -702,6 +702,8 @@ async fn execute_real_batch_actor(
     
     // AppConfig 사용: ExecutionPlan 경로에서 로드한 설정 사용 (개발 기본값 사용하지 않음)
     let app_config = app_config.clone();
+    // Clone once more for passing into BatchActor::new_with_services (it takes ownership)
+    let app_config_for_actor = app_config.clone();
     info!("✅ AppConfig provided from ExecutionPlan context");
     
     // AppConfig에서 실제 batch_size 미리 추출 (app_config이 move되기 전에)
@@ -715,7 +717,7 @@ async fn execute_real_batch_actor(
         http_client,
         data_extractor,
         product_repo,
-        app_config,
+        app_config_for_actor,
     );
     info!("✅ BatchActor created successfully with real services");
     
@@ -729,7 +731,7 @@ async fn execute_real_batch_actor(
     
     let batch_config = BatchConfig {
         batch_size: user_batch_size,
-        concurrency_limit: 5,
+        concurrency_limit: app_config.user.crawling.workers.list_page_max_concurrent as u32,
         batch_delay_ms: 1000,
         retry_on_failure: true,
         start_page: Some(pages[0]),
@@ -743,7 +745,7 @@ async fn execute_real_batch_actor(
         pages: pages.to_vec(),
         config: batch_config,
         batch_size: user_batch_size,
-        concurrency_limit: context.config.performance.concurrency.max_concurrent_tasks,
+    concurrency_limit: app_config.user.crawling.workers.list_page_max_concurrent as u32,
         total_pages: site_status.total_pages,
         products_on_last_page: site_status.products_on_last_page,
     };
@@ -856,8 +858,8 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
         concurrency_limit: app_config.user.max_concurrent_requests,
         batch_size: app_config.user.batch.batch_size,
         request_delay_ms: 1000,
-        timeout_secs: 300,
-        max_retries: 3,
+    timeout_secs: 300,
+    max_retries: app_config.user.crawling.workers.max_retries,
     };
     
     // 사이트 상태도 함께 획득 (힌트 전달용)

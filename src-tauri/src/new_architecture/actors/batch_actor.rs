@@ -998,8 +998,17 @@ impl BatchActor {
             };
             
             // Stage 실행 (실제 current_items 전달)
-            let concurrency_limit = 5; // TODO: 설정 파일에서 가져와야 함
-            let timeout_secs = 300;
+            // Use config when available, fall back to sensible defaults
+            let (concurrency_limit, timeout_secs) = if let Some(app_config) = &self.app_config {
+                let stage_concurrency = match stage_type {
+                    StageType::ListPageCrawling => app_config.user.crawling.workers.list_page_max_concurrent as u32,
+                    StageType::ProductDetailCrawling => app_config.user.crawling.workers.product_detail_max_concurrent as u32,
+                    _ => app_config.user.max_concurrent_requests,
+                };
+                (stage_concurrency, app_config.user.crawling.timing.operation_timeout_seconds)
+            } else {
+                (5, 300)
+            };
             
             let stage_result = stage_actor.execute_stage(
                 stage_type.clone(),
