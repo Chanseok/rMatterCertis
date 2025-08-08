@@ -50,8 +50,8 @@ pub enum ActorCommand {
         config: BatchConfig,
         batch_size: u32,
         concurrency_limit: u32,
-        total_pages: u32,
-        products_on_last_page: u32,
+    total_pages: u32,
+    products_on_last_page: u32,
     },
     
     // === 스테이지 레벨 명령 ===
@@ -176,6 +176,34 @@ pub enum AppEvent {
     PerformanceMetrics {
         session_id: String,
         metrics: PerformanceMetrics,
+        timestamp: DateTime<Utc>,
+    },
+
+    // === 리포트 이벤트 ===
+    /// 배치 단위 요약 리포트
+    BatchReport {
+        session_id: String,
+        batch_id: String,
+        pages_total: u32,
+        pages_success: u32,
+        pages_failed: u32,
+        list_pages_failed: Vec<u32>,
+        details_success: u32,
+        details_failed: u32,
+        retries_used: u32,
+        duration_ms: u64,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// 세션 전체 요약 리포트
+    CrawlReportSession {
+        session_id: String,
+        batches_processed: u32,
+        total_pages: u32,
+        total_success: u32,
+        total_failed: u32,
+        total_retries: u32,
+        duration_ms: u64,
         timestamp: DateTime<Utc>,
     },
 }
@@ -855,6 +883,7 @@ mod tests {
                     error: None,
                     duration_ms: 500,
                     retry_count: 0,
+                    collected_data: None,
                 }
             ],
         };

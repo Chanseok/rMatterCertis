@@ -500,7 +500,7 @@ export const HierarchicalEventMonitor: Component = () => {
     try {
       console.log('🎭 진짜 Actor 시스템 테스트 시작');
       
-      const result = await invoke('start_real_actor_crawling', {
+  const result = await invoke('start_actor_system_crawling', {
         request: {
           // CrawlingPlanner가 모든 설정을 자동 계산하므로 파라미터 불필요
         }

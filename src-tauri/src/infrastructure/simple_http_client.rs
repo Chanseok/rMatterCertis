@@ -257,6 +257,65 @@ impl HttpClient {
         Ok(response)
     }
 
+    /// Fetch response with retry policy based on HTTP status codes and network errors
+    pub async fn fetch_response_with_policy(&self, url: &str) -> Result<Response> {
+        use reqwest::StatusCode;
+        let mut last_err: Option<anyhow::Error> = None;
+
+        for attempt in 1..=self.config.max_retries {
+            let rate_limiter = GlobalRateLimiter::get_instance();
+            rate_limiter.apply_rate_limit(self.config.max_requests_per_second).await;
+
+            info!("🌐 HTTP GET (retry {}/{}): {}", attempt, self.config.max_retries, url);
+            match self.client.get(url).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() {
+                        return Ok(resp);
+                    }
+
+                    // Decide retry policy based on status
+                    let retryable = matches!(
+                        status,
+                        StatusCode::REQUEST_TIMEOUT
+                            | StatusCode::TOO_MANY_REQUESTS
+                            | StatusCode::BAD_GATEWAY
+                            | StatusCode::SERVICE_UNAVAILABLE
+                            | StatusCode::GATEWAY_TIMEOUT
+                            | StatusCode::INTERNAL_SERVER_ERROR
+                    );
+
+                    error!("❌ HTTP error {} on attempt {}: {}", status, attempt, url);
+
+                    if retryable && attempt < self.config.max_retries {
+                        // Respect Retry-After if present on 429/503
+                        let mut delay_secs = 2_u64.pow(attempt - 1);
+                        if let Some(retry_after) = resp.headers().get(reqwest::header::RETRY_AFTER) {
+                            if let Ok(s) = retry_after.to_str() {
+                                if let Ok(parsed) = s.parse::<u64>() { delay_secs = parsed.max(delay_secs); }
+                            }
+                        }
+                        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                        continue;
+                    } else {
+                        return Err(anyhow!("HTTP error {}: {}", status, url));
+                    }
+                }
+                Err(e) => {
+                    warn!("⚠️ Network error on attempt {}: {}", attempt, e);
+                    last_err = Some(anyhow!("HTTP request failed: {}", e));
+                    if attempt < self.config.max_retries {
+                        let delay_secs = 2_u64.pow(attempt - 1);
+                        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| anyhow!("Unknown HTTP error for {}", url)))
+    }
+
     /// Check if the HTTP client is working properly
     pub async fn health_check(&self) -> Result<()> {
         info!("Performing HTTP client health check...");

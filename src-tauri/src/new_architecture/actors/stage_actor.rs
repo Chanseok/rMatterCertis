@@ -28,6 +28,7 @@ use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::crawling_service_impls::{StatusCheckerImpl, ProductListCollectorImpl, ProductDetailCollectorImpl};
 use crate::utils::PageIdCalculator;
 use crate::infrastructure::CollectorConfig;
+use crate::domain::services::SiteStatus;
 
 /// StageActor: 개별 스테이지 작업의 실행 및 관리
 /// 
@@ -79,6 +80,10 @@ pub struct StageActor {
     data_extractor: Option<Arc<MatterDataExtractor>>,
     /// 앱 설정
     app_config: Option<AppConfig>,
+
+    /// 사이트 페이지네이션 힌트(총 페이지 수, 마지막 페이지 제품 수)
+    site_total_pages_hint: Option<u32>,
+    products_on_last_page_hint: Option<u32>,
 }
 
 impl std::fmt::Debug for StageActor {
@@ -164,6 +169,8 @@ impl StageActor {
             http_client: None,
             data_extractor: None,
             app_config: None,
+            site_total_pages_hint: None,
+            products_on_last_page_hint: None,
         }
     }
     
@@ -192,12 +199,12 @@ impl StageActor {
         let data_extractor_inner = (*data_extractor).clone();
         
         // 실제 서비스들을 사용하여 컬렉터 생성 (ServiceBasedBatchCrawlingEngine 패턴 참조)
-        let status_checker_impl = StatusCheckerImpl::new(
+        let status_checker: Option<Arc<dyn StatusChecker>> = Some(Arc::new(StatusCheckerImpl::with_product_repo(
             http_client_inner.clone(),
             data_extractor_inner.clone(),
             app_config.clone(),
-        );
-        let status_checker = Some(Arc::new(status_checker_impl));
+            Arc::clone(&product_repo),
+        )));
         
         // ProductListCollector 생성
         let list_collector_config = CollectorConfig {
@@ -211,10 +218,11 @@ impl StageActor {
         };
         
         // StatusCheckerImpl을 다시 생성 (ProductListCollector가 StatusCheckerImpl을 요구)
-        let status_checker_for_list = Arc::new(StatusCheckerImpl::new(
+        let status_checker_for_list = Arc::new(StatusCheckerImpl::with_product_repo(
             http_client_inner.clone(),
             data_extractor_inner.clone(),
             app_config.clone(),
+            Arc::clone(&product_repo),
         ));
         
         let product_list_collector: Option<Arc<dyn ProductListCollector>> = Some(Arc::new(ProductListCollectorImpl::new(
@@ -255,13 +263,15 @@ impl StageActor {
             skipped_count: 0,
             item_results: Vec::new(),
             // 실제 서비스들 주입
-            status_checker: status_checker.map(|s| s as Arc<dyn StatusChecker>),
+            status_checker,
             product_list_collector,
             product_detail_collector,
             product_repo: Some(product_repo),
             http_client: Some(http_client),
             data_extractor: Some(data_extractor),
             app_config: Some(app_config),
+            site_total_pages_hint: None,
+            products_on_last_page_hint: None,
         }
     }
     
@@ -302,7 +312,16 @@ impl StageActor {
             http_client: None,
             data_extractor: None,
             app_config: None,
+            site_total_pages_hint: None,
+            products_on_last_page_hint: None,
         }
+    }
+
+    /// 사이트 페이지네이션 힌트 설정 (StatusCheck 결과를 상위에서 주입)
+    pub fn set_site_pagination_hints(&mut self, total_pages: u32, products_on_last_page: u32) {
+        self.site_total_pages_hint = Some(total_pages);
+        self.products_on_last_page_hint = Some(products_on_last_page);
+        info!("🔧 Applied site pagination hints: total_pages={}, products_on_last_page={}", total_pages, products_on_last_page);
     }
     
     /// 실제 서비스 초기화 - guide/re-arch-plan-final2.md 설계 기반
@@ -328,10 +347,11 @@ impl StageActor {
         let product_repo = Arc::new(IntegratedProductRepository::new(pool));
         
         // StatusChecker 생성 (ServiceBasedBatchCrawlingEngine과 동일한 방식)
-        let status_checker = Arc::new(StatusCheckerImpl::new(
+        let status_checker = Arc::new(StatusCheckerImpl::with_product_repo(
             http_client.clone(),
             data_extractor.clone(),
             app_config.clone(),
+            Arc::clone(&product_repo),
         ));
         
         // List Collector Config (ServiceBasedBatchCrawlingEngine 패턴 참조)
@@ -356,10 +376,11 @@ impl StageActor {
         };
         
         // Status checker를 concrete type으로 생성 (ProductListCollector에 필요)
-        let status_checker_impl = Arc::new(StatusCheckerImpl::new(
+        let status_checker_impl = Arc::new(StatusCheckerImpl::with_product_repo(
             http_client.clone(),
             data_extractor.clone(),
             app_config.clone(),
+            Arc::clone(&product_repo),
         ));
         
         // ProductListCollector 생성 (ServiceBasedBatchCrawlingEngine과 동일한 방식)
@@ -571,6 +592,50 @@ impl StageActor {
     ) -> Result<StageResult, StageError> {
         debug!("Processing {} items for stage {:?}", items.len(), stage_type);
         
+        // 동시성 상한을 Collector에도 반영하도록 CollectorConfig를 재구성(필요 시)
+        if let (Some(http_client), Some(data_extractor), Some(app_config)) = (&self.http_client, &self.data_extractor, &self.app_config) {
+            // 리스트 수집기
+            if let Some(repo) = &self.product_repo {
+                let list_cfg = crate::infrastructure::crawling_service_impls::CollectorConfig {
+                    max_concurrent: concurrency_limit,
+                    concurrency: concurrency_limit,
+                    delay_between_requests: std::time::Duration::from_millis(app_config.user.request_delay_ms),
+                    delay_ms: app_config.user.request_delay_ms,
+                    batch_size: app_config.user.batch.batch_size,
+                    retry_attempts: app_config.user.crawling.workers.max_retries,
+                    retry_max: app_config.user.crawling.workers.max_retries,
+                };
+                let status_checker_for_list = Arc::new(crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
+                    (**http_client).clone(),
+                    (**data_extractor).clone(),
+                    app_config.clone(),
+                    Arc::clone(repo),
+                ));
+                self.product_list_collector = Some(Arc::new(crate::infrastructure::crawling_service_impls::ProductListCollectorImpl::new(
+                    Arc::clone(http_client),
+                    Arc::clone(data_extractor),
+                    list_cfg,
+                    status_checker_for_list,
+                )));
+            }
+
+            // 상세 수집기
+            let detail_cfg = crate::infrastructure::crawling_service_impls::CollectorConfig {
+                max_concurrent: concurrency_limit,
+                concurrency: concurrency_limit,
+                delay_between_requests: std::time::Duration::from_millis(app_config.user.request_delay_ms),
+                delay_ms: app_config.user.request_delay_ms,
+                batch_size: app_config.user.batch.batch_size,
+                retry_attempts: app_config.user.crawling.workers.max_retries,
+                retry_max: app_config.user.crawling.workers.max_retries,
+            };
+            self.product_detail_collector = Some(Arc::new(crate::infrastructure::crawling_service_impls::ProductDetailCollectorImpl::new(
+                Arc::clone(http_client),
+                Arc::clone(data_extractor),
+                detail_cfg,
+            )));
+        }
+
         // 동시성 제어를 위한 세마포어
         let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency_limit as usize));
         let mut tasks = Vec::new();
@@ -582,6 +647,9 @@ impl StageActor {
         let product_repo = self.product_repo.clone();
         let http_client = self.http_client.clone();
         let data_extractor = self.data_extractor.clone();
+    // 페이지네이션 힌트 복사
+    let site_total_pages_hint = self.site_total_pages_hint;
+    let products_on_last_page_hint = self.products_on_last_page_hint;
         
         // 각 아이템을 병렬로 처리
         for item in items {
@@ -621,6 +689,8 @@ impl StageActor {
                     http_client: http_client_clone,
                     data_extractor: data_extractor_clone,
                     app_config: None,
+                    site_total_pages_hint,
+                    products_on_last_page_hint,
                 };
                 
                 temp_actor.process_single_item(
@@ -700,7 +770,7 @@ impl StageActor {
         item: StageItem,
         status_checker: Option<Arc<dyn StatusChecker>>,
         product_list_collector: Option<Arc<dyn ProductListCollector>>,
-        product_detail_collector: Option<Arc<dyn ProductDetailCollector>>,
+    _product_detail_collector: Option<Arc<dyn ProductDetailCollector>>,
         product_repo: Option<Arc<IntegratedProductRepository>>,
     ) -> Result<StageItemResult, StageError> {
         let start_time = Instant::now();
@@ -719,33 +789,84 @@ impl StageActor {
         debug!("Processing item {} for stage {:?}", item_id, stage_type);
         
         // 스테이지 타입별 처리 로직 - 수집된 데이터와 성공 여부를 함께 반환
-        let (success, collected_data) = match stage_type {
+        let (success, collected_data, retries_used) = match stage_type {
             StageType::StatusCheck => {
                 if let Some(checker) = status_checker {
                     match Self::execute_real_status_check(&item, checker).await {
-                        Ok(()) => (Ok(()), None),
-                        Err(e) => (Err(e), None),
+                        Ok(site_status) => {
+                            match serde_json::to_string(&site_status) {
+                                Ok(json) => (Ok(()), Some(json), 0),
+                                Err(e) => (Err(format!("JSON serialization failed: {}", e)), None, 0),
+                            }
+                        }
+                        Err(e) => (Err(e), None, 0),
                     }
                 } else {
                     // StatusChecker가 없으면 에러
-                    (Err("StatusChecker not available".to_string()), None)
+                    (Err("StatusChecker not available".to_string()), None, 0)
                 }
             }
             StageType::ListPageCrawling => {
                 if let Some(collector) = product_list_collector {
-                    match Self::execute_real_list_page_processing(&item, collector).await {
-                        Ok(urls) => {
-                            // ProductURL들을 JSON으로 직렬화하여 저장
-                            match serde_json::to_string(&urls) {
-                                Ok(json_data) => (Ok(()), Some(json_data)),
-                                Err(e) => (Err(format!("JSON serialization failed: {}", e)), None),
+                    // 재시도 설정 로드
+                    // 권장 기본 재시도 값 (설명된 스펙 기반): 리스트 페이지 4회
+                    const RECOMMENDED_MAX_RETRIES_LIST: u32 = 4;
+                    let (cfg_retries, base_delay_ms) = if let Some(cfg) = &self.app_config {
+                        (cfg.user.crawling.workers.max_retries, cfg.user.crawling.timing.retry_delay_ms)
+                    } else {
+                        (3u32, 1000u64)
+                    };
+                    // 설정값과 권장값 중 큰 값 적용
+                    let max_retries = std::cmp::max(cfg_retries, RECOMMENDED_MAX_RETRIES_LIST);
+                    // 지수 백오프 + 지터를 위한 파라미터
+                    let base_delay_ms = base_delay_ms.max(200); // 안전한 최소값
+                    let max_delay_ms: u64 = 30_000; // 30초 상한
+
+                    let mut attempt: u32 = 0;
+                    loop {
+                        match self.execute_real_list_page_processing(&item, Arc::clone(&collector)).await {
+                            Ok(urls) => {
+                                // ProductURL들을 JSON으로 직렬화하여 저장
+                                match serde_json::to_string(&urls) {
+                                    Ok(json_data) => break (Ok(()), Some(json_data), attempt),
+                                    Err(e) => break (Err(format!("JSON serialization failed: {}", e)), None, attempt),
+                                }
+                            }
+                            Err(e) => {
+                                if attempt < max_retries {
+                                    attempt += 1;
+                                    // 지수 백오프: base * 2^(attempt-1)
+                                    // Note: use checked_shl to avoid panics for large shifts
+                                    let factor = 1u64
+                                        .checked_shl((attempt - 1) as u32)
+                                        .unwrap_or(u64::MAX);
+                                    let exp = base_delay_ms.saturating_mul(factor);
+                                    let capped = std::cmp::min(exp, max_delay_ms);
+                                    // 지터: 최대 20% 랜덤 가산
+                                    let jitter = if capped >= 10 {
+                                        let range = capped / 5; // 20%
+                                        fastrand::u64(0..=range)
+                                    } else { 0 };
+                                    let delay = capped.saturating_add(jitter);
+                                    warn!(
+                                        "🔁 ListPageCrawling retry {}/{} after {}ms (reason: {})",
+                                        attempt,
+                                        max_retries,
+                                        delay,
+                                        e
+                                    );
+                                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                                    continue;
+                                } else {
+                                    error!("❌ ListPageCrawling final failure: {}", e);
+                                    break (Err(e), None, attempt);
+                                }
                             }
                         }
-                        Err(e) => (Err(e), None),
                     }
                 } else {
                     // ProductListCollector가 없으면 에러
-                    (Err("ProductListCollector not available".to_string()), None)
+                    (Err("ProductListCollector not available".to_string()), None, 0)
                 }
             }
             StageType::ProductDetailCrawling => {
@@ -780,22 +901,22 @@ impl StageActor {
                                     match serde_json::to_string(&product_details_wrapper) {
                                         Ok(json_data) => {
                                             info!("✅ ProductDetails JSON serialization successful: {} chars", json_data.len());
-                                            (Ok(()), Some(json_data))
+                                            (Ok(()), Some(json_data), 0)
                                         },
                                         Err(e) => {
                                             error!("❌ ProductDetails JSON serialization failed: {}", e);
-                                            (Err(format!("JSON serialization failed: {}", e)), None)
+                                            (Err(format!("JSON serialization failed: {}", e)), None, 0)
                                         },
                                     }
                                 }
                                 Err(e) => {
                                     error!("❌ Product detail crawling failed: {}", e);
-                                    (Err(e), None)
+                                    (Err(e), None, 0)
                                 }
                             }
                         } else {
                             error!("❌ ProductDetailCollector not available");
-                            (Err("ProductDetailCollector not available".to_string()), None)
+                            (Err("ProductDetailCollector not available".to_string()), None, 0)
                         }
                     }
                     StageItem::ProductList(product_list) => {
@@ -806,8 +927,15 @@ impl StageActor {
                         // ⭐ 중요: Product -> ProductUrl로 변환 시 메타데이터 보존
                         // 실제 사이트 정보를 가져와서 PageIdCalculator 초기화
                         // StatusChecker trait에 discover_total_pages가 없으므로 fallback 값 사용
-                        let (total_pages, products_on_last_page) = (498u32, 8u32); // 현재 알려진 값 사용
-                        info!("✅ Using fallback site info: total_pages={}, products_on_last_page={}", total_pages, products_on_last_page);
+                        let (total_pages, products_on_last_page) = match (self.site_total_pages_hint, self.products_on_last_page_hint) {
+                            (Some(tp), Some(plp)) => (tp, plp),
+                            _ => {
+                                // 최후의 수단으로 알려진 값 사용
+                                let fallback = (498u32, 8u32);
+                                info!("✅ Using fallback site info: total_pages={}, products_on_last_page={}", fallback.0, fallback.1);
+                                fallback
+                            }
+                        };
 
                         let product_urls: Vec<crate::domain::product_url::ProductUrl> = product_list.products
                             .iter()
@@ -860,23 +988,23 @@ impl StageActor {
                                 Ok(product_details) => {
                                     info!("✅ Successfully collected {} product details", product_details.len());
                                     match serde_json::to_string(&product_details) {
-                                        Ok(json_data) => (Ok(()), Some(json_data)),
-                                        Err(e) => (Err(format!("JSON serialization failed: {}", e)), None),
+                                        Ok(json_data) => (Ok(()), Some(json_data), 0),
+                                        Err(e) => (Err(format!("JSON serialization failed: {}", e)), None, 0),
                                     }
                                 }
                                 Err(e) => {
                                     error!("❌ Product detail crawling failed: {}", e);
-                                    (Err(e), None)
+                                    (Err(e), None, 0)
                                 }
                             }
                         } else {
                             error!("❌ ProductDetailCollector not available");
-                            (Err("ProductDetailCollector not available".to_string()), None)
+                            (Err("ProductDetailCollector not available".to_string()), None, 0)
                         }
                     }
                     other => {
                         warn!("⚠️ ProductDetailCrawling stage received unexpected item type: {:?}", other);
-                        (Err("Unexpected item type for ProductDetailCrawling".to_string()), None)
+                        (Err("Unexpected item type for ProductDetailCrawling".to_string()), None, 0)
                     }
                 }
             }
@@ -910,25 +1038,35 @@ impl StageActor {
                     Ok(validated_products) => {
                         // 검증된 제품들을 JSON으로 직렬화
                         match serde_json::to_string(&validated_products) {
-                            Ok(json_data) => (Ok(()), Some(json_data)),
-                            Err(e) => (Err(format!("JSON serialization failed: {}", e)), None),
+                            Ok(json_data) => (Ok(()), Some(json_data), 0),
+                            Err(e) => (Err(format!("JSON serialization failed: {}", e)), None, 0),
                         }
                     }
                     Err(e) => {
                         error!("❌ Data validation failed: {}", e);
-                        (Err(format!("Data validation failed: {}", e)), None)
+                        (Err(format!("Data validation failed: {}", e)), None, 0)
                     }
                 }
             }
             StageType::DataSaving => {
-                if let Some(repo) = product_repo {
+                // 임시 조치: 환경 변수로 데이터베이스 저장 단계 스킵
+                // MC_SKIP_DB_SAVE=1 또는 true 이면 저장을 생략하고 성공으로 처리
+                let skip_save = std::env::var("MC_SKIP_DB_SAVE")
+                    .ok()
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
+
+                if skip_save {
+                    warn!("⏭️ Skipping DataSaving stage due to MC_SKIP_DB_SAVE flag");
+                    (Ok(()), None, 0)
+                } else if let Some(repo) = product_repo {
                     match Self::execute_real_database_storage(&item, repo).await {
-                        Ok(()) => (Ok(()), None),
-                        Err(e) => (Err(e), None),
+                        Ok(()) => (Ok(()), None, 0),
+                        Err(e) => (Err(e), None, 0),
                     }
                 } else {
                     // Product repository가 없으면 에러
-                    (Err("Product repository not available".to_string()), None)
+                    (Err("Product repository not available".to_string()), None, 0)
                 }
             }
         };
@@ -952,7 +1090,7 @@ impl StageActor {
                 success: true,
                 error: None,
                 duration_ms: duration.as_millis() as u64,
-                retry_count: 0,
+                retry_count: retries_used,
                 collected_data,
             }),
             Err(error) => {
@@ -971,7 +1109,7 @@ impl StageActor {
                     success: false,
                     error: Some(error.clone()),
                     duration_ms: duration.as_millis() as u64,
-                    retry_count: 0,
+                    retry_count: retries_used,
                     collected_data: None,
                 })
             }
@@ -984,7 +1122,7 @@ impl StageActor {
     async fn execute_real_status_check(
         item: &StageItem,
         status_checker: Arc<dyn StatusChecker>,
-    ) -> Result<(), String> {
+    ) -> Result<SiteStatus, String> {
         // 새로운 StageItem 구조에 맞게 수정
         let item_desc = match item {
             StageItem::Page(page_num) => format!("page_{}", page_num),
@@ -994,9 +1132,9 @@ impl StageActor {
         
         // 실제 사이트 상태 확인
         match status_checker.check_site_status().await {
-            Ok(_status) => {
+            Ok(status) => {
                 info!("✅ Real status check successful for item {}", item_desc);
-                Ok(())
+                Ok(status)
             }
             Err(e) => {
                 warn!("❌ Real status check failed for item {}: {}", item_desc, e);
@@ -1007,25 +1145,51 @@ impl StageActor {
     
     /// 실제 리스트 페이지 처리
     async fn execute_real_list_page_processing(
+        &self,
         item: &StageItem,
         product_list_collector: Arc<dyn ProductListCollector>,
     ) -> Result<Vec<crate::domain::product_url::ProductUrl>, String> {
         match item {
             StageItem::Page(page_number) => {
                 // 실제 리스트 페이지 크롤링
-                match product_list_collector.collect_page_range(
-                    *page_number, *page_number, 1000, 20  // 임시 값들 - TODO: 실제 설정 사용
+                // 페이지네이션 힌트 사용, 없으면 필요 시 상태 재확인
+                let (total_pages, products_on_last_page) = match (self.site_total_pages_hint, self.products_on_last_page_hint) {
+                    (Some(tp), Some(plp)) => (tp, plp),
+                    _ => {
+                        if let Some(checker) = &self.status_checker {
+                            match checker.check_site_status().await {
+                                Ok(s) => (s.total_pages, s.products_on_last_page),
+                                Err(e) => {
+                                    warn!("⚠️ Failed to get site status for list processing, using conservative defaults: {}", e);
+                                    (100u32, 10u32)
+                                }
+                            }
+                        } else {
+                            warn!("⚠️ No StatusChecker available; using conservative defaults for pagination");
+                            (100u32, 10u32)
+                        }
+                    }
+                };
+
+                // 단일 페이지 수집 API를 사용하여 실패 시 에러를 그대로 전파
+                match product_list_collector.collect_single_page(
+                    *page_number, total_pages, products_on_last_page
                 ).await {
                     Ok(urls) => {
-                        info!("✅ Real list page processing successful for page {}: {} URLs collected", 
-                              page_number, urls.len());
-                        
-                        // 수집된 ProductURL들을 반환
-                        for (index, url) in urls.iter().enumerate() {
-                            debug!("  📄 Collected URL {}: {}", index + 1, url.url);
+                        // 빈 결과는 실패로 간주하여 재시도를 유도
+                        if urls.is_empty() {
+                            warn!("⚠️ Page {} returned 0 URLs — treating as failure to trigger retry", page_number);
+                            Err("Empty result from list page".to_string())
+                        } else {
+                            info!(
+                                "✅ Real list page processing successful for page {}: {} URLs collected",
+                                page_number, urls.len()
+                            );
+                            for (index, url) in urls.iter().enumerate() {
+                                debug!("  📄 Collected URL {}: {}", index + 1, url.url);
+                            }
+                            Ok(urls)
                         }
-                        
-                        Ok(urls)
                     }
                     Err(e) => {
                         warn!("❌ Real list page processing failed for page {}: {}", page_number, e);

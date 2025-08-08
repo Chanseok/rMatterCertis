@@ -17,6 +17,15 @@ use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
 use super::types::{ActorCommand, CrawlingConfig, ActorError};
 use crate::new_architecture::channels::types::AppEvent;
 use crate::new_architecture::context::AppContext;
+use std::sync::Arc;
+
+use crate::new_architecture::services::CrawlingPlanner;
+use crate::domain::services::{StatusChecker, DatabaseAnalyzer};
+use crate::infrastructure::crawling_service_impls::{StatusCheckerImpl, DatabaseAnalyzerImpl};
+use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
+use crate::infrastructure::config::AppConfig;
+use crate::new_architecture::actors::types::BatchConfig;
+use crate::new_architecture::actors::BatchActor;
 
 /// SessionActor: 크롤링 세션의 전체 생명주기 관리
 /// 
@@ -39,6 +48,8 @@ pub struct SessionActor {
     processed_batches: u32,
     /// 총 성공 아이템 수
     total_success_count: u32,
+    /// 세션 레벨 SiteStatus 캐시
+    site_status_cache: Option<(crate::domain::services::SiteStatus, Instant)>,
 }
 
 /// 세션 상태 열거형
@@ -88,6 +99,7 @@ impl SessionActor {
             start_time: None,
             processed_batches: 0,
             total_success_count: 0,
+            site_status_cache: None,
         }
     }
     
@@ -134,44 +146,124 @@ impl SessionActor {
         info!("📊 SessionActor {} analyzing crawling range: {} -> {}", 
               self.actor_id, config.end_page, config.start_page);
         
-        // 역순 크롤링: end_page(298)부터 start_page(294)까지
-        let total_pages = config.end_page - config.start_page + 1;
-        let batch_size = config.batch_size;
-        
-        info!("📋 SessionActor {} creating batches: total_pages={}, batch_size={}", 
-              self.actor_id, total_pages, batch_size);
-        
-        // 배치들을 생성하여 순차 처리
-        let mut current_page = config.end_page; // 298부터 시작
-        let mut batch_count = 0;
-        
-        while current_page >= config.start_page {
-            // 배치의 끝 페이지 계산 (역순이므로 더 작은 번호)
-            let batch_end_page = std::cmp::max(current_page.saturating_sub(batch_size - 1), config.start_page);
-            
-            batch_count += 1;
-            info!("🏃 SessionActor {} processing batch {}: pages {} -> {}", 
-                  self.actor_id, batch_count, current_page, batch_end_page);
-            
-            // 실제 배치 처리 (임시 구현 - 나중에 BatchActor로 교체)
-            let pages_in_batch = current_page - batch_end_page + 1;
-            for page in (batch_end_page..=current_page).rev() {
-                info!("  📄 Processing page: {}", page);
-                // 실제 페이지 처리 로직 (임시 딜레이)
-                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        // 🔗 CrawlingPlanner로 실행 계획 수립 → 배치별 페이지 집합 생성(SSOT)
+        info!("🧠 SessionActor {} creating CrawlingPlanner and planning batches", self.actor_id);
+
+        // 서비스 구성
+        let http_client = Arc::new(HttpClient::create_from_global_config()
+            .map_err(|e| SessionError::InitializationFailed(format!("Failed to create HttpClient: {}", e)))?);
+        let data_extractor = Arc::new(MatterDataExtractor::new()
+            .map_err(|e| SessionError::InitializationFailed(format!("Failed to create MatterDataExtractor: {}", e)))?);
+
+        // DB 연결 재사용 경로가 없다면 간단히 새로 생성
+        let database_url = crate::infrastructure::database_paths::get_main_database_url();
+        let db_pool = sqlx::SqlitePool::connect(&database_url).await
+            .map_err(|e| SessionError::InitializationFailed(format!("Failed to connect to database: {}", e)))?;
+        let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
+
+        // 플래너 생성에 필요한 서비스들
+    let status_checker: Arc<dyn StatusChecker> = Arc::new(StatusCheckerImpl::with_product_repo(
+            (*http_client).clone(),
+            (*data_extractor).clone(),
+            AppConfig::for_development(),
+            Arc::clone(&product_repo),
+    ));
+    let db_analyzer: Arc<dyn DatabaseAnalyzer> = Arc::new(DatabaseAnalyzerImpl::new(Arc::clone(&product_repo)));
+
+        let planner = CrawlingPlanner::new(
+            status_checker.clone(),
+            db_analyzer,
+            Arc::clone(&context.config),
+        );
+
+        // TTL 5분 캐시 사용해 계획 생성
+        let ttl = Duration::from_secs(300);
+        let cached = self.site_status_cache.as_ref().and_then(|(status, ts)| {
+            if ts.elapsed() <= ttl { Some(status.clone()) } else { None }
+        });
+        let (plan, used_site_status) = planner.create_crawling_plan_with_cache(&config, cached).await
+            .map_err(|e| SessionError::InitializationFailed(format!("Failed to create crawling plan: {}", e)))?;
+        info!("📋 Crawling plan created: {} phases", plan.phases.len());
+        // 플래너 완료 Progress 이벤트 발행 (플래너 단계 관측용)
+        let planning_event = AppEvent::Progress {
+            session_id: session_id.clone(),
+            current_step: 0,
+            total_steps: plan.phases.len() as u32,
+            message: format!(
+                "Crawling plan ready: {} phases, list-batches={}",
+                plan.phases.len(),
+                plan.phases.iter().filter(|p| matches!(p.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling)).count()
+            ),
+            percentage: 0.0,
+            timestamp: Utc::now(),
+        };
+        context.emit_event(planning_event).await
+            .map_err(|e| SessionError::ContextError(e.to_string()))?;
+
+        // 캐시 갱신 및 사용 로그
+        self.site_status_cache = Some((used_site_status.clone(), Instant::now()));
+        let site_status = used_site_status;
+        info!("🌐 SiteStatus: total_pages={}, products_on_last_page={}", site_status.total_pages, site_status.products_on_last_page);
+
+        // ListPageCrawling phases만 추출 → 각 phase 페이지들을 순차 처리
+        let mut batch_idx = 0u32;
+        for phase in plan.phases.iter().filter(|p| matches!(p.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling)) {
+            batch_idx += 1;
+            let pages = phase.pages.clone();
+            if pages.is_empty() { continue; }
+            let batch_id = format!("{}-batch-{}", session_id, batch_idx);
+            info!("🏃 SessionActor {} running batch {} with {} pages: {:?}", self.actor_id, batch_id, pages.len(), pages);
+
+            // 배치 시작 Progress 이벤트 (세션 관점)
+            let progress_event = AppEvent::Progress {
+                session_id: session_id.clone(),
+                current_step: 1,
+                total_steps: plan.phases.len() as u32,
+                message: format!("Starting batch {} with {} pages", batch_id, pages.len()),
+                percentage: ((batch_idx - 1) as f64 / plan.phases.len() as f64) * 100.0,
+                timestamp: Utc::now(),
+            };
+            context.emit_event(progress_event).await
+                .map_err(|e| SessionError::ContextError(e.to_string()))?;
+
+            if let Err(e) = self.run_batch_with_services(
+                    &batch_id,
+                    &pages,
+                    context,
+                    &http_client,
+                    &data_extractor,
+                    &product_repo,
+                    &site_status,
+                ).await {
+                error!("❌ Batch {} failed: {}", batch_id, e);
+                // 세션 실패 이벤트 발행
+                let fail_event = AppEvent::SessionFailed {
+                    session_id: session_id.clone(),
+                    error: format!("Batch {} failed: {}", batch_id, e),
+                    final_failure: false,
+                    timestamp: Utc::now(),
+                };
+                context.emit_event(fail_event).await
+                    .map_err(|er| SessionError::ContextError(er.to_string()))?;
+                // 일단 다음 배치로 계속 진행 (요구 시 중단 정책으로 변경 가능)
+                continue;
             }
-            
+
             self.processed_batches += 1;
-            self.total_success_count += pages_in_batch;
-            
-            info!("✅ SessionActor {} completed batch {}: {} pages processed", 
-                  self.actor_id, batch_count, pages_in_batch);
-            
-            // 다음 배치로 이동
-            if batch_end_page == config.start_page {
-                break; // 마지막 페이지에 도달
-            }
-            current_page = batch_end_page - 1;
+            self.total_success_count += pages.len() as u32;
+            info!("✅ Completed batch {} ({} pages)", batch_id, pages.len());
+
+            // 배치 완료 Progress 이벤트
+            let progress_event = AppEvent::Progress {
+                session_id: session_id.clone(),
+                current_step: 2,
+                total_steps: plan.phases.len() as u32,
+                message: format!("Completed batch {} ({} pages)", batch_id, pages.len()),
+                percentage: (batch_idx as f64 / plan.phases.len() as f64) * 100.0,
+                timestamp: Utc::now(),
+            };
+            context.emit_event(progress_event).await
+                .map_err(|e| SessionError::ContextError(e.to_string()))?;
         }
         
         // 상태를 Running으로 전환 후 Complete로 이동
@@ -204,8 +296,85 @@ impl SessionActor {
         
         context.emit_event(completion_event).await
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
+
+        // === 추가: 세션 리포트 이벤트 발행 ===
+        let duration_ms = self.start_time.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0);
+        // 총 실패 페이지/리트라이 수는 배치 리포트 합산이 이상적이지만, 최소한 현재 수치로 요약 제공
+        let crawl_report = AppEvent::CrawlReportSession {
+            session_id: session_id.clone(),
+            batches_processed: self.processed_batches,
+            total_pages: self.total_success_count,
+            total_success: self.total_success_count,
+            total_failed: 0, // TODO: 배치 결과 수집 시 합산
+            total_retries: 0, // TODO: 배치 리포트 기반 합산
+            duration_ms,
+            timestamp: Utc::now(),
+        };
+        context.emit_event(crawl_report).await
+            .map_err(|e| SessionError::ContextError(e.to_string()))?;
         
         info!("✅ Session {} completed successfully", session_id);
+        Ok(())
+    }
+
+    /// 실서비스가 주입된 BatchActor를 생성해 주어진 페이지들을 처리
+    async fn run_batch_with_services(
+        &self,
+        batch_id: &str,
+        pages: &[u32],
+        context: &AppContext,
+        http_client: &Arc<HttpClient>,
+        data_extractor: &Arc<MatterDataExtractor>,
+        product_repo: &Arc<IntegratedProductRepository>,
+        site_status: &crate::domain::services::SiteStatus,
+    ) -> Result<(), SessionError> {
+        use crate::new_architecture::actors::traits::Actor;
+
+        // AppConfig 로드(개발 기본값)
+        let app_config = AppConfig::for_development();
+
+        let mut batch_actor = BatchActor::new_with_services(
+            batch_id.to_string(),
+            batch_id.to_string(),
+            Arc::clone(http_client),
+            Arc::clone(data_extractor),
+            Arc::clone(product_repo),
+            app_config,
+        );
+
+        let (tx, rx) = mpsc::channel::<super::types::ActorCommand>(100);
+
+        // BatchActor 실행 태스크 시작
+    let actor_context = context.clone();
+        let actor_task = tokio::spawn(async move {
+            let _ = batch_actor.run(actor_context, rx).await;
+        });
+
+        // 배치 설정 및 명령 전송
+        let batch_config = BatchConfig {
+            batch_size: pages.len() as u32,
+            concurrency_limit: 5,
+            batch_delay_ms: 1000,
+            retry_on_failure: true,
+            start_page: pages.first().copied(),
+            end_page: pages.last().copied(),
+        };
+        let cmd = super::types::ActorCommand::ProcessBatch {
+            batch_id: batch_id.to_string(),
+            pages: pages.to_vec(),
+            config: batch_config,
+            batch_size: pages.len() as u32,
+            concurrency_limit: 5,
+            total_pages: site_status.total_pages,
+            products_on_last_page: site_status.products_on_last_page,
+        };
+        tx.send(cmd).await.map_err(|e| SessionError::ContextError(format!("Failed to send ProcessBatch: {}", e)))?;
+
+        // 종료 명령
+        tx.send(super::types::ActorCommand::Shutdown).await.map_err(|e| SessionError::ContextError(format!("Failed to send Shutdown: {}", e)))?;
+
+        // 완료 대기
+        actor_task.await.map_err(|e| SessionError::ContextError(format!("BatchActor join error: {}", e)))?;
         Ok(())
     }
     

@@ -16,6 +16,7 @@ use super::super::{
     SystemConfig,
     actors::types::{CrawlingConfig, BatchConfig, ActorError}
 };
+use crate::domain::services::SiteStatus;
 
 /// 지능형 크롤링 계획 수립자
 /// 
@@ -84,6 +85,38 @@ impl CrawlingPlanner {
         ).await?;
         
         Ok(plan)
+    }
+
+    /// 캐시된 SiteStatus를 활용해 크롤링 계획을 수립하고, 사용된 SiteStatus도 함께 반환합니다.
+    pub async fn create_crawling_plan_with_cache(
+        &self,
+        crawling_config: &CrawlingConfig,
+        cached_site_status: Option<SiteStatus>,
+    ) -> Result<(CrawlingPlan, SiteStatus), ActorError> {
+        // 1. 사이트 상태 확인 (캐시 우선)
+        let site_status = if let Some(cached) = cached_site_status {
+            cached
+        } else {
+            self.status_checker
+                .check_site_status()
+                .await
+                .map_err(|e| ActorError::CommandProcessingFailed(format!("Site status check failed: {e}")))?
+        };
+
+        // 2. 데이터베이스 분석
+        let db_analysis = self.database_analyzer
+            .analyze_current_state()
+            .await
+            .map_err(|e| ActorError::CommandProcessingFailed(format!("Database analysis failed: {e}")))?;
+
+        // 3. 최적화된 계획 수립
+        let plan = self.optimize_crawling_strategy(
+            crawling_config,
+            Box::new(site_status.clone()),
+            Box::new(db_analysis),
+        ).await?;
+
+        Ok((plan, site_status))
     }
     
     /// 시스템 상태를 분석합니다.
@@ -204,79 +237,94 @@ impl CrawlingPlanner {
     async fn optimize_crawling_strategy(
         &self,
         config: &CrawlingConfig,
-        _site_status: Box<dyn std::any::Any + Send>, // SiteStatus trait object workaround
-        _db_analysis: Box<dyn std::any::Any + Send>, // DatabaseAnalysis trait object workaround
+        site_status_any: Box<dyn std::any::Any + Send>,
+        db_analysis_any: Box<dyn std::any::Any + Send>,
     ) -> Result<CrawlingPlan, ActorError> {
-        // Mock 구현 - 실제로는 site_status와 db_analysis를 기반으로 최적화
-        let total_pages = if config.start_page >= config.end_page {
-            config.start_page - config.end_page + 1  // 역순 크롤링
-        } else {
-            config.end_page - config.start_page + 1  // 정순 크롤링
+        // 실제 최적화: SiteStatus + DatabaseAnalysis 기반으로 최신 페이지부터 N개를 선택
+        // 1) 전달된 Any를 다운캐스트
+        let site_status = match site_status_any.downcast::<SiteStatus>() {
+            Ok(b) => *b,
+            Err(_) => return Err(ActorError::CommandProcessingFailed("Failed to downcast SiteStatus".to_string())),
         };
-        
-        // 🔧 역순 크롤링 지원: start_page >= end_page인 경우 범위를 뒤집어서 생성
-        let page_range: Vec<u32> = if config.start_page >= config.end_page {
-            // 역순: 299, 298, 297, 296, 295
-            (config.end_page..=config.start_page).rev().collect()
-        } else {
-            // 정순: start_page..=end_page
-            (config.start_page..=config.end_page).collect()
+        let _db_analysis = match db_analysis_any.downcast::<DatabaseAnalysis>() {
+            Ok(b) => *b,
+            Err(_) => return Err(ActorError::CommandProcessingFailed("Failed to downcast DatabaseAnalysis".to_string())),
         };
-        
-        info!("🔧 CrawlingPlanner page range generation: start={}, end={}, reverse={}, pages={:?}", 
-              config.start_page, config.end_page, config.start_page >= config.end_page, page_range);
-        
-        // 🔧 batch_size에 따른 배치 분할 로직 구현 (5페이지, batch_size=3 → 2개 배치: [3, 2])
-        let batch_size = config.batch_size as usize;
-        let batched_pages = if batch_size > 0 && page_range.len() > batch_size {
-            // 페이지를 batch_size 단위로 분할
-            page_range.chunks(batch_size).map(|chunk| chunk.to_vec()).collect::<Vec<_>>()
+
+        // 2) 요청한 페이지 수 계산 (UI 입력의 start/end는 '개수'만 사용)
+        let requested_count = if config.start_page >= config.end_page {
+            config.start_page - config.end_page + 1
         } else {
-            // 페이지 수가 batch_size보다 작거나 같으면 하나의 배치로
+            config.end_page - config.start_page + 1
+        };
+
+        // 3) 사이트 총 페이지 기준으로 최신부터 범위 생성 (예: total=498, count=12 → 498..487)
+        let total_pages_on_site = site_status.total_pages.max(1);
+        let count = requested_count.max(1).min(total_pages_on_site);
+        let start = total_pages_on_site; // 최신 페이지가 가장 큰 번호
+        let end = start.saturating_sub(count - 1).max(1);
+        let page_range: Vec<u32> = (end..=start).rev().collect();
+
+        info!(
+            "🔧 CrawlingPlanner computed newest-first page range: total_pages_on_site={}, requested_count={}, actual_count={}, pages={:?}",
+            total_pages_on_site, requested_count, page_range.len(), page_range
+        );
+
+        // 4) batch_size에 따라 분할
+        let batch_size = config.batch_size.max(1) as usize;
+        let batched_pages: Vec<Vec<u32>> = if page_range.len() > batch_size {
+            page_range
+                .chunks(batch_size)
+                .map(|c| c.to_vec())
+                .collect()
+        } else {
             vec![page_range.clone()]
         };
-        
-        info!("📋 배치 계획 수립: 총 {}페이지를 {}개 배치로 분할 (batch_size={})", 
-              page_range.len(), batched_pages.len(), batch_size);
-        
-        // 🎯 각 배치별로 ListPageCrawling phase 생성
-        let mut phases = vec![
-            CrawlingPhase {
-                phase_type: PhaseType::StatusCheck,
-                estimated_duration_secs: 30,
-                priority: 1,
-                pages: vec![], // 상태 확인은 페이지별 처리 없음
-            },
-        ];
-        
-        // 배치별 ListPageCrawling phases 추가
+
+        info!(
+            "📋 배치 계획 수립: 총 {}페이지를 {}개 배치로 분할 (batch_size={})",
+            page_range.len(),
+            batched_pages.len(),
+            batch_size
+        );
+
+        // 5) 단계 구성: StatusCheck → (List batches) → ProductDetailCrawling → DataValidation
+        let mut phases = vec![CrawlingPhase {
+            phase_type: PhaseType::StatusCheck,
+            estimated_duration_secs: 30,
+            priority: 1,
+            pages: vec![],
+        }];
+
         for (batch_idx, batch_pages) in batched_pages.iter().enumerate() {
             phases.push(CrawlingPhase {
                 phase_type: PhaseType::ListPageCrawling,
-                estimated_duration_secs: (batch_pages.len() * 2) as u64, // 페이지당 2초 추정
-                priority: 2 + batch_idx as u32, // 배치별 우선순위
+                estimated_duration_secs: (batch_pages.len() * 2) as u64,
+                priority: 2 + batch_idx as u32,
                 pages: batch_pages.clone(),
             });
         }
-        
-        // 나머지 phases 추가
+
         phases.extend(vec![
             CrawlingPhase {
                 phase_type: PhaseType::ProductDetailCrawling,
-                estimated_duration_secs: (total_pages * 10) as u64, // 페이지당 10초 추정 (상품 상세)
-                priority: 100, // 높은 우선순위로 마지막에 실행
+                estimated_duration_secs: (count * 10) as u64,
+                priority: 100,
                 pages: page_range.clone(),
             },
             CrawlingPhase {
                 phase_type: PhaseType::DataValidation,
-                estimated_duration_secs: (total_pages / 2) as u64, // 검증은 빠름
+                estimated_duration_secs: (count / 2).max(1) as u64,
                 priority: 101,
                 pages: vec![],
             },
         ]);
-        
-        let total_estimated_duration_secs = phases.iter().map(|p| p.estimated_duration_secs).sum();
-        
+
+        let total_estimated_duration_secs = phases
+            .iter()
+            .map(|p| p.estimated_duration_secs)
+            .sum();
+
         Ok(CrawlingPlan {
             session_id: format!("crawling_{}", uuid::Uuid::new_v4()),
             phases,
@@ -395,6 +443,10 @@ pub enum OptimizationStrategy {
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use std::time::Duration;
+    use crate::domain::services::{StatusChecker, DatabaseAnalyzer};
+    use crate::domain::services::{SiteStatus, SiteDataChangeStatus, DataDecreaseRecommendation};
+    use crate::domain::services::crawling_services::{FieldAnalysis, DuplicateGroup, DuplicateType};
     
     // Mock implementations for testing
     struct MockStatusChecker;
@@ -402,8 +454,31 @@ mod tests {
     
     #[async_trait::async_trait]
     impl StatusChecker for MockStatusChecker {
-        async fn check_site_status(&self, _url: &str) -> Result<Box<dyn std::any::Any>, Box<dyn std::error::Error + Send + Sync>> {
-            Ok(Box::new("mock_status"))
+        async fn check_site_status(&self) -> anyhow::Result<SiteStatus> {
+            Ok(SiteStatus {
+                is_accessible: true,
+                response_time_ms: 100,
+                total_pages: 100,
+                estimated_products: 1000,
+                products_on_last_page: 10,
+                last_check_time: chrono::Utc::now(),
+                health_score: 0.9,
+                data_change_status: SiteDataChangeStatus::Stable { count: 1000 },
+                decrease_recommendation: None,
+                crawling_range_recommendation: CrawlingRangeRecommendation::Full,
+            })
+        }
+        
+        async fn calculate_crawling_range_recommendation(&self, _site_status: &SiteStatus, _db_analysis: &DatabaseAnalysis) -> anyhow::Result<CrawlingRangeRecommendation> {
+            Ok(CrawlingRangeRecommendation::Full)
+        }
+        
+        async fn estimate_crawling_time(&self, pages: u32) -> Duration {
+            Duration::from_secs(pages as u64)
+        }
+        
+        async fn verify_site_accessibility(&self) -> anyhow::Result<bool> {
+            Ok(true)
         }
     }
     
@@ -413,6 +488,7 @@ mod tests {
             Ok(DatabaseAnalysis {
                 total_products: 0,
                 unique_products: 0,
+                duplicate_count: 0,
                 missing_products_count: 0,
                 last_update: Some(chrono::Utc::now()),
                 missing_fields_analysis: FieldAnalysis {
@@ -427,14 +503,20 @@ mod tests {
         }
         
         async fn recommend_processing_strategy(&self) -> anyhow::Result<ProcessingStrategy> {
-            Ok(ProcessingStrategy::default())
+            Ok(ProcessingStrategy {
+                recommended_batch_size: 20,
+                recommended_concurrency: 5,
+                should_skip_duplicates: false,
+                should_update_existing: true,
+                priority_urls: vec![],
+            })
         }
         
         async fn analyze_duplicates(&self) -> anyhow::Result<DuplicateAnalysis> {
             Ok(DuplicateAnalysis {
-                duplicate_pairs: vec![],
                 total_duplicates: 0,
-                confidence_scores: vec![],
+                duplicate_groups: vec![DuplicateGroup { product_ids: vec![], duplicate_type: DuplicateType::ExactMatch, confidence: 1.0 }],
+                duplicate_percentage: 0.0,
             })
         }
     }
@@ -443,19 +525,19 @@ mod tests {
     async fn test_crawling_planner_creation() {
         let status_checker = Arc::new(MockStatusChecker) as Arc<dyn StatusChecker>;
         let database_analyzer = Arc::new(MockDatabaseAnalyzer) as Arc<dyn DatabaseAnalyzer>;
-        let config = Arc::new(SystemConfig::default());
+        let config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
         
         let planner = CrawlingPlanner::new(status_checker, database_analyzer, config);
         
         // 플래너가 생성되었는지 확인
-        assert_eq!(planner.config.crawling.default_concurrency_limit, 10);
+        assert_eq!(planner.config.crawling.as_ref().and_then(|c| c.default_concurrency_limit), Some(5));
     }
     
     #[test]
     fn test_batch_config_optimization() {
         let status_checker = Arc::new(MockStatusChecker) as Arc<dyn StatusChecker>;
         let database_analyzer = Arc::new(MockDatabaseAnalyzer) as Arc<dyn DatabaseAnalyzer>;
-        let config = Arc::new(SystemConfig::default());
+        let config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
         
         let planner = CrawlingPlanner::new(status_checker, database_analyzer, config);
         
@@ -464,6 +546,8 @@ mod tests {
             concurrency_limit: 20,
             batch_delay_ms: 1000,
             retry_on_failure: true,
+            start_page: None,
+            end_page: None,
         };
         
         let optimized = planner.optimize_batch_config(&base_config, 150);
@@ -477,7 +561,7 @@ mod tests {
     fn test_optimal_batch_size_calculation() {
         let status_checker = Arc::new(MockStatusChecker) as Arc<dyn StatusChecker>;
         let database_analyzer = Arc::new(MockDatabaseAnalyzer) as Arc<dyn DatabaseAnalyzer>;
-        let config = Arc::new(SystemConfig::default());
+        let config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
         
         let planner = CrawlingPlanner::new(status_checker, database_analyzer, config);
         

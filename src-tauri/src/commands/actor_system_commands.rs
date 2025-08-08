@@ -9,6 +9,7 @@ use crate::new_architecture::channels::types::ActorCommand; // 올바른 ActorCo
 use crate::new_architecture::actors::types::{CrawlingConfig, BatchConfig, ExecutionPlan, PageRange, SessionSummary};
 use crate::new_architecture::actor_event_bridge::start_actor_event_bridge;
 use crate::infrastructure::config::AppConfig;
+use crate::domain::services::SiteStatus;
 use crate::infrastructure::service_based_crawling_engine::{ServiceBasedBatchCrawlingEngine, BatchCrawlingConfig};
 use crate::infrastructure::simple_http_client::HttpClient;
 use crate::infrastructure::html_parser::MatterDataExtractor;
@@ -65,10 +66,10 @@ pub async fn start_actor_system_crawling(
     // === Phase 1: 분석 및 계획 (CrawlingPlanner 단일 호출) ===
     info!("🧠 Phase 1: Creating ExecutionPlan with CrawlingPlanner...");
     
-    let (execution_plan, app_config) = create_execution_plan(&app).await
+    let (execution_plan, app_config, site_status) = create_execution_plan(&app).await
         .map_err(|e| format!("Failed to create execution plan: {}", e))?;
     
-    info!("✅ ExecutionPlan created: {} ranges, {} total pages", 
+    info!("✅ ExecutionPlan created: {} batches, {} total pages", 
           execution_plan.crawling_ranges.len(),
           execution_plan.crawling_ranges.iter().map(|r| 
               if r.reverse_order { r.start_page - r.end_page + 1 } 
@@ -96,6 +97,7 @@ pub async fn start_actor_system_crawling(
     // ExecutionPlan 기반 실행 (백그라운드)
     let execution_plan_for_task = execution_plan.clone();
     let app_config_for_task = app_config.clone();
+    let site_status_for_task = site_status.clone();
     let actor_event_tx_for_spawn = actor_event_tx.clone();
     let session_id_for_return = execution_plan.session_id.clone();
     
@@ -103,7 +105,12 @@ pub async fn start_actor_system_crawling(
         info!("🚀 SessionActor executing with predefined ExecutionPlan...");
         
         // SessionActor는 더 이상 분석/계획하지 않고 순수 실행만
-        match execute_session_actor_with_execution_plan(execution_plan_for_task, &app_config_for_task, actor_event_tx_for_spawn).await {
+        match execute_session_actor_with_execution_plan(
+            execution_plan_for_task,
+            &app_config_for_task,
+            &site_status_for_task,
+            actor_event_tx_for_spawn,
+        ).await {
             Ok(()) => {
                 info!("🎉 Actor system crawling completed successfully!");
             }
@@ -221,7 +228,7 @@ async fn initialize_service_based_engine(
         list_page_concurrency: app_config.user.crawling.workers.list_page_max_concurrent as u32,
         product_detail_concurrency: app_config.user.crawling.workers.product_detail_max_concurrent as u32,
         retry_max: app_config.advanced.retry_attempts,
-        timeout_ms: (app_config.advanced.request_timeout_seconds * 1000) as u64,
+    timeout_ms: (app_config.advanced.request_timeout_seconds * 1000),
         disable_intelligent_range: true, // CrawlingPlanner 사용하지 않음
         cancellation_token: None,
     };
@@ -269,9 +276,9 @@ pub async fn test_session_actor_basic(
 ) -> Result<ActorSystemResponse, String> {
     info!("🧪 Testing SessionActor...");
     
-    let system_config = Arc::new(SystemConfig::default());
-    let (_control_tx, control_rx) = mpsc::channel::<ActorCommand>(100);
-    let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(500);
+    let _system_config = Arc::new(SystemConfig::default());
+    let (_control_tx, _control_rx) = mpsc::channel::<ActorCommand>(100);
+    let (_event_tx, _event_rx) = mpsc::channel::<AppEvent>(500);
     
     let _session_actor = SessionActor::new(
         format!("session_{}", chrono::Utc::now().timestamp())
@@ -295,9 +302,9 @@ pub async fn test_actor_integration_basic(
     info!("🧪 Testing Actor system integration...");
     
     // Integration test - create full system
-    let system_config = Arc::new(SystemConfig::default());
-    let (_control_tx, control_rx) = mpsc::channel::<ActorCommand>(100);
-    let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(500);
+    let _system_config = Arc::new(SystemConfig::default());
+    let (_control_tx, _control_rx) = mpsc::channel::<ActorCommand>(100);
+    let (_event_tx, _event_rx) = mpsc::channel::<AppEvent>(500);
     
     let _session_actor = SessionActor::new(
         format!("session_{}", chrono::Utc::now().timestamp())
@@ -322,6 +329,7 @@ pub async fn test_actor_integration_basic(
 }
 
 /// CrawlingPlanner 기반 지능형 범위 계산 (Actor 시스템용)
+#[allow(dead_code)]
 async fn calculate_intelligent_crawling_range(
     session_id: &str,
     request: &ActorCrawlingRequest,
@@ -505,6 +513,7 @@ async fn execute_session_actor_with_batches(
     end_page: u32,
     batch_size: u32,
     app_config: &AppConfig,
+    site_status: &SiteStatus,
     actor_event_tx: broadcast::Sender<AppEvent>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("🎭 SessionActor {} starting with range {} to {}, batch_size: {}", 
@@ -513,7 +522,7 @@ async fn execute_session_actor_with_batches(
     // AppContext 생성에 필요한 채널들 생성
     let system_config = Arc::new(SystemConfig::default());
     let (control_tx, _control_rx) = mpsc::channel::<ActorCommand>(100);
-    let (cancellation_tx, cancellation_rx) = watch::channel(false);
+    let (_cancellation_tx, cancellation_rx) = watch::channel(false);
     
     // AppContext 생성 (실제로는 IntegratedContext::new 호출)
     let context = Arc::new(AppContext::new(
@@ -579,7 +588,7 @@ async fn execute_session_actor_with_batches(
         
         // ✅ 실제 BatchActor 구현 호출 
         info!("🚀 About to call execute_real_batch_actor for batch: {}", batch_id);
-        match execute_real_batch_actor(&batch_id, page_chunk, &context).await {
+    match execute_real_batch_actor(&batch_id, page_chunk, &context, app_config, site_status).await {
             Ok(()) => {
                 info!("✅ BatchActor {} completed successfully", batch_id);
                 
@@ -656,6 +665,8 @@ async fn execute_real_batch_actor(
     batch_id: &str,
     pages: &[u32],
     context: &AppContext,
+    app_config: &AppConfig,
+    site_status: &SiteStatus,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use crate::new_architecture::actors::{BatchActor, ActorCommand};
     use crate::new_architecture::actors::traits::Actor;
@@ -666,7 +677,7 @@ async fn execute_real_batch_actor(
     
     // 🔥 Phase 1: 실제 서비스들 생성 및 주입
     use crate::infrastructure::{HttpClient, MatterDataExtractor};
-    use crate::infrastructure::config::AppConfig;
+    // AppConfig type is provided via function parameter; no local import needed
     use crate::infrastructure::IntegratedProductRepository;
     use std::sync::Arc;
     
@@ -689,9 +700,9 @@ async fn execute_real_batch_actor(
     let product_repo = Arc::new(IntegratedProductRepository::new(db_connection.pool().clone()));
     info!("✅ IntegratedProductRepository created with centralized database path");
     
-    // AppConfig 생성
-    let app_config = AppConfig::for_development();
-    info!("✅ AppConfig loaded");
+    // AppConfig 사용: ExecutionPlan 경로에서 로드한 설정 사용 (개발 기본값 사용하지 않음)
+    let app_config = app_config.clone();
+    info!("✅ AppConfig provided from ExecutionPlan context");
     
     // AppConfig에서 실제 batch_size 미리 추출 (app_config이 move되기 전에)
     let user_batch_size = app_config.user.batch.batch_size;
@@ -733,8 +744,8 @@ async fn execute_real_batch_actor(
         config: batch_config,
         batch_size: user_batch_size,
         concurrency_limit: context.config.performance.concurrency.max_concurrent_tasks,
-        total_pages: pages.len() as u32,
-        products_on_last_page: 12, // 기본값
+        total_pages: site_status.total_pages,
+        products_on_last_page: site_status.products_on_last_page,
     };
     info!("✅ ProcessBatch command created");
     
@@ -775,7 +786,7 @@ async fn execute_real_batch_actor(
 /// 
 /// 시스템 상태를 종합 분석하여 최적의 실행 계획을 생성합니다.
 /// 이 함수가 호출된 후에는 더 이상 분석/계획 단계가 없습니다.
-async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppConfig), Box<dyn std::error::Error + Send + Sync>> {
+async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppConfig, SiteStatus), Box<dyn std::error::Error + Send + Sync>> {
     info!("🧠 Creating ExecutionPlan with single CrawlingPlanner call...");
     
     // 1. 설정 로드
@@ -838,8 +849,10 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
     // CrawlingConfig 생성 (필요한 기본값)
     let crawling_config = CrawlingConfig {
         site_url: "https://csa-iot.org/csa-iot_products/".to_string(),
-        start_page: 1,
-        end_page: 1,
+    // 요청 개수는 start/end 차이로 계산되므로 page_range_limit 만큼 요청하도록 설정
+    // (optimize_crawling_strategy 내 주석: UI 입력의 start/end는 '개수'만 사용)
+    start_page: app_config.user.crawling.page_range_limit.max(1),
+    end_page: 1,
         concurrency_limit: app_config.user.max_concurrent_requests,
         batch_size: app_config.user.batch.batch_size,
         request_delay_ms: 1000,
@@ -847,7 +860,8 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
         max_retries: 3,
     };
     
-    let crawling_plan = crawling_planner.create_crawling_plan(&crawling_config).await?;
+    // 사이트 상태도 함께 획득 (힌트 전달용)
+    let (crawling_plan, site_status) = crawling_planner.create_crawling_plan_with_cache(&crawling_config, None).await?;
     
     info!("📋 CrawlingPlan created: {:?}", crawling_plan);
     
@@ -855,26 +869,50 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
     let session_id = format!("actor_session_{}", Utc::now().timestamp());
     let plan_id = format!("plan_{}", Utc::now().timestamp());
     
-    // CrawlingPlan의 첫 번째 phase에서 페이지 범위 추출 (단순화)
-    let crawling_range = if let Some(first_phase) = crawling_plan.phases.first() {
-        // 실제로는 phase에서 정보를 추출해야 하지만, 지금은 기본값 사용
-        vec![PageRange {
-            start_page: 292,  // 현재 마지막 크롤링 페이지부터
-            end_page: 288,    // 5페이지 역순
-            estimated_products: 50,  // 추정값
-            reverse_order: true,
-        }]
-    } else {
-        // 기본 범위
-        vec![PageRange {
-            start_page: 1,
-            end_page: 1,
-            estimated_products: 12,
-            reverse_order: false,
-        }]
-    };
+    // CrawlingPlan에서 ListPageCrawling phases를 수집하고, 최신순 페이지를 배치 크기로 분할
+    let mut all_pages: Vec<u32> = Vec::new();
+    for phase in &crawling_plan.phases {
+        if let crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling = phase.phase_type {
+            // 각 ListPageCrawling phase에는 해당 배치의 페이지들이 담겨있음(최신순)
+            // Phase의 pages를 그대로 append (이미 최신→과거 순)
+            all_pages.extend(phase.pages.iter());
+        }
+    }
+
+    // 설정의 page_range_limit로 상한 적용
+    let page_limit = app_config.user.crawling.page_range_limit.max(1) as usize;
+    if all_pages.len() > page_limit {
+        all_pages.truncate(page_limit);
+    }
+
+    // 배치 크기로 분할 (역순 범위 유지)
+    let batch_size = app_config.user.batch.batch_size.max(1) as usize;
+    let mut crawling_ranges: Vec<PageRange> = Vec::new();
+    for chunk in all_pages.chunks(batch_size) {
+        if let (Some(&first), Some(&last)) = (chunk.first(), chunk.last()) {
+            // chunk는 최신→과거 순서이므로 start_page=first, end_page=last, reverse_order=true
+            let pages_count = (first.saturating_sub(last)) + 1;
+            crawling_ranges.push(PageRange {
+                start_page: first,
+                end_page: last,
+                estimated_products: pages_count * 12, // 대략치
+                reverse_order: true,
+            });
+        }
+    }
     
-    let total_pages: u32 = crawling_range.iter().map(|r| {
+    if crawling_ranges.is_empty() {
+        // 안전 폴백 (최신 1페이지)
+        let last_page = all_pages.first().copied().unwrap_or(1);
+        crawling_ranges.push(PageRange {
+            start_page: last_page,
+            end_page: last_page,
+            estimated_products: 12,
+            reverse_order: true,
+        });
+    }
+    
+    let total_pages: u32 = crawling_ranges.iter().map(|r| {
         if r.reverse_order { r.start_page - r.end_page + 1 } 
         else { r.end_page - r.start_page + 1 }
     }).sum();
@@ -882,7 +920,7 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
     let execution_plan = ExecutionPlan {
         plan_id,
         session_id,
-        crawling_ranges: crawling_range,
+        crawling_ranges: crawling_ranges,
         batch_size: app_config.user.batch.batch_size,
         concurrency_limit: app_config.user.max_concurrent_requests,
         estimated_duration_secs: crawling_plan.total_estimated_duration_secs,
@@ -891,10 +929,10 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
                                 crawling_plan.optimization_strategy, total_pages),
     };
     
-    info!("✅ ExecutionPlan created successfully: {} pages across {} ranges", 
+    info!("✅ ExecutionPlan created successfully: {} pages across {} batches", 
           total_pages, execution_plan.crawling_ranges.len());
     
-    Ok((execution_plan, app_config))
+    Ok((execution_plan, app_config, site_status))
 }
 
 /// ExecutionPlan 기반 SessionActor 실행 (순수 실행 전용)
@@ -903,10 +941,11 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
 async fn execute_session_actor_with_execution_plan(
     execution_plan: ExecutionPlan,
     app_config: &AppConfig,
+    site_status: &SiteStatus,
     actor_event_tx: broadcast::Sender<AppEvent>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("🎭 Executing SessionActor with predefined ExecutionPlan...");
-    info!("📋 Plan: {} ranges, batch_size: {}, concurrency: {}", 
+    info!("📋 Plan: {} batches, batch_size: {}, concurrency: {}", 
           execution_plan.crawling_ranges.len(),
           execution_plan.batch_size,
           execution_plan.concurrency_limit);
@@ -933,8 +972,8 @@ async fn execute_session_actor_with_execution_plan(
     
     // 각 범위별로 순차 실행
     for (range_idx, page_range) in execution_plan.crawling_ranges.iter().enumerate() {
-        info!("🎯 Processing range {} of {}: pages {} to {} (reverse: {})", 
-              range_idx + 1, execution_plan.crawling_ranges.len(),
+      info!("🎯 Processing batch {} of {}: pages {} to {} (reverse: {})", 
+          range_idx + 1, execution_plan.crawling_ranges.len(),
               page_range.start_page, page_range.end_page, page_range.reverse_order);
         
         // 진행 상황 이벤트 방출
@@ -959,6 +998,7 @@ async fn execute_session_actor_with_execution_plan(
             page_range.end_page,
             execution_plan.batch_size,
             app_config,
+            site_status,
             actor_event_tx.clone(),
         ).await {
             Ok(()) => {

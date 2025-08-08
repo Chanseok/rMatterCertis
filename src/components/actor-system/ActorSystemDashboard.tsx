@@ -191,8 +191,8 @@ ${error}
       
       setTestResult('🎭 진짜 Actor 시스템 배치 분할 테스트 시작...\n📦 설정: pages 294-298\n🎯 예상: Actor 로그 확인');
       
-      // Tauri 커맨드 호출 (진짜 Actor - 설정 기반)
-      const result = await invoke('start_real_actor_crawling', {
+  // Tauri 커맨드 호출 (진짜 Actor - 설정 기반)
+  const result = await invoke('start_actor_system_crawling', {
         request: {
           // CrawlingPlanner가 모든 설정을 자동 계산하므로 파라미터 불필요
         }

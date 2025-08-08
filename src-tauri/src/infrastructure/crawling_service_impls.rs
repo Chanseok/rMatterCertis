@@ -1960,9 +1960,9 @@ impl ProductListCollector for ProductListCollectorImpl {
         
     let page_calculator = crate::utils::PageIdCalculator::new(total_pages, products_on_last_page as usize);
 
-        let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
-        // Use consistent HttpClient
-        let response = self.http_client.fetch_response(&url).await?;
+    let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
+    // Use policy-based HttpClient to respect status-based retry and Retry-After
+    let response = self.http_client.fetch_response_with_policy(&url).await?;
         let html_string: String = response.text().await?;
         
         let doc = scraper::Html::parse_document(&html_string);
@@ -2324,17 +2324,33 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
             let page_id = product_url.page_id;  // Capture page_id
             let index_in_page = product_url.index_in_page;  // Capture index_in_page
             let permit = Arc::clone(&semaphore);
+            let max_retries = self.config.retry_attempts.max(1);
             
             let task = tokio::spawn(async move {
                 let _permit = permit.acquire().await.unwrap();
                 
-                // Remove individual delay - let semaphore handle rate limiting
-                // tokio::time::sleep(Duration::from_millis(delay)).await;
-                
-                // 🔥 Mutex 제거 - 직접 HttpClient 사용으로 진정한 동시성 구현
-                let response = http_client_clone.fetch_response(&url).await?;
-                let html_string: String = response.text().await?;
-                
+                // Retry-aware fetch + minimal parse retry
+                let mut attempts: u32 = 0;
+                let html_string: String;
+                loop {
+                    attempts += 1;
+                    match http_client_clone.fetch_response_with_policy(&url).await {
+                        Ok(response) => {
+                            match response.text().await {
+                                Ok(s) => { html_string = s; break; }
+                                Err(e) => {
+                                    if attempts < max_retries { tokio::time::sleep(Duration::from_millis(500 * attempts as u64)).await; continue; }
+                                    else { return Err(anyhow::anyhow!("Failed to read response text: {}", e)); }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            if attempts < max_retries { tokio::time::sleep(Duration::from_millis(500 * attempts as u64)).await; continue; }
+                            else { return Err(e); }
+                        }
+                    }
+                }
+
                 let doc = scraper::Html::parse_document(&html_string);
                 let mut detail = data_extractor_clone.extract_product_detail(&doc, url.clone())?;
                 
@@ -2351,7 +2367,7 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
             tasks.push(task);
         }
         
-        let results = futures::future::join_all(tasks).await;
+    let results = futures::future::join_all(tasks).await;
         let mut details = Vec::new();
         
         for result in results {
@@ -2378,7 +2394,7 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
         let data_extractor = Arc::clone(&self.data_extractor);
         let mut tasks = Vec::new();
         
-        for product_url in product_urls {
+    for product_url in product_urls {
             let http_client_clone = Arc::clone(&http_client);
             let data_extractor_clone = Arc::clone(&data_extractor);
             let url = product_url.url.clone();
@@ -2405,8 +2421,8 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                     return Err(anyhow!("Task cancelled"));
                 }
                 
-                // 🔥 Mutex 제거 - HttpClient 직접 사용으로 진정한 동시성
-                let response = http_client_clone.fetch_response(&url).await?;
+        // 🔥 Use retry-aware HTTP method
+        let response = http_client_clone.fetch_response_with_policy(&url).await?;
                 let html_string: String = response.text().await?;
                 
                 if token.is_cancelled() {
@@ -2544,8 +2560,8 @@ impl ProductDetailCollectorImpl {
                     task_id: task_id.clone(),
                 });
                 
-                // 🔥 Mutex 제거 - HttpClient 직접 사용
-                let response = match http_client_clone.fetch_response(&url).await {
+                // 🔥 Use retry-aware HTTP method
+                let response = match http_client_clone.fetch_response_with_policy(&url).await {
                     Ok(response) => response,
                     Err(e) => {
                         let _ = event_tx_clone.send(ProductDetailEvent::TaskFailed {

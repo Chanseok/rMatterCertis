@@ -10,6 +10,8 @@
     "serve": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
+  "tauri:dev:nosave": "MC_SKIP_DB_SAVE=1 tauri dev",
+  "dev:nosave": "MC_SKIP_DB_SAVE=1 vite & MC_SKIP_DB_SAVE=1 tauri dev",
     "tauri:build": "tauri build",
     "type-check": "tsc --noEmit"
   },

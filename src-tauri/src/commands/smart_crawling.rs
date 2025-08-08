@@ -276,10 +276,22 @@ pub async fn calculate_crawling_range(
 async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
     info!("🔧 Creating batch plan: start_page={}, end_page={}", start_page, end_page);
     
-    // 설정에서 batch_size 가져오기
-    let app_config = crate::infrastructure::config::AppConfig::for_development();
+    // 설정에서 batch_size 가져오기 (비차단 방식; 실패 시 개발 기본값 사용)
+    let app_config = match ConfigManager::new() {
+        Ok(cm) => match cm.load_config().await {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                tracing::warn!("⚠️ Failed to load AppConfig for batch plan: {}. Falling back to development defaults.", e);
+                crate::infrastructure::config::AppConfig::for_development()
+            }
+        },
+        Err(e) => {
+            tracing::warn!("⚠️ Failed to initialize ConfigManager for batch plan: {}. Falling back to development defaults.", e);
+            crate::infrastructure::config::AppConfig::for_development()
+        }
+    };
     let batch_size = app_config.user.batch.batch_size;
-    let concurrency_limit = 5; // 기본값
+    let concurrency_limit = app_config.user.max_concurrent_requests; // ExecutionPlan 경로와 일치
     
     info!("📋 Batch plan configuration: batch_size={}, concurrency_limit={}", batch_size, concurrency_limit);
     

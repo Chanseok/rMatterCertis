@@ -21,6 +21,7 @@ use crate::new_architecture::actors::StageActor;
 // 실제 서비스 imports 추가
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
 use crate::infrastructure::config::AppConfig;
+use crate::domain::services::SiteStatus;
 
 /// BatchActor: 배치 단위의 크롤링 작업 관리
 /// 
@@ -60,6 +61,9 @@ pub struct BatchActor {
     product_repo: Option<Arc<IntegratedProductRepository>>,
     /// 앱 설정
     app_config: Option<AppConfig>,
+
+    /// Stage 2(ListPageCrawling)에서 재시도 후에도 실패한 페이지 번호 목록
+    failed_list_pages: Vec<u32>,
 }
 
 // Debug 수동 구현 (의존성들이 Debug를 구현하지 않아서)
@@ -78,6 +82,7 @@ impl std::fmt::Debug for BatchActor {
             .field("has_data_extractor", &self.data_extractor.is_some())
             .field("has_product_repo", &self.product_repo.is_some())
             .field("has_app_config", &self.app_config.is_some())
+            .field("failed_list_pages", &self.failed_list_pages)
             .finish()
     }
 }
@@ -153,6 +158,7 @@ impl BatchActor {
             data_extractor: None,
             product_repo: None,
             app_config: None,
+            failed_list_pages: Vec::new(),
         }
     }
     
@@ -192,6 +198,7 @@ impl BatchActor {
             data_extractor: Some(data_extractor),
             product_repo: Some(product_repo),
             app_config: Some(app_config),
+            failed_list_pages: Vec::new(),
         }
     }
     
@@ -205,7 +212,7 @@ impl BatchActor {
     async fn process_list_page_batch(
         &mut self,
         batch_id: String,
-        stage_type: StageType,
+    _stage_type: StageType,
         pages: Vec<u32>,
         config: BatchConfig,
         _batch_size: u32,
@@ -256,60 +263,149 @@ impl BatchActor {
         // 상태를 Processing으로 전환
         self.state = BatchState::Processing;
         
-        // 실제 StageActor 기반 처리 구현
-        info!("🎭 Using real StageActor-based processing for batch {}", batch_id);
+    // 실제 StageActor 기반 처리 구현
+    info!("🎭 Using real StageActor-based processing for batch {}", batch_id);
         
         // 초기 Stage Items 생성 - 페이지 기반 아이템들
         let initial_items: Vec<StageItem> = pages.iter().map(|&page_number| {
             StageItem::Page(page_number)
         }).collect();
 
-        // Stage 1: StatusCheck - 사이트 상태 확인
-        info!("🔍 Starting Stage 1: StatusCheck");
-        // StatusCheck는 사이트 전체 상태를 확인하므로 특별한 URL 아이템으로 처리
-        let status_check_items = vec![StageItem::Url("https://csa-iot.org/csa-iot_products/".to_string())];
-        
-        let status_check_result = self.execute_stage_with_actor(
-            StageType::StatusCheck, 
-            status_check_items, 
-            concurrency_limit, 
-            context
-        ).await?;
-        
-        info!("✅ Stage 1 (StatusCheck) completed: {} success, {} failed", 
-              status_check_result.successful_items, status_check_result.failed_items);
+        // Stage 1: StatusCheck - 사이트 상태 확인 (세션 힌트가 없을 때만 실행)
+        let mut total_pages_hint: Option<u32> = None;
+        let mut last_page_products_hint: Option<u32> = None;
+        if _total_pages > 0 && _products_on_last_page > 0 {
+            info!("🧠 Using provided SiteStatus hints from Session: total_pages={}, products_on_last_page={}", _total_pages, _products_on_last_page);
+            total_pages_hint = Some(_total_pages);
+            last_page_products_hint = Some(_products_on_last_page);
+        } else {
+            info!("🔍 Starting Stage 1: StatusCheck (no valid session hints)");
+            // StatusCheck는 사이트 전체 상태를 확인하므로 특별한 URL 아이템으로 처리
+            let status_check_items = vec![StageItem::Url("https://csa-iot.org/csa-iot_products/".to_string())];
+            let status_check_result = self.execute_stage_with_actor(
+                StageType::StatusCheck, 
+                status_check_items, 
+                concurrency_limit, 
+                context
+            ).await?;
+            info!("✅ Stage 1 (StatusCheck) completed: {} success, {} failed", 
+                  status_check_result.successful_items, status_check_result.failed_items);
 
-        // StatusCheck 스테이지는 사이트 접근성 확인이므로 특별 처리
-        // 성공적으로 완료되었다면 (처리된 아이템이 있다면) 다음 단계로 진행
-        if status_check_result.processed_items == 0 {
-            error!("❌ Stage 1 (StatusCheck) failed completely - no status check performed");
-            self.state = BatchState::Failed { error: "StatusCheck stage failed - no status check performed".to_string() };
-            return Err(BatchError::StageExecutionFailed("StatusCheck stage failed - no status check performed".to_string()));
-        }
-        
-        // StatusCheck에서 사이트 접근 불가능한 경우에만 중단
-        if status_check_result.failed_items > 0 && status_check_result.successful_items == 0 {
-            error!("❌ Stage 1 (StatusCheck) failed completely - site is not accessible");
-            self.state = BatchState::Failed { error: "StatusCheck stage failed - site is not accessible".to_string() };
-            return Err(BatchError::StageExecutionFailed("StatusCheck stage failed - site is not accessible".to_string()));
+            // 성공적으로 완료되었다면 (처리된 아이템이 있다면) 다음 단계로 진행
+            if status_check_result.processed_items == 0 {
+                error!("❌ Stage 1 (StatusCheck) failed completely - no status check performed");
+                self.state = BatchState::Failed { error: "StatusCheck stage failed - no status check performed".to_string() };
+                // 배치 실패 이벤트 발행
+                let fail_event = AppEvent::BatchFailed {
+                    batch_id: batch_id.clone(),
+                    session_id: context.session_id.clone(),
+                    error: "StatusCheck stage failed - no status check performed".to_string(),
+                    final_failure: true,
+                    timestamp: Utc::now(),
+                };
+                context.emit_event(fail_event).await
+                    .map_err(|e| BatchError::ContextError(e.to_string()))?;
+                return Err(BatchError::StageExecutionFailed("StatusCheck stage failed - no status check performed".to_string()));
+            }
+            // StatusCheck에서 사이트 접근 불가능한 경우에만 중단
+            if status_check_result.failed_items > 0 && status_check_result.successful_items == 0 {
+                error!("❌ Stage 1 (StatusCheck) failed completely - site is not accessible");
+                self.state = BatchState::Failed { error: "StatusCheck stage failed - site is not accessible".to_string() };
+                // 배치 실패 이벤트 발행
+                let fail_event = AppEvent::BatchFailed {
+                    batch_id: batch_id.clone(),
+                    session_id: context.session_id.clone(),
+                    error: "StatusCheck stage failed - site is not accessible".to_string(),
+                    final_failure: true,
+                    timestamp: Utc::now(),
+                };
+                context.emit_event(fail_event).await
+                    .map_err(|e| BatchError::ContextError(e.to_string()))?;
+                return Err(BatchError::StageExecutionFailed("StatusCheck stage failed - site is not accessible".to_string()));
+            }
+
+            // StatusCheck에서 수집된 SiteStatus JSON을 파싱하여 페이지네이션 힌트로 사용
+            if let Some(first) = status_check_result.details.first() {
+                if let Some(json) = &first.collected_data {
+                    match serde_json::from_str::<SiteStatus>(json) {
+                        Ok(site_status) => {
+                            total_pages_hint = Some(site_status.total_pages);
+                            last_page_products_hint = Some(site_status.products_on_last_page);
+                            info!("📊 SiteStatus hints from Stage 1: total_pages={}, products_on_last_page={}", site_status.total_pages, site_status.products_on_last_page);
+                        }
+                        Err(e) => {
+                            warn!("⚠️ Failed to parse SiteStatus from Stage 1 collected_data: {}", e);
+                        }
+                    }
+                }
+            }
         }
 
         // Stage 2: ListPageCrawling - ProductURL 수집
         info!("🔍 Starting Stage 2: ListPageCrawling");
-        let list_page_result = self.execute_stage_with_actor(
-            StageType::ListPageCrawling, 
-            initial_items.clone(), 
-            concurrency_limit, 
-            context
-        ).await?;
+
+        // Stage 2는 페이지네이션 힌트를 StageActor에 주입해야 함 → 전용 실행 경로 사용
+    let list_page_result = self.execute_stage_with_actor_with_hints(
+            StageType::ListPageCrawling,
+            initial_items.clone(),
+            concurrency_limit,
+            context,
+            total_pages_hint,
+            last_page_products_hint,
+    ).await?;
         
         info!("✅ Stage 2 (ListPageCrawling) completed: {} success, {} failed", 
               list_page_result.successful_items, list_page_result.failed_items);
+
+        // Stage 2에서 최종 실패한 페이지 수집
+        self.failed_list_pages.clear();
+        for (idx, item) in initial_items.iter().enumerate() {
+            if let StageItem::Page(page_no) = item {
+                if let Some(detail) = list_page_result.details.get(idx) {
+                    if !detail.success {
+                        self.failed_list_pages.push(*page_no);
+                    }
+                }
+            }
+        }
+        if !self.failed_list_pages.is_empty() {
+            warn!(
+                "⚠️ Stage 2 ended with {} failed pages after retries: {:?}",
+                self.failed_list_pages.len(),
+                self.failed_list_pages
+            );
+            // 진행 상황 이벤트로 실패 페이지 정보 요약 발행 (샘플 최대 10)
+            let sample_len = self.failed_list_pages.len().min(10);
+            let sample: Vec<u32> = self.failed_list_pages.iter().copied().take(sample_len).collect();
+            let progress_event = AppEvent::Progress {
+                session_id: context.session_id.clone(),
+                current_step: 2,
+                total_steps: 5,
+                message: format!(
+                    "Stage 2 retries exhausted for {} pages (sample: {:?})",
+                    self.failed_list_pages.len(), sample
+                ),
+                percentage: 40.0,
+                timestamp: Utc::now(),
+            };
+            context.emit_event(progress_event).await
+                .map_err(|e| BatchError::ContextError(e.to_string()))?;
+        }
 
         // Stage 실패 시 파이프라인 중단 검증
         if list_page_result.successful_items == 0 {
             error!("❌ Stage 2 (ListPageCrawling) failed completely - aborting pipeline");
             self.state = BatchState::Failed { error: "ListPageCrawling stage failed completely".to_string() };
+            // 배치 실패 이벤트 발행
+            let fail_event = AppEvent::BatchFailed {
+                batch_id: batch_id.clone(),
+                session_id: context.session_id.clone(),
+                error: "ListPageCrawling stage failed completely".to_string(),
+                final_failure: true,
+                timestamp: Utc::now(),
+            };
+            context.emit_event(fail_event).await
+                .map_err(|e| BatchError::ContextError(e.to_string()))?;
             return Err(BatchError::StageExecutionFailed("ListPageCrawling stage failed completely".to_string()));
         }
 
@@ -322,15 +418,75 @@ impl BatchActor {
 
         // Stage 3: ProductDetailCrawling - 상품 상세 정보 수집
         info!("🔍 Starting Stage 3: ProductDetailCrawling");
-        let detail_result = self.execute_stage_with_actor(
-            StageType::ProductDetailCrawling, 
-            product_detail_items.clone(), 
-            concurrency_limit, 
-            context
-        ).await?;
+        let detail_result = match self.execute_stage_with_actor(
+            StageType::ProductDetailCrawling,
+            product_detail_items.clone(),
+            concurrency_limit,
+            context,
+        ).await {
+            Ok(r) => r,
+            Err(e) => {
+                // 배치 실패 이벤트 발행 후 전파
+                let fail_event = AppEvent::BatchFailed {
+                    batch_id: batch_id.clone(),
+                    session_id: context.session_id.clone(),
+                    error: format!("Stage 3 failed: {}", e),
+                    final_failure: true,
+                    timestamp: Utc::now(),
+                };
+                context.emit_event(fail_event).await
+                    .map_err(|er| BatchError::ContextError(er.to_string()))?;
+                self.state = BatchState::Failed { error: format!("Stage 3 failed: {}", e) };
+                return Err(e);
+            }
+        };
         
         info!("✅ Stage 3 (ProductDetailCrawling) completed: {} success, {} failed", 
               detail_result.successful_items, detail_result.failed_items);
+
+        // Summarize failed product detail URLs by correlating input items with Stage 3 results
+        if detail_result.failed_items > 0 {
+            let mut failed_detail_urls: Vec<String> = Vec::new();
+            for (idx, item) in product_detail_items.iter().enumerate() {
+                if let Some(item_result) = detail_result.details.get(idx) {
+                    if !item_result.success {
+                        match item {
+                            StageItem::ProductUrls(urls_wrapper) => {
+                                // If this item was a batch of URLs, log the count rather than each URL
+                                warn!("⚠️ ProductDetailCrawling subtask failed for a batch of {} urls (index={})", urls_wrapper.urls.len(), idx);
+                            }
+                            StageItem::Url(_url_str) => {
+                                // No direct URL payload here
+                            }
+                            StageItem::Product(product) => {
+                                failed_detail_urls.push(product.url.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            if !failed_detail_urls.is_empty() {
+                let sample_len = failed_detail_urls.len().min(10);
+                let sample = &failed_detail_urls[..sample_len];
+                warn!("⚠️ Stage 3 ended with {} failed detail URLs (sample up to 10): {:?}",
+                    failed_detail_urls.len(), sample);
+                // 진행 상황 이벤트로 실패 URL 요약 발행
+                let progress_event = AppEvent::Progress {
+                    session_id: context.session_id.clone(),
+                    current_step: 3,
+                    total_steps: 5,
+                    message: format!(
+                        "Stage 3 retries exhausted for {} product details (sample: {:?})",
+                        failed_detail_urls.len(), sample
+                    ),
+                    percentage: 60.0,
+                    timestamp: Utc::now(),
+                };
+                context.emit_event(progress_event).await
+                    .map_err(|e| BatchError::ContextError(e.to_string()))?;
+            }
+        }
 
         // Stage 3 결과를 Stage 4 입력으로 변환 
         let data_validation_items = self.transform_stage_output(
@@ -341,12 +497,27 @@ impl BatchActor {
 
         // Stage 4: DataValidation - 데이터 품질 분석
         info!("🔍 Starting Stage 4: DataValidation");
-        let validation_result = self.execute_stage_with_actor(
-            StageType::DataValidation, 
-            data_validation_items.clone(), 
-            concurrency_limit, 
-            context
-        ).await?;
+        let validation_result = match self.execute_stage_with_actor(
+            StageType::DataValidation,
+            data_validation_items.clone(),
+            concurrency_limit,
+            context,
+        ).await {
+            Ok(r) => r,
+            Err(e) => {
+                let fail_event = AppEvent::BatchFailed {
+                    batch_id: batch_id.clone(),
+                    session_id: context.session_id.clone(),
+                    error: format!("Stage 4 failed: {}", e),
+                    final_failure: true,
+                    timestamp: Utc::now(),
+                };
+                context.emit_event(fail_event).await
+                    .map_err(|er| BatchError::ContextError(er.to_string()))?;
+                self.state = BatchState::Failed { error: format!("Stage 4 failed: {}", e) };
+                return Err(e);
+            }
+        };
         
         info!("✅ Stage 4 (DataValidation) completed: {} success, {} failed", 
               validation_result.successful_items, validation_result.failed_items);
@@ -360,12 +531,27 @@ impl BatchActor {
 
         // Stage 5: DataSaving - 데이터 저장
         info!("🔍 Starting Stage 5: DataSaving");
-        let saving_result = self.execute_stage_with_actor(
-            StageType::DataSaving, 
-            data_saving_items, 
-            concurrency_limit, 
-            context
-        ).await?;
+        let saving_result = match self.execute_stage_with_actor(
+            StageType::DataSaving,
+            data_saving_items,
+            concurrency_limit,
+            context,
+        ).await {
+            Ok(r) => r,
+            Err(e) => {
+                let fail_event = AppEvent::BatchFailed {
+                    batch_id: batch_id.clone(),
+                    session_id: context.session_id.clone(),
+                    error: format!("Stage 5 failed: {}", e),
+                    final_failure: true,
+                    timestamp: Utc::now(),
+                };
+                context.emit_event(fail_event).await
+                    .map_err(|er| BatchError::ContextError(er.to_string()))?;
+                self.state = BatchState::Failed { error: format!("Stage 5 failed: {}", e) };
+                return Err(e);
+            }
+        };
         
         info!("✅ Stage 5 (DataSaving) completed: {} success, {} failed", 
               saving_result.successful_items, saving_result.failed_items);
@@ -392,7 +578,34 @@ impl BatchActor {
         
         context.emit_event(completion_event).await
             .map_err(|e| BatchError::ContextError(e.to_string()))?;
-        
+
+        // === 추가: 배치 리포트 이벤트 발행 ===
+        let duration_ms = self.start_time.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
+        // Stage 2/3 결과는 상단 스코프의 변수들에서 가져옴. 사용 가능 시 집계, 없으면 보수적 기본값.
+        let pages_total = self.total_pages;
+        let pages_success = self.success_count.max( list_page_result.successful_items );
+        let pages_failed = list_page_result.failed_items;
+        let details_success = validation_result.successful_items; // Stage 3/4 근사치
+        let details_failed = validation_result.failed_items;
+        let stage2_retries: u32 = list_page_result.details.iter().map(|d| d.retry_count).sum();
+        let stage3_retries: u32 = detail_result.details.iter().map(|d| d.retry_count).sum();
+        let retries_used = stage2_retries.saturating_add(stage3_retries);
+        let report_event = AppEvent::BatchReport {
+            session_id: context.session_id.clone(),
+            batch_id: batch_id.clone(),
+            pages_total,
+            pages_success,
+            pages_failed,
+            list_pages_failed: self.failed_list_pages.clone(),
+            details_success,
+            details_failed,
+            retries_used,
+            duration_ms,
+            timestamp: Utc::now(),
+        };
+        context.emit_event(report_event).await
+            .map_err(|e| BatchError::ContextError(e.to_string()))?;
+
         Ok(())
     }
     
@@ -646,7 +859,7 @@ impl BatchActor {
             .ok_or_else(|| BatchError::ServiceNotAvailable("AppConfig not initialized".to_string()))?;
 
         // StageActor 생성 (실제 서비스들과 함께)
-        let mut stage_actor = StageActor::new_with_services(
+    let mut stage_actor = StageActor::new_with_services(
             format!("stage_{}_{}", stage_type.as_str(), self.actor_id),
             self.batch_id.clone().unwrap_or_default(),
             Arc::clone(http_client),
@@ -664,6 +877,50 @@ impl BatchActor {
             context,
         ).await
         .map_err(|e| BatchError::StageExecutionFailed(format!("Stage execution failed: {}", e)))?;
+
+        Ok(stage_result)
+    }
+
+    /// 힌트를 주입할 수 있는 Stage 실행 도우미 (ListPage 등)
+    async fn execute_stage_with_actor_with_hints(
+        &self,
+        stage_type: StageType,
+        items: Vec<StageItem>,
+        concurrency_limit: u32,
+        context: &AppContext,
+        total_pages_hint: Option<u32>,
+        products_on_last_page_hint: Option<u32>,
+    ) -> Result<StageResult, BatchError> {
+        // 기본 실행 준비는 동일
+        let http_client = self.http_client.as_ref()
+            .ok_or_else(|| BatchError::ServiceNotAvailable("HttpClient not initialized".to_string()))?;
+        let data_extractor = self.data_extractor.as_ref()
+            .ok_or_else(|| BatchError::ServiceNotAvailable("MatterDataExtractor not initialized".to_string()))?;
+        let product_repo = self.product_repo.as_ref()
+            .ok_or_else(|| BatchError::ServiceNotAvailable("IntegratedProductRepository not initialized".to_string()))?;
+        let app_config = self.app_config.as_ref()
+            .ok_or_else(|| BatchError::ServiceNotAvailable("AppConfig not initialized".to_string()))?;
+
+    let mut stage_actor = StageActor::new_with_services(
+            format!("stage_{}_{}", stage_type.as_str(), self.actor_id),
+            self.batch_id.clone().unwrap_or_default(),
+            Arc::clone(http_client),
+            Arc::clone(data_extractor),
+            Arc::clone(product_repo),
+            app_config.clone(),
+        );
+
+        if let (Some(tp), Some(plp)) = (total_pages_hint, products_on_last_page_hint) {
+            stage_actor.set_site_pagination_hints(tp, plp);
+        }
+
+        let stage_result = stage_actor.execute_stage(
+            stage_type,
+            items,
+            concurrency_limit,
+            30,
+            context,
+        ).await.map_err(|e| BatchError::StageExecutionFailed(format!("Stage execution failed: {}", e)))?;
 
         Ok(stage_result)
     }
@@ -926,7 +1183,6 @@ impl BatchActor {
                 info!("🔄 DataSaving completed - pipeline finished");
                 Ok(input_items)
             }
-            _ => Ok(input_items)
         }
     }
 }

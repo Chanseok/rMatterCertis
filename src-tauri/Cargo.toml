@@ -74,6 +74,10 @@ path = "src/bin/phase3_test.rs"
 name = "real_crawling_test_fixed"
 path = "src/bin/real_crawling_test_fixed.rs"
 
+[[bin]]
+name = "batch_actor_sanity"
+path = "src/bin/batch_actor_sanity.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

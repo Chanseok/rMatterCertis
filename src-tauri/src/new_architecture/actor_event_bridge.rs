@@ -105,6 +105,9 @@ impl ActorEventBridge {
             // 진행 상황 이벤트
             AppEvent::Progress { .. } => "actor-progress",
             AppEvent::PerformanceMetrics { .. } => "actor-performance-metrics",
+            // 리포트 이벤트
+            AppEvent::BatchReport { .. } => "actor-batch-report",
+            AppEvent::CrawlReportSession { .. } => "actor-session-report",
         };
 
         // 이벤트 데이터를 JSON으로 직렬화
