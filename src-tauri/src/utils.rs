@@ -60,14 +60,43 @@ impl PageIdCalculator {
     /// # Returns
     /// PageIdCalculation 구조체
     pub fn calculate(&self, actual_page_number: u32, product_index_in_actual_page: usize) -> PageIdCalculation {
-        // 1. 총 제품 수 계산
-        let total_products = (self.last_page_number as usize - 1) * PRODUCTS_PER_PAGE + self.products_in_last_page;
+        // 경계값 보정 및 방어적 계산으로 언더플로우/오버플로우 방지
+        // 0 페이지가 들어오면 1로 보정, 마지막 페이지보다 큰 값이 들어오면 경고 후 마지막 페이지로 보정
+        let mut page = if actual_page_number == 0 { 1 } else { actual_page_number };
+        if page > self.last_page_number {
+            tracing::warn!(
+                "⚠️ PageIdCalculator: actual_page_number ({}) > last_page_number ({}). Clamping to last_page_number.",
+                page, self.last_page_number
+            );
+            page = self.last_page_number;
+        }
+
+        // 페이지 내 인덱스는 0..12-1 범위로 보정 (과대 입력 시 상한 클램프)
+        let bounded_index = if product_index_in_actual_page >= PRODUCTS_PER_PAGE {
+            tracing::warn!(
+                "⚠️ PageIdCalculator: product_index_in_actual_page ({}) >= {}. Clamping to {}.",
+                product_index_in_actual_page, PRODUCTS_PER_PAGE, PRODUCTS_PER_PAGE - 1
+            );
+            PRODUCTS_PER_PAGE - 1
+        } else {
+            product_index_in_actual_page
+        };
+
+        // 1. 총 제품 수 계산 (saturating 사용)
+        let pages_except_last = self.last_page_number.saturating_sub(1) as usize;
+        let total_products = pages_except_last
+            .saturating_mul(PRODUCTS_PER_PAGE)
+            .saturating_add(self.products_in_last_page.min(PRODUCTS_PER_PAGE));
         
-        // 2. 현재 제품의 최신순 글로벌 0-기반 인덱스 계산
-        let current_product_global_index_from_newest = (actual_page_number as usize - 1) * PRODUCTS_PER_PAGE + product_index_in_actual_page;
+        // 2. 현재 제품의 최신순 글로벌 0-기반 인덱스 계산 (saturating 사용)
+        let current_product_global_index_from_newest = (page.saturating_sub(1) as usize)
+            .saturating_mul(PRODUCTS_PER_PAGE)
+            .saturating_add(bounded_index);
         
-        // 3. 현재 제품의 오래된순 글로벌 0-기반 인덱스 계산
-        let from_oldest_product_number = (total_products - 1) - current_product_global_index_from_newest;
+        // 3. 현재 제품의 오래된순 글로벌 0-기반 인덱스 계산 (saturating 사용)
+        let from_oldest_product_number = total_products
+            .saturating_sub(1)
+            .saturating_sub(current_product_global_index_from_newest);
         
         // 4. page_id 계산 (정수 나눗셈)
         let page_id = (from_oldest_product_number / PRODUCTS_PER_PAGE) as i32;
@@ -75,10 +104,7 @@ impl PageIdCalculator {
         // 5. index_in_page 계산 (나머지 - 페이지 아래쪽부터 0)
         let index_in_page = (from_oldest_product_number % PRODUCTS_PER_PAGE) as i32;
         
-        PageIdCalculation {
-            page_id,
-            index_in_page,
-        }
+        PageIdCalculation { page_id, index_in_page }
     }
     
     /// 특정 pageId와 indexInPage로부터 실제 페이지 번호와 인덱스 역계산
@@ -95,13 +121,20 @@ impl PageIdCalculator {
         }
         
         // 1. from_oldest_product_number 역계산
-        let from_oldest_product_number = (page_id as usize) * PRODUCTS_PER_PAGE + (index_in_page as usize);
+        let from_oldest_product_number = (page_id as usize)
+            .saturating_mul(PRODUCTS_PER_PAGE)
+            .saturating_add(index_in_page as usize);
         
         // 2. 총 제품 수 계산
-        let total_products = (self.last_page_number as usize - 1) * PRODUCTS_PER_PAGE + self.products_in_last_page;
+        let pages_except_last = self.last_page_number.saturating_sub(1) as usize;
+        let total_products = pages_except_last
+            .saturating_mul(PRODUCTS_PER_PAGE)
+            .saturating_add(self.products_in_last_page.min(PRODUCTS_PER_PAGE));
         
         // 3. current_product_global_index_from_newest 역계산
-        let current_product_global_index_from_newest = (total_products - 1) - from_oldest_product_number;
+        let current_product_global_index_from_newest = total_products
+            .saturating_sub(1)
+            .saturating_sub(from_oldest_product_number);
         
         // 4. actual_page_number 및 product_index_in_actual_page 역계산
         let actual_page_number = (current_product_global_index_from_newest / PRODUCTS_PER_PAGE) + 1;

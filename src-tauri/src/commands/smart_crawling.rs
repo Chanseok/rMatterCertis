@@ -165,20 +165,40 @@ pub async fn calculate_crawling_range(
     };
 
     // Calculate local DB information
-    let local_db_info = LocalDbInfo {
-        total_saved_products: progress.current,
-        last_crawled_page: if progress.current > 0 {
-            // Convert max_page_id back to actual page number
-            Some(request.total_pages_on_site - (progress.current_batch.unwrap_or(0)))
+    let local_db_info = if progress.current > 0 {
+        // DB에 데이터가 있으면 계산기를 사용해서 실제 페이지 번호를 계산
+        let calculator = crate::utils::PageIdCalculator::new(
+            request.total_pages_on_site,
+            request.products_on_last_page as usize
+        );
+        
+        let max_page_id = progress.current_batch.unwrap_or(0) as i32;
+        let max_index_in_page = 0; // 간단히 0으로 가정 (정확한 값은 DB에서 가져와야 함)
+        
+        if let Some((actual_page, _)) = calculator.reverse_calculate(max_page_id, max_index_in_page) {
+            LocalDbInfo {
+                total_saved_products: progress.current,
+                last_crawled_page: Some(actual_page),
+                last_crawled_page_id: Some(max_page_id),
+                coverage_percentage: progress.percentage,
+            }
         } else {
-            None
-        },
-        last_crawled_page_id: if progress.current > 0 {
-            Some(progress.current_batch.unwrap_or(0) as i32)
-        } else {
-            None
-        },
-        coverage_percentage: progress.percentage,
+            // 역계산 실패 시 기본값
+            LocalDbInfo {
+                total_saved_products: progress.current,
+                last_crawled_page: None,
+                last_crawled_page_id: None,
+                coverage_percentage: progress.percentage,
+            }
+        }
+    } else {
+        // DB가 비어있으면 모든 값을 None으로 설정
+        LocalDbInfo {
+            total_saved_products: 0,
+            last_crawled_page: None,
+            last_crawled_page_id: None,
+            coverage_percentage: 0.0,
+        }
     };
 
     let response = match result {
@@ -198,6 +218,7 @@ pub async fn calculate_crawling_range(
             };
             
             // CrawlingPlanner 기반 배치 계획 생성
+            info!("🔧 Creating batch plan for range: {} to {}", start_page, end_page);
             let batch_plan = create_batch_plan(start_page, end_page).await;
             
             let message = format!("Next crawling range: pages {} to {} (total: {} pages)", 
@@ -253,10 +274,14 @@ pub async fn calculate_crawling_range(
 
 /// CrawlingPlanner 기반 배치 계획 생성
 async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
+    info!("🔧 Creating batch plan: start_page={}, end_page={}", start_page, end_page);
+    
     // 설정에서 batch_size 가져오기
     let app_config = crate::infrastructure::config::AppConfig::for_development();
     let batch_size = app_config.user.batch.batch_size;
     let concurrency_limit = 5; // 기본값
+    
+    info!("📋 Batch plan configuration: batch_size={}, concurrency_limit={}", batch_size, concurrency_limit);
     
     // 페이지 범위 계산
     let pages: Vec<u32> = if start_page >= end_page {
@@ -268,6 +293,8 @@ async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
     let total_pages = pages.len() as u32;
     let total_batches = (total_pages + batch_size - 1) / batch_size; // 올림 계산
     
+    info!("📊 Batch plan calculation: total_pages={}, total_batches={}", total_pages, total_batches);
+    
     // 배치 분할
     let mut batches = Vec::new();
     for (batch_id, chunk) in pages.chunks(batch_size as usize).enumerate() {
@@ -276,11 +303,14 @@ async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
             pages: chunk.to_vec(),
             estimated_products: chunk.len() as u32 * 12, // 평균 12개/페이지
         };
+        info!("🔢 Batch {}: pages={:?}, estimated_products={}", batch_id + 1, chunk, batch_info.estimated_products);
         batches.push(batch_info);
     }
     
     // 예상 실행 시간 (각 페이지당 2초 + 네트워크 지연)
     let estimated_duration_seconds = total_pages * 2 + (total_batches * batch_size) / concurrency_limit;
+    
+    info!("✅ Batch plan created successfully: {} batches, estimated duration: {}s", total_batches, estimated_duration_seconds);
     
     BatchPlan {
         batch_size,

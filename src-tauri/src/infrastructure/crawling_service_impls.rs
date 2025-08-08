@@ -1678,6 +1678,32 @@ impl ProductListCollectorImpl {
                 }
             })
             .collect();
+
+        // 🔎 Debug summary for verification of page_id/index_in_page mapping
+        if !product_urls.is_empty() {
+            let min_page_id = product_urls.iter().map(|p| p.page_id).min().unwrap_or(0);
+            let max_page_id = product_urls.iter().map(|p| p.page_id).max().unwrap_or(0);
+            let min_index = product_urls.iter().map(|p| p.index_in_page).min().unwrap_or(0);
+            let max_index = product_urls.iter().map(|p| p.index_in_page).max().unwrap_or(0);
+            let sample: Vec<String> = product_urls
+                .iter()
+                .take(6)
+                .enumerate()
+                .map(|(i, p)| format!("i{}=>p{}_i{}", i, p.page_id, p.index_in_page))
+                .collect();
+            debug!(
+                "📐 Page {} mapping summary: count={}, page_id=[{}..{}], index_in_page=[{}..{}], sample={:?}",
+                page,
+                product_urls.len(),
+                min_page_id,
+                max_page_id,
+                min_index,
+                max_index,
+                sample
+            );
+        } else {
+            debug!("📐 Page {} produced no product URLs for mapping summary", page);
+        }
         
         Ok(product_urls)
     }
@@ -1854,13 +1880,23 @@ impl ProductListCollector for ProductListCollectorImpl {
                 
                 let doc = scraper::Html::parse_document(&html_string);
                 let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
+
+                // 활성 페이지 번호 추출 (리다이렉트/페이지네이션 불일치 방지)
+                let active_page = status_checker.get_active_page_number(&doc);
+                if active_page != page {
+                    tracing::warn!(
+                        "⚠️ Requested page {} but active pagination indicates {}. Using {} for page_id calculation.",
+                        page, active_page, active_page
+                    );
+                }
+                let effective_page = active_page.max(1);
                 
                 // ✅ PageIdCalculator를 사용한 ProductUrl 생성
                 let product_urls: Vec<ProductUrl> = url_strings
                     .into_iter()
                     .enumerate()
                     .map(|(index, url)| {
-                        let calculation = calculator.calculate(page, index);
+                        let calculation = calculator.calculate(effective_page, index);
                         ProductUrl {
                             url,
                             page_id: calculation.page_id,
@@ -1922,7 +1958,7 @@ impl ProductListCollector for ProductListCollectorImpl {
         info!("📊 Using cached site analysis for single page {}: total_pages={}, products_on_last_page={}", 
               page, total_pages, products_on_last_page);
         
-        let page_calculator = crate::utils::PageIdCalculator::new(total_pages, products_on_last_page as usize);
+    let page_calculator = crate::utils::PageIdCalculator::new(total_pages, products_on_last_page as usize);
 
         let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
         // Use consistent HttpClient
@@ -1931,13 +1967,23 @@ impl ProductListCollector for ProductListCollectorImpl {
         
         let doc = scraper::Html::parse_document(&html_string);
         let url_strings = self.data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
+
+        // 활성 페이지 번호 확인 후 보정
+    let active_page = self.status_checker.get_active_page_number(&doc);
+        if active_page != page {
+            tracing::warn!(
+                "⚠️ Requested page {} but active pagination indicates {}. Using {} for page_id calculation.",
+                page, active_page, active_page
+            );
+        }
+        let effective_page = active_page.max(1);
         
         // ✅ PageIdCalculator를 사용한 ProductUrl 생성
         let product_urls: Vec<ProductUrl> = url_strings
             .into_iter()
             .enumerate()
             .map(|(index, url)| {
-                let calculation = page_calculator.calculate(page, index);
+                let calculation = page_calculator.calculate(effective_page, index);
                 ProductUrl {
                     url,
                     page_id: calculation.page_id,
@@ -2037,13 +2083,23 @@ impl ProductListCollector for ProductListCollectorImpl {
                 
                 let doc = scraper::Html::parse_document(&html_string);
                 let url_strings = data_extractor.extract_product_urls(&doc, "https://csa-iot.org")?;
+
+                // 활성 페이지 번호 추출 및 보정
+                let active_page = status_checker.get_active_page_number(&doc);
+                if active_page != page {
+                    tracing::warn!(
+                        "⚠️ Requested page {} but active pagination indicates {}. Using {} for page_id calculation.",
+                        page, active_page, active_page
+                    );
+                }
+                let effective_page = active_page.max(1);
                 
                 // ✅ PageIdCalculator를 사용한 ProductUrl 생성
                 let product_urls: Vec<ProductUrl> = url_strings
                     .into_iter()
                     .enumerate()
                     .map(|(index, url)| {
-                        let calculation = calculator.calculate(page, index);
+                        let calculation = calculator.calculate(effective_page, index);
                         ProductUrl {
                             url,
                             page_id: calculation.page_id,
@@ -2691,7 +2747,7 @@ impl CrawlingRangeCalculator {
         // 다음 크롤링 시작 페이지 결정
         let start_page = if current_page_products < expected_products_on_current_page {
             // 현재 페이지가 완전히 수집되지 않았다면 현재 페이지부터 시작
-            last_crawled_page
+            last_crawled_page.max(1)
         } else {
             // 현재 페이지가 완료되었다면 다음 페이지부터 시작
             if last_crawled_page > 1 {
@@ -2857,7 +2913,11 @@ impl CrawlingRangeCalculator {
         
         // 총 제품 수 추정
         let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
-        let total_estimated_products = ((total_pages_on_site - 1) * products_per_page) + products_on_last_page;
+        // 안전한 총 제품 수 추정 (언더플로우/오버플로우 방지)
+        let pages_except_last = total_pages_on_site.saturating_sub(1);
+        let total_estimated_products = pages_except_last
+            .saturating_mul(products_per_page)
+            .saturating_add(products_on_last_page.min(products_per_page));
         
         // 진행률 계산
         let percentage = if total_estimated_products > 0 {
@@ -2882,9 +2942,16 @@ impl CrawlingRangeCalculator {
             }
         }
         
-        // 실제 페이지 번호로 변환 (page_id 0 = 마지막 페이지)
+        // 실제 페이지 번호로 변환 (page_id 0 = 마지막 페이지) — 언더플로우 방지
         let actual_last_crawled_page = if max_page_id >= 0 {
-            total_pages_on_site - max_page_id as u32
+            let mp = max_page_id as u32;
+            if mp > total_pages_on_site {
+                warn!(
+                    "⚠️ Detected inconsistency: max_page_id ({}) > total_pages_on_site ({}). Using 0 for actual_last_crawled_page.",
+                    mp, total_pages_on_site
+                );
+            }
+            total_pages_on_site.saturating_sub(mp)
         } else {
             0
         };

@@ -280,8 +280,23 @@ export const CrawlingEngineTab: Component = () => {
     addLog('🎭 진짜 Actor 시스템 크롤링 시작 (CrawlingPlanner 설정 기반)');
 
     try {
-      // 먼저 배치 플랜을 계산해서 설정값을 가져옵니다
-      const crawlingRange = await invoke('calculate_crawling_range') as CrawlingRangeResponse;
+      // 사이트 상태 정보가 필요하므로 먼저 확인
+      const siteInfo = siteStatus();
+      if (!siteInfo) {
+        addLog('❌ 사이트 상태 정보 없음. 먼저 사이트 상태를 확인해주세요.');
+        setIsRunning(false);
+        return;
+      }
+
+      // 배치 플랜을 계산해서 설정값을 가져옵니다
+      const request: CrawlingRangeRequest = {
+        total_pages_on_site: siteInfo.total_pages,
+        products_on_last_page: siteInfo.products_on_last_page
+      };
+      
+      addLog(`🔍 배치 플랜 계산 중... (총 ${request.total_pages_on_site}페이지, 마지막 페이지 ${request.products_on_last_page}개 제품)`);
+      
+      const crawlingRange = await invoke('calculate_crawling_range', { request }) as CrawlingRangeResponse;
       const configBasedBatchSize = crawlingRange?.batch_plan?.batch_size || 9; // 기본값 9
       
       addLog(`📋 설정 기반 배치 크기: ${configBasedBatchSize}`);

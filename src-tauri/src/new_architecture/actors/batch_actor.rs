@@ -222,8 +222,13 @@ impl BatchActor {
         // 설정 검증
         self.validate_batch_config(&config, concurrency_limit)?;
         
-        info!("🔄 BatchActor {} starting batch {} with {} pages", 
-              self.actor_id, batch_id, pages.len());
+        info!(
+            "🔄 [Batch START] actor={}, batch_id={}, pages={}, range={:?}",
+            self.actor_id,
+            batch_id,
+            pages.len(),
+            if pages.is_empty() { None } else { Some((pages.first().copied(), pages.last().copied())) }
+        );
         
         // 상태 초기화
         self.batch_id = Some(batch_id.clone());
@@ -369,6 +374,12 @@ impl BatchActor {
         self.success_count = saving_result.successful_items;
         self.completed_pages = pages.len() as u32;
         self.state = BatchState::Completed;
+        info!(
+            "🏁 [Batch COMPLETE] actor={}, batch_id={}, pages_processed={}",
+            self.actor_id,
+            batch_id,
+            pages.len()
+        );
         
         let completion_event = AppEvent::BatchCompleted {
             batch_id: batch_id.clone(),

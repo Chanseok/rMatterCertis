@@ -824,6 +824,30 @@ impl StageActor {
                                 }
                             })
                             .collect();
+
+                        // 🔎 Debug a compact summary of calculated mappings for this page
+                        if !product_urls.is_empty() {
+                            let min_page_id = product_urls.iter().map(|p| p.page_id).min().unwrap_or(0);
+                            let max_page_id = product_urls.iter().map(|p| p.page_id).max().unwrap_or(0);
+                            let min_index = product_urls.iter().map(|p| p.index_in_page).min().unwrap_or(0);
+                            let max_index = product_urls.iter().map(|p| p.index_in_page).max().unwrap_or(0);
+                            let sample: Vec<String> = product_urls
+                                .iter()
+                                .take(6)
+                                .enumerate()
+                                .map(|(i, p)| format!("i{}=>p{}_i{}", i, p.page_id, p.index_in_page))
+                                .collect();
+                            debug!(
+                                "📐 Stage mapping summary (page {}): count={}, page_id=[{}..{}], index_in_page=[{}..{}], sample={:?}",
+                                product_list.page_number,
+                                product_urls.len(),
+                                min_page_id,
+                                max_page_id,
+                                min_index,
+                                max_index,
+                                sample
+                            );
+                        }
                         
                         if let Some(collector) = &self.product_detail_collector {
                             use crate::new_architecture::channels::types::ProductUrls;
