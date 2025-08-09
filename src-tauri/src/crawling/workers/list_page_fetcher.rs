@@ -18,26 +18,19 @@ use super::{Worker, WorkerError};
 
 /// Worker that fetches HTML content from list pages
 pub struct ListPageFetcher {
-    request_timeout: Duration,
     max_retries: u32,
 }
 
 impl ListPageFetcher {
     /// Creates a new list page fetcher
-    pub fn new(request_timeout: Duration, max_retries: u32) -> Result<Self, WorkerError> {
-        Ok(Self {
-            request_timeout,
-            max_retries,
-        })
+    pub fn new(_request_timeout: Duration, max_retries: u32) -> Result<Self, WorkerError> {
+        Ok(Self { max_retries })
     }
 
     /// 개발 용이성을 위한 간단한 생성자
     pub fn new_simple() -> Self {
         use crate::infrastructure::config::defaults;
-        Self {
-            request_timeout: Duration::from_secs(defaults::REQUEST_TIMEOUT_SECONDS),
-            max_retries: defaults::MAX_RETRIES,
-        }
+    Self { max_retries: defaults::MAX_RETRIES }
     }
 
     pub async fn fetch_page(&self, url: &str) -> Result<String, WorkerError> {

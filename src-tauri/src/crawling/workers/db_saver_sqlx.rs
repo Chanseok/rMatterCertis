@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 use async_trait::async_trait;
-use sqlx::{Pool, Sqlite, Transaction, Row};
+use sqlx::{Pool, Sqlite, Transaction};
 use tokio::sync::Mutex;
 
 use crate::crawling::{tasks::*, state::*};
@@ -16,23 +16,15 @@ use super::{Worker, WorkerError};
 /// Worker that saves product data to the database
 pub struct DbSaver {
     pool: Pool<Sqlite>,
-    batch_size: usize,
     batch_buffer: Arc<Mutex<Vec<ProductData>>>,
-    flush_interval: std::time::Duration,
 }
 
 impl DbSaver {
     /// Creates a new database saver
-    pub fn new(
-        pool: Pool<Sqlite>,
-        batch_size: usize,
-        flush_interval: std::time::Duration,
-    ) -> Self {
+    pub fn new(pool: Pool<Sqlite>) -> Self {
         Self {
             pool,
-            batch_size,
             batch_buffer: Arc::new(Mutex::new(Vec::new())),
-            flush_interval,
         }
     }
 
@@ -124,8 +116,8 @@ impl DbSaver {
     async fn add_to_batch(&self, product: ProductData) -> Result<bool, WorkerError> {
         let mut buffer = self.batch_buffer.lock().await;
         buffer.push(product);
-        
-        Ok(buffer.len() >= self.batch_size)
+        // Simple fixed threshold (previously batch_size field)
+        Ok(buffer.len() >= 100)
     }
 
     /// Flushes the batch buffer to the database
@@ -357,11 +349,7 @@ mod tests {
             return;
         }
 
-        let db_saver = DbSaver::new(
-            mock_pool.unwrap(),
-            3, // batch size
-            std::time::Duration::from_secs(10),
-        );
+    let db_saver = DbSaver::new(mock_pool.unwrap());
 
         // Test batch buffer
         let product = ProductData::new(
@@ -389,11 +377,7 @@ mod tests {
             return;
         }
 
-        let db_saver = DbSaver::new(
-            mock_pool.unwrap(),
-            10,
-            std::time::Duration::from_secs(30),
-        );
+    let db_saver = DbSaver::new(mock_pool.unwrap());
 
         assert_eq!(db_saver.worker_name(), "DbSaver");
         assert_eq!(db_saver.max_concurrency(), 4);

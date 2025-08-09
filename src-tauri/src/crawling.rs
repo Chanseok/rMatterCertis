@@ -307,11 +307,7 @@ impl CrawlingEngine {
         ));
         
         // 3. 워커 풀 생성 (실제 데이터베이스 연결 사용)
-        let db_saver = Arc::new(workers::DbSaver::new(
-            database_pool,
-            100, // batch_size
-            Duration::from_secs(30), // flush_interval
-        ));
+    let db_saver = Arc::new(workers::DbSaver::new(database_pool));
         
         let worker_pool = WorkerPoolBuilder::new()
             .with_max_concurrency(config.max_concurrent_tasks)

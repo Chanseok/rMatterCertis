@@ -39,19 +39,15 @@ pub struct StatusCheckerImpl {
     pub http_client: Arc<HttpClient>,
     pub data_extractor: Arc<MatterDataExtractor>,
     pub config: AppConfig,
-    pub page_cache: Arc<tokio::sync::Mutex<HashMap<u32, PageAnalysisCache>>>,
+    page_cache: Arc<tokio::sync::Mutex<HashMap<u32, PageAnalysisCache>>>,
     pub product_repo: Option<Arc<IntegratedProductRepository>>,
 }
 
 #[derive(Clone, Debug)]
 struct PageAnalysisCache {
-    page_number: u32,
-    has_products: bool,
     max_page_in_pagination: u32,
-    max_pagination_page: u32,
     product_count: u32,
-    active_page: u32,
-    analyzed_at: std::time::Instant,
+    has_products: bool,
 }
 
 impl StatusCheckerImpl {
@@ -264,9 +260,8 @@ impl StatusChecker for StatusCheckerImpl {
         // Verify consistency between different DB access methods
         let db_total = db_analysis.total_products;
         if db_total != local_status.total_saved_products {
-            warn!("⚠️  DB inconsistency detected: analysis={}, local_status={}", 
-                  db_analysis.total_products, local_status.total_saved_products);
-            
+        warn!("⚠️  DB inconsistency detected: analysis={}, local_status={}", 
+            db_analysis.total_products, local_status.total_saved_products);
             // Use the higher value for safer operation
             let effective_total = db_total.max(local_status.total_saved_products);
             info!("🔧 Using effective total: {}", effective_total);
@@ -345,7 +340,6 @@ impl StatusCheckerImpl {
         
         if !start_analysis.has_products {
             warn!("⚠️  Starting page {} has no products - checking site status", current_page);
-            
             // 첫 페이지 확인으로 사이트 접근성 검증
             let first_page_analysis = self.get_or_analyze_page(1).await?;
             if !first_page_analysis.has_products {
@@ -395,9 +389,9 @@ impl StatusCheckerImpl {
             }
             
             // 페이지네이션에서 더 큰 페이지를 찾았는지 확인
-            if analysis.max_pagination_page > current_page {
-                info!("🔺 Found higher page {} in pagination, jumping there", analysis.max_pagination_page);
-                current_page = analysis.max_pagination_page;
+            if analysis.max_page_in_pagination > current_page {
+                info!("🔺 Found higher page {} in pagination, jumping there", analysis.max_page_in_pagination);
+                current_page = analysis.max_page_in_pagination;
                 // 새 페이지로 이동하여 다시 탐색
                 continue;
             }
@@ -591,16 +585,16 @@ impl StatusCheckerImpl {
 
         // 2. 페이지네이션 분석에서 이미 마지막 페이지임을 확신할 수 있다면 추가 확인 생략
         // 현재 페이지가 페이지네이션에서 발견된 최대 페이지와 같다면 검증 완료
-        if analysis.max_pagination_page == candidate_page {
-            info!("✅ Page {} confirmed as last page via pagination analysis (max_pagination={})", 
-                  candidate_page, analysis.max_pagination_page);
+      if analysis.max_page_in_pagination == candidate_page {
+        info!("✅ Page {} confirmed as last page via pagination analysis (max_pagination={})", 
+            candidate_page, analysis.max_page_in_pagination);
             info!("🚀 Skipping additional verification - pagination analysis is reliable");
             return Ok((candidate_page, products_on_last_page));
         }
         
         // 3. 페이지네이션 분석이 불확실한 경우에만 최소한의 추가 검증 수행
-        info!("🔍 Pagination analysis inconclusive (current={}, max_pagination={}), performing minimal verification", 
-              candidate_page, analysis.max_pagination_page);
+      info!("🔍 Pagination analysis inconclusive (current={}, max_pagination={}), performing minimal verification", 
+          candidate_page, analysis.max_page_in_pagination);
         
         // 바로 다음 페이지 1개만 확인 (과도한 검증 방지)
         let next_page = candidate_page + 1;
@@ -697,61 +691,6 @@ impl StatusCheckerImpl {
         Ok((current_page, products_count))
     }
 
-    /// 특정 페이지부터 다시 탐색 시작
-    async fn discover_from_page(&self, start_page: u32) -> Result<u32> {
-        info!("🔄 Re-discovering from page {}", start_page);
-        
-        let mut current_page = start_page;
-        let max_attempts = self.config.advanced.max_search_attempts;
-        let mut attempts = 0;
-
-        loop {
-            attempts += 1;
-            if attempts > max_attempts {
-                warn!("🔄 Reached maximum attempts, stopping at page {}", current_page);
-                break;
-            }
-
-            let test_url = config_utils::matter_products_page_url_simple(current_page);
-            
-            let (has_products, max_page_in_pagination) = {
-                
-                match self.http_client.fetch_html_string(&test_url).await {
-                    Ok(html) => {
-                        let doc = scraper::Html::parse_document(&html);
-                        let has_products = self.has_products_on_page(&doc);
-                        let max_page = self.find_max_page_in_pagination(&doc);
-                        
-                        info!("📊 Page {} analysis: has_products={}, max_pagination={}", 
-                              current_page, has_products, max_page);
-                        
-                        (has_products, max_page)
-                    },
-                    Err(e) => {
-                        warn!("❌ Failed to fetch page {}: {}", current_page, e);
-                        break;
-                    }
-                }
-            };
-
-            if !has_products {
-                // 제품이 없으면 안전성 검사가 포함된 하향 탐색
-                return self.find_last_valid_page_with_safety_check(current_page).await;
-            }
-
-            if max_page_in_pagination > current_page {
-                // 더 큰 페이지가 있으면 이동
-                current_page = max_page_in_pagination;
-            } else {
-                // 더 큰 페이지가 없으면 현재 페이지가 마지막
-                break;
-            }
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(self.config.user.request_delay_ms)).await;
-        }
-
-        Ok(current_page)
-    }
 
     /// 특정 페이지에 제품이 있는지 확인 - 활성 페이지네이션 값도 함께 확인
     async fn check_page_has_products(&self, page: u32) -> Result<bool> {
@@ -861,9 +800,8 @@ impl StatusCheckerImpl {
             // 마지막 성공한 크롤링 시간 업데이트
             app_managed.last_successful_crawl = Some(chrono::Utc::now().to_rfc3339());
             
-        // 총 제품 수 정확 계산: (last_page - 1) * items_per_full_page + items_on_last_page
-        // items_on_last_page 가 None 인 경우 보수적으로 full page 로 간주
-    let items_per_page: u32 = DEFAULT_PRODUCTS_PER_PAGE; // cast removed (already u32)
+    // 총 제품 수 정확 계산
+    let items_per_page: u32 = DEFAULT_PRODUCTS_PER_PAGE;
         let last_partial = items_on_last_page.unwrap_or(items_per_page);
         let accurate_total = if last_page == 0 { 0 } else { (last_page - 1) * items_per_page + last_partial };
             app_managed.last_crawl_product_count = Some(accurate_total);
@@ -1106,7 +1044,7 @@ impl StatusCheckerImpl {
         debug!("🔍 Analyzing page {} (not in cache)", page_number);
         let url = config_utils::matter_products_page_url_simple(page_number);
         
-        let (product_count, max_pagination_page, active_page, has_products) = {
+    let (product_count, max_pagination_page, _active_page, has_products) = {
             // Use consistent HttpClient
             let _client = self.create_configured_http_client()?;
             let response = self.http_client.fetch_response(&url).await?;
@@ -1122,13 +1060,9 @@ impl StatusCheckerImpl {
         };
         
         let analysis = PageAnalysisCache {
-            page_number,
-            has_products,
             max_page_in_pagination: max_pagination_page,
-            max_pagination_page,
             product_count,
-            active_page,
-            analyzed_at: std::time::Instant::now(),
+            has_products,
         };
         
         // 캐시에 저장
@@ -1248,7 +1182,7 @@ impl StatusCheckerImpl {
         match previous_count {
             None => DataChangeAnalysis::Initial,
             Some(prev_count) => {
-                let change_percentage = if prev_count > 0 {
+                let _change_percentage = if prev_count > 0 {
                     ((current_estimated_products as f64 - prev_count as f64) / prev_count as f64) * 100.0
                 } else {
                     0.0
@@ -1257,14 +1191,12 @@ impl StatusCheckerImpl {
                 if current_estimated_products > prev_count {
                     DataChangeAnalysis::Increased { 
                         new_products: current_estimated_products - prev_count,
-                        change_percentage,
                     }
                 } else if current_estimated_products == prev_count {
                     DataChangeAnalysis::Stable
                 } else {
                     DataChangeAnalysis::Decreased {
                         lost_products: prev_count - current_estimated_products,
-                        change_percentage: -change_percentage,
                     }
                 }
             }
@@ -1371,8 +1303,8 @@ struct LocalDbStatus {
 #[derive(Debug, Clone)]
 enum DataChangeAnalysis {
     Initial,
-    Increased { new_products: u32, change_percentage: f64 },
-    Decreased { lost_products: u32, change_percentage: f64 },
+    Increased { new_products: u32 },
+    Decreased { lost_products: u32 },
     Stable,
 }
 
@@ -1542,7 +1474,7 @@ impl ProductListCollectorImpl {
                 // 🔥 논블로킹 이벤트 발송 (실패해도 메인 작업 계속)
                 let _ = event_tx_clone.send(PageEvent::Started { 
                     page_number: page,
-                    timestamp: chrono::Utc::now(),
+                    
                 });
                 
                 // 실행 허가를 받을 때까지 대기 (진정한 동시성 제어)
@@ -1555,7 +1487,7 @@ impl ProductListCollectorImpl {
                         let _ = event_tx_clone.send(PageEvent::Failed { 
                             page_number: page,
                             error: "Semaphore acquisition failed".to_string(),
-                            timestamp: chrono::Utc::now(),
+                            
                         });
                         return Err(anyhow!("Semaphore acquisition failed"));
                     }
@@ -1566,7 +1498,7 @@ impl ProductListCollectorImpl {
                     if token.is_cancelled() {
                         let _ = event_tx_clone.send(PageEvent::Cancelled { 
                             page_number: page,
-                            timestamp: chrono::Utc::now(),
+                            
                         });
                         return Err(anyhow!("Task cancelled"));
                     }
@@ -1590,14 +1522,14 @@ impl ProductListCollectorImpl {
                             page_number: page,
                             products_found: products.len() as u32,
                             duration_ms,
-                            timestamp: chrono::Utc::now(),
+                            
                         });
                     },
                     Err(e) => {
                         let _ = event_tx_clone.send(PageEvent::Failed { 
                             page_number: page,
                             error: e.to_string(),
-                            timestamp: chrono::Utc::now(),
+                            
                         });
                     }
                 }
@@ -1711,20 +1643,20 @@ impl ProductListCollectorImpl {
         // 실제 이벤트 브로드캐스팅 로직
         // 이 함수는 메인 작업과 완전히 독립적으로 실행됨
         match event {
-            PageEvent::Started { page_number, timestamp } => {
-                debug!("📄 Page {} started at {}", page_number, timestamp);
+            PageEvent::Started { page_number } => {
+                debug!("📄 Page {} started", page_number);
                 // SystemStateBroadcaster::emit_product_list_page_event() 호출
             },
-            PageEvent::Completed { page_number, products_found, duration_ms, timestamp: _ } => {
+            PageEvent::Completed { page_number, products_found, duration_ms } => {
                 debug!("✅ Page {} completed: {} products in {}ms", page_number, products_found, duration_ms);
                 // 완료 이벤트 발송
             },
-            PageEvent::Failed { page_number, error, timestamp } => {
-                debug!("❌ Page {} failed: {} at {}", page_number, error, timestamp);
+            PageEvent::Failed { page_number, error } => {
+                debug!("❌ Page {} failed: {}", page_number, error);
                 // 실패 이벤트 발송
             },
-            PageEvent::Cancelled { page_number, timestamp } => {
-                debug!("🛑 Page {} cancelled at {}", page_number, timestamp);
+            PageEvent::Cancelled { page_number } => {
+                debug!("🛑 Page {} cancelled", page_number);
                 // 취소 이벤트 발송
             },
         }
@@ -1739,7 +1671,6 @@ enum ProductDetailEvent {
         product_url: String,
         product_name: Option<String>,
         task_id: String,
-        start_time: std::time::Instant,
     },
     HttpRequestStarted {
         product_url: String,
@@ -2272,7 +2203,7 @@ impl ProductDetailCollectorImpl {
         // SystemStateBroadcaster는 AppHandle이 필요하므로 여기서는 직접 사용하지 않음
         
         match event {
-            ProductDetailEvent::TaskStarted { product_url, product_name, task_id, start_time: _ } => {
+            ProductDetailEvent::TaskStarted { product_url, product_name, task_id } => {
                 info!("🚀 Product task started: {} ({})", product_url, task_id);
                 debug!("📝 Product: {} | Task: {} | Session: {} | Batch: {}", 
                        product_name.unwrap_or_else(|| "Unknown".to_string()), task_id, session_id, batch_id);
@@ -2537,7 +2468,7 @@ impl ProductDetailCollectorImpl {
                     product_url: url.clone(),
                     product_name: None, // Will be filled after parsing
                     task_id: task_id.clone(),
-                    start_time,
+                    
                 });
                 
                 let _permit = permit.acquire().await.unwrap();
@@ -2994,6 +2925,7 @@ impl CrawlingRangeCalculator {
             total_batches: Some(total_pages_on_site),
             errors: 0,
             timestamp: chrono::Utc::now(),
+            
         })
     }
     
@@ -3020,6 +2952,7 @@ impl CrawlingRangeCalculator {
             total_batches: Some(1),
             errors: 0,
             timestamp: chrono::Utc::now(),
+            
         })
     }
 }
@@ -3027,24 +2960,9 @@ impl CrawlingRangeCalculator {
 /// 🔥 페이지 처리 이벤트 (논블로킹 큐용)
 #[derive(Debug, Clone)]
 enum PageEvent {
-    Started { 
-        page_number: u32,
-        timestamp: chrono::DateTime<chrono::Utc>,
-    },
-    Completed { 
-        page_number: u32,
-        products_found: u32,
-        duration_ms: u64,
-        timestamp: chrono::DateTime<chrono::Utc>,
-    },
-    Failed { 
-        page_number: u32,
-        error: String,
-        timestamp: chrono::DateTime<chrono::Utc>,
-    },
-    Cancelled { 
-        page_number: u32,
-        timestamp: chrono::DateTime<chrono::Utc>,
-    },
+    Started { page_number: u32 },
+    Completed { page_number: u32, products_found: u32, duration_ms: u64 },
+    Failed { page_number: u32, error: String },
+    Cancelled { page_number: u32 },
 }
 

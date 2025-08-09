@@ -105,9 +105,7 @@ impl ListPageParser {
     fn extract_page_metadata(&self, html: &str) -> PageMetadata {
         let document = Html::parse_document(html);
         
-        // Try to extract total pages/items information
-        let mut total_items = None;
-        let mut total_pages = None;
+    // (Removed total_items/total_pages extraction to simplify parser)
 
         // Common patterns for pagination info
         let pagination_selectors = [
@@ -117,36 +115,9 @@ impl ListPageParser {
             "span[class*='total']",
         ];
 
-        for selector_str in &pagination_selectors {
-            if let Ok(selector) = Selector::parse(selector_str) {
-                for element in document.select(&selector) {
-                    let text = element.text().collect::<String>();
-                    
-                    // Try to extract numbers from text
-                    if let Some(num) = self.extract_number_from_text(&text) {
-                        if text.contains("총") || text.contains("전체") {
-                            total_items = Some(num);
-                        } else if text.contains("페이지") || text.contains("page") {
-                            total_pages = Some(num);
-                        }
-                    }
-                }
-            }
-        }
+    for _selector_str in &pagination_selectors { /* simplified */ }
 
-        PageMetadata {
-            total_items,
-            total_pages,
-            has_next_page: self.detect_next_page(&document),
-        }
-    }
-
-    fn extract_number_from_text(&self, text: &str) -> Option<u32> {
-        // Extract numbers from Korean text like "총 1,234건" or "전체 567 페이지"
-        let re = regex::Regex::new(r"[\d,]+").ok()?;
-        let captures = re.find(text)?;
-        let number_str = captures.as_str().replace(",", "");
-        number_str.parse().ok()
+    PageMetadata { has_next_page: self.detect_next_page(&document) }
     }
 
     fn detect_next_page(&self, document: &Html) -> bool {
@@ -172,8 +143,6 @@ impl ListPageParser {
 
 #[derive(Debug, Clone)]
 struct PageMetadata {
-    total_items: Option<u32>,
-    total_pages: Option<u32>,
     has_next_page: bool,
 }
 

@@ -15,27 +15,14 @@ use crate::crawling::workers::{Worker, WorkerError};
 
 /// Mock Database Saver for development
 #[derive(Debug, Clone)]
-pub struct MockDbSaver {
-    batch_size: usize,
-    max_concurrency: usize,
-}
+pub struct MockDbSaver {}
 
 impl MockDbSaver {
     /// Create new mock database saver
-    pub fn new(batch_size: usize) -> Self {
-        Self {
-            batch_size,
-            max_concurrency: 4,
-        }
-    }
+    pub fn new(_batch_size: usize) -> Self { Self {} }
 
     /// 개발 용이성을 위한 간단한 생성자
-    pub fn new_simple() -> Self {
-        Self {
-            batch_size: 100,
-            max_concurrency: 4,
-        }
-    }
+    pub fn new_simple() -> Self { Self {} }
 }
 
 #[async_trait]
@@ -50,9 +37,7 @@ impl Worker<CrawlingTask> for MockDbSaver {
         "MockDbSaver"
     }
 
-    fn max_concurrency(&self) -> usize {
-        10 // Mock implementation, no real I/O constraints
-    }
+    fn max_concurrency(&self) -> usize { 10 }
 
     async fn process_task(
         &self,
