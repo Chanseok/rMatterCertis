@@ -5,7 +5,7 @@ pub mod advanced_engine_api;
 pub mod config_commands;
 pub mod simple_crawling;
 pub mod data_queries;
-pub mod unified_crawling;
+pub mod unified_crawling; // unified entrypoint
 
 // 모든 명령어를 한곳에서 export
 pub use advanced_engine_api::{

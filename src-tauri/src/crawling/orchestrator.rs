@@ -467,7 +467,7 @@ pub async fn process_single_task_static(
     config: OrchestratorConfig,
     event_emitter: Option<Arc<crate::application::EventEmitter>>, // 추가: 원자적 이벤트용
 ) -> Result<(), OrchestratorError> {
-    let start_time = Instant::now();
+    let _start_time = Instant::now();
     let task_for_follow_up = task.clone(); // Clone task for follow-up use
     let task_id = task.task_id(); // 태스크 ID 추출
     let task_type = get_task_type_name(&task); // 태스크 타입 이름
@@ -502,7 +502,7 @@ pub async fn process_single_task_static(
     // Handle task result
     match task_result {
         Ok(TaskResult::Success { task_id, output, duration }) => {
-            let duration_ms = duration.as_millis() as u64;
+            let duration_ms = duration.as_millis() as u64; // retain variable for emitter usage
             
             // 🎯 원자적 이벤트: 태스크 완료 알림
             if let Some(emitter) = &event_emitter {

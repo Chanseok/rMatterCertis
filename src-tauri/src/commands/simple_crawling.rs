@@ -87,52 +87,22 @@ pub async fn start_smart_crawling(
         .map_err(|e| format!("Strategy determination failed: {}", e))?;
 
     info!("✅ [NEW ARCHITECTURE] Analysis complete - Range: {:?}, Processing: {:?}", range_recommendation, processing_strategy);    // 4. 계산된 범위로 크롤링 실행 (설정 파일 고정값 대신 지능형 계산 결과 사용)
-    use crate::commands::crawling_v4::{CrawlingEngineState, execute_crawling_with_range, init_crawling_engine};
-    use tauri::Manager;
-    
-    if let Some(engine_state) = app_handle.try_state::<CrawlingEngineState>() {
-        // 엔진 초기화 확인
-        {
-            let engine_guard = engine_state.engine.read().await;
-            if engine_guard.is_none() {
-                drop(engine_guard);
-                info!("🔧 Initializing crawling engine...");
-                
-                match init_crawling_engine(app_handle.clone(), engine_state.clone()).await {
-                    Ok(response) => {
-                        if !response.success {
-                            return Err(format!("Engine initialization failed: {}", response.message));
-                        }
-                    }
-                    Err(e) => return Err(format!("Engine initialization error: {}", e)),
-                }
-            }
-        }
-        
-        // 지능형 범위 계산 결과를 실제 페이지 범위로 변환
-        if let Some((start_page, end_page)) = range_recommendation.to_page_range(site_status.total_pages) {
-            info!("📊 지능형 분석 기반 크롤링 범위: {}-{} 페이지 (총 {} 페이지 중)", 
-                  start_page, end_page, site_status.total_pages);
-        
-            // ServiceBasedBatchCrawlingEngine으로 지능형 계산 결과로 실행
-            match execute_crawling_with_range(
-                &app_handle,
-                &engine_state,
-                start_page,
-                end_page
-            ).await {
-                Ok(response) => {
-                    info!("✅ 지능형 분석 기반 크롤링 시작: {}", response.message);
-                }
-                Err(e) => {
-                    return Err(format!("Crawling execution failed: {}", e));
-                }
-            }
-        } else {
-            info!("🛑 분석 결과: 크롤링이 필요하지 않습니다 (CrawlingRangeRecommendation::None)");
+    // Legacy crawling_v4 path removed. For now, delegate to unified actor-based crawling if range is recommended.
+    if let Some((start_page, end_page)) = range_recommendation.to_page_range(site_status.total_pages) {
+        info!("📊 지능형 분석 기반 크롤링 범위: {}-{} 페이지 (총 {} 페이지 중)", start_page, end_page, site_status.total_pages);
+        // Fire unified crawling command (actor-based real crawling)
+        use crate::commands::unified_crawling::{start_unified_crawling, StartCrawlingRequest};
+        let req = StartCrawlingRequest {
+            engine_type: "actor".to_string(),
+            start_page: Some(start_page),
+            end_page: Some(end_page),
+            concurrency: None,
+        };
+        if let Err(e) = start_unified_crawling(app_handle.clone(), req).await {
+            return Err(format!("Unified crawling execution failed: {}", e));
         }
     } else {
-        return Err("CrawlingEngineState not available".to_string());
+        info!("🛑 분석 결과: 크롤링이 필요하지 않습니다 (CrawlingRangeRecommendation::None)");
     }
     
     Ok(CrawlingSession {

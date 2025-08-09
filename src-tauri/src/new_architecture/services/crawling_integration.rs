@@ -53,8 +53,7 @@ impl CrawlingIntegrationService {
         );
         
         // 실제 DB 연결 URL 가져오기
-        let database_url = crate::commands::crawling_v4::get_database_url_v4()
-            .map_err(|e| anyhow::anyhow!("Failed to get database URL: {}", e))?;
+    let database_url = crate::infrastructure::get_main_database_url();
         
         // DB 연결 풀 생성
         let db_pool = sqlx::SqlitePool::connect(&database_url).await

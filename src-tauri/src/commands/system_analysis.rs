@@ -7,7 +7,14 @@ use tauri::{AppHandle, State};
 use tracing::info;
 use serde_json;
 
-use crate::commands::crawling_v4::{CrawlingEngineState, CrawlingResponse};
+// Legacy CrawlingEngineState/CrawlingResponse removed – define minimal local response
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct CrawlingResponse {
+    pub success: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
 use crate::application::shared_state::{SharedStateCache, SiteAnalysisResult, DbAnalysisResult};
 use crate::domain::constants::{crawling::ttl, site};
 use crate::domain::services::crawling_services::StatusChecker;
@@ -24,7 +31,6 @@ use crate::domain::services::crawling_services::StatusChecker;
 #[tauri::command]
 pub async fn analyze_system_status(
     _app: AppHandle,
-    _engine_state: State<'_, CrawlingEngineState>,
     shared_state: State<'_, SharedStateCache>,
 ) -> Result<CrawlingResponse, String> {
     info!("🔍 Starting comprehensive system analysis...");
@@ -113,7 +119,7 @@ async fn perform_site_analysis() -> Result<SiteAnalysisResult, String> {
         .map_err(|e| format!("Failed to create data extractor: {}", e))?;
     
     // Create database connection and repository for StatusChecker
-    let database_url = crate::commands::crawling_v4::get_database_url_v4()?;
+    let database_url = crate::infrastructure::get_main_database_url();
     let db_pool = sqlx::SqlitePool::connect(&database_url).await
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
     let product_repo = std::sync::Arc::new(crate::infrastructure::IntegratedProductRepository::new(db_pool));
@@ -146,7 +152,7 @@ async fn perform_database_analysis() -> Result<DbAnalysisResult, String> {
     info!("🗄️ Analyzing database state...");
     
     // Create database connection and repository
-    let database_url = crate::commands::crawling_v4::get_database_url_v4()?;
+    let database_url = crate::infrastructure::get_main_database_url();
     let db_pool = sqlx::SqlitePool::connect(&database_url).await
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
     let product_repo = crate::infrastructure::IntegratedProductRepository::new(db_pool);

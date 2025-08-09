@@ -120,9 +120,8 @@ pub mod services;
 // Modern Rust 2024 - Commands module with direct declarations
     pub mod commands {
     //! Command handlers for Tauri frontend integration
-    pub mod modern_crawling;
+    // Removed legacy modules: modern_crawling, crawling_v4, service_based_reference
     pub mod config_commands;
-    pub mod crawling_v4;
     pub mod smart_crawling;
     pub mod simple_crawling;      // Phase 1: 설정 파일 기반 간단한 크롤링  
     pub mod simple_actor_test;
@@ -136,19 +135,17 @@ pub mod services;
     pub mod advanced_engine_api;  // 새로운 Advanced Engine API 추가
     pub mod data_queries;         // Backend-Only CRUD commands (Modern Rust 2024)
     pub mod unified_crawling;     // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
-    pub mod service_based_reference;  // 🔧 참조용: ServiceBased 크롤링 (구현 완료 후 삭제 예정)
     pub mod real_actor_commands;  // 🎭 진짜 Actor 시스템 명령어
     
     // Re-export commonly used commands
-    pub use crawling_v4::*;
-    pub use simple_crawling::*;   // Phase 1 명령어 export
-    pub use advanced_engine_api::*;  // Advanced Engine 명령어 export
-    pub use data_queries::*;      // Backend-Only CRUD 명령어 export
-    pub use config_commands::*;   // Config and window management 명령어 export
-    pub use real_crawling_commands::*;  // Phase C 실제 크롤링 명령어 export
-    pub use crawling_test_commands::*;  // Phase C 테스트 명령어 export
-    pub use performance_commands::*;    // Phase C 성능 최적화 명령어 export
-    pub use dashboard_commands::*;      // Phase C 대시보드 명령어 export
+    pub use simple_crawling::*;          // Phase 1 명령어 export
+    pub use advanced_engine_api::*;      // Advanced Engine 명령어 export
+    pub use data_queries::*;             // Backend-Only CRUD 명령어 export
+    pub use config_commands::*;          // Config and window management 명령어 export
+    pub use real_crawling_commands::*;   // Phase C 실제 크롤링 명령어 export
+    pub use crawling_test_commands::*;   // Phase C 테스트 명령어 export
+    pub use performance_commands::*;     // Phase C 성능 최적화 명령어 export
+    pub use dashboard_commands::*;       // Phase C 대시보드 명령어 export
 }// Modern Rust 2024 - 명시적 모듈 선언
 pub mod crawling;
 
@@ -255,12 +252,7 @@ pub fn run() {
         .manage(app_state)
         .manage(shared_state)  // SharedState 추가
         .manage(session_manager)  // CrawlingSessionManager 추가
-        .manage(commands::crawling_v4::CrawlingEngineState {
-            engine: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
-            database: commands::crawling_v4::MockDatabase {
-                connection_status: "Mock Connected".to_string(),
-            },
-        })
+    // Legacy CrawlingEngineState (crawling_v4) removed – unified actor-based path only
         .manage(commands::simple_actor_test::ActorSystemState::default())
         .manage(commands::performance_commands::PerformanceOptimizerState::default())
         .manage(commands::dashboard_commands::DashboardServiceState::default())
@@ -305,21 +297,7 @@ pub fn run() {
             // commands::service_based_reference::start_service_based_crawling_reference,
             // commands::real_actor_commands::start_legacy_service_based_crawling,
             
-            // Core v4.0 commands - keeping only the implemented ones
-            commands::crawling_v4::init_crawling_engine,
-            commands::crawling_v4::start_crawling,
-            commands::crawling_v4::start_crawling_with_profile,
-            commands::crawling_v4::get_cache_status,
-            commands::crawling_v4::clear_cache,
-            commands::crawling_v4::stop_crawling,
-            commands::crawling_v4::get_crawling_stats,
-            commands::crawling_v4::get_system_health,
-            commands::crawling_v4::update_crawling_config,
-            commands::crawling_v4::get_crawling_config,
-            commands::crawling_v4::emergency_stop,
-            commands::crawling_v4::ping_backend,
-            commands::crawling_v4::get_app_settings,
-            commands::crawling_v4::save_app_settings,
+            // Legacy v4 commands removed (init/start/stop/etc.) – replaced by unified_crawling + real_crawling_commands
             
             // Advanced Crawling Engine commands (Phase 4B)
             commands::advanced_engine_api::check_advanced_site_status,

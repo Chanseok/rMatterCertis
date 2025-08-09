@@ -1,10 +1,13 @@
-//! # Modern Crawling Commands v4.0
+//! # Modern Crawling Commands v4.0 (QUARANTINED - pending deletion)
 //!
 //! Tauri commands for the new event-driven crawling system.
 //! These commands integrate with the new orchestrator and provide
 //! real-time updates to the frontend.
 //!
 //! DEPRECATED: crawling_v4 legacy interface retained temporarily for reference; will be removed after actor system consolidation.
+//! This file is now feature-gated and excluded from normal builds.
+
+#![cfg(feature = "legacy-v4")] // Feature flag will be removed after quarantine period
 
 use std::sync::Arc;
 use std::collections::HashMap;

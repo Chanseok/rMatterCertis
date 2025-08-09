@@ -1,7 +1,7 @@
 //! 통합 크롤러 매니저 - PHASE2_CRAWLING_ENHANCEMENT_PLAN 구현
 //! 
-//! 이 모듈은 .local/crawling_explanation.md에 정의된 CrawlerManager 역할을 수행하며,
-//! 3개의 크롤링 엔진을 통합 관리하고 재시도 메커니즘을 제공합니다.
+//! ServiceBasedBatchCrawlingEngine 관련 레거시 경로 제거 (2025-08 Option B cleanup).
+//! 현재 활성 엔진: Basic (4-stage), Advanced, Actor 시스템.
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -60,7 +60,6 @@ pub struct CrawlingConfig {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CrawlingEngineType {
     Basic,      // BatchCrawlingEngine
-    // Service variant removed (legacy ServiceBasedBatchCrawlingEngine deprecated)
     Advanced,   // AdvancedBatchCrawlingEngine
     Actor,      // 🎯 NEW: ActorBatchProcessor (SessionActor → BatchActor → StageActor)
 }
@@ -145,7 +144,6 @@ pub struct CrawlerManager {
     
     // 크롤링 엔진들
     basic_engine: Arc<BatchCrawlingEngine>,
-    service_engine: Arc<ServiceBasedBatchCrawlingEngine>,
     advanced_engine: Arc<AdvancedBatchCrawlingEngine>,
     
     // 공통 컴포넌트들 (ServiceBatchProcessor에서 사용)
@@ -162,9 +160,8 @@ impl CrawlerManager {
     /// 새 크롤러 매니저 생성
     pub fn new(
         session_manager: Arc<SessionManager>,
-        basic_engine: Arc<BatchCrawlingEngine>,
-        service_engine: Arc<ServiceBasedBatchCrawlingEngine>,
-        advanced_engine: Arc<AdvancedBatchCrawlingEngine>,
+    basic_engine: Arc<BatchCrawlingEngine>,
+    advanced_engine: Arc<AdvancedBatchCrawlingEngine>,
         http_client: HttpClient,
         data_extractor: MatterDataExtractor,
         product_repo: Arc<IntegratedProductRepository>,
@@ -179,7 +176,6 @@ impl CrawlerManager {
             performance_monitor,
             event_emitter: Arc::new(RwLock::new(None)),
             basic_engine,
-            service_engine,
             advanced_engine,
             http_client,
             data_extractor,
@@ -216,7 +212,6 @@ impl CrawlerManager {
         self.performance_monitor.start_session_tracking(&session_id).await;
         
         // 5. 백그라운드에서 크롤링 실행
-        let manager_clone = Arc::new(self.clone());
         let session_id_clone = session_id.clone();
         let config_clone = config.clone();
         
@@ -232,7 +227,6 @@ impl CrawlerManager {
                 }
             }
         });
-        
         Ok(session_id)
     }
     
@@ -339,15 +333,6 @@ impl CrawlerManager {
         match config.engine_type {
             CrawlingEngineType::Basic => {
                 Ok(Arc::new(BasicBatchProcessor::new(self.basic_engine.clone())))
-            }
-            CrawlingEngineType::Service => {
-                Ok(Arc::new(ServiceBatchProcessor::new(
-                    self.service_engine.clone(),
-                    self.http_client.clone(),
-                    self.data_extractor.clone(),
-                    self.product_repo.clone(),
-                    self.app_handle.clone(),
-                )))
             }
             CrawlingEngineType::Advanced => {
                 Ok(Arc::new(AdvancedBatchProcessor::new(self.advanced_engine.clone())))
@@ -509,7 +494,6 @@ impl Clone for CrawlerManager {
             performance_monitor: self.performance_monitor.clone(),
             event_emitter: self.event_emitter.clone(),
             basic_engine: self.basic_engine.clone(),
-            service_engine: self.service_engine.clone(),
             advanced_engine: self.advanced_engine.clone(),
             http_client: self.http_client.clone(),
             data_extractor: self.data_extractor.clone(),
@@ -526,15 +510,6 @@ impl Clone for CrawlerManager {
 
 pub struct BasicBatchProcessor {
     engine: Arc<BatchCrawlingEngine>,
-}
-
-pub struct ServiceBatchProcessor {
-    // 기존 엔진의 컴포넌트들에 접근하기 위해 엔진 참조 유지
-    base_engine: Arc<ServiceBasedBatchCrawlingEngine>,
-    http_client: HttpClient,
-    data_extractor: MatterDataExtractor,
-    product_repo: Arc<IntegratedProductRepository>,
-    app_handle: Option<AppHandle>,
 }
 
 pub struct AdvancedBatchProcessor {
@@ -798,169 +773,6 @@ impl BatchProcessor for ActorBatchProcessor {
     }
 }
 
-impl ServiceBatchProcessor {
-    pub fn new(
-        base_engine: Arc<ServiceBasedBatchCrawlingEngine>,
-        http_client: HttpClient,
-        data_extractor: MatterDataExtractor,
-        product_repo: Arc<IntegratedProductRepository>,
-        app_handle: Option<AppHandle>,
-    ) -> Self {
-        Self { 
-            base_engine,
-            http_client,
-            data_extractor,
-            product_repo,
-            app_handle,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl BatchProcessor for ServiceBatchProcessor {
-    async fn execute_task(&self, config: CrawlingConfig) -> Result<TaskResult> {
-        info!("🔧 Executing task with ServiceBatchProcessor");
-        
-        let start_time = Instant::now();
-        
-        // CrawlingConfig를 BatchCrawlingConfig로 변환
-        let batch_config = BatchCrawlingConfig {
-            start_page: config.start_page,
-            end_page: config.end_page,
-            concurrency: config.concurrency,
-            delay_ms: config.delay_ms,
-            batch_size: config.batch_size,
-            retry_max: config.retry_max,
-            timeout_ms: config.timeout_ms,
-            cancellation_token: config.cancellation_token.clone(), // 🔥 중요: cancellation_token 전달
-        };
-        
-        // 새로운 ServiceBasedBatchCrawlingEngine 생성 (cancellation_token 포함)
-        // 사용자 설정을 로드하여 사용자가 설정한 page_range_limit을 존중
-        let mut app_config = match crate::infrastructure::config::ConfigManager::new() {
-            Ok(config_manager) => {
-                match config_manager.load_config().await {
-                    Ok(config) => {
-                        info!("✅ Loaded user configuration with page_range_limit: {}", config.user.crawling.page_range_limit);
-                        config
-                    },
-                    Err(e) => {
-                        warn!("⚠️ Failed to load user config: {}", e);
-                        crate::infrastructure::config::AppConfig::default()
-                    }
-                }
-            },
-            Err(e) => {
-                warn!("⚠️ Failed to create config manager: {}", e);
-                crate::infrastructure::config::AppConfig::default()
-            }
-        };
-        
-        // 지능형 모드가 활성화되고 override_config_limit이 true인 경우에만
-        // 설정값을 조정할 수 있음 (사용자 명시적 허용 하에서만)
-        if app_config.user.crawling.intelligent_mode.enabled 
-           && app_config.user.crawling.intelligent_mode.override_config_limit {
-            let requested_range = config.end_page - config.start_page + 1;
-            let max_allowed = app_config.user.crawling.intelligent_mode.max_range_limit;
-            
-            if requested_range > max_allowed {
-                warn!("🚨 Requested range {} exceeds intelligent mode limit {}, adjusting to {}", 
-                      requested_range, max_allowed, max_allowed);
-                app_config.user.crawling.page_range_limit = max_allowed;
-            } else {
-                // 사용자가 요청한 범위가 허용 범위 내라면 그대로 사용
-                app_config.user.crawling.page_range_limit = requested_range;
-                info!("✅ Using requested range {} (within intelligent mode limits)", requested_range);
-            }
-        } else {
-            // 지능형 모드가 비활성화되었거나 override가 비활성화된 경우
-            // 사용자 설정값을 그대로 유지
-            info!("ℹ️ Using user-configured page_range_limit: {} (intelligent mode override: {})", 
-                  app_config.user.crawling.page_range_limit,
-                  app_config.user.crawling.intelligent_mode.override_config_limit);
-        }
-        
-        let mut engine = ServiceBasedBatchCrawlingEngine::new(
-            self.http_client.clone(),
-            self.data_extractor.clone(),
-            self.product_repo.clone(),
-            self.event_emitter.clone(),
-            batch_config,
-            format!("service_session_{}", chrono::Utc::now().timestamp()),
-            app_config,
-        );
-        
-        info!("🛑 Created ServiceBasedBatchCrawlingEngine with cancellation_token: {}", 
-              config.cancellation_token.is_some());
-        
-        // SystemStateBroadcaster 설정 (Live Production Line UI용)
-        if let Some(app_handle) = self.app_handle.clone() {
-            let broadcaster = crate::infrastructure::system_broadcaster::SystemStateBroadcaster::new(
-                app_handle,
-            );
-            engine.set_broadcaster(broadcaster);
-            info!("📡 SystemStateBroadcaster configured for Live Production Line UI");
-        }
-        
-        // 실행 결과 처리
-        match engine.execute().await {
-            Ok(()) => {
-                info!("✅ ServiceBatchProcessor completed successfully");
-                Ok(TaskResult {
-                    session_id: "service_session".to_string(),
-                    items_processed: config.end_page - config.start_page + 1,
-                    items_success: config.end_page - config.start_page + 1,
-                    items_failed: 0,
-                    duration: start_time.elapsed(),
-                    final_status: CrawlingStatus::Completed,
-                })
-            }
-            Err(e) => {
-                warn!("❌ ServiceBatchProcessor failed: {}", e);
-                Ok(TaskResult {
-                    session_id: "service_session".to_string(),
-                    items_processed: 0,
-                    items_success: 0,
-                    items_failed: config.end_page - config.start_page + 1,
-                    duration: start_time.elapsed(),
-                    final_status: CrawlingStatus::Error,
-                })
-            }
-        }
-    }
-    
-    async fn get_progress(&self) -> CrawlingProgress {
-        CrawlingProgress {
-            current: 0,
-            total: 100,
-            percentage: 0.0,
-            current_stage: CrawlingStage::Processing,
-            status: CrawlingStatus::Running,
-            new_items: 0,
-            updated_items: 0,
-            errors: 0,
-            timestamp: Utc::now().to_rfc3339(),
-            current_step: "ServiceBatchProcessor running".to_string(),
-            message: "".to_string(),
-            elapsed_time: 0,
-        }
-    }
-    
-    async fn pause(&self) -> Result<()> {
-        info!("⏸️ ServiceBatchProcessor paused");
-        Ok(())
-    }
-    
-    async fn resume(&self) -> Result<()> {
-        info!("▶️ ServiceBatchProcessor resumed");
-        Ok(())
-    }
-    
-    async fn stop(&self) -> Result<()> {
-        info!("⏹️ ServiceBatchProcessor stopped");
-        Ok(())
-    }
-}
 
 impl AdvancedBatchProcessor {
     pub fn new(engine: Arc<AdvancedBatchCrawlingEngine>) -> Self {

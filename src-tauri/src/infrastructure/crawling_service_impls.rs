@@ -505,7 +505,7 @@ impl StatusCheckerImpl {
             info!("🔍 Checking page {} (consecutive empty: {})", current_page, consecutive_empty_pages);
             
             // Use configured HttpClient
-            let client = self.create_configured_http_client()?;
+            let _client = self.create_configured_http_client()?; // unused (legacy path)
             match self.http_client.fetch_response(&test_url).await {
                 Ok(response) => match response.text().await {
                     Ok(html) => {
@@ -885,7 +885,7 @@ impl StatusCheckerImpl {
             
         // 총 제품 수 정확 계산: (last_page - 1) * items_per_full_page + items_on_last_page
         // items_on_last_page 가 None 인 경우 보수적으로 full page 로 간주
-        let items_per_page = DEFAULT_PRODUCTS_PER_PAGE as u32; // 기존 상수 (검증된 값)
+    let items_per_page: u32 = DEFAULT_PRODUCTS_PER_PAGE; // cast removed (already u32)
         let last_partial = items_on_last_page.unwrap_or(items_per_page);
         let accurate_total = if last_page == 0 { 0 } else { (last_page - 1) * items_per_page + last_partial };
             app_managed.last_crawl_product_count = Some(accurate_total);

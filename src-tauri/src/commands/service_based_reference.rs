@@ -1,3 +1,4 @@
+// QUARANTINED legacy reference command - pending deletion
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tracing::{info, error};

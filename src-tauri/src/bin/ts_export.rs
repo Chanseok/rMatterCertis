@@ -2,9 +2,16 @@
 use matter_certis_v2_lib::types::frontend_api::{
     AdvancedCrawlingConfig, CrawlingProgressInfo, ErrorInfo
 };
-use matter_certis_v2_lib::commands::crawling_v4::{
-    SystemStatePayload, CrawlingResponse, StartCrawlingRequest as V4StartCrawlingRequest
-};
+// Legacy crawling_v4 types removed. Provide minimal stand-ins for TS export continuity.
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct SystemStatePayload { pub is_running: bool }
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct CrawlingResponse { pub success: bool, pub message: String }
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct V4StartCrawlingRequest { pub start_page: u32, pub end_page: u32 }
 use matter_certis_v2_lib::commands::config_commands::{
     WindowState, WindowPosition, WindowSize
 };

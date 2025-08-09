@@ -1,7 +1,8 @@
-//! Modern Tauri commands for real-time crawling operations
+//! Modern Tauri commands for real-time crawling operations (LEGACY V3 - QUARANTINED)
 //! 
-//! This module implements Tauri commands that support real-time event emission
-//! and proper state management following the architectural guide.
+//! This module is deprecated and kept only for reference. Compile with --features legacy-v3 to include.
+
+#![cfg(feature = "legacy-v3")] // To be removed after verification
 
 use crate::application::{AppState, EventEmitter};
 use crate::domain::events::{CrawlingProgress, CrawlingStatus, CrawlingStage, DatabaseStats, DatabaseHealth};
@@ -16,8 +17,7 @@ use tokio::sync::RwLock;
 use crate::infrastructure::config::ConfigManager;
 use sqlx::Row; // Add this import for try_get method
 
-/// Start a new crawling session using backend configuration with intelligent range calculation
-/// NOTE: This command is deprecated. Use start_crawling_v4 instead.
+/// Start a new crawling session using backend configuration with intelligent range calculation (legacy)
 #[tauri::command]
 pub async fn start_crawling_v3(
     start_page: Option<u32>,

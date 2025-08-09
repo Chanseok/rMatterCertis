@@ -71,11 +71,11 @@ pub async fn start_legacy_service_based_crawling(
     info!("🔧 Creating intelligent crawling plan using CrawlingPlanner");
     
     // 🎯 사이트 상태 확인 및 분석
-    let http_client_for_engine = HttpClient::create_from_global_config()
+    let _http_client_for_engine = HttpClient::create_from_global_config()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-    let data_extractor_for_engine = MatterDataExtractor::new()
+    let _data_extractor_for_engine = MatterDataExtractor::new()
         .map_err(|e| format!("Failed to create data extractor: {}", e))?;
-    let product_repo_for_engine = Arc::new(IntegratedProductRepository::new(
+    let _product_repo_for_engine = Arc::new(IntegratedProductRepository::new(
         app_state.database_pool.read().await.as_ref()
             .ok_or("Database pool not initialized")?.clone()
     ));

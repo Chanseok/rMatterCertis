@@ -14,7 +14,6 @@ use crate::infrastructure::MatterDataExtractor;
 use crate::{
     application::state::AppState,
     infrastructure::config::{AppConfig, ConfigManager, LoggingConfig, csa_iot, utils},
-    commands::modern_crawling::get_databasestats,
 };
 
 /// Frontend-friendly configuration structure
@@ -767,9 +766,28 @@ pub async fn get_crawling_status_check(
 ) -> Result<CrawlingStatusCheck, String> {
     info!("Frontend requesting crawling status check");
     
-    // Get database stats
-    let db_stats = get_databasestats(state.clone()).await
-        .map_err(|e| format!("Failed to get database stats: {}", e))?;
+    // Get database stats (inlined - legacy get_databasestats removed)
+    use crate::domain::events::DatabaseStats; // ensure struct in scope
+    let db_stats = {
+        let pool_guard = state.database_pool.read().await;
+        let pool = pool_guard.as_ref().ok_or("Database pool not initialized")?;
+        let total_products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("Failed to count products: {}", e))?;
+        let _latest_product_time: Option<String> = sqlx::query_scalar("SELECT created_at FROM products ORDER BY id DESC LIMIT 1")
+            .fetch_one(pool)
+            .await
+            .ok();
+        DatabaseStats {
+            total_products: total_products as u64,
+            total_devices: 0,
+            last_updated: chrono::Utc::now(),
+            storage_size: "N/A".to_string(),
+            incomplete_records: 0,
+            health_status: crate::domain::events::DatabaseHealth::Healthy,
+        }
+    };
     
     // Get current configuration
     let config = state.get_config().await;

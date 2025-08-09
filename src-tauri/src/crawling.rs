@@ -78,10 +78,10 @@ impl CrawlingEngineFactory {
         _dependencies: CrawlingEngineDependencies,
     ) -> Result<CrawlingEngine, CrawlingEngineError> {
         // 1. 공유 상태 초기화
-        let shared_state = Arc::new(SharedState::new(config.clone()));
+    let _shared_state = Arc::new(SharedState::new(config.clone()));
         
         // 2. 큐 매니저 초기화 (설정값 사용)
-        let queue_manager = Arc::new(QueueManager::new_with_config(
+    let _queue_manager = Arc::new(QueueManager::new_with_config(
             config.max_queue_size,
             config.backpressure_threshold,
         ));
