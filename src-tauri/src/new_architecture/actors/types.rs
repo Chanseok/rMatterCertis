@@ -198,6 +198,9 @@ pub enum AppEvent {
         details_failed: u32,
         retries_used: u32,
         duration_ms: u64,
+    /// 중복 제거로 스킵된 Product URL 수 (옵션 - v1 기본 0)
+    #[serde(default)]
+    duplicates_skipped: u32,
         timestamp: DateTime<Utc>,
     },
 
@@ -541,6 +544,10 @@ pub struct SessionSummary {
     
     /// 총 성공 수
     pub total_success_count: u32,
+
+    /// 세션 전체에서 중복 제거로 스킵된 Product URL 수 (BatchReport 합산)
+    #[serde(default)]
+    pub duplicates_skipped: u32,
     
     /// 최종 상태
     pub final_state: String,
@@ -820,6 +827,19 @@ pub struct ExecutionPlan {
 
     /// 입력 스냅샷 + 핵심 파라미터 직렬화 후 계산된 해시
     pub plan_hash: String,
+    /// 중복 상품 URL 스킵 여부 (경량 dedupe 1단계)
+    pub skip_duplicate_urls: bool,
+    pub kpi_meta: Option<ExecutionPlanKpi>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExecutionPlanKpi {
+    pub total_ranges: usize,
+    pub total_pages: u32,
+    pub batches: usize,
+    pub strategy: String,
+    pub created_at: DateTime<Utc>,
 }
 
 impl ExecutionPlan {

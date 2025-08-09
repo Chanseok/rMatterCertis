@@ -56,6 +56,8 @@ pub struct SessionActor {
     active_plan_hash: Option<String>,
     /// 배치/세션 실행 중 발생한 에러 메시지 누적 (요약/리포트 용)
     errors: Vec<String>,
+    /// 세션 누적 duplicate skip 합계
+    duplicates_skipped: u32,
 }
 
 /// 세션 상태 열거형
@@ -109,6 +111,7 @@ impl SessionActor {
             preplanned_mode: false,
             active_plan_hash: None,
             errors: Vec::new(),
+            duplicates_skipped: 0,
         }
     }
     
@@ -299,6 +302,7 @@ impl SessionActor {
                 error_summary: Vec::new(), // TODO: 실제 에러 수집
                 processed_batches: self.processed_batches,
                 total_success_count: self.total_success_count,
+                duplicates_skipped: self.duplicates_skipped,
                 final_state: "completed".to_string(),
                 timestamp: Utc::now(),
             },
@@ -567,6 +571,7 @@ impl SessionActor {
                 error_summary: aggregated,
                 processed_batches: self.processed_batches,
                 total_success_count: self.total_success_count,
+                duplicates_skipped: self.duplicates_skipped,
                 final_state: format!("{:?}", self.state),
                 timestamp: Utc::now(),
             }
@@ -591,6 +596,8 @@ impl Actor for SessionActor {
         mut command_rx: mpsc::Receiver<Self::Command>,
     ) -> Result<(), Self::Error> {
         info!("🎬 SessionActor {} starting execution loop", self.actor_id);
+        // 새 이벤트 구독자 생성 (BatchReport 실시간 집계 목적)
+        let mut event_rx = context.subscribe_events();
         
         loop {
             tokio::select! {
@@ -668,6 +675,7 @@ impl Actor for SessionActor {
                                                         if let Err(er) = context.emit_event(fail_event).await { error!("emit batch fail event error: {}", er); }
                                                     }
                                                     self.processed_batches += 1; self.total_success_count += pages.len() as u32;
+                                                    // BatchReport 이벤트에서 누적 중복 스킵을 수신할 수 없으므로 여기서는 BatchActor 내부 누적이 반영된 값 없. 향후 이벤트 브릿지에서 BatchReport 수신 시 합산.
                                                 }
                                                 let duration_ms = self.start_time.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0);
                                                 self.state = SessionState::Completed;
@@ -676,7 +684,7 @@ impl Actor for SessionActor {
                                                 let mut map: BTreeMap<String, (u32, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = BTreeMap::new();
                                                 for e in &self.errors { let now = chrono::Utc::now(); map.entry(e.clone()).and_modify(|entry| { entry.0 += 1; entry.2 = now; }).or_insert((1, now, now)); }
                                                 let aggregated: Vec<crate::new_architecture::actors::types::ErrorSummary> = map.into_iter().map(|(k,(count, first, last))| crate::new_architecture::actors::types::ErrorSummary { error_type: k, count, first_occurrence: first, last_occurrence: last }).collect();
-                                                let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / self.total_success_count as u64 } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, final_state: "completed".into(), timestamp: Utc::now() };
+                                                let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / self.total_success_count as u64 } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, duplicates_skipped: self.duplicates_skipped, final_state: "completed".into(), timestamp: Utc::now() };
                                                 if let Err(e) = context.emit_event(AppEvent::SessionCompleted { session_id: session_id.clone(), summary: summary.clone(), timestamp: Utc::now() }).await { error!("emit completion event failed: {}", e); }
                                                 if let Err(e) = context.emit_event(AppEvent::CrawlReportSession { session_id: session_id.clone(), batches_processed: self.processed_batches, total_pages: self.total_success_count, total_success: self.total_success_count, total_failed: 0, total_retries: 0, duration_ms, timestamp: Utc::now() }).await { error!("emit crawl report failed: {}", e); }
                                             }
@@ -725,6 +733,20 @@ impl Actor for SessionActor {
                     }
                 }
                 
+                // 이벤트 스트림 수신 (BatchReport -> duplicates_skipped 누적)
+                Ok(evt) = event_rx.recv() => {
+                    match evt {
+                        AppEvent::BatchReport { duplicates_skipped, .. } => {
+                            if duplicates_skipped > 0 {
+                                let before = self.duplicates_skipped;
+                                self.duplicates_skipped = self.duplicates_skipped.saturating_add(duplicates_skipped);
+                                debug!("🧮 SessionActor {} accumulated duplicates_skipped: +{} ({} -> {})", self.actor_id, duplicates_skipped, before, self.duplicates_skipped);
+                            }
+                        }
+                        _ => { /* ignore other events */ }
+                    }
+                }
+
                 // 취소 신호 확인
                 _ = context.cancellation_token.changed() => {
                     if *context.cancellation_token.borrow() {

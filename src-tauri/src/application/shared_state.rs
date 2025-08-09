@@ -303,6 +303,8 @@ pub struct SharedStateCache {
     
     /// 캐시 생성 시간
     created_at: Instant,
+    /// ExecutionPlan 메모리 LRU 캐시 (plan_hash 기반, 최대 5개)
+    pub execution_plan_cache: Arc<RwLock<Vec<(String, crate::new_architecture::actors::types::ExecutionPlan)>>>,
 }
 
 impl Default for SharedStateCache {
@@ -323,6 +325,7 @@ impl SharedStateCache {
             last_crawling_session: Arc::new(RwLock::new(None)),
             runtime_state: Arc::new(RwLock::new(RuntimeState::default())),
             created_at: Instant::now(),
+            execution_plan_cache: Arc::new(RwLock::new(Vec::with_capacity(5))),
         }
     }
     
@@ -339,7 +342,22 @@ impl SharedStateCache {
             last_crawling_session: Arc::new(RwLock::new(None)),
             runtime_state: Arc::new(RwLock::new(RuntimeState::default())),
             created_at: Instant::now(),
+            execution_plan_cache: Arc::new(RwLock::new(Vec::with_capacity(5))),
         }
+    }
+
+    /// ExecutionPlan 캐시에 저장 (LRU 방식, 중복 제거)
+    pub async fn cache_execution_plan(&self, plan: crate::new_architecture::actors::types::ExecutionPlan) {
+        let mut guard = self.execution_plan_cache.write().await;
+        if let Some(pos) = guard.iter().position(|(h, _)| *h == plan.plan_hash) { guard.remove(pos); }
+        guard.insert(0, (plan.plan_hash.clone(), plan));
+        if guard.len() > 5 { guard.pop(); }
+    }
+
+    /// plan_hash 로 ExecutionPlan 조회
+    pub async fn get_cached_execution_plan(&self, hash: &str) -> Option<crate::new_architecture::actors::types::ExecutionPlan> {
+        let guard = self.execution_plan_cache.read().await;
+        guard.iter().find(|(h, _)| h == hash).map(|(_, p)| p.clone())
     }
     
     /// 현재 검증된 설정 가져오기

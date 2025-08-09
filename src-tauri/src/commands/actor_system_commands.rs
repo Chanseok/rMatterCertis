@@ -13,7 +13,9 @@ use crate::domain::services::SiteStatus;
 use crate::infrastructure::simple_http_client::HttpClient;
 use crate::infrastructure::html_parser::MatterDataExtractor;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
-use crate::application::AppState;
+use crate::application::{AppState, shared_state::SharedStateCache};
+use crate::domain::services::crawling_services::{SiteStatus as DomainSiteStatus, SiteDataChangeStatus, CrawlingRangeRecommendation};
+use tauri::State; // For accessing managed state
  // 실제 CrawlingPlanner에서 사용
 use crate::infrastructure::config::ConfigManager; // 설정 관리자 추가
 use serde::{Deserialize, Serialize};
@@ -130,38 +132,7 @@ pub async fn start_actor_system_crawling(
     })
 }
 
-/// 🔧 ServiceBasedBatchCrawlingEngine 크롤링 (가짜 크롤링 - 참고용)
-/// NOTE: Deprecated – actor-based pipeline is canonical now. Schedule for removal after pagination & rate-limit FSM stabilization
-// #[tauri::command]
-// pub async fn start_service_based_crawling(
-//     app: AppHandle,
-//     request: ActorCrawlingRequest,
-// ) -> Result<ActorSystemResponse, String> {
-//     info!("🔧 [SERVICE-BASED] Starting ServiceBasedBatchCrawlingEngine crawling: {:?}", request);
-    
-//     let session_id = format!("service_session_{}", Utc::now().timestamp());
-    
-// /// ServiceBasedBatchCrawlingEngine 초기화 (참고용)
-// /// NOTE: Deprecated – replace with ExecutionPlan + SessionActor flow. Pending removal
-// async fn initialize_service_based_engine(
-//     session_id: &str,
-//     request: &ActorCrawlingRequest,
-//     app_handle: &AppHandle,
-// ) -> Result<(ServiceBasedBatchCrawlingEngine, serde_json::Value), Box<dyn std::error::Error + Send + Sync>> {
-//     info!("🔧 Initializing ServiceBasedBatchCrawlingEngine for session: {}", session_id);
-//     Err("ServiceBasedBatchCrawlingEngine deprecated".into())
-// }
-//     }
-// }
-// /// ServiceBasedBatchCrawlingEngine 초기화 (참고용 - 완전 비활성화)
-// /// NOTE: Fully deprecated. Left commented for historical reference. Will be removed.
-// async fn initialize_service_based_engine(
-//     _session_id: &str,
-//     _request: &ActorCrawlingRequest,
-//     _app_handle: &AppHandle,
-// ) -> Result<(ServiceBasedBatchCrawlingEngine, serde_json::Value), Box<dyn std::error::Error + Send + Sync>> {
-//     Err("ServiceBasedBatchCrawlingEngine deprecated".into())
-// }
+// (Removed deprecated ServiceBasedBatchCrawlingEngine command block)
 
 /// Test SessionActor functionality
 #[tauri::command]
@@ -542,6 +513,7 @@ async fn execute_session_actor_with_batches(
             error_summary: vec![], // TODO: 실제 에러 요약
             processed_batches: batch_count as u32,
             total_success_count: total_pages as u32,
+            duplicates_skipped: 0,
             final_state: "completed".to_string(),
             timestamp: chrono::Utc::now(),
         },
@@ -688,8 +660,8 @@ async fn execute_real_batch_actor(
 /// 
 /// 시스템 상태를 종합 분석하여 최적의 실행 계획을 생성합니다.
 /// 이 함수가 호출된 후에는 더 이상 분석/계획 단계가 없습니다.
-async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppConfig, SiteStatus), Box<dyn std::error::Error + Send + Sync>> {
-    info!("🧠 Creating ExecutionPlan with single CrawlingPlanner call...");
+async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppConfig, DomainSiteStatus), Box<dyn std::error::Error + Send + Sync>> {
+    info!("🧠 Creating ExecutionPlan with CrawlingPlanner (cache-aware)...");
     
     // 1. 설정 로드
     let config_manager = ConfigManager::new()?;
@@ -746,7 +718,37 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
         Arc::new(SystemConfig::default()),
     ).with_repository(product_repo.clone());
     
-    info!("🎯 Analyzing system state with CrawlingPlanner...");
+    info!("🎯 Analyzing system state with CrawlingPlanner (attempting cache reuse)...");
+
+    // === Cache: attempt to reuse previously computed site analysis ===
+    let shared_cache: Option<State<SharedStateCache>> = app.try_state::<SharedStateCache>();
+    let cached_site_status: Option<DomainSiteStatus> = if let Some(cache_state) = shared_cache.as_ref() {
+        // TTL 5분 기본
+        match cache_state.get_valid_site_analysis_async(Some(5)).await {
+            Some(cached) => {
+                info!("♻️ Reusing cached SiteStatus: total_pages={}, last_page_products={} (age<=TTL)", cached.total_pages, cached.products_on_last_page);
+                Some(DomainSiteStatus {
+                    is_accessible: true,
+                    response_time_ms: 0, // Unknown from cache snapshot
+                    total_pages: cached.total_pages,
+                    estimated_products: cached.estimated_products,
+                    products_on_last_page: cached.products_on_last_page,
+                    last_check_time: cached.analyzed_at,
+                    health_score: cached.health_score,
+                    data_change_status: SiteDataChangeStatus::Stable { count: cached.estimated_products },
+                    decrease_recommendation: None,
+                    crawling_range_recommendation: CrawlingRangeRecommendation::Full, // Conservative default
+                })
+            }
+            None => {
+                info!("🔄 No valid cached SiteStatus (or expired) – performing fresh check");
+                None
+            }
+        }
+    } else {
+        info!("📭 SharedStateCache not available in Tauri state – proceeding without cache");
+        None
+    };
 
     // ──────────────────────────────────────────────
     // (1) 사전 데이터베이스 상태로 전략 결정 힌트 계산
@@ -778,12 +780,68 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
     };
 
     // (3) 사이트 상태 및 계획 생성 (사이트 상태 1회 조회 + DB 분석)
-    let (crawling_plan, site_status) = crawling_planner.create_crawling_plan_with_cache(&crawling_config, None).await?;
+    let cache_was_none = cached_site_status.is_none();
+    // Attempt DB analysis cache reuse (TTL 3m)
+    let cached_db_analysis: Option<crate::domain::services::crawling_services::DatabaseAnalysis> = if let Some(cache_state) = shared_cache.as_ref() {
+        cache_state.get_valid_db_analysis_async(Some(3)).await.map(|d| crate::domain::services::crawling_services::DatabaseAnalysis {
+            total_products: d.total_products,
+            unique_products: d.total_products, // approximation (no uniqueness snapshot in cached struct)
+            duplicate_count: 0,
+            missing_products_count: 0,
+            last_update: Some(d.analyzed_at),
+            missing_fields_analysis: crate::domain::services::crawling_services::FieldAnalysis {
+                missing_company: 0,
+                missing_model: 0,
+                missing_matter_version: 0,
+                missing_connectivity: 0,
+                missing_certification_date: 0,
+            },
+            data_quality_score: d.quality_score,
+        })
+    } else { None };
+    let db_cache_hit = cached_db_analysis.is_some();
+    if db_cache_hit { info!(target: "kpi.execution_plan", "{{\"event\":\"db_analysis_cache_hit\"}}"); }
+    let (crawling_plan, site_status, db_analysis_used) = crawling_planner
+        .create_crawling_plan_with_caches(&crawling_config, cached_site_status, cached_db_analysis)
+        .await?;
+    if !db_cache_hit { info!(target: "kpi.execution_plan", "{{\"event\":\"db_analysis_cache_miss\"}}"); }
+    // Persist fresh site status & db analysis if newly fetched
+    if let Some(cache_state_ref) = shared_cache.as_ref() {
+        if cache_was_none {
+            use crate::application::shared_state::SiteAnalysisResult;
+            let site_analysis = SiteAnalysisResult::new(
+                site_status.total_pages,
+                site_status.products_on_last_page,
+                site_status.estimated_products,
+                crawling_config.site_url.clone(),
+                site_status.health_score,
+            );
+            cache_state_ref.set_site_analysis(site_analysis).await;
+        }
+        if !db_cache_hit {
+            use crate::application::shared_state::DbAnalysisResult;
+            let db_cached = DbAnalysisResult::new(
+                db_analysis_used.total_products,
+                None,
+                None,
+                db_analysis_used.data_quality_score,
+            );
+            cache_state_ref.set_db_analysis(db_cached).await;
+        }
+    }
     info!("🧪 CrawlingPlanner produced plan with {:?} (requested strategy {:?})", crawling_plan.optimization_strategy, chosen_strategy);
+    if db_cache_hit { info!(target: "kpi.execution_plan", "{{\"event\":\"db_analysis_used\",\"source\":\"cache\",\"total_products\":{}}}", db_analysis_used.total_products); } else { info!(target: "kpi.execution_plan", "{{\"event\":\"db_analysis_used\",\"source\":\"fresh\",\"total_products\":{}}}", db_analysis_used.total_products); }
     
     info!("📋 CrawlingPlan created: {:?}", crawling_plan);
-    
-    // 5. ExecutionPlan 생성
+
+    // === DB Analysis cache advisory (pre-plan) ===
+    if let Some(cache_state) = shared_cache.as_ref() {
+        if let Some(db_cached) = cache_state.get_valid_db_analysis_async(Some(3)).await {
+            info!("♻️ Using cached DB analysis advisory: total_products={} (age TTL<=3m)", db_cached.total_products);
+        }
+    }
+
+    // 5. ExecutionPlan 생성 전 hash 산출 및 PlanCache 검사
     let session_id = format!("actor_session_{}", Utc::now().timestamp());
     let plan_id = format!("plan_{}", Utc::now().timestamp());
     
@@ -864,6 +922,40 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
     let hash_string = serde_json::to_string(&hash_input).unwrap_or_default();
     let plan_hash = blake3::hash(hash_string.as_bytes()).to_hex().to_string();
 
+    if let Some(cache_state) = shared_cache.as_ref() {
+        if let Some(hit) = cache_state.get_cached_execution_plan(&plan_hash).await {
+            return Ok((hit, app_config, site_status));
+        } else {
+            info!("🆕 PlanCache miss (hash={}) — creating new ExecutionPlan", plan_hash);
+        }
+    }
+
+    // Partial page reinclusion (if last DB page not fully processed)
+    if let (Some(mp), Some(mi)) = (db_max_page_id, db_max_index_in_page) {
+        if mi < 11 { // 0-based index; full page means 0..11
+            let partial_site_page = site_status.total_pages - mp as u32; // mapping rule
+            let already_included = crawling_ranges.iter().any(|r| {
+                if r.reverse_order { partial_site_page <= r.start_page && partial_site_page >= r.end_page } else { partial_site_page >= r.start_page && partial_site_page <= r.end_page }
+            });
+            if !already_included {
+                info!("🔁 Reinserting partial page {} (db_page_id={}, index_in_page={}) at front of ranges", partial_site_page, mp, mi);
+                crawling_ranges.insert(0, PageRange { start_page: partial_site_page, end_page: partial_site_page, estimated_products: 12, reverse_order: true });
+            }
+        }
+    }
+
+    // PlanCache hit 확인 (hash 계산 후 조회) - hash 는 아래에서 이미 계산됨
+    if let Some(cache_state) = app.try_state::<SharedStateCache>() {
+        if let Some(cached_plan) = futures::executor::block_on(async { cache_state.get_cached_execution_plan(&plan_hash).await }) {
+            info!("♻️ PlanCache hit: reuse ExecutionPlan hash={}", plan_hash);
+            let json_line = format!("{{\"event\":\"plan_cache_hit\",\"hash\":\"{}\"}}", plan_hash);
+            info!(target: "kpi.execution_plan", "{}", json_line);
+            return Ok((cached_plan, app_config, site_status));
+        }
+    }
+
+    let ranges_len = crawling_ranges.len();
+    let strategy_string = format!("{:?}", crawling_plan.optimization_strategy);
     let execution_plan = ExecutionPlan {
         plan_id,
         session_id,
@@ -873,14 +965,27 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
         estimated_duration_secs: crawling_plan.total_estimated_duration_secs,
         created_at: Utc::now(),
         analysis_summary: format!("Strategy: {:?}, Total pages: {}", 
-                                crawling_plan.optimization_strategy, total_pages),
-    original_strategy: format!("{:?}", crawling_plan.optimization_strategy),
+                                strategy_string, total_pages),
+    original_strategy: strategy_string.clone(),
         input_snapshot: snapshot,
         plan_hash,
+    skip_duplicate_urls: true,
+    kpi_meta: Some(crate::new_architecture::actors::types::ExecutionPlanKpi {
+        total_ranges: ranges_len,
+        total_pages,
+        batches: ranges_len,
+        strategy: strategy_string,
+        created_at: Utc::now(),
+    }),
     };
     
     info!("✅ ExecutionPlan created successfully: {} pages across {} batches (hash={})", 
           total_pages, execution_plan.crawling_ranges.len(), execution_plan.plan_hash);
+    if let Some(kpi) = &execution_plan.kpi_meta {
+        info!(target: "kpi.execution_plan", "{{\"event\":\"plan_created\",\"hash\":\"{}\",\"total_pages\":{},\"ranges\":{},\"batches\":{},\"strategy\":\"{}\",\"ts\":\"{}\"}}",
+            execution_plan.plan_hash, kpi.total_pages, kpi.total_ranges, kpi.batches, kpi.strategy, kpi.created_at);
+    }
+    if let Some(cache_state) = app.try_state::<SharedStateCache>() { cache_state.cache_execution_plan(execution_plan.clone()).await; }
     
     Ok((execution_plan, app_config, site_status))
 }
@@ -1008,6 +1113,7 @@ async fn execute_session_actor_with_execution_plan(
             error_summary: vec![],
             processed_batches: execution_plan.crawling_ranges.len() as u32,
             total_success_count: 0,
+            duplicates_skipped: 0,
             final_state: "Completed".to_string(),
             timestamp: Utc::now(),
         },
@@ -1022,70 +1128,4 @@ async fn execute_session_actor_with_execution_plan(
     Ok(())
 }
 
-/// BatchActor 시뮬레이션 (나중에 실제 구현으로 교체)
-async fn execute_batch_actor_simulation(
-    batch_id: &str,
-    pages: &[u32],
-    actor_event_tx: broadcast::Sender<AppEvent>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    info!("🎯 BatchActor {} simulating processing of {} pages", batch_id, pages.len());
-    
-    for (index, page) in pages.iter().enumerate() {
-        info!("🔍 BatchActor {} processing page {}", batch_id, page);
-        
-        // 진행 상황 이벤트 발송
-        let progress_event = AppEvent::Progress {
-            session_id: batch_id.split('_').take(2).collect::<Vec<_>>().join("_"),
-            current_step: index as u32 + 1,
-            total_steps: pages.len() as u32,
-            message: format!("Processing page {}", page),
-            percentage: ((index + 1) as f64 / pages.len() as f64) * 100.0,
-            timestamp: chrono::Utc::now(),
-        };
-        
-        if let Err(e) = actor_event_tx.send(progress_event) {
-            error!("Failed to send Progress event: {}", e);
-        }
-        
-        // 시뮬레이션 처리 시간
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        
-        info!("✅ BatchActor {} completed page {}", batch_id, page);
-    }
-    
-    info!("✅ BatchActor {} completed all {} pages", batch_id, pages.len());
-    Ok(())
-}
-
-/// 시뮬레이션 크롤링 실행 (폴백)
-async fn run_simulation_crawling(
-    request: &ActorCrawlingRequest,
-    batch_size: u32,
-) {
-    info!("🔄 Running simulation crawling as fallback...");
-    
-    // 페이지 범위를 배치로 분할
-    let mut current_page = request.start_page;
-    let mut batch_number = 1;
-    
-    while current_page <= request.end_page {
-        let batch_end = std::cmp::min(current_page + batch_size - 1, request.end_page);
-        info!("📦 Processing Batch {}: pages {} to {}", batch_number, current_page, batch_end);
-        
-        // 배치별 페이지 처리 시뮬레이션
-        for page in current_page..=batch_end {
-            info!("🔍 Processing page {} with simulated crawling", page);
-            
-            // 시뮬레이션 지연 시간
-            tokio::time::sleep(Duration::from_millis(request.delay_ms.unwrap_or(800))).await;
-            
-            info!("✅ Page {} processed successfully", page);
-        }
-        
-        info!("✅ Batch {} completed", batch_number);
-        current_page = batch_end + 1;
-        batch_number += 1;
-    }
-    
-    info!("🎉 Simulation crawling completed successfully");
-}
+// (Removed unused simulation helpers: execute_batch_actor_simulation, run_simulation_crawling)

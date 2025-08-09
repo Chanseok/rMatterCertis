@@ -156,6 +156,15 @@ impl IntegratedContext {
     pub fn get_event_buffer_size(&self) -> usize {
         self.config.event_buffer_size.unwrap_or(1000)
     }
+
+    /// 이벤트 채널 구독자 생성 (Broadcast Receiver 반환)
+    ///
+    /// SessionActor 등이 실시간으로 BatchReport 등 AppEvent 를 수신하여
+    /// 누적 지표(예: duplicates_skipped)를 집계하기 위한 표준 인터페이스.
+    /// 호출 시마다 새로운 receiver 가 생성되며 call site 에서 select! 에 통합 가능.
+    pub fn subscribe_events(&self) -> broadcast::Receiver<AppEvent> {
+        self.event_tx.subscribe()
+    }
 }
 
 /// 컨텍스트 관련 에러
@@ -288,10 +297,18 @@ mod tests {
 
         let event = AppEvent::SessionStarted {
             session_id: "test-session".to_string(),
-            config: crate::new_architecture::channels::types::BatchConfig {
-                target_url: "https://test.com".to_string(),
-                max_pages: Some(10),
+            config: crate::new_architecture::actors::types::CrawlingConfig {
+                site_url: "https://test.com".to_string(),
+                start_page: 1,
+                end_page: 10,
+                concurrency_limit: 1,
+                batch_size: 5,
+                request_delay_ms: 0,
+                timeout_secs: 30,
+                max_retries: 0,
+                strategy: crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst,
             },
+            timestamp: chrono::Utc::now(),
         };
 
         context.emit_event(event.clone()).expect("Should emit event");

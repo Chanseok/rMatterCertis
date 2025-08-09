@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::sync::Arc;
+use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 use tokio::sync::{mpsc, Semaphore};
 use tracing::{info, warn, error, debug};
@@ -64,6 +65,14 @@ pub struct BatchActor {
 
     /// Stage 2(ListPageCrawling)에서 재시도 후에도 실패한 페이지 번호 목록
     failed_list_pages: Vec<u32>,
+    // 최근 처리한 Product URL LRU 캐시 (경량 dedupe 1단계)
+    recent_product_urls: VecDeque<String>,
+    recent_product_set: HashSet<String>,
+    recent_capacity: usize,
+    /// URL 중복 제거 사용 여부 (ExecutionPlan에서 전달)
+    skip_duplicate_urls: bool,
+    /// 누적 중복 스킵 수 (배치 단위)
+    duplicates_skipped: u32,
 }
 
 // Debug 수동 구현 (의존성들이 Debug를 구현하지 않아서)
@@ -159,6 +168,11 @@ impl BatchActor {
             product_repo: None,
             app_config: None,
             failed_list_pages: Vec::new(),
+            recent_product_urls: VecDeque::new(),
+            recent_product_set: HashSet::new(),
+            recent_capacity: 2000,
+            skip_duplicate_urls: true,
+            duplicates_skipped: 0,
         }
     }
     
@@ -199,6 +213,11 @@ impl BatchActor {
             product_repo: Some(product_repo),
             app_config: Some(app_config),
             failed_list_pages: Vec::new(),
+            recent_product_urls: VecDeque::new(),
+            recent_product_set: HashSet::new(),
+            recent_capacity: 2000,
+            skip_duplicate_urls: true,
+            duplicates_skipped: 0,
         }
     }
     
@@ -259,6 +278,10 @@ impl BatchActor {
         self.completed_pages = 0;
         self.success_count = 0;
         self.failure_count = 0;
+    // 새 배치마다 중복 방지 캐시 초기화 (세션 전체 유지가 아니라 배치 단위로 격리)
+    self.recent_product_urls.clear();
+    self.recent_product_set.clear();
+    debug!("♻️ Cleared recent product URL dedupe caches for new batch");
         
         // 동시성 제어 설정
         self.concurrency_limiter = Some(Arc::new(Semaphore::new(concurrency_limit as usize)));
@@ -424,7 +447,7 @@ impl BatchActor {
         }
 
         // Stage 2 결과를 Stage 3 입력으로 변환
-        let product_detail_items = self.transform_stage_output(
+    let product_detail_items = self.transform_stage_output(
             StageType::ListPageCrawling,
             initial_items.clone(),
             &list_page_result
@@ -455,8 +478,10 @@ impl BatchActor {
             }
         };
         
-        info!("✅ Stage 3 (ProductDetailCrawling) completed: {} success, {} failed", 
-              detail_result.successful_items, detail_result.failed_items);
+      info!("✅ Stage 3 (ProductDetailCrawling) completed: {} success, {} failed", 
+          detail_result.successful_items, detail_result.failed_items);
+      info!(target: "kpi.batch", "{{\"event\":\"batch_stage_summary\",\"batch_id\":\"{}\",\"stage\":\"product_detail\",\"success\":{},\"failed\":{},\"pages\":{},\"ts\":\"{}\"}}",
+          batch_id, detail_result.successful_items, detail_result.failed_items, pages.len(), chrono::Utc::now());
 
         // Summarize failed product detail URLs by correlating input items with Stage 3 results
         if detail_result.failed_items > 0 {
@@ -503,7 +528,7 @@ impl BatchActor {
         }
 
         // Stage 3 결과를 Stage 4 입력으로 변환 
-        let data_validation_items = self.transform_stage_output(
+    let data_validation_items = self.transform_stage_output(
             StageType::ProductDetailCrawling,
             product_detail_items,
             &detail_result
@@ -533,11 +558,13 @@ impl BatchActor {
             }
         };
         
-        info!("✅ Stage 4 (DataValidation) completed: {} success, {} failed", 
-              validation_result.successful_items, validation_result.failed_items);
+      info!("✅ Stage 4 (DataValidation) completed: {} success, {} failed", 
+          validation_result.successful_items, validation_result.failed_items);
+      info!(target: "kpi.batch", "{{\"event\":\"batch_stage_summary\",\"batch_id\":\"{}\",\"stage\":\"data_validation\",\"success\":{},\"failed\":{},\"pages\":{},\"ts\":\"{}\"}}",
+          batch_id, validation_result.successful_items, validation_result.failed_items, pages.len(), chrono::Utc::now());
 
         // Stage 4 결과를 Stage 5 입력으로 변환 
-        let data_saving_items = self.transform_stage_output(
+    let data_saving_items = self.transform_stage_output(
             StageType::DataValidation,
             data_validation_items,
             &validation_result
@@ -567,8 +594,10 @@ impl BatchActor {
             }
         };
         
-        info!("✅ Stage 5 (DataSaving) completed: {} success, {} failed", 
-              saving_result.successful_items, saving_result.failed_items);
+      info!("✅ Stage 5 (DataSaving) completed: {} success, {} failed", 
+          saving_result.successful_items, saving_result.failed_items);
+      info!(target: "kpi.batch", "{{\"event\":\"batch_stage_summary\",\"batch_id\":\"{}\",\"stage\":\"data_saving\",\"success\":{},\"failed\":{},\"pages\":{},\"ts\":\"{}\"}}",
+          batch_id, saving_result.successful_items, saving_result.failed_items, pages.len(), chrono::Utc::now());
 
         // 배치 결과 집계
         self.success_count = saving_result.successful_items;
@@ -632,6 +661,7 @@ impl BatchActor {
             details_failed,
             retries_used,
             duration_ms,
+            duplicates_skipped: self.duplicates_skipped,
             timestamp: Utc::now(),
         };
         context.emit_event(report_event).await
@@ -1071,7 +1101,7 @@ impl BatchActor {
     
     /// Stage 출력을 다음 Stage 입력으로 변환
     async fn transform_stage_output(
-        &self, 
+        &mut self, 
         completed_stage: StageType, 
         input_items: Vec<StageItem>,
         stage_result: &StageResult
@@ -1088,6 +1118,9 @@ impl BatchActor {
                 
                 let mut transformed_items = Vec::new();
                 let mut total_urls_collected = 0;
+                let mut total_urls_after_dedupe = 0;
+                let enable_dedupe = self.skip_duplicate_urls;
+                let mut total_duplicates_skipped = 0u32;
                 
                 for (item_index, item) in input_items.iter().enumerate() {
                     if let StageItem::Page(page_number) = item {
@@ -1099,18 +1132,56 @@ impl BatchActor {
                                     // JSON에서 ProductURL들을 파싱
                                     match serde_json::from_str::<Vec<crate::domain::product_url::ProductUrl>>(collected_data_json) {
                                         Ok(product_urls_vec) => {
-                                            
                                             if !product_urls_vec.is_empty() {
-                                                total_urls_collected += product_urls_vec.len();
-                                                
-                                                let product_urls = ProductUrls {
-                                                    urls: product_urls_vec.clone(),
-                                                    batch_id: Some(self.actor_id.clone()),
+                                                let original_count = product_urls_vec.len();
+                                                total_urls_collected += original_count;
+                                                let filtered_vec = if enable_dedupe {
+                                                    let mut filtered = Vec::with_capacity(original_count);
+                                                    for pu in product_urls_vec.into_iter() {
+                                                        let key = pu.url.clone();
+                                                        if !self.recent_product_set.contains(&key) {
+                                                            // LRU eviction if needed
+                                                            if self.recent_product_urls.len() >= self.recent_capacity {
+                                                                if let Some(old) = self.recent_product_urls.pop_front() {
+                                                                    self.recent_product_set.remove(&old);
+                                                                }
+                                                            }
+                                                            self.recent_product_set.insert(key.clone());
+                                                            self.recent_product_urls.push_back(key);
+                                                            filtered.push(pu);
+                                                        } else {
+                                                            total_duplicates_skipped += 1;
+                                                        }
+                                                    }
+                                                    filtered
+                                                } else {
+                                                    product_urls_vec
                                                 };
-                                                
-                                                transformed_items.push(StageItem::ProductUrls(product_urls));
-                                                
-                                                info!("✅ Extracted {} ProductURLs from page {}", product_urls_vec.len(), page_number);
+
+                                                let after_count = filtered_vec.len();
+                                                total_urls_after_dedupe += after_count;
+
+                                                if after_count > 0 {
+                                                    let product_urls = ProductUrls {
+                                                        urls: filtered_vec,
+                                                        batch_id: Some(self.actor_id.clone()),
+                                                    };
+                                                    transformed_items.push(StageItem::ProductUrls(product_urls));
+                                                }
+
+                                                if enable_dedupe {
+                                                    info!(
+                                                        "✅ Extracted page {} URLs: original={} after_dedupe={} skipped={} recent_cache_size={} recent_set_size={}",
+                                                        page_number,
+                                                        original_count,
+                                                        after_count,
+                                                        original_count.saturating_sub(after_count),
+                                                        self.recent_product_urls.len(),
+                                                        self.recent_product_set.len()
+                                                    );
+                                                } else {
+                                                    info!("✅ Extracted {} ProductURLs from page {} (dedupe disabled)", original_count, page_number);
+                                                }
                                             } else {
                                                 warn!("⚠️  Page {} crawling succeeded but no ProductURLs were collected", page_number);
                                             }
@@ -1132,12 +1203,28 @@ impl BatchActor {
                     }
                 }
                 
-                info!("✅ Transformed {} Page items to {} ProductUrls items ({} total URLs)", 
-                      input_items.len(), transformed_items.len(), total_urls_collected);
+                if enable_dedupe {
+                    info!(
+                        "✅ Transformed {} Page items → {} ProductUrls items (total_urls_collected={} after_dedupe={} duplicates_skipped={} recent_cache_size={})",
+                        input_items.len(),
+                        transformed_items.len(),
+                        total_urls_collected,
+                        total_urls_after_dedupe,
+                        total_duplicates_skipped,
+                        self.recent_product_urls.len()
+                    );
+                } else {
+                    info!(
+                        "✅ Transformed {} Page items to {} ProductUrls items ({} total URLs)",
+                        input_items.len(), transformed_items.len(), total_urls_collected
+                    );
+                }
                 
                 if transformed_items.is_empty() {
                     warn!("⚠️  No ProductURLs were extracted - all pages may have failed or returned no data");
                 }
+                // 누적 합산 후 저장
+                self.duplicates_skipped = self.duplicates_skipped.saturating_add(total_duplicates_skipped);
                 
                 Ok(transformed_items)
             }

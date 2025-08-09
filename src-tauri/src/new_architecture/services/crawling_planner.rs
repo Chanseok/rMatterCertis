@@ -119,7 +119,7 @@ impl CrawlingPlanner {
                 .map_err(|e| ActorError::CommandProcessingFailed(format!("Site status check failed: {e}")))?
         };
 
-        // 2. 데이터베이스 분석
+        // 2. 데이터베이스 분석 (SharedStateCache 재사용 시도)
         let db_analysis = self.database_analyzer
             .analyze_current_state()
             .await
@@ -133,6 +133,44 @@ impl CrawlingPlanner {
         ).await?;
 
         Ok((plan, site_status))
+    }
+
+    /// 캐시된 SiteStatus 및 DatabaseAnalysis를 활용해 크롤링 계획을 수립하고 모두 반환합니다.
+    /// 기존 create_crawling_plan_with_cache 와 달리 DB 분석도 캐시를 재사용합니다.
+    pub async fn create_crawling_plan_with_caches(
+        &self,
+        crawling_config: &CrawlingConfig,
+        cached_site_status: Option<SiteStatus>,
+        cached_db_analysis: Option<DatabaseAnalysis>,
+    ) -> Result<(CrawlingPlan, SiteStatus, DatabaseAnalysis), ActorError> {
+        // 1. 사이트 상태 (캐시 우선)
+        let site_status = if let Some(cached) = cached_site_status {
+            cached
+        } else {
+            self.status_checker
+                .check_site_status()
+                .await
+                .map_err(|e| ActorError::CommandProcessingFailed(format!("Site status check failed: {e}")))?
+        };
+
+        // 2. DB 분석 (캐시 우선)
+        let db_analysis = if let Some(cached) = cached_db_analysis {
+            cached
+        } else {
+            self.database_analyzer
+                .analyze_current_state()
+                .await
+                .map_err(|e| ActorError::CommandProcessingFailed(format!("Database analysis failed: {e}")))?
+        };
+
+        // 3. 최적화된 계획 수립
+        let plan = self.optimize_crawling_strategy(
+            crawling_config,
+            Box::new(site_status.clone()),
+            Box::new(db_analysis.clone()),
+        ).await?;
+
+        Ok((plan, site_status, db_analysis))
     }
     
     /// 시스템 상태를 분석합니다.
@@ -295,7 +333,7 @@ impl CrawlingPlanner {
                 // ──────────────────────────────────────────────
                 // Precise DB continuation
             // reuse global cached range; prefer lazy_static already present
-            use lazy_static::lazy_static; // macro import
+            // lazy_static import removed (no longer needed)
                 #[derive(Clone)]
                 struct DbCachedRange { pages: Vec<u32>, total_pages: u32, requested: u32, last_db_page_id: Option<i32>, last_db_index: Option<i32>, ts: std::time::Instant }
                 lazy_static::lazy_static! {
@@ -340,9 +378,18 @@ impl CrawlingPlanner {
                         None
                     }
                 };
-                let pages: Vec<u32> = if let Some((start_page, end_page)) = precise {
+                let mut pages: Vec<u32> = if let Some((start_page, end_page)) = precise {
                     if start_page >= end_page { (end_page..=start_page).rev().collect() } else { (start_page..=end_page).rev().collect() }
                 } else { newest_fallback_pages() };
+                if let (Some(mp), Some(mi)) = (max_page_id, max_index_in_page) {
+                    if mi < 11 { // partial page
+                        let partial_site_page = total_pages_on_site - mp as u32;
+                        if !pages.contains(&partial_site_page) {
+                            pages.insert(0, partial_site_page);
+                            info!("🔁 Partial page re-included (planner): {} (db_page_id={}, index_in_page={})", partial_site_page, mp, mi);
+                        }
+                    }
+                }
                 *LAST_DB_RANGE.lock().unwrap() = Some(DbCachedRange { pages: pages.clone(), total_pages: total_pages_on_site, requested: count, last_db_page_id: max_page_id, last_db_index: max_index_in_page, ts: now });
                 info!("🔧 Computed ContinueFromDb range: db_last=({:?},{:?}) pages={:?}", max_page_id, max_index_in_page, pages);
                 pages
