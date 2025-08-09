@@ -2861,6 +2861,7 @@ dependencies = [
  "futures",
  "governor",
  "lazy_static",
+ "once_cell",
  "proptest",
  "rayon",
  "regex",

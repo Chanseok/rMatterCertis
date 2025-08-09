@@ -108,6 +108,11 @@ impl ActorEventBridge {
             // 리포트 이벤트
             AppEvent::BatchReport { .. } => "actor-batch-report",
             AppEvent::CrawlReportSession { .. } => "actor-session-report",
+            AppEvent::PhaseStarted { .. } => "actor-phase-started",
+            AppEvent::PhaseCompleted { .. } => "actor-phase-completed",
+            AppEvent::PhaseAborted { .. } => "actor-phase-aborted",
+            AppEvent::ShutdownRequested { .. } => "actor-shutdown-requested",
+            AppEvent::ShutdownCompleted { .. } => "actor-shutdown-completed",
         };
 
         // 이벤트 데이터를 JSON으로 직렬화

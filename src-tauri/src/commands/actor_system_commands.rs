@@ -6,7 +6,7 @@ use crate::new_architecture::actors::SessionActor;
 use crate::new_architecture::context::{SystemConfig, AppContext};
 use crate::new_architecture::channels::types::AppEvent;
 use crate::new_architecture::channels::types::ActorCommand; // 올바른 ActorCommand 사용
-use crate::new_architecture::actors::types::{CrawlingConfig, BatchConfig, ExecutionPlan, PageRange, SessionSummary};
+use crate::new_architecture::actors::types::{CrawlingConfig, BatchConfig, ExecutionPlan, PageRange, SessionSummary, CrawlPhase};
 use crate::new_architecture::actor_event_bridge::start_actor_event_bridge;
 use crate::infrastructure::config::AppConfig;
 use crate::domain::services::SiteStatus;
@@ -25,6 +25,12 @@ use tokio::sync::{mpsc, broadcast, watch};
 use tokio::time::Duration;
 use tracing::{info, error, warn};
 use chrono::Utc;
+use once_cell::sync::OnceCell;
+
+// Global shutdown signal sender for phase runner / session
+static PHASE_SHUTDOWN_TX: OnceCell<watch::Sender<bool>> = OnceCell::new();
+
+// (Removed temporary phase runner + single batch helper after unifying execution path)
 
 /// Actor System State managed by Tauri
 #[derive(Default)]
@@ -96,29 +102,62 @@ pub async fn start_actor_system_crawling(
     info!("🎭 SessionActor created with ID: {}", execution_plan.session_id);
     
     // ExecutionPlan 기반 실행 (백그라운드)
-    let execution_plan_for_task = execution_plan.clone();
+    let execution_plan_for_task_main = execution_plan.clone();
+    let execution_plan_for_return = execution_plan.clone();
     let app_config_for_task = app_config.clone();
     let site_status_for_task = site_status.clone();
     let actor_event_tx_for_spawn = actor_event_tx.clone();
     let session_id_for_return = execution_plan.session_id.clone();
     
+    let (shutdown_req_tx, shutdown_req_rx) = watch::channel(false);
+    let _ = PHASE_SHUTDOWN_TX.set(shutdown_req_tx.clone()); // ignore if already set
+
     let _session_actor_handle = tokio::spawn(async move {
-        info!("🚀 SessionActor executing with predefined ExecutionPlan...");
+        info!("🚀 SessionActor executing with predefined ExecutionPlan (phased)...");
         
         // SessionActor는 더 이상 분석/계획하지 않고 순수 실행만
-        match execute_session_actor_with_execution_plan(
-            execution_plan_for_task,
-            &app_config_for_task,
-            &site_status_for_task,
-            actor_event_tx_for_spawn,
-        ).await {
-            Ok(()) => {
-                info!("🎉 Actor system crawling completed successfully!");
+        // Phase sequence definition (extensible)
+        let phases = vec![
+            CrawlPhase::ListPages,
+            // Future: CrawlPhase::ProductDetails,
+            // Future: CrawlPhase::DataValidation,
+            CrawlPhase::Finalize,
+        ];
+
+        let session_id_clone = execution_plan_for_task_main.session_id.clone();
+    let total_phase_start = std::time::Instant::now();
+        for phase in phases {
+            if *shutdown_req_rx.borrow() { 
+                let _ = actor_event_tx_for_spawn.send(AppEvent::PhaseAborted { session_id: session_id_clone.clone(), phase: phase.clone(), reason: "shutdown_requested".into(), timestamp: Utc::now() });
+                break;
             }
-            Err(e) => {
-                error!("❌ Actor system crawling failed: {}", e);
+            let phase_started_at = std::time::Instant::now();
+            let _ = actor_event_tx_for_spawn.send(AppEvent::PhaseStarted { session_id: session_id_clone.clone(), phase: phase.clone(), timestamp: Utc::now() });
+            let phase_res = match phase {
+                CrawlPhase::ListPages => execute_session_actor_with_execution_plan(
+                    execution_plan_for_task_main.clone(),
+                    &app_config_for_task,
+                    &site_status_for_task,
+                    actor_event_tx_for_spawn.clone(),
+                ).await.map(|_| true),
+                CrawlPhase::Finalize => { info!("🧹 Finalize phase placeholder"); Ok(true) },
+                CrawlPhase::ProductDetails | CrawlPhase::DataValidation => { info!("(Phase not yet implemented: {:?})", phase); Ok(true) }
+            };
+            let duration_ms = phase_started_at.elapsed().as_millis() as u64;
+            match phase_res {
+                Ok(ok) => {
+                    let _ = actor_event_tx_for_spawn.send(AppEvent::PhaseCompleted { session_id: session_id_clone.clone(), phase: phase.clone(), succeeded: ok, duration_ms, timestamp: Utc::now() });
+                }
+                Err(e) => {
+                    error!("Phase {:?} failed: {}", phase, e);
+                    let _ = actor_event_tx_for_spawn.send(AppEvent::PhaseAborted { session_id: session_id_clone.clone(), phase: phase.clone(), reason: format!("{}", e), timestamp: Utc::now() });
+                    break;
+                }
             }
         }
+        info!("🎉 Actor system phase sequence finished in {} ms", total_phase_start.elapsed().as_millis());
+
+    // (PhaseRunner fallback removed: execute_session_actor_with_execution_plan now covers all ranges)
         
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     });
@@ -128,8 +167,24 @@ pub async fn start_actor_system_crawling(
         success: true,
         message: "Actor system crawling started with ExecutionPlan".to_string(),
         session_id: Some(session_id_for_return),
-        data: Some(serde_json::to_value(&execution_plan).map_err(|e| e.to_string())?),
+    data: Some(serde_json::to_value(&execution_plan_for_return).map_err(|e| e.to_string())?),
     })
+}
+
+/// 요청: 현재 실행 중인 세션에 Graceful Shutdown 신호 전송
+#[tauri::command]
+pub async fn request_graceful_shutdown(app: AppHandle) -> Result<ActorSystemResponse, String> {
+    if let Some(tx) = PHASE_SHUTDOWN_TX.get() {
+        if tx.send(true).is_err() { return Err("Failed to send shutdown signal".into()); }
+        // Emit ShutdownRequested event via broadcast if bridge exists (best-effort)
+        if let Some(state) = app.try_state::<AppState>() { let _ = state; }
+        let now = Utc::now();
+        // We don't hold a broadcast handle here; Session loop will emit PhaseAborted + SessionCompleted/Failed
+        info!("🛑 Graceful shutdown requested at {}", now);
+        Ok(ActorSystemResponse { success: true, message: "Graceful shutdown signal sent".into(), session_id: None, data: None })
+    } else {
+        Err("No active session to shutdown".into())
+    }
 }
 
 // (Removed deprecated ServiceBasedBatchCrawlingEngine command block)
@@ -640,21 +695,18 @@ async fn execute_real_batch_actor(
         .map_err(|e| format!("Failed to send ProcessBatch command: {}", e))?;
     info!("✅ ProcessBatch command sent");
     
-    // Shutdown 명령 전송
-    info!("📡 Sending Shutdown command...");
-    command_tx.send(ActorCommand::Shutdown).await
-        .map_err(|e| format!("Failed to send Shutdown command: {}", e))?;
-    info!("✅ Shutdown command sent");
-    
-    // BatchActor 완료 대기
-    info!("⏳ Waiting for BatchActor completion...");
+    // Shutdown 명령은 모든 작업이 자연 종료될 때까지 지연 (다음 phase/배치 전환 로직에서 결정)
+    info!("⏳ Waiting for BatchActor completion (deferred shutdown)...");
     batch_task.await
         .map_err(|e| format!("BatchActor task failed: {}", e))?
         .map_err(|e| format!("BatchActor execution failed: {:?}", e))?;
     
     info!("✅ BatchActor {} completed REAL processing of {} pages", batch_id, pages.len());
+    // TODO: phase/plan 실행 컨트롤러에서 남은 배치/phase 진행 후 최종 Shutdown 발송
     Ok(())
 }
+
+// (run_single_batch_real removed)
 
 /// CrawlingPlanner 기반 ExecutionPlan 생성 (단일 호출)
 /// 
@@ -1005,6 +1057,19 @@ async fn execute_session_actor_with_execution_plan(
           execution_plan.batch_size,
           execution_plan.concurrency_limit);
 
+    // ----- Aggregated metrics (ranges -> batches/pages) -----
+    let batch_unit = execution_plan.batch_size.max(1);
+    let mut expected_pages: usize = 0;
+    let mut expected_batches: usize = 0;
+    for r in &execution_plan.crawling_ranges {
+        let pages_in_range = if r.reverse_order { r.start_page - r.end_page + 1 } else { r.end_page - r.start_page + 1 } as usize;
+        expected_pages += pages_in_range;
+        expected_batches += (pages_in_range + batch_unit as usize - 1) / batch_unit as usize;
+    }
+    info!("🧮 Aggregated metrics => ranges: {}, expected_pages: {}, expected_batches: {}, batch_size: {}", execution_plan.crawling_ranges.len(), expected_pages, expected_batches, batch_unit);
+    let mut completed_pages: usize = 0;
+    let mut completed_batches: usize = 0;
+
     // 실행 전 해시 재계산 & 검증 (생성 시와 동일한 직렬화 스키마 사용)
     let verify_input = serde_json::json!({
         "snapshot": &execution_plan.input_snapshot,
@@ -1057,18 +1122,20 @@ async fn execute_session_actor_with_execution_plan(
     }
     
     // 각 범위별로 순차 실행
-    for (range_idx, page_range) in execution_plan.crawling_ranges.iter().enumerate() {
-      info!("🎯 Processing batch {} of {}: pages {} to {} (reverse: {})", 
-          range_idx + 1, execution_plan.crawling_ranges.len(),
-              page_range.start_page, page_range.end_page, page_range.reverse_order);
+        for (range_idx, page_range) in execution_plan.crawling_ranges.iter().enumerate() {
+            let pages_in_range = if page_range.reverse_order { page_range.start_page - page_range.end_page + 1 } else { page_range.end_page - page_range.start_page + 1 } as usize;
+            let range_batches = (pages_in_range + batch_unit as usize - 1) / batch_unit as usize;
+            info!("🎯 Range {}/{} start: pages {} to {} ({} pages => {} batches, reverse: {})", 
+                    range_idx + 1, execution_plan.crawling_ranges.len(),
+                    page_range.start_page, page_range.end_page, pages_in_range, range_batches, page_range.reverse_order);
         
         // 진행 상황 이벤트 방출
-        let progress_percentage = ((range_idx as f64) / (execution_plan.crawling_ranges.len() as f64)) * 100.0;
+        let progress_percentage = ((completed_pages as f64) / (expected_pages as f64).max(1.0)) * 100.0;
         let progress_event = AppEvent::Progress {
             session_id: execution_plan.session_id.clone(),
             current_step: range_idx as u32 + 1,
             total_steps: execution_plan.crawling_ranges.len() as u32,
-            message: format!("Processing pages {} to {}", page_range.start_page, page_range.end_page),
+            message: format!("Processing range {}/{} pages {}->{} (range pages={}, est batches={})", range_idx+1, execution_plan.crawling_ranges.len(), page_range.start_page, page_range.end_page, pages_in_range, range_batches),
             percentage: progress_percentage,
             timestamp: Utc::now(),
         };
@@ -1078,7 +1145,8 @@ async fn execute_session_actor_with_execution_plan(
         }
         
         // BatchActor로 실행 (기존 로직 재사용)
-        match execute_session_actor_with_batches(
+    // (tracking variables for diff removed as not yet needed)
+    match execute_session_actor_with_batches(
             &execution_plan.session_id,
             page_range.start_page,
             page_range.end_page,
@@ -1088,7 +1156,17 @@ async fn execute_session_actor_with_execution_plan(
             actor_event_tx.clone(),
         ).await {
             Ok(()) => {
-                info!("✅ Range {} completed successfully", range_idx + 1);
+        // Approximate increments (recompute similar to helper)
+        let added_pages = if page_range.reverse_order { page_range.start_page - page_range.end_page + 1 } else { page_range.end_page - page_range.start_page + 1 } as usize;
+        let added_batches = (added_pages + batch_unit as usize - 1) / batch_unit as usize;
+        completed_pages += added_pages;
+        completed_batches += added_batches;
+        let pct_batches = (completed_batches as f64 / expected_batches as f64) * 100.0;
+        let pct_pages = (completed_pages as f64 / expected_pages as f64) * 100.0;
+        info!("✅ Range {} complete | cumulative: {}/{} batches ({:.1}%), {}/{} pages ({:.1}%)",
+              range_idx + 1,
+              completed_batches, expected_batches, pct_batches,
+              completed_pages, expected_pages, pct_pages);
             }
             Err(e) => {
                 error!("❌ Range {} failed: {}", range_idx + 1, e);
@@ -1103,15 +1181,12 @@ async fn execute_session_actor_with_execution_plan(
         summary: SessionSummary {
             session_id: execution_plan.session_id.clone(),
             total_duration_ms: 0, // 실제 시간은 나중에 계산
-            total_pages_processed: execution_plan.crawling_ranges.iter().map(|r| {
-                if r.reverse_order { r.start_page - r.end_page + 1 } 
-                else { r.end_page - r.start_page + 1 }
-            }).sum(),
+            total_pages_processed: completed_pages as u32,
             total_products_processed: 0, // 실제 처리 후 계산
             success_rate: 100.0,
             avg_page_processing_time: 2000,
             error_summary: vec![],
-            processed_batches: execution_plan.crawling_ranges.len() as u32,
+            processed_batches: completed_batches as u32,
             total_success_count: 0,
             duplicates_skipped: 0,
             final_state: "Completed".to_string(),
