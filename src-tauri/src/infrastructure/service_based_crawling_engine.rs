@@ -512,6 +512,7 @@ pub struct ServiceBasedBatchCrawlingEngine {
     session_id: String,
 }
 
+#[allow(dead_code)] // Phase2: legacy engine retained for reference; prune in Phase3
 impl ServiceBasedBatchCrawlingEngine {
     pub fn new(
         http_client: HttpClient,
@@ -951,6 +952,7 @@ impl ServiceBasedBatchCrawlingEngine {
     }
 
     /// Stage 2: 제품 목록 수집 (서비스 기반)
+    // REMOVE_CANDIDATE(Phase3): Currently unused – legacy batch workflow
     async fn stage2_collect_product_list(&self, total_pages: u32, products_on_last_page: u32) -> Result<Vec<ProductUrl>> {
         info!("Stage 2: Collecting product list using ProductListCollector service");
         
@@ -2676,6 +2678,7 @@ impl ServiceBasedBatchCrawlingEngine {
     }
 
     /// AtomicTaskEvent 발송 (Live Production Line UI용)
+    // REMOVE_CANDIDATE(Phase3): Legacy granular event emission
     fn emit_atomic_task_event(&self, task_id: &str, stage_name: &str, status: TaskStatus, progress: f64, message: Option<String>) {
         if let Some(broadcaster) = &self.broadcaster {
             let batch_id = 1; // 현재는 단일 배치로 처리

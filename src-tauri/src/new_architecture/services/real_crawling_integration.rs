@@ -16,9 +16,10 @@ use crate::new_architecture::services::crawling_integration::{
 use crate::infrastructure::config::AppConfig;
 
 /// 실제 크롤링 통합 서비스
+#[allow(dead_code)] // Phase2: retained for near-term expansion; prune in Phase3 if still unused
 pub struct RealCrawlingIntegration {
-    config: Arc<SystemConfig>,
-    app_config: AppConfig,
+    config: Arc<SystemConfig>, // REMOVE_CANDIDATE(if unused in Phase3)
+    app_config: AppConfig,     // REMOVE_CANDIDATE(if unused in Phase3)
 }
 
 impl RealCrawlingIntegration {
@@ -62,7 +63,7 @@ impl StageActor {
     /// 크롤링 실행기 설정
     pub fn set_crawling_executor(
         &mut self, 
-        executor: Arc<RealCrawlingStageExecutor>
+    _executor: Arc<RealCrawlingStageExecutor>
     ) {
         // 현재 StageActor는 crawling_executor 필드가 없으므로 
         // 실제로는 내부 상태로 저장하고 run_with_oneshot에서 사용

@@ -154,23 +154,6 @@ impl DbSaver {
         Ok(())
     }
 
-    /// Gets database statistics
-    async fn get_db_stats(&self) -> Result<DatabaseStats, WorkerError> {
-        let query = "SELECT COUNT(*) as total_products, MAX(updated_at) as last_updated FROM products";
-        
-        let row = sqlx::query(query)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| WorkerError::DatabaseError(format!("Failed to get database stats: {}", e)))?;
-        
-        let total_products: i64 = row.try_get("total_products").unwrap_or(0);
-        let last_updated: Option<chrono::DateTime<chrono::Utc>> = row.try_get("last_updated").ok();
-        
-        Ok(DatabaseStats {
-            total_products: total_products as u64,
-            last_updated,
-        })
-    }
 
     /// Convert TaskProductData to domain ProductData
     fn convert_task_product_to_domain(&self, task_product: &TaskProductData) -> Result<ProductData, WorkerError> {

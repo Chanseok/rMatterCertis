@@ -445,7 +445,7 @@ impl SharedStateCache {
     }
 
     /// 유효한 계산된 범위 가져오기
-    pub fn get_valid_calculated_range(&self, ttl_minutes: u64) -> Option<&CalculatedRange> {
+    pub fn get_valid_calculated_range(&self, _ttl_minutes: u64) -> Option<&CalculatedRange> {
         // Note: 이 메서드는 동기식이므로 실제로는 사용하지 않음
         // async 버전을 사용하는 것을 권장
         None

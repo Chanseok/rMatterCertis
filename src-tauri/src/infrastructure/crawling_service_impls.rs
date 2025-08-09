@@ -34,46 +34,30 @@ use crate::domain::pagination::CanonicalPageIdCalculator;
 // 상수 정의
 const DEFAULT_PRODUCTS_PER_PAGE: u32 = 12;
 
-/// 페이지 분석 결과를 캐싱하기 위한 구조체
-#[derive(Debug, Clone)]
+// Reintroduced struct definitions (accidentally disrupted during method removal phase)
+pub struct StatusCheckerImpl {
+    pub http_client: Arc<HttpClient>,
+    pub data_extractor: Arc<MatterDataExtractor>,
+    pub config: AppConfig,
+    pub page_cache: Arc<tokio::sync::Mutex<HashMap<u32, PageAnalysisCache>>>,
+    pub product_repo: Option<Arc<IntegratedProductRepository>>,
+}
+
+#[derive(Clone, Debug)]
 struct PageAnalysisCache {
-    /// 페이지의 제품 수
-    product_count: u32,
-    /// 페이지네이션에서 발견된 최대 페이지 번호
-    max_pagination_page: u32,
-    /// 현재 활성화된 페이지 번호 (페이지네이션에서 확인)
-    active_page: u32,
-    /// 제품이 있는지 여부
+    page_number: u32,
     has_products: bool,
-    /// 분석 완료 시각
+    max_page_in_pagination: u32,
+    max_pagination_page: u32,
+    product_count: u32,
+    active_page: u32,
     analyzed_at: std::time::Instant,
 }
 
-/// 사이트 상태 체크 서비스 구현체
-/// PageDiscoveryService와 협력하여 사이트 상태를 종합적으로 분석
-pub struct StatusCheckerImpl {
-    http_client: Arc<HttpClient>,  // 🔥 Mutex 제거 - 사이트 상태 체크도 진정한 동시성
-    data_extractor: Arc<MatterDataExtractor>,
-    config: AppConfig,
-    /// 페이지 분석 결과 캐시 (페이지 번호 -> 분석 결과)
-    page_cache: Arc<tokio::sync::Mutex<HashMap<u32, PageAnalysisCache>>>,
-    /// 제품 레포지토리 (로컬 DB 상태 조회용)
-    product_repo: Option<Arc<IntegratedProductRepository>>,
-}
-
 impl StatusCheckerImpl {
-    pub fn new(
-        http_client: HttpClient,
-        data_extractor: MatterDataExtractor,
-        config: AppConfig,
-    ) -> Self {
-        // 470을 초기값으로 설정한 이유 설명:
-        // 이는 과거 CSA-IoT 사이트에서 관찰된 대략적인 페이지 수입니다.
-        // 그러나 현재는 더 작은 값(100)부터 시작하여 동적으로 탐지합니다.
-        // 앱이 사용되면서 실제 마지막 페이지를 학습하고 저장하게 됩니다.
-        
+    pub fn new(http_client: HttpClient, data_extractor: MatterDataExtractor, config: AppConfig) -> Self {
         Self {
-            http_client: Arc::new(http_client),  // 🔥 Mutex 제거
+            http_client: Arc::new(http_client),
             data_extractor: Arc::new(data_extractor),
             config,
             page_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -81,42 +65,36 @@ impl StatusCheckerImpl {
         }
     }
 
-    /// 설정에서 HttpClient 생성 (설정 기반)
-    fn create_configured_http_client(&self) -> Result<HttpClient> {
-        HttpClient::from_worker_config(&self.config.user.crawling.workers)
+    pub fn create_configured_http_client(&self) -> Result<HttpClient> {
+        HttpClient::create_from_global_config().map_err(|e| anyhow!("HttpClient create failed: {}", e))
     }
 
-    pub fn with_product_repo(
-        http_client: HttpClient,
-        data_extractor: MatterDataExtractor,
-        config: AppConfig,
-        product_repo: Arc<IntegratedProductRepository>,
-    ) -> Self {
-        let mut instance = Self::new(http_client, data_extractor, config);
+    pub async fn clear_page_cache(&self) {
+        let mut guard = self.page_cache.lock().await;
+        guard.clear();
+    }
+}
+
+impl StatusCheckerImpl {
+    /// Associate a product repository after initial creation (legacy helper)
+    pub fn with_product_repo(http_client: HttpClient, data_extractor: MatterDataExtractor, config: AppConfig, product_repo: Arc<IntegratedProductRepository>) -> Self {
+        let mut instance = StatusCheckerImpl::new(http_client, data_extractor, config);
         instance.product_repo = Some(product_repo);
         instance
     }
 
     /// Update the pagination context in the data extractor based on discovered page information
     pub async fn update_pagination_context(&self, total_pages: u32, items_on_last_page: u32) -> Result<()> {
-        // Get validated configuration for products per page instead of hardcoding
         let validated_config = crate::application::validated_crawling_config::ValidatedCrawlingConfig::from_app_config(&self.config);
         let products_per_page = validated_config.products_per_page;
-        
-        // Create pagination context
         let pagination_context = crate::infrastructure::html_parser::PaginationContext {
             total_pages,
-            items_per_page: products_per_page, // Use config instead of hardcoded 12
+            items_per_page: products_per_page,
             items_on_last_page,
-            target_page_size: products_per_page, // Use config instead of hardcoded 12
+            target_page_size: products_per_page,
         };
-        
-        // Update the data extractor's pagination context
         self.data_extractor.set_pagination_context(pagination_context)?;
-        
-        info!("📊 Updated pagination context: total_pages={}, items_on_last_page={}, products_per_page={}", 
-               total_pages, items_on_last_page, products_per_page);
-        
+        info!("📊 Updated pagination context: total_pages={}, items_on_last_page={}, products_per_page={}", total_pages, items_on_last_page, products_per_page);
         Ok(())
     }
 }
@@ -128,7 +106,7 @@ impl StatusChecker for StatusCheckerImpl {
         info!("Starting comprehensive site status check with detailed page discovery");
         
         // 캐시 초기화
-        self.clear_page_cache().await;
+    self.clear_page_cache_internal().await;
         
         info!("Checking site status and discovering pages...");
 
@@ -1144,10 +1122,12 @@ impl StatusCheckerImpl {
         };
         
         let analysis = PageAnalysisCache {
-            product_count,
-            max_pagination_page,
-            active_page,
+            page_number,
             has_products,
+            max_page_in_pagination: max_pagination_page,
+            max_pagination_page,
+            product_count,
+            active_page,
             analyzed_at: std::time::Instant::now(),
         };
         
@@ -1164,7 +1144,7 @@ impl StatusCheckerImpl {
     }
     
     /// 캐시를 초기화 (새로운 상태 체크 시작 시 호출)
-    async fn clear_page_cache(&self) {
+    async fn clear_page_cache_internal(&self) {
         let mut cache = self.page_cache.lock().await;
         cache.clear();
         debug!("🗑️  Page cache cleared");

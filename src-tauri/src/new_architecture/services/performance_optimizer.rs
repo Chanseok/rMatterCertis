@@ -217,7 +217,7 @@ impl CrawlingPerformanceOptimizer {
         &self,
         avg_response_time_ms: f64,
         success_rate: f64,
-        throughput_rps: f64,
+    _throughput_rps: f64,
         network_error_rate: f64,
         current_concurrency: u32,
     ) -> OptimizationStatus {
@@ -247,7 +247,7 @@ impl CrawlingPerformanceOptimizer {
         &self,
         avg_response_time_ms: f64,
         success_rate: f64,
-        throughput_rps: f64,
+    _throughput_rps: f64,
         current_concurrency: u32,
     ) -> u32 {
         let min_concurrency = self.config.performance.concurrency.min_concurrent_batches;

@@ -27,14 +27,15 @@ use crate::new_architecture::channels::types::{StageType, StageItem};
 use crate::new_architecture::config::SystemConfig;
 
 /// 실제 크롤링 서비스와 OneShot Actor 시스템을 연결하는 통합 서비스
+#[allow(dead_code)] // Phase2: allow unused fields temporarily – evaluate in Phase3
 pub struct CrawlingIntegrationService {
     status_checker: Arc<dyn StatusChecker>,
     list_collector: Arc<dyn ProductListCollector>,
     detail_collector: Arc<dyn ProductDetailCollector>,
-    database_analyzer: Arc<dyn DatabaseAnalyzer>,
+    database_analyzer: Arc<dyn DatabaseAnalyzer>,        // REMOVE_CANDIDATE(if still unused)
     product_repository: Arc<IntegratedProductRepository>,
-    config: Arc<SystemConfig>,
-    app_config: AppConfig,
+    config: Arc<SystemConfig>,                           // REMOVE_CANDIDATE(if still unused)
+    app_config: AppConfig,                               // REMOVE_CANDIDATE(if still unused)
 }
 
 impl CrawlingIntegrationService {

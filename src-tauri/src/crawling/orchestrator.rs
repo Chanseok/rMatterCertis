@@ -367,16 +367,6 @@ impl CrawlingOrchestrator {
         Ok(())
     }
 
-    /// Process a single task with the appropriate worker
-    async fn process_single_task(
-        task: CrawlingTask,
-        worker_pool: Arc<WorkerPool>,
-        shared_state: Arc<SharedState>,
-        queue_manager: Arc<QueueManager>,
-        config: OrchestratorConfig,
-    ) -> Result<(), OrchestratorError> {
-        process_single_task_static(task, worker_pool, shared_state, queue_manager, config, None).await
-    }
 
     /// Helper methods for internal operations
     async fn graceful_shutdown(&self) -> Result<(), OrchestratorError> {
@@ -502,14 +492,14 @@ pub async fn process_single_task_static(
     // Handle task result
     match task_result {
         Ok(TaskResult::Success { task_id, output, duration }) => {
-            let duration_ms = duration.as_millis() as u64; // retain variable for emitter usage
+            let _duration_ms = duration.as_millis() as u64; // unused: metrics emission currently disabled
             
             // 🎯 원자적 이벤트: 태스크 완료 알림
             if let Some(emitter) = &event_emitter {
                 let _ = emitter.emit_task_completed(
                     task_id.into(),
                     task_type.clone(),
-                    duration_ms
+                    _duration_ms
                 ).await;
             }
             
@@ -525,8 +515,7 @@ pub async fn process_single_task_static(
                 }
             }
         }
-        Ok(TaskResult::Failure { task_id, error, duration, retry_count }) => {
-            let duration_ms = duration.as_millis() as u64;
+    Ok(TaskResult::Failure { task_id, error, duration, retry_count }) => {
             
             // 🎯 원자적 이벤트: 태스크 실패 알림
             if let Some(emitter) = &event_emitter {

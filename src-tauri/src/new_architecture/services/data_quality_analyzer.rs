@@ -290,35 +290,6 @@ impl DataQualityAnalyzer {
         Ok(products.to_vec())
     }
 
-    // Helper method for field analysis
-    fn analyze_field(&self, field_name: &str, field_value: &Option<String>) {
-        match field_value {
-            Some(value) if !value.trim().is_empty() => {
-                info!("        - {}: ✅ Present ('{}')", field_name, 
-                    if value.len() > 50 { 
-                        format!("{}...", &value[..47]) 
-                    } else { 
-                        value.clone() 
-                    }
-                );
-            }
-            Some(value) if value.trim().is_empty() => {
-                warn!("        - {}: ⚠️  Empty (present but no content)", field_name);
-            }
-            Some(value) => {
-                info!("        - {}: ✅ Present ('{}')", field_name, 
-                    if value.len() > 50 { 
-                        format!("{}...", &value[..47]) 
-                    } else { 
-                        value.clone() 
-                    }
-                );
-            }
-            None => {
-                warn!("        - {}: ❌ Missing (critical for product identification)", field_name);
-            }
-        }
-    }
 
     /// Analyze collected product data and provide storage recommendation
     pub async fn assess_for_storage(&self, products: &[ProductDetail]) -> Result<StorageAssessment, String> {
