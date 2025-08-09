@@ -11,6 +11,7 @@
 
 use std::path::PathBuf;
 use anyhow::{Result, Context};
+use tracing::{info, debug};
 use std::sync::OnceLock;
 
 /// 전역 데이터베이스 경로 관리자 (싱글톤)
@@ -119,7 +120,9 @@ impl DatabasePathManager {
     
     /// 완전한 데이터베이스 초기화 (경로 + 파일 + 권한)
     pub async fn full_initialization(&self) -> Result<()> {
-        tracing::info!("🔧 데이터베이스 경로 전체 초기화 시작...");
+    let concise_all = std::env::var("MC_CONCISE_ALL").ok().map(|v| !(v=="0"||v.eq_ignore_ascii_case("false"))).unwrap_or(true);
+    let concise = concise_all || std::env::var("MC_CONCISE_STARTUP").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+    if concise { debug!("🔧 데이터베이스 경로 전체 초기화 시작..."); } else { info!("🔧 데이터베이스 경로 전체 초기화 시작..."); }
         
         // 1. 디렉토리 생성
         self.ensure_directories_exist().await
@@ -135,8 +138,13 @@ impl DatabasePathManager {
                          self.main_database_path.display());
         }
         
-        tracing::info!("✅ 데이터베이스 경로 전체 초기화 완료");
-        tracing::info!("📁 메인 DB: {}", self.main_database_path.display());
+        if concise {
+            debug!("✅ 데이터베이스 경로 전체 초기화 완료");
+            info!("📁 메인 DB: {}", self.main_database_path.display());
+        } else {
+            info!("✅ 데이터베이스 경로 전체 초기화 완료");
+            info!("📁 메인 DB: {}", self.main_database_path.display());
+        }
         
         Ok(())
     }

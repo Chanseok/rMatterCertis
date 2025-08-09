@@ -20,6 +20,8 @@ try {
 
 // AppWithTabs를 직접 테스트해보겠습니다
 import { AppWithTabs } from "./components/AppWithTabs";
+// Attempt to explicitly show the Tauri window once the frontend is ready
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 console.log("✅ AppWithTabs imported successfully");
 
@@ -32,6 +34,13 @@ if (root) {
   try {
     render(() => <AppWithTabs />, root);
     console.log("✅ AppWithTabs render completed successfully");
+    // Explicitly show window (in case initial visible=false or delayed)
+    try {
+      const win = getCurrentWindow();
+      win.show().then(() => console.log("🪟 Tauri window show() invoked"));
+    } catch (e) {
+      console.warn("⚠️ Failed to call window.show():", e);
+    }
   } catch (error) {
     console.error("❌ Error rendering AppWithTabs:", error);
     render(() => (

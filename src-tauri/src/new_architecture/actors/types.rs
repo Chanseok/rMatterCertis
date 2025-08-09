@@ -235,6 +235,9 @@ pub struct CrawlingConfig {
     
     /// 재시도 횟수
     pub max_retries: u32,
+
+    /// 크롤링 전략 (기본: 최신 페이지 기준 역순)
+    pub strategy: CrawlingStrategy,
 }
 
 impl Default for CrawlingConfig {
@@ -248,8 +251,19 @@ impl Default for CrawlingConfig {
             request_delay_ms: 1000,
             timeout_secs: 30,
             max_retries: 3,
+            strategy: CrawlingStrategy::NewestFirst,
         }
     }
+}
+
+/// 크롤링 전략 모드
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum CrawlingStrategy {
+    /// 사이트 최신 페이지부터 N개 (기존 Planner 기본)
+    NewestFirst,
+    /// 로컬 DB 저장 상태를 기반으로 이어서 수집 (증분)
+    ContinueFromDb,
 }
 
 /// 배치 설정

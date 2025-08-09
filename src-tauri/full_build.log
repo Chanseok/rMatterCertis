@@ -1,0 +1,203 @@
+warning: matter-certis-v2@0.2.0: Generated unified types index with 29 exports
+    Checking matter-certis-v2 v0.2.0 (/Users/chanseok/Codes/rMatterCertis/src-tauri)
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `once_cell`
+   --> src/new_architecture/services/crawling_planner.rs:270:13
+    |
+270 |         use once_cell::sync::Lazy;
+    |             ^^^^^^^^^ use of unresolved module or unlinked crate `once_cell`
+    |
+    = help: if you wanted to use a crate named `once_cell`, use `cargo add once_cell` to add it to your `Cargo.toml`
+
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `once_cell`
+   --> src/new_architecture/services/crawling_planner.rs:312:21
+    |
+312 |                 use once_cell::sync::Lazy as _;
+    |                     ^^^^^^^^^ use of unresolved module or unlinked crate `once_cell`
+    |
+    = help: if you wanted to use a crate named `once_cell`, use `cargo add once_cell` to add it to your `Cargo.toml`
+
+error[E0425]: cannot find value `items_on_last_page` in this scope
+   --> src/infrastructure/crawling_service_impls.rs:887:28
+    |
+887 |         let last_partial = items_on_last_page.unwrap_or(items_per_page);
+    |                            ^^^^^^^^^^^^^^^^^^ not found in this scope
+
+warning: unused import: `CrawlingStrategy`
+  --> src/new_architecture/services/crawling_planner.rs:17:62
+   |
+17 |     actors::types::{CrawlingConfig, BatchConfig, ActorError, CrawlingStrategy}
+   |                                                              ^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+error[E0277]: a value of type `()` cannot be built from an iterator over elements of type `u32`
+    --> src/new_architecture/services/crawling_planner.rs:322:41
+     |
+322  |                     (end..=start).rev().collect()
+     |                                         ^^^^^^^ value of type `()` cannot be built from `std::iter::Iterator<Item=u32>`
+     |
+     = help: the trait `FromIterator<u32>` is not implemented for `()`
+             but trait `FromIterator<()>` is implemented for it
+     = help: for that trait implementation, expected `()`, found `u32`
+note: the method call chain might not have had the expected associated types
+    --> src/new_architecture/services/crawling_planner.rs:322:35
+     |
+322  |                     (end..=start).rev().collect()
+     |                     ------------- ^^^^^ `Iterator::Item` is `u32` here
+     |                     |
+     |                     this expression has type `RangeInclusive<u32>`
+note: required by a bound in `std::iter::Iterator::collect`
+    --> /Users/chanseok/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/iter/traits/iterator.rs:1988:19
+     |
+1988 |     fn collect<B: FromIterator<Self::Item>>(self) -> B
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Iterator::collect`
+
+error[E0277]: a value of type `(std::option::Option<i32>, std::option::Option<i32>)` cannot be built from an iterator over elements of type `u32`
+    --> src/new_architecture/services/crawling_planner.rs:333:45
+     |
+333  |                         (end..=start).rev().collect()
+     |                                             ^^^^^^^ value of type `(std::option::Option<i32>, std::option::Option<i32>)` cannot be built from `std::iter::Iterator<Item=u32>`
+     |
+     = help: the trait `FromIterator<u32>` is not implemented for `(std::option::Option<i32>, std::option::Option<i32>)`
+     = help: the following other types implement trait `FromIterator<A>`:
+               `()` implements `FromIterator<()>`
+               `(A,)` implements `FromIterator<(EA,)>`
+               `(B, A)` implements `FromIterator<(EB, EA)>`
+               `(C, B, A)` implements `FromIterator<(EC, EB, EA)>`
+               `(D, C, B, A)` implements `FromIterator<(ED, EC, EB, EA)>`
+               `(E, D, C, B, A)` implements `FromIterator<(EE, ED, EC, EB, EA)>`
+               `(F, E, D, C, B, A)` implements `FromIterator<(EF, EE, ED, EC, EB, EA)>`
+               `(G, F, E, D, C, B, A)` implements `FromIterator<(EG, EF, EE, ED, EC, EB, EA)>`
+             and 5 others
+note: the method call chain might not have had the expected associated types
+    --> src/new_architecture/services/crawling_planner.rs:333:39
+     |
+333  |                         (end..=start).rev().collect()
+     |                         ------------- ^^^^^ `Iterator::Item` is `u32` here
+     |                         |
+     |                         this expression has type `RangeInclusive<u32>`
+note: required by a bound in `std::iter::Iterator::collect`
+    --> /Users/chanseok/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/iter/traits/iterator.rs:1988:19
+     |
+1988 |     fn collect<B: FromIterator<Self::Item>>(self) -> B
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Iterator::collect`
+
+error[E0061]: this method takes 1 argument but 2 arguments were supplied
+   --> src/infrastructure/crawling_service_impls.rs:432:26
+    |
+432 |     if let Err(e) = self.update_last_known_page(verified_last_page, Some(products_on_last_page)).await {
+    |                          ^^^^^^^^^^^^^^^^^^^^^^                     --------------------------- unexpected argument #2 of type `std::option::Option<u32>`
+    |
+note: method defined here
+   --> src/infrastructure/crawling_service_impls.rs:871:14
+    |
+871 |     async fn update_last_known_page(&self, last_page: u32) -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^
+help: remove the extra argument
+    |
+432 -     if let Err(e) = self.update_last_known_page(verified_last_page, Some(products_on_last_page)).await {
+432 +     if let Err(e) = self.update_last_known_page(verified_last_page).await {
+    |
+
+warning: unused variable: `client`
+   --> src/infrastructure/crawling_service_impls.rs:506:17
+    |
+506 |             let client = self.create_configured_http_client()?;
+    |                 ^^^^^^ help: if this is intentional, prefix it with an underscore: `_client`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+error[E0609]: no field `last_items_on_last_page` on type `&mut AppManagedConfig`
+   --> src/infrastructure/crawling_service_impls.rs:890:21
+    |
+890 |         app_managed.last_items_on_last_page = Some(last_partial as i32);
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `last_known_max_page`, `last_successful_crawl`, `last_crawl_product_count`, `avg_products_per_page`, `config_version`, `window_state`
+
+warning: trivial numeric cast: `u32` as `u32`
+   --> src/infrastructure/crawling_service_impls.rs:886:30
+    |
+886 |         let items_per_page = DEFAULT_PRODUCTS_PER_PAGE as u32; // 기존 상수 (검증된 값)
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: cast can be replaced by coercion; this might require a temporary variable
+    = note: requested on the command line with `-W trivial-numeric-casts`
+
+error[E0063]: missing field `strategy` in initializer of `actors::types::CrawlingConfig`
+   --> src/commands/actor_system_commands.rs:963:17
+    |
+963 |         config: CrawlingConfig {
+    |                 ^^^^^^^^^^^^^^ missing `strategy`
+
+error[E0063]: missing field `strategy` in initializer of `actors::types::CrawlingConfig`
+   --> src/commands/actor_system_commands.rs:857:27
+    |
+857 |     let crawling_config = CrawlingConfig {
+    |                           ^^^^^^^^^^^^^^ missing `strategy`
+
+error[E0063]: missing field `strategy` in initializer of `actors::types::CrawlingConfig`
+   --> src/commands/actor_system_commands.rs:551:17
+    |
+551 |         config: CrawlingConfig {
+    |                 ^^^^^^^^^^^^^^ missing `strategy`
+
+warning: unused variable: `timeout_ms`
+   --> src/commands/real_actor_commands.rs:299:5
+    |
+299 |     timeout_ms: u64,
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_timeout_ms`
+
+warning: unused variable: `shared_state`
+  --> src/crawling.rs:81:13
+   |
+81 |         let shared_state = Arc::new(SharedState::new(config.clone()));
+   |             ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_shared_state`
+
+warning: unused variable: `queue_manager`
+  --> src/crawling.rs:84:13
+   |
+84 |         let queue_manager = Arc::new(QueueManager::new_with_config(
+   |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_queue_manager`
+
+warning: unused variable: `start_time`
+   --> src/crawling/orchestrator.rs:470:9
+    |
+470 |     let start_time = Instant::now();
+    |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_start_time`
+
+warning: unused variable: `duration_ms`
+   --> src/crawling/orchestrator.rs:529:17
+    |
+529 |             let duration_ms = duration.as_millis() as u64;
+    |                 ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_duration_ms`
+
+warning: unused variable: `executor`
+  --> src/new_architecture/services/real_crawling_integration.rs:65:9
+   |
+65 |         executor: Arc<RealCrawlingStageExecutor>
+   |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_executor`
+
+warning: unused variable: `throughput_rps`
+   --> src/new_architecture/services/performance_optimizer.rs:220:9
+    |
+220 |         throughput_rps: f64,
+    |         ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_throughput_rps`
+
+warning: unused variable: `throughput_rps`
+   --> src/new_architecture/services/performance_optimizer.rs:250:9
+    |
+250 |         throughput_rps: f64,
+    |         ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_throughput_rps`
+
+warning: unused variable: `ttl_minutes`
+   --> src/application/shared_state.rs:430:46
+    |
+430 |     pub fn get_valid_calculated_range(&self, ttl_minutes: u64) -> Option<&CalculatedRange> {
+    |                                              ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_ttl_minutes`
+
+Some errors have detailed explanations: E0061, E0063, E0277, E0425, E0433, E0609.
+For more information about an error, try `rustc --explain E0061`.
+warning: `matter-certis-v2` (lib) generated 12 warnings
+warning: matter-certis-v2@0.2.0: Generated unified types index with 29 exports
+error: could not compile `matter-certis-v2` (lib) due to 10 previous errors; 12 warnings emitted

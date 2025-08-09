@@ -1115,7 +1115,7 @@ impl IntegratedProductRepository {
 
     /// 최근 업데이트된 제품들 조회 (Backend-Only CRUD 패턴)
     pub async fn get_latest_updated_products(&self, limit: u32) -> Result<Vec<Product>> {
-        let offset = 0;
+    let _offset = 0;
         let rows = sqlx::query(
             r"
             SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, 

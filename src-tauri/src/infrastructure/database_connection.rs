@@ -7,6 +7,7 @@
 
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use anyhow::Result;
+use tracing::{info, warn, debug};
 use std::path::Path;
 
 #[derive(Clone)]
@@ -50,20 +51,21 @@ impl DatabaseConnection {
     }
 
     pub async fn migrate(&self) -> Result<()> {
-        use std::fs;
-        use tracing::{info, warn};
+    use std::fs;
+    let concise_all = std::env::var("MC_CONCISE_ALL").ok().map(|v| !(v=="0"||v.eq_ignore_ascii_case("false"))).unwrap_or(true);
+    let concise = concise_all || std::env::var("MC_CONCISE_STARTUP").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
         
         // Enable foreign key constraints
         sqlx::query("PRAGMA foreign_keys = ON").execute(&self.pool).await?;
         
         // Load and run the integrated schema SQL (003_integrated_schema.sql)
-        info!("📦 Checking database schema (CREATE TABLE IF NOT EXISTS)...");
+        if concise { debug!("📦 Checking database schema (CREATE TABLE IF NOT EXISTS)..."); } else { info!("📦 Checking database schema (CREATE TABLE IF NOT EXISTS)..."); }
         let schema_path = std::path::Path::new("migrations/003_integrated_schema.sql");
         
         if schema_path.exists() {
             let schema_sql = fs::read_to_string(schema_path)?;
             sqlx::query(&schema_sql).execute(&self.pool).await?;
-            info!("✅ Database schema verified successfully");
+            if concise { debug!("✅ Database schema verified successfully"); } else { info!("✅ Database schema verified successfully"); }
         } else {
             // Fallback to embedded schema if file doesn't exist
             warn!("⚠️ Schema file not found, using embedded schema");
@@ -71,7 +73,7 @@ impl DatabaseConnection {
             // Read schema from embedded file or resources
             let schema_sql = include_str!("../../migrations/003_integrated_schema.sql");
             sqlx::query(schema_sql).execute(&self.pool).await?;
-            info!("✅ Database schema verified with embedded version");
+            if concise { debug!("✅ Database schema verified with embedded version"); } else { info!("✅ Database schema verified with embedded version"); }
         }
         
         // Check if we need to migrate legacy data
@@ -90,7 +92,7 @@ impl DatabaseConnection {
             .await?;
             
             if legacy_count > 0 {
-                info!("🔄 Found {} legacy records to migrate", legacy_count);
+                if concise { debug!("🔄 Found {} legacy records to migrate", legacy_count); } else { info!("🔄 Found {} legacy records to migrate", legacy_count); }
                 
                 // Apply data migration script
                 let migration_path = std::path::Path::new("migrations/004_migrate_legacy_data.sql");
@@ -98,18 +100,18 @@ impl DatabaseConnection {
                 if migration_path.exists() {
                     let migration_sql = fs::read_to_string(migration_path)?;
                     sqlx::query(&migration_sql).execute(&self.pool).await?;
-                    info!("✅ Migrated legacy data successfully");
+                    if concise { debug!("✅ Migrated legacy data successfully"); } else { info!("✅ Migrated legacy data successfully"); }
                 } else {
                     // Fallback to embedded migration script
                     let migration_sql = include_str!("../../migrations/004_migrate_legacy_data.sql");
                     sqlx::query(migration_sql).execute(&self.pool).await?;
-                    info!("✅ Migrated legacy data using embedded script");
+                    if concise { debug!("✅ Migrated legacy data using embedded script"); } else { info!("✅ Migrated legacy data using embedded script"); }
                 }
             } else {
-                info!("ℹ️ No legacy data to migrate");
+                if concise { debug!("ℹ️ No legacy data to migrate"); } else { info!("ℹ️ No legacy data to migrate"); }
             }
         } else {
-            info!("ℹ️ No legacy migration needed (modern schema already in use)");
+            if concise { debug!("ℹ️ No legacy migration needed (modern schema already in use)"); } else { info!("ℹ️ No legacy migration needed (modern schema already in use)"); }
         }
         
         // Report on database status
@@ -120,9 +122,11 @@ impl DatabaseConnection {
         let details_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM product_details")
             .fetch_one(&self.pool)
             .await?;
-            
-        info!("📊 Database initialized with {} products and {} detailed records", 
-            product_count, details_count);
+        if concise {
+            info!("🗄️ DB ready: products={}, details={}", product_count, details_count);
+        } else {
+            info!("📊 Database initialized with {} products and {} detailed records", product_count, details_count);
+        }
             
         Ok(())
     }

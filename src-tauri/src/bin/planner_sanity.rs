@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use matter_certis_v2_lib::new_architecture::services::crawling_planner::{CrawlingPlanner, PhaseType};
 use matter_certis_v2_lib::new_architecture::system_config::SystemConfig;
-use matter_certis_v2_lib::new_architecture::actors::types::CrawlingConfig;
+use matter_certis_v2_lib::new_architecture::actors::types::{CrawlingConfig, CrawlingStrategy};
 use matter_certis_v2_lib::domain::services::{StatusChecker, DatabaseAnalyzer};
 use matter_certis_v2_lib::domain::services::crawling_services::{DatabaseAnalysis, SiteStatus, SiteDataChangeStatus, CrawlingRangeRecommendation, FieldAnalysis, ProcessingStrategy, DuplicateAnalysis, DuplicateGroup, DuplicateType};
 
@@ -105,6 +105,7 @@ async fn main() -> anyhow::Result<()> {
         request_delay_ms: 1000,
         timeout_secs: 30,
         max_retries: 1,
+    strategy: CrawlingStrategy::NewestFirst,
     };
 
     let cached = Some(SiteStatus {

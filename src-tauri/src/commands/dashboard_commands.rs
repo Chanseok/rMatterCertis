@@ -66,7 +66,7 @@ pub async fn init_dashboard_service(
     let database_url = get_main_database_url();
     
     // 제품 리포지토리 생성
-    let product_repository = match DatabaseConnection::new(&database_url).await {
+    let _product_repository = match DatabaseConnection::new(&database_url).await {
         Ok(db_conn) => {
             let repo = Arc::new(IntegratedProductRepository::new(db_conn.pool().clone()));
             info!("✅ Database connection established for dashboard");

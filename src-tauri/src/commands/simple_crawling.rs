@@ -25,7 +25,7 @@ pub struct CrawlingSession {
 #[tauri::command]
 pub async fn start_smart_crawling(
     app_handle: tauri::AppHandle,
-    state: State<'_, AppState>
+    _state: State<'_, AppState>
 ) -> Result<CrawlingSession, String> {
     let session_id = format!("session_{}", chrono::Utc::now().timestamp());
     let started_at = chrono::Utc::now().to_rfc3339();

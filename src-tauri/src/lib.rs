@@ -17,13 +17,14 @@
 #![allow(missing_docs)]
 #![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
+#![allow(ambiguous_glob_reexports)]
 
 #[cfg(test)]
 mod test_http_client_config;
 
 use crate::infrastructure::{DatabaseConnection, init_logging_with_config};
 use crate::infrastructure::config::{ConfigManager, AppConfig};
-use tracing::{info, error, warn};
+use tracing::{info, error, warn, debug};
 use tauri::Manager;
 use std::sync::{Arc, RwLock};
 
@@ -201,14 +202,16 @@ pub fn run() {
     
     // 🦀 Modern Rust 2024: Single Responsibility Database Initialization
     rt.block_on(async {
-        info!("🔧 Initializing centralized database system (paths + pool + migrations)...");
+    let concise_all = std::env::var("MC_CONCISE_ALL").ok().map(|v| !(v=="0"||v.eq_ignore_ascii_case("false"))).unwrap_or(true);
+        let concise = concise_all || std::env::var("MC_CONCISE_STARTUP").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+        if concise { debug!("🔧 Initializing centralized database system (paths + pool + migrations)..."); } else { info!("🔧 Initializing centralized database system (paths + pool + migrations)..."); }
         
         // 1. Initialize database paths using centralized manager
-        match crate::infrastructure::initialize_database_paths().await {
+    match crate::infrastructure::initialize_database_paths().await {
             Ok(()) => {
-                info!("✅ Database paths initialized successfully");
+        if concise { debug!("✅ Database paths initialized successfully"); } else { info!("✅ Database paths initialized successfully"); }
                 let main_url = crate::infrastructure::get_main_database_url();
-                info!("🗄️ Using database: {}", main_url);
+        if concise { debug!("🗄️ Using database: {}", main_url); } else { info!("🗄️ Using database: {}", main_url); }
             },
             Err(e) => {
                 error!("❌ Failed to initialize database paths: {}", e);
@@ -219,16 +222,16 @@ pub fn run() {
         
         // 2. Initialize database connection with migrations
         let database_url = crate::infrastructure::get_main_database_url();
-        info!("🔧 Establishing database connection...");
-        info!("� Connecting to: {}", database_url);
+    if concise { debug!("🔧 Establishing database connection..."); } else { info!("🔧 Establishing database connection..."); }
+    if concise { debug!("🔌 Connecting to: {}", database_url); } else { info!("🔌 Connecting to: {}", database_url); }
         
         let db = DatabaseConnection::new(&database_url).await
             .expect("Failed to initialize database connection");
         
-        info!("🔄 Verifying database schema...");
+    if concise { debug!("🔄 Verifying database schema..."); } else { info!("🔄 Verifying database schema..."); }
         db.migrate().await.expect("Failed to verify database schema");
         
-        info!("✅ Database connection established successfully");
+    if concise { debug!("✅ Database connection established successfully"); } else { info!("✅ Database connection established successfully"); }
         db
     });
 
@@ -296,11 +299,9 @@ pub fn run() {
             // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
             commands::unified_crawling::start_unified_crawling,
             
-            // 🔧 참조용: ServiceBased 크롤링 명령어 (구현 완료 후 삭제 예정)
-            commands::service_based_reference::start_service_based_crawling_reference,
-            
-            // 🎭 Legacy Service-Based 크롤링 (참고용 보존, 추후 제거 예정)
-            commands::real_actor_commands::start_legacy_service_based_crawling,
+            // 🔧 참조/레거시 ServiceBased 명령어는 노출 중단 (엔트리포인트 통일)
+            // commands::service_based_reference::start_service_based_crawling_reference,
+            // commands::real_actor_commands::start_legacy_service_based_crawling,
             
             // Core v4.0 commands - keeping only the implemented ones
             commands::crawling_v4::init_crawling_engine,

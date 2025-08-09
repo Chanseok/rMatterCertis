@@ -468,7 +468,7 @@ pub async fn optimize_database(state: State<'_, AppState>) -> Result<(), String>
             tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
             
             // Get real stats
-            let stats = get_databasestats(state.clone()).await?;
+            let _stats = get_databasestats(state.clone()).await?;
             return Ok(());
         }
     };
@@ -486,7 +486,7 @@ pub async fn optimize_database(state: State<'_, AppState>) -> Result<(), String>
     }
     
     // Get real stats after optimization
-    let stats = get_databasestats(state.clone()).await?;
+    let _stats = get_databasestats(state.clone()).await?;
     
     info!("Database optimization completed");
     Ok(())
@@ -964,7 +964,7 @@ async fn ensure_database_schema_exists(db_pool: &sqlx::SqlitePool) -> Result<(),
 
 /// Calculate intelligent crawling range based on site status and database state
 async fn calculate_intelligent_crawling_range(
-    state: &State<'_, AppState>, 
+    _state: &State<'_, AppState>, 
     app_config: &crate::infrastructure::config::AppConfig
 ) -> Result<(u32, u32), String> {
     info!("🔍 Calculating intelligent crawling range...");

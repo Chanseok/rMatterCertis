@@ -73,9 +73,9 @@ impl StageActor {
     /// 실제 크롤링 서비스를 사용하는 OneShot 실행
     pub async fn run_with_real_crawling(
         mut self,
-        mut control_rx: tokio::sync::mpsc::Receiver<crate::new_architecture::channels::types::ActorCommand>,
+    mut control_rx: tokio::sync::mpsc::Receiver<crate::new_architecture::channels::types::ActorCommand>,
         result_tx: oneshot::Sender<StageResult>,
-        crawling_executor: Arc<RealCrawlingStageExecutor>,
+    crawling_executor: Arc<RealCrawlingStageExecutor>,
     ) -> Result<(), crate::new_architecture::actors::ActorError> {
         info!(batch_id = ?self.batch_id, "StageActor started with real crawling service");
         
@@ -91,7 +91,7 @@ impl StageActor {
         while let Some(command) = control_rx.recv().await {
             match command {
                 crate::new_architecture::channels::types::ActorCommand::ExecuteStage { 
-                    stage_type, items, concurrency_limit, timeout_secs 
+                    stage_type, items, concurrency_limit, timeout_secs: _ 
                 } => {
                     // 실제 크롤링 서비스를 사용한 스테이지 실행
                     final_result = self.execute_stage_with_real_crawling(

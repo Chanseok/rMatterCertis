@@ -80,7 +80,7 @@ pub async fn start_legacy_service_based_crawling(
             .ok_or("Database pool not initialized")?.clone()
     ));
     
-    let advanced_engine = ServiceBasedBatchCrawlingEngine::new(
+    let _advanced_engine = ServiceBasedBatchCrawlingEngine::new(
         http_client_for_engine,
         data_extractor_for_engine,
         product_repo_for_engine,
@@ -230,10 +230,10 @@ async fn execute_session_with_parallel_batches(
     batches: Vec<crate::new_architecture::actors::types::BatchConfig>,
     max_concurrency: u32,
     timeout_ms: u64,
-    http_client: Arc<HttpClient>,
-    data_extractor: Arc<MatterDataExtractor>,
+    _http_client: Arc<HttpClient>,
+    _data_extractor: Arc<MatterDataExtractor>,
     event_tx: broadcast::Sender<FrontendEvent>,
-    app_config: AppConfig
+    _app_config: AppConfig
 ) -> Result<(), ActorError> {
     info!("🎭 SessionActor executing {} batches SEQUENTIALLY (not parallel)", batches.len());
 
@@ -434,7 +434,7 @@ async fn execute_real_stage_3_detail_collection(
     let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency as usize));
     let mut tasks = Vec::new();
     
-    for (index, url) in stage2_urls.iter().enumerate() {
+    for (_index, url) in stage2_urls.iter().enumerate() {
         let http_client_clone = Arc::clone(&http_client);
         let data_extractor_clone = Arc::clone(&data_extractor);
         let semaphore_clone = Arc::clone(&semaphore);
@@ -580,7 +580,7 @@ fn convert_json_to_product_detail(json: &serde_json::Value) -> Result<ProductDet
         .unwrap_or("")
         .to_string();
     
-    let device_type = json.get("device_type")
+    let device_type = json.get("certification_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     

@@ -47,8 +47,8 @@ pub struct ProductDetailSelectors {
     pub model: String,
     /// Selector for device type
     pub device_type: String,
-    /// Selector for certification ID
-    pub certification_id: String,
+    /// Selector for certification ID (maps to ProductDetail.certificate_id)
+    pub certificate_id: String,
     /// Selector for certification date
     pub certification_date: String,
     /// Selector for software version
@@ -82,7 +82,7 @@ impl Default for MatterExtractorConfig {
                 manufacturer: ".manufacturer, .company-info".to_string(),
                 model: "h1.entry-title, h1".to_string(),
                 device_type: ".device-type, .category".to_string(),
-                certification_id: ".cert-id, .certification-id".to_string(),
+                certificate_id: ".cert-id, .certification-id".to_string(),
                 certification_date: ".cert-date, .certification-date".to_string(),
                 software_version: ".software-version".to_string(),
                 hardware_version: ".hardware-version".to_string(),
@@ -286,8 +286,9 @@ impl MatterDataExtractor {
         let manufacturer = self.extract_field_text(html, ".manufacturer, .company-info");
         let model = self.extract_field_text(html, "h1.entry-title, h1");
         let certificate_id = self.extract_field_text(html, ".cert-id, .certification-id");
-        let device_type = self.extract_field_text(html, ".device-type, .category");
-        let certification_date = self.extract_field_text(html, ".cert-date, .certification-date");
+    // Product 구조체에는 아직 device_type / certification_date 필드가 없어 경고 발생 → 추후 확장 대비 유지
+    let _device_type = self.extract_field_text(html, ".device-type, .category");
+    let _certification_date = self.extract_field_text(html, ".cert-date, .certification-date");
 
         debug!("Extracted from {}: manufacturer={:?}, model={:?}, cert_id={:?}", 
                url, manufacturer, model, certificate_id);
@@ -336,7 +337,7 @@ impl MatterDataExtractor {
         // Extract basic product information from page headers/title
         let model = self.extract_field_text(html, &self.config.product_detail_selectors.model);
         let manufacturer = self.extract_field_text(html, "p.company-info, .company-name, .manufacturer, p.entry-company, .entry-company");
-        let device_type = self.extract_field_text(html, "p.device-category, .product-type, .device-type, p.entry-category, .entry-category, h6.entry-category");
+    let device_type = self.extract_field_text(html, "p.device-category, .product-type, .device-type, p.entry-category, .entry-category, h6.entry-category");
         
         let mut detail = ProductDetail {
             url,
@@ -885,7 +886,7 @@ mod tests {
         assert_eq!(detail.model, Some("Test Product Detail".to_string()));
         assert_eq!(detail.manufacturer, Some("Test Manufacturer".to_string()));
         assert_eq!(detail.device_type, Some("Test Device Type".to_string()));
-        assert_eq!(detail.certification_id, Some("CSA12345MAT12345-24".to_string()));
+    assert_eq!(detail.certificate_id, Some("CSA12345MAT12345-24".to_string()));
         assert_eq!(detail.certification_date, Some("2024-01-15".to_string()));
         assert_eq!(detail.vid, Some(0x1234));
         assert_eq!(detail.pid, Some(5678));
@@ -906,7 +907,7 @@ mod tests {
             manufacturer: None,
             model: None,
             device_type: None,
-            certification_id: None,
+            certificate_id: None,
             certification_date: None,
             software_version: None,
             hardware_version: None,
@@ -930,7 +931,7 @@ mod tests {
         
         extractor.extract_from_detail_list(&html, &mut detail).unwrap();
         
-        assert_eq!(detail.certification_id, Some("CSA12345MAT12345-24".to_string()));
+    assert_eq!(detail.certificate_id, Some("CSA12345MAT12345-24".to_string()));
         assert_eq!(detail.vid, Some(0x1234));
         assert_eq!(detail.pid, Some(5678));
         assert_eq!(detail.hardware_version, Some("1.0".to_string()));

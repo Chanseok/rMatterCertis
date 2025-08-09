@@ -236,8 +236,8 @@ impl IntegratedProductUseCases {
         manufacturer: Option<String>,
         model: Option<String>,
         certificate_id: Option<String>,
-        device_type: Option<String>,
-        certification_date: Option<String>,
+    _device_type: Option<String>,
+    _certification_date: Option<String>,
         page_id: Option<i32>,
         index_in_page: Option<i32>,
     ) -> Product {

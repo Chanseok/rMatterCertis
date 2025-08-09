@@ -198,128 +198,92 @@ impl DataQualityAnalyzer {
             return Ok(Vec::new());
         }
 
-        // Log quality report for actual data
-        info!("🔍 Data Quality Analysis Report:");
-        info!("  📊 Total products analyzed: {}", report.total_products);
-        info!("  ✅ Complete products: {} ({:.1}%)", 
-                 report.complete_products, 
-                 if report.total_products > 0 { (report.complete_products as f32 / report.total_products as f32) * 100.0 } else { 0.0 });
-        info!("  ⚠️  Incomplete products: {}", report.incomplete_products);
-        info!("  📈 Overall quality score: {:.2}%", report.quality_score);
-        
-        // 🔍 상세 필드 분석 및 로컬 DB 비교
-        if !report.missing_fields.is_empty() {
-            info!("  📋 Missing field frequency (compared to ideal product structure):");
-            for (field, count) in &report.missing_fields {
-                let percentage = (*count as f32 / report.total_products as f32) * 100.0;
-                let impact = if matches!(field.as_str(), "manufacturer" | "model") {
-                    "🔴 CRITICAL (blocks identification)"
-                } else if matches!(field.as_str(), "certificate_id" | "device_type") {
-                    "🟡 HIGH (affects searchability)"
-                } else if matches!(field.as_str(), "vid" | "pid") {
-                    "🟠 MEDIUM (Matter standard compliance)"
-                } else {
-                    "🟢 LOW (optional metadata)"
-                };
-                info!("    - {}: {} products ({:.1}%) {}", 
-                         field, count, percentage, impact);
-            }
-        }
-        
-        // 🔍 특정 제품 사례 상세 분석
-        if !products.is_empty() {
-            info!("  🔬 DETAILED EXAMPLE ANALYSIS:");
-            let sample_product = &products[0];
-            info!("    📄 Sample Product: {}", sample_product.url.split('/').last().unwrap_or("Unknown"));
-            info!("    🏷️  Field Completeness Analysis:");
-            
-            // Critical fields analysis
-            info!("      🔴 CRITICAL FIELDS:");
-            self.analyze_field("manufacturer", &sample_product.manufacturer);
-            self.analyze_field("model", &sample_product.model);
-            
-            // Important fields analysis  
-            info!("      🟡 IMPORTANT FIELDS:");
-            self.analyze_field("device_type", &sample_product.device_type);
-            self.analyze_field("certificate_id", &sample_product.certificate_id);
-            
-            // Matter-specific fields
-            info!("      🟠 MATTER COMPLIANCE FIELDS:");
-            info!("        - vid: {} {}", 
-                if sample_product.vid.is_some() { "✅ Present" } else { "❌ Missing" },
-                sample_product.vid.map_or("(required for Matter device identification)".to_string(), |v| format!("(value: {})", v))
-            );
-            info!("        - pid: {} {}", 
-                if sample_product.pid.is_some() { "✅ Present" } else { "❌ Missing" },
-                sample_product.pid.map_or("(required for Matter device identification)".to_string(), |v| format!("(value: {})", v))
-            );
-            
-            // Additional metadata
-            info!("      🟢 OPTIONAL METADATA:");
-            self.analyze_field("specification_version", &sample_product.specification_version);
-            self.analyze_field("transport_interface", &sample_product.transport_interface);
-            self.analyze_field("certification_date", &sample_product.certification_date);
-        }
-        
-        if !report.issues.is_empty() {
-            warn!("  🚨 Quality issues by severity:");
-            let mut critical_count = 0;
-            let mut warning_count = 0;
-            let mut info_count = 0;
-            
-            for issue in &report.issues {
-                match issue.severity {
-                    IssueSeverity::Critical => critical_count += 1,
-                    IssueSeverity::Warning => warning_count += 1,
-                    IssueSeverity::Info => info_count += 1,
-                }
-            }
-            
-            if critical_count > 0 {
-                error!("    🔴 Critical issues: {} (blocks database storage)", critical_count);
-            }
-            if warning_count > 0 {
-                warn!("    🟡 Warning issues: {} (reduces data usability)", warning_count);
-            }
-            if info_count > 0 {
-                info!("    🔵 Info issues: {} (minor concerns)", info_count);
-            }
-            
-            // Show first few issues as examples
-            info!("  📝 Sample issues (first 5):");
-            for (i, issue) in report.issues.iter().take(5).enumerate() {
-                warn!("    {}. {} {} in '{}' for product: {}", 
-                    i + 1,
-                    match issue.severity {
-                        IssueSeverity::Critical => "🔴 CRITICAL",
-                        IssueSeverity::Warning => "🟡 WARNING", 
-                        IssueSeverity::Info => "🔵 INFO",
-                    },
-                    match issue.issue_type {
-                        IssueType::MissingRequired => "Missing Required Field",
-                        IssueType::InvalidFormat => "Invalid Format",
-                        IssueType::EmptyValue => "Empty Value",
-                        IssueType::Duplicate => "Duplicate",
-                    },
-                    issue.field_name,
-                    issue.product_url.split('/').last().unwrap_or(&issue.product_url)
+        // Decide logging mode (concise vs verbose) using env flag MC_CONCISE_DQ=1/true
+        let concise = std::env::var("MC_CONCISE_DQ").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+
+        // Pre-compute issue counts
+        let critical_count = report.issues.iter().filter(|i| matches!(i.severity, IssueSeverity::Critical)).count();
+        let warning_count = report.issues.iter().filter(|i| matches!(i.severity, IssueSeverity::Warning)).count();
+        let info_count = report.issues.iter().filter(|i| matches!(i.severity, IssueSeverity::Info)).count();
+
+        // Storage recommendation (short + long versions)
+        let (storage_recommendation_short, storage_recommendation_long) = if report.quality_score >= 80.0 {
+            ("RECOMMENDED", "🟢 RECOMMENDED - High quality data, safe to store")
+        } else if report.quality_score >= 60.0 {
+            ("CONDITIONAL", "🟡 CONDITIONAL - Moderate quality, review critical issues before storage")
+        } else {
+            ("NOT_RECOMMENDED", "� NOT RECOMMENDED - Low quality data, fix critical issues first")
+        };
+
+        let json_mode = std::env::var("MC_DQ_JSON").ok().map(|v| v=="1"||v.eq_ignore_ascii_case("true")).unwrap_or(false);
+        if concise {
+            // Build compact missing field summary (max 4 entries)
+            let mut missing: Vec<(String, usize)> = report.missing_fields.iter().map(|(k,v)|(k.clone(),*v)).collect();
+            missing.sort_by(|a,b| b.1.cmp(&a.1));
+            let missing_summary = if missing.is_empty() { "none".to_string() } else {
+                missing.iter().take(4).map(|(k,v)| format!("{}:{}", k, v)).collect::<Vec<_>>().join(",") + if missing.len()>4 { ",…" } else { "" }
+            };
+            if json_mode {
+                // Emit machine-readable JSON one-liner
+                if let Ok(json) = serde_json::to_string(&serde_json::json!({
+                    "kind":"dq_summary",
+                    "products":report.total_products,
+                    "complete":report.complete_products,
+                    "incomplete":report.incomplete_products,
+                    "score":format!("{:.1}", report.quality_score),
+                    "missing_top":missing.iter().take(4).collect::<Vec<_>>(),
+                    "critical":critical_count,
+                    "warning":warning_count,
+                    "info":info_count,
+                    "storage":storage_recommendation_short
+                })) { info!("{}", json); }
+            } else {
+                info!(
+                    "DQ summary products={} complete={} incomplete={} score={:.1}% miss=[{}] issues(c={} w={} i={}) storage={}",
+                    report.total_products,
+                    report.complete_products,
+                    report.incomplete_products,
+                    report.quality_score,
+                    missing_summary,
+                    critical_count,
+                    warning_count,
+                    info_count,
+                    storage_recommendation_short
                 );
             }
-            if report.issues.len() > 5 {
-                info!("    ... and {} more issues", report.issues.len() - 5);
-            }
-        }
-        
-        // Storage recommendation with detailed rationale
-        let storage_recommendation = if report.quality_score >= 80.0 {
-            "🟢 RECOMMENDED - High quality data, safe to store"
-        } else if report.quality_score >= 60.0 {
-            "🟡 CONDITIONAL - Moderate quality, review critical issues before storage"
         } else {
-            "🔴 NOT RECOMMENDED - Low quality data, fix critical issues first"
-        };
-        
-        info!("  💾 Storage Recommendation: {}", storage_recommendation);
+            // Verbose (original) logging retained but condensed to reduce duplication
+            info!("🔍 Data Quality Analysis Report:");
+            info!("  � Total products analyzed: {}", report.total_products);
+            info!("  ✅ Complete products: {} ({:.1}%)", report.complete_products, if report.total_products > 0 { (report.complete_products as f32 / report.total_products as f32) * 100.0 } else { 0.0 });
+            info!("  ⚠️  Incomplete products: {}", report.incomplete_products);
+            info!("  � Overall quality score: {:.2}%", report.quality_score);
+            if !report.missing_fields.is_empty() {
+                info!("  📋 Missing field frequency:");
+                for (field, count) in &report.missing_fields {
+                    let pct = (*count as f32 / report.total_products as f32) * 100.0;
+                    info!("    - {}: {} ({:.1}%)", field, count, pct);
+                }
+            }
+            if !report.issues.is_empty() {
+                warn!("  � Issues: critical={} warning={} info={} (showing first 3)", critical_count, warning_count, info_count);
+                for (i, issue) in report.issues.iter().take(3).enumerate() {
+                    warn!("    {}. {} {} in '{}' [{}]", i+1,
+                        match issue.severity { IssueSeverity::Critical=>"CRIT", IssueSeverity::Warning=>"WARN", IssueSeverity::Info=>"INFO" },
+                        match issue.issue_type { IssueType::MissingRequired=>"Missing", IssueType::InvalidFormat=>"Format", IssueType::EmptyValue=>"Empty", IssueType::Duplicate=>"Dup" },
+                        issue.field_name,
+                        issue.product_url.split('/').last().unwrap_or(&issue.product_url));
+                }
+                if report.issues.len()>3 { info!("    ... {} more", report.issues.len()-3); }
+            }
+            // Sample only if verbose and products available
+            if let Some(sample_product) = products.first() {
+                info!("  🧪 Sample: manf={:?} model={:?} device_type={:?} cert_id={:?} vid={:?} pid={:?}",
+                    sample_product.manufacturer, sample_product.model, sample_product.device_type,
+                    sample_product.certificate_id, sample_product.vid, sample_product.pid);
+            }
+            info!("  💾 Storage Recommendation: {}", storage_recommendation_long);
+        }
         
         // Filter out products with critical issues if needed
         // For now, return all products but log the assessment

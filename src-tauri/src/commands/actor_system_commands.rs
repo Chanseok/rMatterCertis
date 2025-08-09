@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio::sync::{mpsc, broadcast, watch};
 use tokio::time::Duration;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use chrono::Utc;
 
 /// Actor System State managed by Tauri
@@ -392,7 +392,7 @@ async fn calculate_intelligent_crawling_range(
         status_checker.clone(),
         db_analyzer.clone(),
         system_config.clone(),
-    );
+    ).with_repository(product_repo.clone());
     
     // 시스템 상태 분석 (진짜 도메인 로직)
     let (site_status, db_analysis) = crawling_planner.analyze_system_state().await
@@ -558,6 +558,7 @@ async fn execute_session_actor_with_batches(
             request_delay_ms: app_config.user.request_delay_ms,
             timeout_secs: app_config.advanced.request_timeout_seconds,
             max_retries: app_config.advanced.retry_attempts,
+            strategy: crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst,
         },
         timestamp: chrono::Utc::now(),
     };
@@ -849,26 +850,42 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
         status_checker,
         database_analyzer,
         Arc::new(SystemConfig::default()),
-    );
+    ).with_repository(product_repo.clone());
     
     info!("🎯 Analyzing system state with CrawlingPlanner...");
-    
-    // CrawlingConfig 생성 (필요한 기본값)
+
+    // ──────────────────────────────────────────────
+    // (1) 사전 데이터베이스 상태로 전략 결정 힌트 계산
+    let existing_product_count = match product_repo.get_product_count().await {
+        Ok(c) => c,
+        Err(e) => { warn!("⚠️ Failed to get product count for strategy decision: {} -> default NewestFirst", e); 0 }
+    };
+
+    // 기본 전략은 NewestFirst. DB에 데이터가 있으면 ContinueFromDb 시도
+    let mut chosen_strategy = crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst;
+    if existing_product_count > 0 {
+        chosen_strategy = crate::new_architecture::actors::types::CrawlingStrategy::ContinueFromDb;
+        info!("🧭 Choosing ContinueFromDb strategy (existing products={})", existing_product_count);
+    } else {
+        info!("🧭 Choosing NewestFirst strategy (empty DB)");
+    }
+
+    // (2) CrawlingConfig 생성 (start_page/end_page는 '개수' 표현: start_page - end_page + 1 = 요청 수)
     let crawling_config = CrawlingConfig {
         site_url: "https://csa-iot.org/csa-iot_products/".to_string(),
-    // 요청 개수는 start/end 차이로 계산되므로 page_range_limit 만큼 요청하도록 설정
-    // (optimize_crawling_strategy 내 주석: UI 입력의 start/end는 '개수'만 사용)
-    start_page: app_config.user.crawling.page_range_limit.max(1),
-    end_page: 1,
+        start_page: app_config.user.crawling.page_range_limit.max(1), // 요청 개수 표현
+        end_page: 1,
         concurrency_limit: app_config.user.max_concurrent_requests,
         batch_size: app_config.user.batch.batch_size,
         request_delay_ms: 1000,
-    timeout_secs: 300,
-    max_retries: app_config.user.crawling.workers.max_retries,
+        timeout_secs: 300,
+        max_retries: app_config.user.crawling.workers.max_retries,
+        strategy: chosen_strategy.clone(),
     };
-    
-    // 사이트 상태도 함께 획득 (힌트 전달용)
+
+    // (3) 사이트 상태 및 계획 생성 (사이트 상태 1회 조회 + DB 분석)
     let (crawling_plan, site_status) = crawling_planner.create_crawling_plan_with_cache(&crawling_config, None).await?;
+    info!("🧪 CrawlingPlanner produced plan with {:?} (requested strategy {:?})", crawling_plan.optimization_strategy, chosen_strategy);
     
     info!("📋 CrawlingPlan created: {:?}", crawling_plan);
     
@@ -958,18 +975,30 @@ async fn execute_session_actor_with_execution_plan(
           execution_plan.concurrency_limit);
     
     // 시작 이벤트 방출 (설정 파일 기반 값 사용)
+    // 전략 추론: 첫 배치가 마지막 페이지보다 작은 페이지를 포함하면 ContinueFromDb였을 가능성 높음
+    let inferred_strategy = if execution_plan.crawling_ranges.len() > 1 {
+        // 여러 범위가 있고 첫 start_page가 site_status.total_pages 보다 작으면 ContinueFromDb 추정
+        let first_start = execution_plan.crawling_ranges.first().map(|r| r.start_page).unwrap_or(1);
+        if first_start < site_status.total_pages { crate::new_architecture::actors::types::CrawlingStrategy::ContinueFromDb } else { crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst }
+    } else {
+        let first_range = execution_plan.crawling_ranges.first();
+        if let Some(r) = first_range {
+            if r.start_page < site_status.total_pages { crate::new_architecture::actors::types::CrawlingStrategy::ContinueFromDb } else { crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst }
+        } else { crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst }
+    };
+
     let session_event = AppEvent::SessionStarted {
         session_id: execution_plan.session_id.clone(),
         config: CrawlingConfig {
             site_url: "https://csa-iot.org/csa-iot_products/".to_string(),
             start_page: execution_plan.crawling_ranges.first().map(|r| r.start_page).unwrap_or(1),
             end_page: execution_plan.crawling_ranges.last().map(|r| r.end_page).unwrap_or(1),
-            // Use the plan's concurrency as the effective session concurrency
             concurrency_limit: execution_plan.concurrency_limit,
             batch_size: execution_plan.batch_size,
             request_delay_ms: app_config.user.request_delay_ms,
             timeout_secs: app_config.advanced.request_timeout_seconds,
             max_retries: app_config.advanced.retry_attempts,
+            strategy: inferred_strategy,
         },
         timestamp: Utc::now(),
     };

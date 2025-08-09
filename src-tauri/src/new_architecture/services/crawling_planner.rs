@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use ts_rs::TS;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::domain::services::{StatusChecker, DatabaseAnalyzer};
 use crate::domain::services::crawling_services::{
@@ -14,9 +14,17 @@ use crate::domain::services::crawling_services::{
 };
 use super::super::{
     SystemConfig,
-    actors::types::{CrawlingConfig, BatchConfig, ActorError}
+    actors::types::{CrawlingConfig, BatchConfig, ActorError, CrawlingStrategy}
 };
 use crate::domain::services::SiteStatus;
+use lazy_static::lazy_static;
+use std::sync::Mutex;
+
+#[derive(Clone)]
+struct CachedRange { pages: Vec<u32>, total_pages: u32, requested: u32, ts: std::time::Instant }
+lazy_static! {
+    static ref LAST_RANGE: Mutex<Option<CachedRange>> = Mutex::new(None);
+}
 
 /// 지능형 크롤링 계획 수립자
 /// 
@@ -31,6 +39,9 @@ pub struct CrawlingPlanner {
     
     /// 시스템 설정
     config: Arc<SystemConfig>,
+
+    /// (선택) 통합 제품 저장소 - ContinueFromDb 전략 정밀 계산에 사용
+    product_repo: Option<Arc<crate::infrastructure::IntegratedProductRepository>>,
 }
 
 impl CrawlingPlanner {
@@ -50,7 +61,15 @@ impl CrawlingPlanner {
             status_checker,
             database_analyzer,
             config,
+            product_repo: None,
         }
+    }
+
+    /// 통합 제품 저장소를 추가로 연결 (builder 패턴)
+    #[must_use]
+    pub fn with_repository(mut self, repo: Arc<crate::infrastructure::IntegratedProductRepository>) -> Self {
+        self.product_repo = Some(repo);
+        self
     }
     
     /// 크롤링 계획을 수립합니다.
@@ -251,28 +270,107 @@ impl CrawlingPlanner {
             Err(_) => return Err(ActorError::CommandProcessingFailed("Failed to downcast DatabaseAnalysis".to_string())),
         };
 
-        // 2) 요청한 페이지 수 계산 (UI 입력의 start/end는 '개수'만 사용)
-        let requested_count = if config.start_page >= config.end_page {
-            config.start_page - config.end_page + 1
-        } else {
-            config.end_page - config.start_page + 1
-        };
+        // ──────────────────────────────────────────────
+        // Range REUSE GUARD (simple in-memory, per process)
+        // 최근 60초 이내 동일 total_pages + requested_count면 재사용
+        // (실제 영속화는 추후 ConfigManager 통합 시 확장)
+    // (전역 lazy_static 캐시 사용)
 
-        // 3) 사이트 총 페이지 기준으로 최신부터 범위 생성 (예: total=498, count=12 → 498..487)
+        let now = std::time::Instant::now();
+
+        // 2) 요청한 페이지 수 계산 (UI 입력의 start/end는 '개수'만 사용)
+        let requested_count = if config.start_page >= config.end_page { config.start_page - config.end_page + 1 } else { config.end_page - config.start_page + 1 };
+
         let total_pages_on_site = site_status.total_pages.max(1);
         let count = requested_count.max(1).min(total_pages_on_site);
-        let start = total_pages_on_site; // 최신 페이지가 가장 큰 번호
-        let end = start.saturating_sub(count - 1).max(1);
-        let page_range: Vec<u32> = (end..=start).rev().collect();
 
-        info!(
-            "🔧 CrawlingPlanner computed newest-first page range: total_pages_on_site={}, requested_count={}, actual_count={}, pages={:?}",
-            total_pages_on_site, requested_count, page_range.len(), page_range
-        );
+        // 전략 분기
+        let page_range: Vec<u32> = match config.strategy {
+            crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst => {
+                // 재사용 체크
+                if let Some(cached) = LAST_RANGE.lock().unwrap().as_ref() {
+                    if cached.total_pages == total_pages_on_site && cached.requested == count && now.duration_since(cached.ts).as_secs() < 60 {
+                        info!("♻️ Reusing cached newest-first range: {:?}", cached.pages);
+                        cached.pages.clone()
+                    } else {
+                        // 새로 계산
+                        let start = total_pages_on_site;
+                        let end = start.saturating_sub(count - 1).max(1);
+                        let pages: Vec<u32> = (end..=start).rev().collect();
+                        *LAST_RANGE.lock().unwrap() = Some(CachedRange { pages: pages.clone(), total_pages: total_pages_on_site, requested: count, ts: now });
+                        info!("🔧 Computed newest-first page range: total_pages_on_site={}, requested_count={}, actual_count={}, pages={:?}", total_pages_on_site, requested_count, pages.len(), pages);
+                        pages
+                    }
+                } else {
+                    let start = total_pages_on_site;
+                    let end = start.saturating_sub(count - 1).max(1);
+                    let pages: Vec<u32> = (end..=start).rev().collect();
+                    *LAST_RANGE.lock().unwrap() = Some(CachedRange { pages: pages.clone(), total_pages: total_pages_on_site, requested: count, ts: now });
+                    info!("🔧 Computed newest-first page range: total_pages_on_site={}, requested_count={}, actual_count={}, pages={:?}", total_pages_on_site, requested_count, pages.len(), pages);
+                    pages
+                }
+            }
+            crate::new_architecture::actors::types::CrawlingStrategy::ContinueFromDb => {
+                // ──────────────────────────────────────────────
+                // Precise DB continuation
+            // reuse global cached range; prefer lazy_static already present
+            use lazy_static::lazy_static; // macro import
+                #[derive(Clone)]
+                struct DbCachedRange { pages: Vec<u32>, total_pages: u32, requested: u32, last_db_page_id: Option<i32>, last_db_index: Option<i32>, ts: std::time::Instant }
+                lazy_static::lazy_static! {
+                    static ref LAST_DB_RANGE: std::sync::Mutex<Option<DbCachedRange>> = std::sync::Mutex::new(None);
+                }
+
+                // 1) 저장소 없으면 fallback → 최신순
+                let newest_fallback_pages = || {
+                    let start = total_pages_on_site;
+                    let end = start.saturating_sub(count - 1).max(1);
+                    (end..=start).rev().collect::<Vec<u32>>()
+                };
+                if self.product_repo.is_none() {
+                    warn!("🧪 ContinueFromDb requested but product_repo not attached -> fallback newest-first");
+                    return Ok(CrawlingPlan { session_id: uuid::Uuid::new_v4().to_string(), phases: vec![], total_estimated_duration_secs: 0, optimization_strategy: OptimizationStrategy::Balanced, created_at: chrono::Utc::now() }); // using Balanced as placeholder for reuse scenario
+                }
+                let repo = self.product_repo.as_ref().unwrap().clone();
+
+                // 2) DB 상태 조회
+                let (max_page_id, max_index_in_page) = match repo.get_max_page_id_and_index().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!("⚠️ Failed to read DB state ({e}); using newest-first fallback");
+                        return Ok(CrawlingPlan { session_id: uuid::Uuid::new_v4().to_string(), phases: vec![], total_estimated_duration_secs: 0, optimization_strategy: OptimizationStrategy::Balanced, created_at: chrono::Utc::now() });
+                    }
+                };
+
+                // 3) 캐시 재사용 판단
+                if let Some(cached) = LAST_DB_RANGE.lock().unwrap().as_ref() {
+                    if cached.total_pages == total_pages_on_site && cached.requested == count && cached.last_db_page_id == max_page_id && cached.last_db_index == max_index_in_page && now.duration_since(cached.ts).as_secs() < 60 {
+                        info!("♻️ Reusing cached ContinueFromDb range: {:?}", cached.pages);
+                        return Ok(CrawlingPlan { session_id: uuid::Uuid::new_v4().to_string(), phases: vec![], total_estimated_duration_secs: 0, optimization_strategy: OptimizationStrategy::Balanced, created_at: chrono::Utc::now() });
+                    }
+                }
+
+                // 4) 정밀 범위 계산
+                let products_on_last_page = site_status.products_on_last_page;
+                let precise = match repo.calculate_next_crawling_range(total_pages_on_site, products_on_last_page, count).await {
+                    Ok(opt) => opt,
+                    Err(e) => {
+                        warn!("⚠️ Failed calculate_next_crawling_range ({e}); fallback to newest-first pages");
+                        None
+                    }
+                };
+                let pages: Vec<u32> = if let Some((start_page, end_page)) = precise {
+                    if start_page >= end_page { (end_page..=start_page).rev().collect() } else { (start_page..=end_page).rev().collect() }
+                } else { newest_fallback_pages() };
+                *LAST_DB_RANGE.lock().unwrap() = Some(DbCachedRange { pages: pages.clone(), total_pages: total_pages_on_site, requested: count, last_db_page_id: max_page_id, last_db_index: max_index_in_page, ts: now });
+                info!("🔧 Computed ContinueFromDb range: db_last=({:?},{:?}) pages={:?}", max_page_id, max_index_in_page, pages);
+                pages
+            }
+        };
 
         // 4) batch_size에 따라 분할
         let batch_size = config.batch_size.max(1) as usize;
-        let batched_pages: Vec<Vec<u32>> = if page_range.len() > batch_size {
+    let batched_pages: Vec<Vec<u32>> = if page_range.len() > batch_size {
             page_range
                 .chunks(batch_size)
                 .map(|c| c.to_vec())

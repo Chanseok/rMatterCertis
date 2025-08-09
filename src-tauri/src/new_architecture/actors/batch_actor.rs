@@ -580,6 +580,23 @@ impl BatchActor {
             batch_id,
             pages.len()
         );
+
+        // 추가: 배치 요약 한 줄 로그로 핵심 지표 집계 출력
+        let duration_ms = self.start_time.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
+        info!(
+            "📦 [Batch SUMMARY] actor={}, batch_id={}, pages_total={}, success_items={}, failed_items={}, retries_used≈{}, duration_ms={}",
+            self.actor_id,
+            batch_id,
+            self.total_pages,
+            saving_result.successful_items,
+            saving_result.failed_items,
+            {
+                let stage2_retries: u32 = list_page_result.details.iter().map(|d| d.retry_count).sum();
+                let stage3_retries: u32 = detail_result.details.iter().map(|d| d.retry_count).sum();
+                stage2_retries.saturating_add(stage3_retries)
+            },
+            duration_ms
+        );
         
         let completion_event = AppEvent::BatchCompleted {
             batch_id: batch_id.clone(),
@@ -594,7 +611,7 @@ impl BatchActor {
             .map_err(|e| BatchError::ContextError(e.to_string()))?;
 
         // === 추가: 배치 리포트 이벤트 발행 ===
-        let duration_ms = self.start_time.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
+    let duration_ms = self.start_time.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
         // Stage 2/3 결과는 상단 스코프의 변수들에서 가져옴. 사용 가능 시 집계, 없으면 보수적 기본값.
         let pages_total = self.total_pages;
         let pages_success = self.success_count.max( list_page_result.successful_items );

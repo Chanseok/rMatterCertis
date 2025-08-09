@@ -193,8 +193,9 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
     }
 
     // Concise startup mode (config or ENV override)
+    let concise_all = std::env::var("MC_CONCISE_ALL").ok().map(|v| !(v=="0"||v.eq_ignore_ascii_case("false"))); // 기본 true
     let concise_env = std::env::var("MC_CONCISE_STARTUP").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true"));
-    let concise_startup = concise_env.unwrap_or(config.concise_startup);
+    let concise_startup = concise_all.unwrap_or(false) || concise_env.unwrap_or(config.concise_startup);
 
     // Set up environment filter with configurable module filtering
     let env_filter = EnvFilter::try_from_default_env()

@@ -174,14 +174,15 @@ impl SessionActor {
             status_checker.clone(),
             db_analyzer,
             Arc::clone(&context.config),
-        );
+        ).with_repository(Arc::clone(&product_repo));
 
         // TTL 5분 캐시 사용해 계획 생성
         let ttl = Duration::from_secs(300);
         let cached = self.site_status_cache.as_ref().and_then(|(status, ts)| {
             if ts.elapsed() <= ttl { Some(status.clone()) } else { None }
         });
-        let (plan, used_site_status) = planner.create_crawling_plan_with_cache(&config, cached).await
+    // NOTE: Strategy currently default (NewestFirst) unless caller overrides
+    let (plan, used_site_status) = planner.create_crawling_plan_with_cache(&config, cached).await
             .map_err(|e| SessionError::InitializationFailed(format!("Failed to create crawling plan: {}", e)))?;
         info!("📋 Crawling plan created: {} phases", plan.phases.len());
         // 플래너 완료 Progress 이벤트 발행 (플래너 단계 관측용)

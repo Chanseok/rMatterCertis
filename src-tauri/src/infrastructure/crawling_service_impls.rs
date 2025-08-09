@@ -136,7 +136,7 @@ impl StatusChecker for StatusCheckerImpl {
         // 접근성 테스트
         let access_test = {
             // Use configured HttpClient instead of hardcoded default
-            let client = self.create_configured_http_client()?;
+            let _client = self.create_configured_http_client()?;
             let result = self.http_client.fetch_response(&url).await?.text().await;
             result
         };
@@ -429,7 +429,7 @@ impl StatusCheckerImpl {
         let (verified_last_page, products_on_last_page) = self.verify_last_page(current_page).await?;
         
         // 5. 설정 파일에 결과 저장
-        if let Err(e) = self.update_last_known_page(verified_last_page).await {
+    if let Err(e) = self.update_last_known_page(verified_last_page, Some(products_on_last_page)).await {
             warn!("⚠️  Failed to update last known page in config: {}", e);
         }
         
@@ -448,7 +448,7 @@ impl StatusCheckerImpl {
             let test_url = config_utils::matter_products_page_url_simple(current_page);
             
             // Use configured HttpClient
-            let client = self.create_configured_http_client()?;
+            let _client = self.create_configured_http_client()?;
             match self.http_client.fetch_response(&test_url).await {
                 Ok(response) => {
                     match response.text().await {
@@ -778,7 +778,7 @@ impl StatusCheckerImpl {
         let test_url = config_utils::matter_products_page_url_simple(page);
         
         // Use configured HttpClient
-        let client = self.create_configured_http_client()?;
+    let _client = self.create_configured_http_client()?;
         match self.http_client.fetch_response(&test_url).await {
             Ok(response) => {
                 match response.text().await {
@@ -868,7 +868,7 @@ impl StatusCheckerImpl {
     }
 
     /// 설정 파일에 마지막 페이지 및 메타데이터 업데이트
-    async fn update_last_known_page(&self, last_page: u32) -> Result<()> {
+    async fn update_last_known_page(&self, last_page: u32, items_on_last_page: Option<u32>) -> Result<()> {
         use crate::infrastructure::config::ConfigManager;
         
         let config_manager = ConfigManager::new()?;
@@ -881,15 +881,21 @@ impl StatusCheckerImpl {
             // 마지막 성공한 크롤링 시간 업데이트
             app_managed.last_successful_crawl = Some(chrono::Utc::now().to_rfc3339());
             
-            // 추정 제품 수 업데이트 (페이지당 12개 제품 - 실제 사이트 구조 기반)
-            app_managed.last_crawl_product_count = Some(last_page * 12);
+        // 총 제품 수 정확 계산: (last_page - 1) * items_per_full_page + items_on_last_page
+        // items_on_last_page 가 None 인 경우 보수적으로 full page 로 간주
+        let items_per_page = DEFAULT_PRODUCTS_PER_PAGE as u32; // 기존 상수 (검증된 값)
+        let last_partial = items_on_last_page.unwrap_or(items_per_page);
+        let accurate_total = if last_page == 0 { 0 } else { (last_page - 1) * items_per_page + last_partial };
+            app_managed.last_crawl_product_count = Some(accurate_total);
             
             // 페이지당 평균 제품 수 업데이트
             app_managed.avg_products_per_page = Some(DEFAULT_PRODUCTS_PER_PAGE as f64);
             
-            info!("📝 Updated config: last_page={}, timestamp={}", 
-                  last_page, 
-                  app_managed.last_successful_crawl.as_ref().unwrap_or(&"unknown".to_string()));
+        info!("📝 Updated config: last_page={}, items_on_last_page={}, accurate_total_products={}, timestamp={}", 
+            last_page,
+            last_partial,
+            accurate_total,
+            app_managed.last_successful_crawl.as_ref().unwrap_or(&"unknown".to_string()));
         }).await?;
         
         info!("✅ Successfully updated last known page to {} in config file", last_page);
@@ -912,6 +918,8 @@ impl StatusCheckerImpl {
                 } else {
                     0.0
                 };
+                // 허용 오차 (마지막 페이지 partial 차이 등) - 0.5% 미만 변화는 Stable 처리
+                let decrease_tolerance_pct = 0.5_f64;
                 
                 if current_estimated_products > prev_count {
                     let increase = current_estimated_products - prev_count;
@@ -921,8 +929,12 @@ impl StatusCheckerImpl {
                         new_count: current_estimated_products, 
                         previous_count: prev_count 
                     }, None)
-                } else if current_estimated_products == prev_count {
-                    info!("📊 Site data stable: {} products", current_estimated_products);
+                } else if current_estimated_products == prev_count || change_percentage.abs() < decrease_tolerance_pct {
+                    if change_percentage.abs() < decrease_tolerance_pct && current_estimated_products != prev_count {
+                        info!("📊 Site data change {:.2}% within tolerance (<{:.2}%), treating as stable ({} -> {})", change_percentage, decrease_tolerance_pct, prev_count, current_estimated_products);
+                    } else {
+                        info!("📊 Site data stable: {} products", current_estimated_products);
+                    }
                     (SiteDataChangeStatus::Stable { count: current_estimated_products }, None)
                 } else {
                     let decrease = prev_count - current_estimated_products;
@@ -1116,7 +1128,7 @@ impl StatusCheckerImpl {
         
         let (product_count, max_pagination_page, active_page, has_products) = {
             // Use consistent HttpClient
-            let client = self.create_configured_http_client()?;
+            let _client = self.create_configured_http_client()?;
             let response = self.http_client.fetch_response(&url).await?;
             let html_string: String = response.text().await?;
             
@@ -1711,8 +1723,8 @@ impl ProductListCollectorImpl {
     /// 🔥 이벤트 처리기 (비동기, 논블로킹)
     async fn handle_page_event(
         event: PageEvent,
-        session_id: &str,
-        batch_id: &str,
+    _session_id: &str,
+    _batch_id: &str,
     ) -> Result<()> {
         // 실제 이벤트 브로드캐스팅 로직
         // 이 함수는 메인 작업과 완전히 독립적으로 실행됨
@@ -1721,7 +1733,7 @@ impl ProductListCollectorImpl {
                 debug!("📄 Page {} started at {}", page_number, timestamp);
                 // SystemStateBroadcaster::emit_product_list_page_event() 호출
             },
-            PageEvent::Completed { page_number, products_found, duration_ms, timestamp } => {
+            PageEvent::Completed { page_number, products_found, duration_ms, timestamp: _ } => {
                 debug!("✅ Page {} completed: {} products in {}ms", page_number, products_found, duration_ms);
                 // 완료 이벤트 발송
             },
@@ -2278,7 +2290,7 @@ impl ProductDetailCollectorImpl {
         // SystemStateBroadcaster는 AppHandle이 필요하므로 여기서는 직접 사용하지 않음
         
         match event {
-            ProductDetailEvent::TaskStarted { product_url, product_name, task_id, start_time } => {
+            ProductDetailEvent::TaskStarted { product_url, product_name, task_id, start_time: _ } => {
                 info!("🚀 Product task started: {} ({})", product_url, task_id);
                 debug!("📝 Product: {} | Task: {} | Session: {} | Batch: {}", 
                        product_name.unwrap_or_else(|| "Unknown".to_string()), task_id, session_id, batch_id);
@@ -2401,7 +2413,7 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
             let page_id = product_url.page_id;  // Capture page_id
             let index_in_page = product_url.index_in_page;  // Capture index_in_page
             let permit = Arc::clone(&semaphore);
-            let delay = self.config.delay_ms;
+            let _delay = self.config.delay_ms;
             let token = cancellation_token.clone();
             
             let task = tokio::spawn(async move {

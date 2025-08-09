@@ -70,7 +70,7 @@ pub async fn check_advanced_site_status(
     info!("🔄 Starting real site status check...");
     
     // 🔥 실제 사이트 체크 진행 중 이벤트 발송
-    let progress_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
+    let _progress_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
         is_standalone: true,
         status: crate::domain::events::SiteCheckStatus::InProgress,
         message: "사이트에 접속하여 상태를 확인 중입니다...".to_string(),
@@ -428,7 +428,7 @@ pub async fn get_database_stats(
     
     // 실제 데이터베이스 통계 조회
     match product_repo.get_database_statistics().await {
-        Ok(db_stats) => {
+    Ok(_db_stats) => {
             // 총 제품 수 조회 
             let total_products = match product_repo.get_product_count().await {
                 Ok(count) => count as u32,

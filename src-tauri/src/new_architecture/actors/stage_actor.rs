@@ -1229,7 +1229,8 @@ impl StageActor {
         }
     }
     
-    /// 실제 데이터 검증 처리
+    /// 실제 데이터 검증 처리 (현재 외부에서 직접 호출하지 않아 dead_code 경고 발생 가능)
+    #[allow(dead_code)]
     async fn execute_real_data_validation(item: &StageItem) -> Result<(), String> {
         match item {
             StageItem::ProductDetails(product_details) => {
@@ -1283,6 +1284,14 @@ impl StageActor {
                 }
                 
                 // 실제 데이터베이스에 저장
+                // 좌표 기본 검증: index_in_page는 0..11 범위, 음수 page_id 경고
+                for d in product_details.iter().take(12) { // 표본 제한
+                    if let Some(idx) = d.index_in_page {
+                        if !(0..=11).contains(&idx) { warn!("⚠️ index_in_page out of range (0..11): id={:?} idx={}", d.id, idx); }
+                    }
+                    if let Some(pid) = d.page_id { if pid < 0 { warn!("⚠️ negative page_id detected: id={:?} pid={}", d.id, pid); } }
+                }
+
                 for detail in product_details {
                     match product_repo.create_or_update_product_detail(&detail).await {
                         Ok(_) => {
@@ -1354,6 +1363,7 @@ impl StageActor {
     // === 시뮬레이션 함수들 (기존) ===
     
     /// 리스트 페이지 처리 시뮬레이션 (Phase 3 임시)
+    #[allow(dead_code)]
     async fn simulate_list_page_processing(item: &StageItem) -> Result<(), String> {
         // 임시: 간단한 처리 시뮬레이션
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1560,6 +1570,7 @@ impl StageActor {
     /// ServiceBasedBatchCrawlingEngine의 로직을 참조하여 구현
     /// 실제 HTTP 요청으로 제품 상세 정보 추출
     /// DataValidation 스테이지에서 ProductUrls -> ProductDetails 변환에 사용
+    #[allow(dead_code)]
     async fn extract_product_detail_from_url(&self, url: &str) -> Result<crate::domain::product::ProductDetail, ActorError> {
         // HTTP 클라이언트 확인
         let http_client = self.http_client.as_ref()

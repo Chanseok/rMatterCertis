@@ -7,7 +7,7 @@ use crate::application::AppState;
 #[tauri::command]
 pub async fn start_crawling_session(
     app_handle: tauri::AppHandle,
-    state: State<'_, AppState>
+    _state: State<'_, AppState>
 ) -> Result<String, String> {
     let session_id = uuid::Uuid::new_v4().to_string();
     
