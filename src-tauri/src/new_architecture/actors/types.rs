@@ -41,6 +41,12 @@ pub enum ActorCommand {
         session_id: String,
         reason: String,
     },
+
+    /// 미리 생성된 ExecutionPlan을 그대로 실행 (재계획 금지)
+    ExecutePrePlanned {
+        session_id: String,
+        plan: ExecutionPlan,
+    },
     
     // === 배치 레벨 명령 ===
     /// 배치 처리
@@ -805,6 +811,59 @@ pub struct ExecutionPlan {
     
     /// 분석 정보 (디버깅용)
     pub analysis_summary: String,
+
+    /// 원본 최적화 전략 (해시/검증 시 안정적 사용)
+    pub original_strategy: String,
+
+    /// 계획 입력 스냅샷 (사이트/DB 상태) - 단일 권위 보장 용도
+    pub input_snapshot: PlanInputSnapshot,
+
+    /// 입력 스냅샷 + 핵심 파라미터 직렬화 후 계산된 해시
+    pub plan_hash: String,
+}
+
+impl ExecutionPlan {
+    /// Preplanned 실행 시 최소한의 SiteStatus 형태를 구성 (페이지 처리 통계용)
+    pub fn input_snapshot_to_site_status(&self) -> crate::domain::services::SiteStatus {
+        use crate::domain::services::crawling_services::{SiteDataChangeStatus, CrawlingRangeRecommendation};
+        // 안정 상태 count 산출: DB 총량 >0 이면 사용, 아니면 페이지 * 마지막페이지상품수 (대략치)
+        let stable_count: u32 = if self.input_snapshot.db_total_products > 0 {
+            // u64 -> u32 캐스팅 (과도한 값은 u32::MAX 로 clamp)
+            self.input_snapshot.db_total_products.min(u32::MAX as u64) as u32
+        } else {
+            let fallback = self.input_snapshot.total_pages
+                * self.input_snapshot.products_on_last_page.max(1);
+            fallback
+        };
+        crate::domain::services::SiteStatus {
+            is_accessible: true,
+            response_time_ms: 0,
+            total_pages: self.input_snapshot.total_pages,
+            // Use stable_count heuristic (DB total if available) as estimated products
+            estimated_products: stable_count,
+            products_on_last_page: self.input_snapshot.products_on_last_page,
+            last_check_time: chrono::Utc::now(),
+            health_score: 1.0,
+            data_change_status: SiteDataChangeStatus::Stable { count: stable_count },
+            decrease_recommendation: None,
+            crawling_range_recommendation: CrawlingRangeRecommendation::Full,
+        }
+    }
+}
+
+/// ExecutionPlan 생성 시의 입력 상태 스냅샷
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PlanInputSnapshot {
+    pub total_pages: u32,
+    pub products_on_last_page: u32,
+    pub db_max_page_id: Option<i32>,
+    pub db_max_index_in_page: Option<i32>,
+    pub db_total_products: u64,
+    pub page_range_limit: u32,
+    pub batch_size: u32,
+    pub concurrency_limit: u32,
+    pub created_at: DateTime<Utc>,
 }
 
 /// 페이지 범위

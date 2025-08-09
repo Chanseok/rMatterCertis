@@ -14,17 +14,14 @@ use crate::domain::services::crawling_services::{
 };
 use super::super::{
     SystemConfig,
-    actors::types::{CrawlingConfig, BatchConfig, ActorError, CrawlingStrategy}
+    actors::types::{CrawlingConfig, BatchConfig, ActorError}
 };
 use crate::domain::services::SiteStatus;
-use lazy_static::lazy_static;
-use std::sync::Mutex;
+// Removed lazy_static cache (unused) to reduce warnings
+// use lazy_static::lazy_static;
+// use std::sync::Mutex;
 
-#[derive(Clone)]
-struct CachedRange { pages: Vec<u32>, total_pages: u32, requested: u32, ts: std::time::Instant }
-lazy_static! {
-    static ref LAST_RANGE: Mutex<Option<CachedRange>> = Mutex::new(None);
-}
+// (Legacy cache removed)
 
 /// 지능형 크롤링 계획 수립자
 /// 
@@ -265,7 +262,7 @@ impl CrawlingPlanner {
             Ok(b) => *b,
             Err(_) => return Err(ActorError::CommandProcessingFailed("Failed to downcast SiteStatus".to_string())),
         };
-        let _db_analysis = match db_analysis_any.downcast::<DatabaseAnalysis>() {
+        let db_analysis = match db_analysis_any.downcast::<DatabaseAnalysis>() {
             Ok(b) => *b,
             Err(_) => return Err(ActorError::CommandProcessingFailed("Failed to downcast DatabaseAnalysis".to_string())),
         };
@@ -276,7 +273,7 @@ impl CrawlingPlanner {
         // (실제 영속화는 추후 ConfigManager 통합 시 확장)
     // (전역 lazy_static 캐시 사용)
 
-        let now = std::time::Instant::now();
+    let now = std::time::Instant::now();
 
         // 2) 요청한 페이지 수 계산 (UI 입력의 start/end는 '개수'만 사용)
         let requested_count = if config.start_page >= config.end_page { config.start_page - config.end_page + 1 } else { config.end_page - config.start_page + 1 };
@@ -288,27 +285,11 @@ impl CrawlingPlanner {
         let page_range: Vec<u32> = match config.strategy {
             crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst => {
                 // 재사용 체크
-                if let Some(cached) = LAST_RANGE.lock().unwrap().as_ref() {
-                    if cached.total_pages == total_pages_on_site && cached.requested == count && now.duration_since(cached.ts).as_secs() < 60 {
-                        info!("♻️ Reusing cached newest-first range: {:?}", cached.pages);
-                        cached.pages.clone()
-                    } else {
-                        // 새로 계산
-                        let start = total_pages_on_site;
-                        let end = start.saturating_sub(count - 1).max(1);
-                        let pages: Vec<u32> = (end..=start).rev().collect();
-                        *LAST_RANGE.lock().unwrap() = Some(CachedRange { pages: pages.clone(), total_pages: total_pages_on_site, requested: count, ts: now });
-                        info!("🔧 Computed newest-first page range: total_pages_on_site={}, requested_count={}, actual_count={}, pages={:?}", total_pages_on_site, requested_count, pages.len(), pages);
-                        pages
-                    }
-                } else {
-                    let start = total_pages_on_site;
-                    let end = start.saturating_sub(count - 1).max(1);
-                    let pages: Vec<u32> = (end..=start).rev().collect();
-                    *LAST_RANGE.lock().unwrap() = Some(CachedRange { pages: pages.clone(), total_pages: total_pages_on_site, requested: count, ts: now });
-                    info!("🔧 Computed newest-first page range: total_pages_on_site={}, requested_count={}, actual_count={}, pages={:?}", total_pages_on_site, requested_count, pages.len(), pages);
-                    pages
-                }
+                let start = total_pages_on_site;
+                let end = start.saturating_sub(count - 1).max(1);
+                let pages: Vec<u32> = (end..=start).rev().collect();
+                info!("🔧 Computed newest-first page range: total_pages_on_site={}, requested_count={}, actual_count={}, pages={:?}", total_pages_on_site, requested_count, pages.len(), pages);
+                pages
             }
             crate::new_architecture::actors::types::CrawlingStrategy::ContinueFromDb => {
                 // ──────────────────────────────────────────────
@@ -329,7 +310,7 @@ impl CrawlingPlanner {
                 };
                 if self.product_repo.is_none() {
                     warn!("🧪 ContinueFromDb requested but product_repo not attached -> fallback newest-first");
-                    return Ok(CrawlingPlan { session_id: uuid::Uuid::new_v4().to_string(), phases: vec![], total_estimated_duration_secs: 0, optimization_strategy: OptimizationStrategy::Balanced, created_at: chrono::Utc::now() }); // using Balanced as placeholder for reuse scenario
+                    return Ok(CrawlingPlan { session_id: uuid::Uuid::new_v4().to_string(), phases: vec![], total_estimated_duration_secs: 0, optimization_strategy: OptimizationStrategy::Balanced, created_at: chrono::Utc::now(), db_total_products: None, db_unique_products: None, db_last_update: None }); // reuse placeholder
                 }
                 let repo = self.product_repo.as_ref().unwrap().clone();
 
@@ -338,7 +319,7 @@ impl CrawlingPlanner {
                     Ok(v) => v,
                     Err(e) => {
                         warn!("⚠️ Failed to read DB state ({e}); using newest-first fallback");
-                        return Ok(CrawlingPlan { session_id: uuid::Uuid::new_v4().to_string(), phases: vec![], total_estimated_duration_secs: 0, optimization_strategy: OptimizationStrategy::Balanced, created_at: chrono::Utc::now() });
+                        return Ok(CrawlingPlan { session_id: uuid::Uuid::new_v4().to_string(), phases: vec![], total_estimated_duration_secs: 0, optimization_strategy: OptimizationStrategy::Balanced, created_at: chrono::Utc::now(), db_total_products: None, db_unique_products: None, db_last_update: None });
                     }
                 };
 
@@ -346,7 +327,7 @@ impl CrawlingPlanner {
                 if let Some(cached) = LAST_DB_RANGE.lock().unwrap().as_ref() {
                     if cached.total_pages == total_pages_on_site && cached.requested == count && cached.last_db_page_id == max_page_id && cached.last_db_index == max_index_in_page && now.duration_since(cached.ts).as_secs() < 60 {
                         info!("♻️ Reusing cached ContinueFromDb range: {:?}", cached.pages);
-                        return Ok(CrawlingPlan { session_id: uuid::Uuid::new_v4().to_string(), phases: vec![], total_estimated_duration_secs: 0, optimization_strategy: OptimizationStrategy::Balanced, created_at: chrono::Utc::now() });
+                        return Ok(CrawlingPlan { session_id: uuid::Uuid::new_v4().to_string(), phases: vec![], total_estimated_duration_secs: 0, optimization_strategy: OptimizationStrategy::Balanced, created_at: chrono::Utc::now(), db_total_products: None, db_unique_products: None, db_last_update: None });
                     }
                 }
 
@@ -429,6 +410,9 @@ impl CrawlingPlanner {
             total_estimated_duration_secs,
             optimization_strategy: OptimizationStrategy::Balanced,
             created_at: chrono::Utc::now(),
+            db_total_products: Some(db_analysis.total_products),
+            db_unique_products: Some(db_analysis.unique_products),
+            db_last_update: db_analysis.last_update,
         })
     }
     
@@ -481,6 +465,10 @@ pub struct CrawlingPlan {
     
     /// 계획 생성 시간
     pub created_at: chrono::DateTime<chrono::Utc>,
+    // ⬇️ Database snapshot (선택적 - ExecutionPlan 스냅샷 해시 안정화에 활용)
+    pub db_total_products: Option<u32>,
+    pub db_unique_products: Option<u32>,
+    pub db_last_update: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// 크롤링 단계

@@ -16,8 +16,7 @@ use crate::domain::session_manager::SessionManager;
 use crate::domain::events::{CrawlingProgress, CrawlingStage, CrawlingStatus};
 use crate::application::EventEmitter;
 use crate::infrastructure::{
-    BatchCrawlingEngine, 
-    ServiceBasedBatchCrawlingEngine, 
+    BatchCrawlingEngine,
     AdvancedBatchCrawlingEngine,
     BatchCrawlingConfig,
     HttpClient,
@@ -61,7 +60,7 @@ pub struct CrawlingConfig {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CrawlingEngineType {
     Basic,      // BatchCrawlingEngine
-    Service,    // ServiceBasedBatchCrawlingEngine  
+    // Service variant removed (legacy ServiceBasedBatchCrawlingEngine deprecated)
     Advanced,   // AdvancedBatchCrawlingEngine
     Actor,      // 🎯 NEW: ActorBatchProcessor (SessionActor → BatchActor → StageActor)
 }

@@ -30,6 +30,9 @@ pub struct ServiceBasedCrawlingResponse {
 /// 
 /// 이 명령어는 Actor 시스템 구현 완료 후 삭제될 예정입니다.
 /// 현재는 작동하는 구현의 참조를 위해 유지됩니다.
+/// 
+/// # DEPRECATED
+/// Reference ServiceBasedBatchCrawlingEngine command; scheduled for removal.
 #[tauri::command]
 pub async fn start_service_based_crawling_reference(
     app: AppHandle,

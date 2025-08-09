@@ -130,6 +130,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+blake3 = "1.5"
 
 # 📁 Configuration & File System
 config = "0.14"

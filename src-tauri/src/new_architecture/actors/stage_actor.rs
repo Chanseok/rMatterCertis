@@ -26,7 +26,7 @@ use crate::domain::services::{StatusChecker, ProductListCollector, ProductDetail
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::crawling_service_impls::{StatusCheckerImpl, ProductListCollectorImpl, ProductDetailCollectorImpl};
-use crate::utils::PageIdCalculator;
+use crate::domain::pagination::CanonicalPageIdCalculator as PageIdCalculator;
 use crate::infrastructure::CollectorConfig;
 use crate::domain::services::SiteStatus;
 
@@ -938,19 +938,14 @@ impl StageActor {
                             }
                         };
 
+                        // Canonical 계산: 페이지 enumerate index 는 0-based
+                        let canonical_calc = PageIdCalculator::new(total_pages, products_on_last_page as usize);
                         let product_urls: Vec<crate::domain::product_url::ProductUrl> = product_list.products
                             .iter()
                             .enumerate()
-                            .map(|(index, product)| {
-                                // 실제 사이트 정보로 PageIdCalculator 초기화
-                                let calculator = PageIdCalculator::new(total_pages, products_on_last_page as usize);
-                                let calculation = calculator.calculate(product_list.page_number, index);
-                                
-                                crate::domain::product_url::ProductUrl {
-                                    url: product.url.clone(),
-                                    page_id: calculation.page_id,
-                                    index_in_page: calculation.index_in_page,
-                                }
+                            .map(|(zero_idx, product)| {
+                                let c = canonical_calc.calculate(product_list.page_number, zero_idx);
+                                crate::domain::product_url::ProductUrl { url: product.url.clone(), page_id: c.page_id, index_in_page: c.index_in_page }
                             })
                             .collect();
 
@@ -1303,6 +1298,36 @@ impl StageActor {
                         }
                     }
                 }
+                // 📊 저장 전 배치 페이지네이션 검증
+                if !product_details.is_empty() {
+                    // 1) page_id/index_in_page 쌍 수집
+                    let mut coords: Vec<(i32,i32)> = product_details.iter()
+                        .filter_map(|d| match (d.page_id, d.index_in_page) { (Some(p), Some(i)) => Some((p,i)), _ => None })
+                        .collect();
+                    if !coords.is_empty() {
+                        // 2) page_id 기준 정렬 후 index 정렬 검사
+                        coords.sort_unstable();
+                        // page_id 그룹 -> index_in_page 오름차순 단조 증가(+1) 기대
+                        let mut group_violations = 0u32;
+                        let mut cross_page_mixed = false;
+                        let mut prev: Option<(i32,i32)> = None;
+                        for (p,i) in &coords {
+                            if let Some((pp,pi)) = prev {
+                                if *p==pp && *i != pi+1 { group_violations+=1; }
+                                if *p<pp { cross_page_mixed = true; }
+                            }
+                            prev = Some((*p,*i));
+                        }
+                        // 3) 연속 page_id 블록 여부 (예: 두 page_id 이상 섞인 경우 경고)
+                        use std::collections::BTreeSet; let unique: BTreeSet<i32> = coords.iter().map(|c| c.0).collect();
+                        if unique.len()>1 { debug!("⚠️ Mixed page_id batch detected: unique={:?}", unique); }
+                        if cross_page_mixed { warn!("⚠️ page_id ordering regression: page_id decreased inside batch"); }
+                        if group_violations>0 { warn!("⚠️ index_in_page non-consecutive inside same page_id occurrences={} (tolerated for now)", group_violations); }
+                    } else {
+                        debug!("ℹ️ No coordinate pairs available for batch validation");
+                    }
+                }
+
                 // 📊 저장 요약 (page_id, index_in_page 범위)
                 let page_ids: Vec<i32> = product_details
                     .iter()

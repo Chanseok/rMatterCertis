@@ -118,7 +118,6 @@ impl MatterDataExtractor {
             pagination_context: Arc::new(RwLock::new(None)),
         })
     }
-
     /// Set pagination context for proper pageId and indexInPage calculation
     pub fn set_pagination_context(&self, context: PaginationContext) -> Result<()> {
         let mut pagination_context = self.pagination_context.write()
@@ -393,7 +392,7 @@ impl MatterDataExtractor {
                 .map_err(|e| anyhow!("Failed to acquire read lock: {}", e))?;
             if let Some(ref context) = *pagination_context {
                 // TODO(PaginationRefactor): context 내부 구현이 PaginationCalculator 사용하도록 교체
-                context.calculate_page_index(source_page_id as u32, source_index as u32)
+                context.calculate_page_index_canonical(source_page_id as u32, source_index as u32)
             } else {
                 debug!("⚠️  No pagination context set, using original page_id and index");
                 (source_page_id, source_index)
@@ -680,6 +679,14 @@ impl PaginationContext {
         let index_in_page = total_index % self.target_page_size;
         
         (page_id as i32, index_in_page as i32)
+    }
+
+    /// Canonical 계산 방식 (Phase2): domain::pagination::CanonicalPageIdCalculator 사용
+    /// current_page: 1-based, zero_based_index: 0-based
+    pub fn calculate_page_index_canonical(&self, current_page: u32, zero_based_index: u32) -> (i32, i32) {
+        let calc = crate::domain::pagination::CanonicalPageIdCalculator::new(self.total_pages, self.items_on_last_page as usize);
+        let result = calc.calculate(current_page, zero_based_index as usize);
+        (result.page_id, result.index_in_page)
     }
 }
 

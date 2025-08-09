@@ -5,7 +5,6 @@
 //! - 역산(reverse) 기능
 //! - 향후 batch 계획에서 사용될 수 있는 보조 함수
 
-use tracing::debug;
 
 const PRODUCTS_PER_PAGE: usize = 12; // TODO: 설정 연동 필요 시 주입 고려
 
@@ -61,6 +60,11 @@ impl PaginationCalculator {
         Some((physical_page, index_in_physical))
     }
 }
+
+/// Transitional alias exposing the legacy PageIdCalculator implementation
+/// through the domain module so that all future references converge here
+/// before we physically migrate the logic (Phase1 -> Phase2).
+pub type CanonicalPageIdCalculator = crate::utils::PageIdCalculator;
 
 // 간단 테스트 (통합 이전 임시) - 향후 tests/pagination_tests.rs 로 이동
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use crate::utils::PageIdCalculator;
+use crate::domain::pagination::CanonicalPageIdCalculator as PageIdCalculator;
 
 /// PageIdCalculator 테스트
 #[cfg(test)]

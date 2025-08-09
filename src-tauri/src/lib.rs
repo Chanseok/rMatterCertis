@@ -72,11 +72,13 @@ pub mod domain {
     pub mod product;
     pub mod matter_product;
     pub mod integrated_product;
+    pub mod pagination; // PHASE1: page_id/index_in_page 중앙 집중 모듈 (legacy -> canonical 전환용)
 
     // Re-export commonly used items
     pub use entities::*;
     pub use events::*;
     pub use value_objects::*;
+    pub use pagination::{PaginationCalculator, CanonicalPageIdCalculator, PagePosition};
 }
 
 pub mod application {

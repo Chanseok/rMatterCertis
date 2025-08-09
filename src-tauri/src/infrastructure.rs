@@ -42,7 +42,7 @@ pub use config::csa_iot;  // CSA-IoT configuration constants
 pub use parsing::{ParsingConfig, ParsingError, ParsingResult, ProductListParser, ProductDetailParser};
 pub use crawling::WebCrawler;
 pub use crawling_engine::{BatchCrawlingEngine, BatchCrawlingConfig};
-pub use service_based_crawling_engine::ServiceBasedBatchCrawlingEngine;
+// pub use service_based_crawling_engine::ServiceBasedBatchCrawlingEngine; // Deprecated
 pub use advanced_crawling_engine::AdvancedBatchCrawlingEngine;
 pub use crawling_service_impls::{StatusCheckerImpl, ProductListCollectorImpl, CollectorConfig};
 pub use data_processing_service_impls::{DeduplicationServiceImpl, ValidationServiceImpl, ConflictResolverImpl};

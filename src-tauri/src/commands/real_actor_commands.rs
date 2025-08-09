@@ -19,7 +19,7 @@ use futures;
 // 내부 모듈 임포트
 use crate::new_architecture::actors::ActorError;
 use crate::infrastructure::{HttpClient, MatterDataExtractor};
-use crate::infrastructure::service_based_crawling_engine::ServiceBasedBatchCrawlingEngine;
+// use crate::infrastructure::service_based_crawling_engine::ServiceBasedBatchCrawlingEngine; // Deprecated
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::infrastructure::database_paths::get_main_database_url;
@@ -39,7 +39,7 @@ pub struct RealActorCrawlingRequest {
 /// 🎯 Legacy Service-Based 크롤링 시작 (참고용 보존)
 /// 
 /// 이 커맨드는 순수 ServiceBasedBatchCrawlingEngine만 사용하는 레거시 구현입니다.
-/// Actor 시스템 완성 후 제거 예정입니다.
+/// NOTE: Deprecated – use unified Analysis-Plan-Execute (ExecutionPlan + SessionActor) instead.
 #[command]
 pub async fn start_legacy_service_based_crawling(
     app: AppHandle,
@@ -80,27 +80,8 @@ pub async fn start_legacy_service_based_crawling(
             .ok_or("Database pool not initialized")?.clone()
     ));
     
-    let _advanced_engine = ServiceBasedBatchCrawlingEngine::new(
-        http_client_for_engine,
-        data_extractor_for_engine,
-        product_repo_for_engine,
-        Arc::new(None), // No event emitter for this case
-        crate::infrastructure::service_based_crawling_engine::BatchCrawlingConfig {
-            start_page: 1,
-            end_page: 5,
-            concurrency: 4,
-            batch_size: 3,
-            delay_ms: 1000,
-            list_page_concurrency: 4,
-            product_detail_concurrency: 8,
-            retry_max: 3,
-            timeout_ms: 60000,
-            disable_intelligent_range: true,
-            cancellation_token: None,
-        },
-        session_id.clone(),
-        app_config.clone(),
-    );
+    // LEGACY ENGINE DISABLED: ServiceBasedBatchCrawlingEngine removed
+    // let _advanced_engine = ServiceBasedBatchCrawlingEngine::new(...);
 
     // 🎯 실제 크롤링 플래너를 사용하여 최적 범위 계산
     let db_pool = {
@@ -292,11 +273,12 @@ async fn execute_session_with_parallel_batches(
 }
 
 /// 🎯 BatchActor 전체 파이프라인 실제 구현 (Stage 2→3→4)
+#[allow(unused_variables)]
 async fn execute_batch_actor_complete_pipeline_simulation(
     batch_id: String,
     batch_config: crate::new_architecture::actors::types::BatchConfig,
     concurrency: u32,
-    timeout_ms: u64,
+    _timeout_ms: u64,
 ) -> Result<(), ActorError> {
     info!("🎯 BatchActor {} executing complete Stage 2-3-4 pipeline (REAL IMPLEMENTATION)", batch_id);
 

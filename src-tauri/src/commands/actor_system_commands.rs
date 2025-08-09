@@ -10,7 +10,6 @@ use crate::new_architecture::actors::types::{CrawlingConfig, BatchConfig, Execut
 use crate::new_architecture::actor_event_bridge::start_actor_event_bridge;
 use crate::infrastructure::config::AppConfig;
 use crate::domain::services::SiteStatus;
-use crate::infrastructure::service_based_crawling_engine::{ServiceBasedBatchCrawlingEngine, BatchCrawlingConfig};
 use crate::infrastructure::simple_http_client::HttpClient;
 use crate::infrastructure::html_parser::MatterDataExtractor;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
@@ -132,142 +131,37 @@ pub async fn start_actor_system_crawling(
 }
 
 /// 🔧 ServiceBasedBatchCrawlingEngine 크롤링 (가짜 크롤링 - 참고용)
-/// 
-/// 기존 ServiceBasedBatchCrawlingEngine을 직접 사용하는 방식
-/// 도메인 요구사항 일부 구현, 나중에 제거 예정
-#[tauri::command]
-pub async fn start_service_based_crawling(
-    app: AppHandle,
-    request: ActorCrawlingRequest,
-) -> Result<ActorSystemResponse, String> {
-    info!("🔧 [SERVICE-BASED] Starting ServiceBasedBatchCrawlingEngine crawling: {:?}", request);
+/// NOTE: Deprecated – actor-based pipeline is canonical now. Schedule for removal after pagination & rate-limit FSM stabilization
+// #[tauri::command]
+// pub async fn start_service_based_crawling(
+//     app: AppHandle,
+//     request: ActorCrawlingRequest,
+// ) -> Result<ActorSystemResponse, String> {
+//     info!("🔧 [SERVICE-BASED] Starting ServiceBasedBatchCrawlingEngine crawling: {:?}", request);
     
-    let session_id = format!("service_session_{}", Utc::now().timestamp());
+//     let session_id = format!("service_session_{}", Utc::now().timestamp());
     
-    // ServiceBasedBatchCrawlingEngine 초기화 및 실행
-    match initialize_service_based_engine(&session_id, &request, &app).await {
-        Ok((mut crawling_engine, analysis_info)) => {
-            info!("✅ ServiceBasedBatchCrawlingEngine initialized successfully");
-            
-            // 백그라운드에서 실행
-            let _engine_handle = tokio::spawn(async move {
-                match crawling_engine.execute().await {
-                    Ok(()) => {
-                        info!("🎉 ServiceBasedBatchCrawlingEngine completed successfully!");
-                    }
-                    Err(e) => {
-                        error!("❌ ServiceBasedBatchCrawlingEngine failed: {}", e);
-                    }
-                }
-            });
-            
-            Ok(ActorSystemResponse {
-                success: true,
-                message: "🔧 ServiceBasedBatchCrawlingEngine started successfully".to_string(),
-                session_id: Some(session_id),
-                data: Some(serde_json::json!({
-                    "engine_type": "ServiceBasedBatchCrawlingEngine",
-                    "architecture": "Direct ServiceBasedBatchCrawlingEngine",
-                    "status": "RUNNING",
-                    "mode": "SERVICE_BASED_CRAWLING",
-                    "analysis_info": analysis_info
-                })),
-            })
-        }
-        Err(e) => {
-            error!("❌ Failed to initialize ServiceBasedBatchCrawlingEngine: {}", e);
-            Err(format!("ServiceBasedBatchCrawlingEngine initialization failed: {}", e))
-        }
-    }
-}
-
-/// ServiceBasedBatchCrawlingEngine 초기화 (참고용)
-async fn initialize_service_based_engine(
-    session_id: &str,
-    request: &ActorCrawlingRequest,
-    app_handle: &AppHandle,
-) -> Result<(ServiceBasedBatchCrawlingEngine, serde_json::Value), Box<dyn std::error::Error + Send + Sync>> {
-    info!("🔧 Initializing ServiceBasedBatchCrawlingEngine for session: {}", session_id);
-    
-    // 앱 상태에서 데이터베이스 풀 가져오기
-    let app_state = app_handle.state::<AppState>();
-    let db_pool = {
-        let pool_guard = app_state.database_pool.read().await;
-        pool_guard.as_ref()
-            .ok_or("Database pool not initialized")?
-            .clone()
-    };
-    
-    // IntegratedProductRepository 생성
-    let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
-    
-    // HTTP 클라이언트 생성
-    let http_client = HttpClient::create_from_global_config()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-    
-    // 데이터 추출기 생성
-    let data_extractor = MatterDataExtractor::new()
-        .map_err(|e| format!("Failed to create data extractor: {}", e))?;
-    
-    // 이벤트 방출기 설정 (선택적)
-    let event_emitter = Arc::new(None);
-    
-    // 설정 로드
-    let config_manager = crate::infrastructure::config::ConfigManager::new()
-        .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
-    let app_config = config_manager.load_config().await
-        .map_err(|e| format!("Failed to load config: {}", e))?;
-    
-    // 설정 파일 기반 배치 크롤링 설정 생성
-    let batch_config = BatchCrawlingConfig {
-        start_page: request.start_page,
-        end_page: request.end_page,
-        concurrency: request.concurrency.unwrap_or(app_config.user.crawling.workers.list_page_max_concurrent as u32),
-        batch_size: request.batch_size.unwrap_or(app_config.user.batch.batch_size),
-        delay_ms: request.delay_ms.unwrap_or(app_config.user.request_delay_ms),
-        list_page_concurrency: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-        product_detail_concurrency: app_config.user.crawling.workers.product_detail_max_concurrent as u32,
-        retry_max: app_config.advanced.retry_attempts,
-    timeout_ms: (app_config.advanced.request_timeout_seconds * 1000),
-        disable_intelligent_range: true, // CrawlingPlanner 사용하지 않음
-        cancellation_token: None,
-    };
-    
-    info!("🔧 [SERVICE-BASED] Configuration applied:");
-    info!("   📊 Range: {} to {} ({} pages)", 
-          batch_config.start_page, batch_config.end_page, 
-          if batch_config.start_page >= batch_config.end_page { 
-              batch_config.start_page - batch_config.end_page + 1 
-          } else { 
-              batch_config.end_page - batch_config.start_page + 1 
-          });
-    info!("   ⚙️ Processing: batch_size={}, concurrency={}, delay={}ms", 
-          batch_config.batch_size, batch_config.concurrency, batch_config.delay_ms);
-    
-    // ServiceBasedBatchCrawlingEngine 생성
-    let crawling_engine = ServiceBasedBatchCrawlingEngine::new(
-        http_client,
-        data_extractor,
-        product_repo,
-        event_emitter,
-        batch_config,
-        session_id.to_string(),
-        app_config,
-    );
-    
-    // 분석 정보를 JSON으로 구성
-    let analysis_info = serde_json::json!({
-        "user_requested": {
-            "start_page": request.start_page,
-            "end_page": request.end_page
-        },
-        "engine_type": "ServiceBasedBatchCrawlingEngine",
-        "intelligent_planning": false
-    });
-    
-    info!("✅ ServiceBasedBatchCrawlingEngine initialized successfully");
-    Ok((crawling_engine, analysis_info))
-}
+// /// ServiceBasedBatchCrawlingEngine 초기화 (참고용)
+// /// NOTE: Deprecated – replace with ExecutionPlan + SessionActor flow. Pending removal
+// async fn initialize_service_based_engine(
+//     session_id: &str,
+//     request: &ActorCrawlingRequest,
+//     app_handle: &AppHandle,
+// ) -> Result<(ServiceBasedBatchCrawlingEngine, serde_json::Value), Box<dyn std::error::Error + Send + Sync>> {
+//     info!("🔧 Initializing ServiceBasedBatchCrawlingEngine for session: {}", session_id);
+//     Err("ServiceBasedBatchCrawlingEngine deprecated".into())
+// }
+//     }
+// }
+// /// ServiceBasedBatchCrawlingEngine 초기화 (참고용 - 완전 비활성화)
+// /// NOTE: Fully deprecated. Left commented for historical reference. Will be removed.
+// async fn initialize_service_based_engine(
+//     _session_id: &str,
+//     _request: &ActorCrawlingRequest,
+//     _app_handle: &AppHandle,
+// ) -> Result<(ServiceBasedBatchCrawlingEngine, serde_json::Value), Box<dyn std::error::Error + Send + Sync>> {
+//     Err("ServiceBasedBatchCrawlingEngine deprecated".into())
+// }
 
 /// Test SessionActor functionality
 #[tauri::command]
@@ -941,6 +835,35 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
         else { r.end_page - r.start_page + 1 }
     }).sum();
     
+    // DB page/index 상태 읽기 (실패 시 None 유지)
+    let (db_max_page_id, db_max_index_in_page) = match product_repo.get_max_page_id_and_index().await {
+        Ok(v) => v,
+        Err(e) => { warn!("⚠️ Failed to read max page/index: {}", e); (None, None) }
+    };
+    info!("🧾 DB snapshot: max_page_id={:?} max_index_in_page={:?} total_products_dbMetric={:?}", db_max_page_id, db_max_index_in_page, crawling_plan.db_total_products);
+
+    // 입력 스냅샷 구성 (사이트/DB 상태 + 핵심 제한값)
+    let snapshot = crate::new_architecture::actors::types::PlanInputSnapshot {
+        total_pages: site_status.total_pages,
+        products_on_last_page: site_status.products_on_last_page,
+        db_max_page_id,
+        db_max_index_in_page,
+        db_total_products: crawling_plan.db_total_products.unwrap_or(0) as u64,
+        page_range_limit: app_config.user.crawling.page_range_limit,
+        batch_size: app_config.user.batch.batch_size,
+        concurrency_limit: app_config.user.max_concurrent_requests,
+        created_at: Utc::now(),
+    };
+
+    // 해시 계산 (스냅샷 + 페이지들 + 전략 핵심 필드 직렬화)
+    let hash_input = serde_json::json!({
+        "snapshot": &snapshot,
+        "ranges": &crawling_ranges,
+        "strategy": format!("{:?}", crawling_plan.optimization_strategy),
+    });
+    let hash_string = serde_json::to_string(&hash_input).unwrap_or_default();
+    let plan_hash = blake3::hash(hash_string.as_bytes()).to_hex().to_string();
+
     let execution_plan = ExecutionPlan {
         plan_id,
         session_id,
@@ -951,10 +874,13 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
         created_at: Utc::now(),
         analysis_summary: format!("Strategy: {:?}, Total pages: {}", 
                                 crawling_plan.optimization_strategy, total_pages),
+    original_strategy: format!("{:?}", crawling_plan.optimization_strategy),
+        input_snapshot: snapshot,
+        plan_hash,
     };
     
-    info!("✅ ExecutionPlan created successfully: {} pages across {} batches", 
-          total_pages, execution_plan.crawling_ranges.len());
+    info!("✅ ExecutionPlan created successfully: {} pages across {} batches (hash={})", 
+          total_pages, execution_plan.crawling_ranges.len(), execution_plan.plan_hash);
     
     Ok((execution_plan, app_config, site_status))
 }
@@ -973,6 +899,24 @@ async fn execute_session_actor_with_execution_plan(
           execution_plan.crawling_ranges.len(),
           execution_plan.batch_size,
           execution_plan.concurrency_limit);
+
+    // 실행 전 해시 재계산 & 검증 (생성 시와 동일한 직렬화 스키마 사용)
+    let verify_input = serde_json::json!({
+        "snapshot": &execution_plan.input_snapshot,
+        "ranges": &execution_plan.crawling_ranges,
+        "strategy": &execution_plan.original_strategy,
+    });
+    if let Ok(serialized) = serde_json::to_string(&verify_input) {
+        let current_hash = blake3::hash(serialized.as_bytes()).to_hex().to_string();
+        if current_hash != execution_plan.plan_hash {
+            tracing::error!("❌ ExecutionPlan hash mismatch! expected={}, got={}", execution_plan.plan_hash, current_hash);
+            return Err("ExecutionPlan integrity check failed".into());
+        } else {
+            tracing::info!("🔐 ExecutionPlan integrity verified (hash={})", current_hash);
+        }
+    } else {
+        tracing::warn!("⚠️ Failed to serialize ExecutionPlan for integrity verification – continuing cautiously");
+    }
     
     // 시작 이벤트 방출 (설정 파일 기반 값 사용)
     // 전략 추론: 첫 배치가 마지막 페이지보다 작은 페이지를 포함하면 ContinueFromDb였을 가능성 높음

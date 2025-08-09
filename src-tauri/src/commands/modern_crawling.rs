@@ -113,7 +113,7 @@ pub async fn start_crawling_v3(
     state.update_progress(initial_progress).await?;
     
     // 비동기 태스크에서 사용할 변수들 복제
-    let session_id_for_task = session_id.clone();
+    let _session_id_for_task = session_id.clone();
     let _app_handle_for_task = app_handle.clone();
     
     // Get cancellation token from AppState
@@ -123,7 +123,7 @@ pub async fn start_crawling_v3(
         info!("🛑 DEBUG: Cancellation token current state - is_cancelled: {}", token.is_cancelled());
     }
     
-    let crawling_config = crate::infrastructure::service_based_crawling_engine::BatchCrawlingConfig {
+    let _crawling_config = crate::infrastructure::service_based_crawling_engine::BatchCrawlingConfig {
         start_page: actual_start_page,
         end_page: actual_end_page,
         concurrency: app_config.user.max_concurrent_requests,
@@ -137,21 +137,21 @@ pub async fn start_crawling_v3(
         cancellation_token,
     };
     
-    info!("🛑 DEBUG: Created BatchCrawlingConfig with cancellation_token: {:?}", crawling_config.cancellation_token.is_some());
+    info!("🛑 DEBUG: Created BatchCrawlingConfig with cancellation_token: {:?}", _crawling_config.cancellation_token.is_some());
     
     // 이벤트 이미터 참조 복제 
-    let event_emitter_for_task = {
+    let _event_emitter_for_task = {
         let emitter_guard = state.event_emitter.read().await;
         emitter_guard.clone()
     };
     
     // AppState 복제하여 백그라운드 작업에 전달
-    let app_state_for_update = Arc::clone(&state.current_progress);
+    let app_state_for_update = Arc::clone(&state.current_progress); // used inside spawn
     
     // 실제 배치 크롤링 엔진 백그라운드로 실행
     tokio::spawn(async move {
         // HTTP 클라이언트 및 파서 초기화
-        let http_client = match crate::infrastructure::HttpClient::create_from_global_config() {
+    let _http_client = match crate::infrastructure::HttpClient::create_from_global_config() {
             Ok(client) => client,
             Err(e) => {
                 tracing::error!("Failed to create HTTP client: {}", e);
@@ -162,7 +162,7 @@ pub async fn start_crawling_v3(
             }
         };
         
-        let data_extractor = match crate::infrastructure::MatterDataExtractor::new() {
+    let _data_extractor = match crate::infrastructure::MatterDataExtractor::new() {
             Ok(extractor) => extractor,
             Err(e) => {
                 tracing::error!("Failed to create data extractor: {}", e);
@@ -183,7 +183,7 @@ pub async fn start_crawling_v3(
             }
         };
         
-        let db_pool = match sqlx::SqlitePool::connect(&database_url).await {
+    let _db_pool = match sqlx::SqlitePool::connect(&database_url).await {
             Ok(pool) => pool,
             Err(e) => {
                 tracing::error!("Failed to connect to database: {}", e);
@@ -195,33 +195,33 @@ pub async fn start_crawling_v3(
         };
         
         // Ensure database schema exists
-        if let Err(e) = ensure_database_schema_exists(&db_pool).await {
+    if let Err(e) = ensure_database_schema_exists(&_db_pool).await {
             tracing::error!("Failed to ensure database schema: {}", e);
             update_error_state(&app_state_for_update, &format!("데이터베이스 스키마 확인 실패: {}", e)).await;
             return;
         }
         
         let product_repo = std::sync::Arc::new(
-            crate::infrastructure::IntegratedProductRepository::new(db_pool)
+            crate::infrastructure::IntegratedProductRepository::new(_db_pool)
         );
 
-        // 서비스 기반 배치 크롤링 엔진 생성 및 실행 (개선된 취소 기능 포함)
-        let mut engine = crate::infrastructure::service_based_crawling_engine::ServiceBasedBatchCrawlingEngine::new(
-            http_client,
-            data_extractor,
-            product_repo,
-            std::sync::Arc::new(event_emitter_for_task),
-            crawling_config,
-            session_id_for_task,
-            app_config.clone(),
-        );
+        // LEGACY DISABLED: ServiceBasedBatchCrawlingEngine instantiation commented out pending removal.
+        // let mut engine = crate::infrastructure::service_based_crawling_engine::ServiceBasedBatchCrawlingEngine::new(
+        //     http_client,
+        //     data_extractor,
+        //     product_repo,
+        //     std::sync::Arc::new(event_emitter_for_task),
+        //     crawling_config,
+        //     session_id_for_task,
+        //     app_config.clone(),
+        // );
 
-        if let Err(e) = engine.execute().await {
-            tracing::error!("Batch crawling failed: {}", e);
+        // if let Err(e) = engine.execute().await {
+        //     tracing::error!("Batch crawling failed: {}", e);
             
             // 에러 상태 업데이트
-            update_error_state(&app_state_for_update, &format!("크롤링 엔진 실행 실패: {}", e)).await;
-        }
+            update_error_state(&app_state_for_update, "크롤링 엔진 실행 실패: legacy engine disabled").await;
+        // }
     });
     
     info!("Crawling session started with ID: {}", session_id);

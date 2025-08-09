@@ -7,6 +7,7 @@ use crate::application::AppState;
 use crate::infrastructure::crawling_service_impls::CrawlingRangeCalculator;
 use crate::domain::events::CrawlingProgress;
 use crate::infrastructure::config::ConfigManager;
+use crate::domain::pagination::CanonicalPageIdCalculator;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::infrastructure::DatabaseConnection;
 use anyhow::Result;
@@ -167,7 +168,7 @@ pub async fn calculate_crawling_range(
     // Calculate local DB information
     let local_db_info = if progress.current > 0 {
         // DB에 데이터가 있으면 계산기를 사용해서 실제 페이지 번호를 계산
-        let calculator = crate::utils::PageIdCalculator::new(
+            let calculator = CanonicalPageIdCalculator::new(
             request.total_pages_on_site,
             request.products_on_last_page as usize
         );

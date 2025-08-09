@@ -3,6 +3,8 @@
 //! Tauri commands for the new event-driven crawling system.
 //! These commands integrate with the new orchestrator and provide
 //! real-time updates to the frontend.
+//!
+//! DEPRECATED: crawling_v4 legacy interface retained temporarily for reference; will be removed after actor system consolidation.
 
 use std::sync::Arc;
 use std::collections::HashMap;

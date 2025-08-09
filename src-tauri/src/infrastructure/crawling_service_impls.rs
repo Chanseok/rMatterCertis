@@ -28,6 +28,8 @@ use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRe
 use crate::new_architecture::services::crawling_planner::CrawlingPlanner;
 use crate::infrastructure::config::{AppConfig, CrawlingConfig};
 use crate::infrastructure::config::utils as config_utils;
+// Canonical pagination calculator (legacy utils::PageIdCalculator via domain alias)
+use crate::domain::pagination::CanonicalPageIdCalculator;
 
 // 상수 정의
 const DEFAULT_PRODUCTS_PER_PAGE: u32 = 12;
@@ -1529,8 +1531,8 @@ impl ProductListCollectorImpl {
         let last_page_number = total_pages;
         let products_in_last_page = products_on_last_page;
         
-        // PageIdCalculator 초기화
-        let page_calculator = crate::utils::PageIdCalculator::new(last_page_number, products_in_last_page as usize);
+    // CanonicalPageIdCalculator 초기화 (legacy 구현 alias)
+    let page_calculator = CanonicalPageIdCalculator::new(last_page_number, products_in_last_page as usize);
         let max_concurrent = self.config.max_concurrent as usize;
         
         // 진정한 동시성 실행을 위한 세마포어 기반 처리
@@ -1665,7 +1667,7 @@ impl ProductListCollectorImpl {
     async fn collect_single_page_independently(
         http_client: Arc<HttpClient>,  // 🔥 Mutex 제거 - 페이지 수집도 진정한 동시성
         data_extractor: Arc<MatterDataExtractor>,
-        calculator: crate::utils::PageIdCalculator,
+    calculator: CanonicalPageIdCalculator,
         page: u32,
     ) -> Result<Vec<ProductUrl>> {
         let url = format!("https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver", page);
@@ -1849,8 +1851,8 @@ impl ProductListCollector for ProductListCollectorImpl {
         info!("📊 Using explicit parameters: total_pages={}, products_on_last_page={}", 
               total_pages, products_on_last_page);
         
-        // PageIdCalculator 초기화 (한 번만 생성)
-        let page_calculator = crate::utils::PageIdCalculator::new(total_pages, products_on_last_page as usize);
+    // CanonicalPageIdCalculator 초기화 (한 번만 생성)
+    let page_calculator = CanonicalPageIdCalculator::new(total_pages, products_on_last_page as usize);
         
         let max_concurrent = self.config.max_concurrent as usize;
         
@@ -1868,7 +1870,7 @@ impl ProductListCollector for ProductListCollectorImpl {
             let data_extractor = Arc::clone(&self.data_extractor);
             let status_checker = Arc::clone(&self.status_checker);
             let semaphore_clone = Arc::clone(&semaphore);
-            let calculator = page_calculator.clone();  // PageIdCalculator 클론
+            let calculator = page_calculator.clone();  // CanonicalPageIdCalculator 클론
             
             // 3. 각 태스크는 세마포어 permit을 획득한 후 실행
             let task = tokio::spawn(async move {
@@ -1970,7 +1972,7 @@ impl ProductListCollector for ProductListCollectorImpl {
         info!("📊 Using cached site analysis for single page {}: total_pages={}, products_on_last_page={}", 
               page, total_pages, products_on_last_page);
         
-    let page_calculator = crate::utils::PageIdCalculator::new(total_pages, products_on_last_page as usize);
+    let page_calculator = CanonicalPageIdCalculator::new(total_pages, products_on_last_page as usize);
 
     let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
     // Use policy-based HttpClient to respect status-based retry and Retry-After
@@ -2033,8 +2035,8 @@ impl ProductListCollector for ProductListCollectorImpl {
         info!("📊 Using explicit parameters: total_pages={}, products_on_last_page={}", 
               total_pages, products_on_last_page);
         
-        // PageIdCalculator 초기화 (한 번만 생성)
-        let page_calculator = crate::utils::PageIdCalculator::new(total_pages, products_on_last_page as usize);
+    // CanonicalPageIdCalculator 초기화 (한 번만 생성)
+    let page_calculator = CanonicalPageIdCalculator::new(total_pages, products_on_last_page as usize);
         
         let max_concurrent = self.config.max_concurrent as usize;
         
@@ -2059,7 +2061,7 @@ impl ProductListCollector for ProductListCollectorImpl {
             let status_checker = Arc::clone(&self.status_checker);
             let token_clone = cancellation_token.clone();
             let semaphore_clone = Arc::clone(&semaphore);
-            let calculator = page_calculator.clone();  // PageIdCalculator 클론
+            let calculator = page_calculator.clone();  // CanonicalPageIdCalculator 클론
             
             // 3. 각 태스크는 세마포어 permit을 획득한 후 실행
             let task = tokio::spawn(async move {
