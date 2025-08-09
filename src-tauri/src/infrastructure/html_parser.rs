@@ -386,14 +386,15 @@ impl MatterDataExtractor {
         let now = chrono::Utc::now();
         
         // Calculate proper pageId and indexInPage using pagination context
+        // PHASE1-STEP: 기존 context.calculate_page_index -> domain::pagination::PaginationCalculator 로 점진적 이관 예정
+        // 현재는 동작 변화 없이 주석 + TODO 만 추가
         let (page_id, index_in_page) = {
             let pagination_context = self.pagination_context.read()
                 .map_err(|e| anyhow!("Failed to acquire read lock: {}", e))?;
-            
             if let Some(ref context) = *pagination_context {
+                // TODO(PaginationRefactor): context 내부 구현이 PaginationCalculator 사용하도록 교체
                 context.calculate_page_index(source_page_id as u32, source_index as u32)
             } else {
-                // Fallback to original logic if no pagination context is set
                 debug!("⚠️  No pagination context set, using original page_id and index");
                 (source_page_id, source_index)
             }

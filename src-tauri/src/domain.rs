@@ -15,6 +15,7 @@ pub mod session_manager;
 pub mod product;
 pub mod matter_product;
 pub mod integrated_product;
+pub mod pagination; // PHASE1: page_id/index_in_page 중앙 집중 로직
 
 // Re-export commonly used items for convenience
 // Note: Be specific about re-exports to avoid ambiguous glob warnings
