@@ -159,14 +159,22 @@ class ModernCrawlerStore {
   async startCrawling(request: StartCrawlingRequest): Promise<void> {
     try {
       console.log('🚀 Starting crawling with request:', request);
-      
-      // Tauri invoke를 직접 사용 (타입 안전함)
       const { invoke } = await import('@tauri-apps/api/core');
-      const response = await invoke<CrawlingResponse>('start_advanced_crawling', { request });
-      
-      console.log('✅ Crawling started:', response);
+      // Map legacy AdvancedCrawlingConfig into ActorCrawlingRequest overrides
+      const cfg = request.config;
+      const actorReq = {
+        site_url: null as string | null,
+        start_page: cfg.start_page || null,
+        end_page: cfg.end_page || null,
+        page_count: null as number | null,
+        concurrency: cfg.concurrency || null,
+        batch_size: cfg.batch_size || null,
+        delay_ms: cfg.delay_ms || null,
+        mode: 'AdvancedEngine'
+      };
+      const response = await invoke<CrawlingResponse>('start_actor_system_crawling', { request: actorReq });
+      console.log('✅ Crawling started (actor):', response);
       setModernCrawlerState('lastApiResponse', response);
-      
     } catch (error) {
       console.error('❌ Failed to start crawling:', error);
       setModernCrawlerState('lastError', String(error));

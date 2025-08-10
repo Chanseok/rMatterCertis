@@ -128,41 +128,118 @@ impl IntegratedProductRepository {
         if let Some(existing_detail) = existing {
             // 🔍 지능적 비교: 빈 필드 채우기 + 실제 변경사항 확인
             let mut updates = Vec::new();
-            let mut binds = Vec::new();
+            // Heterogeneous bind values (different Option<T> types) captured via enum to avoid type mismatch
+            enum BindValue<'a> {
+                OptStr(&'a Option<String>),
+                OptI32(&'a Option<i32>),
+            }
+            let mut binds: Vec<BindValue> = Vec::new();
+            let mut change_kinds: Vec<String> = Vec::new(); // human readable change descriptors
+            let verbose = std::env::var("MC_PERSIST_VERBOSE").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
             
-            // 빈 필드가 있으면 새 데이터로 채우기
+            // === Expanded fill/change detection (P1) ===
+            macro_rules! fill_or_change_opt_str { ($field:ident, $col:expr) => {
+                if existing_detail.$field.is_none() && detail.$field.is_some() {
+                    updates.push(concat!($col, " = ?"));
+                    binds.push(BindValue::OptStr(&detail.$field));
+                    change_kinds.push(format!("fill:{}", $col));
+                } else if existing_detail.$field.is_some() && detail.$field.is_some() && existing_detail.$field != detail.$field {
+                    updates.push(concat!($col, " = ?"));
+                    binds.push(BindValue::OptStr(&detail.$field));
+                    change_kinds.push(format!("change:{}", $col));
+                }
+            }}
+
+            // device_type handled manually for legacy diff
             if existing_detail.device_type.is_none() && detail.device_type.is_some() {
                 updates.push("device_type = ?");
-                binds.push(&detail.device_type);
+                binds.push(BindValue::OptStr(&detail.device_type));
+                change_kinds.push("fill:device_type".to_string());
+            } else if existing_detail.device_type.is_some() && detail.device_type.is_some() && existing_detail.device_type != detail.device_type {
+                updates.push("device_type = ?");
+                binds.push(BindValue::OptStr(&detail.device_type));
+                change_kinds.push("change:device_type".to_string());
             }
-            if existing_detail.certification_date.is_none() && detail.certification_date.is_some() {
-                updates.push("certification_date = ?");
-                binds.push(&detail.certification_date);
+            fill_or_change_opt_str!(certification_date, "certification_date");
+            fill_or_change_opt_str!(software_version, "software_version");
+            fill_or_change_opt_str!(hardware_version, "hardware_version");
+            fill_or_change_opt_str!(description, "description");
+            fill_or_change_opt_str!(firmware_version, "firmware_version");
+            fill_or_change_opt_str!(specification_version, "specification_version");
+            fill_or_change_opt_str!(transport_interface, "transport_interface");
+            fill_or_change_opt_str!(application_categories, "application_categories");
+            fill_or_change_opt_str!(compliance_document_url, "compliance_document_url");
+            fill_or_change_opt_str!(program_type, "program_type");
+            fill_or_change_opt_str!(family_sku, "family_sku");
+            fill_or_change_opt_str!(family_variant_sku, "family_variant_sku");
+            fill_or_change_opt_str!(family_id, "family_id");
+            fill_or_change_opt_str!(tis_trp_tested, "tis_trp_tested");
+            fill_or_change_opt_str!(primary_device_type_id, "primary_device_type_id");
+            fill_or_change_opt_str!(certificate_id, "certificate_id");
+            // numeric
+            if existing_detail.vid != detail.vid && detail.vid.is_some() {
+                updates.push("vid = ?");
+                binds.push(BindValue::OptI32(&detail.vid));
+                change_kinds.push("change:vid".to_string());
             }
-            if existing_detail.software_version.is_none() && detail.software_version.is_some() {
-                updates.push("software_version = ?");
-                binds.push(&detail.software_version);
-            }
-            if existing_detail.hardware_version.is_none() && detail.hardware_version.is_some() {
-                updates.push("hardware_version = ?");
-                binds.push(&detail.hardware_version);
-            }
-            if existing_detail.description.is_none() && detail.description.is_some() {
-                updates.push("description = ?");
-                binds.push(&detail.description);
+            if existing_detail.pid != detail.pid && detail.pid.is_some() {
+                updates.push("pid = ?");
+                binds.push(BindValue::OptI32(&detail.pid));
+                change_kinds.push("change:pid".to_string());
             }
             
             // 실제 변경사항 확인 (기존 값과 다른 경우)
             if existing_detail.manufacturer != detail.manufacturer {
                 updates.push("manufacturer = ?");
-                binds.push(&detail.manufacturer);
+                binds.push(BindValue::OptStr(&detail.manufacturer));
+                change_kinds.push("change:manufacturer".to_string());
             }
             if existing_detail.model != detail.model {
                 updates.push("model = ?");
-                binds.push(&detail.model);
+                binds.push(BindValue::OptStr(&detail.model));
+                change_kinds.push("change:model".to_string());
             }
             
             if !updates.is_empty() {
+                // Optional verbose diff logging before executing update
+                if verbose {
+                    // helper closures for formatting
+                    fn fmt_opt_str(v: &Option<String>) -> String { v.as_deref().map(|s| if s.is_empty() { "" } else { s }).unwrap_or("∅").to_string() }
+                    fn fmt_opt_i32(v: &Option<i32>) -> String { v.map(|n| n.to_string()).unwrap_or_else(|| "∅".to_string()) }
+                    let mut diffs: Vec<String> = Vec::new();
+                    for kind in &change_kinds {
+                        if let Some((k, col)) = kind.split_once(':') {
+                            let (old_v, new_v) = match col {
+                                "device_type" => (fmt_opt_str(&existing_detail.device_type), fmt_opt_str(&detail.device_type)),
+                                "certification_date" => (fmt_opt_str(&existing_detail.certification_date), fmt_opt_str(&detail.certification_date)),
+                                "software_version" => (fmt_opt_str(&existing_detail.software_version), fmt_opt_str(&detail.software_version)),
+                                "hardware_version" => (fmt_opt_str(&existing_detail.hardware_version), fmt_opt_str(&detail.hardware_version)),
+                                "description" => (fmt_opt_str(&existing_detail.description), fmt_opt_str(&detail.description)),
+                                "firmware_version" => (fmt_opt_str(&existing_detail.firmware_version), fmt_opt_str(&detail.firmware_version)),
+                                "specification_version" => (fmt_opt_str(&existing_detail.specification_version), fmt_opt_str(&detail.specification_version)),
+                                "transport_interface" => (fmt_opt_str(&existing_detail.transport_interface), fmt_opt_str(&detail.transport_interface)),
+                                "application_categories" => (fmt_opt_str(&existing_detail.application_categories), fmt_opt_str(&detail.application_categories)),
+                                "compliance_document_url" => (fmt_opt_str(&existing_detail.compliance_document_url), fmt_opt_str(&detail.compliance_document_url)),
+                                "program_type" => (fmt_opt_str(&existing_detail.program_type), fmt_opt_str(&detail.program_type)),
+                                "family_sku" => (fmt_opt_str(&existing_detail.family_sku), fmt_opt_str(&detail.family_sku)),
+                                "family_variant_sku" => (fmt_opt_str(&existing_detail.family_variant_sku), fmt_opt_str(&detail.family_variant_sku)),
+                                "family_id" => (fmt_opt_str(&existing_detail.family_id), fmt_opt_str(&detail.family_id)),
+                                "tis_trp_tested" => (fmt_opt_str(&existing_detail.tis_trp_tested), fmt_opt_str(&detail.tis_trp_tested)),
+                                "primary_device_type_id" => (fmt_opt_str(&existing_detail.primary_device_type_id), fmt_opt_str(&detail.primary_device_type_id)),
+                                "certificate_id" => (fmt_opt_str(&existing_detail.certificate_id), fmt_opt_str(&detail.certificate_id)),
+                                "vid" => (fmt_opt_i32(&existing_detail.vid), fmt_opt_i32(&detail.vid)),
+                                "pid" => (fmt_opt_i32(&existing_detail.pid), fmt_opt_i32(&detail.pid)),
+                                "manufacturer" => (fmt_opt_str(&existing_detail.manufacturer), fmt_opt_str(&detail.manufacturer)),
+                                "model" => (fmt_opt_str(&existing_detail.model), fmt_opt_str(&detail.model)),
+                                other => ("?".to_string(), format!("(unmapped:{})", other)),
+                            };
+                            diffs.push(format!("{} {}: '{}' -> '{}'", k, col, old_v, new_v));
+                        }
+                    }
+                    if !diffs.is_empty() {
+                        info!("[PersistDiff] ProductDetail url={} changes: {}", detail.url, diffs.join("; "));
+                    }
+                }
                 let query = format!(
                     "UPDATE product_details SET {}, updated_at = ? WHERE url = ?",
                     updates.join(", ")
@@ -170,15 +247,26 @@ impl IntegratedProductRepository {
                 
                 let mut sql_query = sqlx::query(&query);
                 for bind in binds {
-                    sql_query = sql_query.bind(bind);
+                    sql_query = match bind {
+                        BindValue::OptStr(v) => sql_query.bind(v),
+                        BindValue::OptI32(v) => sql_query.bind(v),
+                    };
                 }
                 sql_query = sql_query.bind(now).bind(&detail.url);
                 
                 sql_query.execute(&*self.pool).await?;
-                info!("📝 ProductDetail updated: {} ({} fields)", detail.model.as_deref().unwrap_or("Unknown"), updates.len());
+                if verbose {
+                    info!("📝 ProductDetail updated: {} ({} fields) kinds={:?}", detail.model.as_deref().unwrap_or("Unknown"), updates.len(), change_kinds);
+                } else {
+                    info!("📝 ProductDetail updated: {} ({} fields)", detail.model.as_deref().unwrap_or("Unknown"), updates.len());
+                }
                 Ok((true, false)) // updated=true, created=false
             } else {
-                debug!("✅ ProductDetail unchanged: {} (skipping update)", detail.model.as_deref().unwrap_or("Unknown"));
+                if verbose {
+                    debug!("✅ ProductDetail unchanged(noop): {} manufacturer={:?} model={:?} device_type={:?}", detail.model.as_deref().unwrap_or("Unknown"), detail.manufacturer, detail.model, detail.device_type);
+                } else {
+                    debug!("✅ ProductDetail unchanged: {} (skipping update)", detail.model.as_deref().unwrap_or("Unknown"));
+                }
                 Ok((false, false)) // updated=false, created=false
             }
         } else {
@@ -253,9 +341,26 @@ impl IntegratedProductRepository {
             .execute(&*self.pool)
             .await?;
             
-            info!("🆕 New ProductDetail created: {}", detail.model.as_deref().unwrap_or("Unknown"));
+            let verbose = std::env::var("MC_PERSIST_VERBOSE").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+            if verbose {
+                info!("🆕 New ProductDetail created: {} url={} page_id={:?} idx={:?}", detail.model.as_deref().unwrap_or("Unknown"), detail.url, detail.page_id, detail.index_in_page);
+            } else {
+                info!("🆕 New ProductDetail created: {}", detail.model.as_deref().unwrap_or("Unknown"));
+            }
             Ok((false, true)) // updated=false, created=true
         }
+    }
+
+    /// 빠른 통계: product_details 전체 개수, page_id 범위, 마지막 업데이트 시각
+    pub async fn get_product_detail_stats(&self) -> Result<(i64, Option<i32>, Option<i32>, Option<DateTime<Utc>>)> {
+        let row = sqlx::query(
+            r"SELECT COUNT(*) as cnt, MIN(page_id) as min_page, MAX(page_id) as max_page, MAX(updated_at) as last_updated FROM product_details"
+        ).fetch_one(&*self.pool).await?;
+        let cnt: i64 = row.get("cnt");
+        let min_page: Option<i32> = row.get("min_page");
+        let max_page: Option<i32> = row.get("max_page");
+        let last_updated: Option<DateTime<Utc>> = row.get("last_updated");
+        Ok((cnt, min_page, max_page, last_updated))
     }
 
     /// Get all products with pagination

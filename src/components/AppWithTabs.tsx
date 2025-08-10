@@ -12,6 +12,7 @@ import { StatusTab } from './tabs/StatusTab';
 import { LocalDBTab } from './tabs/LocalDBTab';
 import { AnalysisTab } from './tabs/AnalysisTab';
 import { LiveProductionTab } from './tabs/LiveProductionTab';
+import { LiveCrawlingTab } from './tabs/LiveCrawlingTab';
 import { NewArchTestTab } from './tabs/NewArchTestTab';
 import { ActorSystemTab } from './tabs/ActorSystemTab';
 import { DomainDashboardTab } from './tabs/DomainDashboardTab';
@@ -59,7 +60,9 @@ export const AppWithTabs: Component = () => {
       case 'localDB':
         return <LocalDBTab />;
       case 'liveProduction':
-        return <LiveProductionTab />;
+        return <LiveProductionTab />; // legacy (will remove after migration)
+      case 'liveCrawling':
+        return <LiveCrawlingTab />;
       case 'analysis':
         return <AnalysisTab />;
       case 'newArchTest':

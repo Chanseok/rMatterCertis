@@ -46,6 +46,7 @@ impl ActorEventBridge {
         while self.is_active.load(std::sync::atomic::Ordering::SeqCst) {
             match self.event_rx.recv().await {
                 Ok(actor_event) => {
+                    debug!("[BridgeRecv] received AppEvent variant (pre-forward)");
                     if let Err(e) = self.forward_to_frontend(actor_event).await {
                         error!("Failed to forward Actor event to Frontend: {}", e);
                     }
@@ -72,8 +73,8 @@ impl ActorEventBridge {
 
     /// Actor 이벤트를 프론트엔드로 전달
     async fn forward_to_frontend(&self, actor_event: AppEvent) -> Result<(), String> {
-        // AppEvent를 프론트엔드가 이해할 수 있는 형태로 변환
-        let (event_name, event_data) = self.convert_actor_event_to_frontend(actor_event)?;
+    // AppEvent를 프론트엔드가 이해할 수 있는 형태로 변환
+    let (event_name, event_data) = self.convert_actor_event_to_frontend(actor_event.clone())?;
         
         // 시퀀스 & backend_ts 주입 (RFC3339)
         let enriched = {
@@ -103,6 +104,21 @@ impl ActorEventBridge {
                 seq_val, event_name, variant, session_id, batch_id
             );
         }
+        // 레거시 PageTask* 이벤트를 사용하는 경로(구 actor_system_commands 기반)에서도
+        // UI가 통합된 actor-page-lifecycle 스트림을 받을 수 있도록 합성 이벤트 생성
+        if let Some((derived_name, mut derived_payload)) = self.create_synthetic_page_lifecycle(&actor_event) {
+            if let Some(obj) = derived_payload.as_object_mut() {
+                obj.insert("seq".into(), serde_json::Value::from(self.seq.fetch_add(1, Ordering::SeqCst)));
+                obj.insert("backend_ts".into(), serde_json::Value::from(chrono::Utc::now().to_rfc3339()));
+                obj.insert("event_name".into(), serde_json::Value::from(derived_name.clone()));
+            }
+            if let Err(e) = self.app_handle.emit(&derived_name, &derived_payload) {
+                warn!("Failed to emit synthetic page lifecycle event: {}", e);
+            } else {
+                debug!("✅ Emitted synthetic page lifecycle event '{}': {:?}", derived_name, derived_payload);
+            }
+        }
+
         Ok(())
     }
 
@@ -139,6 +155,13 @@ impl ActorEventBridge {
             AppEvent::DetailTaskCompleted { .. } => "actor-detail-task-completed",
             AppEvent::DetailTaskFailed { .. } => "actor-detail-task-failed",
             AppEvent::DetailConcurrencyDownshifted { .. } => "actor-detail-concurrency-downshifted",
+            AppEvent::StageItemStarted { .. } => "actor-stage-item-started",
+            AppEvent::StageItemCompleted { .. } => "actor-stage-item-completed",
+            AppEvent::PageLifecycle { .. } => "actor-page-lifecycle",
+            AppEvent::ProductLifecycle { .. } => "actor-product-lifecycle",
+            AppEvent::PreflightDiagnostics { .. } => "actor-preflight-diagnostics",
+            AppEvent::PersistenceAnomaly { .. } => "actor-persistence-anomaly",
+            AppEvent::DatabaseStats { .. } => "actor-database-stats",
         };
 
         let raw = serde_json::to_value(&event)
@@ -226,6 +249,49 @@ impl ActorEventBridge {
     /// 브릿지 상태 확인
     pub fn is_active(&self) -> bool {
         self.is_active.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// PageTaskStarted/Completed/Failed 로부터 actor-page-lifecycle 합성 이벤트 생성
+    /// New pipeline(StageActor)에서 이미 PageLifecycle 이벤트를 직접 방출하는 경우에는 합성하지 않음
+    fn create_synthetic_page_lifecycle(&self, event: &AppEvent) -> Option<(String, serde_json::Value)> {
+        use serde_json::json;
+        match event {
+            AppEvent::PageTaskStarted { session_id, page, batch_id, .. } => Some((
+                "actor-page-lifecycle".to_string(),
+                json!({
+                    "variant": "PageLifecycle",
+                    "session_id": session_id,
+                    "batch_id": batch_id,
+                    "page_number": page,
+                    "status": "fetch_started",
+                    "metrics": serde_json::Value::Null,
+                })
+            )),
+            AppEvent::PageTaskCompleted { session_id, page, batch_id, duration_ms, .. } => Some((
+                "actor-page-lifecycle".to_string(),
+                json!({
+                    "variant": "PageLifecycle",
+                    "session_id": session_id,
+                    "batch_id": batch_id,
+                    "page_number": page,
+                    "status": "fetch_completed",
+                    "metrics": {"kind":"Page", "data": {"url_count": serde_json::Value::Null, "scheduled_details": serde_json::Value::Null, "error": serde_json::Value::Null}},
+                    "duration_ms": duration_ms,
+                })
+            )),
+            AppEvent::PageTaskFailed { session_id, page, batch_id, error, .. } => Some((
+                "actor-page-lifecycle".to_string(),
+                json!({
+                    "variant": "PageLifecycle",
+                    "session_id": session_id,
+                    "batch_id": batch_id,
+                    "page_number": page,
+                    "status": "failed",
+                    "metrics": {"kind":"Page", "data": {"url_count": serde_json::Value::Null, "scheduled_details": serde_json::Value::Null, "error": error}},
+                })
+            )),
+            _ => None,
+        }
     }
 }
 

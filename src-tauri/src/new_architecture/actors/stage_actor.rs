@@ -3,140 +3,145 @@
 //! Phase 3: Actor 구현 - 스테이지 레벨 작업 실행 및 관리
 //! Modern Rust 2024 준수: 함수형 원칙, 명시적 의존성, 상태 최소화
 
-#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
-#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
-use tokio::time::timeout;
+use chrono::Utc;
+use tokio::{sync::mpsc, time::timeout};
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
-use chrono::Utc;
+use once_cell::sync::Lazy;
+use std::sync::Mutex as StdMutex;
+use std::collections::HashSet;
 
-use crate::new_architecture::actors::types::{StageItemResult, StageItemType};
-
-use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
-use super::types::{ActorCommand, StageType, StageResult, ActorError};
-use crate::new_architecture::channels::types::{AppEvent, StageItem};
-use crate::new_architecture::context::AppContext;
-
-// 실제 서비스 imports - ServiceBasedBatchCrawlingEngine 패턴 참조
-use crate::domain::services::{StatusChecker, ProductListCollector, ProductDetailCollector};
 use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
 use crate::infrastructure::config::AppConfig;
-use crate::infrastructure::crawling_service_impls::{StatusCheckerImpl, ProductListCollectorImpl, ProductDetailCollectorImpl};
-use crate::domain::pagination::CanonicalPageIdCalculator as PageIdCalculator;
-use crate::infrastructure::CollectorConfig;
+use crate::new_architecture::actors::types::{AppEvent, StageResult, StageItemResult, StageItemType, ActorCommand, SimpleMetrics};
+use crate::new_architecture::channels::types::{StageItem};
+use crate::new_architecture::context::AppContext;
+use crate::new_architecture::actors::traits::{Actor, ActorHealth, ActorStatus, ActorType};
+use crate::new_architecture::actors::types::ActorError;
 use crate::domain::services::SiteStatus;
+use crate::infrastructure::crawling_service_impls::{StatusCheckerImpl, ProductListCollectorImpl, ProductDetailCollectorImpl, CollectorConfig};
+use crate::domain::services::{StatusChecker, ProductListCollector, ProductDetailCollector};
+use crate::new_architecture::actors::types::{StageType};
+use crate::domain::pagination::PaginationCalculator;
+use thiserror::Error;
 
-/// StageActor: 개별 스테이지 작업의 실행 및 관리
-/// 
-/// 책임:
-/// - 특정 스테이지 타입의 작업 실행
-/// - 아이템별 처리 및 결과 수집
-/// - 스테이지 레벨 이벤트 발행
-/// - 타임아웃 및 재시도 로직 관리
-/// - 실제 크롤링 서비스와 통합
-#[derive(Clone)]
+// NOTE: 원래 파일 상단이 손상되어 재작성. 아래 기존 구현들과 연결되도록 동일한 타입/impl 유지.
+
+// 내부 상태 enum (간단 재구성 - 원래 손상된 정의 복원)
+#[derive(Clone, PartialEq, Debug)]
+enum StageState {
+    Idle,
+    Starting,
+    Processing,
+    Completed,
+    Timeout,
+    Failed { error: String },
+}
+
+#[derive(Debug, Error, Clone)]
+pub enum StageError {
+    #[error("Stage already processing: {0}")]
+    AlreadyProcessing(String),
+    #[error("Stage not found: {0}")]
+    StageNotFound(String),
+    #[error("Invalid configuration: {0}")]
+    InvalidConfiguration(String),
+    #[error("Service initialization failed: {0}")]
+    ServiceInitialization(String),
+    #[error("Initialization failed: {0}")]
+    InitializationFailed(String),
+    #[error("Context communication error: {0}")]
+    ContextError(String),
+    #[error("Processing timeout: {timeout_secs}s")]
+    ProcessingTimeout { timeout_secs: u64 },
+    #[error("Unsupported stage type: {0:?}")]
+    UnsupportedStageType(StageType),
+    #[error("Item processing failed: {item_id} - {error}")]
+    ItemProcessingFailed { item_id: String, error: String },
+}
+
+// StageActor 구조체 (필요 필드만 복원; 나머지 로직과 매칭)
+// Removed automatic Debug derive due to non-Debug trait object fields; manual impl below
 pub struct StageActor {
-    /// Actor 고유 식별자
-    actor_id: String,
-    /// 배치 ID (OneShot 호환성)
+    pub actor_id: String,
     pub batch_id: String,
-    /// 현재 처리 중인 스테이지 ID
-    stage_id: Option<String>,
-    /// 스테이지 타입
-    stage_type: Option<StageType>,
-    /// 스테이지 상태
+    pub stage_id: Option<String>,
+    pub stage_type: Option<StageType>,
     state: StageState,
-    /// 스테이지 시작 시간
     start_time: Option<Instant>,
-    /// 총 아이템 수
     total_items: u32,
-    /// 처리 완료된 아이템 수
     completed_items: u32,
-    /// 성공한 아이템 수
     success_count: u32,
-    /// 실패한 아이템 수
     failure_count: u32,
-    /// 스키핑된 아이템 수
     skipped_count: u32,
-    /// 처리 결과들
     item_results: Vec<StageItemResult>,
-    
-    // 실제 서비스 의존성들
-    /// 상태 확인 서비스
+    // 서비스 의존성
     status_checker: Option<Arc<dyn StatusChecker>>,
-    /// 제품 목록 수집 서비스
     product_list_collector: Option<Arc<dyn ProductListCollector>>,
-    /// 제품 상세 수집 서비스
     product_detail_collector: Option<Arc<dyn ProductDetailCollector>>,
-    /// 데이터베이스 레포지토리
-    product_repo: Option<Arc<IntegratedProductRepository>>,
-    /// HTTP 클라이언트
+    _product_repo: Option<Arc<IntegratedProductRepository>>,
     http_client: Option<Arc<HttpClient>>,
-    /// 데이터 추출기
     data_extractor: Option<Arc<MatterDataExtractor>>,
-    /// 앱 설정
     app_config: Option<AppConfig>,
-
-    /// 사이트 페이지네이션 힌트(총 페이지 수, 마지막 페이지 제품 수)
+    // 힌트
     site_total_pages_hint: Option<u32>,
     products_on_last_page_hint: Option<u32>,
 }
 
+// Prevent duplicate DataSaving executions per (session_id,batch_id)
+static DATA_SAVING_RUN_GUARD: Lazy<StdMutex<HashSet<String>>> = Lazy::new(|| StdMutex::new(HashSet::new()));
+
+// Manual Debug implementation to avoid requiring Debug on all service trait object dependencies
 impl std::fmt::Debug for StageActor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StageActor")
             .field("actor_id", &self.actor_id)
+            .field("batch_id", &self.batch_id)
+            .field("stage_id", &self.stage_id)
+            .field("stage_type", &self.stage_type)
             .field("state", &self.state)
-            .field("has_real_services", &self.status_checker.is_some())
+            .field("total_items", &self.total_items)
+            .field("completed_items", &self.completed_items)
+            .field("success_count", &self.success_count)
+            .field("failure_count", &self.failure_count)
+            .field("skipped_count", &self.skipped_count)
             .finish()
     }
 }
 
-/// 스테이지 상태 열거형
-#[derive(Debug, Clone, PartialEq)]
-pub enum StageState {
-    Idle,
-    Starting,
-    Processing,
-    Completing,
-    Completed,
-    Failed { error: String },
-    Timeout,
+// Extension trait to restore helper methods expected by per-item task logic
+trait StageItemExt {
+    fn id_string(&self) -> String;
+    fn item_type_enum(&self) -> StageItemType;
 }
 
-/// 스테이지 관련 에러 타입
-#[derive(Debug, thiserror::Error)]
-pub enum StageError {
-    #[error("Stage initialization failed: {0}")]
-    InitializationFailed(String),
-    
-    #[error("Stage already processing: {0}")]
-    AlreadyProcessing(String),
-    
-    #[error("Stage not found: {0}")]
-    StageNotFound(String),
-    
-    #[error("Invalid stage configuration: {0}")]
-    InvalidConfiguration(String),
-    
-    #[error("Service initialization failed: {0}")]
-    ServiceInitialization(String),
-    
-    #[error("Stage processing timeout: {timeout_secs}s")]
-    ProcessingTimeout { timeout_secs: u64 },
-    
-    #[error("Item processing failed: {item_id} - {error}")]
-    ItemProcessingFailed { item_id: String, error: String },
-    
-    #[error("Context communication error: {0}")]
-    ContextError(String),
-    
-    #[error("Unsupported stage type: {0:?}")]
-    UnsupportedStageType(StageType),
+impl StageItemExt for StageItem {
+    fn id_string(&self) -> String {
+        match self {
+            StageItem::Page(p) => format!("page_{}", p),
+            StageItem::Url(u) => u.clone(),
+            StageItem::Product(p) => p.url.clone(),
+            StageItem::ProductList(l) => format!("list_page_{}", l.page_number),
+            StageItem::ProductUrls(urls) => format!("product_urls_{}", urls.urls.len()),
+            StageItem::ProductDetails(d) => format!("product_details_{}", d.products.len()),
+            StageItem::ValidatedProducts(v) => format!("validated_products_{}", v.products.len()),
+            StageItem::ValidationTarget(v) => format!("validation_target_{}", v.len()),
+        }
+    }
+    fn item_type_enum(&self) -> StageItemType {
+        match self {
+            StageItem::Page(page) => StageItemType::Page { page_number: *page },
+            StageItem::Url(_u) => StageItemType::Url { url_type: "generic".into() },
+            StageItem::Product(_p) => StageItemType::Url { url_type: "product".into() },
+            StageItem::ProductList(_l) => StageItemType::ProductUrls { urls: vec![] },
+            StageItem::ProductUrls(list) => StageItemType::ProductUrls { urls: list.urls.iter().map(|u| u.url.clone()).collect() },
+            StageItem::ProductDetails(_d) => StageItemType::Url { url_type: "product_details".into() },
+            StageItem::ValidatedProducts(_v) => StageItemType::Url { url_type: "validated_products".into() },
+            StageItem::ValidationTarget(_t) => StageItemType::Url { url_type: "validation_target".into() },
+        }
+    }
 }
 
 impl StageActor {
@@ -165,7 +170,7 @@ impl StageActor {
             status_checker: None,
             product_list_collector: None,
             product_detail_collector: None,
-            product_repo: None,
+            _product_repo: None,
             http_client: None,
             data_extractor: None,
             app_config: None,
@@ -173,6 +178,8 @@ impl StageActor {
             products_on_last_page_hint: None,
         }
     }
+
+    // (Early duplicate progress helpers removed; canonical versions near file end)
     
     /// 🔥 Phase 1: 실제 서비스들과 함께 StageActor 생성
     /// 
@@ -266,7 +273,7 @@ impl StageActor {
             status_checker,
             product_list_collector,
             product_detail_collector,
-            product_repo: Some(product_repo),
+            _product_repo: Some(product_repo),
             http_client: Some(http_client),
             data_extractor: Some(data_extractor),
             app_config: Some(app_config),
@@ -308,7 +315,7 @@ impl StageActor {
             status_checker: None,
             product_list_collector: None,
             product_detail_collector: None,
-            product_repo: None,
+            _product_repo: None,
             http_client: None,
             data_extractor: None,
             app_config: None,
@@ -402,7 +409,7 @@ impl StageActor {
         self.status_checker = Some(status_checker);
         self.product_list_collector = Some(product_list_collector);
         self.product_detail_collector = Some(product_detail_collector);
-        self.product_repo = Some(product_repo);
+    self._product_repo = Some(product_repo);
         self.http_client = Some(Arc::new(http_client));
         self.data_extractor = Some(Arc::new(data_extractor));
         self.app_config = Some(app_config);
@@ -497,6 +504,7 @@ impl StageActor {
         let start_event = AppEvent::StageStarted {
             stage_type: stage_type.clone(),
             session_id: context.session_id.clone(),
+            batch_id: Some(self.batch_id.clone()),
             items_count: items.len() as u32,
             timestamp: Utc::now(),
         };
@@ -523,6 +531,7 @@ impl StageActor {
                         let completion_event = AppEvent::StageCompleted {
                             stage_type: stage_type.clone(),
                             session_id: context.session_id.clone(),
+                            batch_id: Some(self.batch_id.clone()),
                             result: stage_result,
                             timestamp: Utc::now(),
                         };
@@ -541,6 +550,7 @@ impl StageActor {
                         let failure_event = AppEvent::StageFailed {
                             stage_type: stage_type.clone(),
                             session_id: context.session_id.clone(),
+                            batch_id: Some(self.batch_id.clone()),
                             error: error_msg,
                             timestamp: Utc::now(),
                         };
@@ -562,6 +572,7 @@ impl StageActor {
                 let timeout_event = AppEvent::StageFailed {
                     stage_type: stage_type.clone(),
                     session_id: context.session_id.clone(),
+                    batch_id: Some(self.batch_id.clone()),
                     error: error.to_string(),
                     timestamp: Utc::now(),
                 };
@@ -595,7 +606,7 @@ impl StageActor {
         // 동시성 상한을 Collector에도 반영하도록 CollectorConfig를 재구성(필요 시)
         if let (Some(http_client), Some(data_extractor), Some(app_config)) = (&self.http_client, &self.data_extractor, &self.app_config) {
             // 리스트 수집기
-            if let Some(repo) = &self.product_repo {
+            if let Some(repo) = &self._product_repo {
                 let list_cfg = crate::infrastructure::crawling_service_impls::CollectorConfig {
                     max_concurrent: concurrency_limit,
                     concurrency: concurrency_limit,
@@ -644,7 +655,7 @@ impl StageActor {
         let status_checker = self.status_checker.clone();
         let product_list_collector = self.product_list_collector.clone();
         let product_detail_collector = self.product_detail_collector.clone();
-        let product_repo = self.product_repo.clone();
+    let product_repo = self._product_repo.clone();
         let http_client = self.http_client.clone();
         let data_extractor = self.data_extractor.clone();
     // 페이지네이션 힌트 복사
@@ -654,7 +665,7 @@ impl StageActor {
         // 각 아이템을 병렬로 처리
         for item in items {
             let sem = semaphore.clone();
-            let item_clone = item.clone();
+            let base_item = item.clone(); // used for lifecycle pre-emits
             let stage_type_clone = stage_type.clone();
             let status_checker_clone = status_checker.clone();
             let product_list_collector_clone = product_list_collector.clone();
@@ -662,13 +673,58 @@ impl StageActor {
             let product_repo_clone = product_repo.clone();
             let http_client_clone = http_client.clone();
             let data_extractor_clone = data_extractor.clone();
-            
+            let session_id_clone = _context.session_id.clone();
+            let batch_id_opt = Some(self.batch_id.clone());
+            let ctx_clone = _context.clone();
+            // Pre-emit lifecycle coarse events (page/product) before spawning heavy work
+            match (&stage_type, &base_item) {
+                (StageType::ListPageCrawling, StageItem::Page(pn)) => {
+                    if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle { session_id: session_id_clone.clone(), batch_id: batch_id_opt.clone(), page_number: *pn, status: "fetch_started".into(), metrics: None, timestamp: Utc::now() }).await {
+                        error!("PageLifecycle fetch_started emit failed page={} err={}", pn, e);
+                    } else {
+                        debug!("Emitted PageLifecycle fetch_started page={}", pn);
+                    }
+                }
+                (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) => {
+                    let count = urls.urls.len() as u32;
+                    let metrics = crate::new_architecture::actors::types::SimpleMetrics::Page { url_count: None, scheduled_details: Some(count), error: None };
+                    let page_hint = urls.urls.first().map(|u| u.page_id as u32).unwrap_or(0u32);
+                    if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle { session_id: session_id_clone.clone(), batch_id: batch_id_opt.clone(), page_number: page_hint, status: "detail_scheduled".into(), metrics: Some(metrics), timestamp: Utc::now() }).await {
+                        error!("PageLifecycle detail_scheduled emit failed page={} err={}", page_hint, e);
+                    } else {
+                        debug!("Emitted PageLifecycle detail_scheduled page={} scheduled_details={}", page_hint, count);
+                    }
+                    for pu in &urls.urls { // per-product fetch_started
+                        if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                            session_id: session_id_clone.clone(),
+                            batch_id: batch_id_opt.clone(),
+                            page_number: Some(pu.page_id as u32),
+                            product_ref: pu.url.clone(),
+                            status: "fetch_started".into(),
+                            retry: None,
+                            duration_ms: None,
+                            metrics: None,
+                            timestamp: Utc::now(),
+                        }).await {
+                            error!("ProductLifecycle fetch_started emit failed product={} err={}", pu.url, e);
+                        }
+                    }
+                }
+                _ => {}
+            }
             let task = tokio::spawn(async move {
-                let _permit = sem.acquire().await.map_err(|e| 
+                let _permit = sem.acquire().await.map_err(|e|
                     StageError::InitializationFailed(format!("Semaphore error: {}", e))
                 )?;
-                
-                // 임시 StageActor 생성 (필요한 서비스만으로)
+                if let Err(e) = ctx_clone.emit_event(AppEvent::StageItemStarted {
+                    session_id: session_id_clone.clone(),
+                    batch_id: batch_id_opt.clone(),
+                    stage_type: stage_type_clone.clone(),
+                    item_id: base_item.id_string(),
+                    item_type: base_item.item_type_enum(),
+                    timestamp: Utc::now(),
+                }).await { tracing::error!("StageItemStarted emit failed: {}", e); }
+                let item_start = Instant::now();
                 let temp_actor = StageActor {
                     actor_id: "temp".to_string(),
                     batch_id: "temp".to_string(),
@@ -685,24 +741,249 @@ impl StageActor {
                     status_checker: status_checker_clone.clone(),
                     product_list_collector: product_list_collector_clone.clone(),
                     product_detail_collector: product_detail_collector_clone.clone(),
-                    product_repo: product_repo_clone.clone(),
+                    _product_repo: product_repo_clone.clone(),
                     http_client: http_client_clone,
                     data_extractor: data_extractor_clone,
                     app_config: None,
                     site_total_pages_hint,
                     products_on_last_page_hint,
                 };
-                
-                temp_actor.process_single_item(
-                    stage_type_clone, 
-                    item_clone,
+                let lifecycle_item = base_item.clone();
+                let processing_item = base_item.clone();
+                let result = temp_actor.process_single_item(
+                    stage_type_clone.clone(),
+                    processing_item,
                     status_checker_clone,
                     product_list_collector_clone,
                     product_detail_collector_clone,
                     product_repo_clone,
-                ).await
+                ).await;
+                match &result {
+                    Ok(r) => {
+                        // If this is DataSaving stage, perform persistence now (previous arm returned Ok(()))
+                        // NOTE: Previous pattern used value patterns against references &StageType/&StageItem and never matched.
+                        // We now explicitly match references to ensure the block executes.
+                        if matches!(stage_type_clone, StageType::DataSaving) {
+                            // DataSaving 단계에서는 ProductDetails 또는 ValidatedProducts 둘 다 저장 대상이 될 수 있음
+                            let is_persist_target = matches!(lifecycle_item, StageItem::ProductDetails(_)) || matches!(lifecycle_item, StageItem::ValidatedProducts(_));
+                            if is_persist_target {
+                                info!("[Persist] Enter DataSaving block batch_id={:?} variant={}", batch_id_opt, match &lifecycle_item { StageItem::ProductDetails(_) => "ProductDetails", StageItem::ValidatedProducts(_) => "ValidatedProducts", _ => "Other" });
+                                // Duplicate guard
+                                let guard_key = format!("{}:{}:data_saving", session_id_clone, batch_id_opt.clone().unwrap_or_else(|| "none".into()));
+                                if let Ok(mut guard) = DATA_SAVING_RUN_GUARD.lock() {
+                                    if guard.contains(&guard_key) {
+                                        info!("[PersistGuard] duplicate DataSaving suppression key={}", guard_key);
+                                        return Ok(StageItemResult { item_id: "data_saving_guard".into(), item_type: StageItemType::Url { url_type: "data_saving".into() }, success: true, error: None, duration_ms: item_start.elapsed().as_millis() as u64, retry_count: 0, collected_data: None });
+                                    } else {
+                                        guard.insert(guard_key);
+                                        info!("[PersistGuard] first DataSaving execution proceeding");
+                                    }
+                                }
+                                // decide skip via env inside task scope
+                                let skip_save = std::env::var("MC_SKIP_DB_SAVE")
+                                    .ok()
+                                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                                    .unwrap_or(false);
+                                if skip_save {
+                                    info!("[Persist] Skipped by env MC_SKIP_DB_SAVE");
+                                    if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                        session_id: session_id_clone.clone(),
+                                        batch_id: batch_id_opt.clone(),
+                                        page_number: None,
+                                        product_ref: "_batch_persist".into(),
+                                        status: "persist_skipped".into(),
+                                        retry: None,
+                                        duration_ms: None,
+                                        metrics: Some(SimpleMetrics::Generic { key: "reason".into(), value: "MC_SKIP_DB_SAVE".into() }),
+                                        timestamp: Utc::now(),
+                                    }).await { error!("ProductLifecycle persist_skipped emit failed err={}", e); }
+                                } else {
+                                    let attempted_count = match &lifecycle_item { StageItem::ValidatedProducts(v) => v.products.len() as u32, StageItem::ProductDetails(d) => d.products.len() as u32, _ => 0 };
+                                    if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                        session_id: session_id_clone.clone(),
+                                        batch_id: batch_id_opt.clone(),
+                                        page_number: None,
+                                        product_ref: "_batch_persist".into(),
+                                        status: "persist_started".into(),
+                                        retry: None,
+                                        duration_ms: None,
+                                        metrics: Some(SimpleMetrics::Generic { key: "attempted_count".into(), value: attempted_count.to_string() }),
+                                        timestamp: Utc::now(),
+                                    }).await { error!("ProductLifecycle persist_started emit failed err={}", e); }
+                                    let persist_start = Instant::now();
+                                    if attempted_count == 0 {
+                                        info!("[Persist] Empty batch (attempted_count=0) -> emit persist_empty and skip storage call");
+                                        let _ = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                            session_id: session_id_clone.clone(),
+                                            batch_id: batch_id_opt.clone(),
+                                            page_number: None,
+                                            product_ref: "_batch_persist".into(),
+                                            status: "persist_empty".into(),
+                                            retry: None,
+                                            duration_ms: Some(0),
+                                            metrics: Some(SimpleMetrics::Generic { key: "persist_result".into(), value: "attempted=0".into() }),
+                                            timestamp: Utc::now(),
+                                        }).await;
+                                        return Ok(StageItemResult { item_id: "data_saving_empty".into(), item_type: StageItemType::Url { url_type: "data_saving".into() }, success: true, error: None, duration_ms: item_start.elapsed().as_millis() as u64, retry_count: 0, collected_data: None });
+                                    }
+                                    if let Some(repo) = &temp_actor._product_repo {
+                                        info!("[PersistExec] starting storage call variant={}", match &lifecycle_item { StageItem::ProductDetails(_) => "ProductDetails", StageItem::ValidatedProducts(_) => "ValidatedProducts", _ => "Other" });
+                                        match StageActor::execute_real_database_storage(&lifecycle_item, repo.clone()).await {
+                                            Ok((inserted, updated)) => {
+                                                let total = inserted + updated;
+                                                let attempted = attempted_count; // from outer scope
+                                                let unchanged = if attempted > total { attempted - total } else { 0 };
+                                                let status = if inserted > 0 && updated == 0 { "persist_inserted" } else if updated > 0 && inserted == 0 { "persist_updated" } else if inserted == 0 && updated == 0 { "persist_noop" } else { "persist_mixed" };
+                                                info!("[Persist] Result status={} inserted={} updated={} total={} unchanged={} attempted={} duration_ms={}", status, inserted, updated, total, unchanged, attempted, persist_start.elapsed().as_millis());
+                                                let metrics = SimpleMetrics::Generic { key: "persist_result".into(), value: format!("attempted={},inserted={},updated={},total={},unchanged={}", attempted, inserted, updated, total, unchanged) };
+                                                let emit_res = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                                    session_id: session_id_clone.clone(),
+                                                    batch_id: batch_id_opt.clone(),
+                                                    page_number: None,
+                                                    product_ref: "_batch_persist".into(),
+                                                    status: status.into(),
+                                                    retry: None,
+                                                    duration_ms: Some(persist_start.elapsed().as_millis() as u64),
+                                                    metrics: Some(metrics),
+                                                    timestamp: Utc::now(),
+                                                }).await;
+                                                match emit_res {
+                                                    Ok(_) => info!("[PersistEmit] lifecycle emitted status={}", status),
+                                                    Err(e) => error!("ProductLifecycle {} emit failed err={}", status, e)
+                                                }
+                                                if status == "persist_noop" {
+                                                    // emit anomaly diagnostic + (future) logical drift probe
+                                                    if let Some(repo) = &temp_actor._product_repo {
+                                                        if let Ok((cnt, minp, maxp, _)) = repo.get_product_detail_stats().await {
+                                                            let attempted = match &lifecycle_item { StageItem::ValidatedProducts(v) => v.products.len() as u32, StageItem::ProductDetails(d) => d.products.len() as u32, _ => total };
+                                                            let _ = ctx_clone.emit_event(AppEvent::PersistenceAnomaly {
+                                                                session_id: session_id_clone.clone(),
+                                                                batch_id: batch_id_opt.clone(),
+                                                                kind: "all_noop".into(),
+                                                                detail: format!("All attempted saves were noop: attempted={} inserted={} updated={} db_total={} db_page_range={:?}-{:?}", attempted, inserted, updated, cnt, minp, maxp),
+                                                                attempted,
+                                                                inserted,
+                                                                updated,
+                                                                timestamp: Utc::now(),
+                                                            }).await;
+                                                            // LogicalMappingDrift (placeholder): detect unexpected min/max inversion or large gap
+                                                            if let (Some(min_p), Some(max_p)) = (minp, maxp) {
+                                                                if min_p > max_p { // impossible condition -> drift
+                                                                    let _ = ctx_clone.emit_event(AppEvent::PersistenceAnomaly {
+                                                                        session_id: session_id_clone.clone(),
+                                                                        batch_id: batch_id_opt.clone(),
+                                                                        kind: "logical_mapping_drift".into(),
+                                                                        detail: format!("Inverted page range detected min_page={} > max_page={} during noop persistence", min_p, max_p),
+                                                                        attempted,
+                                                                        inserted,
+                                                                        updated,
+                                                                        timestamp: Utc::now(),
+                                                                    }).await;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error!("[Persist] Failed error={} duration_ms={}", e, persist_start.elapsed().as_millis());
+                                                let emit_res = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                                    session_id: session_id_clone.clone(),
+                                                    batch_id: batch_id_opt.clone(),
+                                                    page_number: None,
+                                                    product_ref: "_batch_persist".into(),
+                                                    status: "persist_failed".into(),
+                                                    retry: None,
+                                                    duration_ms: Some(persist_start.elapsed().as_millis() as u64),
+                                                    metrics: Some(SimpleMetrics::Generic { key: "error".into(), value: e.clone() }),
+                                                    timestamp: Utc::now(),
+                                                }).await;
+                                                if let Err(e2) = emit_res { error!("ProductLifecycle persist_failed emit failed err={}", e2); } else { info!("[PersistEmit] lifecycle emitted status=persist_failed"); }
+                                            }
+                                        }
+                                    } else {
+                                        error!("Product repository not available during DataSaving persistence stage");
+                                    }
+                                }
+                            }
+                        }
+                        if let Err(e) = ctx_clone.emit_event(AppEvent::StageItemCompleted {
+                            session_id: session_id_clone.clone(),
+                            batch_id: batch_id_opt.clone(),
+                            stage_type: stage_type_clone.clone(),
+                            item_id: r.item_id.clone(),
+                            item_type: r.item_type.clone(),
+                            success: true,
+                            error: None,
+                            duration_ms: item_start.elapsed().as_millis() as u64,
+                            retry_count: r.retry_count,
+                            collected_count: r.collected_data.as_ref().map(|d| {
+                                // JSON 배열일 가능성 높음 → 대략 길이 추정 (간단 처리)
+                                if d.starts_with('[') { d.matches("\"").count() as u32 / 2 } else { 1 }
+                            }),
+                            timestamp: Utc::now(),
+                        }).await { tracing::error!("StageItemCompleted emit failed: {}", e); }
+                        // Emit lifecycle completion for page or product aggregated result
+                        if let (StageType::ListPageCrawling, StageItem::Page(pn)) = (&stage_type_clone, &lifecycle_item) {
+                            let metrics = crate::new_architecture::actors::types::SimpleMetrics::Page { url_count: Some(r.collected_data.as_ref().map(|d| d.len() as u32).unwrap_or(0)), scheduled_details: None, error: None };
+                            if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle { session_id: session_id_clone.clone(), batch_id: batch_id_opt.clone(), page_number: *pn, status: "fetch_completed".into(), metrics: Some(metrics), timestamp: Utc::now() }).await { error!("PageLifecycle fetch_completed emit failed page={} err={}", pn, e); } else { debug!("Emitted PageLifecycle fetch_completed page={}", pn); }
+                        }
+                        // Product detail lifecycle completion (group success)
+                        if let (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) = (&stage_type_clone, &lifecycle_item) {
+                            for pu in &urls.urls {
+                                if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                    session_id: session_id_clone.clone(),
+                                    batch_id: batch_id_opt.clone(),
+                                    page_number: Some(pu.page_id as u32),
+                                    product_ref: pu.url.clone(),
+                                    status: "fetch_completed".into(),
+                                    retry: None,
+                                    duration_ms: Some(item_start.elapsed().as_millis() as u64),
+                                    metrics: None,
+                                    timestamp: Utc::now(),
+                                }).await { error!("ProductLifecycle fetch_completed emit failed product={} err={}", pu.url, e); }
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        if let Err(e) = ctx_clone.emit_event(AppEvent::StageItemCompleted {
+                            session_id: session_id_clone.clone(),
+                            batch_id: batch_id_opt.clone(),
+                            stage_type: stage_type_clone.clone(),
+                            item_id: "unknown".into(),
+                            item_type: StageItemType::Url { url_type: "unknown".into() },
+                            success: false,
+                            error: Some(err.to_string()),
+                            duration_ms: item_start.elapsed().as_millis() as u64,
+                            retry_count: 0,
+                            collected_count: None,
+                            timestamp: Utc::now(),
+                        }).await { tracing::error!("StageItemCompleted emit failed: {}", e); }
+                        if let (StageType::ListPageCrawling, StageItem::Page(pn)) = (&stage_type_clone, &lifecycle_item) {
+                            let metrics = crate::new_architecture::actors::types::SimpleMetrics::Page { url_count: None, scheduled_details: None, error: Some(err.to_string()) };
+                            if let Err(e2) = ctx_clone.emit_event(AppEvent::PageLifecycle { session_id: session_id_clone.clone(), batch_id: batch_id_opt.clone(), page_number: *pn, status: "failed".into(), metrics: Some(metrics), timestamp: Utc::now() }).await { error!("PageLifecycle failed emit failed page={} err={}", pn, e2); } else { debug!("Emitted PageLifecycle failed page={}", pn); }
+                        }
+                        // Product detail lifecycle failure
+                        if let (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) = (&stage_type_clone, &lifecycle_item) {
+                            for pu in &urls.urls {
+                                let metrics = crate::new_architecture::actors::types::SimpleMetrics::Product { fields: None, size_bytes: None, error: Some(err.to_string()) };
+                                if let Err(e2) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                    session_id: session_id_clone.clone(),
+                                    batch_id: batch_id_opt.clone(),
+                                    page_number: Some(pu.page_id as u32),
+                                    product_ref: pu.url.clone(),
+                                    status: "failed".into(),
+                                    retry: None,
+                                    duration_ms: Some(item_start.elapsed().as_millis() as u64),
+                                    metrics: Some(metrics),
+                                    timestamp: Utc::now(),
+                                }).await { error!("ProductLifecycle failed emit failed product={} err={}", pu.url, e2); }
+                            }
+                        }
+                    }
+                }
+                result
             });
-            
             tasks.push(task);
         }
         
@@ -771,7 +1052,7 @@ impl StageActor {
         status_checker: Option<Arc<dyn StatusChecker>>,
         product_list_collector: Option<Arc<dyn ProductListCollector>>,
     _product_detail_collector: Option<Arc<dyn ProductDetailCollector>>,
-        product_repo: Option<Arc<IntegratedProductRepository>>,
+    _product_repo: Option<Arc<IntegratedProductRepository>>,
     ) -> Result<StageItemResult, StageError> {
         let start_time = Instant::now();
         
@@ -939,12 +1220,12 @@ impl StageActor {
                         };
 
                         // Canonical 계산: 페이지 enumerate index 는 0-based
-                        let canonical_calc = PageIdCalculator::new(total_pages, products_on_last_page as usize);
+                        let canonical_calc = PaginationCalculator::default(); // total_pages 는 호출 시 세 번째 인자로 전달
                         let product_urls: Vec<crate::domain::product_url::ProductUrl> = product_list.products
                             .iter()
                             .enumerate()
                             .map(|(zero_idx, product)| {
-                                let c = canonical_calc.calculate(product_list.page_number, zero_idx);
+                                let c = canonical_calc.calculate(product_list.page_number, zero_idx as u32, total_pages);
                                 crate::domain::product_url::ProductUrl { url: product.url.clone(), page_id: c.page_id, index_in_page: c.index_in_page }
                             })
                             .collect();
@@ -1045,25 +1326,9 @@ impl StageActor {
                 }
             }
             StageType::DataSaving => {
-                // 임시 조치: 환경 변수로 데이터베이스 저장 단계 스킵
-                // MC_SKIP_DB_SAVE=1 또는 true 이면 저장을 생략하고 성공으로 처리
-                let skip_save = std::env::var("MC_SKIP_DB_SAVE")
-                    .ok()
-                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                    .unwrap_or(false);
-
-                if skip_save {
-                    warn!("⏭️ Skipping DataSaving stage due to MC_SKIP_DB_SAVE flag");
-                    (Ok(()), None, 0)
-                } else if let Some(repo) = product_repo {
-                    match Self::execute_real_database_storage(&item, repo).await {
-                        Ok(()) => (Ok(()), None, 0),
-                        Err(e) => (Err(e), None, 0),
-                    }
-                } else {
-                    // Product repository가 없으면 에러
-                    (Err("Product repository not available".to_string()), None, 0)
-                }
+                // DataSaving persistence 로직은 비동기 task 내부에서 처리 (ctx_clone 스코프 확보 위해 여기서는 패스스루)
+                // 여기서는 StageItem 처리 결과를 (Ok, None, 0) 로 넘기고 실제 저장은 아래 task match 분기에서 수행
+                (Ok(()), None, 0)
             }
         };
         
@@ -1265,123 +1530,56 @@ impl StageActor {
     async fn execute_real_database_storage(
         item: &StageItem,
         product_repo: Arc<IntegratedProductRepository>,
-    ) -> Result<(), String> {
-        // 실제 데이터베이스 저장 로직 - ServiceBasedBatchCrawlingEngine 패턴 참조
+    ) -> Result<(u32,u32), String> { // (inserted, updated)
         match item {
-            StageItem::ProductDetails(product_details_wrapper) => {
-                // Stage 4 (DataValidation)에서 검증된 ProductDetail 데이터를 받음
-                let product_details = &product_details_wrapper.products;
-                info!("💾 Saving {} validated product details to database", product_details.len());
-                        
-                if product_details.is_empty() {
-                    info!("ℹ️ No product details to save");
-                    return Ok(());
-                }
-                
-                // 실제 데이터베이스에 저장
-                // 좌표 기본 검증: index_in_page는 0..11 범위, 음수 page_id 경고
-                for d in product_details.iter().take(12) { // 표본 제한
-                    if let Some(idx) = d.index_in_page {
-                        if !(0..=11).contains(&idx) { warn!("⚠️ index_in_page out of range (0..11): id={:?} idx={}", d.id, idx); }
-                    }
-                    if let Some(pid) = d.page_id { if pid < 0 { warn!("⚠️ negative page_id detected: id={:?} pid={}", d.id, pid); } }
-                }
-
-                for detail in product_details {
+            StageItem::ProductDetails(wrapper) => {
+                info!("[PersistExec] handling ProductDetails count={} extraction_stats=attempted:{} success:{} failed:{}", wrapper.products.len(), wrapper.extraction_stats.attempted, wrapper.extraction_stats.successful, wrapper.extraction_stats.failed);
+                let products = &wrapper.products;
+                if products.is_empty() { return Ok((0,0)); }
+                // Duplicate detection by URL
+                let mut seen = std::collections::HashSet::new();
+                let mut duplicates: Vec<String> = Vec::new();
+                for d in products { if !seen.insert(d.url.clone()) { duplicates.push(d.url.clone()); } }
+                if !duplicates.is_empty() { warn!("[PersistExec] duplicate urls detected count={} urls={:?}", duplicates.len(), duplicates); }
+                let mut inserted = 0u32; let mut updated = 0u32;
+                for (idx, detail) in products.iter().enumerate() {
+                    let start = std::time::Instant::now();
+                    debug!("[PersistExec] upsert detail idx={} url={} page_id={:?}", idx, detail.url, detail.page_id);
                     match product_repo.create_or_update_product_detail(&detail).await {
-                        Ok(_) => {
-                            debug!("✅ Successfully saved product: {}", detail.url);
-                        }
-                        Err(e) => {
-                            error!("❌ Failed to save product {}: {}", detail.url, e);
-                            return Err(format!("Database save failed: {}", e));
-                        }
+                        Ok((was_updated, was_created)) => {
+                            if was_created { inserted += 1; }
+                            if was_updated { updated += 1; }
+                            debug!("[PersistExecDetail] idx={} url={} created={} updated={} elapsed_ms={}", idx, detail.url, was_created, was_updated, start.elapsed().as_millis());
+                        },
+                        Err(e) => return Err(format!("Database save failed: {}", e))
                     }
                 }
-                // 📊 저장 전 배치 페이지네이션 검증
-                if !product_details.is_empty() {
-                    // 1) page_id/index_in_page 쌍 수집
-                    let mut coords: Vec<(i32,i32)> = product_details.iter()
-                        .filter_map(|d| match (d.page_id, d.index_in_page) { (Some(p), Some(i)) => Some((p,i)), _ => None })
-                        .collect();
-                    if !coords.is_empty() {
-                        // 2) page_id 기준 정렬 후 index 정렬 검사
-                        coords.sort_unstable();
-                        // page_id 그룹 -> index_in_page 오름차순 단조 증가(+1) 기대
-                        let mut group_violations = 0u32;
-                        let mut cross_page_mixed = false;
-                        let mut prev: Option<(i32,i32)> = None;
-                        for (p,i) in &coords {
-                            if let Some((pp,pi)) = prev {
-                                if *p==pp && *i != pi+1 { group_violations+=1; }
-                                if *p<pp { cross_page_mixed = true; }
-                            }
-                            prev = Some((*p,*i));
-                        }
-                        // 3) 연속 page_id 블록 여부 (예: 두 page_id 이상 섞인 경우 경고)
-                        use std::collections::BTreeSet; let unique: BTreeSet<i32> = coords.iter().map(|c| c.0).collect();
-                        if unique.len()>1 { debug!("⚠️ Mixed page_id batch detected: unique={:?}", unique); }
-                        if cross_page_mixed { warn!("⚠️ page_id ordering regression: page_id decreased inside batch"); }
-                        if group_violations>0 { warn!("⚠️ index_in_page non-consecutive inside same page_id occurrences={} (tolerated for now)", group_violations); }
-                    } else {
-                        debug!("ℹ️ No coordinate pairs available for batch validation");
+                Ok((inserted, updated))
+            }
+            StageItem::ValidatedProducts(wrapper) => {
+                info!("[PersistExec] handling ValidatedProducts count={}", wrapper.products.len());
+                let products = &wrapper.products;
+                if products.is_empty() { return Ok((0,0)); }
+                let mut seen = std::collections::HashSet::new();
+                let mut duplicates: Vec<String> = Vec::new();
+                for d in products { if !seen.insert(d.url.clone()) { duplicates.push(d.url.clone()); } }
+                if !duplicates.is_empty() { warn!("[PersistExec] duplicate validated urls detected count={} urls={:?}", duplicates.len(), duplicates); }
+                let mut inserted = 0u32; let mut updated = 0u32;
+                for (idx, detail) in products.iter().enumerate() {
+                    let start = std::time::Instant::now();
+                    debug!("[PersistExec] upsert validated detail idx={} url={} page_id={:?}", idx, detail.url, detail.page_id);
+                    match product_repo.create_or_update_product_detail(&detail).await {
+                        Ok((was_updated, was_created)) => {
+                            if was_created { inserted += 1; }
+                            if was_updated { updated += 1; }
+                            debug!("[PersistExecDetail] validated idx={} url={} created={} updated={} elapsed_ms={}", idx, detail.url, was_created, was_updated, start.elapsed().as_millis());
+                        },
+                        Err(e) => return Err(format!("Database save failed: {}", e))
                     }
                 }
-
-                // 📊 저장 요약 (page_id, index_in_page 범위)
-                let page_ids: Vec<i32> = product_details
-                    .iter()
-                    .filter_map(|d| d.page_id)
-                    .collect();
-                let indices: Vec<i32> = product_details
-                    .iter()
-                    .filter_map(|d| d.index_in_page)
-                    .collect();
-
-                if !page_ids.is_empty() || !indices.is_empty() {
-                    let (min_page, max_page) = (
-                        page_ids.iter().min().copied(),
-                        page_ids.iter().max().copied(),
-                    );
-                    let (min_idx, max_idx) = (
-                        indices.iter().min().copied(),
-                        indices.iter().max().copied(),
-                    );
-
-                    // 고유 페이지 수 계산
-                    let unique_pages = {
-                        use std::collections::BTreeSet;
-                        let set: BTreeSet<i32> = page_ids.iter().copied().collect();
-                        set.len()
-                    };
-
-                    info!(
-                        "🧾 DataSaving summary: items={}, pages_unique={}, page_id_range={:?}, index_in_page_range={:?}",
-                        product_details.len(),
-                        unique_pages,
-                        min_page.zip(max_page),
-                        min_idx.zip(max_idx)
-                    );
-                } else {
-                    info!(
-                        "🧾 DataSaving summary: items={}, no coordinate data present",
-                        product_details.len()
-                    );
-                }
-
-                info!("✅ Successfully saved all product details to database");
-                Ok(())
+                Ok((inserted, updated))
             }
-            StageItem::ValidatedProducts(products) => {
-                info!("💾 Saving {} validated products to database", products.products.len());
-                // Legacy support - ValidatedProducts 받는 경우
-                Ok(())
-            }
-            _ => {
-                // 다른 타입의 경우 저장할 제품 데이터가 없으므로 스킵
-                info!("🔧 Skipping database storage for non-product item");
-                Ok(())
-            }
+            _ => Ok((0,0))
         }
     }
     
@@ -1451,6 +1649,8 @@ impl StageActor {
     }
 }
 
+// (기존 상세 Actor trait 구현은 파일 하단 원본 영역 유지)
+
 #[async_trait::async_trait]
 impl Actor for StageActor {
     type Command = ActorCommand;
@@ -1462,7 +1662,9 @@ impl Actor for StageActor {
 
     fn actor_type(&self) -> ActorType {
         ActorType::Stage
-    }    async fn run(
+    }
+
+    async fn run(
         &mut self,
         mut context: AppContext,
         mut command_rx: mpsc::Receiver<Self::Command>,

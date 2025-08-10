@@ -151,9 +151,6 @@ export interface TauriCommands {
   // Advanced Crawling Engine 사이트 상태 확인
   check_advanced_site_status(): Promise<ApiResponse<SiteStatusInfo>>;
   
-  // Advanced Crawling Engine 시작
-  start_advanced_crawling(request: StartCrawlingRequest): Promise<ApiResponse<CrawlingSession>>;
-  
   // 크롤링 범위 계산
   calculate_crawling_range(request: CrawlingRangeRequest): Promise<ApiResponse<CrawlingRangeResponse>>;
   

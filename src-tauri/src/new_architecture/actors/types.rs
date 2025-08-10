@@ -82,14 +82,21 @@ pub enum ActorCommand {
 /// 시스템 상태 변화를 알리는 이벤트들입니다.
 /// 이벤트 드리븐 아키텍처의 핵심 구성 요소입니다.
 /// ActorContractVersion: v1
+/// Core field groups (v2 clarification - additive only):
+/// - Session lifecycle: SessionStarted/Completed/Failed { session_id, timestamp }
+/// - Progress: Progress { session_id, current_step, total_steps, percentage }
+/// - Batch: BatchStarted/Completed/Failed { batch_id, session_id, timestamp }
+/// - Stage: StageStarted/Completed/Failed { stage_type, session_id, batch_id? }
+/// - Persistence diagnostics: ProductLifecycle { status, metrics? }, PersistenceAnomaly { kind, detail }
+/// - Metrics snapshots: DatabaseStats { total_product_details, min_page, max_page }
+/// UI 소비자는 최소 session_id + timestamp 조합을 키로 사용하고, 선택적으로 batch_id / stage_type 으로 세분화 렌더링.
 ///
 /// 버전 관리 원칙:
 /// 1. Additive-only (새 이벤트/필드 추가는 허용)
 /// 2. 필드 제거/의미 변경 금지 → 새 필드/이벤트로 교체 후 기존 Deprecated 유지
 /// 3. 버전 증가 조건: UI 분기 필수 스키마 변화(추가 필드가 breaking semantic) 또는 요약(summary) 구조 확장
 /// 4. TS `actorContractVersion.ts` 와 값 동기화 필요
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AppEvent {
     // === 세션 이벤트 ===
     SessionStarted {
@@ -127,6 +134,41 @@ pub enum AppEvent {
         elapsed: u64, // Duration을 milliseconds로 변경
         timestamp: DateTime<Utc>,
     },
+
+    /// 사전 점검(프리플라이트) 진단 이벤트: 로컬 DB 및 사이트 상태 요약
+    PreflightDiagnostics {
+        session_id: String,
+        db_products: i64,
+        db_min_page: Option<i32>,
+        db_max_page: Option<i32>,
+        site_total_pages: Option<u32>,
+        site_known_last_page: Option<u32>,
+        reason: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// 저장 단계 이상 탐지 (예: 예상 신규/업데이트 없을 때, page_id 역순 불일치 등)
+    PersistenceAnomaly {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")] batch_id: Option<String>,
+        kind: String,        // e.g. "all_noop", "page_id_mismatch"
+        detail: String,      // human readable description
+        attempted: u32,      // attempted product details in this batch stage
+        inserted: u32,
+        updated: u32,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// DB 통계 스냅샷 (진행 중 주기적 보고 용도)
+    DatabaseStats {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")] batch_id: Option<String>,
+        total_product_details: i64,
+        min_page: Option<i32>,
+        max_page: Option<i32>,
+        note: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
     
     // === 배치 이벤트 ===
     BatchStarted {
@@ -157,6 +199,8 @@ pub enum AppEvent {
     StageStarted {
         stage_type: StageType,
         session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
         items_count: u32,
         timestamp: DateTime<Utc>,
     },
@@ -164,6 +208,8 @@ pub enum AppEvent {
     StageCompleted {
         stage_type: StageType,
         session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
         result: StageResult,
         timestamp: DateTime<Utc>,
     },
@@ -171,7 +217,39 @@ pub enum AppEvent {
     StageFailed {
         stage_type: StageType,
         session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
         error: String,
+        timestamp: DateTime<Utc>,
+    },
+
+    // === 스테이지 아이템(세부 단위) 이벤트 ===
+    /// 개별 아이템 처리 시작 (페이지 또는 상품 단위)
+    StageItemStarted {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
+        stage_type: StageType,
+        item_id: String,
+        item_type: StageItemType,
+        timestamp: DateTime<Utc>,
+    },
+    /// 개별 아이템 처리 완료
+    StageItemCompleted {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
+        stage_type: StageType,
+        item_id: String,
+        item_type: StageItemType,
+        success: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        duration_ms: u64,
+        retry_count: u32,
+        /// 수집된 엔트리 수 (ListPage: product URL 개수, ProductDetail: 상세 필드 객체 개수)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        collected_count: Option<u32>,
         timestamp: DateTime<Utc>,
     },
     
@@ -208,6 +286,10 @@ pub enum AppEvent {
     /// 중복 제거로 스킵된 Product URL 수 (옵션 - v1 기본 0)
     #[serde(default)]
     duplicates_skipped: u32,
+    #[serde(default)]
+    products_inserted: u32,
+    #[serde(default)]
+    products_updated: u32,
         timestamp: DateTime<Utc>,
     },
 
@@ -220,6 +302,10 @@ pub enum AppEvent {
         total_failed: u32,
         total_retries: u32,
         duration_ms: u64,
+    #[serde(default)]
+    products_inserted: u32,
+    #[serde(default)]
+    products_updated: u32,
         timestamp: DateTime<Utc>,
     },
 
@@ -309,6 +395,46 @@ pub enum AppEvent {
         trigger: String,
         timestamp: DateTime<Utc>,
     },
+
+    // === Fine-grained lifecycle events (additive v2) ===
+    /// Page lifecycle state transition (queued -> fetch_started -> fetch_completed | failed -> urls_extracted)
+    PageLifecycle {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")] 
+        batch_id: Option<String>,
+        page_number: u32,
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")] 
+        metrics: Option<SimpleMetrics>,
+        timestamp: DateTime<Utc>,
+    },
+    /// Product lifecycle (optional aggregation level for group fetch) or per-product when available
+    ProductLifecycle {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")] 
+        batch_id: Option<String>,
+        /// Origin page number if known
+        #[serde(skip_serializing_if = "Option::is_none")] 
+        page_number: Option<u32>,
+        product_ref: String, // URL or hashed key
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")] 
+        retry: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")] 
+        duration_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")] 
+        metrics: Option<SimpleMetrics>,
+        timestamp: DateTime<Utc>,
+    },
+}
+
+// Lightweight TS-friendly metrics container (additive, extensible)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag="kind", content="data")]
+pub enum SimpleMetrics {
+    Page { url_count: Option<u32>, scheduled_details: Option<u32>, error: Option<String> },
+    Product { fields: Option<u32>, size_bytes: Option<u32>, error: Option<String> },
+    Generic { key: String, value: String },
 }
 
 /// High-level crawl phases (extensible)
@@ -662,6 +788,10 @@ pub struct SessionSummary {
     /// 세션 전체에서 중복 제거로 스킵된 Product URL 수 (BatchReport 합산)
     #[serde(default)]
     pub duplicates_skipped: u32,
+    #[serde(default)]
+    pub products_inserted: u32,
+    #[serde(default)]
+    pub products_updated: u32,
     
     /// 최종 상태
     pub final_state: String,

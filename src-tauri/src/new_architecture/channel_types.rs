@@ -69,9 +69,9 @@ pub struct BatchConfig {
     pub max_pages: Option<u32>,
 }
 
-/// 앱 이벤트 정의
+/// (Legacy) 앱 이벤트 정의 - new_architecture::actors::types::AppEvent 와 구분
 #[derive(Debug, Clone, Serialize)]
-pub enum AppEvent {
+pub enum LegacyAppEvent {
     SessionStarted {
         session_id: String,
         config: BatchConfig,

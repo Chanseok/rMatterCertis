@@ -3,15 +3,16 @@ use tauri::AppHandle;
 use tracing::{info, warn};
 // chrono is not used directly in this module
 
-use crate::commands::real_crawling_commands::{execute_real_crawling, RealCrawlingRequest};
+use crate::commands::actor_system_commands::{start_actor_system_crawling, ActorCrawlingRequest, CrawlingMode};
 
 /// 통합 크롤링 요청 구조체
 #[derive(Debug, Deserialize)]
 pub struct StartCrawlingRequest {
-    pub engine_type: String, // "service" | "actor" | "simple"
-    pub start_page: Option<u32>,
-    pub end_page: Option<u32>,
-    pub concurrency: Option<u32>,
+    pub engine_type: String, // "actor" (others deprecated)
+    pub mode: Option<String>, // "advanced" | "live" (UI two tabs)
+    pub override_batch_size: Option<u32>,
+    pub override_concurrency: Option<u32>,
+    pub delay_ms: Option<u64>,
 }
 
 /// 통합 크롤링 응답 구조체
@@ -43,24 +44,24 @@ pub async fn start_unified_crawling(
         }
         // Primary path: Actor-based real crawling
         "actor" | "" => {
-            let start = request.start_page.unwrap_or(1);
-            let end = request.end_page.unwrap_or(start);
-            let actor_req = RealCrawlingRequest {
-                start_page: start,
-                end_page: end,
-                concurrency_limit: request.concurrency,
-                batch_size: None,
-                perform_site_check: Some(true),
+            // Map mode string to CrawlingMode
+            let crawling_mode = match request.mode.as_deref() {
+                Some("advanced") => Some(CrawlingMode::AdvancedEngine),
+                Some("live") => Some(CrawlingMode::LiveProduction),
+                _ => None,
             };
-            let result = execute_real_crawling(app, actor_req).await?;
-            Ok(StartCrawlingResponse {
-                success: result.success,
-                message: format!(
-                    "Actor 크롤링 완료: processed_pages={}, saved_products={}",
-                    result.processed_pages, result.saved_products
-                ),
-                session_id: Some(result.session_id),
-            })
+            let actor_req = ActorCrawlingRequest {
+                site_url: None,
+                start_page: None,
+                end_page: None,
+                page_count: None,
+                concurrency: request.override_concurrency,
+                batch_size: request.override_batch_size,
+                delay_ms: request.delay_ms,
+                mode: crawling_mode,
+            };
+            let result = start_actor_system_crawling(app.clone(), actor_req).await.map_err(|e| format!("failed to start actor crawling: {}", e))?;
+            Ok(StartCrawlingResponse { success: result.success, message: result.message, session_id: result.session_id })
         }
         _ => Err(format!("알 수 없는 엔진 타입: {}", request.engine_type)),
     }

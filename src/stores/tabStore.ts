@@ -24,8 +24,19 @@ export interface TabState {
 }
 
 const [tabState, setTabState] = createStore<TabState>({
-  activeTab: 'eventDisplay',
+  activeTab: 'liveCrawling',
   tabs: [
+    {
+      id: 'liveCrawling',
+      label: 'Live Crawling',
+      icon: '🟢',
+      theme: {
+        bg: 'bg-gradient-to-br from-emerald-50 to-green-50',
+        border: 'border-emerald-200',
+        text: 'text-emerald-700',
+        accent: 'from-emerald-500 to-green-500'
+      }
+    },
     {
       id: 'eventDisplay',
       label: '계층적 이벤트 모니터',
@@ -202,6 +213,9 @@ const cleanupTabResources = (tabId: string) => {
         element.removeEventListener('update', () => {});
       });
       console.log('🧹 Live Production resources cleaned up');
+      break;
+    case 'liveCrawling':
+      console.log('🧹 Live Crawling resources cleaned up');
       break;
     
     default:

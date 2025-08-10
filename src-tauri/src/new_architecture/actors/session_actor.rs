@@ -52,6 +52,10 @@ pub struct SessionActor {
     site_status_cache: Option<(crate::domain::services::SiteStatus, Instant)>,
     /// 이미 외부에서 확정된 계획을 실행 중인지 여부 (재계획 방지)
     preplanned_mode: bool,
+    /// 배치 완료 시 삽입된 제품 수
+    products_inserted: u32,
+    /// 배치 완료 시 업데이트된 제품 수
+    products_updated: u32,
     /// 현재 실행 중인 ExecutionPlan 해시 (무결성 로그 목적)
     active_plan_hash: Option<String>,
     /// 배치/세션 실행 중 발생한 에러 메시지 누적 (요약/리포트 용)
@@ -107,6 +111,8 @@ impl SessionActor {
             start_time: None,
             processed_batches: 0,
             total_success_count: 0,
+            products_inserted: 0,
+            products_updated: 0,
             site_status_cache: None,
             preplanned_mode: false,
             active_plan_hash: None,
@@ -173,6 +179,25 @@ impl SessionActor {
             .map_err(|e| SessionError::InitializationFailed(format!("Failed to connect to database: {}", e)))?;
         let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
 
+        info!("🎬 [SessionRun] Enter run() for session_id={}", session_id);
+        // Preflight DB stats emit (best-effort)
+        if let Ok((cnt, minp, maxp, _last)) = product_repo.get_product_detail_stats().await {
+            let pre_event = AppEvent::PreflightDiagnostics {
+                session_id: session_id.clone(),
+                db_products: cnt,
+                db_min_page: minp,
+                db_max_page: maxp,
+                site_total_pages: None, // filled after site status if needed
+                site_known_last_page: None,
+                reason: Some("initial_db_scan".into()),
+                timestamp: Utc::now(),
+            };
+            match context.emit_event(pre_event).await {
+                Ok(_) => info!("[DiagEmit] PreflightDiagnostics initial_db_scan emitted products={} page_range={:?}-{:?}", cnt, minp, maxp),
+                Err(e) => warn!("[DiagEmit] initial_db_scan emit failed err={}", e),
+            }
+        }
+
         // 플래너 생성에 필요한 서비스들
     let status_checker: Arc<dyn StatusChecker> = Arc::new(StatusCheckerImpl::with_product_repo(
             (*http_client).clone(),
@@ -217,6 +242,24 @@ impl SessionActor {
         self.site_status_cache = Some((used_site_status.clone(), Instant::now()));
         let site_status = used_site_status;
         info!("🌐 SiteStatus: total_pages={}, products_on_last_page={}", site_status.total_pages, site_status.products_on_last_page);
+
+        // Update DB stats with site info after site status known
+        if let Ok((cnt, minp, maxp, _last)) = product_repo.get_product_detail_stats().await {
+            let pre_event2 = AppEvent::PreflightDiagnostics {
+                session_id: session_id.clone(),
+                db_products: cnt,
+                db_min_page: minp,
+                db_max_page: maxp,
+                site_total_pages: Some(site_status.total_pages as u32),
+                site_known_last_page: Some(site_status.total_pages as u32),
+                reason: Some("post_site_status".into()),
+                timestamp: Utc::now(),
+            };
+            match context.emit_event(pre_event2).await {
+                Ok(_) => info!("[DiagEmit] PreflightDiagnostics post_site_status emitted products={} site_total_pages={} page_range={:?}-{:?}", cnt, site_status.total_pages, minp, maxp),
+                Err(e) => warn!("[DiagEmit] post_site_status emit failed err={}", e),
+            }
+        }
 
         // ListPageCrawling phases만 추출 → 각 phase 페이지들을 순차 처리
         let mut batch_idx = 0u32;
@@ -307,6 +350,8 @@ impl SessionActor {
                 max_retries_single_page: 0,
                 pages_retried: 0,
                 retry_histogram: Vec::new(),
+                products_inserted: 0,
+                products_updated: 0,
                 final_state: "completed".to_string(),
                 timestamp: Utc::now(),
             },
@@ -327,6 +372,8 @@ impl SessionActor {
             total_failed: 0, // TODO: 배치 결과 수집 시 합산
             total_retries: 0, // TODO: 배치 리포트 기반 합산
             duration_ms,
+            products_inserted: 0,
+            products_updated: 0,
             timestamp: Utc::now(),
         };
         context.emit_event(crawl_report).await
@@ -338,7 +385,7 @@ impl SessionActor {
 
     /// 실서비스가 주입된 BatchActor를 생성해 주어진 페이지들을 처리
     async fn run_batch_with_services(
-        &self,
+        &mut self,
         batch_id: &str,
         pages: &[u32],
         context: &AppContext,
@@ -348,11 +395,9 @@ impl SessionActor {
         site_status: &crate::domain::services::SiteStatus,
     ) -> Result<(), SessionError> {
         use crate::new_architecture::actors::traits::Actor;
-
-    // AppConfig 로드(개발 기본값)
-    let app_config = AppConfig::for_development();
-    let config_concurrency = app_config.user.crawling.workers.list_page_max_concurrent as u32;
-
+        let app_config = AppConfig::for_development();
+        let config_concurrency = app_config.user.crawling.workers.list_page_max_concurrent as u32;
+        let shared_metrics = Arc::new(std::sync::Mutex::new((0u32,0u32)));
         let mut batch_actor = BatchActor::new_with_services(
             batch_id.to_string(),
             batch_id.to_string(),
@@ -361,17 +406,10 @@ impl SessionActor {
             Arc::clone(product_repo),
             app_config.clone(),
         );
-
+        batch_actor.shared_metrics = Some(shared_metrics.clone());
         let (tx, rx) = mpsc::channel::<super::types::ActorCommand>(100);
-
-        // BatchActor 실행 태스크 시작
-    let actor_context = context.clone();
-        let actor_task = tokio::spawn(async move {
-            let _ = batch_actor.run(actor_context, rx).await;
-        });
-
-        // 배치 설정 및 명령 전송
-    // Use config-driven concurrency
+        let actor_context = context.clone();
+        let actor_task = tokio::spawn(async move { let _ = batch_actor.run(actor_context, rx).await; });
         let batch_config = BatchConfig {
             batch_size: pages.len() as u32,
             concurrency_limit: config_concurrency,
@@ -380,22 +418,11 @@ impl SessionActor {
             start_page: pages.first().copied(),
             end_page: pages.last().copied(),
         };
-        let cmd = super::types::ActorCommand::ProcessBatch {
-            batch_id: batch_id.to_string(),
-            pages: pages.to_vec(),
-            config: batch_config,
-            batch_size: pages.len() as u32,
-            concurrency_limit: config_concurrency,
-            total_pages: site_status.total_pages,
-            products_on_last_page: site_status.products_on_last_page,
-        };
+        let cmd = super::types::ActorCommand::ProcessBatch { batch_id: batch_id.to_string(), pages: pages.to_vec(), config: batch_config, batch_size: pages.len() as u32, concurrency_limit: config_concurrency, total_pages: site_status.total_pages, products_on_last_page: site_status.products_on_last_page };
         tx.send(cmd).await.map_err(|e| SessionError::ContextError(format!("Failed to send ProcessBatch: {}", e)))?;
-
-        // 종료 명령
         tx.send(super::types::ActorCommand::Shutdown).await.map_err(|e| SessionError::ContextError(format!("Failed to send Shutdown: {}", e)))?;
-
-        // 완료 대기
         actor_task.await.map_err(|e| SessionError::ContextError(format!("BatchActor join error: {}", e)))?;
+        if let Ok(g) = shared_metrics.lock() { self.products_inserted = self.products_inserted.saturating_add(g.0); self.products_updated = self.products_updated.saturating_add(g.1); }
         Ok(())
     }
     
@@ -432,6 +459,7 @@ impl SessionActor {
             reason,
             timestamp: Utc::now(),
         };
+    // (metrics already aggregated post batch run)
         
         context.emit_event(pause_event).await
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
@@ -560,18 +588,10 @@ impl SessionActor {
             SessionSummary {
                 session_id: session_id.clone(),
                 total_duration_ms: duration.as_millis() as u64,
-                total_pages_processed: 0, // TODO: 실제 처리된 페이지 수 계산
-                total_products_processed: 0, // TODO: 실제 처리된 상품 수 계산
-                success_rate: if self.processed_batches > 0 { 
-                    self.total_success_count as f64 / self.processed_batches as f64 
-                } else { 
-                    0.0 
-                },
-                avg_page_processing_time: if self.processed_batches > 0 { 
-                    duration.as_millis() as u64 / self.processed_batches as u64 
-                } else { 
-                    0 
-                },
+                total_pages_processed: self.total_success_count, // 페이지 성공 누적
+                total_products_processed: self.products_inserted + self.products_updated,
+                success_rate: if self.total_success_count > 0 { 1.0 } else { 0.0 },
+                avg_page_processing_time: if self.total_success_count > 0 { duration.as_millis() as u64 / self.total_success_count as u64 } else { 0 },
                 error_summary: aggregated,
                 processed_batches: self.processed_batches,
                 total_success_count: self.total_success_count,
@@ -580,6 +600,8 @@ impl SessionActor {
                 max_retries_single_page: 0,
                 pages_retried: 0,
                 retry_histogram: Vec::new(),
+                products_inserted: self.products_inserted,
+                products_updated: self.products_updated,
                 final_state: format!("{:?}", self.state),
                 timestamp: Utc::now(),
             }
@@ -692,9 +714,9 @@ impl Actor for SessionActor {
                                                 let mut map: BTreeMap<String, (u32, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = BTreeMap::new();
                                                 for e in &self.errors { let now = chrono::Utc::now(); map.entry(e.clone()).and_modify(|entry| { entry.0 += 1; entry.2 = now; }).or_insert((1, now, now)); }
                                                 let aggregated: Vec<crate::new_architecture::actors::types::ErrorSummary> = map.into_iter().map(|(k,(count, first, last))| crate::new_architecture::actors::types::ErrorSummary { error_type: k, count, first_occurrence: first, last_occurrence: last }).collect();
-                                                let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / self.total_success_count as u64 } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, duplicates_skipped: self.duplicates_skipped, total_retry_events: 0, max_retries_single_page: 0, pages_retried: 0, retry_histogram: Vec::new(), final_state: "completed".into(), timestamp: Utc::now() };
+                                                let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / self.total_success_count as u64 } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, duplicates_skipped: self.duplicates_skipped, total_retry_events: 0, max_retries_single_page: 0, pages_retried: 0, retry_histogram: Vec::new(), products_inserted: 0, products_updated: 0, final_state: "completed".into(), timestamp: Utc::now() };
                                                 if let Err(e) = context.emit_event(AppEvent::SessionCompleted { session_id: session_id.clone(), summary: summary.clone(), timestamp: Utc::now() }).await { error!("emit completion event failed: {}", e); }
-                                                if let Err(e) = context.emit_event(AppEvent::CrawlReportSession { session_id: session_id.clone(), batches_processed: self.processed_batches, total_pages: self.total_success_count, total_success: self.total_success_count, total_failed: 0, total_retries: 0, duration_ms, timestamp: Utc::now() }).await { error!("emit crawl report failed: {}", e); }
+                                                if let Err(e) = context.emit_event(AppEvent::CrawlReportSession { session_id: session_id.clone(), batches_processed: self.processed_batches, total_pages: self.total_success_count, total_success: self.total_success_count, total_failed: 0, total_retries: 0, duration_ms, products_inserted: 0, products_updated: 0, timestamp: Utc::now() }).await { error!("emit crawl report failed: {}", e); }
                                             }
                                             Err(e) => {
                                                 error!("DB pool init failed: {}", e);

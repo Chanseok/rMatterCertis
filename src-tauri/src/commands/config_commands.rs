@@ -465,6 +465,27 @@ pub fn get_comprehensive_crawler_config() -> Result<ComprehensiveCrawlerConfig, 
     Ok(config)
 }
 
+/// Frontend settingsStore compatibility: expose full AppConfig (mirrors legacy crawling_v4 commands)
+#[tauri::command]
+pub async fn get_app_settings() -> Result<serde_json::Value, String> {
+    use crate::infrastructure::config::ConfigManager;
+    tracing::info!("⚙️ [config_commands] get_app_settings invoked");
+    let manager = ConfigManager::new().map_err(|e| format!("Failed to init config manager: {}", e))?;
+    let cfg = manager.load_config().await.map_err(|e| format!("Failed to load config: {}", e))?;
+    serde_json::to_value(&cfg).map_err(|e| format!("Serialize failed: {}", e))
+}
+
+#[tauri::command]
+pub async fn save_app_settings(settings: serde_json::Value) -> Result<String, String> {
+    use crate::infrastructure::config::ConfigManager;
+    tracing::info!("⚙️ [config_commands] save_app_settings invoked");
+    let parsed: crate::infrastructure::config::AppConfig = serde_json::from_value(settings)
+        .map_err(|e| format!("Failed to parse settings: {}", e))?;
+    let manager = ConfigManager::new().map_err(|e| format!("Failed to init config manager: {}", e))?;
+    manager.save_config(&parsed).await.map_err(|e| format!("Failed to save config: {}", e))?;
+    Ok("saved".into())
+}
+
 /// Convert internal AppConfig to frontend-friendly FrontendConfig
 fn convert_to_frontend_config(app_config: &AppConfig) -> FrontendConfig {
     FrontendConfig {

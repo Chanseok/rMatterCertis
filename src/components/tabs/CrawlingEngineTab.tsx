@@ -19,6 +19,7 @@ import type {
 } from '../../types/advanced-engine';
 // Session animation/status panel (Actor system shared component)
 import { SessionStatusPanel } from '../actor-system/SessionStatusPanel';
+import { useActorVisualizationStream } from '../../hooks/useActorVisualizationStream';
 
 export const CrawlingEngineTab: Component = () => {
   // 기본 설정값을 반환하는 더미 함수 (백엔드가 설정 파일을 직접 읽음)
@@ -71,6 +72,8 @@ export const CrawlingEngineTab: Component = () => {
   const [crawlingRange, setCrawlingRange] = createSignal<CrawlingRangeResponse | null>(null);
   const [showSiteStatus, setShowSiteStatus] = createSignal(true);
   const [batchSize, setBatchSize] = createSignal(3); // 기본값 3, 실제 설정에서 로드됨
+  // Shared actor/concurrency events
+  const { events: actorEvents } = useActorVisualizationStream(600);
 
   // Log helper
   const addLog = (message: string) => {
@@ -438,7 +441,7 @@ export const CrawlingEngineTab: Component = () => {
           </p>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <div class="space-y-6">
             {/* Site Status */}
             <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -767,20 +770,41 @@ export const CrawlingEngineTab: Component = () => {
               </div>
             </div>
 
-            {/* Live Logs */}
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-              <h2 class="text-lg font-semibold text-gray-900 mb-4">📝 실시간 로그</h2>
-              <div class="bg-gray-900 rounded-md p-4 h-80 overflow-y-auto font-mono text-sm">
-                <Show
-                  when={logs().length > 0}
-                  fallback={<p class="text-gray-400">로그 대기 중...</p>}
-                >
-                  <For each={logs()}>
-                    {(log) => (
-                      <div class="text-green-400 mb-1">{log}</div>
-                    )}
-                  </For>
-                </Show>
+            {/* Live Logs + Actor Events */}
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
+              <div>
+                <h2 class="text-lg font-semibold text-gray-900 mb-4">📝 실시간 로그</h2>
+                <div class="bg-gray-900 rounded-md p-4 h-60 overflow-y-auto font-mono text-sm">
+                  <Show
+                    when={logs().length > 0}
+                    fallback={<p class="text-gray-400">로그 대기 중...</p>}
+                  >
+                    <For each={logs()}>
+                      {(log) => (
+                        <div class="text-green-400 mb-1">{log}</div>
+                      )}
+                    </For>
+                  </Show>
+                </div>
+              </div>
+              <div>
+                <h2 class="text-lg font-semibold text-gray-900 mb-2">🎯 Actor / Concurrency Events</h2>
+                <div class="border border-gray-200 rounded-md bg-gray-50 h-60 overflow-y-auto p-2">
+                  <Show when={actorEvents().length} fallback={<div class="text-xs text-gray-500">아직 이벤트 없음</div>}>
+                    <ol class="text-[11px] font-mono space-y-0.5">
+                      <For each={actorEvents().slice(-120)}>{ev => (
+                        <li class="flex gap-2">
+                          <span class="text-gray-400">#{ev.seq}</span>
+                          <span class="px-1 rounded bg-gray-100 text-gray-700">{ev.rawName}</span>
+                          <Show when={ev.batchId}><span class="text-emerald-600">{ev.batchId}</span></Show>
+                          <Show when={ev.page !== undefined}><span class="text-indigo-600">p{ev.page}</span></Show>
+                          <Show when={ev.progressPct !== undefined}><span class="text-amber-600">{ev.progressPct?.toFixed(1)}%</span></Show>
+                          <Show when={ev.activeDetails !== undefined}><span class="text-pink-600">d{ev.activeDetails}</span></Show>
+                        </li>
+                      )}</For>
+                    </ol>
+                  </Show>
+                </div>
               </div>
             </div>
           </div>

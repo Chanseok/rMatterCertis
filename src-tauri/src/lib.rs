@@ -303,7 +303,7 @@ pub fn run() {
             
             // Advanced Crawling Engine commands (Phase 4B)
             commands::advanced_engine_api::check_advanced_site_status,
-            commands::advanced_engine_api::start_advanced_crawling,
+            // start_advanced_crawling 제거: FE는 start_actor_system_crawling 직접 호출
             commands::advanced_engine_api::get_recent_products,
             commands::advanced_engine_api::get_database_stats,
             
@@ -319,7 +319,7 @@ pub fn run() {
             commands::smart_crawling::demo_prompts6_calculation,
             
             // Simple crawling commands (Phase 1 - 즉시 안정화)
-            commands::simple_crawling::start_smart_crawling,
+            // Removed start_smart_crawling (use start_unified_crawling)
             
             // Backend-Only CRUD commands (Modern Rust 2024 Architecture)
             commands::data_queries::get_products_page,
@@ -340,7 +340,7 @@ pub fn run() {
             commands::simple_actor_test::test_new_arch_channels,
             commands::simple_actor_test::test_new_arch_performance,
             
-            // 🎭 Actor System 크롤링 (메인 개발 브랜치)
+            // 🎭 Actor System 크롤링 (직접 호출 허용: FE 통합)
             commands::actor_system_commands::start_actor_system_crawling,
             commands::actor_system_commands::pause_session,
             commands::actor_system_commands::resume_session,
@@ -354,7 +354,7 @@ pub fn run() {
             // They will be re-enabled after Phase 2 completion
             
             // Actor System Monitoring commands (Phase C: UI 개선)
-            commands::actor_system_monitoring::start_crawling_session,
+            // Removed start_crawling_session (unified entrypoint)
             
             // 🚀 Phase C: Real Crawling Commands (PRODUCTION-READY)
             commands::real_crawling_commands::execute_real_crawling,
@@ -379,11 +379,14 @@ pub fn run() {
             commands::dashboard_commands::init_dashboard_service,
             commands::dashboard_commands::get_dashboard_state,
             commands::dashboard_commands::get_chart_data,
-            commands::dashboard_commands::start_dashboard_crawling_session,
+            // Removed start_dashboard_crawling_session (unified entrypoint)
             commands::dashboard_commands::update_dashboard_progress,
             commands::dashboard_commands::complete_dashboard_crawling_session,
             commands::dashboard_commands::test_dashboard_integration,
-            commands::dashboard_commands::run_dashboard_demo
+            commands::dashboard_commands::run_dashboard_demo,
+            // Settings store commands
+            commands::config_commands::get_app_settings,
+            commands::config_commands::save_app_settings
             
             
             // TODO: Add other commands as they are implemented

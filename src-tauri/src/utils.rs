@@ -32,115 +32,20 @@ pub struct PageIdCalculator {
 }
 
 impl PageIdCalculator {
-    /// 새로운 계산기 생성
-    /// 
-    /// # Arguments
-    /// * `last_page_number` - 사이트의 마지막 페이지 번호 (가장 오래된 페이지)
-    /// * `products_in_last_page` - 마지막 페이지의 제품 수
-    pub fn new(last_page_number: u32, products_in_last_page: usize) -> Self {
-        Self {
-            last_page_number,
-            products_in_last_page,
-        }
-    }
-    
-    /// 실제 페이지 번호와 페이지 내 제품 인덱스를 기반으로 pageId와 indexInPage 계산
-    /// 
-    /// prompts5에서 제시된 간결한 공식 사용:
-    /// 1. total_products = (last_page_number - 1) * PRODUCTS_PER_PAGE + products_in_last_page
-    /// 2. current_product_global_index_from_newest = (actual_page_number - 1) * PRODUCTS_PER_PAGE + product_index_in_actual_page
-    /// 3. from_oldest_product_number = (total_products - 1) - current_product_global_index_from_newest
-    /// 4. page_id = from_oldest_product_number / PRODUCTS_PER_PAGE
-    /// 5. index_in_page = from_oldest_product_number % PRODUCTS_PER_PAGE
-    /// 
-    /// # Arguments
-    /// * `actual_page_number` - 사이트의 실제 페이지 번호 (1부터 시작)
-    /// * `product_index_in_actual_page` - 해당 페이지에서 제품의 인덱스 (0부터 시작, 위에서부터)
-    /// 
-    /// # Returns
-    /// PageIdCalculation 구조체
+    pub fn new(last_page_number: u32, products_in_last_page: usize) -> Self { Self { last_page_number, products_in_last_page } }
     pub fn calculate(&self, actual_page_number: u32, product_index_in_actual_page: usize) -> PageIdCalculation {
-        // 경계값 보정 및 방어적 계산으로 언더플로우/오버플로우 방지
-        // 0 페이지가 들어오면 1로 보정, 마지막 페이지보다 큰 값이 들어오면 경고 후 마지막 페이지로 보정
-        let mut page = if actual_page_number == 0 { 1 } else { actual_page_number };
-        if page > self.last_page_number {
-            tracing::warn!(
-                "⚠️ PageIdCalculator: actual_page_number ({}) > last_page_number ({}). Clamping to last_page_number.",
-                page, self.last_page_number
-            );
-            page = self.last_page_number;
-        }
-
-        // 페이지 내 인덱스는 0..12-1 범위로 보정 (과대 입력 시 상한 클램프)
-        let bounded_index = if product_index_in_actual_page >= PRODUCTS_PER_PAGE {
-            tracing::warn!(
-                "⚠️ PageIdCalculator: product_index_in_actual_page ({}) >= {}. Clamping to {}.",
-                product_index_in_actual_page, PRODUCTS_PER_PAGE, PRODUCTS_PER_PAGE - 1
-            );
-            PRODUCTS_PER_PAGE - 1
-        } else {
-            product_index_in_actual_page
-        };
-
-        // 1. 총 제품 수 계산 (saturating 사용)
-        let pages_except_last = self.last_page_number.saturating_sub(1) as usize;
-        let total_products = pages_except_last
-            .saturating_mul(PRODUCTS_PER_PAGE)
-            .saturating_add(self.products_in_last_page.min(PRODUCTS_PER_PAGE));
-        
-        // 2. 현재 제품의 최신순 글로벌 0-기반 인덱스 계산 (saturating 사용)
-        let current_product_global_index_from_newest = (page.saturating_sub(1) as usize)
-            .saturating_mul(PRODUCTS_PER_PAGE)
-            .saturating_add(bounded_index);
-        
-        // 3. 현재 제품의 오래된순 글로벌 0-기반 인덱스 계산 (saturating 사용)
-        let from_oldest_product_number = total_products
-            .saturating_sub(1)
-            .saturating_sub(current_product_global_index_from_newest);
-        
-        // 4. page_id 계산 (정수 나눗셈)
-        let page_id = (from_oldest_product_number / PRODUCTS_PER_PAGE) as i32;
-        
-        // 5. index_in_page 계산 (나머지 - 페이지 아래쪽부터 0)
-        let index_in_page = (from_oldest_product_number % PRODUCTS_PER_PAGE) as i32;
-        
-        PageIdCalculation { page_id, index_in_page }
+        // 위임: domain::pagination::PaginationCalculator 와 동일한 역방향 공식 사용.
+        // NOTE: products_in_last_page 는 현재 위임 경로에서 직접 활용되지 않지만 호환성 유지.
+        // 개선: 필요한 경우 last_page_number == actual_page_number 일 때 남은 제품 수 보정 로직 추가.
+        let calc = crate::domain::pagination::PaginationCalculator::default();
+        // PaginationCalculator 는 (physical_page, index_in_physical-from-top, total_pages) 서명을 사용 →
+        // 여기서 total_pages = last_page_number, index_in_physical 는 top 기준 그대로 전달.
+        let pos = calc.calculate(actual_page_number, product_index_in_actual_page as u32, self.last_page_number);
+        PageIdCalculation { page_id: pos.page_id, index_in_page: pos.index_in_page }
     }
-    
-    /// 특정 pageId와 indexInPage로부터 실제 페이지 번호와 인덱스 역계산
-    /// 
-    /// # Arguments
-    /// * `page_id` - 계산된 페이지 ID
-    /// * `index_in_page` - 계산된 페이지 내 인덱스
-    /// 
-    /// # Returns
-    /// (actual_page_number, product_index_in_actual_page) 튜플
     pub fn reverse_calculate(&self, page_id: i32, index_in_page: i32) -> Option<(u32, usize)> {
-        if page_id < 0 || index_in_page < 0 || index_in_page >= PRODUCTS_PER_PAGE as i32 {
-            return None;
-        }
-        
-        // 1. from_oldest_product_number 역계산
-        let from_oldest_product_number = (page_id as usize)
-            .saturating_mul(PRODUCTS_PER_PAGE)
-            .saturating_add(index_in_page as usize);
-        
-        // 2. 총 제품 수 계산
-        let pages_except_last = self.last_page_number.saturating_sub(1) as usize;
-        let total_products = pages_except_last
-            .saturating_mul(PRODUCTS_PER_PAGE)
-            .saturating_add(self.products_in_last_page.min(PRODUCTS_PER_PAGE));
-        
-        // 3. current_product_global_index_from_newest 역계산
-        let current_product_global_index_from_newest = total_products
-            .saturating_sub(1)
-            .saturating_sub(from_oldest_product_number);
-        
-        // 4. actual_page_number 및 product_index_in_actual_page 역계산
-        let actual_page_number = (current_product_global_index_from_newest / PRODUCTS_PER_PAGE) + 1;
-        let product_index_in_actual_page = current_product_global_index_from_newest % PRODUCTS_PER_PAGE;
-        
-        Some((actual_page_number as u32, product_index_in_actual_page))
+        let calc = crate::domain::pagination::PaginationCalculator::default();
+        calc.reverse(page_id, index_in_page, self.last_page_number).map(|(phys, idx)| (phys, idx as usize))
     }
 }
 

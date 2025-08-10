@@ -64,7 +64,9 @@ const DEFAULT_SETTINGS: AppConfig = {
       batch_retry_limit: 3
     },
     crawling: {
-      page_range_limit: 6,
+      // Backend defaults::PAGE_RANGE_LIMIT = 100 (infrastructure/config.rs)
+      // Align frontend default to prevent initial UI mismatch before IPC load
+      page_range_limit: 100,
       intelligent_mode: {
         enabled: true,
         max_range_limit: 1000,

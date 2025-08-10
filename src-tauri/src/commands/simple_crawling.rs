@@ -105,9 +105,10 @@ pub async fn start_smart_crawling(
         use crate::commands::unified_crawling::{start_unified_crawling, StartCrawlingRequest};
         let req = StartCrawlingRequest {
             engine_type: "actor".to_string(),
-            start_page: Some(start_page),
-            end_page: Some(end_page),
-            concurrency: None,
+            mode: Some("advanced".to_string()),
+            override_batch_size: None,
+            override_concurrency: None,
+            delay_ms: None,
         };
         if let Err(e) = start_unified_crawling(app_handle.clone(), req).await {
             return Err(format!("Unified crawling execution failed: {}", e));

@@ -3,11 +3,12 @@
  * @description Live Production Line UI를 위한 탭 컴포넌트
  */
 
-import { Component, createSignal, onMount, onCleanup } from 'solid-js';
+import { Component, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import CrawlingProgressDashboard from '../visualization/CrawlingProgressDashboard';
 import { SessionStatusPanel } from '../actor-system/SessionStatusPanel';
+import { useActorVisualizationStream } from '../../hooks/useActorVisualizationStream';
 
 export const LiveProductionTab: Component = () => {
   // 크롤링 상태 관리
@@ -17,23 +18,41 @@ export const LiveProductionTab: Component = () => {
   const [totalPages, setTotalPages] = createSignal(0);
   const [totalProducts, setTotalProducts] = createSignal(0);
   const [errorCount, setErrorCount] = createSignal(0);
+  const [productsInserted, setProductsInserted] = createSignal(0);
+  const [productsUpdated, setProductsUpdated] = createSignal(0);
+  const [lastBatchId, setLastBatchId] = createSignal<string | undefined>(undefined);
+  // New lifecycle progress counters
+  const [pagesFetchStarted, setPagesFetchStarted] = createSignal(0);
+  const [pagesFetchCompleted, setPagesFetchCompleted] = createSignal(0);
+  const [productsFetchStarted, setProductsFetchStarted] = createSignal(0);
+  const [productsFetchCompleted, setProductsFetchCompleted] = createSignal(0);
+
+  const { events } = useActorVisualizationStream(600);
+  // Derive simple aggregates from events (minimal Phase 1 wiring)
+  const [pageCount, setPageCount] = createSignal(0);
+  const [productCount] = createSignal(0); // placeholder until product events exist
+  const [batchActive, setBatchActive] = createSignal(0);
+
+  // reactively update counters when new events appended
+  const originalSetTotalPages = setTotalPages;
+  const originalSetActiveBatches = setActiveBatches;
+  const originalSetTotalProducts = setTotalProducts;
+
+  // naive observer (Phase 1); could be replaced with memo derivations
+  // events.subscribe?.?.(); // placeholder to avoid TS removal if not used
 
   // 크롤링 시작
   const startCrawling = async () => {
     try {
       setIsCrawlingActive(true);
       setCrawlingStatus('크롤링 시작 중...');
-      
-      // Tauri 백엔드 크롤링 시작 명령
-      await invoke('start_crawling', {
-        config: {
-          batchSize: 50,
-          maxConcurrency: 10,
-          retryCount: 3,
-          delayMs: 1000
+      await invoke('start_actor_system_crawling', {
+        request: {
+          override_batch_size: 50,
+          override_max_concurrency: 10,
+          override_delay_ms: 1000,
         }
       });
-      
       setCrawlingStatus('크롤링 실행 중');
     } catch (error) {
       console.error('크롤링 시작 실패:', error);
@@ -46,10 +65,7 @@ export const LiveProductionTab: Component = () => {
   const stopCrawling = async () => {
     try {
       setCrawlingStatus('크롤링 중지 중...');
-      
-      // Tauri 백엔드 크롤링 중지 명령
-      await invoke('stop_crawling');
-      
+      await invoke('request_graceful_shutdown', { request: { timeout_ms: 15000 } });
       setIsCrawlingActive(false);
       setCrawlingStatus('크롤링 중지됨');
     } catch (error) {
@@ -68,54 +84,76 @@ export const LiveProductionTab: Component = () => {
     setErrorCount(0);
   };
 
-  // 실시간 이벤트 리스너 설정
-  const setupEventListeners = async () => {
-    try {
-      // 배치 생성 이벤트
-      await listen('batch-created', (event: any) => {
-        console.log('배치 생성됨:', event.payload);
-        setActiveBatches(prev => prev + 1);
-      });
-
-      // 페이지 크롤링 이벤트
-      await listen('page-crawled', (event: any) => {
-        console.log('페이지 크롤링됨:', event.payload);
-        setTotalPages(prev => prev + 1);
-      });
-
-      // 제품 수집 이벤트
-      await listen('product-collected', (event: any) => {
-        console.log('제품 수집됨:', event.payload);
-        setTotalProducts(prev => prev + 1);
-      });
-
-      // 배치 완료 이벤트
-      await listen('batch-completed', (event: any) => {
-        console.log('배치 완료됨:', event.payload);
-        setActiveBatches(prev => Math.max(0, prev - 1));
-      });
-
-      // 크롤링 완료 이벤트
-      await listen('crawling-completed', (event: any) => {
-        console.log('크롤링 완료:', event.payload);
-        setIsCrawlingActive(false);
-        setCrawlingStatus('크롤링 완료');
-      });
-
-      // 에러 이벤트
-      await listen('crawling-error', (event: any) => {
-        console.error('크롤링 에러:', event.payload);
-        setErrorCount(prev => prev + 1);
-      });
-
-    } catch (error) {
-      console.error('이벤트 리스너 설정 실패:', error);
-    }
-  };
-
   // 컴포넌트 마운트
-  onMount(() => {
-    setupEventListeners();
+  // 이벤트 집계: actor-batch-report / actor-session-report 에서 제품 카운트 추출
+  createEffect(() => {
+    const evs = events();
+    if (!evs.length) return;
+    const latest = evs[evs.length - 1];
+    // raw payload를 전체적으로 알 수 없으므로 window에서 마지막 보고 관련 이벤트들 스캔
+    // 간단히 이름을 통해 필터링
+    const batchReports = evs.filter(e => e.rawName === 'actor-batch-report');
+    const sessionReports = evs.filter(e => e.rawName === 'actor-session-report');
+    // 페이지 수 추정: batch-report pages_success 또는 pages_total 값이 payload에 포함되지만 visualization 이벤트에는 없으므로 backend 확장 전까지 기존 totalPages 유지
+    // 제품 카운트는 session-report 최종값을 우선, 없으면 batch 누적(추후 raw payload 확장 시 개선)
+    // Tauri emitter가 구조 flatten 하므로 window.electron? 접근 없이 invoke 대신 lightweight listen 재구현 필요 → 여기서는 전송된 enriched 객체를 얻지 못하므로 개선 TODO
+    // 임시 전략: backend가 추후 actor-session-report payload에 products_inserted/products_updated 표시하는지 확인 후 직접 update
+  });
+
+  // Tauri low-level listener로 실제 payload 접근 (직접 수신) - 필요한 필드만 추출
+  onMount(async () => {
+    const un1 = await listen<any>('actor-batch-report', (e) => {
+      const p = e.payload as any;
+      if (typeof p?.products_inserted === 'number') {
+        setProductsInserted((prev: number) => prev + p.products_inserted);
+      }
+      if (typeof p?.products_updated === 'number') {
+        setProductsUpdated((prev: number) => prev + p.products_updated);
+      }
+      if (p?.batch_id) setLastBatchId(p.batch_id);
+      if (typeof p?.pages_success === 'number') {
+        setTotalPages((prev: number) => prev + p.pages_success);
+      }
+    });
+    const un2 = await listen<any>('actor-session-report', (e) => {
+      const p = e.payload as any;
+      // 세션 리포트는 누적 값이므로 그대로 덮어씀
+      if (typeof p?.products_inserted === 'number') setProductsInserted(p.products_inserted);
+      if (typeof p?.products_updated === 'number') setProductsUpdated(p.products_updated);
+      if (typeof p?.total_pages === 'number') setTotalPages(p.total_pages);
+    });
+    const un3 = await listen<any>('actor-stage-item-completed', (e) => {
+      // DataSaving StageItemCompleted에서 collected_data 내 삽입/업데이트 JSON을 후처리하려면 backend가 수치 직접 전파 전까지 parsing 가능
+      const p = e.payload as any;
+      if (p?.item_type === 'Url' && p?.collected_data && typeof p.collected_data === 'string') {
+        // heuristics: ignore (not metrics JSON)
+        return;
+      }
+      if (p?.collected_data && typeof p.collected_data === 'string' && p.collected_data.startsWith('{')) {
+        try {
+          const data = JSON.parse(p.collected_data);
+          if (typeof data.products_inserted === 'number') {
+            setProductsInserted((prev: number) => prev + data.products_inserted);
+          }
+          if (typeof data.products_updated === 'number') {
+            setProductsUpdated((prev: number) => prev + data.products_updated);
+          }
+        } catch (_) {/* ignore parse errors */}
+      }
+    });
+    // Lifecycle listeners
+    const un4 = await listen<any>('actor-page-lifecycle', (e) => {
+      const p = e.payload as any;
+      if (p?.status === 'fetch_started') setPagesFetchStarted(v => v + 1);
+      if (p?.status === 'fetch_completed') setPagesFetchCompleted(v => v + 1);
+    });
+    const un5 = await listen<any>('actor-product-lifecycle', (e) => {
+      const p = e.payload as any;
+      if (p?.status === 'fetch_started') setProductsFetchStarted(v => v + 1);
+      if (p?.status === 'fetch_completed') setProductsFetchCompleted(v => v + 1);
+    });
+    // cleanup
+    onCleanup(() => { un1(); un2(); un3(); un4(); un5(); });
   });
 
   // 컴포넌트 언마운트
@@ -170,7 +208,7 @@ export const LiveProductionTab: Component = () => {
         </div>
         
         {/* 실시간 상태 표시 */}
-        <div class="grid grid-cols-5 gap-4 text-sm">
+          <div class="grid grid-cols-9 gap-4 text-sm">
           <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
             <div class="text-blue-600 font-medium">상태</div>
             <div class="text-blue-800 font-semibold">{crawlingStatus()}</div>
@@ -187,13 +225,29 @@ export const LiveProductionTab: Component = () => {
           </div>
           
           <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
-            <div class="text-indigo-600 font-medium">수집된 제품</div>
-            <div class="text-indigo-800 font-semibold">{totalProducts().toLocaleString()}</div>
+            <div class="text-indigo-600 font-medium">신규 제품</div>
+            <div class="text-indigo-800 font-semibold">{productsInserted().toLocaleString()}</div>
+          </div>
+          <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+            <div class="text-indigo-600 font-medium">업데이트 제품</div>
+            <div class="text-indigo-800 font-semibold">{productsUpdated().toLocaleString()}</div>
+          </div>
+          <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+            <div class="text-indigo-600 font-medium">총 제품 영향</div>
+            <div class="text-indigo-800 font-semibold">{(productsInserted()+productsUpdated()).toLocaleString()}</div>
           </div>
           
           <div class="bg-red-50 border border-red-200 rounded-lg p-3">
             <div class="text-red-600 font-medium">에러 수</div>
             <div class="text-red-800 font-semibold">{errorCount()}</div>
+          </div>
+          <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+            <div class="text-yellow-600 font-medium">페이지 진행</div>
+            <div class="text-yellow-800 font-semibold">{pagesFetchCompleted()}/{pagesFetchStarted()}</div>
+          </div>
+          <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+            <div class="text-yellow-600 font-medium">제품 진행</div>
+            <div class="text-yellow-800 font-semibold">{productsFetchCompleted()}/{productsFetchStarted()}</div>
           </div>
         </div>
       </div>

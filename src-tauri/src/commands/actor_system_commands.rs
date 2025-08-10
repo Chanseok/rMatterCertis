@@ -65,6 +65,7 @@ fn classify_error_type(err: &str) -> String {
 pub enum CrawlingMode { LiveProduction, AdvancedEngine }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct ActorCrawlingRequest {
     // New unified fields (optional for backward compatibility)
     pub site_url: Option<String>,
@@ -279,6 +280,13 @@ pub async fn start_actor_system_crawling(app: AppHandle, request: ActorCrawlingR
             if r.reverse_order { r.start_page - r.end_page + 1 } else { r.end_page - r.start_page + 1 }
         }).sum();
         kpi.total_pages = total_pages;
+    }
+
+    // (NEW) 2b. 사용자가 start_page/end_page/page_count 로 범위를 제한하려는 경우 ExecutionPlan 조정
+    if request.start_page.is_some() || request.end_page.is_some() || request.page_count.is_some() {
+        if let Err(e) = adjust_execution_plan_with_page_overrides(&mut execution_plan, &request) {
+            warn!("⚠️ Failed to apply page overrides: {} (continuing with original plan)", e);
+        }
     }
 
     // 3. CrawlingMode 별 로깅/전략 태그 (현재는 정보성)
@@ -546,9 +554,44 @@ pub async fn resume_from_token(app: AppHandle, resume_token: String) -> Result<A
     }
     // 마지막 구간 push
     ranges.push(PageRange { start_page: seg_start, end_page: prev, estimated_products: (prev - seg_start + 1) * 12, reverse_order: false });
-    // page_slots 재구성 (단순 physical_page => page_id 역순 매핑 축소 버전)
+    // page_slots 재구성 (논리 page_id/index_in_page canonical 계산)
+    // 가정: remaining_pages 는 물리 페이지 번호 (사이트 기준, 1 = 최신, total_pages = 가장 오래된) 혹은 역순 포함 혼재 가능.
+    // 1) total_pages 추정: 토큰 내 first/last 로는 불충분하므로 입력 remaining_pages 중 최대값을 total_pages 후보로 사용.
+    //    (Phase4: 토큰에 total_pages 명시 필드 추가 고려)
+    let inferred_total_pages = *pages_sorted.iter().max().unwrap_or(&last);
+    // 2) 각 물리 페이지의 제품 슬롯을 보수적으로 0..(products_per_page-1) 로 가정하되 실제 마지막(오래된) 페이지 용량은 알 수 없어 full 로 가정.
+    //    재개 시 정확성보다 안정적 page_id 재현성이 더 중요: old mapping 과의 drift 는 이후 PersistenceAnomaly 로 감지.
+    use crate::domain::pagination::PaginationCalculator;
+    let calc = PaginationCalculator::default();
     let mut page_slots: Vec<PageSlot> = Vec::new();
-    for (idx, p) in pages_sorted.iter().enumerate() { page_slots.push(PageSlot { physical_page: *p, page_id: idx as i64, index_in_page: 0 }); }
+    for &physical_page in pages_sorted.iter() {
+        // 기본 12개 슬롯 가정 (Phase3: 토큰 전달 값 또는 site status snapshot 연동)
+        for index_in_physical in 0..12u32 { // PRODUCTS_PER_PAGE 상수와 동기화 필요
+            let pos = calc.calculate(physical_page, index_in_physical, inferred_total_pages);
+            page_slots.push(PageSlot { physical_page, page_id: pos.page_id as i64, index_in_page: pos.index_in_page as i16 });
+        }
+    }
+    // 3) page_slots 안정화: (page_id, index_in_page) 기준 정렬 후 중복 제거 (같은 물리 페이지에서 full 가정으로 생긴 초과 슬롯 필터링은 아직 수행하지 않음)
+    page_slots.sort_by(|a,b| {
+        match a.page_id.cmp(&b.page_id) { 
+            core::cmp::Ordering::Equal => a.index_in_page.cmp(&b.index_in_page),
+            other => other
+        }
+    });
+    // Deduplicate identical logical slots keeping earliest physical_page (min)
+    let mut dedup: Vec<PageSlot> = Vec::new();
+    for slot in page_slots.into_iter() {
+        if let Some(last) = dedup.last() {
+            if last.page_id == slot.page_id && last.index_in_page == slot.index_in_page { continue; }
+        }
+        dedup.push(slot);
+    }
+    let page_slots = dedup;
+    info!("♻️ Reconstructed logical page_slots (resume): physical_pages={}, total_slots={}, inferred_total_pages={}", pages_sorted.len(), page_slots.len(), inferred_total_pages);
+    // 샘플 감사 로그 (앞/뒤 5개)
+    let head_samples: Vec<String> = page_slots.iter().take(5).map(|s| format!("p{}=>gid{}_i{}", s.physical_page, s.page_id, s.index_in_page)).collect();
+    let tail_samples: Vec<String> = page_slots.iter().rev().take(5).map(|s| format!("p{}=>gid{}_i{}", s.physical_page, s.page_id, s.index_in_page)).collect();
+    info!("🔍 page_slot audit head={:?} tail={:?}", head_samples, tail_samples);
     let batch_size_from_token = token_v.get("batch_size").and_then(|v| v.as_u64()).map(|v| v as u32).unwrap_or(20);
     let concurrency_from_token = token_v.get("concurrency_limit").and_then(|v| v.as_u64()).map(|v| v as u32).unwrap_or(5);
     // Retry state parsing (v1 token extensions)
@@ -1327,28 +1370,35 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
 
     let ranges_len = crawling_ranges.len();
     let strategy_string = format!("{:?}", crawling_plan.optimization_strategy);
-    // Precompute page_slots according to domain rule:
-    // page_id = total_pages - physical_page (last page => 0)
-    // index_in_page = (page_capacity-1 .. 0) where capacity = products_on_last_page for last page else DEFAULT PRODUCTS_PER PAGE
+    // Precompute page_slots using canonical PaginationCalculator to avoid drift.
+    use crate::domain::pagination::PaginationCalculator;
+    let calc = PaginationCalculator::default();
     let mut page_slots: Vec<crate::new_architecture::actors::types::PageSlot> = Vec::new();
     for range in &crawling_ranges {
         let pages_iter: Box<dyn Iterator<Item=u32>> = if range.reverse_order {
-            Box::new(range.end_page..=range.start_page) // reverse_order true means start_page >= end_page and we go ascending physically oldest? domain nuance; keep physical order for slot listing
+            Box::new(range.end_page..=range.start_page)
         } else { Box::new(range.start_page..=range.end_page) };
         for physical_page in pages_iter {
             if physical_page == 0 { continue; }
-            let page_id: i64 = (site_status.total_pages.saturating_sub(physical_page)) as i64;
-            let capacity = if physical_page == site_status.total_pages { site_status.products_on_last_page.max(1) } else { crate::domain::constants::site::PRODUCTS_PER_PAGE as u32 }; // derived from domain constant
-            for offset in 0..capacity { // produce reverse order index (capacity-1-offset)
-                let reverse_index = (capacity - 1 - offset) as i16;
+            // Conservative: assume up to PRODUCTS_PER_PAGE slots; last page actual size handled by index filtering or later pruning if needed.
+            let assumed_capacity = crate::domain::constants::site::PRODUCTS_PER_PAGE as u32;
+            for idx in 0..assumed_capacity { // idx = from top (newest) within physical page
+                let pos = calc.calculate(physical_page, idx, site_status.total_pages);
                 page_slots.push(crate::new_architecture::actors::types::PageSlot {
                     physical_page,
-                    page_id,
-                    index_in_page: reverse_index,
+                    page_id: pos.page_id as i64,
+                    index_in_page: pos.index_in_page as i16,
                 });
             }
         }
     }
+    // Sort & dedup logical slots to ensure stable ordering
+    page_slots.sort_by(|a,b| match a.page_id.cmp(&b.page_id) { core::cmp::Ordering::Equal => a.index_in_page.cmp(&b.index_in_page), other => other });
+    page_slots.dedup_by(|a,b| a.page_id == b.page_id && a.index_in_page == b.index_in_page);
+    // Audit sample
+    let head: Vec<String> = page_slots.iter().take(5).map(|s| format!("p{}=>gid{}_i{}", s.physical_page, s.page_id, s.index_in_page)).collect();
+    let tail: Vec<String> = page_slots.iter().rev().take(5).map(|s| format!("p{}=>gid{}_i{}", s.physical_page, s.page_id, s.index_in_page)).collect();
+    info!("📐 canonical page_slots audit head={:?} tail={:?} total_slots={}", head, tail, page_slots.len());
     let execution_plan = ExecutionPlan {
         plan_id,
         session_id,
@@ -1383,6 +1433,78 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
     if let Some(cache_state) = app.try_state::<SharedStateCache>() { cache_state.cache_execution_plan(execution_plan.clone()).await; }
     
     Ok((execution_plan, app_config, site_status))
+}
+
+/// Adjusts an existing ExecutionPlan with optional start_page/end_page/page_count overrides.
+/// Rules:
+/// - If page_count provided (N): take first N physical pages from current plan order (respecting reverse order flags) then rebuild crawling_ranges & page_slots.
+/// - Else if both start_page & end_page provided: restrict to inclusive range (supports start>=end reverse semantics). If direction mismatches plan ranges, will normalize.
+/// - Else if only start_page provided: treat as limiting to pages >= end_page of plan and <= start_page (reverse newest→oldest semantics).
+/// - Else if only end_page provided: limit to pages down to end_page from current highest.
+/// Any invalid combination results in Err and original plan is retained.
+fn adjust_execution_plan_with_page_overrides(plan: &mut ExecutionPlan, req: &ActorCrawlingRequest) -> Result<(), String> {
+    use crate::new_architecture::actors::types::PageSlot;
+    if req.page_count.is_none() && req.start_page.is_none() && req.end_page.is_none() { return Ok(()); }
+    let mut pages: Vec<u32> = plan.crawling_ranges.iter().flat_map(|r| {
+        if r.reverse_order {
+            (r.end_page..=r.start_page).rev().collect::<Vec<_>>()
+        } else { (r.start_page..=r.end_page).collect::<Vec<_>>() }
+    }).collect();
+    // Pages currently newest→oldest (because we reversed reverse_order ranges above)
+    pages.sort_by(|a,b| b.cmp(a));
+    pages.dedup();
+    let original_len = pages.len();
+    let min_page = *pages.iter().min().unwrap_or(&1);
+    let max_page = *pages.iter().max().unwrap_or(&1);
+    tracing::info!("🛠️ override_request start_page={:?} end_page={:?} page_count={:?} plan_range=[{}..{}] total_pages_in_plan={}", req.start_page, req.end_page, req.page_count, min_page, max_page, original_len);
+    // Heuristic: if user start_page is lower than min_page and end_page/page_count absent -> treat as page_count (legacy semantics)
+    let mut synthetic_page_count: Option<u32> = None;
+    if req.page_count.is_none() && req.end_page.is_none() {
+        if let Some(sp) = req.start_page { if sp < min_page { synthetic_page_count = Some(sp); } }
+    }
+    if let Some(pc) = req.page_count { if pc as usize > 0 && (pc as usize) < pages.len() { pages.truncate(pc as usize); } }
+    else if let Some(spc) = synthetic_page_count { if spc as usize > 0 && (spc as usize) < pages.len() { pages.truncate(spc as usize); tracing::info!("🔁 interpreted start_page={} as page_count override (legacy UI)", spc); } }
+    // Range filtering if explicit bounds
+    let start_opt = req.start_page; let end_opt = req.end_page;
+    if start_opt.is_some() || end_opt.is_some() {
+        // Interpret start_page as higher (newer) page, end_page as lower (older)
+        let high = start_opt.unwrap_or_else(|| pages.first().cloned().unwrap_or(1));
+        let low = end_opt.unwrap_or_else(|| pages.last().cloned().unwrap_or(1));
+        if low > high { return Err(format!("invalid override range: end_page {} > start_page {}", low, high)); }
+        pages.retain(|p| *p <= high && *p >= low);
+    }
+    if pages.is_empty() {
+        tracing::warn!("⚠️ override filtering resulted in empty page set -> reverting to original ExecutionPlan pages (ignoring overrides)" );
+        return Ok(()); // Keep original plan unchanged
+    }
+    if pages.len() != original_len { tracing::info!("📏 ExecutionPlan override: pages reduced {} -> {}", original_len, pages.len()); }
+    else { tracing::info!("ℹ️ ExecutionPlan override produced no change (ignored)"); }
+    // Rebuild crawling_ranges using existing batch_size semantics (reverse order newest→oldest)
+    let batch_size = plan.batch_size.max(1) as usize;
+    let mut new_ranges: Vec<PageRange> = Vec::new();
+    for chunk in pages.chunks(batch_size) {
+        let first = *chunk.first().unwrap();
+        let last = *chunk.last().unwrap();
+        new_ranges.push(PageRange { start_page: first, end_page: last, estimated_products: ((first - last)+1)*12, reverse_order: true });
+    }
+    // Recompute page_slots (canonical)
+    use crate::domain::pagination::PaginationCalculator; let calc = PaginationCalculator::default();
+    let mut page_slots: Vec<PageSlot> = Vec::new();
+    if let Some(total_pages_site) = Some(plan.input_snapshot.total_pages) {
+        for p in &pages {
+            for idx in 0..crate::domain::constants::site::PRODUCTS_PER_PAGE as u32 {
+                let pos = calc.calculate(*p, idx, total_pages_site);
+                page_slots.push(PageSlot { physical_page: *p, page_id: pos.page_id as i64, index_in_page: pos.index_in_page as i16 });
+            }
+        }
+    }
+    page_slots.sort_by(|a,b| match a.page_id.cmp(&b.page_id) { core::cmp::Ordering::Equal => a.index_in_page.cmp(&b.index_in_page), other => other });
+    page_slots.dedup_by(|a,b| a.page_id == b.page_id && a.index_in_page == b.index_in_page);
+    plan.crawling_ranges = new_ranges;
+    plan.page_slots = page_slots;
+    // kpi_meta update
+    if let Some(kpi) = &mut plan.kpi_meta { kpi.total_pages = pages.len() as u32; kpi.batches = plan.crawling_ranges.len(); }
+    Ok(())
 }
 
 /// ExecutionPlan 기반 SessionActor 실행 (순수 실행 전용)
@@ -1486,8 +1608,6 @@ async fn execute_session_actor_with_execution_plan(
         let pages_vec: Vec<u32> = if page_range.start_page > page_range.end_page { (page_range.end_page..=page_range.start_page).rev().collect() } else { (page_range.start_page..=page_range.end_page).collect() };
         for (batch_index, page_chunk) in pages_vec.chunks(execution_plan.batch_size as usize).enumerate() {
             let batch_id = format!("{}_range{}_batch{}", execution_plan.session_id, range_idx, batch_index);
-            let batch_event = AppEvent::BatchStarted { session_id: execution_plan.session_id.clone(), batch_id: batch_id.clone(), pages_count: page_chunk.len() as u32, timestamp: Utc::now() };
-            let _ = actor_event_tx.send(batch_event);
             let system_config = Arc::new(SystemConfig::default());
             let (control_tx, _control_rx) = mpsc::channel::<ActorCommand>(100);
             let (_cancel_tx, cancel_rx) = watch::channel(false);
@@ -1649,6 +1769,8 @@ async fn execute_session_actor_with_execution_plan(
             total_success_count,
             duplicates_skipped: 0,
             final_state: final_state.to_string(),
+            products_inserted: 0,
+            products_updated: 0,
             timestamp: Utc::now(),
         },
         timestamp: Utc::now(),
