@@ -198,7 +198,7 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
     let concise_startup = concise_all.unwrap_or(false) || concise_env.unwrap_or(config.concise_startup);
 
     // Set up environment filter with configurable module filtering
-    let env_filter = EnvFilter::try_from_default_env()
+    let mut env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| {
             // Create base filter with application log level
             let mut filter = EnvFilter::new(&config.level);
@@ -253,6 +253,18 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
             
             filter
         });
+
+    // Inject convenience alias: allow users to specify `new_architecture::actor_event_bridge=debug`
+    // without the crate prefix. If present, add fully-qualified directive for the library crate.
+    if let Ok(rust_log_var) = std::env::var("RUST_LOG") {
+        // Only add if user asked for the shorthand target AND hasn't already provided the prefixed one
+        if rust_log_var.contains("new_architecture::actor_event_bridge") && !rust_log_var.contains("matter_certis_v2_lib::new_architecture::actor_event_bridge") {
+            if let Ok(directive) = "matter_certis_v2_lib::new_architecture::actor_event_bridge=debug".parse() {
+                env_filter = env_filter.add_directive(directive);
+                info!("Added alias log directive for matter_certis_v2_lib::new_architecture::actor_event_bridge=debug");
+            }
+        }
+    }
 
     // Build the subscriber registry
     let registry = Registry::default().with(env_filter);

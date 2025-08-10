@@ -92,6 +92,17 @@ impl ActorEventBridge {
             .map_err(|e| format!("Tauri emit failed: {}", e))?;
 
         debug!("✅ Forwarded Actor event '{}' to Frontend", event_name);
+        // Always emit a concise info-level line so users see forwarding even if debug is filtered.
+        if let Some(obj) = enriched.as_object() {
+            let variant = obj.get("variant").and_then(|v| v.as_str()).unwrap_or("?");
+            let seq_val = obj.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
+            let session_id = obj.get("session_id").and_then(|v| v.as_str());
+            let batch_id = obj.get("batch_id").and_then(|v| v.as_str());
+            info!(
+                "🌉 actor-event seq={} name={} variant={} session_id={:?} batch_id={:?}",
+                seq_val, event_name, variant, session_id, batch_id
+            );
+        }
         Ok(())
     }
 
