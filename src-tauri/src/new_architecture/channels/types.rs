@@ -197,7 +197,7 @@ impl ChannelFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::new_architecture::config::system_config::SystemConfig;
+    use crate::new_architecture::system_config::SystemConfig;
 
     #[test]
     fn test_channel_factory_creation() {
@@ -205,15 +205,15 @@ mod tests {
         let factory = ChannelFactory::new(config.clone());
         
         // 제어 채널 생성 테스트
-        let (tx, rx) = factory.create_control_channel::<ActorCommand>();
-        assert!(tx.capacity() > 0);
+    let (tx, _rx) = factory.create_control_channel::<ActorCommand>();
+    assert!(tx.capacity() > 0);
         
         // 이벤트 채널 생성 테스트
         let event_tx = factory.create_event_channel::<AppEvent>();
         assert!(event_tx.receiver_count() == 0); // 아직 구독자 없음
         
         // 데이터 채널 생성 테스트
-        let (data_tx, data_rx) = factory.create_data_channel::<String>();
+    let (_data_tx, _data_rx) = factory.create_data_channel::<String>();
         // OneShot 채널은 사용 전까지는 특별한 검증이 어려움
     }
     

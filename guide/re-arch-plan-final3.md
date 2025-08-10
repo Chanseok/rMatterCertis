@@ -4,6 +4,14 @@
 
 > **🔄 v8 업데이트 (2025.01.03)**: 설계-구현 간극 분석을 통해 확인된 **Actor 핵심 인프라 부재** 문제 해결을 최우선 과제로 설정하고, 점진적 마이그레이션 전략을 수립했습니다.
 
+> **📌 2025.08.09 추가 동기화 메모**
+> - v8 문서의 “핵심 인프라 구축” 단계는 현재 Phase Roadmap 상 Phase 1 완료 상태로 전환됨
+> - Phase abstraction / Graceful shutdown 최소 기능이 main 브랜치에 반영됨 (ListPages / Finalize)
+> - 다음 집중 대상: UI 이중 모드(Advanced Engine / Live Production) 구축 (Phase 2)
+> - 본 문서는 인프라 중심, 실행 로드맵 세부는 `re-arch-plan-final2.md` 최신 표 참조
+> - Contract Freeze v1: AppEvent / ActorCommand 확정, PhaseStarted/Completed/Aborted & ShutdownRequested/Completed 포함. 변경은 additive-only 정책 적용.
+
+
 **🦀 Modern Rust 2024 & Clean Code 필수 준수**: 
 - `mod.rs` 사용 금지 - 모듈은 `lib.rs` 또는 `directory/file.rs` 사용
 - Clippy 권고사항 100% 준수 (`cargo clippy --all-targets --all-features`)

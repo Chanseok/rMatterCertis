@@ -252,17 +252,7 @@ mod tests {
         assert!(!parser.is_valid_product_url("https://example.com/other"));
     }
 
-    #[test]
-    fn number_extraction() {
-        let parser = ListPageParser::new(
-            "https://csa-iot.org".to_string(),
-            50
-        );
-
-        assert_eq!(parser.extract_number_from_text("총 1,234건"), Some(1234));
-        assert_eq!(parser.extract_number_from_text("전체 567 페이지"), Some(567));
-        assert_eq!(parser.extract_number_from_text("no numbers here"), None);
-    }
+    // number_extraction test removed: extract_number_from_text method deprecated/removed.
 
     #[tokio::test]
     async fn task_processing() {

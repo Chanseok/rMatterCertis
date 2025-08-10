@@ -51,10 +51,8 @@ mod tests {
     
     #[test]
     fn test_typescript_type_generation() {
-        // 타입 생성이 에러 없이 수행되는지 테스트
-        let result = generate_typescript_types();
-        println!("Type generation result: {:?}", result);
-        
-        // 실제 프로덕션에서는 생성된 파일의 존재와 유효성을 확인
+        // 기존 함수명으로 수정
+        let result = generate_ts_bindings();
+        assert!(result.is_ok(), "TS binding generation should succeed");
     }
 }

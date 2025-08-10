@@ -3,8 +3,9 @@
  * Phase C: UI 개선 - Actor 시스템 상태 시각화
  */
 
-import { Component, createSignal, onMount, onCleanup, For } from 'solid-js';
+import { Component, createSignal, onMount, onCleanup, For, Show, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
+import { useActorSessionControls } from '../../hooks/useActorSessionControls';
 import { tauriApi } from '../../services/tauri-api';
 import './ActorSystemDashboard.css';
 
@@ -59,6 +60,10 @@ export const ActorSystemDashboard: Component = () => {
   const [loading, setLoading] = createSignal(true);
   const [autoRefresh, setAutoRefresh] = createSignal(true);
   const [refreshInterval, setRefreshInterval] = createSignal(2000); // 2초
+  const [currentSessionId, setCurrentSessionId] = createSignal<string | null>(null);
+  const [sessionStatusText, setSessionStatusText] = createSignal<string>('');
+  const [polling, setPolling] = createSignal<boolean>(false);
+  const controls = useActorSessionControls();
   
   // Actor 시스템 배치 분할 테스트를 위한 상태
   const [isActorTesting, setIsActorTesting] = createSignal(false);
@@ -201,7 +206,7 @@ ${error}
       console.log('✅ Real Actor system test completed:', result);
       
       // 결과 분석
-      const testSummary = `✅ 진짜 Actor 시스템 배치 분할 테스트 완료
+  const testSummary = `✅ 진짜 Actor 시스템 배치 분할 테스트 완료
 
 📦 설정:
   - 페이지 범위: 294-298 (총 5페이지)
@@ -219,6 +224,12 @@ ${JSON.stringify(result, null, 2)}
 실제 Actor 패러다임으로 크롤링을 처리했습니다.`;
 
       setTestResult(testSummary);
+      // 세션 ID 추출 (result.session_id 또는 data.session_id)
+      try {
+        // @ts-ignore
+        const sid = (result?.session_id) || (result?.sessionId) || (result?.data?.session_id);
+        if (sid) { setCurrentSessionId(sid as string); }
+      } catch (_) {}
       
       // 성공 후 시스템 상태 새로고침
       await fetchSystemStatus();
@@ -247,6 +258,48 @@ ${error}
       setIsActorTesting(false);
     }
   };
+
+  // 세션 상태 폴링
+  const pollSessionStatus = async () => {
+    if (!currentSessionId()) return;
+    if (polling()) return;
+    setPolling(true);
+    try {
+      const resp = await controls.status(currentSessionId()!);
+      if (resp.ok && resp.data) {
+        const status = (resp.data as any).status;
+        setSessionStatusText(status);
+        if (status === 'Completed' || status === 'Failed' || status === 'ShuttingDown') {
+          // 완료되면 자동 폴링 중단
+          setAutoRefresh(false);
+        }
+      }
+    } finally {
+      setPolling(false);
+    }
+  };
+
+  // 수동 폴링 버튼 클릭 시 즉시 조회
+  const handleSessionStatusClick = () => {
+    pollSessionStatus();
+  };
+
+  const handlePause = async () => { if (currentSessionId()) { await controls.pause(currentSessionId()!); await pollSessionStatus(); } };
+  const handleResume = async () => { if (currentSessionId()) { await controls.resume(currentSessionId()!); await pollSessionStatus(); } };
+  const handleShutdown = async () => { await controls.shutdown(); await pollSessionStatus(); };
+
+  // 세션 ID가 존재하면 상태 자동 폴링 (2초 간격)
+  let sessionPollTimer: number | null = null;
+  createEffect(() => {
+    const sid = currentSessionId();
+    if (sessionPollTimer) { clearInterval(sessionPollTimer); sessionPollTimer = null; }
+    if (sid) {
+      // 즉시 1회
+      pollSessionStatus();
+      sessionPollTimer = setInterval(() => { pollSessionStatus(); }, 2000);
+    }
+  });
+  onCleanup(() => { if (sessionPollTimer) clearInterval(sessionPollTimer); });
 
   // 컴포넌트 마운트/언마운트 처리
   onMount(async () => {
@@ -305,6 +358,22 @@ ${error}
         </h2>
         
         <div class="dashboard-controls">
+          {/* 세션 제어 패널 */}
+          <Show when={currentSessionId()}>
+            <div class="flex flex-col gap-1 mr-4 p-2 rounded-md bg-white/60 border border-gray-200 text-xs min-w-[200px]">
+              <div class="font-semibold text-gray-700">세션 제어</div>
+              <div class="text-[11px] break-all text-gray-500">ID: {currentSessionId()}</div>
+              <div class="flex items-center gap-2">
+                <button class="px-2 py-1 bg-yellow-500 text-white rounded disabled:opacity-40" onClick={handlePause} disabled={!currentSessionId()}>⏸ Pause</button>
+                <button class="px-2 py-1 bg-green-600 text-white rounded disabled:opacity-40" onClick={handleResume} disabled={!currentSessionId()}>▶ Resume</button>
+                <button class="px-2 py-1 bg-red-600 text-white rounded" onClick={handleShutdown}>🛑 Shutdown</button>
+              </div>
+              <div class="flex items-center gap-2 mt-1">
+                <button class="px-2 py-1 bg-blue-600 text-white rounded" onClick={handleSessionStatusClick}>ℹ Status</button>
+                <span class="text-[11px] text-gray-700">{sessionStatusText() || '상태 미확인'}</span>
+              </div>
+            </div>
+          </Show>
           <div class="refresh-controls">
             <button 
               class={`refresh-toggle ${autoRefresh() ? 'active' : ''}`}

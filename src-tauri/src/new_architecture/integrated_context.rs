@@ -311,7 +311,10 @@ mod tests {
             timestamp: chrono::Utc::now(),
         };
 
-        context.emit_event(event.clone()).expect("Should emit event");
+        // emit_event is async returning Future
+        futures::executor::block_on(async {
+            context.emit_event(event.clone()).await.expect("Should emit event");
+        });
 
         let received = event_rx.recv().await.expect("Should receive event");
         match received {

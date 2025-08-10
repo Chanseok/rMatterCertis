@@ -85,51 +85,28 @@ mod tests {
     use super::*;
     use crate::crawling::tasks::TaskId;
     use crate::crawling::state::CrawlingConfig;
-    use crate::domain::ProductData;
 
     #[tokio::test]
     async fn test_mock_db_saver() {
         let saver = MockDbSaver::new(10);
         let shared_state = Arc::new(SharedState::new(CrawlingConfig::default()));
         
-        let product_data = ProductData {
-            product_id: "test123".to_string(),
-            name: "Test Product".to_string(),
-            category: None,
-            manufacturer: None,
-            model: None,
-            certification_number: None,
-            certification_date: None,
-            technical_details: std::collections::HashMap::new(),
-            compliance_details: std::collections::HashMap::new(),
-            confidence_score: 0.8,
-            extracted_at: chrono::Utc::now(),
-            source_url: crate::domain::ValidatedUrl::new("https://example.com/test".to_string()).unwrap(),
-            index_in_page: Some(1),
-            page_id: Some(1),
-        };
-
-        let task_product_data = crate::crawling::tasks::TaskProductData {
-            product_id: "test123".to_string(),
-            name: "Test Product".to_string(),
-            category: Some("Electronics".to_string()),
-            manufacturer: Some("Test Company".to_string()),
-            model: None,
-            index_in_page: Some(1),
-            page_id: Some(1),
-            certification_number: None,
-            certification_date: None,
-            details: std::collections::HashMap::new(),
-            extracted_at: chrono::Utc::now(),
-            source_url: "https://example.com/test".to_string(),
-        };
+        let mut task_product_data = crate::crawling::tasks::TaskProductData::new(
+            "test123".to_string(),
+            "Test Product".to_string(),
+            "https://example.com/test".to_string()
+        );
+        task_product_data.category = Some("Electronics".to_string());
+        task_product_data.manufacturer = Some("Test Company".to_string());
+        task_product_data.page_id = Some(1);
+        task_product_data.index_in_page = Some(1);
 
         let task = CrawlingTask::SaveProduct {
             task_id: TaskId::new(),
             product_data: task_product_data,
         };
 
-        let result = saver.process_task(task, shared_state).await;
+    let result = saver.process_task(task, shared_state).await;
         assert!(result.is_ok());
 
         if let Ok(TaskResult::Success { output: TaskOutput::SaveConfirmation { product_id, .. }, .. }) = result {

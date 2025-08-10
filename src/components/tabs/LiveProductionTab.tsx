@@ -7,6 +7,7 @@ import { Component, createSignal, onMount, onCleanup } from 'solid-js';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import CrawlingProgressDashboard from '../visualization/CrawlingProgressDashboard';
+import { SessionStatusPanel } from '../actor-system/SessionStatusPanel';
 
 export const LiveProductionTab: Component = () => {
   // 크롤링 상태 관리
@@ -197,6 +198,10 @@ export const LiveProductionTab: Component = () => {
         </div>
       </div>
       
+      <div class="p-4 border-b border-gray-200 bg-gray-50/40 dark:bg-neutral-800/30">
+        {/* Actor 시스템 세션 진행 & Detail 애니메이션 (공유 패널) */}
+        <SessionStatusPanel />
+      </div>
       <div class="flex-1 overflow-hidden">
         <CrawlingProgressDashboard />
       </div>

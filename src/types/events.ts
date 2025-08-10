@@ -55,3 +55,23 @@ export interface LiveSystemState {
   stages: StageInfo[];
   recent_completions: AtomicTaskEvent[];
 }
+
+// Detail crawling status exposed via get_session_status + incremental actor events
+export interface DetailStatus {
+  total: number;
+  completed: number;
+  failed: number;
+  failed_ids_sample?: string[];
+  remaining_ids?: string[] | null;
+  retries_total?: number;
+  retry_histogram?: { retries: number; count: number }[];
+  retry_counts_sample?: { id: string; count: number }[];
+  failure_threshold?: number;
+  downshifted?: boolean;
+  downshift_meta?: {
+    timestamp?: string | null;
+    old_limit?: number | null;
+    new_limit?: number | null;
+    trigger?: string | null;
+  } | null;
+}

@@ -823,6 +823,25 @@ impl IntegratedProductRepository {
         Ok(products)
     }
 
+    /// Get only product URLs (no details yet) within a specific set of page_ids
+    /// Returns at most `limit` URLs. If `pages` is empty returns empty Vec.
+    pub async fn get_product_urls_without_details_in_pages(&self, pages: &[u32], limit: i32) -> Result<Vec<String>> {
+        if pages.is_empty() { return Ok(Vec::new()); }
+        // Build dynamic IN clause safely
+        let mut placeholders = String::new();
+        for i in 0..pages.len() { if i>0 { placeholders.push_str(","); } placeholders.push_str("?"); }
+        let query = format!(
+            "SELECT p.url FROM products p LEFT JOIN product_details pd ON p.url = pd.url \
+             WHERE pd.url IS NULL AND p.page_id IN ({}) ORDER BY p.page_id DESC, p.index_in_page ASC LIMIT ?",
+            placeholders
+        );
+        let mut q = sqlx::query(&query);
+        for p in pages { q = q.bind(*p as i32); }
+        q = q.bind(limit);
+        let rows = q.fetch_all(&*self.pool).await?;
+        Ok(rows.into_iter().map(|r| r.get::<String, _>("url")).collect())
+    }
+
     /// Get all products from the database
     pub async fn get_all_products(&self) -> Result<Vec<Product>> {
         let rows = sqlx::query(

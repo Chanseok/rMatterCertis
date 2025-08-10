@@ -6,6 +6,7 @@
 import { Component, createSignal } from 'solid-js';
 import { ActorSystemDashboard } from '../actor-system/ActorSystemDashboard';
 import { CrawlingProgressMonitor } from '../actor-system/CrawlingProgressMonitor';
+import { SessionStatusPanel } from '../actor-system/SessionStatusPanel';
 import './ActorSystemTab.css';
 
 export const ActorSystemTab: Component = () => {
@@ -55,9 +56,12 @@ export const ActorSystemTab: Component = () => {
       </div>
 
       {/* 탭 컨텐츠 */}
-      <div class="tab-content">
-        {activeView() === 'dashboard' && <ActorSystemDashboard />}
-        {activeView() === 'progress' && <CrawlingProgressMonitor />}
+      <div class="tab-content space-y-6">
+        <SessionStatusPanel />
+        <div>
+          {activeView() === 'dashboard' && <ActorSystemDashboard />}
+          {activeView() === 'progress' && <CrawlingProgressMonitor />}
+        </div>
       </div>
     </div>
   );

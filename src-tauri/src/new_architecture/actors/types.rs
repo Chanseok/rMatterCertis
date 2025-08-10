@@ -81,6 +81,13 @@ pub enum ActorCommand {
 /// 
 /// 시스템 상태 변화를 알리는 이벤트들입니다.
 /// 이벤트 드리븐 아키텍처의 핵심 구성 요소입니다.
+/// ActorContractVersion: v1
+///
+/// 버전 관리 원칙:
+/// 1. Additive-only (새 이벤트/필드 추가는 허용)
+/// 2. 필드 제거/의미 변경 금지 → 새 필드/이벤트로 교체 후 기존 Deprecated 유지
+/// 3. 버전 증가 조건: UI 분기 필수 스키마 변화(추가 필드가 breaking semantic) 또는 요약(summary) 구조 확장
+/// 4. TS `actorContractVersion.ts` 와 값 동기화 필요
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub enum AppEvent {
@@ -244,6 +251,62 @@ pub enum AppEvent {
     },
     ShutdownCompleted {
         session_id: String,
+        timestamp: DateTime<Utc>,
+    },
+
+    // === (Additive v1) Granular Page / Detail Task Events ===
+    /// 개별 페이지 처리 시작 (ListPages phase 범위 내)
+    PageTaskStarted {
+        session_id: String,
+        page: u32,
+        batch_id: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
+    /// 개별 페이지 처리 성공
+    PageTaskCompleted {
+        session_id: String,
+        page: u32,
+        batch_id: Option<String>,
+        duration_ms: u64,
+        timestamp: DateTime<Utc>,
+    },
+    /// 개별 페이지 처리 실패 (재시도 후 최종 실패 또는 중간 실패)
+    PageTaskFailed {
+        session_id: String,
+        page: u32,
+        batch_id: Option<String>,
+        error: String,
+        final_failure: bool,
+        timestamp: DateTime<Utc>,
+    },
+    /// (미구현 ProductDetails Phase 대비) 상세 작업 시작
+    DetailTaskStarted {
+        session_id: String,
+        detail_id: String,
+        page: Option<u32>,
+        timestamp: DateTime<Utc>,
+    },
+    DetailTaskCompleted {
+        session_id: String,
+        detail_id: String,
+        page: Option<u32>,
+        duration_ms: u64,
+        timestamp: DateTime<Utc>,
+    },
+    DetailTaskFailed {
+        session_id: String,
+        detail_id: String,
+        page: Option<u32>,
+        error: String,
+        final_failure: bool,
+        timestamp: DateTime<Utc>,
+    },
+    /// Detail phase dynamic concurrency reduction triggered
+    DetailConcurrencyDownshifted {
+        session_id: String,
+        old_limit: u32,
+        new_limit: u32,
+        trigger: String,
         timestamp: DateTime<Utc>,
     },
 }
@@ -579,6 +642,16 @@ pub struct SessionSummary {
     
     /// 에러 요약
     pub error_summary: Vec<ErrorSummary>,
+
+    /// 재시도 관련 통계 (추가 필드)
+    #[serde(default)]
+    pub total_retry_events: u32,
+    #[serde(default)]
+    pub max_retries_single_page: u32,
+    #[serde(default)]
+    pub pages_retried: u32,
+    #[serde(default)]
+    pub retry_histogram: Vec<(u32, u32)>, // (retry_count, pages_with_that_count)
     
     /// 처리된 배치 수
     pub processed_batches: u32,
@@ -871,6 +944,21 @@ pub struct ExecutionPlan {
     /// 중복 상품 URL 스킵 여부 (경량 dedupe 1단계)
     pub skip_duplicate_urls: bool,
     pub kpi_meta: Option<ExecutionPlanKpi>,
+    /// API / 이벤트 스키마 계약 버전 (additive-only 변경 추적)
+    pub contract_version: u32,
+    /// 사전 계산된 논리적 page slot 목록 (역순/정순 혼합 시 순서 유지)
+    pub page_slots: Vec<PageSlot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PageSlot {
+    /// 실제 물리 페이지 번호 (사이트 기준)
+    pub physical_page: u32,
+    /// 논리 page_id (0 = 가장 오래된 페이지의 마지막 제품 그룹)
+    pub page_id: i64,
+    /// 해당 물리 페이지 내에서의 index_in_page (0 기반, 최신→오래된 역순 규칙 반영)
+    pub index_in_page: i16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

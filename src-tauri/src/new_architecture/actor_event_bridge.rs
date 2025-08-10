@@ -4,7 +4,7 @@
 //! 설계 의도: 각 Actor, Task 레벨에서 독립적으로 이벤트 발행을 가능하게 하여 
 //! 낮은 복잡성의 구현으로도 모든 경우를 다 커버할 수 있도록 함
 
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 use tokio::sync::broadcast;
 use tauri::{AppHandle, Emitter};
 use tracing::{info, warn, error, debug};
@@ -19,6 +19,8 @@ pub struct ActorEventBridge {
     event_rx: broadcast::Receiver<AppEvent>,
     /// 브릿지 활성화 상태
     is_active: Arc<std::sync::atomic::AtomicBool>,
+    /// 단조 증가 시퀀스 번호
+    seq: Arc<AtomicU64>,
 }
 
 impl ActorEventBridge {
@@ -28,6 +30,7 @@ impl ActorEventBridge {
             app_handle,
             event_rx,
             is_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            seq: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -72,9 +75,20 @@ impl ActorEventBridge {
         // AppEvent를 프론트엔드가 이해할 수 있는 형태로 변환
         let (event_name, event_data) = self.convert_actor_event_to_frontend(actor_event)?;
         
+        // 시퀀스 & backend_ts 주입 (RFC3339)
+        let enriched = {
+            let mut v = event_data;
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("seq".into(), serde_json::Value::from(self.seq.fetch_add(1, Ordering::SeqCst)));
+                obj.insert("backend_ts".into(), serde_json::Value::from(chrono::Utc::now().to_rfc3339()));
+                obj.insert("event_name".into(), serde_json::Value::from(event_name.clone()));
+            }
+            v
+        };
+
         // Tauri emit을 통해 프론트엔드로 전송
         self.app_handle
-            .emit(&event_name, &event_data)
+            .emit(&event_name, &enriched)
             .map_err(|e| format!("Tauri emit failed: {}", e))?;
 
         debug!("✅ Forwarded Actor event '{}' to Frontend", event_name);
@@ -83,29 +97,23 @@ impl ActorEventBridge {
 
     /// AppEvent를 프론트엔드 이벤트로 변환
     fn convert_actor_event_to_frontend(&self, event: AppEvent) -> Result<(String, serde_json::Value), String> {
+        use serde_json::{Value, Map};
+        // Determine event name (use .. to ignore future fields)
         let event_name = match &event {
-            // 세션 이벤트
             AppEvent::SessionStarted { .. } => "actor-session-started",
-            AppEvent::SessionPaused { .. } => "actor-session-paused", 
+            AppEvent::SessionPaused { .. } => "actor-session-paused",
             AppEvent::SessionResumed { .. } => "actor-session-resumed",
             AppEvent::SessionCompleted { .. } => "actor-session-completed",
             AppEvent::SessionFailed { .. } => "actor-session-failed",
             AppEvent::SessionTimeout { .. } => "actor-session-timeout",
-
-            // 배치 이벤트  
             AppEvent::BatchStarted { .. } => "actor-batch-started",
             AppEvent::BatchCompleted { .. } => "actor-batch-completed",
             AppEvent::BatchFailed { .. } => "actor-batch-failed",
-
-            // 스테이지 이벤트
             AppEvent::StageStarted { .. } => "actor-stage-started",
-            AppEvent::StageCompleted { .. } => "actor-stage-completed", 
+            AppEvent::StageCompleted { .. } => "actor-stage-completed",
             AppEvent::StageFailed { .. } => "actor-stage-failed",
-
-            // 진행 상황 이벤트
             AppEvent::Progress { .. } => "actor-progress",
             AppEvent::PerformanceMetrics { .. } => "actor-performance-metrics",
-            // 리포트 이벤트
             AppEvent::BatchReport { .. } => "actor-batch-report",
             AppEvent::CrawlReportSession { .. } => "actor-session-report",
             AppEvent::PhaseStarted { .. } => "actor-phase-started",
@@ -113,13 +121,37 @@ impl ActorEventBridge {
             AppEvent::PhaseAborted { .. } => "actor-phase-aborted",
             AppEvent::ShutdownRequested { .. } => "actor-shutdown-requested",
             AppEvent::ShutdownCompleted { .. } => "actor-shutdown-completed",
+            AppEvent::PageTaskStarted { .. } => "actor-page-task-started",
+            AppEvent::PageTaskCompleted { .. } => "actor-page-task-completed",
+            AppEvent::PageTaskFailed { .. } => "actor-page-task-failed",
+            AppEvent::DetailTaskStarted { .. } => "actor-detail-task-started",
+            AppEvent::DetailTaskCompleted { .. } => "actor-detail-task-completed",
+            AppEvent::DetailTaskFailed { .. } => "actor-detail-task-failed",
+            AppEvent::DetailConcurrencyDownshifted { .. } => "actor-detail-concurrency-downshifted",
         };
 
-        // 이벤트 데이터를 JSON으로 직렬화
-        let event_data = serde_json::to_value(&event)
+        let raw = serde_json::to_value(&event)
             .map_err(|e| format!("Failed to serialize Actor event: {}", e))?;
 
-        Ok((event_name.to_string(), event_data))
+        // Flatten tagged enum structure: { "VariantName": { fields... } } -> { variant: "VariantName", fields... }
+        let flat = if let Value::Object(map) = raw {
+            if map.len() == 1 {
+                let mut out = Map::new();
+                if let Some((k,v)) = map.into_iter().next() {
+                    out.insert("variant".into(), Value::String(k.clone()));
+                    if let Value::Object(inner) = v {
+                        for (ik,iv) in inner.into_iter() { out.insert(ik, iv); }
+                    } else {
+                        out.insert("value".into(), v);
+                    }
+                }
+                Value::Object(out)
+            } else {
+                Value::Object(map)
+            }
+        } else { raw };
+
+        Ok((event_name.to_string(), flat))
     }
 
     /// CrawlingEvent 호환성을 위한 변환 (필요시)

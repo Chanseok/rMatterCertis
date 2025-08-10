@@ -6,8 +6,7 @@
 #[cfg(test)]
 mod priority1_tests {
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
-    use tokio_util::sync::CancellationToken;
+    // Removed unused Duration/Instant/CancellationToken imports after refactor
     
     use crate::new_architecture::{
         system_config::SystemConfig,

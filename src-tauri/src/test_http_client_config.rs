@@ -11,7 +11,7 @@ async fn test_http_client_from_worker_config() {
     let client = HttpClient::from_worker_config(&config.user.crawling.workers);
     assert!(client.is_ok());
     
-    let client = client.unwrap();
+    let _client = client.unwrap();
     
     // 설정 값이 제대로 적용되었는지 확인할 수 있는 방법이 있으면 좋겠지만,
     // 현재는 생성만 확인

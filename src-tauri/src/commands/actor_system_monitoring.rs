@@ -84,12 +84,15 @@ async fn execute_crawling_with_state(app_handle: &tauri::AppHandle) -> Result<()
     match crate::commands::actor_system_commands::start_actor_system_crawling(
         app_handle.clone(),
         crate::commands::actor_system_commands::ActorCrawlingRequest {
-            // CrawlingPlanner가 모든 설정을 자동 계산하므로 0으로 설정
-            start_page: 0,
-            end_page: 0,
+            // CrawlingPlanner가 모든 설정을 자동 계산하므로 None 으로 설정
+            site_url: None,
+            start_page: Some(0),
+            end_page: Some(0),
+            page_count: None,
             concurrency: None,
             batch_size: None,
             delay_ms: None,
+            mode: None,
         },
     ).await {
         Ok(response) => {

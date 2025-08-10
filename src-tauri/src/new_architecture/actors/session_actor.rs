@@ -303,6 +303,10 @@ impl SessionActor {
                 processed_batches: self.processed_batches,
                 total_success_count: self.total_success_count,
                 duplicates_skipped: self.duplicates_skipped,
+                total_retry_events: 0,
+                max_retries_single_page: 0,
+                pages_retried: 0,
+                retry_histogram: Vec::new(),
                 final_state: "completed".to_string(),
                 timestamp: Utc::now(),
             },
@@ -572,6 +576,10 @@ impl SessionActor {
                 processed_batches: self.processed_batches,
                 total_success_count: self.total_success_count,
                 duplicates_skipped: self.duplicates_skipped,
+                total_retry_events: 0,
+                max_retries_single_page: 0,
+                pages_retried: 0,
+                retry_histogram: Vec::new(),
                 final_state: format!("{:?}", self.state),
                 timestamp: Utc::now(),
             }
@@ -684,7 +692,7 @@ impl Actor for SessionActor {
                                                 let mut map: BTreeMap<String, (u32, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = BTreeMap::new();
                                                 for e in &self.errors { let now = chrono::Utc::now(); map.entry(e.clone()).and_modify(|entry| { entry.0 += 1; entry.2 = now; }).or_insert((1, now, now)); }
                                                 let aggregated: Vec<crate::new_architecture::actors::types::ErrorSummary> = map.into_iter().map(|(k,(count, first, last))| crate::new_architecture::actors::types::ErrorSummary { error_type: k, count, first_occurrence: first, last_occurrence: last }).collect();
-                                                let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / self.total_success_count as u64 } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, duplicates_skipped: self.duplicates_skipped, final_state: "completed".into(), timestamp: Utc::now() };
+                                                let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / self.total_success_count as u64 } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, duplicates_skipped: self.duplicates_skipped, total_retry_events: 0, max_retries_single_page: 0, pages_retried: 0, retry_histogram: Vec::new(), final_state: "completed".into(), timestamp: Utc::now() };
                                                 if let Err(e) = context.emit_event(AppEvent::SessionCompleted { session_id: session_id.clone(), summary: summary.clone(), timestamp: Utc::now() }).await { error!("emit completion event failed: {}", e); }
                                                 if let Err(e) = context.emit_event(AppEvent::CrawlReportSession { session_id: session_id.clone(), batches_processed: self.processed_batches, total_pages: self.total_success_count, total_success: self.total_success_count, total_failed: 0, total_retries: 0, duration_ms, timestamp: Utc::now() }).await { error!("emit crawl report failed: {}", e); }
                                             }

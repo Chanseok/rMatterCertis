@@ -14,6 +14,7 @@ pub mod actor_event_bridge; // Actor 이벤트 프론트엔드 브릿지
 pub mod services;
 pub mod config;
 pub mod events;
+pub mod runtime; // session registry & runtime helpers
 
 // 🔄 Phase 4: 타입 동기화 및 ts-rs 통합 (새로 추가)
 pub mod ts_gen;

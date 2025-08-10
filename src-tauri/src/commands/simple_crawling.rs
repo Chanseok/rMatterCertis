@@ -22,11 +22,22 @@ pub struct CrawlingSession {
 }
 
 /// Smart Crawling 시작 - 설정 파일 기반 자동 실행
+/// DEPRECATED: 통합 API `start_actor_system_crawling` + CrawlingMode::LiveProduction 사용 예정.
 #[tauri::command]
 pub async fn start_smart_crawling(
     app_handle: tauri::AppHandle,
     _state: State<'_, AppState>
 ) -> Result<CrawlingSession, String> {
+    // Delegation to unified actor system
+    {
+        use crate::commands::actor_system_commands::{ActorCrawlingRequest, CrawlingMode};
+    use crate::types::frontend_api::AdvancedCrawlingConfig;
+    let actor_req = ActorCrawlingRequest { site_url: None, start_page: Some(1), end_page: Some(1), page_count: None, concurrency: None, batch_size: None, delay_ms: None, mode: Some(CrawlingMode::LiveProduction) };
+        if let Ok(resp) = crate::commands::actor_system_commands::start_actor_system_crawling(app_handle.clone(), actor_req).await {
+            let _cfg = AdvancedCrawlingConfig { start_page: 1, end_page: 1, batch_size: 1, concurrency: 1, delay_ms: 0, retry_max: 0 };
+            return Ok(CrawlingSession { session_id: resp.session_id.unwrap_or_default(), started_at: chrono::Utc::now().to_rfc3339(), status: "delegated".into() });
+        }
+    }
     let session_id = format!("session_{}", chrono::Utc::now().timestamp());
     let started_at = chrono::Utc::now().to_rfc3339();
     

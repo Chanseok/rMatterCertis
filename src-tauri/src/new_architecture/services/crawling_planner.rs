@@ -578,7 +578,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use crate::domain::services::{StatusChecker, DatabaseAnalyzer};
-    use crate::domain::services::{SiteStatus, SiteDataChangeStatus, DataDecreaseRecommendation};
+    use crate::domain::services::{SiteStatus};
+    use crate::domain::services::crawling_services::{SiteDataChangeStatus, DuplicateAnalysis};
     use crate::domain::services::crawling_services::{FieldAnalysis, DuplicateGroup, DuplicateType};
     
     // Mock implementations for testing
@@ -656,9 +657,9 @@ mod tests {
     
     #[tokio::test]
     async fn test_crawling_planner_creation() {
-        let status_checker = Arc::new(MockStatusChecker) as Arc<dyn StatusChecker>;
-        let database_analyzer = Arc::new(MockDatabaseAnalyzer) as Arc<dyn DatabaseAnalyzer>;
-        let config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
+    let status_checker: Arc<dyn StatusChecker> = Arc::new(MockStatusChecker);
+    let database_analyzer: Arc<dyn DatabaseAnalyzer> = Arc::new(MockDatabaseAnalyzer);
+    let config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
         
         let planner = CrawlingPlanner::new(status_checker, database_analyzer, config);
         
@@ -668,9 +669,9 @@ mod tests {
     
     #[test]
     fn test_batch_config_optimization() {
-        let status_checker = Arc::new(MockStatusChecker) as Arc<dyn StatusChecker>;
-        let database_analyzer = Arc::new(MockDatabaseAnalyzer) as Arc<dyn DatabaseAnalyzer>;
-        let config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
+    let status_checker: Arc<dyn StatusChecker> = Arc::new(MockStatusChecker);
+    let database_analyzer: Arc<dyn DatabaseAnalyzer> = Arc::new(MockDatabaseAnalyzer);
+    let config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
         
         let planner = CrawlingPlanner::new(status_checker, database_analyzer, config);
         
@@ -692,9 +693,9 @@ mod tests {
     
     #[test]
     fn test_optimal_batch_size_calculation() {
-        let status_checker = Arc::new(MockStatusChecker) as Arc<dyn StatusChecker>;
-        let database_analyzer = Arc::new(MockDatabaseAnalyzer) as Arc<dyn DatabaseAnalyzer>;
-        let config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
+    let status_checker: Arc<dyn StatusChecker> = Arc::new(MockStatusChecker);
+    let database_analyzer: Arc<dyn DatabaseAnalyzer> = Arc::new(MockDatabaseAnalyzer);
+    let config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
         
         let planner = CrawlingPlanner::new(status_checker, database_analyzer, config);
         

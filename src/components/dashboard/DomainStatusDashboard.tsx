@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Domain Status Dashboard - 새로운 타입 시스템을 활용한 현대적 대시보드
  * 

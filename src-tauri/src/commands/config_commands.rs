@@ -1177,7 +1177,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_frontend_log_writing() {
-        let entry = LogEntry {
+        let _entry = LogEntry {
             level: "info".to_string(),
             message: "Test log message".to_string(),
             timestamp: "2025-07-04T14:30:00.000Z".to_string(),

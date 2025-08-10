@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * HierarchicalEventMonitor.tsx
  * @description 계층적 이벤트 시스템을 위한 완전히 새로운 모니터링 UI

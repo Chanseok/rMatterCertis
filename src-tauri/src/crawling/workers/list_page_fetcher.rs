@@ -177,15 +177,7 @@ mod tests {
         let config = CrawlingConfig::default();
         let shared_state = Arc::new(SharedState::new(config));
 
-        // Valid task
-        let valid_task = CrawlingTask::FetchListPage {
-            task_id: TaskId::new(),
-            page_number: 1,
-            url: "".to_string(),
-        };
-
-        // Should not immediately fail on validation
-        // (actual network call would fail in test environment)
+    // Note: previously created a 'valid_task' here only to assert construction; removed as unused.
         
         // Invalid task
         let invalid_task = CrawlingTask::SaveProduct {

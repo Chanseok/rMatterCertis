@@ -21,6 +21,8 @@
 
 #[cfg(test)]
 mod test_http_client_config;
+#[cfg(test)]
+mod test_execution_plan_page_slots;
 
 use crate::infrastructure::{DatabaseConnection, init_logging_with_config};
 use crate::infrastructure::config::{ConfigManager, AppConfig};
@@ -340,8 +342,12 @@ pub fn run() {
             
             // 🎭 Actor System 크롤링 (메인 개발 브랜치)
             commands::actor_system_commands::start_actor_system_crawling,
+            commands::actor_system_commands::pause_session,
+            commands::actor_system_commands::resume_session,
+            commands::actor_system_commands::get_session_status,
+            commands::actor_system_commands::request_graceful_shutdown,
             commands::actor_system_commands::test_session_actor_basic,
-            commands::actor_system_commands::test_actor_integration_basic,
+            commands::actor_system_commands::list_actor_sessions,
             
             // Real Crawling Integration commands (Option B implementation)
             // Note: These commands are temporarily disabled due to module restructuring

@@ -3,24 +3,18 @@
 
 use tauri::{command, AppHandle, State, Emitter};
 use tracing::{info, warn, error};
-use uuid::Uuid;
-use std::sync::Arc;
 
 use crate::types::frontend_api::*;
 use crate::application::shared_state::SharedStateCache;
 use crate::application::state::AppState;
-use crate::infrastructure::{
-    AdvancedBatchCrawlingEngine, HttpClient, MatterDataExtractor, 
-    IntegratedProductRepository
-};
-use crate::infrastructure::service_based_crawling_engine::BatchCrawlingConfig;
-use crate::application::EventEmitter;
+use crate::infrastructure::IntegratedProductRepository;
+use crate::domain::services::crawling_services::StatusChecker;
 
 /// Advanced Crawling Engine 사이트 상태 확인 (실제 구현)
 #[command]
 pub async fn check_advanced_site_status(
     app: AppHandle,
-    app_state: State<'_, AppState>,
+    _app_state: State<'_, AppState>,
     shared_state: State<'_, SharedStateCache>,
 ) -> Result<ApiResponse<SiteStatusInfo>, String> {
     info!("🌐 Advanced site status check requested");
@@ -88,249 +82,112 @@ pub async fn check_advanced_site_status(
     if let Err(e) = app.emit("site-status-check", &progress_event) {
         warn!("Failed to emit site status progress event: {}", e);
     }
-    
-    // 캐시가 없거나 만료된 경우, 실제 크롤링 엔진 인스턴스 생성
-    let http_client = match HttpClient::create_from_global_config() {
-        Ok(client) => client,
-        Err(e) => {
-            error!("Failed to create HTTP client: {}", e);
-            
-            // 🔥 실패 이벤트 발송
-            let failed_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
-                is_standalone: true,
-                status: crate::domain::events::SiteCheckStatus::Failed,
-                message: format!("HTTP 클라이언트 생성 실패: {}", e),
-                timestamp: chrono::Utc::now(),
-            };
-            let _ = app.emit("site-status-check", &failed_event);
-            
-            return Err(format!("HTTP client creation failed: {}", e));
-        }
-    };
-    
-    let data_extractor = match MatterDataExtractor::new() {
-        Ok(extractor) => extractor,
-        Err(e) => {
-            error!("Failed to create data extractor: {}", e);
-            return Err(format!("Data extractor creation failed: {}", e));
-        }
-    };
-    
-    // AppState에서 중앙화된 데이터베이스 풀 가져오기
-    let database_pool = {
-        let pool_guard = app_state.database_pool.read().await;
-        match pool_guard.as_ref() {
-            Some(pool) => pool.clone(),
-            None => {
-                error!("Database pool is not initialized");
-                return Err("Database pool is not available".to_string());
-            }
-        }
-    };
-    let product_repo = Arc::new(IntegratedProductRepository::new(database_pool));
 
-    // Advanced 크롤링 엔진 생성
-    let config = BatchCrawlingConfig {
-        start_page: 1,
-        end_page: 1, // 상태 확인용으로 1페이지만
-        batch_size: 10,
-        concurrency: 1,
-        list_page_concurrency: 1,
-        product_detail_concurrency: 1,
-        delay_ms: 1000,
-        retry_max: 3,
-        timeout_ms: 30000,
-        disable_intelligent_range: false, // Advanced API에서는 지능형 범위 사용
-        cancellation_token: None,
-    };
-    
-    let session_id = format!("status_check_{}", Uuid::new_v4().simple());
-    let event_emitter = Arc::new(None::<EventEmitter>);
-    
-    let engine = AdvancedBatchCrawlingEngine::new(
+    // 실제 사이트 상태 분석 (system_analysis 로직 재사용 경량 버전)
+    use crate::application::shared_state::SiteAnalysisResult;
+    use crate::domain::constants::site;
+    // 1. 구성 로드 및 의존성 생성
+    let config_manager = crate::infrastructure::config::ConfigManager::new()
+        .map_err(|e| format!("Config init failed: {}", e))?;
+    let config = config_manager.load_config().await
+        .map_err(|e| format!("Config load failed: {}", e))?;
+    let http_client = crate::infrastructure::HttpClient::create_from_global_config()
+        .map_err(|e| format!("HTTP client create failed: {}", e))?;
+    let data_extractor = crate::infrastructure::MatterDataExtractor::new()
+        .map_err(|e| format!("Data extractor create failed: {}", e))?;
+    let database_url = crate::infrastructure::get_main_database_url();
+    let db_pool = sqlx::SqlitePool::connect(&database_url).await
+        .map_err(|e| format!("DB connect failed: {}", e))?;
+    let product_repo = std::sync::Arc::new(crate::infrastructure::IntegratedProductRepository::new(db_pool));
+    let status_checker = crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
         http_client,
         data_extractor,
-        product_repo,
-        event_emitter,
         config,
-        session_id,
+        product_repo,
     );
-    
-    info!("🚀 Starting real site analysis...");
-    
-    // 실제 사이트 상태 확인
-    match engine.stage0_check_site_status().await {
-        Ok(site_status) => {
-            info!("✅ Fresh site status check completed - {} pages found", site_status.total_pages);
-            
-            // 🔥 성공 이벤트 발송
-            let success_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
-                is_standalone: true,
-                status: crate::domain::events::SiteCheckStatus::Success,
-                message: format!("사이트 상태 확인 완료: {}개 페이지 발견", site_status.total_pages),
-                timestamp: chrono::Utc::now(),
-            };
-            
-            if let Err(e) = app.emit("site-status-check", &success_event) {
-                warn!("Failed to emit site status success event: {}", e);
-            }
-            
-            // 새로운 분석 결과를 캐시에 저장
-            let site_analysis = crate::application::shared_state::SiteAnalysisResult::new(
-                site_status.total_pages,
-                site_status.products_on_last_page,
-                site_status.estimated_products,
-                "https://iotready.kr".to_string(), // site_url
-                1.0, // health_score
-            );
-            shared_state.set_site_analysis(site_analysis).await;
-            
-            let site_status_info = SiteStatusInfo {
-                is_accessible: true,
-                response_time_ms: 500, // 기본값
-                total_pages: site_status.total_pages,
-                products_on_last_page: site_status.products_on_last_page,
-                estimated_total_products: site_status.estimated_products,
-                health_score: 1.0,
-            };
-            
-            info!("✅ Fresh site status check completed and cached");
-            Ok(ApiResponse::success(site_status_info))
-        },
-        Err(e) => {
-            error!("Site status check failed: {}", e);
-            
-            // 🔥 실패 이벤트 발송
-            let failed_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
-                is_standalone: true,
-                status: crate::domain::events::SiteCheckStatus::Failed,
-                message: format!("사이트 상태 확인 실패: {}", e),
-                timestamp: chrono::Utc::now(),
-            };
-            
-            if let Err(emit_err) = app.emit("site-status-check", &failed_event) {
-                warn!("Failed to emit site status failed event: {}", emit_err);
-            }
-            
-            Err(format!("Site status check error: {}", e))
-        }
+
+    // 2. 사이트 상태 조회
+    let site_status = status_checker.check_site_status().await
+        .map_err(|e| format!("Site status check failed: {}", e))?;
+
+    // 3. 결과 캐시에 저장
+    let analysis = SiteAnalysisResult::new(
+        site_status.total_pages,
+        site_status.products_on_last_page,
+        site_status.estimated_products,
+        site::BASE_URL.to_string(),
+        1.0,
+    );
+    shared_state.set_site_analysis(analysis.clone()).await;
+
+    // 4. 성공 이벤트 발송
+    let success_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
+        is_standalone: true,
+        status: crate::domain::events::SiteCheckStatus::Success,
+        message: format!(
+            "사이트 분석 완료: pages={} last_page_products={} est_products={}",
+            site_status.total_pages, site_status.products_on_last_page, site_status.estimated_products
+        ),
+        timestamp: chrono::Utc::now(),
+    };
+    if let Err(e) = app.emit("site-status-check", &success_event) {
+        warn!("Failed to emit site status success event: {}", e);
     }
+
+    // 5. 응답 변환
+    let site_status_info = SiteStatusInfo {
+        is_accessible: true,
+        response_time_ms: site_status.response_time_ms,
+        total_pages: site_status.total_pages,
+        products_on_last_page: site_status.products_on_last_page,
+        estimated_total_products: site_status.estimated_products,
+        health_score: 1.0,
+    };
+    Ok(ApiResponse::success(site_status_info))
 }
 
 /// Advanced Crawling Engine 실제 크롤링 실행
+/// DEPRECATED: Phase 2 이후 `start_actor_system_crawling` + CrawlingMode::AdvancedEngine 사용 권장.
 #[command]
 pub async fn start_advanced_crawling(
     request: StartCrawlingRequest,
     app: AppHandle,
-    app_state: State<'_, AppState>,
+    _app_state: State<'_, AppState>,
     _shared_state: State<'_, SharedStateCache>,
 ) -> Result<ApiResponse<CrawlingSession>, String> {
-    let session_id = format!("advanced_{}", Uuid::new_v4().simple());
-    info!("🚀 Starting real advanced crawling session: {}", session_id);
-    
-    // 실제 크롤링 엔진 인스턴스 생성
-    let http_client = match HttpClient::create_from_global_config() {
-        Ok(client) => client,
-        Err(e) => {
-            error!("Failed to create HTTP client: {}", e);
-            return Err(format!("HTTP client creation failed: {}", e));
-        }
-    };
-    
-    let data_extractor = match MatterDataExtractor::new() {
-        Ok(extractor) => extractor,
-        Err(e) => {
-            error!("Failed to create data extractor: {}", e);
-            return Err(format!("Data extractor creation failed: {}", e));
-        }
-    };
-    
-    // AppState에서 중앙화된 데이터베이스 풀 가져오기
-    let database_pool = {
-        let pool_guard = app_state.database_pool.read().await;
-        match pool_guard.as_ref() {
-            Some(pool) => pool.clone(),
-            None => {
-                error!("Database pool is not initialized");
-                return Err("Database pool is not available".to_string());
+    // Fast-path delegation to unified actor system (Phase 2+)
+    // Always delegate to unified actor system (legacy path retained below if needed in future)
+    {
+        use crate::commands::actor_system_commands::{ActorCrawlingRequest, CrawlingMode};
+        let cfg = &request.config;
+        let actor_req = ActorCrawlingRequest {
+            site_url: None,
+            start_page: Some(cfg.start_page),
+            end_page: Some(cfg.end_page),
+            page_count: None,
+            concurrency: Some(cfg.concurrency),
+            batch_size: Some(cfg.batch_size),
+            delay_ms: Some(cfg.delay_ms),
+            mode: Some(CrawlingMode::AdvancedEngine),
+        };
+        match crate::commands::actor_system_commands::start_actor_system_crawling(app.clone(), actor_req).await {
+            Ok(resp) => {
+                let cfg = request.config.clone();
+                let session = CrawlingSession {
+                    session_id: resp.session_id.unwrap_or_else(|| "delegated_session".into()),
+                    started_at: chrono::Utc::now(),
+                    config: cfg,
+                    status: SessionStatus::Running,
+                    total_products_processed: 0,
+                    success_rate: 0.0,
+                };
+                return Ok(ApiResponse::success(session));
             }
-        }
-    };
-    let product_repo = Arc::new(IntegratedProductRepository::new(database_pool));
-
-    // 프론트엔드 설정을 BatchCrawlingConfig로 변환
-    let config = BatchCrawlingConfig {
-        start_page: request.config.start_page,
-        end_page: request.config.end_page,
-        batch_size: request.config.batch_size,
-        concurrency: request.config.concurrency,
-        list_page_concurrency: request.config.concurrency,
-        product_detail_concurrency: request.config.concurrency,
-        delay_ms: request.config.delay_ms,
-        retry_max: request.config.retry_max,
-        timeout_ms: 30000,
-        disable_intelligent_range: false, // Advanced API에서는 지능형 범위 사용
-        cancellation_token: None,
-    };
-    
-    // 세션 정보 생성
-    let session = CrawlingSession {
-        session_id: session_id.clone(),
-        started_at: chrono::Utc::now(),
-        config: request.config,
-        status: SessionStatus::Running,
-        total_products_processed: 0,
-        success_rate: 0.0,
-    };
-    
-    // EventEmitter 설정 (앱 핸들을 사용하여 이벤트 발송)
-    let event_emitter = Arc::new(Some(EventEmitter::new(app.clone())));
-    
-    // Advanced 크롤링 엔진 생성
-    let engine = AdvancedBatchCrawlingEngine::new(
-        http_client,
-        data_extractor,
-        product_repo,
-        event_emitter,
-        config,
-        session_id.clone(),
-    );
-    
-    // 백그라운드에서 실제 크롤링 실행
-    let session_clone = session.clone();
-    let app_clone = app.clone();
-    let session_id_for_spawn = session_id.clone();
-    
-    tokio::spawn(async move {
-        info!("🔄 Starting real advanced crawling execution for session: {}", session_id_for_spawn);
-        
-        // 실제 크롤링 엔진 실행
-        match engine.execute().await {
-            Ok(()) => {
-                info!("✅ Real advanced crawling completed successfully for session: {}", session_id_for_spawn);
-                
-                // 성공 완료 이벤트 발송
-                if let Err(e) = app_clone.emit("crawling-completed", &session_clone) {
-                    warn!("Failed to emit crawling-completed event: {}", e);
-                }
-            },
             Err(e) => {
-                error!("❌ Real advanced crawling failed for session {}: {}", session_id_for_spawn, e);
-                
-                // 실패 이벤트 발송
-                let mut failed_session = session_clone;
-                failed_session.status = SessionStatus::Failed;
-                
-                if let Err(emit_err) = app_clone.emit("crawling-failed", &failed_session) {
-                    warn!("Failed to emit crawling-failed event: {}", emit_err);
-                }
+                return Err(format!("Delegated unified actor start failed: {}", e));
             }
         }
-    });
-    
-    // 즉시 세션 정보 반환
-    info!("✅ Real advanced crawling session started: {}", session_id);
-    Ok(ApiResponse::success(session))
+    }
 }
 
 /// 최근 제품 목록 조회 (실제 데이터베이스)

@@ -238,6 +238,10 @@ pub struct AdvancedConfig {
     
     /// Retry attempts for failed requests
     pub retry_attempts: u32,
+
+    /// Failure escalation / session lifecycle 정책
+    #[serde(default)]
+    pub failure_policy: FailurePolicyConfig,
     
     /// Retry delay in milliseconds
     pub retry_delay_ms: u64,
@@ -247,6 +251,22 @@ pub struct AdvancedConfig {
     
     /// Timeout for HTTP requests in seconds
     pub request_timeout_seconds: u64,
+}
+
+/// 세션 실패/제거 정책 구성
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FailurePolicyConfig {
+    /// Range 실패 누적 임계치 (SessionFailed 전환)
+    #[serde(default = "FailurePolicyConfig::default_threshold")] 
+    pub failure_threshold: u32,
+    /// Completed/Failed 후 레지스트리 유지(grace) 초
+    #[serde(default = "FailurePolicyConfig::default_grace_secs")] 
+    pub removal_grace_secs: i64,
+}
+
+impl FailurePolicyConfig {
+    fn default_threshold() -> u32 { 5 }
+    fn default_grace_secs() -> i64 { 10 }
 }
 
 /// Application-managed settings that are automatically updated by the app
@@ -341,6 +361,7 @@ impl Default for AdvancedConfig {
             last_page_search_start: defaults::LAST_PAGE_SEARCH_START,
             max_search_attempts: defaults::MAX_SEARCH_ATTEMPTS,
             retry_attempts: defaults::RETRY_ATTEMPTS,
+            failure_policy: FailurePolicyConfig::default(),
             retry_delay_ms: defaults::RETRY_DELAY_MS,
             product_selectors: defaults::PRODUCT_SELECTORS.iter().map(|s| s.to_string()).collect(),
             request_timeout_seconds: defaults::REQUEST_TIMEOUT_SECONDS,

@@ -240,10 +240,10 @@ pub enum CommandSendError {
 mod tests {
     use super::*;
     use crate::new_architecture::{
-        config::system_config::SystemConfig,
+        system_config::SystemConfig,
         channels::types::ChannelFactory,
     };
-    use tokio::sync::watch;
+    // Removed unused watch import
 
     #[test]
     fn test_context_hierarchy() {

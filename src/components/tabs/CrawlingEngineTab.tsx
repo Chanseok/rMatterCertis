@@ -17,6 +17,8 @@ import type {
   CrawlingRangeRequest,
   CrawlingRangeResponse
 } from '../../types/advanced-engine';
+// Session animation/status panel (Actor system shared component)
+import { SessionStatusPanel } from '../actor-system/SessionStatusPanel';
 
 export const CrawlingEngineTab: Component = () => {
   // 기본 설정값을 반환하는 더미 함수 (백엔드가 설정 파일을 직접 읽음)
@@ -232,10 +234,12 @@ export const CrawlingEngineTab: Component = () => {
       addLog(`🚀 Actor System Crawling 시작 - 실시간 이벤트 모니터링`);
       
       // ✅ Actor 시스템 방식: 실시간 이벤트가 있는 크롤링
-      const sessionId = await invoke<string>('start_crawling_session');
-      
-      setCurrentSessionId(sessionId);
-      addLog(`✅ Actor 시스템 크롤링 세션 시작: ${sessionId}`);
+  const sessionId = await invoke<string>('start_crawling_session');
+  setCurrentSessionId(sessionId);
+  addLog(`✅ Actor 시스템 크롤링 세션 시작: ${sessionId}`);
+  // Notify session status panel to refresh immediately
+  window.dispatchEvent(new CustomEvent('actorSessionRefresh', { detail: { sessionId } }));
+  setTimeout(() => window.dispatchEvent(new CustomEvent('actorSessionRefresh', { detail: { sessionId } })), 800);
       
     } catch (error) {
       setIsRunning(false);
@@ -252,7 +256,7 @@ export const CrawlingEngineTab: Component = () => {
     addLog(`🎭 가짜 Actor 시스템 크롤링 시작 (실제로는 ServiceBased)`);
 
     try {
-      const result = await invoke('start_actor_system_crawling', {
+      const result: any = await invoke('start_actor_system_crawling', {
         request: {
           // 🧠 CrawlingPlanner가 모든 범위를 자동 계산하므로 0으로 설정 (By Design)
           start_page: 0,
@@ -263,6 +267,13 @@ export const CrawlingEngineTab: Component = () => {
         }
       });
       addLog(`✅ 가짜 Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
+      if (result?.session_id) {
+        window.dispatchEvent(new CustomEvent('actorSessionRefresh', { detail: { sessionId: result.session_id } }));
+        setTimeout(() => window.dispatchEvent(new CustomEvent('actorSessionRefresh', { detail: { sessionId: result.session_id } })), 800);
+      } else {
+        window.dispatchEvent(new CustomEvent('actorSessionRefresh'));
+        setTimeout(() => window.dispatchEvent(new CustomEvent('actorSessionRefresh')), 800);
+      }
       addLog('🎭 가짜 Actor 시스템이 활성화되었습니다 (실제로는 ServiceBased 엔진).');
       
     } catch (error) {
@@ -301,7 +312,7 @@ export const CrawlingEngineTab: Component = () => {
       
       addLog(`📋 설정 기반 배치 크기: ${configBasedBatchSize}`);
       
-      const result = await invoke('start_actor_system_crawling', {
+      const result: any = await invoke('start_actor_system_crawling', {
         request: {
           // 🧠 CrawlingPlanner 설정을 기반으로 한 값들 사용
           start_page: 0,     // By Design: 프론트엔드에서 범위 지정하지 않음
@@ -313,6 +324,13 @@ export const CrawlingEngineTab: Component = () => {
       });
       addLog(`✅ 진짜 Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
       addLog('🎭 진짜 Actor 시스템이 활성화되었습니다. CrawlingPlanner 설정 기반으로 SessionActor가 실행됩니다.');
+      if (result?.session_id) {
+        window.dispatchEvent(new CustomEvent('actorSessionRefresh', { detail: { sessionId: result.session_id } }));
+        setTimeout(() => window.dispatchEvent(new CustomEvent('actorSessionRefresh', { detail: { sessionId: result.session_id } })), 800);
+      } else {
+        window.dispatchEvent(new CustomEvent('actorSessionRefresh'));
+        setTimeout(() => window.dispatchEvent(new CustomEvent('actorSessionRefresh')), 800);
+      }
       
     } catch (error) {
       console.error('진짜 Actor 시스템 크롤링 시작 실패:', error);
@@ -402,7 +420,15 @@ export const CrawlingEngineTab: Component = () => {
 
   return (
     <div class="min-h-screen bg-gray-50 p-6">
-      <div class="max-w-7xl mx-auto">
+      <div class="max-w-7xl mx-auto space-y-6">
+        {/* Actor Session Status & Concurrency Animation (shared) */}
+        <div class="bg-neutral-900/90 rounded-lg border border-neutral-700 p-4 shadow-sm">
+          <h2 class="text-sm font-semibold text-neutral-200 mb-2 flex items-center gap-2">
+            <span>🎭 Actor Session Status</span>
+            <span class="text-xs text-neutral-500 font-normal">(real-time detail concurrency)</span>
+          </h2>
+          <SessionStatusPanel />
+        </div>
         <div class="mb-8">
           <h1 class="text-3xl font-bold text-gray-900 mb-2">
             🔬 Advanced Crawling Engine

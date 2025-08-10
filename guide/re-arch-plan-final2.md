@@ -1,8 +1,178 @@
+    - Phase 2 제어 명령 구현 완료: `pause_session`, `resume_session`, `get_session_status`, `request_graceful_shutdown` (SessionRegistry + watch 채널 기반 Running↔Paused 전환 / ShuttingDown 표시 / Completed 기록, SolidJS 대시보드 제어 패널 & 자동 폴링 연동)
+## ExecutionPlan Contract Additions (v1)
+
+Added fields:
+- contract_version: 1 (additive-only evolution)
+- page_slots: Precomputed logical mapping (physical_page -> page_id + index_in_page)
+
+Domain rules:
+- page_id = total_pages - physical_page (last physical page => page_id 0)
+- index_in_page: descending (capacity-1 .. 0) where capacity = products_on_last_page for last page, else site::PRODUCTS_PER_PAGE (12)
+- Stable ordering across mixed reverse ranges ensures deterministic resume & diffing.
+
+Integrity logging (SessionCompleted):
+- Emits warnings if completed_batches != expected_batches or completed_pages != expected_pages
+- Provides avg_page_processing_time (ms) = total_duration_ms / total_pages_processed
+- final_state becomes "CompletedWithDiscrepancy" on mismatch.
+
+Test coverage (unit):
+- page_slots_basic_reverse_order: validates page_id mapping and index range
+- last_page_uses_products_on_last_page_capacity: validates tail capacity rule
+- page_id_monotonic_decreasing_with_newer_pages_first: validates physical->logical consistency
+- integrity_mismatch_detection_synthetic: simulates truncated page_slots to validate detection surface & future warning logic (tamper scenario)
+
+Next enhancements:
+- Derive products_per_page from config if site variance emerges
+- Emit per-page timing events for refined avg_page_processing_time
+- Extend page_slots for future ProductDetail phase (linking detail tasks)
+- Attach integrity mismatch warning emission into structured metrics channel once Stage phases extended
+
+### Advanced Site Status Command (check_advanced_site_status) – 복구된 실제 흐름
+Phase 2 이전 임시 스텁이었던 Advanced Engine용 사이트 상태 확인 명령이 실제 구현으로 복구되었습니다.
+
+실행 흐름 요약:
+1. 이벤트 시퀀스: Started → InProgress → Success (모두 `site-status-check` 채널로 emit)
+2. 캐시 우선: SharedStateCache 에 5분 TTL 기준 유효한 SiteAnalysis 존재 시 즉시 성공 응답 반환
+3. 미존재 시 Fresh 분석 수행:
+    - Config 로드 (ConfigManager)
+    - HttpClient / MatterDataExtractor 생성
+    - DB 풀 연결 후 IntegratedProductRepository 준비 (StatusCheckerImpl with_product_repo 경로)
+    - StatusCheckerImpl.check_site_status() 실행 (전체 페이지 수, 마지막 페이지 제품 수, 추정 총 제품 수 산출)
+    - SiteAnalysisResult 로 캐시에 저장 (health_score 임시 1.0)
+4. 응답: SiteStatusInfo { is_accessible, response_time_ms, total_pages, products_on_last_page, estimated_total_products, health_score }
+
+설계 특징:
+- Domain 상수 site::PRODUCTS_PER_PAGE 와 분리된 실제 값(마지막 페이지 products_on_last_page)을 명시적으로 반환 → UI 가 Capacity 차이를 표현 가능
+- 향후 Health Score 계산 로직을 Stage/Validation Phase 진입 전 한 번 더 재평가하도록 확장 가능 (현재 placeholder 1.0)
+- 통합 ExecutionPlan 생성 이전에 캐시를 따뜻하게(warm) 하여 중복 site status 호출 제거
+
+추가 예정 개선 (후속 문서화 필요):
+- 실패 이벤트(SiteCheckStatus::Failed) 케이스 복구 및 UI 표준화된 에러 payload 스키마 연결
+- DB 분석 병렬화(system_analysis와 유사) 및 incremental diff 기반 변화 감지 필드(ex: delta_pages)
+- Health score = 가용성(응답성) × 구조 안정성(목록 패턴 일관성) × 데이터 밀도(페이지당 제품 수 편차) 공식 적용
 # 최종 통합 설계 계획 v7: Actor 모델과 삼중 채널 아키텍처
 
 > **문서 목적:** `re-arch-plan2.md`의 구체적인 계층적 Actor 모델과 `re-arch-plan-final.md`의 추상적인 삼중 채널 및 회복탄력성 설계를 완벽하게 통합하여, 모순이 없고 모든 세부사항을 포함하는 **단일 최종 설계 문서(Single Source of Truth)**를 수립합니다.
 
 > **✅ 2024.07.22 업데이트**: Backend-Only CRUD 패턴 완전 구현 완료 - 데이터베이스 접근 완전 분리, 공유 연결 풀, TypeScript 타입 안전성 보장
+
+> **🚀 2025.08.09 진행 현황 & 신규 로드맵 반영**
+> - Phase 1 (백엔드 Actor 시스템 기반 기본 크롤링 동작) 1차 완료: SessionActor → BatchActor 실행 경로, ExecutionPlan 기반 범위 결정, Phase abstraction (ListPages / Finalize 1차), Graceful Shutdown 신호 경로( watch 채널 + PhaseAborted 이벤트 ) 도입.
+> - 임시 PhaseRunner 제거, 단일 통합 실행 경로 확보.
+> - 다음 단계: Phase 2(UI 연동) 착수 – 'Advanced Engine' / 'Live Production' 2개 탭 전략 적용. 첫 탭은 구조/상태 투명성, 두 번째 탭은 역동적/게임화된 피드백 UX 제공.
+> - ServiceBasedBatchCrawlingEngine 은 참조 용도로만 유지(삭제 예정: Phase 3 리팩토링 단계).
+> - ProductDetails / DataValidation Phase는 Phase 3(구조 정돈 & 도메인 정밀화)에서 본격 통합.
+
+---
+## 🔄 통합 다단계 로드맵 (2025.08 재정의)
+
+| Phase | 목표 | 핵심 산출물 | 배포 기준 (Exit Criteria) |
+|-------|------|-------------|---------------------------|
+| 1. Backend Actor Core | Actor 기반 기본 크롤링 파이프라인 가동 | SessionActor→BatchActor 순차 배치 실행, ExecutionPlan 검증, Phase Started/Completed 이벤트, Graceful Shutdown 신호 | 여러 range/배치 정상 처리 & 이벤트 브릿지 동작 |
+| 2. Dual UI Integration | 두 형태(UI 단순/역동)로 Actor 이벤트 시각화 | Advanced Engine 탭(진단/표준 상태), Live Production 탭(애니메이션/인터랙션), 상태 조회 단일 명령 통합 | 실시간 진행률/배치/phase 전환 UI 노출 |
+| 3. Backend Refine & Expansion | ProductDetails / DataValidation phase 통합 및 구조 다이어트 | PhaseRunner 확장(Phase FSM), 재시작(resume) 지점, ServiceBased 코드 제거, 경량화된 repository 경계 | ServiceBased 제거 후 빌드/테스트 green |
+| 4. Value Add Features | 설정/DB 분석/Excel Export/고급 KPI | 자동 리포트(세션 종료 CSV/XLSX), 설정 변경 hot-reload UI 알림, DB 상태 분석 API | 기능 테스트 + UI export 확인 |
+| 5. Precision & Optimization | 성능/품질 고도화 & 관측성 | 상세 KPI(throughput, 실패율, latency histogram), 고급 재시도 정책, 메모리 추적, 파이프라인 튜닝 | 목표 RPS & 안정성 SLO 충족 |
+
+### Phase 2 세부 지침
+> Contract Freeze v1 (이벤트/명령 스키마): Phase 2 UI 구현 착수 전에 Session/Batch/Phase/Progress/Shutdown 이벤트 필드 구조 변경 금지(추가만 허용). ts-rs 생성 타입 헤더에 ActorContractVersion: v1 주석 삽입.
+> 구현 현황: `ACTOR_CONTRACT_VERSION` (Rust 상수) + `src/types/actorContractVersion.ts` 동기화 추가. AppEvent enum 상단 주석에 버전/규칙 명시.
+1. 단일 크롤링 시작 명령(예: `start_actor_system_crawling`)을 UI에서 공통 사용 → 변형은 설정값/모드 플래그로 처리
+2. Advanced Engine 탭
+    - 표준 이벤트 스트림 (Session / Batch / Phase / Progress) 수평 타임라인 + 로그 테이블
+    - KPI 패널: (진행 배치 / 총 배치, 처리 페이지 / 예상 페이지, ETA, 실패 카운트)
+3. Live Production 탭
+    - 애니메이션 기반 상태(예: batch 큐 박스, 진행중 파티클, 완료 페이드)
+    - Phase 경계시 트랜지션 효과
+    - Cancellable / Pausable UX (Graceful shutdown hook 재사용)
+4. 통합 명령 구조 - 기존 중복 start_* 명령 정리 (ServiceBased만 예외적으로 남기고 나머지 alias 제거 예정)
+
+### Graceful Shutdown 설계 (현 구현 요약)
+| 요소 | 구현 상태 | 향후 보강 |
+|------|-----------|-----------|
+| 신호 전파 | watch 채널 (PHASE_SHUTDOWN_TX) + SessionRegistry 상태 ShuttingDown 반영 | Batch/Stage 레벨 세분화 체크 추가 |
+| 이벤트 | PhaseAborted + 로그 (Shutdown 시) | ShutdownRequested / SessionCompleted(Final) 이벤트 분리 송출 |
+| 정리 절차 | Phase loop 종료 후 Completed 상태 기록 | 세션 요약 + 재시작 토큰(export) 저장 |
+
+### Session 제어 (Pause/Resume/Status) 구현 요약 (2025-08-10)
+| 기능 | 구현 방식 | 상세 |
+|------|-----------|------|
+| Pause | SessionRegistry 내 pause watch 채널 true 전송, 상태 Paused 갱신 | Phase 루프 진입 직전 polling loop 대기 250ms 단위 |
+| Resume | pause watch 채널 false 전송, 상태 Running 복귀 | 재개 즉시 Phase 진행 재개 |
+| Status | Registry 조회 -> {status, started_at, completed_at, contract_version} 반환 | UI 2초 간격 자동 폴링 + 수동 Status 버튼 |
+| Shutdown | shutdown watch 채널 true + 상태 ShuttingDown | 완료 시 Completed 전환 및 향후 이벤트 확장 예정 |
+| UI 연동 | ActorSystemDashboard 상단 세션 제어 패널 | Pause/Resume/Shutdown/Status 버튼 + 상태 문자열 표시 |
+
+향후 확장 예정: 진행률(per-page) 카운터, Failed 상태 전환 경로 (에러 처리), Completed 이후 자동 세션 제거 정책, resume 토큰 생성.
+
+### ✅ Progress / Failure / Auto-Removal / Resume Token 1차 구현 (2025-08-10)
+| 항목 | 상태 | 설명 |
+|------|------|------|
+| 페이지 진행률 | 구현 | SessionRegistry: total_pages_planned / processed_pages → percent 계산 |
+| 배치 진행률 | 구현 | total_batches_planned / completed_batches 저장 (현재 range 수 기반, 향후 실제 batch 분할 정확화 가능) |
+| 실패 추적 | 구현 | last_error, error_count 누적 (Range 실패 기록) |
+| 세션 상태 API 확장 | 구현 | get_session_status 반환 JSON에 pages{}, batches{}, errors{}, resume_token 포함 |
+| Completed 후 자동 제거 | 구현 | 실행 완료 시 status Completed 인 경우 Registry에서 remove (메모리 정리) |
+| Resume Token 설계 | 스켈레톤 | entry.resume_token 필드 추가 (현재 Completed 시 None, 향후 남은 ExecutionPlan fragment 직렬화 예정) |
+| 에러 이벤트 표준화 | 부분 | Range 실패는 Registry 카운터/last_error로만, AppEvent 확장(페이지/상세 태스크 단위)은 차기 단계 |
+
+### ✅ (Additive v1 확장) Granular PageTask 이벤트 & Failure Threshold / Grace Removal / ETA Metrics (2025-08-10 Late)
+| 항목 | 상태 | 설명 |
+|------|------|------|
+| PageTaskStarted/Completed/Failed 이벤트 | 구현 | Batch 실행 루프 내 per-page 이벤트 발행 (PageTaskCompleted duration_ms = batch 평균 분배) |
+| DetailTask* 이벤트 | 스켈레톤 | ProductDetails Phase 대비 enum variant 선추가 (emit 아직 없음) |
+| Failure Threshold | 구현 | SESSION_FAILURE_THRESHOLD (기본 5) 도달 시 1회 SessionFailed(final_failure=true) + grace 제거 예약 |
+| failed_emitted 플래그 | 구현 | 중복 SessionFailed 방지 (Registry) |
+| Grace 기반 제거 | 구현 | Completed / Failed 시 removal_deadline 설정 후 (N+1)s 후 실제 Registry 제거 |
+| ETA / Throughput / Error Rate | 구현 | get_session_status: metrics.elapsed_ms / throughput_pages_per_min / eta_ms / errors.rate 추가 |
+| remaining_page_slots 정밀화 | 1차 | range 완료 시 해당 물리 페이지 제거 (향후 per-page 성공 시 제거로 개선 가능) |
+| Resume Token 기본 구조 | 구현 | Completed/Failed 시 {plan_hash, remaining_pages, generated_at, processed_pages, total_pages, failure_threshold?, error_count?} 직렬화 |
+| resume_from_token 명령 | 1차 | 토큰 JSON 파싱 → 단일 range + page_slots 축약 ExecutionPlan 생성 후 동일 경로 실행 (Phase3 리팩토링 예정) |
+| plan_hash 무결성 | 부분 | 토큰의 plan_hash 그대로 복제 (Phase3: 재계산 & 검증) |
+| UI 반영 | 미구현 | 프론트 구독/시각화는 차기 단계에서 Patch 예정 |
+
+추가 예정 (Phase3~):
+- resume_from_token: CrawlingPlanner 재사용 + page_slots 기반 plan_hash 재계산 (현재 다중 연속 구간 그룹핑 구현 완료)
+- remaining_page_slots per-page 제거 (완료) → 실패 시 재시도 정책 도입되면 실패 페이지 유지 전략 재평가
+- PageTaskFailed(final_failure 판정) 재시도 정책 통합
+- plan_hash mismatch 처리(구현됨) → 불일치 시 SessionFailed(plan_hash_mismatch)
+- Failure threshold / grace 설정: config.advanced.failure_policy 로 이전 (env fallback 유지)
+- DetailTask phase 실제 데이터 연동 (현재 skeleton 이벤트 3개 시뮬레이션)
+
+#### Resume Token v1 포맷 (최신)
+```
+{
+    "plan_hash": "<string>",
+    "remaining_pages": [<u32>...],
+    "generated_at": "RFC3339",
+    "processed_pages": <u64>,
+    "total_pages": <u64>,
+    "failure_threshold": <u32?>,
+    "error_count": <u32?>,
+    "batch_size": <u32>,
+    "concurrency_limit": <u32>
+}
+```
+주의:
+- plan_hash 는 Phase3 에서 재계산 검증 예정(현재 신뢰 기반)
+- remaining_pages 는 range 단위 제거 로직 → 일부 완료 페이지가 포함될 수 있음 (per-page 제거 예정)
+- batch_size / concurrency_limit 은 Phase2.5 에서 실행 전 파라미터 검증 로직 도입 계획
+
+향후 2차 단계:
+1. 실제 batch 분할 로직에서 total_batches_planned 정확 재계산(or ExecutionPlan에 precalc) 
+2. Resume token 포맷: { remaining_page_slots: [...], plan_hash, generated_at } → Integrity 검증 포함
+3. Page/Detail Task granular AppEvent 추가 (RetryScheduled, TaskFailed(final_failure) 등)
+4. get_session_status 에 ETA / throughput(ms/page) / discrepancy 플래그 추가
+5. Auto-removal grace 기간 옵션 (예: Completed 후 N초 유지 → 나중에 resume 필요 시 토큰 획득)
+
+### 남은 Phase 1→2 전이 TODO (우선순위)
+1. ProductDetails Phase 설계 skeleton (URL 수집 → 상세 파이프라인 placeholder 이벤트)
+2. SessionCompleted 시 실제 측정 시간/통계 반영 (now - start)
+3. Graceful shutdown 시 SessionCompleted vs SessionFailed 명확 구분
+4. 시작 명령 단일화: start_* 중복 명령 deprecated 표기 & 코드 주석화
+5. ExecutionPlan 생성 시 재계산/재조정 중복 방지(로그에서 재계산 관측)
+
+---
 
 **🦀 Modern Rust 2024 & Clean Code 필수 준수**: 
 - `mod.rs` 사용 금지 (모듈은 `lib.rs` 또는 `파일명.rs` 사용)

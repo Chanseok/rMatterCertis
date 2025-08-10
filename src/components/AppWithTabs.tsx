@@ -18,6 +18,7 @@ import { DomainDashboardTab } from './tabs/DomainDashboardTab';
 import { RealtimeDashboardTab } from './tabs/RealtimeDashboardTab';
 import { HierarchicalEventMonitor } from './HierarchicalEventMonitor';
 import { tabState, restoreLastActiveTab } from '../stores/tabStore';
+let auditEnabled = false; // dev event audit flag
 import { windowState } from '../stores/windowStore';
 
 export const AppWithTabs: Component = () => {
@@ -38,6 +39,10 @@ export const AppWithTabs: Component = () => {
       }
       
       console.log('✅ AppWithTabs 초기화 완료');
+      if (import.meta.env.VITE_EVENT_AUDIT === 'true' && !auditEnabled) {
+        auditEnabled = true;
+        import('../dev/eventAudit').then(m => m.enableEventAudit()).catch(e => console.error('event audit load failed', e));
+      }
     } catch (error) {
       console.error('❌ AppWithTabs 초기화 실패:', error);
     }
