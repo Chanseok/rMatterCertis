@@ -322,12 +322,70 @@ impl CrawlingPlanner {
         // 전략 분기
         let page_range: Vec<u32> = match config.strategy {
             crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst => {
-                // 재사용 체크
-                let start = total_pages_on_site;
-                let end = start.saturating_sub(count - 1).max(1);
-                let pages: Vec<u32> = (end..=start).rev().collect();
-                info!("🔧 Computed newest-first page range: total_pages_on_site={}, requested_count={}, actual_count={}, pages={:?}", total_pages_on_site, requested_count, pages.len(), pages);
-                pages
+                // Enhanced newest-first: prioritize pages containing products lacking details if repository available
+                if let Some(repo) = &self.product_repo {
+                    // heuristic: fetch up to count * 20 products without details (assuming ~20 per page)
+                    let fetch_limit: i32 = ((count * 20).max(20)).min(2000) as i32;
+                    match repo.get_products_without_details(fetch_limit).await {
+                        Ok(missing) if !missing.is_empty() => {
+                            let mut pages: Vec<u32> = missing.iter().filter_map(|p| p.page_id.map(|pid| pid as u32)).collect();
+                            pages.sort_unstable();
+                            pages.dedup();
+                            // Focus on newest pages first
+                            pages.sort_by(|a,b| b.cmp(a));
+                            // Truncate to requested count but keep boundary neighbors
+                            let mut selected: Vec<u32> = pages.iter().take(count as usize).copied().collect();
+                            if let (Some(min_sel), Some(max_sel)) = (selected.iter().min().copied(), selected.iter().max().copied()) {
+                                // include immediate neighbor pages to cover boundary partial pages
+                                let mut boundary = vec![];
+                                if min_sel > 1 { boundary.push(min_sel - 1); }
+                                if max_sel < total_pages_on_site { boundary.push(max_sel + 1); }
+                                for b in boundary { if !selected.contains(&b) { selected.push(b); } }
+                            }
+                            // Pad with additional newest pages if still below requested count
+                            if selected.len() < count as usize {
+                                let mut candidate = total_pages_on_site;
+                                while selected.len() < count as usize && candidate >= 1 {
+                                    if !selected.contains(&candidate) { selected.push(candidate); }
+                                    if candidate == 1 { break; }
+                                    candidate -= 1;
+                                }
+                            }
+                            selected.sort_by(|a,b| b.cmp(a));
+                            info!("🧭 Missing-detail aware page range computed: base_missing_pages={} requested={} final_selected={} pages={:?}", pages.len(), count, selected.len(), selected);
+                            if !selected.is_empty() { selected } else {
+                                let start = total_pages_on_site; let end = start.saturating_sub(count - 1).max(1); (end..=start).rev().collect()
+                            }
+                        }
+                        Ok(_) => {
+                            // 모든 제품이 detail 을 이미 가진 상태 (요청한 범위 기준으로 신규 detail 필요 없음)
+                            // 재크롤링을 피하기 위해 페이지 범위를 비워둠
+                            // - 기존 로직은 최신 페이지를 다시 선택하여 불필요한 재수집 및 DB no-op update 발생
+                            // - 이제는 명시적 요청(환경변수) 없으면 건너뜀
+                            let force_recrawl = std::env::var("MC_FORCE_RECRAWL_ON_COMPLETE")
+                                .map(|v| { let t = v.trim(); !(t.eq("0") || t.eq_ignore_ascii_case("false")) })
+                                .unwrap_or(false);
+                            if force_recrawl {
+                                let start = total_pages_on_site; let end = start.saturating_sub(count - 1).max(1); let pages: Vec<u32> = (end..=start).rev().collect();
+                                info!("♻️ Force recrawl enabled (MC_FORCE_RECRAWL_ON_COMPLETE) -> selecting newest pages again count={} pages={:?}", pages.len(), pages);
+                                pages
+                            } else {
+                                info!("✅ All products already have details (no missing detail rows) -> skipping list page crawling (use MC_FORCE_RECRAWL_ON_COMPLETE=1 to override)");
+                                Vec::new()
+                            }
+                        }
+                        Err(e) => {
+                            // repo 조회 실패 시 기존 fallback 유지
+                            let start = total_pages_on_site; let end = start.saturating_sub(count - 1).max(1); let pages: Vec<u32> = (end..=start).rev().collect();
+                            warn!("⚠️ Missing-detail fetch failed ({}), fallback newest-first pages count={}", e, pages.len());
+                            pages
+                        }
+                    }
+                } else {
+                    let start = total_pages_on_site; let end = start.saturating_sub(count - 1).max(1); let pages: Vec<u32> = (end..=start).rev().collect();
+                    info!("🔧 Computed newest-first page range (no repo): total_pages_on_site={} requested_count={} actual_count={} pages={:?}", total_pages_on_site, requested_count, pages.len(), pages);
+                    pages
+                }
             }
             crate::new_architecture::actors::types::CrawlingStrategy::ContinueFromDb => {
                 // ──────────────────────────────────────────────
@@ -398,23 +456,27 @@ impl CrawlingPlanner {
 
         // 4) batch_size에 따라 분할
         let batch_size = config.batch_size.max(1) as usize;
-    let batched_pages: Vec<Vec<u32>> = if page_range.len() > batch_size {
-            page_range
-                .chunks(batch_size)
-                .map(|c| c.to_vec())
-                .collect()
+        // 페이지가 비어 있으면 재크롤링이 필요 없는 상태이므로 배치 생성 생략
+        let batched_pages: Vec<Vec<u32>> = if page_range.is_empty() {
+            Vec::new()
+        } else if page_range.len() > batch_size {
+            page_range.chunks(batch_size).map(|c| c.to_vec()).collect()
         } else {
             vec![page_range.clone()]
         };
 
-        info!(
-            "📋 배치 계획 수립: 총 {}페이지를 {}개 배치로 분할 (batch_size={})",
-            page_range.len(),
-            batched_pages.len(),
-            batch_size
-        );
+        if page_range.is_empty() {
+            info!("📋 배치 계획 수립: 수집할 신규 페이지 없음 (모든 detail 이미 존재) batches=0");
+        } else {
+            info!(
+                "📋 배치 계획 수립: 총 {}페이지를 {}개 배치로 분할 (batch_size={})",
+                page_range.len(),
+                batched_pages.len(),
+                batch_size
+            );
+        }
 
-        // 5) 단계 구성: StatusCheck → (List batches) → ProductDetailCrawling → DataValidation
+    // 5) 단계 구성: StatusCheck → (List batches) → DataValidation
         let mut phases = vec![CrawlingPhase {
             phase_type: PhaseType::StatusCheck,
             estimated_duration_secs: 30,
@@ -423,6 +485,7 @@ impl CrawlingPlanner {
         }];
 
         for (batch_idx, batch_pages) in batched_pages.iter().enumerate() {
+            if batch_pages.is_empty() { continue; }
             phases.push(CrawlingPhase {
                 phase_type: PhaseType::ListPageCrawling,
                 estimated_duration_secs: (batch_pages.len() * 2) as u64,
@@ -432,12 +495,6 @@ impl CrawlingPlanner {
         }
 
         phases.extend(vec![
-            CrawlingPhase {
-                phase_type: PhaseType::ProductDetailCrawling,
-                estimated_duration_secs: (count * 10) as u64,
-                priority: 100,
-                pages: page_range.clone(),
-            },
             CrawlingPhase {
                 phase_type: PhaseType::DataValidation,
                 estimated_duration_secs: (count / 2).max(1) as u64,

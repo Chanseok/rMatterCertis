@@ -62,6 +62,8 @@ pub struct SessionActor {
     errors: Vec<String>,
     /// 세션 누적 duplicate skip 합계
     duplicates_skipped: u32,
+    // Unified detail crawling accumulation across batches
+    aggregated_product_urls: Vec<crate::domain::product_url::ProductUrl>,
 }
 
 /// 세션 상태 열거형
@@ -118,6 +120,7 @@ impl SessionActor {
             active_plan_hash: None,
             errors: Vec::new(),
             duplicates_skipped: 0,
+            aggregated_product_urls: Vec::new(),
         }
     }
     
@@ -261,14 +264,24 @@ impl SessionActor {
             }
         }
 
-        // ListPageCrawling phases만 추출 → 각 phase 페이지들을 순차 처리
-        let mut batch_idx = 0u32;
-        for phase in plan.phases.iter().filter(|p| matches!(p.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling)) {
+    // ListPageCrawling phases만 추출 → 각 phase 페이지들을 순차 처리
+    let planned_list_batches: Vec<_> = plan.phases.iter().filter(|p| matches!(p.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling)).collect();
+    if planned_list_batches.is_empty() {
+        warn!("⚠️ No ListPageCrawling phases planned (requested start/end maybe collapsed). start_page={} end_page={}", config.start_page, config.end_page);
+    } else {
+        let mut agg: Vec<u32> = planned_list_batches.iter().flat_map(|p| p.pages.clone()).collect();
+        agg.sort_unstable(); agg.dedup();
+        info!("🧪 Planned list page batches={} unique_pages_total={} pages={:?}", planned_list_batches.len(), agg.len(), agg);
+    }
+    let planned_batches_count = planned_list_batches.len();
+    let mut executed_batches_pages: Vec<Vec<u32>> = Vec::new();
+    let mut batch_idx = 0u32;
+    for phase in planned_list_batches.iter() {
             batch_idx += 1;
             let pages = phase.pages.clone();
             if pages.is_empty() { continue; }
             let batch_id = format!("{}-batch-{}", session_id, batch_idx);
-            info!("🏃 SessionActor {} running batch {} with {} pages: {:?}", self.actor_id, batch_id, pages.len(), pages);
+            info!("🏃 SessionActor {} running batch {} (batch_index={}/{}) with {} pages: {:?}", self.actor_id, batch_id, batch_idx, planned_batches_count, pages.len(), pages);
 
             // 배치 시작 Progress 이벤트 (세션 관점)
             let progress_event = AppEvent::Progress {
@@ -307,7 +320,9 @@ impl SessionActor {
             }
 
             self.processed_batches += 1;
+            executed_batches_pages.push(pages.clone());
             self.total_success_count += pages.len() as u32;
+            // TODO: Collect batch-level deferred URLs via a channel/event once BatchActor emits them.
             info!("✅ Completed batch {} ({} pages)", batch_id, pages.len());
 
             // 배치 완료 Progress 이벤트
@@ -323,13 +338,25 @@ impl SessionActor {
                 .map_err(|e| SessionError::ContextError(e.to_string()))?;
         }
         
+        // Unified detail crawling (if enabled) BEFORE marking completion
+        let unified_flag = std::env::var("MC_UNIFIED_DETAIL")
+            .map(|v| { let t = v.trim(); !(t.eq("0") || t.eq_ignore_ascii_case("false")) })
+            .unwrap_or(false);
+        if unified_flag {
+            let unique_urls: usize = {
+                use std::collections::HashSet;
+                let mut set = HashSet::new();
+                for u in &self.aggregated_product_urls { set.insert(u.url.clone()); }
+                set.len()
+            };
+            info!("🧩 Unified detail crawling placeholder: aggregated_urls_total={} unique_urls={} (execution not yet implemented)", self.aggregated_product_urls.len(), unique_urls);
+            // TODO: Implement execution of unified detail crawling pipeline using StageActor once aggregation wiring is complete.
+        }
+
         // 상태를 Running으로 전환 후 Complete로 이동
         self.state = SessionState::Running;
-        
-        info!("🎯 SessionActor {} completing session: {} batches, {} pages total", 
-              self.actor_id, self.processed_batches, self.total_success_count);
-        
-        // 세션 완료 처리
+        if self.processed_batches as usize != planned_batches_count { warn!("⚠️ List batch execution mismatch planned={} executed={}", planned_batches_count, self.processed_batches); } else { info!("📊 All planned list batches executed planned={} executed={}", planned_batches_count, self.processed_batches); }
+        info!("🎯 SessionActor {} completing session: {} batches, {} pages total", self.actor_id, self.processed_batches, self.total_success_count);
         self.state = SessionState::Completed;
         
         // 완료 이벤트 발행
@@ -346,6 +373,8 @@ impl SessionActor {
                 processed_batches: self.processed_batches,
                 total_success_count: self.total_success_count,
                 duplicates_skipped: self.duplicates_skipped,
+                planned_list_batches: planned_batches_count as u32,
+                executed_list_batches: self.processed_batches,
                 total_retry_events: 0,
                 max_retries_single_page: 0,
                 pages_retried: 0,
@@ -382,6 +411,8 @@ impl SessionActor {
         info!("✅ Session {} completed successfully", session_id);
         Ok(())
     }
+
+    // (Removed misplaced unified detail crawling block)
 
     /// 실서비스가 주입된 BatchActor를 생성해 주어진 페이지들을 처리
     async fn run_batch_with_services(
@@ -596,6 +627,8 @@ impl SessionActor {
                 processed_batches: self.processed_batches,
                 total_success_count: self.total_success_count,
                 duplicates_skipped: self.duplicates_skipped,
+                planned_list_batches: self.processed_batches,
+                executed_list_batches: self.processed_batches,
                 total_retry_events: 0,
                 max_retries_single_page: 0,
                 pages_retried: 0,
@@ -714,7 +747,7 @@ impl Actor for SessionActor {
                                                 let mut map: BTreeMap<String, (u32, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = BTreeMap::new();
                                                 for e in &self.errors { let now = chrono::Utc::now(); map.entry(e.clone()).and_modify(|entry| { entry.0 += 1; entry.2 = now; }).or_insert((1, now, now)); }
                                                 let aggregated: Vec<crate::new_architecture::actors::types::ErrorSummary> = map.into_iter().map(|(k,(count, first, last))| crate::new_architecture::actors::types::ErrorSummary { error_type: k, count, first_occurrence: first, last_occurrence: last }).collect();
-                                                let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / self.total_success_count as u64 } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, duplicates_skipped: self.duplicates_skipped, total_retry_events: 0, max_retries_single_page: 0, pages_retried: 0, retry_histogram: Vec::new(), products_inserted: 0, products_updated: 0, final_state: "completed".into(), timestamp: Utc::now() };
+                                                let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / self.total_success_count as u64 } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, duplicates_skipped: self.duplicates_skipped, planned_list_batches: self.processed_batches, executed_list_batches: self.processed_batches, total_retry_events: 0, max_retries_single_page: 0, pages_retried: 0, retry_histogram: Vec::new(), products_inserted: 0, products_updated: 0, final_state: "completed".into(), timestamp: Utc::now() };
                                                 if let Err(e) = context.emit_event(AppEvent::SessionCompleted { session_id: session_id.clone(), summary: summary.clone(), timestamp: Utc::now() }).await { error!("emit completion event failed: {}", e); }
                                                 if let Err(e) = context.emit_event(AppEvent::CrawlReportSession { session_id: session_id.clone(), batches_processed: self.processed_batches, total_pages: self.total_success_count, total_success: self.total_success_count, total_failed: 0, total_retries: 0, duration_ms, products_inserted: 0, products_updated: 0, timestamp: Utc::now() }).await { error!("emit crawl report failed: {}", e); }
                                             }

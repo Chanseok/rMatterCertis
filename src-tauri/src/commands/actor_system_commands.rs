@@ -1768,6 +1768,8 @@ async fn execute_session_actor_with_execution_plan(
             processed_batches: completed_batches as u32,
             total_success_count,
             duplicates_skipped: 0,
+            planned_list_batches: expected_batches as u32,
+            executed_list_batches: completed_batches as u32,
             final_state: final_state.to_string(),
             products_inserted: 0,
             products_updated: 0,
@@ -1825,6 +1827,29 @@ async fn execute_session_actor_with_execution_plan(
 }
 
 // (Removed unused simulation helpers: execute_batch_actor_simulation, run_simulation_crawling)
+
+// =====================================================
+//  Data Consistency Check Command (page_id / index_in_page)
+// =====================================================
+#[tauri::command]
+pub async fn check_page_index_consistency() -> Result<String, String> {
+    use crate::infrastructure::{simple_http_client::HttpClient, html_parser::MatterDataExtractor, integrated_product_repository::IntegratedProductRepository};
+    use crate::infrastructure::config::AppConfig;
+    use crate::infrastructure::crawling_service_impls::StatusCheckerImpl;
+    use crate::new_architecture::services::data_consistency_checker::DataConsistencyChecker;
+    use std::sync::Arc;
+    let http = HttpClient::create_from_global_config().map_err(|e| e.to_string())?;
+    let extractor = MatterDataExtractor::new().map_err(|e| e.to_string())?;
+    let db_url = crate::infrastructure::database_paths::get_main_database_url();
+    let pool = sqlx::SqlitePool::connect(&db_url).await.map_err(|e| e.to_string())?;
+    let repo = Arc::new(IntegratedProductRepository::new(pool));
+    let status_checker: Arc<dyn crate::domain::services::StatusChecker> = Arc::new(
+        StatusCheckerImpl::with_product_repo(http, extractor, AppConfig::for_development(), Arc::clone(&repo))
+    );
+    let checker = DataConsistencyChecker::new(status_checker, repo);
+    let report = checker.run_check().await.map_err(|e| e.to_string())?;
+    serde_json::to_string_pretty(&report).map_err(|e| e.to_string())
+}
 
 // ===================== Tests (Phase C: resume token integrity) =====================
 #[cfg(test)]

@@ -421,6 +421,29 @@ export const CrawlingEngineTab: Component = () => {
     'Stage 5: 데이터베이스 저장'
   ];
 
+  // 데이터 정합성 체크 (page_id / index_in_page) 실행
+  const runConsistencyCheck = async () => {
+    addLog('🧪 정합성 체크 실행 중...');
+    try {
+      const json = await invoke<string>('check_page_index_consistency');
+      addLog('✅ 정합성 체크 완료 (콘솔 상세 출력)');
+      console.log('[ConsistencyReport]', json);
+      try {
+        const report = JSON.parse(json);
+        if (report && typeof report.invalid === 'number') {
+          if (report.invalid > 0) {
+            addLog(`⚠️ 불일치 ${report.invalid}건 (샘플 ${report.sample_inconsistencies?.length || 0})`);
+          } else {
+            addLog('🧪 불일치 없음 (OK)');
+          }
+        }
+      } catch (_) { /* ignore parse error */ }
+    } catch (e:any) {
+      addLog(`❌ 정합성 체크 실패: ${e}`);
+      console.error('Consistency check failed', e);
+    }
+  };
+
   return (
     <div class="min-h-screen bg-gray-50 p-6">
       <div class="max-w-7xl mx-auto space-y-6">
@@ -455,12 +478,21 @@ export const CrawlingEngineTab: Component = () => {
                     {showSiteStatus() ? '🔽' : '▶️'}
                   </button>
                 </div>
-                <button
-                  onClick={checkSiteStatus}
-                  class="px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200"
-                >
-                  새로고침
-                </button>
+                <div class="flex items-center gap-2">
+                  <button
+                    onClick={runConsistencyCheck}
+                    class="px-3 py-1.5 text-sm bg-amber-100 text-amber-700 rounded-md hover:bg-amber-200"
+                    title="DB 제품 page_id / index_in_page 값이 사이트 구조와 맞는지 검사"
+                  >
+                    🧪 정합성 체크
+                  </button>
+                  <button
+                    onClick={checkSiteStatus}
+                    class="px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200"
+                  >
+                    새로고침
+                  </button>
+                </div>
               </div>
               
               <Show when={showSiteStatus()}>

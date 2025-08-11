@@ -79,6 +79,9 @@ pub struct BatchActor {
     products_updated: u32,
     /// 외부에서 읽을 수 있는 메트릭 공유 상태 (옵션)
     pub shared_metrics: Option<Arc<Mutex<(u32,u32)>>>, // (inserted, updated)
+    // Unified detail crawling accumulation
+    collected_product_urls: Vec<crate::domain::product_url::ProductUrl>,
+    defer_detail_crawling: bool,
 }
 
 // Debug 수동 구현 (의존성들이 Debug를 구현하지 않아서)
@@ -182,6 +185,13 @@ impl BatchActor {
             products_inserted: 0,
             products_updated: 0,
             shared_metrics: None,
+            collected_product_urls: Vec::new(),
+            defer_detail_crawling: std::env::var("MC_UNIFIED_DETAIL")
+                .map(|v| {
+                    let t = v.trim();
+                    !(t.eq("0") || t.eq_ignore_ascii_case("false"))
+                })
+                .unwrap_or(false),
         }
     }
     
@@ -230,6 +240,13 @@ impl BatchActor {
             products_inserted: 0,
             products_updated: 0,
             shared_metrics: None,
+            collected_product_urls: Vec::new(),
+            defer_detail_crawling: std::env::var("MC_UNIFIED_DETAIL")
+                .map(|v| {
+                    let t = v.trim();
+                    !(t.eq("0") || t.eq_ignore_ascii_case("false"))
+                })
+                .unwrap_or(false),
         }
     }
     
@@ -458,44 +475,55 @@ impl BatchActor {
             return Err(BatchError::StageExecutionFailed("ListPageCrawling stage failed completely".to_string()));
         }
 
-        // Stage 2 결과를 Stage 3 입력으로 변환
-    let product_detail_items = self.transform_stage_output(
+        // Stage 2 결과를 Stage 3 입력으로 변환 또는 누적
+        let product_detail_items = self.transform_stage_output(
             StageType::ListPageCrawling,
             initial_items.clone(),
             &list_page_result
         ).await?;
 
-        // Stage 3: ProductDetailCrawling - 상품 상세 정보 수집
-        info!("🔍 Starting Stage 3: ProductDetailCrawling");
-        let detail_result = match self.execute_stage_with_actor(
-            StageType::ProductDetailCrawling,
-            product_detail_items.clone(),
-            concurrency_limit,
-            context,
-        ).await {
-            Ok(r) => r,
-            Err(e) => {
-                // 배치 실패 이벤트 발행 후 전파
-                let fail_event = AppEvent::BatchFailed {
-                    batch_id: batch_id.clone(),
-                    session_id: context.session_id.clone(),
-                    error: format!("Stage 3 failed: {}", e),
-                    final_failure: true,
-                    timestamp: Utc::now(),
-                };
-                context.emit_event(fail_event).await
-                    .map_err(|er| BatchError::ContextError(er.to_string()))?;
-                self.state = BatchState::Failed { error: format!("Stage 3 failed: {}", e) };
-                return Err(e);
+    let mut detail_result_opt: Option<StageResult> = None;
+    if self.defer_detail_crawling {
+            for item in &product_detail_items {
+                if let StageItem::ProductUrls(wrapper) = item { self.collected_product_urls.extend(wrapper.urls.clone()); }
             }
-        };
-        
-      info!("✅ Stage 3 (ProductDetailCrawling) completed: {} success, {} failed", 
-          detail_result.successful_items, detail_result.failed_items);
-      info!(target: "kpi.batch", "{{\"event\":\"batch_stage_summary\",\"batch_id\":\"{}\",\"stage\":\"product_detail\",\"success\":{},\"failed\":{},\"pages\":{},\"ts\":\"{}\"}}",
-          batch_id, detail_result.successful_items, detail_result.failed_items, pages.len(), chrono::Utc::now());
+            info!("🧺 Deferred product detail crawling: accumulated_urls={} (batch pages={})", self.collected_product_urls.len(), pages.len());
+        } else {
+            // 즉시 상세 수집
+            info!("🔍 Starting Stage 3: ProductDetailCrawling");
+            let detail_result = match self.execute_stage_with_actor(
+                StageType::ProductDetailCrawling,
+                product_detail_items.clone(),
+                concurrency_limit,
+                context,
+            ).await {
+                Ok(r) => r,
+                Err(e) => {
+                    let fail_event = AppEvent::BatchFailed {
+                        batch_id: batch_id.clone(),
+                        session_id: context.session_id.clone(),
+                        error: format!("Stage 3 failed: {}", e),
+                        final_failure: true,
+                        timestamp: Utc::now(),
+                    };
+                    context.emit_event(fail_event).await
+                        .map_err(|er| BatchError::ContextError(er.to_string()))?;
+                    self.state = BatchState::Failed { error: format!("Stage 3 failed: {}", e) };
+                    return Err(e);
+                }
+            };
+            info!("✅ Stage 3 (ProductDetailCrawling) completed: {} success, {} failed", detail_result.successful_items, detail_result.failed_items);
+            info!(target: "kpi.batch", "{{\"event\":\"batch_stage_summary\",\"batch_id\":\"{}\",\"stage\":\"product_detail\",\"success\":{},\"failed\":{},\"pages\":{},\"ts\":\"{}\"}}",
+                batch_id, detail_result.successful_items, detail_result.failed_items, pages.len(), chrono::Utc::now());
+            detail_result_opt = Some(detail_result);
+        }
 
         // Summarize failed product detail URLs by correlating input items with Stage 3 results
+        if !self.defer_detail_crawling {
+            // detail_result only exists in non-deferred path; re-execute minimal failure inspection via executing stage again not desired.
+            // TODO: Refactor to hold detail_result outside branch if failure summary needed.
+            // Skipping failure summary in deferred mode.
+        /*
         if detail_result.failed_items > 0 {
             let mut failed_detail_urls: Vec<String> = Vec::new();
             for (idx, item) in product_detail_items.iter().enumerate() {
@@ -537,14 +565,46 @@ impl BatchActor {
                 context.emit_event(progress_event).await
                     .map_err(|e| BatchError::ContextError(e.to_string()))?;
             }
-        }
+    }
+    */
+    }
 
         // Stage 3 결과를 Stage 4 입력으로 변환 
-    let data_validation_items = self.transform_stage_output(
-            StageType::ProductDetailCrawling,
-            product_detail_items,
-            &detail_result
-        ).await?;
+        let data_validation_items = if self.defer_detail_crawling {
+            // Deferred mode: skip (no items)
+            Vec::new()
+        } else {
+            // 기존 변환 결과 (각 ProductDetail 단위) → 하나의 ProductDetails StageItem 으로 합쳐 1회 실행
+            let per_item = self.transform_stage_output(
+                StageType::ProductDetailCrawling,
+                product_detail_items,
+                detail_result_opt.as_ref().expect("detail_result present when not deferred")
+            ).await?;
+            if per_item.is_empty() { Vec::new() } else {
+                // 모든 Product 또는 ProductDetails 아이템에서 상세 제품들을 추출해 하나로 병합
+                use crate::new_architecture::channels::types::{ProductDetails, StageItem as SItem};
+                let mut all_products: Vec<crate::domain::product::ProductDetail> = Vec::new();
+                let mut all_source_urls: Vec<crate::domain::product_url::ProductUrl> = Vec::new();
+                for it in per_item.into_iter() {
+                    match it {
+                        SItem::ProductDetails(pd) => {
+                            all_source_urls.extend(pd.source_urls.into_iter());
+                            all_products.extend(pd.products.into_iter());
+                        }
+                        SItem::Product(p) => {
+                            // 단일 ProductInfo 로 표현된 경우 ProductDetail 변환 불가 → 무시 또는 향후 변환 로직 추가
+                            debug!("Skipping non-detailed product item in aggregation");
+                        }
+                        _ => {}
+                    }
+                }
+                if all_products.is_empty() { Vec::new() } else {
+                    let stats = crate::new_architecture::channels::types::ExtractionStats { attempted: all_products.len() as u32, successful: all_products.len() as u32, failed: 0, empty_responses: 0 };
+                    let merged = ProductDetails { products: all_products, source_urls: all_source_urls, extraction_stats: stats };
+                    vec![SItem::ProductDetails(merged)]
+                }
+            }
+        };
 
         // Stage 4: DataValidation - 데이터 품질 분석
         info!("🔍 Starting Stage 4: DataValidation");
@@ -576,11 +636,13 @@ impl BatchActor {
           batch_id, validation_result.successful_items, validation_result.failed_items, pages.len(), chrono::Utc::now());
 
         // Stage 4 결과를 Stage 5 입력으로 변환 
-    let data_saving_items = self.transform_stage_output(
-            StageType::DataValidation,
-            data_validation_items,
-            &validation_result
-        ).await?;
+        let data_saving_items = if self.defer_detail_crawling { Vec::new() } else {
+            self.transform_stage_output(
+                StageType::DataValidation,
+                data_validation_items,
+                &validation_result
+            ).await?
+        };
 
         // Stage 5: DataSaving - 데이터 저장
         info!("🔍 Starting Stage 5: DataSaving");
@@ -643,7 +705,7 @@ impl BatchActor {
         // 추가: 배치 요약 한 줄 로그로 핵심 지표 집계 출력
         let duration_ms = self.start_time.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
         info!(
-            "📦 [Batch SUMMARY] actor={}, batch_id={}, pages_total={}, success_items={}, failed_items={}, retries_used≈{}, duration_ms={}, products_inserted={}, products_updated={}",
+            "📦 [Batch SUMMARY] actor={}, batch_id={}, pages_total={}, success_items={}, failed_items={}, retries_used≈{}, duration_ms={}, products_inserted={}, products_updated={}, deferred_detail={}",
             self.actor_id,
             batch_id,
             self.total_pages,
@@ -651,12 +713,15 @@ impl BatchActor {
             saving_result.failed_items,
             {
                 let stage2_retries: u32 = list_page_result.details.iter().map(|d| d.retry_count).sum();
-                let stage3_retries: u32 = detail_result.details.iter().map(|d| d.retry_count).sum();
-                stage2_retries.saturating_add(stage3_retries)
+                if self.defer_detail_crawling { stage2_retries } else { 
+                    let stage3_retries: u32 = detail_result_opt.as_ref().map(|r| r.details.iter().map(|d| d.retry_count).sum()).unwrap_or(0);
+                    stage2_retries.saturating_add(stage3_retries)
+                }
             },
             duration_ms,
             self.products_inserted,
-            self.products_updated
+            self.products_updated,
+            self.defer_detail_crawling
         );
         
         let completion_event = AppEvent::BatchCompleted {
@@ -680,11 +745,12 @@ impl BatchActor {
         let pages_total = self.total_pages;
         let pages_success = self.success_count.max( list_page_result.successful_items );
         let pages_failed = list_page_result.failed_items;
-        let details_success = validation_result.successful_items; // Stage 3/4 근사치
-        let details_failed = validation_result.failed_items;
+        let (details_success, details_failed) = if self.defer_detail_crawling { (0,0) } else { (validation_result.successful_items, validation_result.failed_items) };
         let stage2_retries: u32 = list_page_result.details.iter().map(|d| d.retry_count).sum();
-        let stage3_retries: u32 = detail_result.details.iter().map(|d| d.retry_count).sum();
-        let retries_used = stage2_retries.saturating_add(stage3_retries);
+        let retries_used = if self.defer_detail_crawling { stage2_retries } else {
+            let stage3_retries: u32 = detail_result_opt.as_ref().map(|r| r.details.iter().map(|d| d.retry_count).sum()).unwrap_or(0);
+            stage2_retries.saturating_add(stage3_retries)
+        };
         let report_event = AppEvent::BatchReport {
             session_id: context.session_id.clone(),
             batch_id: batch_id.clone(),

@@ -28,6 +28,8 @@ pub struct IntegratedProductRepository {
 }
 
 impl IntegratedProductRepository {
+    /// Expose underlying pool reference (read-only operations convenience)
+    pub fn pool(&self) -> &sqlx::SqlitePool { &self.pool }
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool: Arc::new(pool) }
     }

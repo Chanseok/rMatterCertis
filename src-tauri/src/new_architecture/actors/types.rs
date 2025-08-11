@@ -792,6 +792,10 @@ pub struct SessionSummary {
     pub products_inserted: u32,
     #[serde(default)]
     pub products_updated: u32,
+    #[serde(default)]
+    pub planned_list_batches: u32,
+    #[serde(default)]
+    pub executed_list_batches: u32,
     
     /// 최종 상태
     pub final_state: String,

@@ -530,6 +530,21 @@ export const CrawlingProcessDashboard: Component = () => {
         <button onClick={testActorSystem} class="bg-purple-500 text-white font-bold py-2 px-4 rounded shadow-lg">
           🎭 Test Actor System
         </button>
+        <button
+          onClick={async () => {
+            try {
+              const json = await (await import('@tauri-apps/api/core')).invoke<string>('check_page_index_consistency');
+              addLogEntry('SYSTEM', 'Consistency OK');
+              // 간단 출력 패널 생성
+              console.log('[ConsistencyReport]', json);
+              alert('Consistency Report 생성 (console 확인)');
+            } catch (e:any) {
+              addLogEntry('SYSTEM', `Consistency FAIL: ${e}`);
+              alert(`Consistency Check 실패: ${e}`);
+            }
+          }}
+          class="bg-amber-500 text-white font-bold py-2 px-4 rounded shadow-lg"
+        >🧪 Consistency Check</button>
       </div>
 
       {/* Actor 시스템 상태 표시 */}

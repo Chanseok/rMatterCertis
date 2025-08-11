@@ -829,13 +829,13 @@ impl StageActor {
                                     if let Some(repo) = &temp_actor._product_repo {
                                         info!("[PersistExec] starting storage call variant={}", match &lifecycle_item { StageItem::ProductDetails(_) => "ProductDetails", StageItem::ValidatedProducts(_) => "ValidatedProducts", _ => "Other" });
                                         match StageActor::execute_real_database_storage(&lifecycle_item, repo.clone()).await {
-                                            Ok((inserted, updated)) => {
+                                            Ok((inserted, updated, duplicates_ct)) => {
                                                 let total = inserted + updated;
                                                 let attempted = attempted_count; // from outer scope
                                                 let unchanged = if attempted > total { attempted - total } else { 0 };
-                                                let status = if inserted > 0 && updated == 0 { "persist_inserted" } else if updated > 0 && inserted == 0 { "persist_updated" } else if inserted == 0 && updated == 0 { "persist_noop" } else { "persist_mixed" };
-                                                info!("[Persist] Result status={} inserted={} updated={} total={} unchanged={} attempted={} duration_ms={}", status, inserted, updated, total, unchanged, attempted, persist_start.elapsed().as_millis());
-                                                let metrics = SimpleMetrics::Generic { key: "persist_result".into(), value: format!("attempted={},inserted={},updated={},total={},unchanged={}", attempted, inserted, updated, total, unchanged) };
+                                                let status = if inserted > 0 && updated == 0 { "persist_inserted" } else if updated > 0 && inserted == 0 { "persist_updated" } else if inserted == 0 && updated == 0 { if duplicates_ct == attempted { "persist_noop_all_duplicate" } else { "persist_noop" } } else { "persist_mixed" };
+                                                info!("[Persist] Result status={} inserted={} updated={} duplicates={} total={} unchanged={} attempted={} duration_ms={}", status, inserted, updated, duplicates_ct, total, unchanged, attempted, persist_start.elapsed().as_millis());
+                                                let metrics = SimpleMetrics::Generic { key: "persist_result".into(), value: format!("attempted={},inserted={},updated={},duplicates={},total={},unchanged={}", attempted, inserted, updated, duplicates_ct, total, unchanged) };
                                                 let emit_res = ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                                     session_id: session_id_clone.clone(),
                                                     batch_id: batch_id_opt.clone(),
@@ -1530,18 +1530,18 @@ impl StageActor {
     async fn execute_real_database_storage(
         item: &StageItem,
         product_repo: Arc<IntegratedProductRepository>,
-    ) -> Result<(u32,u32), String> { // (inserted, updated)
+    ) -> Result<(u32,u32,u32), String> { // (inserted, updated, duplicates)
         match item {
             StageItem::ProductDetails(wrapper) => {
                 info!("[PersistExec] handling ProductDetails count={} extraction_stats=attempted:{} success:{} failed:{}", wrapper.products.len(), wrapper.extraction_stats.attempted, wrapper.extraction_stats.successful, wrapper.extraction_stats.failed);
                 let products = &wrapper.products;
-                if products.is_empty() { return Ok((0,0)); }
+                if products.is_empty() { return Ok((0,0,0)); }
                 // Duplicate detection by URL
                 let mut seen = std::collections::HashSet::new();
                 let mut duplicates: Vec<String> = Vec::new();
                 for d in products { if !seen.insert(d.url.clone()) { duplicates.push(d.url.clone()); } }
                 if !duplicates.is_empty() { warn!("[PersistExec] duplicate urls detected count={} urls={:?}", duplicates.len(), duplicates); }
-                let mut inserted = 0u32; let mut updated = 0u32;
+                let mut inserted = 0u32; let mut updated = 0u32; let mut duplicates_ct = 0u32;
                 for (idx, detail) in products.iter().enumerate() {
                     let start = std::time::Instant::now();
                     debug!("[PersistExec] upsert detail idx={} url={} page_id={:?}", idx, detail.url, detail.page_id);
@@ -1549,22 +1549,23 @@ impl StageActor {
                         Ok((was_updated, was_created)) => {
                             if was_created { inserted += 1; }
                             if was_updated { updated += 1; }
+                            if !was_created && !was_updated { duplicates_ct += 1; }
                             debug!("[PersistExecDetail] idx={} url={} created={} updated={} elapsed_ms={}", idx, detail.url, was_created, was_updated, start.elapsed().as_millis());
                         },
                         Err(e) => return Err(format!("Database save failed: {}", e))
                     }
                 }
-                Ok((inserted, updated))
+                Ok((inserted, updated, duplicates_ct))
             }
             StageItem::ValidatedProducts(wrapper) => {
                 info!("[PersistExec] handling ValidatedProducts count={}", wrapper.products.len());
                 let products = &wrapper.products;
-                if products.is_empty() { return Ok((0,0)); }
+                if products.is_empty() { return Ok((0,0,0)); }
                 let mut seen = std::collections::HashSet::new();
                 let mut duplicates: Vec<String> = Vec::new();
                 for d in products { if !seen.insert(d.url.clone()) { duplicates.push(d.url.clone()); } }
                 if !duplicates.is_empty() { warn!("[PersistExec] duplicate validated urls detected count={} urls={:?}", duplicates.len(), duplicates); }
-                let mut inserted = 0u32; let mut updated = 0u32;
+                let mut inserted = 0u32; let mut updated = 0u32; let mut duplicates_ct = 0u32;
                 for (idx, detail) in products.iter().enumerate() {
                     let start = std::time::Instant::now();
                     debug!("[PersistExec] upsert validated detail idx={} url={} page_id={:?}", idx, detail.url, detail.page_id);
@@ -1572,14 +1573,15 @@ impl StageActor {
                         Ok((was_updated, was_created)) => {
                             if was_created { inserted += 1; }
                             if was_updated { updated += 1; }
+                            if !was_created && !was_updated { duplicates_ct += 1; }
                             debug!("[PersistExecDetail] validated idx={} url={} created={} updated={} elapsed_ms={}", idx, detail.url, was_created, was_updated, start.elapsed().as_millis());
                         },
                         Err(e) => return Err(format!("Database save failed: {}", e))
                     }
                 }
-                Ok((inserted, updated))
+                Ok((inserted, updated, duplicates_ct))
             }
-            _ => Ok((0,0))
+            _ => Ok((0,0,0))
         }
     }
     

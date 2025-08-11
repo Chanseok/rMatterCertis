@@ -348,6 +348,7 @@ pub fn run() {
             commands::actor_system_commands::request_graceful_shutdown,
             commands::actor_system_commands::test_session_actor_basic,
             commands::actor_system_commands::list_actor_sessions,
+            commands::actor_system_commands::check_page_index_consistency,
             
             // Real Crawling Integration commands (Option B implementation)
             // Note: These commands are temporarily disabled due to module restructuring
