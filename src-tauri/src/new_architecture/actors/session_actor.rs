@@ -149,9 +149,7 @@ impl SessionActor {
         // 상태 업데이트
         self.session_id = Some(session_id.clone());
         self.state = SessionState::Starting;
-        self.start_time = Some(Instant::now());
-        self.processed_batches = 0;
-        self.total_success_count = 0;
+    self.start_time = Some(Instant::now());
         
         // 세션 시작 이벤트 발행
         let start_event = AppEvent::SessionStarted {
@@ -253,8 +251,8 @@ impl SessionActor {
                 db_products: cnt,
                 db_min_page: minp,
                 db_max_page: maxp,
-                site_total_pages: Some(site_status.total_pages as u32),
-                site_known_last_page: Some(site_status.total_pages as u32),
+                site_total_pages: Some(site_status.total_pages),
+                site_known_last_page: Some(site_status.total_pages),
                 reason: Some("post_site_status".into()),
                 timestamp: Utc::now(),
             };

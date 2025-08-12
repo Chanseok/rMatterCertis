@@ -1,5 +1,5 @@
-//! Advanced Crawling Engine 프론트엔드 연동 Commands (실제 구현 버전)
-//! ts-rs로 생성된 TypeScript 타입과 연동되는 Tauri 명령어들
+//! Advanced Crawling Engine 관련 status / 조회 전용 명령어 모듈
+//! NOTE: start_advanced_crawling(실행 엔트리포인트)는 통합 Actor 진입점으로 완전히 이관되어 제거되었습니다.
 
 use tauri::{command, AppHandle, State, Emitter};
 use tracing::{info, warn, error};
@@ -8,7 +8,7 @@ use crate::types::frontend_api::*;
 use crate::application::shared_state::SharedStateCache;
 use crate::application::state::AppState;
 use crate::infrastructure::IntegratedProductRepository;
-use crate::domain::services::crawling_services::StatusChecker;
+use crate::domain::services::crawling_services::StatusChecker; // trait import for check_site_status
 
 /// Advanced Crawling Engine 사이트 상태 확인 (실제 구현)
 #[command]
@@ -146,49 +146,7 @@ pub async fn check_advanced_site_status(
     Ok(ApiResponse::success(site_status_info))
 }
 
-/// Advanced Crawling Engine 실제 크롤링 실행
-/// DEPRECATED: Phase 2 이후 `start_actor_system_crawling` + CrawlingMode::AdvancedEngine 사용 권장.
-#[command]
-pub async fn start_advanced_crawling(
-    request: StartCrawlingRequest,
-    app: AppHandle,
-    _app_state: State<'_, AppState>,
-    _shared_state: State<'_, SharedStateCache>,
-) -> Result<ApiResponse<CrawlingSession>, String> {
-    // Fast-path delegation to unified actor system (Phase 2+)
-    // Always delegate to unified actor system (legacy path retained below if needed in future)
-    {
-        use crate::commands::actor_system_commands::{ActorCrawlingRequest, CrawlingMode};
-        let cfg = &request.config;
-        let actor_req = ActorCrawlingRequest {
-            site_url: None,
-            start_page: Some(cfg.start_page),
-            end_page: Some(cfg.end_page),
-            page_count: None,
-            concurrency: Some(cfg.concurrency),
-            batch_size: Some(cfg.batch_size),
-            delay_ms: Some(cfg.delay_ms),
-            mode: Some(CrawlingMode::AdvancedEngine),
-        };
-        match crate::commands::actor_system_commands::start_actor_system_crawling(app.clone(), actor_req).await {
-            Ok(resp) => {
-                let cfg = request.config.clone();
-                let session = CrawlingSession {
-                    session_id: resp.session_id.unwrap_or_else(|| "delegated_session".into()),
-                    started_at: chrono::Utc::now(),
-                    config: cfg,
-                    status: SessionStatus::Running,
-                    total_products_processed: 0,
-                    success_rate: 0.0,
-                };
-                return Ok(ApiResponse::success(session));
-            }
-            Err(e) => {
-                return Err(format!("Delegated unified actor start failed: {}", e));
-            }
-        }
-    }
-}
+// (start_advanced_crawling 제거됨)
 
 /// 최근 제품 목록 조회 (실제 데이터베이스)
 #[command]

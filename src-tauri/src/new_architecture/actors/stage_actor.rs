@@ -1209,7 +1209,7 @@ impl StageActor {
                         // ⭐ 중요: Product -> ProductUrl로 변환 시 메타데이터 보존
                         // 실제 사이트 정보를 가져와서 PageIdCalculator 초기화
                         // StatusChecker trait에 discover_total_pages가 없으므로 fallback 값 사용
-                        let (total_pages, products_on_last_page) = match (self.site_total_pages_hint, self.products_on_last_page_hint) {
+                        let (total_pages, _products_on_last_page) = match (self.site_total_pages_hint, self.products_on_last_page_hint) {
                             (Some(tp), Some(plp)) => (tp, plp),
                             _ => {
                                 // 최후의 수단으로 알려진 값 사용

@@ -68,6 +68,7 @@
       "get_crawling_progress",
       "get_database_state_for_range_calculation",
       "demo_prompts6_calculation"
+  ,"start_validation"
     ]
   }
 }

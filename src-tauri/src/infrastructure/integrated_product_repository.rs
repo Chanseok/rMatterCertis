@@ -34,6 +34,30 @@ impl IntegratedProductRepository {
         Self { pool: Arc::new(pool) }
     }
 
+    /// Danger zone: completely remove all product related data so we can rebuild
+    /// indexing semantics (Plan B). This is intentionally explicit and NOT called
+    /// automatically; the frontend must invoke the dedicated reset command.
+    /// Returns (products_deleted, product_details_deleted).
+    pub async fn clear_all_products_and_details(&self) -> Result<(u64, u64)> {
+        // Foreign key constraints: ensure ON DELETE CASCADE or delete child first.
+        // We optimistically attempt child table deletion then parent.
+        // NOTE: We don't wrap in a transaction intentionally to allow partial
+        // progress visibility even if second step fails; caller can retry.
+        let mut details_deleted: u64 = 0;
+        let mut products_deleted: u64 = 0;
+        // product_details may not exist in early DB versions; ignore errors gracefully.
+        if let Ok(res) = sqlx::query("DELETE FROM product_details").execute(&*self.pool).await {
+            details_deleted = res.rows_affected();
+        }
+        if let Ok(res) = sqlx::query("DELETE FROM products").execute(&*self.pool).await {
+            products_deleted = res.rows_affected();
+        }
+        // Optionally reclaim space (best-effort)
+        let _ = sqlx::query("VACUUM").execute(&*self.pool).await; // ignore errors
+        info!("🧹 Cleared product data: products_deleted={}, product_details_deleted={}", products_deleted, details_deleted);
+        Ok((products_deleted, details_deleted))
+    }
+
     // ===============================
     // PRODUCT OPERATIONS
     // ===============================

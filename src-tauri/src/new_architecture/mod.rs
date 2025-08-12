@@ -18,6 +18,7 @@ pub mod runtime; // session registry & runtime helpers
 
 // 🔄 Phase 4: 타입 동기화 및 ts-rs 통합 (새로 추가)
 pub mod ts_gen;
+pub mod validation; // MI-2 Validation skeleton
 
 // Re-exports for compatibility - 명시적 export로 ambiguous glob 문제 해결
 pub use context::{AppContext};

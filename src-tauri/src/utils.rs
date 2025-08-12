@@ -15,7 +15,8 @@
 ///   - 앞의 4개 제품: pageId=1, indexInPage=3,2,1,0
 ///   - 뒤의 8개 제품: pageId=0, indexInPage=11,10,9,8,7,6,5,4
 
-const PRODUCTS_PER_PAGE: usize = 12;
+#[allow(dead_code)]
+const PRODUCTS_PER_PAGE: usize = 12; // Used later by validation assignment logic
 
 /// 페이지 ID와 인덱스 계산 결과
 #[derive(Debug, Clone)]
@@ -28,20 +29,35 @@ pub struct PageIdCalculation {
 #[derive(Debug, Clone)]
 pub struct PageIdCalculator {
     last_page_number: u32,
+    #[allow(dead_code)]
     products_in_last_page: usize,
 }
 
 impl PageIdCalculator {
     pub fn new(last_page_number: u32, products_in_last_page: usize) -> Self { Self { last_page_number, products_in_last_page } }
     pub fn calculate(&self, actual_page_number: u32, product_index_in_actual_page: usize) -> PageIdCalculation {
-        // 위임: domain::pagination::PaginationCalculator 와 동일한 역방향 공식 사용.
-        // NOTE: products_in_last_page 는 현재 위임 경로에서 직접 활용되지 않지만 호환성 유지.
-        // 개선: 필요한 경우 last_page_number == actual_page_number 일 때 남은 제품 수 보정 로직 추가.
-        let calc = crate::domain::pagination::PaginationCalculator::default();
-        // PaginationCalculator 는 (physical_page, index_in_physical-from-top, total_pages) 서명을 사용 →
-        // 여기서 total_pages = last_page_number, index_in_physical 는 top 기준 그대로 전달.
-        let pos = calc.calculate(actual_page_number, product_index_in_actual_page as u32, self.last_page_number);
-        PageIdCalculation { page_id: pos.page_id, index_in_page: pos.index_in_page }
+        // New (Plan B) canonical rule:
+        // 1. 전역 oldest-first 시퀀스 기준으로 page_id/index_in_page 결정
+        // 2. 가장 오래된(global oldest) 제품: (page_id=0, index_in_page=0)
+        // 3. 같은 logical page 내에서 오래된→신규 방향으로 index_in_page 증가
+        // 4. physical page (사이트 페이지) 순서는 newest-first 이므로 변환 필요
+        // Parameters:
+        //  - actual_page_number: 1-based physical page (1 = newest, last_page_number = oldest)
+        //  - product_index_in_actual_page: 0-based index within physical page (0 = newest on that page)
+        const P: u32 = PRODUCTS_PER_PAGE as u32;
+        if self.last_page_number == 0 { return PageIdCalculation { page_id: 0, index_in_page: 0 }; }
+        // 총 제품 수
+        let total_products = if self.last_page_number > 0 {
+            (self.last_page_number - 1) * P + (self.products_in_last_page as u32)
+        } else { 0 };
+        if total_products == 0 { return PageIdCalculation { page_id: 0, index_in_page: 0 }; }
+        // newest-first 0-based global index
+        let index_from_newest = (actual_page_number - 1) * P + (product_index_in_actual_page as u32);
+        // oldest-first 0-based global index
+        let index_from_oldest = (total_products - 1).saturating_sub(index_from_newest);
+        let page_id = (index_from_oldest / P) as i32;
+        let index_in_page = (index_from_oldest % P) as i32;
+        PageIdCalculation { page_id, index_in_page }
     }
     pub fn reverse_calculate(&self, page_id: i32, index_in_page: i32) -> Option<(u32, usize)> {
         let calc = crate::domain::pagination::PaginationCalculator::default();

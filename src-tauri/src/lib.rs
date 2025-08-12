@@ -41,6 +41,8 @@ pub mod types {
 
 // 🚀 새로운 아키텍처 모듈 (Phase 1 구현 완료) - Modern Rust 2024
 pub mod new_architecture;
+// Validation (MI-2) module (under new_architecture::validation)
+// validation module available under new_architecture::validation
 
 pub mod domain {
     //! Domain module - Core business logic and entities
@@ -119,6 +121,9 @@ pub mod events;
 // Services module - 실시간 대시보드 등
 pub mod services;
 
+// Integrated commands (DB stats / reset utilities)
+pub mod commands_integrated;
+
 // Modern Rust 2024 - Commands module with direct declarations
     pub mod commands {
     //! Command handlers for Tauri frontend integration
@@ -138,9 +143,10 @@ pub mod services;
     pub mod data_queries;         // Backend-Only CRUD commands (Modern Rust 2024)
     pub mod unified_crawling;     // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
     pub mod real_actor_commands;  // 🎭 진짜 Actor 시스템 명령어
+    pub mod validation_commands;  // ✅ Validation pass commands (page/index integrity)
     
     // Re-export commonly used commands
-    pub use simple_crawling::*;          // Phase 1 명령어 export
+    // simple_crawling re-export removed (deprecated stub only)
     pub use advanced_engine_api::*;      // Advanced Engine 명령어 export
     pub use data_queries::*;             // Backend-Only CRUD 명령어 export
     pub use config_commands::*;          // Config and window management 명령어 export
@@ -301,9 +307,9 @@ pub fn run() {
             
             // Legacy v4 commands removed (init/start/stop/etc.) – replaced by unified_crawling + real_crawling_commands
             
-            // Advanced Crawling Engine commands (Phase 4B)
+            // Advanced Crawling Engine commands (status/info only)
             commands::advanced_engine_api::check_advanced_site_status,
-            // start_advanced_crawling 제거: FE는 start_actor_system_crawling 직접 호출
+            // (start_advanced_crawling 완전 제거)
             commands::advanced_engine_api::get_recent_products,
             commands::advanced_engine_api::get_database_stats,
             
@@ -388,6 +394,8 @@ pub fn run() {
             // Settings store commands
             commands::config_commands::get_app_settings,
             commands::config_commands::save_app_settings
+            ,crate::commands_integrated::reset_product_storage
+            ,commands::validation_commands::start_validation
             
             
             // TODO: Add other commands as they are implemented

@@ -3,7 +3,7 @@
  * Phase 4A의 5단계 파이프라인을 UI에서 제어하고 모니터링
  */
 
-import { Component, createSignal, onMount, onCleanup, Show, For } from 'solid-js';
+import { Component, createSignal, createEffect, onMount, onCleanup, Show, For } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { tauriApi } from '../../services/tauri-api';
@@ -72,6 +72,16 @@ export const CrawlingEngineTab: Component = () => {
   const [crawlingRange, setCrawlingRange] = createSignal<CrawlingRangeResponse | null>(null);
   const [showSiteStatus, setShowSiteStatus] = createSignal(true);
   const [batchSize, setBatchSize] = createSignal(3); // 기본값 3, 실제 설정에서 로드됨
+  // Validation state
+  const [isValidating, setIsValidating] = createSignal(false);
+  const [validationStats, setValidationStats] = createSignal<{pages_scanned:number;products_checked:number;divergences:number;anomalies:number;duration_ms:number;session_id?:string}|null>(null);
+  const [validationDetails, setValidationDetails] = createSignal<any|null>(null); // full summary
+  const [validationEvents, setValidationEvents] = createSignal<any[]>([]);
+  // Validation custom physical page range (oldest -> newer). Oldest (larger number) = start_physical_page, newer (smaller number) = end_physical_page
+  const [valRangeStart, setValRangeStart] = createSignal<string>('');
+  const [valRangeEnd, setValRangeEnd] = createSignal<string>('');
+  // Track if user manually edited (to avoid auto overwrite)
+  let userTouchedValidationRange = false;
   // Shared actor/concurrency events
   const { events: actorEvents } = useActorVisualizationStream(600);
 
@@ -166,13 +176,76 @@ export const CrawlingEngineTab: Component = () => {
       setCurrentSessionId(null);
       addLog(`❌ 크롤링 실패: 세션 ${sessionData.session_id}`);
     });
+
+    // Validation event listeners
+    const vStarted = await listen('actor-validation-started', (e) => {
+      const p = e.payload as any;
+      setIsValidating(true);
+      setValidationStats(null);
+      setValidationEvents(evts => [...evts, p]);
+      addLog(`🧪 Validation 시작: session=${p.session_id} scan_pages=${p.scan_pages}`);
+    });
+    const vPage = await listen('actor-validation-page-scanned', (e) => {
+      const p = e.payload as any;
+      setValidationEvents(evts => [...evts.slice(-199), p]);
+      addLog(`🧪 페이지 스캔: physical=${p.physical_page} products=${p.products_found}`);
+    });
+    const vDiv = await listen('actor-validation-divergence', (e) => {
+      const p = e.payload as any;
+      setValidationEvents(evts => [...evts.slice(-199), p]);
+      addLog(`⚠️ 불일치 발견: ${p.kind} (${p.detail?.substring(0,80)})`);
+    });
+    const vAnom = await listen('actor-validation-anomaly', (e) => {
+      const p = e.payload as any;
+      setValidationEvents(evts => [...evts.slice(-199), p]);
+      addLog(`⚠️ 이상 징후: ${p.code}`);
+    });
+    const vDone = await listen('actor-validation-completed', (e) => {
+      const p = e.payload as any;
+      setIsValidating(false);
+      setValidationStats({
+        pages_scanned: p.pages_scanned,
+        products_checked: p.products_checked,
+        divergences: p.divergences,
+        anomalies: p.anomalies,
+        duration_ms: p.duration_ms,
+        session_id: p.session_id
+      });
+      setValidationDetails(p); // store full enriched payload
+      setValidationEvents(evts => [...evts.slice(-199), p]);
+      addLog(`🧪 Validation 완료: pages=${p.pages_scanned} divergences=${p.divergences} anomalies=${p.anomalies}`);
+    });
     
     // 컴포넌트 언마운트 시 리스너 해제
     onCleanup(() => {
       unlistenProgress();
       unlistenCompleted();
       unlistenFailed();
+  vStarted(); vPage(); vDiv(); vAnom(); vDone();
     });
+  });
+
+  // Detect user edits
+  const onUserEditRangeStart = (v: string) => { setValRangeStart(v); userTouchedValidationRange = true; };
+  const onUserEditRangeEnd = (v: string) => { setValRangeEnd(v); userTouchedValidationRange = true; };
+
+  // Auto-populate default validation range when site status & crawling range become available
+  createEffect(() => {
+    const site = siteStatus();
+    const cr = crawlingRange();
+    if (!site || !cr?.range || userTouchedValidationRange) return;
+    if (valRangeStart() !== '' || valRangeEnd() !== '') return; // already filled (e.g., restored)
+    const totalPages = site.total_pages;
+    const crawlStart = cr.range[0];
+    let endDefault = crawlStart + 1; // just before crawl window
+    if (endDefault > totalPages) endDefault = totalPages;
+    if (endDefault < 1) endDefault = 1;
+    const startDefault = totalPages;
+    if (startDefault >= endDefault) {
+      setValRangeStart(String(startDefault));
+      setValRangeEnd(String(endDefault));
+      addLog(`🧪 기본 Validation 범위 자동 설정: physical ${startDefault} → ${endDefault}`);
+    }
   });
 
   const loadDatabaseStats = async () => {
@@ -412,6 +485,81 @@ export const CrawlingEngineTab: Component = () => {
     }
   };
 
+  // Validation invocation
+  const runValidation = async () => {
+    if (isValidating()) {
+      addLog('⏳ Validation 이미 실행 중');
+      return;
+    }
+    setIsValidating(true);
+    addLog('🧪 Validation 요청 중...');
+    try {
+      let start_physical_page: number|undefined;
+      let end_physical_page: number|undefined;
+      const sRaw = valRangeStart().trim();
+      const eRaw = valRangeEnd().trim();
+      const haveCustom = sRaw !== '' && eRaw !== '';
+      const args: any = {};
+      if (haveCustom) {
+        const s = parseInt(sRaw, 10);
+        const e = parseInt(eRaw, 10);
+        if (!Number.isNaN(s) && !Number.isNaN(e)) {
+          if (s < e) {
+            addLog(`⚠️ 잘못된 범위: 시작(older) ${s} < 종료(newer) ${e}. oldest >= newer 이어야 합니다. 자동 기본 규칙 사용으로 전환.`);
+          } else {
+            start_physical_page = s;
+            end_physical_page = e;
+            args.start_physical_page = start_physical_page;
+            args.end_physical_page = end_physical_page;
+            addLog(`🧪 사용자 지정 범위 사용: physical ${s} → ${e}`);
+          }
+        } else {
+          addLog('⚠️ 페이지 범위 입력이 숫자가 아닙니다. 자동 기본 규칙 사용');
+        }
+      } else {
+        // New default rule: oldest(total_pages) → (crawl_start_page + 1) just before crawling target start
+        const site = siteStatus();
+        const cr = crawlingRange();
+        if (site && cr?.range?.length === 2) {
+          const totalPages = site.total_pages;
+          const crawlStart = cr.range[0]; // older (start) page of crawling target
+            // default end (newer) is one page newer than crawlStart (i.e., just before the crawl window)
+          let endDefault = crawlStart + 1;
+          if (endDefault > totalPages) { endDefault = totalPages; }
+          if (endDefault < 1) { endDefault = 1; }
+          if (totalPages < endDefault) { endDefault = Math.max(totalPages, 1); }
+          start_physical_page = totalPages;
+          end_physical_page = endDefault;
+          if (start_physical_page! < end_physical_page!) { // safety: swap if inversion due to edge cases
+            const tmp = start_physical_page!;
+            start_physical_page = end_physical_page;
+            end_physical_page = tmp;
+          }
+          args.start_physical_page = start_physical_page;
+          args.end_physical_page = end_physical_page;
+          addLog(`🧪 기본 범위(자동): physical ${start_physical_page} → ${end_physical_page} (oldest→crawl-start 이전)`);
+        } else if (site) {
+          // Fallback: just scan from oldest to 1
+          start_physical_page = site.total_pages;
+          end_physical_page = 1;
+          args.start_physical_page = start_physical_page;
+          args.end_physical_page = end_physical_page;
+          addLog(`🧪 기본 범위(폴백): physical ${start_physical_page} → 1 (전체)`);
+        } else {
+          addLog('⚠️ 사이트/크롤링 범위 정보 없음: 기본 계산 불가 (Validation 취소)');
+          setIsValidating(false);
+          return;
+        }
+      }
+      const summary = await invoke<any>('start_validation', args);
+      if (summary) { setValidationDetails(summary); }
+    } catch (err) {
+      setIsValidating(false);
+      addLog(`❌ Validation 실패: ${err}`);
+      console.error('Validation error', err);
+    }
+  };
+
   const stageNames = [
     'Stage 0: 사이트 상태 확인',
     'Stage 1: 데이터베이스 분석', 
@@ -602,6 +750,109 @@ export const CrawlingEngineTab: Component = () => {
                     </Show>
                   </div>
                 </Show>
+              </Show>
+            </div>
+
+            {/* Validation Panel */}
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-gray-900">🧪 페이지/인덱스 Validation</h2>
+                <button
+                  onClick={runValidation}
+                  class={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${isValidating() ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'}`}
+                  disabled={isValidating()}
+                  title="사이트 실제 페이지를 oldest→newer 순서로 스캔하여 DB page_id/index_in_page 정합성 검증"
+                >
+                  {isValidating() ? '⏳ 실행 중...' : '🧪 Validation 실행'}
+                </button>
+              </div>
+              <div class="mb-3 grid grid-cols-5 gap-2 items-end">
+                <div class="col-span-2">
+                  <label class="block text-[11px] text-gray-600 mb-1">Start (oldest phys page)</label>
+                  <input
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="예: 120"
+                    value={valRangeStart()}
+                    onInput={e => onUserEditRangeStart(e.currentTarget.value)}
+                    class="w-full px-2 py-1 rounded border text-xs focus:ring-emerald-500 focus:border-emerald-500"
+                  />
+                </div>
+                <div class="col-span-2">
+                  <label class="block text-[11px] text-gray-600 mb-1">End (newer phys page)</label>
+                  <input
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="예: 111"
+                    value={valRangeEnd()}
+                    onInput={e => onUserEditRangeEnd(e.currentTarget.value)}
+                    class="w-full px-2 py-1 rounded border text-xs focus:ring-emerald-500 focus:border-emerald-500"
+                  />
+                </div>
+                <div class="col-span-1 flex flex-col gap-1 text-[10px] text-gray-500 leading-tight">
+                  <span class="mt-[18px]">빈칸=자동</span>
+                  <span class="">(빈칸= oldest_page → (크롤링 시작 직전 페이지))</span>
+                  <button
+                    class="text-amber-600 underline"
+                    onClick={() => { setValRangeStart(''); setValRangeEnd(''); }}
+                  >초기화</button>
+                </div>
+              </div>
+              <Show when={validationStats()} fallback={
+                <p class="text-sm text-gray-600">
+                  {isValidating() ? '실시간 이벤트 수신 중...' : '아직 실행된 Validation 없음'}
+                </p>
+              }>
+                <div class="grid grid-cols-2 gap-4 text-sm">
+                  <div class="flex justify-between"><span class="text-gray-600">스캔 페이지:</span><span class="font-medium">{validationStats()?.pages_scanned}</span></div>
+                  <div class="flex justify-between"><span class="text-gray-600">검증 제품:</span><span class="font-medium">{validationStats()?.products_checked}</span></div>
+                  <div class="flex justify-between"><span class="text-gray-600">불일치:</span><span class="font-medium text-red-600">{validationStats()?.divergences}</span></div>
+                  <div class="flex justify-between"><span class="text-gray-600">이상 징후:</span><span class="font-medium text-amber-600">{validationStats()?.anomalies}</span></div>
+                  <div class="flex justify-between col-span-2"><span class="text-gray-600">소요 시간:</span><span class="font-medium">{(validationStats()!.duration_ms/1000).toFixed(2)}s</span></div>
+                  <Show when={validationDetails()}>
+                    <div class="flex justify-between col-span-2"><span class="text-gray-600">gap ranges:</span><span class="font-medium">{validationDetails()?.gap_ranges?.length || 0}</span></div>
+                    <div class="flex justify-between col-span-2"><span class="text-gray-600">cross-page dup URLs:</span><span class="font-medium">{validationDetails()?.cross_page_duplicate_urls || 0}</span></div>
+                  </Show>
+                </div>
+                <p class="mt-2 text-xs text-gray-500 font-mono break-all">session: {validationStats()?.session_id}</p>
+                <Show when={validationDetails()}>
+                  <div class="mt-3 border-t pt-3 space-y-3">
+                    <div>
+                      <h3 class="text-sm font-semibold text-gray-800 mb-1">📌 불일치 샘플 (최대 8)</h3>
+                      <div class="space-y-1 text-[11px] font-mono bg-gray-50 p-2 rounded border border-gray-200 max-h-40 overflow-auto">
+                        <For each={(validationDetails()?.divergence_samples || []).slice(0,8)}>{(d:any) =>
+                          <div class="truncate">
+                            p{d.physical_page} {d.kind} url={d.url.split('/').filter(Boolean).slice(-2,-1)} db=({d.db_page_id ?? '-'}, {d.db_index_in_page ?? '-'}) exp=({d.expected_page_id},{d.expected_index_in_page})
+                          </div>
+                        }</For>
+                        <Show when={(validationDetails()?.divergence_samples || []).length > 8}>
+                          <div class="text-gray-500">… {(validationDetails()?.divergence_samples.length || 0)-8} more</div>
+                        </Show>
+                      </div>
+                    </div>
+                    <div>
+                      <h3 class="text-sm font-semibold text-gray-800 mb-1">🗂 페이지별 요약</h3>
+                      <div class="space-y-1 text-[11px] font-mono bg-gray-50 p-2 rounded border border-gray-200 max-h-60 overflow-auto">
+                        <For each={validationDetails()?.per_page || []}>{(r:any) =>
+                          <div class="truncate">
+                            p{r.physical_page}: prod={r.products_found} div={r.divergences} (miss={r.mismatch_missing} coord={r.mismatch_coord}) anom={r.anomalies}{r.mismatch_shift_pattern !== null ? ` shift=${r.mismatch_shift_pattern}`:''}
+                          </div>
+                        }</For>
+                        <Show when={(validationDetails()?.gap_ranges || []).length > 0}>
+                          <div class="mt-2 pt-2 border-t border-gray-200 text-[11px]">
+                            <span class="font-semibold">Gaps:</span>
+                            <For each={validationDetails()?.gap_ranges || []}>{(g:any) => <div>offset {g.start_offset}..{g.end_offset} (size={g.size})</div>}</For>
+                          </div>
+                        </Show>
+                      </div>
+                    </div>
+                  </div>
+                </Show>
+              </Show>
+              <Show when={validationEvents().length > 0}>
+                <div class="mt-4 max-h-40 overflow-auto bg-gray-50 border border-gray-200 rounded p-2 text-xs font-mono space-y-0.5">
+                  <For each={validationEvents().slice(-50)}>{(e:any) => <div class="truncate">{e.event_name}:{e.physical_page ?? ''}:{e.kind ?? e.code ?? ''}</div>}</For>
+                </div>
               </Show>
             </div>
 

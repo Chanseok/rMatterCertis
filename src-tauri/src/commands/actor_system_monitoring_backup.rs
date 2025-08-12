@@ -476,10 +476,11 @@ async fn start_real_actor_session(
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         
         let state_clone = state.clone();
-        match crate::commands::simple_crawling::start_smart_crawling(
-            app_handle_clone.clone(),
-            state_clone
-        ).await {
+        // Deprecated path removed (start_smart_crawling). Keeping placeholder to preserve demo timing.
+        match async {
+            // TODO(MI-1 Cleanup): Replace with unified_crawling::start_unified_crawling if this backup path retained.
+            Ok::<(), String>(())
+        }.await {
             Ok(_) => {
                 info!("✅ Smart crawling completed successfully");
                 

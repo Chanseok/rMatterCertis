@@ -162,6 +162,11 @@ impl ActorEventBridge {
             AppEvent::PreflightDiagnostics { .. } => "actor-preflight-diagnostics",
             AppEvent::PersistenceAnomaly { .. } => "actor-persistence-anomaly",
             AppEvent::DatabaseStats { .. } => "actor-database-stats",
+            AppEvent::ValidationStarted { .. } => "actor-validation-started",
+            AppEvent::ValidationPageScanned { .. } => "actor-validation-page-scanned",
+            AppEvent::ValidationDivergenceFound { .. } => "actor-validation-divergence",
+            AppEvent::ValidationAnomaly { .. } => "actor-validation-anomaly",
+            AppEvent::ValidationCompleted { .. } => "actor-validation-completed",
         };
 
         let raw = serde_json::to_value(&event)

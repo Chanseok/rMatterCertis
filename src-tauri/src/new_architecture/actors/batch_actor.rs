@@ -591,7 +591,7 @@ impl BatchActor {
                             all_source_urls.extend(pd.source_urls.into_iter());
                             all_products.extend(pd.products.into_iter());
                         }
-                        SItem::Product(p) => {
+                        SItem::Product(_p) => {
                             // 단일 ProductInfo 로 표현된 경우 ProductDetail 변환 불가 → 무시 또는 향후 변환 로직 추가
                             debug!("Skipping non-detailed product item in aggregation");
                         }

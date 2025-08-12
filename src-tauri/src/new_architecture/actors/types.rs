@@ -426,6 +426,45 @@ pub enum AppEvent {
         metrics: Option<SimpleMetrics>,
         timestamp: DateTime<Utc>,
     },
+
+    // === Validation (page_id/index_in_page integrity) events (additive v1) ===
+    ValidationStarted {
+        session_id: String,
+        scan_pages: u32,
+        total_pages_site: Option<u32>,
+        timestamp: DateTime<Utc>,
+    },
+    ValidationPageScanned {
+        session_id: String,
+        physical_page: u32,
+        products_found: u32,
+        assigned_start_offset: u64,
+        assigned_end_offset: u64,
+        timestamp: DateTime<Utc>,
+    },
+    ValidationDivergenceFound {
+        session_id: String,
+        physical_page: u32,
+        kind: String,          // first_missing | coord_mismatch | duplicate | gap
+        detail: String,        // human readable
+        expected_offset: u64,
+        timestamp: DateTime<Utc>,
+    },
+    ValidationAnomaly {
+        session_id: String,
+        code: String,          // duplicate_index | sparse_page | out_of_range
+        detail: String,
+        timestamp: DateTime<Utc>,
+    },
+    ValidationCompleted {
+        session_id: String,
+        pages_scanned: u32,
+        products_checked: u64,
+        divergences: u32,
+        anomalies: u32,
+        duration_ms: u64,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 // Lightweight TS-friendly metrics container (additive, extensible)

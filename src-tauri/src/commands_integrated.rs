@@ -7,6 +7,7 @@ use crate::infrastructure::{
 use crate::application::integrated_use_cases::IntegratedProductUseCases;
 use crate::domain::product::ProductSearchCriteria;
 use crate::domain::integrated_product::DatabaseStatistics;
+use tracing::info;
 
 /// Get comprehensive database statistics from the integrated schema
 #[tauri::command(async)]
@@ -41,7 +42,7 @@ pub async fn search_integrated_products_simple(
     let criteria = ProductSearchCriteria {
         manufacturer,
         device_type: None,
-        certification_id: None,
+    certificate_id: None,
         specification_version: None,
         program_type: None,
         page: Some(1),
@@ -100,5 +101,17 @@ pub async fn validate_integrated_database_integrity(
             println!("❌ Failed to validate database integrity: {e}");
             Err(format!("Failed to validate database integrity: {e}"))
         }
+    }
+}
+
+/// Hard reset: delete all products & details so we can rebuild with new indexing semantics (Plan B)
+#[tauri::command(async)]
+pub async fn reset_product_storage(
+    db: State<'_, DatabaseConnection>
+) -> Result<(u64, u64), String> {
+    let repo = IntegratedProductRepository::new(db.pool().clone());
+    match repo.clear_all_products_and_details().await {
+        Ok((p, d)) => { info!("✅ Product storage reset: products={}, details={}", p, d); Ok((p, d)) },
+        Err(e) => Err(format!("Failed to reset product storage: {e}"))
     }
 }
