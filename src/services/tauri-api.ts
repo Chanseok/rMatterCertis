@@ -726,6 +726,7 @@ export class TauriApiService {
    */
   async updateCrawlingSettings(settings: {
     page_range_limit: number;
+  validation_page_limit?: number | null;
     product_list_retry_count: number;
     product_detail_retry_count: number;
     auto_add_to_local_db: boolean;
@@ -733,6 +734,7 @@ export class TauriApiService {
     try {
       await invoke<void>('update_crawling_settings', {
         pageRangeLimit: settings.page_range_limit,
+    validationPageLimit: settings.validation_page_limit ?? null,
         productListRetryCount: settings.product_list_retry_count,
         productDetailRetryCount: settings.product_detail_retry_count,
         autoAddToLocalDb: settings.auto_add_to_local_db

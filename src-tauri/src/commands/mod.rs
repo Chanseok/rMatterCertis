@@ -6,6 +6,8 @@ pub mod config_commands;               // Configuration & window state commands
 // simple_crawling 모듈 제거: start_smart_crawling → unified_crawling 경로로 통합 (MI-1 Cleanup)
 pub mod data_queries;                  // Read/query endpoints
 pub mod unified_crawling;              // Single crawling entrypoint (actor-based)
+pub mod validation_commands;           // Validation command
+pub mod sync_commands;                 // Partial sync command
 
 // 모든 명령어를 한곳에서 export
 pub use advanced_engine_api::{
@@ -34,3 +36,6 @@ pub use data_queries::{
 pub use unified_crawling::{
     start_unified_crawling,
 };
+
+pub use validation_commands::start_validation;
+pub use sync_commands::start_partial_sync;

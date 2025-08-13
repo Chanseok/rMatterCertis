@@ -167,6 +167,13 @@ impl ActorEventBridge {
             AppEvent::ValidationDivergenceFound { .. } => "actor-validation-divergence",
             AppEvent::ValidationAnomaly { .. } => "actor-validation-anomaly",
             AppEvent::ValidationCompleted { .. } => "actor-validation-completed",
+            // Sync events
+            AppEvent::SyncStarted { .. } => "actor-sync-started",
+            AppEvent::SyncPageStarted { .. } => "actor-sync-page-started",
+            AppEvent::SyncUpsertProgress { .. } => "actor-sync-upsert-progress",
+            AppEvent::SyncPageCompleted { .. } => "actor-sync-page-completed",
+            AppEvent::SyncWarning { .. } => "actor-sync-warning",
+            AppEvent::SyncCompleted { .. } => "actor-sync-completed",
         };
 
         let raw = serde_json::to_value(&event)

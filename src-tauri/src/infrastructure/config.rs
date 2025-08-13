@@ -61,6 +61,9 @@ pub struct UserConfig {
 pub struct CrawlingConfig {
     /// Maximum pages to process (페이지 범위 제한)
     pub page_range_limit: u32,
+    /// Maximum pages to scan for validation/sync (separate from crawling range limit)
+    #[serde(default)]
+    pub validation_page_limit: Option<u32>,
     
     /// Intelligent mode configuration
     pub intelligent_mode: IntelligentModeConfig,
@@ -397,6 +400,7 @@ impl Default for CrawlingConfig {
     fn default() -> Self {
         Self {
             page_range_limit: defaults::PAGE_RANGE_LIMIT,
+            validation_page_limit: None,
             intelligent_mode: IntelligentModeConfig::default(),
             product_list_retry_count: defaults::PRODUCT_LIST_RETRY_COUNT,
             product_detail_retry_count: defaults::PRODUCT_DETAIL_RETRY_COUNT,
@@ -624,7 +628,21 @@ impl ConfigManager {
         match serde_json::from_str::<AppConfig>(&content) {
             Ok(config) => {
                 debug!("Loaded configuration from: {:?}", self.config_path);
-                Ok(config)
+                // Ensure new optional fields are present with sensible defaults
+                let mut cfg = config;
+                let mut mutated = false;
+                if cfg.user.crawling.validation_page_limit.is_none() {
+                    cfg.user.crawling.validation_page_limit = Some(50);
+                    mutated = true;
+                    info!("Backfilling missing validation_page_limit to default 50");
+                }
+                if mutated {
+                    // Save updated config back to disk
+                    if let Err(e) = self.save_config(&cfg).await {
+                        warn!("Failed to persist config backfill: {}", e);
+                    }
+                }
+                Ok(cfg)
             }
             Err(parse_error) => {
                 // If parsing fails, try to migrate from old format
@@ -674,6 +692,13 @@ impl ConfigManager {
                     .context("Failed to serialize default crawling config")?;
                 user_obj.insert("crawling".to_string(), crawling_config);
                 info!("Added missing 'crawling' configuration section");
+            }
+            // Ensure validation_page_limit exists under crawling (default to 50 if missing)
+            if let Some(crawling) = user_obj.get_mut("crawling").and_then(|v| v.as_object_mut()) {
+                if !crawling.contains_key("validation_page_limit") {
+                    crawling.insert("validation_page_limit".into(), serde_json::Value::from(50u32));
+                    info!("Added missing 'validation_page_limit' with default 50");
+                }
             }
             
             // Ensure batch config exists (should already be there from previous migration)

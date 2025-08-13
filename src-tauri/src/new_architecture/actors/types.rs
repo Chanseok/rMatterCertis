@@ -465,6 +465,54 @@ pub enum AppEvent {
         duration_ms: u64,
         timestamp: DateTime<Utc>,
     },
+
+    // === Sync (partial recrawl + DB upsert) events (additive v1) ===
+    SyncStarted {
+        session_id: String,
+        ranges: Vec<(u32, u32)>, // (start_oldest, end_newest) inclusive per range
+        #[serde(skip_serializing_if = "Option::is_none")] rate_limit: Option<u32>,
+        timestamp: DateTime<Utc>,
+    },
+    SyncPageStarted {
+        session_id: String,
+        physical_page: u32,
+        timestamp: DateTime<Utc>,
+    },
+    SyncUpsertProgress {
+        session_id: String,
+        physical_page: u32,
+        inserted: u32,
+        updated: u32,
+        skipped: u32,
+        failed: u32,
+        timestamp: DateTime<Utc>,
+    },
+    SyncPageCompleted {
+        session_id: String,
+        physical_page: u32,
+        inserted: u32,
+        updated: u32,
+        skipped: u32,
+        failed: u32,
+        ms: u64,
+        timestamp: DateTime<Utc>,
+    },
+    SyncWarning {
+        session_id: String,
+        code: String,
+        detail: String,
+        timestamp: DateTime<Utc>,
+    },
+    SyncCompleted {
+        session_id: String,
+        pages_processed: u32,
+        inserted: u32,
+        updated: u32,
+        skipped: u32,
+        failed: u32,
+        duration_ms: u64,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 // Lightweight TS-friendly metrics container (additive, extensible)

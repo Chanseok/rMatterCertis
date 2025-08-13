@@ -384,19 +384,22 @@ pub async fn update_batch_settings(
 #[tauri::command]
 pub async fn update_crawling_settings(
     page_range_limit: u32,
+    #[allow(unused_variables)]
+    validation_page_limit: Option<u32>,
     product_list_retry_count: u32,
     product_detail_retry_count: u32,
     auto_add_to_local_db: bool,
     state: State<'_, AppState>
 ) -> Result<(), String> {
-    info!("Frontend updating crawling settings: page_limit={}, list_retry={}, detail_retry={}, auto_add={}", 
-          page_range_limit, product_list_retry_count, product_detail_retry_count, auto_add_to_local_db);
+    info!("Frontend updating crawling settings: page_limit={}, validation_page_limit={:?}, list_retry={}, detail_retry={}, auto_add={}", 
+          page_range_limit, validation_page_limit, product_list_retry_count, product_detail_retry_count, auto_add_to_local_db);
     
     let config_manager = ConfigManager::new()
         .map_err(|e| format!("Failed to create config manager: {}", e))?;
     
     config_manager.update_user_config(|user_config| {
         user_config.crawling.page_range_limit = page_range_limit;
+        user_config.crawling.validation_page_limit = validation_page_limit;
         user_config.crawling.product_list_retry_count = product_list_retry_count;
         user_config.crawling.product_detail_retry_count = product_detail_retry_count;
         user_config.crawling.auto_add_to_local_db = auto_add_to_local_db;

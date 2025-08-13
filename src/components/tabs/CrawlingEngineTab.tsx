@@ -77,13 +77,26 @@ export const CrawlingEngineTab: Component = () => {
   const [validationStats, setValidationStats] = createSignal<{pages_scanned:number;products_checked:number;divergences:number;anomalies:number;duration_ms:number;session_id?:string}|null>(null);
   const [validationDetails, setValidationDetails] = createSignal<any|null>(null); // full summary
   const [validationEvents, setValidationEvents] = createSignal<any[]>([]);
-  // Validation custom physical page range (oldest -> newer). Oldest (larger number) = start_physical_page, newer (smaller number) = end_physical_page
-  const [valRangeStart, setValRangeStart] = createSignal<string>('');
-  const [valRangeEnd, setValRangeEnd] = createSignal<string>('');
+  // Validation custom range as a single expression: e.g., "498-489" or "498~489" (oldest -> newer)
+  const [valRangeExpr, setValRangeExpr] = createSignal<string>('');
   // Track if user manually edited (to avoid auto overwrite)
   let userTouchedValidationRange = false;
+  // Remember the last resolved validation window and expression so Sync button can reuse it
+  const [lastValidationRange, setLastValidationRange] = createSignal<{start:number; end:number} | null>(null);
+  const [lastValidationExpr, setLastValidationExpr] = createSignal<string>('');
+
+  // Sync state
+  const [isSyncing, setIsSyncing] = createSignal(false);
+  const [syncEvents, setSyncEvents] = createSignal<any[]>([]);
+  const [syncStats, setSyncStats] = createSignal<{pages_processed:number;inserted:number;updated:number;skipped:number;failed:number;duration_ms?:number;session_id?:string}|null>(null);
+  // UI notices (e.g., range corrections)
+  const [rangeNotice, setRangeNotice] = createSignal<string | null>(null);
+  // Config: optional cap for validation/sync span
+  const [validationPageLimit, setValidationPageLimit] = createSignal<number | null>(null);
   // Shared actor/concurrency events
   const { events: actorEvents } = useActorVisualizationStream(600);
+  // Multi-range validation control
+  const [isMultiRangeRun, setIsMultiRangeRun] = createSignal(false);
 
   // Log helper
   const addLog = (message: string) => {
@@ -97,6 +110,17 @@ export const CrawlingEngineTab: Component = () => {
       const backendConfig = await tauriApi.getComprehensiveCrawlerConfig();
       setBatchSize(backendConfig.batch_size);
       addLog(`📋 설정 로드 완료: batch_size=${backendConfig.batch_size}`);
+      // Load full app settings to discover optional validation_page_limit
+      try {
+        const appCfg: any = await invoke('get_app_settings');
+        const limit = appCfg?.user?.crawling?.validation_page_limit;
+        if (typeof limit === 'number' && limit > 0) {
+          setValidationPageLimit(limit);
+          addLog(`📋 validation_page_limit 감지됨: ${limit} 페이지`);
+        }
+      } catch (e) {
+        console.warn('get_app_settings failed (non-fatal):', e);
+      }
     } catch (error) {
       addLog(`❌ 설정 로드 실패: ${error}`);
     }
@@ -178,7 +202,7 @@ export const CrawlingEngineTab: Component = () => {
     });
 
     // Validation event listeners
-    const vStarted = await listen('actor-validation-started', (e) => {
+  const vStarted = await listen('actor-validation-started', (e) => {
       const p = e.payload as any;
       setIsValidating(true);
       setValidationStats(null);
@@ -203,17 +227,71 @@ export const CrawlingEngineTab: Component = () => {
     const vDone = await listen('actor-validation-completed', (e) => {
       const p = e.payload as any;
       setIsValidating(false);
-      setValidationStats({
-        pages_scanned: p.pages_scanned,
-        products_checked: p.products_checked,
-        divergences: p.divergences,
-        anomalies: p.anomalies,
-        duration_ms: p.duration_ms,
-        session_id: p.session_id
-      });
+      // If multi-range run is active, don't override aggregated stats here
+      if (!isMultiRangeRun()) {
+        setValidationStats({
+          pages_scanned: p.pages_scanned,
+          products_checked: p.products_checked,
+          divergences: p.divergences,
+          anomalies: p.anomalies,
+          duration_ms: p.duration_ms,
+          session_id: p.session_id
+        });
+      }
       setValidationDetails(p); // store full enriched payload
       setValidationEvents(evts => [...evts.slice(-199), p]);
       addLog(`🧪 Validation 완료: pages=${p.pages_scanned} divergences=${p.divergences} anomalies=${p.anomalies}`);
+    });
+
+    // Sync event listeners
+    const sStarted = await listen('actor-sync-started', (e) => {
+      const p = e.payload as any;
+      setIsSyncing(true);
+      setSyncStats({ pages_processed: 0, inserted: 0, updated: 0, skipped: 0, failed: 0, session_id: p.session_id });
+      setSyncEvents(evts => [...evts.slice(-199), p]);
+      addLog(`🔄 Sync 시작: session=${p.session_id} ranges=${JSON.stringify(p.ranges)}`);
+    });
+    const sPage = await listen('actor-sync-page-started', (e) => {
+      const p = e.payload as any;
+      setSyncEvents(evts => [...evts.slice(-199), p]);
+      addLog(`🔄 Sync 페이지 시작: physical=${p.physical_page}`);
+    });
+    const sProg = await listen('actor-sync-upsert-progress', (e) => {
+      const p = e.payload as any;
+      setSyncEvents(evts => [...evts.slice(-199), p]);
+    });
+    const sPageDone = await listen('actor-sync-page-completed', (e) => {
+      const p = e.payload as any;
+      setSyncEvents(evts => [...evts.slice(-199), p]);
+      // Update aggregate stats incrementally
+      setSyncStats(prev => prev ? {
+        ...prev,
+        pages_processed: (prev.pages_processed || 0) + 1,
+        inserted: (prev.inserted || 0) + (p.inserted || 0),
+        updated: (prev.updated || 0) + (p.updated || 0),
+        skipped: (prev.skipped || 0) + (p.skipped || 0),
+        failed: (prev.failed || 0) + (p.failed || 0),
+      } : prev);
+    });
+    const sWarn = await listen('actor-sync-warning', (e) => {
+      const p = e.payload as any;
+      setSyncEvents(evts => [...evts.slice(-199), p]);
+      addLog(`⚠️ Sync 경고: ${p.code} ${p.detail}`);
+    });
+    const sDone = await listen('actor-sync-completed', (e) => {
+      const p = e.payload as any;
+      setIsSyncing(false);
+      setSyncStats({
+        pages_processed: p.pages_processed,
+        inserted: p.inserted,
+        updated: p.updated,
+        skipped: p.skipped,
+        failed: p.failed,
+        duration_ms: p.duration_ms,
+        session_id: p.session_id,
+      });
+      setSyncEvents(evts => [...evts.slice(-199), p]);
+      addLog(`🔄 Sync 완료: pages=${p.pages_processed} ins=${p.inserted} upd=${p.updated} skip=${p.skipped} fail=${p.failed}`);
     });
     
     // 컴포넌트 언마운트 시 리스너 해제
@@ -221,20 +299,114 @@ export const CrawlingEngineTab: Component = () => {
       unlistenProgress();
       unlistenCompleted();
       unlistenFailed();
-  vStarted(); vPage(); vDiv(); vAnom(); vDone();
+      vStarted(); vPage(); vDiv(); vAnom(); vDone();
+      sStarted(); sPage(); sProg(); sPageDone(); sWarn(); sDone();
     });
   });
 
   // Detect user edits
-  const onUserEditRangeStart = (v: string) => { setValRangeStart(v); userTouchedValidationRange = true; };
-  const onUserEditRangeEnd = (v: string) => { setValRangeEnd(v); userTouchedValidationRange = true; };
+  const onUserEditRangeExpr = (v: string) => { setValRangeExpr(v); userTouchedValidationRange = true; };
+
+  // Small parser for single range expression like "498-489" or "498~489"
+  const parseRangeExpr = (expr: string): {start:number; end:number} | null => {
+    const s = (expr || '').trim();
+    if (!s) return null;
+    // Normalize whitespace and unicode separators: en/em dashes, minus, fullwidth, wave variants
+    const norm0 = s.replace(/\s+/g, '');
+    const norm = norm0
+      .replace(/[–—−﹣－]/g, '-')   // dash variants -> '-'
+      .replace(/[~〜～]/g, '~');   // tilde variants -> '~'
+    const sep = norm.includes('~') ? '~' : '-';
+    const parts = norm.split(sep);
+    if (parts.length !== 2) return null;
+    const a = parseInt(parts[0], 10);
+    const b = parseInt(parts[1], 10);
+    if (Number.isNaN(a) || Number.isNaN(b)) return null;
+    // Oldest (larger) should be first
+    const start = Math.max(a, b);
+    const end = Math.min(a, b);
+    return { start, end };
+  };
+
+  // Parse multi-range expression like: "498-492,489,487-485"
+  const parseMultiRangeExpr = (expr: string): Array<{start:number; end:number}> => {
+    const raw = (expr || '').trim();
+    if (!raw) return [];
+    const tokens = raw.split(',').map(t => t.trim()).filter(Boolean);
+    const out: Array<{start:number; end:number}> = [];
+    for (const t of tokens) {
+      const tt = t
+        .replace(/\s+/g, '')
+        .replace(/[–—−﹣－]/g, '-')
+        .replace(/[~〜～]/g, '~');
+      const single = parseRangeExpr(tt) || (/^\d+$/.test(tt) ? { start: parseInt(tt, 10), end: parseInt(tt, 10) } : null);
+      if (single) out.push(single);
+    }
+    return out;
+  };
+
+  // Clamp ranges to site bounds (1..total_pages) and serialize back to expr
+  const clampRangesToSite = (expr: string, siteTotalPages?: number): {
+    expr: string;
+    changed: boolean;
+    details: Array<{ start: number; end: number; before: { start: number; end: number } }>
+  } => {
+    const total = typeof siteTotalPages === 'number' && siteTotalPages > 0
+      ? siteTotalPages
+      : siteStatus()?.total_pages;
+    const ranges = parseMultiRangeExpr(expr);
+  if (!ranges.length) return { expr, changed: false, details: [] };
+    let changed = false;
+    const clamped = ranges.map(r => {
+      const before = { ...r };
+      let s = r.start;
+      let e = r.end;
+      if (typeof total === 'number') {
+        if (s > total) { s = total; changed = true; }
+        if (e > total) { e = total; changed = true; }
+      }
+      if (s < 1) { s = 1; changed = true; }
+      if (e < 1) { e = 1; changed = true; }
+      // Ensure start >= end after clamping
+      if (s < e) { const t = s; s = e; e = t; changed = true; }
+      // Normalize to inclusive range string
+      return { start: s, end: e, before } as { start:number; end:number; before:{start:number;end:number} };
+    });
+    const exprClamped = clamped.map(r => r.start === r.end ? `${r.start}` : `${r.start}-${r.end}`).join(',');
+  return { expr: exprClamped, changed, details: clamped };
+  };
+
+  // Clamp ranges to configured validationPageLimit (max span per contiguous range)
+  const clampRangesToLimit = (expr: string, limit?: number | null): {
+    expr: string;
+    changed: boolean;
+    details: Array<{ start: number; end: number; before: { start: number; end: number } }>
+  } => {
+    const ranges = parseMultiRangeExpr(expr);
+    if (!ranges.length || !limit || limit <= 0) return { expr, changed: false, details: [] };
+    let changed = false;
+    const adjusted = ranges.map(r => {
+      const before = { ...r };
+      const span = Math.max(1, r.start - r.end + 1);
+      if (span > limit) {
+        // new_end moves towards start to reduce span, but never goes beyond current end (stay within user's newer bound)
+        const computedEnd = r.start - limit + 1;
+        const newEnd = Math.max(r.end, computedEnd);
+        changed = true;
+        return { start: r.start, end: newEnd, before };
+      }
+      return { start: r.start, end: r.end, before };
+    });
+    const exprAdjusted = adjusted.map(r => r.start === r.end ? `${r.start}` : `${r.start}-${r.end}`).join(',');
+    return { expr: exprAdjusted, changed, details: adjusted };
+  };
 
   // Auto-populate default validation range when site status & crawling range become available
   createEffect(() => {
     const site = siteStatus();
     const cr = crawlingRange();
     if (!site || !cr?.range || userTouchedValidationRange) return;
-    if (valRangeStart() !== '' || valRangeEnd() !== '') return; // already filled (e.g., restored)
+    if (valRangeExpr() !== '') return; // already filled (e.g., restored)
     const totalPages = site.total_pages;
     const crawlStart = cr.range[0];
     let endDefault = crawlStart + 1; // just before crawl window
@@ -242,8 +414,7 @@ export const CrawlingEngineTab: Component = () => {
     if (endDefault < 1) endDefault = 1;
     const startDefault = totalPages;
     if (startDefault >= endDefault) {
-      setValRangeStart(String(startDefault));
-      setValRangeEnd(String(endDefault));
+      setValRangeExpr(`${startDefault}-${endDefault}`);
       addLog(`🧪 기본 Validation 범위 자동 설정: physical ${startDefault} → ${endDefault}`);
     }
   });
@@ -494,69 +665,147 @@ export const CrawlingEngineTab: Component = () => {
     setIsValidating(true);
     addLog('🧪 Validation 요청 중...');
     try {
-      let start_physical_page: number|undefined;
-      let end_physical_page: number|undefined;
-      const sRaw = valRangeStart().trim();
-      const eRaw = valRangeEnd().trim();
-      const haveCustom = sRaw !== '' && eRaw !== '';
-      const args: any = {};
-      if (haveCustom) {
-        const s = parseInt(sRaw, 10);
-        const e = parseInt(eRaw, 10);
-        if (!Number.isNaN(s) && !Number.isNaN(e)) {
-          if (s < e) {
-            addLog(`⚠️ 잘못된 범위: 시작(older) ${s} < 종료(newer) ${e}. oldest >= newer 이어야 합니다. 자동 기본 규칙 사용으로 전환.`);
-          } else {
-            start_physical_page = s;
-            end_physical_page = e;
-            args.start_physical_page = start_physical_page;
-            args.end_physical_page = end_physical_page;
-            addLog(`🧪 사용자 지정 범위 사용: physical ${s} → ${e}`);
+      const expr = valRangeExpr();
+      const ranges = parseMultiRangeExpr(expr);
+      let aggregated = { pages_scanned: 0, products_checked: 0, divergences: 0, anomalies: 0, duration_ms: 0 };
+      if (ranges.length >= 1) {
+        // Multi-range (or single parsed as list size 1)
+        setLastValidationExpr(expr);
+        setIsMultiRangeRun(ranges.length > 1);
+        for (let i = 0; i < ranges.length; i++) {
+          let r = ranges[i];
+          let span = Math.max(1, r.start - r.end + 1);
+          // Apply optional FE-side cap to match backend behavior and inform user
+          const vLimit = validationPageLimit();
+          if (vLimit && vLimit > 0 && span > vLimit) {
+            const computedEnd = r.start - vLimit + 1;
+            const newEnd = Math.max(r.end, computedEnd);
+            addLog(`ℹ️ 설정된 최대 범위(${vLimit}p)를 초과하여 Validation 범위를 보정합니다: ${r.start}-${r.end} → ${r.start}-${newEnd}`);
+            setRangeNotice(`최대 Validation 범위 ${vLimit}페이지를 초과하여 보정했습니다: ${r.start}-${r.end} → ${r.start}-${newEnd}`);
+            r = { start: r.start, end: newEnd };
+            span = Math.max(1, r.start - r.end + 1);
+            // Reflect corrected expr for UX transparency
+            if (ranges.length === 1) setValRangeExpr(`${r.start}-${r.end}`);
           }
-        } else {
-          addLog('⚠️ 페이지 범위 입력이 숫자가 아닙니다. 자동 기본 규칙 사용');
+          // Normalize expr fallback per-range if empty
+          const exprForThis = (expr && expr.trim()) ? expr : `${r.start}-${r.end}`;
+          // Send both snake_case (Rust) and camelCase (defensive) keys
+          const args: any = {
+            start_physical_page: r.start,
+            end_physical_page: r.end,
+            scan_pages: span,
+            ranges_expr: exprForThis,
+            // defensive aliases (ignored by Rust, helpful if any layer maps keys unexpectedly)
+            startPhysicalPage: r.start,
+            endPhysicalPage: r.end,
+            scanPages: span,
+            rangesExpr: exprForThis,
+          };
+          // FE guard: enforce presence before invoking
+          if (
+            !("start_physical_page" in args) ||
+            !("end_physical_page" in args) ||
+            !("scan_pages" in args)
+          ) {
+            console.error('[validation][guard] Missing required args', args);
+            addLog('❌ Validation 호출 차단: 필수 인자 누락(start/end/scan_pages)');
+            setIsValidating(false);
+            return;
+          }
+          addLog(`🧪 Validation 실행 (${i+1}/${ranges.length}): physical ${r.start} → ${r.end} (scan_pages=${span})`);
+          console.info('[validation] expr:', exprForThis, 'ranges:', ranges, 'args:', args);
+          const summary = await invoke<any>('start_validation', args);
+          if (summary) {
+            aggregated.pages_scanned += summary.pages_scanned || 0;
+            aggregated.products_checked += summary.products_checked || 0;
+            aggregated.divergences += summary.divergences || 0;
+            aggregated.anomalies += summary.anomalies || 0;
+            aggregated.duration_ms += summary.duration_ms || 0;
+            setValidationDetails(summary);
+            if (typeof summary.resolved_start_oldest === 'number' && typeof summary.resolved_end_newest === 'number') {
+              setLastValidationRange({ start: summary.resolved_start_oldest, end: summary.resolved_end_newest });
+              setLastValidationExpr(`${summary.resolved_start_oldest}-${summary.resolved_end_newest}`);
+              addLog(`🧪 적용 범위(백엔드 확정): ${summary.resolved_start_oldest} → ${summary.resolved_end_newest}`);
+            }
+            setValidationStats({
+              pages_scanned: aggregated.pages_scanned,
+              products_checked: aggregated.products_checked,
+              divergences: aggregated.divergences,
+              anomalies: aggregated.anomalies,
+              duration_ms: aggregated.duration_ms,
+              session_id: summary.session_id,
+            });
+          }
         }
+        setIsMultiRangeRun(false);
+        const last = ranges[ranges.length - 1];
+        setLastValidationRange({ start: last.start, end: last.end });
+        addLog(`🧪 다중 범위 Validation 완료: ${ranges.length}개 범위 합산`);
       } else {
-        // New default rule: oldest(total_pages) → (crawl_start_page + 1) just before crawling target start
-        const site = siteStatus();
-        const cr = crawlingRange();
-        if (site && cr?.range?.length === 2) {
-          const totalPages = site.total_pages;
-          const crawlStart = cr.range[0]; // older (start) page of crawling target
-            // default end (newer) is one page newer than crawlStart (i.e., just before the crawl window)
-          let endDefault = crawlStart + 1;
-          if (endDefault > totalPages) { endDefault = totalPages; }
-          if (endDefault < 1) { endDefault = 1; }
-          if (totalPages < endDefault) { endDefault = Math.max(totalPages, 1); }
-          start_physical_page = totalPages;
-          end_physical_page = endDefault;
-          if (start_physical_page! < end_physical_page!) { // safety: swap if inversion due to edge cases
-            const tmp = start_physical_page!;
-            start_physical_page = end_physical_page;
-            end_physical_page = tmp;
-          }
-          args.start_physical_page = start_physical_page;
-          args.end_physical_page = end_physical_page;
-          addLog(`🧪 기본 범위(자동): physical ${start_physical_page} → ${end_physical_page} (oldest→crawl-start 이전)`);
-        } else if (site) {
-          // Fallback: just scan from oldest to 1
-          start_physical_page = site.total_pages;
-          end_physical_page = 1;
-          args.start_physical_page = start_physical_page;
-          args.end_physical_page = end_physical_page;
-          addLog(`🧪 기본 범위(폴백): physical ${start_physical_page} → 1 (전체)`);
-        } else {
-          addLog('⚠️ 사이트/크롤링 범위 정보 없음: 기본 계산 불가 (Validation 취소)');
-          setIsValidating(false);
-          return;
-        }
+        addLog('⚠️ 잘못된 범위 표현식입니다. 예시: "488-479" 또는 "488~479" 형식으로 입력해주세요.');
+        setIsValidating(false);
+        return;
       }
-      const summary = await invoke<any>('start_validation', args);
-      if (summary) { setValidationDetails(summary); }
-    } catch (err) {
-      setIsValidating(false);
-      addLog(`❌ Validation 실패: ${err}`);
-      console.error('Validation error', err);
+      } catch (err) {
+        setIsValidating(false);
+        addLog(`❌ Validation 실패: ${err}`);
+        console.error('Validation error', err);
+      }
+  };
+
+  // Trigger Sync using the last validation range
+  const runSyncForLastValidationRange = async (dryRun = false) => {
+    // Prefer the current input field, then fallback to last validation expression, then last resolved single range
+    let rangesExpr = (valRangeExpr() && valRangeExpr().trim()) ? valRangeExpr().trim() : (lastValidationExpr() || '');
+    if (!rangesExpr) {
+      const rng = lastValidationRange();
+      if (!rng) {
+        addLog('⚠️ Sync 불가: 최근 Validation 범위 정보가 없습니다. 먼저 Validation을 실행하세요.');
+        return;
+      }
+      rangesExpr = `${rng.start}-${rng.end}`;
+    }
+    // Clamp to site bounds and inform user if corrected
+    const clamp = clampRangesToSite(rangesExpr);
+    if (clamp.changed) {
+      const total = siteStatus()?.total_pages;
+      const fixes = (clamp.details || [])
+        .filter((d: { before: { start: number; end: number }; start: number; end: number }) => d.before.start !== d.start || d.before.end !== d.end)
+        .map((d: { before: { start: number; end: number }; start: number; end: number }) => `${d.before.start === d.before.end ? d.before.start : `${d.before.start}-${d.before.end}`}` +
+                  ` → ${d.start === d.end ? d.start : `${d.start}-${d.end}`}`);
+      const msg1 = `입력 범위를 사이트 최대 페이지${typeof total==='number' ? `(${total})` : ''} 기준으로 보정했습니다: ${fixes.join(', ')} (최종: ${clamp.expr})`;
+      addLog(`ℹ️ ${msg1}`);
+      setRangeNotice(msg1);
+      setValRangeExpr(clamp.expr); // reflect correction in UI
+      rangesExpr = clamp.expr;
+    } else {
+      setRangeNotice(null);
+    }
+    // Then clamp to configured validationPageLimit (max span)
+    const vLimit = validationPageLimit();
+    if (vLimit && vLimit > 0) {
+      const byLimit = clampRangesToLimit(rangesExpr, vLimit);
+      if (byLimit.changed) {
+        const fixes = (byLimit.details || [])
+          .filter((d: { before: { start: number; end: number }; start: number; end: number }) => d.before.end !== d.end)
+          .map((d: { before: { start: number; end: number }; start: number; end: number }) => `${d.before.start}-${d.before.end} → ${d.start}-${d.end}`);
+        const msg2 = `최대 Validation/Sync 범위 ${vLimit}페이지를 초과하여 보정했습니다: ${fixes.join(', ')} (최종: ${byLimit.expr})`;
+        addLog(`ℹ️ ${msg2}`);
+        setRangeNotice(prev => prev ? `${prev} | ${msg2}` : msg2);
+        setValRangeExpr(byLimit.expr);
+        rangesExpr = byLimit.expr;
+      }
+    }
+    try {
+      addLog(`🔄 Sync 요청: ranges=${rangesExpr} dryRun=${dryRun}`);
+      // Optimistic UI: show syncing state immediately; backend events will update stats
+      setIsSyncing(true);
+      setSyncStats({ pages_processed: 0, inserted: 0, updated: 0, skipped: 0, failed: 0, session_id: undefined });
+      await invoke('start_partial_sync', { ranges: rangesExpr, dry_run: dryRun });
+    } catch (e:any) {
+      addLog(`❌ Sync 시작 실패: ${e}`);
+      console.error('start_partial_sync error', e);
+      setIsSyncing(false);
     }
   };
 
@@ -767,49 +1016,79 @@ export const CrawlingEngineTab: Component = () => {
                 </button>
               </div>
               <div class="mb-3 grid grid-cols-5 gap-2 items-end">
-                <div class="col-span-2">
-                  <label class="block text-[11px] text-gray-600 mb-1">Start (oldest phys page)</label>
+                <div class="col-span-4">
+                  <label class="block text-[11px] text-gray-600 mb-1">페이지 범위 (oldest→newer, 쉼표로 다중 지정) — 예: 498-489,487~485,480</label>
                   <input
                     type="text"
-                    inputmode="numeric"
-                    placeholder="예: 120"
-                    value={valRangeStart()}
-                    onInput={e => onUserEditRangeStart(e.currentTarget.value)}
-                    class="w-full px-2 py-1 rounded border text-xs focus:ring-emerald-500 focus:border-emerald-500"
-                  />
-                </div>
-                <div class="col-span-2">
-                  <label class="block text-[11px] text-gray-600 mb-1">End (newer phys page)</label>
-                  <input
-                    type="text"
-                    inputmode="numeric"
-                    placeholder="예: 111"
-                    value={valRangeEnd()}
-                    onInput={e => onUserEditRangeEnd(e.currentTarget.value)}
+                    placeholder="예: 498-489,487-485,480"
+                    value={valRangeExpr()}
+                    onInput={e => onUserEditRangeExpr(e.currentTarget.value)}
                     class="w-full px-2 py-1 rounded border text-xs focus:ring-emerald-500 focus:border-emerald-500"
                   />
                 </div>
                 <div class="col-span-1 flex flex-col gap-1 text-[10px] text-gray-500 leading-tight">
                   <span class="mt-[18px]">빈칸=자동</span>
-                  <span class="">(빈칸= oldest_page → (크롤링 시작 직전 페이지))</span>
+                  <span class="">(oldest → 크롤링 시작 직전)</span>
                   <button
                     class="text-amber-600 underline"
-                    onClick={() => { setValRangeStart(''); setValRangeEnd(''); }}
+                    onClick={() => { setValRangeExpr(''); userTouchedValidationRange = false; }}
                   >초기화</button>
                 </div>
               </div>
+
+              <div class="flex items-center gap-2 mb-2">
+                <button
+                  onClick={() => runSyncForLastValidationRange(false)}
+                  class={`px-3 py-1.5 text-sm rounded-md transition-colors ${isSyncing() ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}
+                  disabled={isSyncing()}
+                  title="Validation 범위를 기준으로 partial sync 실행"
+                >
+                  {isSyncing() ? '⏳ Sync 실행 중...' : '🔄 이 범위 Sync 실행'}
+                </button>
+                <button
+                  onClick={() => runSyncForLastValidationRange(true)}
+                  class={`px-3 py-1.5 text-sm rounded-md transition-colors ${isSyncing() ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                  disabled={isSyncing()}
+                  title="DB 변경 없이 진행 상황만 보기"
+                >
+                  Dry-run
+                </button>
+              </div>
+              <Show when={rangeNotice()}>
+                <div class="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded p-2">
+                  {rangeNotice()}
+                </div>
+              </Show>
+
+              <Show when={syncStats()}>
+                <div class="text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded p-2 mb-2">
+                  <div class="flex gap-3">
+                    <span>pages: <b>{syncStats()!.pages_processed || 0}</b></span>
+                    <span>ins: <b class="text-emerald-700">{syncStats()!.inserted || 0}</b></span>
+                    <span>upd: <b class="text-blue-700">{syncStats()!.updated || 0}</b></span>
+                    <span>skip: <b class="text-gray-600">{syncStats()!.skipped || 0}</b></span>
+                    <span>fail: <b class="text-red-700">{syncStats()!.failed || 0}</b></span>
+                    <Show when={typeof syncStats()!.duration_ms !== 'undefined'}>
+                      <span>ms: <b>{syncStats()!.duration_ms}</b></span>
+                    </Show>
+                  </div>
+                </div>
+              </Show>
               <Show when={validationStats()} fallback={
                 <p class="text-sm text-gray-600">
                   {isValidating() ? '실시간 이벤트 수신 중...' : '아직 실행된 Validation 없음'}
                 </p>
               }>
-                <div class="grid grid-cols-2 gap-4 text-sm">
+        <div class="grid grid-cols-2 gap-4 text-sm">
                   <div class="flex justify-between"><span class="text-gray-600">스캔 페이지:</span><span class="font-medium">{validationStats()?.pages_scanned}</span></div>
                   <div class="flex justify-between"><span class="text-gray-600">검증 제품:</span><span class="font-medium">{validationStats()?.products_checked}</span></div>
                   <div class="flex justify-between"><span class="text-gray-600">불일치:</span><span class="font-medium text-red-600">{validationStats()?.divergences}</span></div>
                   <div class="flex justify-between"><span class="text-gray-600">이상 징후:</span><span class="font-medium text-amber-600">{validationStats()?.anomalies}</span></div>
                   <div class="flex justify-between col-span-2"><span class="text-gray-600">소요 시간:</span><span class="font-medium">{(validationStats()!.duration_ms/1000).toFixed(2)}s</span></div>
                   <Show when={validationDetails()}>
+          <div class="flex justify-between col-span-2"><span class="text-gray-600">적용 범위:</span><span class="font-medium">{validationDetails()?.resolved_start_oldest} → {validationDetails()?.resolved_end_newest}</span></div>
+          <div class="flex justify-between col-span-2"><span class="text-gray-600">시도/성공 페이지:</span><span class="font-medium">{validationDetails()?.pages_attempted || 0} / {validationStats()?.pages_scanned || 0}</span></div>
+          <div class="flex justify-between col-span-2"><span class="text-gray-600">사이트 메타:</span><span class="font-medium">pages={validationDetails()?.total_pages_site} last_items={validationDetails()?.items_on_last_page}</span></div>
                     <div class="flex justify-between col-span-2"><span class="text-gray-600">gap ranges:</span><span class="font-medium">{validationDetails()?.gap_ranges?.length || 0}</span></div>
                     <div class="flex justify-between col-span-2"><span class="text-gray-600">cross-page dup URLs:</span><span class="font-medium">{validationDetails()?.cross_page_duplicate_urls || 0}</span></div>
                   </Show>

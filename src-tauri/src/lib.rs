@@ -144,6 +144,7 @@ pub mod commands_integrated;
     pub mod unified_crawling;     // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
     pub mod real_actor_commands;  // 🎭 진짜 Actor 시스템 명령어
     pub mod validation_commands;  // ✅ Validation pass commands (page/index integrity)
+    pub mod sync_commands;        // 🔄 Partial Sync (recrawl + DB upsert)
     
     // Re-export commonly used commands
     // simple_crawling re-export removed (deprecated stub only)
@@ -154,6 +155,7 @@ pub mod commands_integrated;
     pub use crawling_test_commands::*;   // Phase C 테스트 명령어 export
     pub use performance_commands::*;     // Phase C 성능 최적화 명령어 export
     pub use dashboard_commands::*;       // Phase C 대시보드 명령어 export
+    pub use sync_commands::*;            // Partial Sync 명령어 export
 }// Modern Rust 2024 - 명시적 모듈 선언
 pub mod crawling;
 
@@ -396,6 +398,7 @@ pub fn run() {
             commands::config_commands::save_app_settings
             ,crate::commands_integrated::reset_product_storage
             ,commands::validation_commands::start_validation
+            ,commands::sync_commands::start_partial_sync
             
             
             // TODO: Add other commands as they are implemented

@@ -30,7 +30,7 @@
   "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"],
+  "include": ["src", "src/types/**/*.d.ts"],
   "exclude": [
     "src/components/visualization/**",
     "src/components/NewArchTest.tsx",
@@ -41,7 +41,8 @@
     "src/components/HierarchicalEventMonitor.tsx",
     "src/components/dashboard/DomainStatusDashboard.tsx",
     "src/components/dashboard/DomainStatusDashboardDeprecated.tsx",
-    "src/types/src/types/generated/**"
+  // Exclude legacy generator output that has broken intra-module imports
+  "src/types/src/types/generated/**"
   ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

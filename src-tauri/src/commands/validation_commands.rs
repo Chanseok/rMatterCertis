@@ -54,6 +54,12 @@ pub struct ValidationSummary {
     pub lowest_divergence_physical_page: Option<u32>,  // numerically smallest page id with divergence (i.e., newest among scanned)
     pub gap_ranges: Vec<GapRange>,
     pub cross_page_duplicate_urls: u32,
+    // Diagnostics/confirmation
+    pub pages_attempted: u32,
+    pub total_pages_site: u32,
+    pub items_on_last_page: u32,
+    pub resolved_start_oldest: u32,
+    pub resolved_end_newest: u32,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -139,9 +145,16 @@ pub async fn start_validation(
     scan_pages: Option<u32>,
     start_physical_page: Option<u32>, // oldest (larger number)
     end_physical_page: Option<u32>,   // newest (smaller number)
+    // Optional fallback: a human-friendly expression like "498-489,487~485,480"
+    // If provided and explicit numeric args are missing, we'll parse the first range.
+    ranges_expr: Option<String>,
 ) -> Result<ValidationSummary, String> {
     // Preserve user-provided scan_pages separately; dynamic default may override if None
     let user_scan_pages = scan_pages.filter(|v| *v > 0);
+    info!(
+        "start_validation args: scan_pages={:?}, start_physical_page={:?}, end_physical_page={:?}, ranges_expr={:?}",
+        user_scan_pages, start_physical_page, end_physical_page, ranges_expr
+    );
     // Treat presence of either start or end as intent to use a custom explicit range.
     // Semantics:
     //   start_physical_page (oldest, numerically largest) defaults to total_pages (resolved after fetch) but we only know total_pages later.
@@ -150,7 +163,67 @@ pub async fn start_validation(
     let user_range_requested = start_physical_page.is_some() || end_physical_page.is_some();
     // Defer final computation of custom range until after total_pages known; we keep the raw inputs here.
     // We'll represent this by Option<(Option<u32>, Option<u32>)> holding raw values.
-    let pending_custom_range: Option<(Option<u32>, Option<u32>)> = if user_range_requested { Some((start_physical_page, end_physical_page)) } else { None };
+    let pending_custom_range: Option<(Option<u32>, Option<u32>)> = if user_range_requested {
+        info!(
+            "User provided explicit range inputs detected (raw): start={:?}, end={:?}",
+            start_physical_page, end_physical_page
+        );
+        Some((start_physical_page, end_physical_page))
+    } else {
+        // If numeric args missing, try parsing from ranges_expr as a fallback for robustness
+        if let Some(expr_raw) = ranges_expr.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+            // Parse first valid token from comma-separated list. Accept "a-b", "a~b", or single number "n".
+            let tokens: Vec<String> = expr_raw
+                .split(',')
+                .map(|t| t.trim())
+                .filter(|t| !t.is_empty())
+                .map(|t| {
+                    let s = t.replace(char::is_whitespace, "");
+                    // Normalize unicode dashes to '-'
+                    let s = s
+                        .replace('–', "-")
+                        .replace('—', "-")
+                        .replace('−', "-")
+                        .replace('﹣', "-")
+                        .replace('－', "-");
+                    // Normalize unicode tildes to '~'
+                    let s = s
+                        .replace('〜', "~")
+                        .replace('～', "~");
+                    s
+                })
+                .collect();
+            debug!("ranges_expr tokens(normalized)={:?}", tokens);
+            let mut parsed: Option<(u32, u32)> = None;
+            for norm in tokens {
+                let (sep_dash, sep_tilde) = (norm.contains('-'), norm.contains('~'));
+                if sep_dash || sep_tilde {
+                    let parts: Vec<&str> = norm.split(if sep_tilde { '~' } else { '-' }).collect();
+                    if parts.len() == 2 {
+                        if let (Ok(a), Ok(b)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
+                            let start = a.max(b);
+                            let end = a.min(b);
+                            parsed = Some((start, end));
+                            break;
+                        }
+                    }
+                } else if let Ok(n) = norm.parse::<u32>() { // single page token
+                    parsed = Some((n, n));
+                    break;
+                }
+            }
+            if let Some((s, e)) = parsed {
+                info!("Parsed explicit range from ranges_expr fallback: {} -> {}", s, e);
+                Some((Some(s), Some(e)))
+            } else {
+                info!("No explicit range provided (ranges_expr parse failed or empty); will compute dynamic default window after site discovery");
+                None
+            }
+        } else {
+            info!("No explicit range provided; will compute dynamic default window after site discovery");
+            None
+        }
+    };
     let session_id = format!("validation-{}", Utc::now().format("%Y%m%d%H%M%S"));
     let started = std::time::Instant::now();
     // Build HttpClient from loaded worker configuration for consistent rate limiting
@@ -202,13 +275,22 @@ pub async fn start_validation(
         if start_oldest == 0 { start_oldest = total_pages; }
         if start_oldest > total_pages { warn!("start_physical_page {} > total_pages {}, clamping to total_pages", start_oldest, total_pages); start_oldest = total_pages; }
         if end_newest == 0 { end_newest = 1; }
-        if end_newest > start_oldest { warn!("Provided range inverted (start {} < end {}), swapping", start_oldest, end_newest); std::mem::swap(&mut start_oldest, &mut end_newest); }
-        let span = start_oldest.saturating_sub(end_newest) + 1;
+        if end_newest > start_oldest { warn!("Provided range inverted (end_newest {} > start_oldest {}), swapping", end_newest, start_oldest); std::mem::swap(&mut start_oldest, &mut end_newest); }
+        let mut span = start_oldest.saturating_sub(end_newest) + 1;
+        // Apply optional validation_page_limit if configured
+        if let Some(limit) = app_config.user.crawling.validation_page_limit.filter(|v| *v > 0) {
+            if span > limit {
+                let new_end = start_oldest.saturating_sub(limit - 1);
+                info!("Clamping validation span from {} to {} by config validation_page_limit={}, new range {} -> {}", span, limit, limit, start_oldest, new_end);
+                span = limit;
+                end_newest = new_end.max(1);
+            }
+        }
         info!("Using explicit custom validation range start_oldest={} end_newest={} span={}", start_oldest, end_newest, span);
         (span, start_oldest, end_newest)
     } else {
         // Dynamic default if user didn't specify scan_pages:
-        let pages_to_scan = if let Some(user) = user_scan_pages { user.max(1) } else {
+        let mut pages_to_scan = if let Some(user) = user_scan_pages { user.max(1) } else {
             // Query DB for product count & max page_id
             let total_products: i64 = sqlx::query("SELECT COUNT(*) as cnt FROM products")
                 .fetch_one(&pool).await.map_err(|e| format!("DB count failed: {e}"))?
@@ -225,16 +307,22 @@ pub async fn start_validation(
                 30u32
             }
         };
+        // Apply optional validation_page_limit if configured
+        if let Some(limit) = app_config.user.crawling.validation_page_limit.filter(|v| *v > 0) {
+            if pages_to_scan > limit { info!("Clamping dynamic validation pages_to_scan from {} to {} by config validation_page_limit", pages_to_scan, limit); pages_to_scan = limit; }
+        }
         let pages_to_scan = pages_to_scan.min(total_pages.max(1));
         let start_oldest = total_pages; // always the oldest physical page number
         let end_newest = if pages_to_scan >= total_pages { 1 } else { total_pages - pages_to_scan + 1 };
-        (pages_to_scan, start_oldest, end_newest)
+    info!("Using dynamic default validation window start_oldest={} end_newest={} scan_pages={} (total_pages={})", start_oldest, end_newest, pages_to_scan, total_pages);
+    (pages_to_scan, start_oldest, end_newest)
     };
 
     emit_actor_event(&app, AppEvent::ValidationStarted { session_id: session_id.clone(), scan_pages: scan_pages_used, total_pages_site: Some(total_pages), timestamp: Utc::now() });
 
     info!("Validation window resolved: session_id={} total_pages={} start_oldest={} end_newest={} scan_pages_used={}", session_id, total_pages, physical_range_start_oldest, physical_range_end_newest, scan_pages_used);
     let mut pages_scanned = 0u32;
+    let mut pages_attempted = 0u32;
     let mut products_checked = 0u64;
     let mut divergences = 0u32;
     let mut anomalies = 0u32; // now tracking
@@ -249,16 +337,29 @@ pub async fn start_validation(
     let mut cross_page_duplicate_urls: u32 = 0;
 
     for physical_page in (physical_range_end_newest..=physical_range_start_oldest).rev() { // oldest -> newer (descending numbers)
+        pages_attempted += 1;
         let html_str = if physical_page == oldest_physical_page { oldest_html.clone() } else if physical_page == 1 { newest_html.clone() } else {
             let url = csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &physical_page.to_string());
             match http.fetch_response(&url).await {
-                Ok(resp) => match resp.text().await { Ok(t) => t, Err(e) => { warn!("Read page {} text error: {}", physical_page, e); continue; } },
-                Err(e) => { warn!("Skip page {} fetch error: {}", physical_page, e); continue; }
+                Ok(resp) => match resp.text().await { Ok(t) => t, Err(e) => {
+                    warn!("Read page {} text error: {}", physical_page, e);
+                    emit_actor_event(&app, AppEvent::ValidationAnomaly { session_id: session_id.clone(), code: "page_read_failed".into(), detail: format!("physical_page={} error={}", physical_page, e), timestamp: Utc::now() });
+                    anomalies += 1;
+                    continue; } },
+                Err(e) => { 
+                    warn!("Skip page {} fetch error: {}", physical_page, e);
+                    emit_actor_event(&app, AppEvent::ValidationAnomaly { session_id: session_id.clone(), code: "page_fetch_failed".into(), detail: format!("physical_page={} error={}", physical_page, e), timestamp: Utc::now() });
+                    anomalies += 1;
+                    continue; }
             }
         };
         let product_urls = match extractor.extract_product_urls_from_content(&html_str) {
             Ok(u) => u,
-            Err(e) => { warn!("Parse failure page {}: {}", physical_page, e); continue; }
+            Err(e) => { 
+                warn!("Parse failure page {}: {}", physical_page, e);
+                emit_actor_event(&app, AppEvent::ValidationAnomaly { session_id: session_id.clone(), code: "page_parse_failed".into(), detail: format!("physical_page={} error={}", physical_page, e), timestamp: Utc::now() });
+                anomalies += 1;
+                continue; }
         };
         // Anomaly detection for this page
         let page_anomalies = detect_page_anomalies(physical_page, &product_urls, physical_page == oldest_physical_page, items_on_last_page);
@@ -343,7 +444,24 @@ pub async fn start_validation(
     }
 
     let duration_ms = started.elapsed().as_millis() as u64;
-    let summary = ValidationSummary { pages_scanned, products_checked, divergences, anomalies, duration_ms, divergence_samples, per_page: per_page_stats, highest_divergence_physical_page, lowest_divergence_physical_page, gap_ranges, cross_page_duplicate_urls };
+    let summary = ValidationSummary { 
+        pages_scanned, 
+        products_checked, 
+        divergences, 
+        anomalies, 
+        duration_ms, 
+        divergence_samples, 
+        per_page: per_page_stats, 
+        highest_divergence_physical_page, 
+        lowest_divergence_physical_page, 
+        gap_ranges, 
+        cross_page_duplicate_urls,
+        pages_attempted,
+        total_pages_site: total_pages,
+        items_on_last_page: items_on_last_page as u32,
+        resolved_start_oldest: physical_range_start_oldest,
+        resolved_end_newest: physical_range_end_newest,
+    };
     emit_actor_event(&app, AppEvent::ValidationCompleted { session_id, pages_scanned, products_checked, divergences, anomalies, duration_ms, timestamp: Utc::now() });
     info!("Validation completed: pages_scanned={} products_checked={} divergences={} duration_ms={} total_pages={} items_on_last={}", pages_scanned, products_checked, divergences, duration_ms, total_pages, items_on_last_page);
     Ok(summary)
