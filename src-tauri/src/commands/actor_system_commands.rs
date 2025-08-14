@@ -1694,6 +1694,15 @@ async fn execute_session_actor_with_execution_plan(
               range_idx + 1,
               completed_batches, expected_batches, pct_batches,
               completed_pages, expected_pages, pct_pages);
+        // Emit an explicit event for FE/diagnostics that a range has completed
+        let _ = actor_event_tx.send(AppEvent::Progress {
+            session_id: execution_plan.session_id.clone(),
+            current_step: (range_idx + 1) as u32,
+            total_steps: execution_plan.crawling_ranges.len() as u32,
+            message: format!("Range {}/{} completed", range_idx + 1, execution_plan.crawling_ranges.len()),
+            percentage: (completed_pages as f64 / expected_pages as f64) * 100.0,
+            timestamp: Utc::now(),
+        });
     }
     }
     
@@ -1780,6 +1789,8 @@ async fn execute_session_actor_with_execution_plan(
     
     if let Err(e) = actor_event_tx.send(completion_event) {
         error!("Failed to send SessionCompleted event: {}", e);
+    } else {
+        info!("🎉 SessionCompleted event emitted for {}", execution_plan.session_id);
     }
     
     info!("🎉 ExecutionPlan fully executed!");

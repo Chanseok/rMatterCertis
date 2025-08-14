@@ -1172,9 +1172,24 @@ impl IntegratedProductRepository {
         // Formula: targetPageNumber = floor(forwardIndex / productsPerPage) + 1
         let target_page_number = (forward_index / products_per_page) + 1;
         
-        // Step 6: Apply crawl page limit (respecting user settings)
+        // Step 6: Adjust start page to the nearest page that is NOT fully detailed
         // Crawling goes from older pages (higher numbers) to newer pages (lower numbers)
-        let start_page = target_page_number;
+        let mut start_page = target_page_number;
+        // Scan backwards (older pages) until we find a page that is not fully detailed.
+        // Cap scan to a reasonable window (effective_crawl_limit * 3) to avoid long loops on pathological DBs.
+        let scan_cap = (effective_crawl_limit.saturating_mul(3)).max(10);
+        let mut scanned: u32 = 0;
+        while start_page >= 1 && scanned < scan_cap {
+            if !self.is_site_page_fully_detailed(start_page, total_pages_on_site, products_on_last_page).await.unwrap_or(false) {
+                break;
+            }
+            if start_page == 1 { break; }
+            start_page -= 1;
+            scanned += 1;
+        }
+        if scanned > 0 {
+            tracing::info!("🔎 Adjusted start_page backward by {} to skip fully detailed pages → {}", scanned, start_page);
+        }
         let end_page = if start_page >= effective_crawl_limit {
             start_page - effective_crawl_limit + 1
         } else {
@@ -1191,6 +1206,26 @@ impl IntegratedProductRepository {
         tracing::info!("  Crawl range: {} to {} (effective limit: {})", start_page, end_page, effective_crawl_limit);
         
         Ok(Some((start_page, end_page)))
+    }
+
+    /// Check if a given site page (1..=total_pages_on_site) is fully stored in product_details
+    /// Uses product_details table as source of truth for deduplication decisions.
+    pub async fn is_site_page_fully_detailed(&self, site_page: u32, total_pages_on_site: u32, products_on_last_page: u32) -> Result<bool> {
+        if site_page == 0 || site_page > total_pages_on_site { return Ok(true); }
+        // Convert site page (1=newest, total_pages_on_site=oldest) to our 0-based page_id
+        let page_id: i32 = (total_pages_on_site - site_page) as i32;
+        // Expected count
+        let expected: i32 = if site_page == total_pages_on_site { products_on_last_page as i32 } else { crate::domain::constants::site::PRODUCTS_PER_PAGE as i32 };
+        // Count details for this page_id
+        let count: i32 = sqlx::query_scalar(
+            r"SELECT COUNT(*) FROM product_details WHERE page_id = ?"
+        )
+        .bind(page_id)
+        .fetch_one(&*self.pool)
+        .await
+        .unwrap_or(0);
+        tracing::debug!("[DetailCoverage] site_page={} (page_id={}) details_count={} expected={}", site_page, page_id, count, expected);
+        Ok(count >= expected && expected > 0)
     }
 
     /// Check if a specific page range has already been crawled

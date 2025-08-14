@@ -439,6 +439,23 @@ impl CrawlingPlanner {
                 let mut pages: Vec<u32> = if let Some((start_page, end_page)) = precise {
                     if start_page >= end_page { (end_page..=start_page).rev().collect() } else { (start_page..=end_page).rev().collect() }
                 } else { newest_fallback_pages() };
+                // Drop pages that are already fully detailed to reduce no-op batches
+                if let Some(repo_ref) = self.product_repo.as_ref() {
+                    let repo = repo_ref.clone();
+                    let total_pages = site_status.total_pages;
+                    let products_on_last = site_status.products_on_last_page;
+                    let mut filtered: Vec<u32> = Vec::with_capacity(pages.len());
+                    for sp in pages.iter().copied() {
+                        match repo.is_site_page_fully_detailed(sp, total_pages, products_on_last).await {
+                            Ok(true) => { tracing::info!("🧹 Skipping fully detailed page {} from plan", sp); },
+                            Ok(false) | Err(_) => { filtered.push(sp); }
+                        }
+                    }
+                    if filtered.len() != pages.len() {
+                        tracing::info!("🧮 Planner filtered pages: before={} after={}", pages.len(), filtered.len());
+                        pages = filtered;
+                    }
+                }
                 if let (Some(mp), Some(mi)) = (max_page_id, max_index_in_page) {
                     if mi < 11 { // partial page
                         let partial_site_page = total_pages_on_site - mp as u32;
