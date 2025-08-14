@@ -1444,7 +1444,14 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
 /// Any invalid combination results in Err and original plan is retained.
 fn adjust_execution_plan_with_page_overrides(plan: &mut ExecutionPlan, req: &ActorCrawlingRequest) -> Result<(), String> {
     use crate::new_architecture::actors::types::PageSlot;
-    if req.page_count.is_none() && req.start_page.is_none() && req.end_page.is_none() { return Ok(()); }
+    // Normalize sentinel values (0 => None) to avoid generating meaningless overrides
+    let mut norm_start = req.start_page;
+    let mut norm_end = req.end_page;
+    let mut norm_count = req.page_count;
+    if matches!(norm_start, Some(0)) { norm_start = None; }
+    if matches!(norm_end, Some(0)) { norm_end = None; }
+    if matches!(norm_count, Some(0)) { norm_count = None; }
+    if norm_count.is_none() && norm_start.is_none() && norm_end.is_none() { return Ok(()); }
     let mut pages: Vec<u32> = plan.crawling_ranges.iter().flat_map(|r| {
         if r.reverse_order {
             (r.end_page..=r.start_page).rev().collect::<Vec<_>>()
@@ -1456,16 +1463,17 @@ fn adjust_execution_plan_with_page_overrides(plan: &mut ExecutionPlan, req: &Act
     let original_len = pages.len();
     let min_page = *pages.iter().min().unwrap_or(&1);
     let max_page = *pages.iter().max().unwrap_or(&1);
-    tracing::info!("🛠️ override_request start_page={:?} end_page={:?} page_count={:?} plan_range=[{}..{}] total_pages_in_plan={}", req.start_page, req.end_page, req.page_count, min_page, max_page, original_len);
+    tracing::info!("🛠️ override_request(start_page={:?}, end_page={:?}, page_count={:?}) normalized(start={:?}, end={:?}, count={:?}) plan_range=[{}..{}] total_pages_in_plan={}",
+        req.start_page, req.end_page, req.page_count, norm_start, norm_end, norm_count, min_page, max_page, original_len);
     // Heuristic: if user start_page is lower than min_page and end_page/page_count absent -> treat as page_count (legacy semantics)
     let mut synthetic_page_count: Option<u32> = None;
-    if req.page_count.is_none() && req.end_page.is_none() {
-        if let Some(sp) = req.start_page { if sp < min_page { synthetic_page_count = Some(sp); } }
+    if norm_count.is_none() && norm_end.is_none() {
+        if let Some(sp) = norm_start { if sp < min_page { synthetic_page_count = Some(sp); } }
     }
-    if let Some(pc) = req.page_count { if pc as usize > 0 && (pc as usize) < pages.len() { pages.truncate(pc as usize); } }
+    if let Some(pc) = norm_count { if pc as usize > 0 && (pc as usize) < pages.len() { pages.truncate(pc as usize); } }
     else if let Some(spc) = synthetic_page_count { if spc as usize > 0 && (spc as usize) < pages.len() { pages.truncate(spc as usize); tracing::info!("🔁 interpreted start_page={} as page_count override (legacy UI)", spc); } }
     // Range filtering if explicit bounds
-    let start_opt = req.start_page; let end_opt = req.end_page;
+    let start_opt = norm_start; let end_opt = norm_end;
     if start_opt.is_some() || end_opt.is_some() {
         // Interpret start_page as higher (newer) page, end_page as lower (older)
         let high = start_opt.unwrap_or_else(|| pages.first().cloned().unwrap_or(1));
@@ -1474,8 +1482,8 @@ fn adjust_execution_plan_with_page_overrides(plan: &mut ExecutionPlan, req: &Act
         pages.retain(|p| *p <= high && *p >= low);
     }
     if pages.is_empty() {
-        tracing::warn!("⚠️ override filtering resulted in empty page set -> reverting to original ExecutionPlan pages (ignoring overrides)" );
-        return Ok(()); // Keep original plan unchanged
+        tracing::warn!("⚠️ override filtering produced empty set (normalized start={:?} end={:?} count={:?}) -> keeping original plan (override ignored)", norm_start, norm_end, norm_count);
+        return Ok(()); // Keep original plan unchanged intentionally
     }
     if pages.len() != original_len { tracing::info!("📏 ExecutionPlan override: pages reduced {} -> {}", original_len, pages.len()); }
     else { tracing::info!("ℹ️ ExecutionPlan override produced no change (ignored)"); }
@@ -1516,6 +1524,34 @@ async fn execute_session_actor_with_execution_plan(
     site_status: &SiteStatus,
     actor_event_tx: broadcast::Sender<AppEvent>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Scope guard 상태
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let completed_normally = Arc::new(AtomicBool::new(false));
+    let guard_flag = completed_normally.clone();
+    let session_id_for_guard = execution_plan.session_id.clone();
+    let actor_event_tx_guard = actor_event_tx.clone();
+    let planned_batches_guard: u32 = {
+        let mut _total_pages: usize = 0; let mut total_batches: usize = 0; let batch_unit = execution_plan.batch_size.max(1) as usize;
+        for r in &execution_plan.crawling_ranges { let pages_in_range = if r.reverse_order { r.start_page - r.end_page + 1 } else { r.end_page - r.start_page + 1 } as usize; _total_pages += pages_in_range; total_batches += (pages_in_range + batch_unit -1)/batch_unit; }
+        total_batches as u32
+    };
+    struct SessionFinalizer { flag: Arc<AtomicBool>, session_id: String, tx: broadcast::Sender<AppEvent>, planned_batches: u32 }
+    impl Drop for SessionFinalizer {
+        fn drop(&mut self) {
+            if !self.flag.load(Ordering::SeqCst) {
+                let now = Utc::now();
+                let fallback = AppEvent::SessionCompleted { session_id: self.session_id.clone(), summary: SessionSummary {
+                    session_id: self.session_id.clone(), total_duration_ms: 0, total_pages_processed: 0, total_products_processed: 0,
+                    success_rate: 0.0, avg_page_processing_time: 0, error_summary: vec![crate::new_architecture::actors::types::ErrorSummary { error_type: "Aborted".into(), count: 1, first_occurrence: now, last_occurrence: now }],
+                    total_retry_events: 0, max_retries_single_page: 0, pages_retried: 0, retry_histogram: vec![], processed_batches: 0, total_success_count: 0, duplicates_skipped: 0,
+                    planned_list_batches: self.planned_batches, executed_list_batches: 0, failed_pages_count: 0, failed_page_ids: vec![], final_state: "AbortedNoCompletion".into(), products_inserted: 0, products_updated: 0, timestamp: now
+                }, timestamp: now };
+                let _ = self.tx.send(fallback);
+                tracing::warn!("⚠️ SessionFinalizer emitted fallback SessionCompleted (aborted) session_id={}", self.session_id);
+            }
+        }
+    }
+    let _finalizer = SessionFinalizer { flag: guard_flag, session_id: session_id_for_guard, tx: actor_event_tx_guard, planned_batches: planned_batches_guard };
     info!("🎭 Executing SessionActor with predefined ExecutionPlan...");
     info!("📋 Plan: {} batches, batch_size: {}, effective_concurrency: {}", 
           execution_plan.crawling_ranges.len(),
@@ -1624,25 +1660,27 @@ async fn execute_session_actor_with_execution_plan(
                 let _ = actor_event_tx.send(AppEvent::PageTaskStarted { session_id: execution_plan.session_id.clone(), page: *p, batch_id: Some(batch_id.clone()), timestamp: Utc::now() });
             }
             if let Err(e) = execute_real_batch_actor(&batch_id, page_chunk, &context, app_config, site_status).await {
-                error!("❌ Batch {} failed: {}", batch_id, e);
+                error!("❌ Batch {} failed: {} (policy=ContinueWithoutRetry)", batch_id, e);
+                // 정책(b): 재시도 없이 지금 실패한 페이지를 즉시 final_failure 처리하고 다음 배치로 진행
                 for p in page_chunk.iter() {
-                    let mut final_failure = false;
-                    {
-                        let registry = session_registry();
-                        let mut g = registry.write().await;
-                        if let Some(entry) = g.get_mut(&execution_plan.session_id) {
-                            let counter = entry.retries_per_page.entry(*p).or_insert(0); *counter += 1;
-                            let max_r = entry.product_list_max_retries;
-                            if *counter >= max_r { final_failure = true; entry.failed_pages.push(*p); if let Some(ref mut rem) = entry.remaining_page_slots { rem.retain(|rp: &u32| rp != p); } entry.processed_pages += 1; } else { if !entry.retrying_pages.contains(p) { entry.retrying_pages.push(*p); } }
-                            let err_s = format!("batch_error: {} (attempt={})", e, *counter);
-                            let etype = classify_error_type(&err_s); let now = Utc::now();
-                            entry.error_type_stats.entry(etype).and_modify(|rec| { rec.0 += 1; rec.2 = now; }).or_insert((1, now, now));
-                            let _ = actor_event_tx.send(AppEvent::PageTaskFailed { session_id: execution_plan.session_id.clone(), page: *p, batch_id: Some(batch_id.clone()), error: err_s, final_failure, timestamp: Utc::now() });
-                        }
+                    let registry = session_registry();
+                    let mut g = registry.write().await;
+                    if let Some(entry) = g.get_mut(&execution_plan.session_id) {
+                        // 기존 retry/threshold 로직 우회: 즉시 final 로 마킹
+                        if !entry.failed_pages.contains(p) { entry.failed_pages.push(*p); }
+                        if let Some(ref mut rem) = entry.remaining_page_slots { rem.retain(|rp: &u32| rp != p); }
+                        entry.processed_pages += 1; // 카운트 증가
+                        // 에러 통계 갱신
+                        let err_s = format!("batch_error_no_retry: {}", e);
+                        let etype = classify_error_type(&err_s); let now = Utc::now();
+                        entry.error_type_stats.entry(etype).and_modify(|rec| { rec.0 += 1; rec.2 = now; }).or_insert((1, now, now));
+                        // 페이지 실패 이벤트 (final_failure=true)
+                        let _ = actor_event_tx.send(AppEvent::PageTaskFailed { session_id: execution_plan.session_id.clone(), page: *p, batch_id: Some(batch_id.clone()), error: err_s, final_failure: true, timestamp: Utc::now() });
                     }
                 }
-                let _ = actor_event_tx.send(AppEvent::BatchFailed { session_id: execution_plan.session_id.clone(), batch_id: batch_id.clone(), error: format!("{}", e), final_failure: false, timestamp: Utc::now() });
-                continue; // proceed to next batch
+                let _ = actor_event_tx.send(AppEvent::BatchFailed { session_id: execution_plan.session_id.clone(), batch_id: batch_id.clone(), error: format!("{}", e), final_failure: true, timestamp: Utc::now() });
+                info!("➡️ Continuing to next batch after failure (policy b)");
+                continue; // 다음 배치 진행
             } else {
                 for p in page_chunk.iter() {
                     let duration_ms = per_page_start.get(p).map(|t| t.elapsed().as_millis() as u64).unwrap_or_default();
@@ -1765,12 +1803,21 @@ async fn execute_session_actor_with_execution_plan(
                 let g = registry.read().await;
                 g.get(&execution_plan.session_id).map(|e| e.retries_per_page.values().filter(|v| **v>0).count() as u32).unwrap_or(0)
             },
+            failed_pages_count: failed_pages_vec.len() as u32,
+            failed_page_ids: failed_pages_vec.clone(),
             retry_histogram: {
                 let registry = session_registry();
                 let g = registry.read().await;
                 if let Some(e) = g.get(&execution_plan.session_id) {
                     let mut hist: std::collections::BTreeMap<u32,u32> = std::collections::BTreeMap::new();
                     for (_p, c) in e.retries_per_page.iter() { if *c>0 { *hist.entry(*c).or_insert(0)+=1; } }
+                    // merge detail retry histogram (distinct domain) using offset key prefix 1000+retries to avoid collision if needed
+                    if !e.detail_retry_histogram.is_empty() {
+                        for (retry_count, pages) in e.detail_retry_histogram.iter() {
+                            // use actual retry_count; semantics are disjoint but consumer can differentiate via context if needed
+                            *hist.entry(*retry_count).or_insert(0) += *pages;
+                        }
+                    }
                     hist.into_iter().collect()
                 } else { Vec::new() }
             },
@@ -1792,6 +1839,7 @@ async fn execute_session_actor_with_execution_plan(
     } else {
         info!("🎉 SessionCompleted event emitted for {}", execution_plan.session_id);
     }
+    completed_normally.store(true, Ordering::SeqCst);
     
     info!("🎉 ExecutionPlan fully executed!");
     // Update registry for completed (if not already failed) and schedule grace removal

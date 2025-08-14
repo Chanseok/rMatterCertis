@@ -227,9 +227,9 @@ impl HttpClient {
             // Apply global rate limiting
             let rate_limiter = GlobalRateLimiter::get_instance();
             if let Some(label) = &self.context_label {
-                info!("⚖️ Applying rate limit {} RPS (source: {})", self.config.max_requests_per_second, label);
+                debug!("⚖️ [rate-limit] {} RPS (source: {})", self.config.max_requests_per_second, label);
             } else {
-                info!("⚖️ Applying rate limit {} RPS", self.config.max_requests_per_second);
+                debug!("⚖️ [rate-limit] {} RPS", self.config.max_requests_per_second);
             }
             rate_limiter.apply_rate_limit(self.config.max_requests_per_second).await;
             
@@ -258,9 +258,9 @@ impl HttpClient {
     pub async fn fetch_response(&self, url: &str) -> Result<Response> {
         let rate_limiter = GlobalRateLimiter::get_instance();
         if let Some(label) = &self.context_label {
-            info!("⚖️ Applying rate limit {} RPS (source: {})", self.config.max_requests_per_second, label);
+            debug!("⚖️ [rate-limit] {} RPS (source: {})", self.config.max_requests_per_second, label);
         } else {
-            info!("⚖️ Applying rate limit {} RPS", self.config.max_requests_per_second);
+            debug!("⚖️ [rate-limit] {} RPS", self.config.max_requests_per_second);
         }
         rate_limiter.apply_rate_limit(self.config.max_requests_per_second).await;
         
@@ -289,9 +289,9 @@ impl HttpClient {
         for attempt in 1..=self.config.max_retries {
             let rate_limiter = GlobalRateLimiter::get_instance();
             if let Some(label) = &self.context_label {
-                info!("⚖️ Applying rate limit {} RPS (source: {})", self.config.max_requests_per_second, label);
+                debug!("⚖️ [rate-limit] {} RPS (source: {})", self.config.max_requests_per_second, label);
             } else {
-                info!("⚖️ Applying rate limit {} RPS", self.config.max_requests_per_second);
+                debug!("⚖️ [rate-limit] {} RPS", self.config.max_requests_per_second);
             }
             rate_limiter.apply_rate_limit(self.config.max_requests_per_second).await;
 

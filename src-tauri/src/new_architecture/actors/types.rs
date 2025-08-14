@@ -883,6 +883,10 @@ pub struct SessionSummary {
     pub planned_list_batches: u32,
     #[serde(default)]
     pub executed_list_batches: u32,
+    #[serde(default)]
+    pub failed_pages_count: u32,
+    #[serde(default)]
+    pub failed_page_ids: Vec<u32>,
     
     /// 최종 상태
     pub final_state: String,

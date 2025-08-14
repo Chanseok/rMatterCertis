@@ -1215,7 +1215,7 @@ impl IntegratedProductRepository {
         // Convert site page (1=newest, total_pages_on_site=oldest) to our 0-based page_id
         let page_id: i32 = (total_pages_on_site - site_page) as i32;
         // Expected count
-        let expected: i32 = if site_page == total_pages_on_site { products_on_last_page as i32 } else { crate::domain::constants::site::PRODUCTS_PER_PAGE as i32 };
+    let expected: i32 = if site_page == total_pages_on_site { products_on_last_page as i32 } else { crate::domain::constants::site::PRODUCTS_PER_PAGE };
         // Count details for this page_id
         let count: i32 = sqlx::query_scalar(
             r"SELECT COUNT(*) FROM product_details WHERE page_id = ?"

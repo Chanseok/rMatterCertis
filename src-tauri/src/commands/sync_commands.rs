@@ -1,4 +1,5 @@
 use chrono::Utc;
+use tracing::trace;
 use tauri::{AppHandle, State, Emitter};
 use tracing::{error, info, debug};
 use crate::application::AppState;
@@ -178,10 +179,10 @@ pub async fn start_partial_sync(
             };
             let product_urls = match extractor.extract_product_urls_from_content(&page_html) { Ok(v) => v, Err(e) => { failed += 1; emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "parse_failed".into(), detail: format!("page {}: {}", physical_page, e), timestamp: Utc::now() }); continue; } };
 
-            let mut page_inserted = 0u32; let mut page_updated = 0u32; let mut page_skipped = 0u32; let mut page_failed = 0u32;
+            let mut page_inserted = 0u32; let mut page_updated = 0u32; let mut page_skipped = 0u32; let mut page_failed = 0u32; // page_failed aggregated into `failed`
             let page_start = std::time::Instant::now();
             // Batch all DB operations for this page inside a single transaction to reduce fsync/commit overhead
-            let mut tx = match pool.begin().await { Ok(t) => t, Err(e) => { page_failed += product_urls.len() as u32; failed += product_urls.len() as u32; emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "tx_begin_failed".into(), detail: format!("page {}: {}", physical_page, e), timestamp: Utc::now() }); continue; } };
+            let mut tx = match pool.begin().await { Ok(t) => t, Err(e) => { failed += product_urls.len() as u32; emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "tx_begin_failed".into(), detail: format!("page {}: {}", physical_page, e), timestamp: Utc::now() }); continue; } };
 
             for (i, url) in product_urls.iter().enumerate() {
                 let calc = calculator.calculate(physical_page, i);
@@ -237,6 +238,9 @@ pub async fn start_partial_sync(
 
             // Commit transaction for this page
             if let Err(e) = tx.commit().await { page_failed += 1; failed += 1; emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "tx_commit_failed".into(), detail: format!("page {}: {}", physical_page, e), timestamp: Utc::now() }); }
+
+            // Fold per-page failure metric into session-level accumulator explicitly (warning avoidance & clarity)
+            if page_failed > 0 { trace!("page {} had {} failed product upserts", physical_page, page_failed); }
 
             let ms = page_start.elapsed().as_millis() as u64;
             pages_processed += 1;

@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use chrono::Utc;
-use tokio::{sync::mpsc, time::timeout};
+use tokio::sync::mpsc;
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
 use once_cell::sync::Lazy;
@@ -515,60 +515,33 @@ impl StageActor {
         // 상태를 Processing으로 전환
         self.state = StageState::Processing;
         
-        // 타임아웃과 함께 스테이지 처리
-        let processing_result = timeout(
-            Duration::from_secs(timeout_secs),
-            self.process_stage_items(stage_type.clone(), items, concurrency_limit, context)
+        // 내부 타임아웃/취소 지원이 포함된 처리 실행 (tasks abort 포함)
+        let processing_result = self.process_stage_items(
+            stage_type.clone(),
+            items,
+            concurrency_limit,
+            context,
+            Duration::from_secs(timeout_secs)
         ).await;
-        
+
         match processing_result {
-            Ok(result) => {
-                match result {
-                    Ok(stage_result) => {
-                        self.state = StageState::Completed;
-                        
-                        // 완료 이벤트 발행
-                        let completion_event = AppEvent::StageCompleted {
-                            stage_type: stage_type.clone(),
-                            session_id: context.session_id.clone(),
-                            batch_id: Some(self.batch_id.clone()),
-                            result: stage_result,
-                            timestamp: Utc::now(),
-                        };
-                        
-                        context.emit_event(completion_event).await
-                            .map_err(|e| StageError::ContextError(e.to_string()))?;
-                        
-                        info!("✅ Stage {:?} completed successfully: {}/{} items processed", 
-                              stage_type, self.success_count, self.total_items);
-                    }
-                    Err(e) => {
-                        let error_msg = e.to_string();
-                        self.state = StageState::Failed { error: error_msg.clone() };
-                        
-                        // 실패 이벤트 발행
-                        let failure_event = AppEvent::StageFailed {
-                            stage_type: stage_type.clone(),
-                            session_id: context.session_id.clone(),
-                            batch_id: Some(self.batch_id.clone()),
-                            error: error_msg,
-                            timestamp: Utc::now(),
-                        };
-                        
-                        context.emit_event(failure_event).await
-                            .map_err(|e| StageError::ContextError(e.to_string()))?;
-                        
-                        return Err(e);
-                    }
-                }
+            Ok(stage_result) => {
+                self.state = StageState::Completed;
+                let completion_event = AppEvent::StageCompleted {
+                    stage_type: stage_type.clone(),
+                    session_id: context.session_id.clone(),
+                    batch_id: Some(self.batch_id.clone()),
+                    result: stage_result,
+                    timestamp: Utc::now(),
+                };
+                context.emit_event(completion_event).await
+                    .map_err(|e| StageError::ContextError(e.to_string()))?;
+                info!("✅ Stage {:?} completed successfully: {}/{} items processed", stage_type, self.success_count, self.total_items);
+                Ok(())
             }
-            Err(_) => {
-                // 타임아웃 발생
+            Err(StageError::ProcessingTimeout { .. }) => {
                 self.state = StageState::Timeout;
-                
                 let error = StageError::ProcessingTimeout { timeout_secs };
-                
-                // 타임아웃 이벤트 발행
                 let timeout_event = AppEvent::StageFailed {
                     stage_type: stage_type.clone(),
                     session_id: context.session_id.clone(),
@@ -576,15 +549,25 @@ impl StageActor {
                     error: error.to_string(),
                     timestamp: Utc::now(),
                 };
-                
                 context.emit_event(timeout_event).await
                     .map_err(|e| StageError::ContextError(e.to_string()))?;
-                
-                return Err(error);
+                Err(error)
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                self.state = StageState::Failed { error: error_msg.clone() };
+                let failure_event = AppEvent::StageFailed {
+                    stage_type: stage_type.clone(),
+                    session_id: context.session_id.clone(),
+                    batch_id: Some(self.batch_id.clone()),
+                    error: error_msg,
+                    timestamp: Utc::now(),
+                };
+                context.emit_event(failure_event).await
+                    .map_err(|er| StageError::ContextError(er.to_string()))?;
+                Err(e)
             }
         }
-        
-        Ok(())
     }
     
     /// 스테이지 아이템들 처리
@@ -600,6 +583,7 @@ impl StageActor {
         items: Vec<StageItem>,
         concurrency_limit: u32,
         _context: &AppContext,
+        overall_timeout: Duration,
     ) -> Result<StageResult, StageError> {
         debug!("Processing {} items for stage {:?}", items.len(), stage_type);
         
@@ -662,7 +646,10 @@ impl StageActor {
     let site_total_pages_hint = self.site_total_pages_hint;
     let products_on_last_page_hint = self.products_on_last_page_hint;
         
-        // 각 아이템을 병렬로 처리
+        // 각 아이템을 병렬로 처리 (StageItemStarted를 먼저 emit하여 이벤트 순서 보장)
+        let deadline = Instant::now() + overall_timeout;
+    // join 전에 추후 abort 대상 추적을 위해 task handle 저장
+    let mut handles: Vec<tokio::task::JoinHandle<Result<StageItemResult, StageError>>> = Vec::new();
         for item in items {
             let sem = semaphore.clone();
             let base_item = item.clone(); // used for lifecycle pre-emits
@@ -676,42 +663,6 @@ impl StageActor {
             let session_id_clone = _context.session_id.clone();
             let batch_id_opt = Some(self.batch_id.clone());
             let ctx_clone = _context.clone();
-            // Pre-emit lifecycle coarse events (page/product) before spawning heavy work
-            match (&stage_type, &base_item) {
-                (StageType::ListPageCrawling, StageItem::Page(pn)) => {
-                    if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle { session_id: session_id_clone.clone(), batch_id: batch_id_opt.clone(), page_number: *pn, status: "fetch_started".into(), metrics: None, timestamp: Utc::now() }).await {
-                        error!("PageLifecycle fetch_started emit failed page={} err={}", pn, e);
-                    } else {
-                        debug!("Emitted PageLifecycle fetch_started page={}", pn);
-                    }
-                }
-                (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) => {
-                    let count = urls.urls.len() as u32;
-                    let metrics = crate::new_architecture::actors::types::SimpleMetrics::Page { url_count: None, scheduled_details: Some(count), error: None };
-                    let page_hint = urls.urls.first().map(|u| u.page_id as u32).unwrap_or(0u32);
-                    if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle { session_id: session_id_clone.clone(), batch_id: batch_id_opt.clone(), page_number: page_hint, status: "detail_scheduled".into(), metrics: Some(metrics), timestamp: Utc::now() }).await {
-                        error!("PageLifecycle detail_scheduled emit failed page={} err={}", page_hint, e);
-                    } else {
-                        debug!("Emitted PageLifecycle detail_scheduled page={} scheduled_details={}", page_hint, count);
-                    }
-                    for pu in &urls.urls { // per-product fetch_started
-                        if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
-                            session_id: session_id_clone.clone(),
-                            batch_id: batch_id_opt.clone(),
-                            page_number: Some(pu.page_id as u32),
-                            product_ref: pu.url.clone(),
-                            status: "fetch_started".into(),
-                            retry: None,
-                            duration_ms: None,
-                            metrics: None,
-                            timestamp: Utc::now(),
-                        }).await {
-                            error!("ProductLifecycle fetch_started emit failed product={} err={}", pu.url, e);
-                        }
-                    }
-                }
-                _ => {}
-            }
             let task = tokio::spawn(async move {
                 let _permit = sem.acquire().await.map_err(|e|
                     StageError::InitializationFailed(format!("Semaphore error: {}", e))
@@ -724,6 +675,36 @@ impl StageActor {
                     item_type: base_item.item_type_enum(),
                     timestamp: Utc::now(),
                 }).await { tracing::error!("StageItemStarted emit failed: {}", e); }
+
+                // Lifecycle coarse events AFTER StageItemStarted to preserve ordering
+                match (&stage_type_clone, &base_item) {
+                    (StageType::ListPageCrawling, StageItem::Page(pn)) => {
+                        if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle { session_id: session_id_clone.clone(), batch_id: batch_id_opt.clone(), page_number: *pn, status: "fetch_started".into(), metrics: None, timestamp: Utc::now() }).await {
+                            error!("PageLifecycle fetch_started emit failed page={} err={}", pn, e);
+                        } else { debug!("Emitted PageLifecycle fetch_started page={}", pn); }
+                    }
+                    (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) => {
+                        let count = urls.urls.len() as u32;
+                        let metrics = crate::new_architecture::actors::types::SimpleMetrics::Page { url_count: None, scheduled_details: Some(count), error: None };
+                        let page_hint = urls.urls.first().map(|u| u.page_id as u32).unwrap_or(0u32);
+                        if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle { session_id: session_id_clone.clone(), batch_id: batch_id_opt.clone(), page_number: page_hint, status: "detail_scheduled".into(), metrics: Some(metrics), timestamp: Utc::now() }).await {
+                            error!("PageLifecycle detail_scheduled emit failed page={} err={}", page_hint, e);
+                        } else { debug!("Emitted PageLifecycle detail_scheduled page={} scheduled_details={}", page_hint, count); }
+                        // Aggregate start event (volume reduction)
+                        if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                            session_id: session_id_clone.clone(),
+                            batch_id: batch_id_opt.clone(),
+                            page_number: Some(page_hint),
+                            product_ref: format!("_batch_urls_{}", count),
+                            status: "fetch_started_group".into(),
+                            retry: None,
+                            duration_ms: None,
+                            metrics: Some(SimpleMetrics::Generic { key: "group_size".into(), value: count.to_string() }),
+                            timestamp: Utc::now(),
+                        }).await { error!("ProductLifecycle fetch_started_group emit failed err={}", e); }
+                    }
+                    _ => {}
+                }
                 let item_start = Instant::now();
                 let temp_actor = StageActor {
                     actor_id: "temp".to_string(),
@@ -760,6 +741,25 @@ impl StageActor {
                 ).await;
                 match &result {
                     Ok(r) => {
+                        // For grouped product detail crawling, emit a grouped completion event summarizing counts
+                        if let StageType::ProductDetailCrawling = stage_type_clone {
+                            if let StageItem::ProductUrls(ref urls) = lifecycle_item {
+                                let page_hint = urls.urls.first().map(|u| u.page_id as u32).unwrap_or(0u32);
+                                let total = urls.urls.len() as u32;
+                                let duration_ms = item_start.elapsed().as_millis() as u64;
+                                if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                    session_id: session_id_clone.clone(),
+                                    batch_id: batch_id_opt.clone(),
+                                    page_number: Some(page_hint),
+                                    product_ref: format!("_batch_urls_{}", total),
+                                    status: "fetch_completed_group".into(),
+                                    retry: None,
+                                    duration_ms: Some(duration_ms),
+                                    metrics: Some(SimpleMetrics::Generic { key: "group_size".into(), value: total.to_string() }),
+                                    timestamp: Utc::now(),
+                                }).await { error!("ProductLifecycle fetch_completed_group emit failed err={}", e); }
+                            }
+                        }
                         // If this is DataSaving stage, perform persistence now (previous arm returned Ok(()))
                         // NOTE: Previous pattern used value patterns against references &StageType/&StageItem and never matched.
                         // We now explicitly match references to ensure the block executes.
@@ -830,12 +830,20 @@ impl StageActor {
                                         info!("[PersistExec] starting storage call variant={}", match &lifecycle_item { StageItem::ProductDetails(_) => "ProductDetails", StageItem::ValidatedProducts(_) => "ValidatedProducts", _ => "Other" });
                                         match StageActor::execute_real_database_storage(&lifecycle_item, repo.clone()).await {
                                             Ok((inserted, updated, duplicates_ct)) => {
-                                                let total = inserted + updated;
-                                                let attempted = attempted_count; // from outer scope
-                                                let unchanged = if attempted > total { attempted - total } else { 0 };
+                                                // total = inserted + updated (실제 DB 변경된 row 수)
+                                                let total_changed = inserted + updated;
+                                                let attempted = attempted_count; // from outer scope (입력 product 개수)
+                                                // unchanged = attempted - (inserted+updated+duplicates) 로 해석: duplicates 는 이미 동일 데이터 존재
+                                                let consumed = inserted + updated + duplicates_ct;
+                                                let unchanged = if attempted > consumed { attempted - consumed } else { 0 };
                                                 let status = if inserted > 0 && updated == 0 { "persist_inserted" } else if updated > 0 && inserted == 0 { "persist_updated" } else if inserted == 0 && updated == 0 { if duplicates_ct == attempted { "persist_noop_all_duplicate" } else { "persist_noop" } } else { "persist_mixed" };
-                                                info!("[Persist] Result status={} inserted={} updated={} duplicates={} total={} unchanged={} attempted={} duration_ms={}", status, inserted, updated, duplicates_ct, total, unchanged, attempted, persist_start.elapsed().as_millis());
-                                                let metrics = SimpleMetrics::Generic { key: "persist_result".into(), value: format!("attempted={},inserted={},updated={},duplicates={},total={},unchanged={}", attempted, inserted, updated, duplicates_ct, total, unchanged) };
+                                                // 일관성 검증
+                                                let logical_sum = inserted + updated + duplicates_ct + unchanged;
+                                                if logical_sum != attempted {
+                                                    warn!("[Persist] metric_inconsistency attempted={} != inserted+updated+duplicates+unchanged={} ({}+{}+{}+{})", attempted, logical_sum, inserted, updated, duplicates_ct, unchanged);
+                                                }
+                                                info!("[Persist] Result status={} inserted={} updated={} duplicates={} changed={} unchanged={} attempted={} duration_ms={}", status, inserted, updated, duplicates_ct, total_changed, unchanged, attempted, persist_start.elapsed().as_millis());
+                                                let metrics = SimpleMetrics::Generic { key: "persist_result".into(), value: format!("attempted={},inserted={},updated={},duplicates={},changed={},unchanged={}", attempted, inserted, updated, duplicates_ct, total_changed, unchanged) };
                                                 let emit_res = ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                                     session_id: session_id_clone.clone(),
                                                     batch_id: batch_id_opt.clone(),
@@ -855,7 +863,7 @@ impl StageActor {
                                                     // emit anomaly diagnostic + (future) logical drift probe
                                                     if let Some(repo) = &temp_actor._product_repo {
                                                         if let Ok((cnt, minp, maxp, _)) = repo.get_product_detail_stats().await {
-                                                            let attempted = match &lifecycle_item { StageItem::ValidatedProducts(v) => v.products.len() as u32, StageItem::ProductDetails(d) => d.products.len() as u32, _ => total };
+                                                            let attempted = match &lifecycle_item { StageItem::ValidatedProducts(v) => v.products.len() as u32, StageItem::ProductDetails(d) => d.products.len() as u32, _ => attempted };
                                                             let _ = ctx_clone.emit_event(AppEvent::PersistenceAnomaly {
                                                                 session_id: session_id_clone.clone(),
                                                                 batch_id: batch_id_opt.clone(),
@@ -930,19 +938,17 @@ impl StageActor {
                         }
                         // Product detail lifecycle completion (group success)
                         if let (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) = (&stage_type_clone, &lifecycle_item) {
-                            for pu in &urls.urls {
-                                if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
-                                    session_id: session_id_clone.clone(),
-                                    batch_id: batch_id_opt.clone(),
-                                    page_number: Some(pu.page_id as u32),
-                                    product_ref: pu.url.clone(),
-                                    status: "fetch_completed".into(),
-                                    retry: None,
-                                    duration_ms: Some(item_start.elapsed().as_millis() as u64),
-                                    metrics: None,
-                                    timestamp: Utc::now(),
-                                }).await { error!("ProductLifecycle fetch_completed emit failed product={} err={}", pu.url, e); }
-                            }
+                            if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                session_id: session_id_clone.clone(),
+                                batch_id: batch_id_opt.clone(),
+                                page_number: urls.urls.first().map(|u| u.page_id as u32),
+                                product_ref: format!("_batch_urls_{}", urls.urls.len()),
+                                status: "fetch_completed_group".into(),
+                                retry: None,
+                                duration_ms: Some(item_start.elapsed().as_millis() as u64),
+                                metrics: Some(SimpleMetrics::Generic { key: "group_size".into(), value: urls.urls.len().to_string() }),
+                                timestamp: Utc::now(),
+                            }).await { error!("ProductLifecycle fetch_completed_group emit failed err={}", e); }
                         }
                     }
                     Err(err) => {
@@ -987,10 +993,24 @@ impl StageActor {
             tasks.push(task);
         }
         
-        // 모든 태스크 완료 대기
+        // 모든 태스크 완료 대기 (전체 타임아웃 관리 및 잔여 task abort)
         let mut results = Vec::new();
-        for task in tasks {
-            match task.await {
+        let mut timeout_triggered = false;
+    for task in tasks.into_iter() {
+            let now = Instant::now();
+            if now >= deadline {
+                timeout_triggered = true;
+        for h in handles.drain(..) { h.abort(); }
+                break;
+            }
+            let remaining = deadline.saturating_duration_since(now);
+            // 개별 task join에 대해 남은 전체 시간만 허용
+            let join_res = tokio::time::timeout(remaining, task).await;
+            let join_outcome = match join_res {
+                Ok(j) => j,
+                Err(_) => { timeout_triggered = true; break; }
+            };
+            match join_outcome {
                 Ok(Ok(result)) => {
                     results.push(result);
                 }
@@ -1021,6 +1041,12 @@ impl StageActor {
             }
         }
         
+        // 타임아웃 이후 남아있는 handle abort
+        if timeout_triggered {
+            for h in handles { h.abort(); }
+            return Err(StageError::ProcessingTimeout { timeout_secs: overall_timeout.as_secs() });
+        }
+
         // 결과 집계
         self.item_results = results;
         self.completed_items = self.item_results.len() as u32;
