@@ -79,7 +79,16 @@ impl ProductDetailsActor {
             let sem_clone_for_downshift = sem.clone();
             handles.push(tokio::spawn(async move {
                 let started_at = std::time::Instant::now();
-                let _ = tx.send(AppEvent::DetailTaskStarted { session_id: session_id.clone(), detail_id: did.clone(), page: None, timestamp: Utc::now() });
+                let _ = tx.send(AppEvent::DetailTaskStarted {
+                    session_id: session_id.clone(),
+                    detail_id: did.clone(),
+                    page: None,
+                    batch_id: None,
+                    range_idx: None,
+                    batch_index: None,
+                    scope: Some("session".to_string()),
+                    timestamp: Utc::now(),
+                });
                 let mut attempt: u32 = 0;
                 loop {
                     attempt += 1;
@@ -88,7 +97,17 @@ impl ProductDetailsActor {
                     let (fail, err_type) = if roll < 0.12 { (true, if roll < 0.04 { "NetworkError" } else if roll < 0.08 { "TimeoutError" } else { "ParsingError" }) } else { (false, "") };
                     if !fail {
                         let dur_ms = started_at.elapsed().as_millis() as u64;
-                        let _ = tx.send(AppEvent::DetailTaskCompleted { session_id: session_id.clone(), detail_id: did.clone(), page: None, duration_ms: dur_ms, timestamp: Utc::now() });
+                        let _ = tx.send(AppEvent::DetailTaskCompleted {
+                            session_id: session_id.clone(),
+                            detail_id: did.clone(),
+                            page: None,
+                            duration_ms: dur_ms,
+                            batch_id: None,
+                            range_idx: None,
+                            batch_index: None,
+                            scope: Some("session".to_string()),
+                            timestamp: Utc::now(),
+                        });
                         let registry = session_registry();
                         let mut g = registry.write().await;
                         if let Some(e) = g.get_mut(&session_id) {
@@ -130,7 +149,18 @@ impl ProductDetailsActor {
                         }
                         if final_failure {
                             let err = format!("simulated_detail_error:{}", err_type);
-                            let _ = tx.send(AppEvent::DetailTaskFailed { session_id: session_id.clone(), detail_id: did.clone(), page: None, error: err.clone(), final_failure: true, timestamp: Utc::now() });
+                            let _ = tx.send(AppEvent::DetailTaskFailed {
+                                session_id: session_id.clone(),
+                                detail_id: did.clone(),
+                                page: None,
+                                error: err.clone(),
+                                final_failure: true,
+                                batch_id: None,
+                                range_idx: None,
+                                batch_index: None,
+                                scope: Some("session".to_string()),
+                                timestamp: Utc::now(),
+                            });
                             let registry = session_registry();
                             let mut g = registry.write().await;
                             if let Some(e) = g.get_mut(&session_id) {
@@ -167,7 +197,16 @@ impl ProductDetailsActor {
             let cfg = self.config.clone();
             handles.push(tokio::spawn(async move {
                 let started_at = std::time::Instant::now();
-                let _ = tx.send(AppEvent::DetailTaskStarted { session_id: session_id.clone(), detail_id: did.clone(), page: None, timestamp: Utc::now() });
+                let _ = tx.send(AppEvent::DetailTaskStarted {
+                    session_id: session_id.clone(),
+                    detail_id: did.clone(),
+                    page: None,
+                    batch_id: None,
+                    range_idx: None,
+                    batch_index: None,
+                    scope: Some("session".to_string()),
+                    timestamp: Utc::now(),
+                });
                 let mut attempt: u32 = 0;
                 loop {
                     attempt += 1;
@@ -178,7 +217,17 @@ impl ProductDetailsActor {
                     let (fail, err_type) = if roll < 0.12 { (true, if roll < 0.04 { "NetworkError" } else if roll < 0.08 { "TimeoutError" } else { "ParsingError" }) } else { (false, "") };
                     if !fail {
                         let dur_ms = started_at.elapsed().as_millis() as u64;
-                        let _ = tx.send(AppEvent::DetailTaskCompleted { session_id: session_id.clone(), detail_id: did.clone(), page: None, duration_ms: dur_ms, timestamp: Utc::now() });
+                        let _ = tx.send(AppEvent::DetailTaskCompleted {
+                            session_id: session_id.clone(),
+                            detail_id: did.clone(),
+                            page: None,
+                            duration_ms: dur_ms,
+                            batch_id: None,
+                            range_idx: None,
+                            batch_index: None,
+                            scope: Some("session".to_string()),
+                            timestamp: Utc::now(),
+                        });
                         let registry = session_registry();
                         let mut g = registry.write().await;
                         if let Some(e) = g.get_mut(&session_id) {
@@ -213,7 +262,18 @@ impl ProductDetailsActor {
                         }
                         if final_failure {
                             let err = format!("simulated_detail_error:{}", err_type);
-                            let _ = tx.send(AppEvent::DetailTaskFailed { session_id: session_id.clone(), detail_id: did.clone(), page: None, error: err.clone(), final_failure: true, timestamp: Utc::now() });
+                            let _ = tx.send(AppEvent::DetailTaskFailed {
+                                session_id: session_id.clone(),
+                                detail_id: did.clone(),
+                                page: None,
+                                error: err.clone(),
+                                final_failure: true,
+                                batch_id: None,
+                                range_idx: None,
+                                batch_index: None,
+                                scope: Some("session".to_string()),
+                                timestamp: Utc::now(),
+                            });
                             let registry = session_registry();
                             let mut g = registry.write().await;
                             if let Some(e) = g.get_mut(&session_id) {

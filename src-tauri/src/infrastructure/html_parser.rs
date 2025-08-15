@@ -72,7 +72,7 @@ impl Default for MatterExtractorConfig {
         Self {
             product_list_selectors: ProductListSelectors {
                 // 가이드에 따른 정확한 CSA-IoT 페이지 구조 셀렉터
-                product_container: "div.post-feed article".to_string(),
+                product_container: ".wp-block-crown-blocks-product-index article.product".to_string(), // "div.post-feed article".to_string(),
                 product_link: "a".to_string(),
                 manufacturer: "p.entry-company.notranslate".to_string(),
                 model: "h3.entry-title".to_string(),

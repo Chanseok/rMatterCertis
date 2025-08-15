@@ -99,7 +99,8 @@ impl ActorEventBridge {
             let seq_val = obj.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
             let session_id = obj.get("session_id").and_then(|v| v.as_str());
             let batch_id = obj.get("batch_id").and_then(|v| v.as_str());
-            info!(
+            // Route this concise line to events.log by using the dedicated target
+            tracing::info!(target: "actor-event", 
                 "🌉 actor-event seq={} name={} variant={} session_id={:?} batch_id={:?}",
                 seq_val, event_name, variant, session_id, batch_id
             );

@@ -416,6 +416,26 @@ impl SharedStateCache {
         *guard = Some(result);
     }
     
+    /// 기존 DB 분석 캐시를 page/index 정보로 보강 (None -> Some 으로만 업데이트)
+    pub async fn enrich_db_analysis_position(&self, max_page_id: Option<i32>, max_index_in_page: Option<i32>) {
+        if max_page_id.is_none() && max_index_in_page.is_none() { return; }
+        let mut guard = self.db_analysis.write().await;
+        if let Some(ref mut existing) = *guard {
+            let mut changed = false;
+            if existing.max_page_id.is_none() && max_page_id.is_some() {
+                existing.max_page_id = max_page_id;
+                changed = true;
+            }
+            if existing.max_index_in_page.is_none() && max_index_in_page.is_some() {
+                existing.max_index_in_page = max_index_in_page;
+                changed = true;
+            }
+            if changed {
+                tracing::info!("🔄 Enriched cached DB analysis with position: page_id={:?}, index_in_page={:?}", existing.max_page_id, existing.max_index_in_page);
+            }
+        }
+    }
+    
     /// 유효한 DB 분석 결과 가져오기 (TTL 검사 포함)
     pub async fn get_valid_db_analysis_async(&self, ttl_minutes: Option<u64>) -> Option<DbAnalysisResult> {
         let ttl = Duration::from_secs((ttl_minutes.unwrap_or(2)) * 60);

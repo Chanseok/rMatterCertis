@@ -1220,11 +1220,26 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
         })
     } else { None };
     let db_cache_hit = cached_db_analysis.is_some();
-    if db_cache_hit { info!(target: "kpi.execution_plan", "{{\"event\":\"db_analysis_cache_hit\"}}"); }
+    if db_cache_hit {
+        if let Some(cache_state) = shared_cache.as_ref() {
+            if let Some(db_cached_raw) = cache_state.get_valid_db_analysis_async(Some(3)).await {
+                let enriched = db_cached_raw.max_page_id.is_some() && db_cached_raw.max_index_in_page.is_some();
+                let max_pid = db_cached_raw.max_page_id.map(|v| v.to_string()).unwrap_or_else(|| "null".into());
+                let max_idx = db_cached_raw.max_index_in_page.map(|v| v.to_string()).unwrap_or_else(|| "null".into());
+                info!(target: "kpi.execution_plan", "{{\"event\":\"db_analysis_cache_hit\",\"total_products\":{},\"has_position\":{},\"max_page_id\":{},\"max_index_in_page\":{}}}", db_cached_raw.total_products, enriched, max_pid, max_idx);
+            } else {
+                info!(target: "kpi.execution_plan", "{{\"event\":\"db_analysis_cache_hit\",\"warn\":\"cache_disappeared\"}}" );
+            }
+        } else {
+            info!(target: "kpi.execution_plan", "{{\"event\":\"db_analysis_cache_hit\",\"warn\":\"no_shared_cache\"}}" );
+        }
+    }
     let (crawling_plan, site_status, db_analysis_used) = crawling_planner
         .create_crawling_plan_with_caches(&crawling_config, cached_site_status, cached_db_analysis)
         .await?;
-    if !db_cache_hit { info!(target: "kpi.execution_plan", "{{\"event\":\"db_analysis_cache_miss\"}}"); }
+    if !db_cache_hit {
+        info!(target: "kpi.execution_plan", "{{\"event\":\"db_analysis_cache_miss\"}}" );
+    }
     // Persist fresh site status & db analysis if newly fetched
     if let Some(cache_state_ref) = shared_cache.as_ref() {
         if cache_was_none {
@@ -1240,10 +1255,12 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
         }
         if !db_cache_hit {
             use crate::application::shared_state::DbAnalysisResult;
+            // First attempt to read precise page/index BEFORE caching to avoid placeholder None persistence
+            let (precise_page_id, precise_index_in_page) = match product_repo.get_max_page_id_and_index().await { Ok(v) => v, Err(_) => (None, None) };
             let db_cached = DbAnalysisResult::new(
                 db_analysis_used.total_products,
-                None,
-                None,
+                precise_page_id,
+                precise_index_in_page,
                 db_analysis_used.data_quality_score,
             );
             cache_state_ref.set_db_analysis(db_cached).await;
@@ -1264,48 +1281,69 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
     // 5. ExecutionPlan 생성 전 hash 산출 및 PlanCache 검사
     let session_id = format!("actor_session_{}", Utc::now().timestamp());
     let plan_id = format!("plan_{}", Utc::now().timestamp());
+    // Structured PLAN KPI (after plan_id known)
+    let list_phase_count = crawling_plan.phases.iter().filter(|p| matches!(p.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling)).count();
+    let total_list_pages: u32 = crawling_plan.phases.iter().filter(|p| matches!(p.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling)).map(|p| p.pages.len() as u32).sum();
+    // plan_created KPI는 ExecutionPlan hash 확정 후 한 번만 출력하도록 변경 (중복 제거)
     
-    // CrawlingPlan에서 ListPageCrawling phases를 수집하고, 최신순 페이지를 배치 크기로 분할
-    let mut all_pages: Vec<u32> = Vec::new();
-    for phase in &crawling_plan.phases {
-        if let crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling = phase.phase_type {
-            // 각 ListPageCrawling phase에는 해당 배치의 페이지들이 담겨있음(최신순)
-            // Phase의 pages를 그대로 append (이미 최신→과거 순)
-            all_pages.extend(phase.pages.iter());
-        }
-    }
-
-    // 설정의 page_range_limit로 상한 적용
-    let page_limit = app_config.user.crawling.page_range_limit.max(1) as usize;
-    if all_pages.len() > page_limit {
-        all_pages.truncate(page_limit);
-    }
-
-    // 배치 크기로 분할 (역순 범위 유지)
-    let batch_size = app_config.user.batch.batch_size.max(1) as usize;
-    let mut crawling_ranges: Vec<PageRange> = Vec::new();
-    for chunk in all_pages.chunks(batch_size) {
-        if let (Some(&first), Some(&last)) = (chunk.first(), chunk.last()) {
-            // chunk는 최신→과거 순서이므로 start_page=first, end_page=last, reverse_order=true
-            let pages_count = (first.saturating_sub(last)) + 1;
-            crawling_ranges.push(PageRange {
+    // CrawlingPlan phases(ListPageCrawling) -> crawling_ranges (중복 재분할 제거)
+    let mut crawling_ranges: Vec<PageRange> = crawling_plan
+        .phases
+        .iter()
+        .filter(|p| matches!(p.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling))
+        .filter(|p| !p.pages.is_empty())
+        .map(|p| {
+            let first = *p.pages.first().unwrap(); // newest
+            let last = *p.pages.last().unwrap();   // oldest in this batch
+            let pages_count = first.saturating_sub(last) + 1; // contiguous descending
+            PageRange {
                 start_page: first,
                 end_page: last,
-                estimated_products: pages_count * 12, // 대략치
+                estimated_products: pages_count * 12, // heuristic
                 reverse_order: true,
-            });
+            }
+        })
+        .collect();
+
+    // page_range_limit 적용 (최신 배치를 우선 유지하면서 초과 페이지 잘라내기)
+    // page_range_limit already u32; remove redundant cast
+    let page_limit = app_config.user.crawling.page_range_limit.max(1);
+    if page_limit > 0 {
+        let mut accumulated: u32 = 0;
+        let mut trim_index: Option<usize> = None;
+        for (idx, r) in crawling_ranges.iter_mut().enumerate() {
+            let pages_in_range = r.start_page.saturating_sub(r.end_page) + 1;
+            if accumulated + pages_in_range > page_limit {
+                // 이 range를 부분 절단
+                let remaining = page_limit - accumulated;
+                if remaining == 0 {
+                    trim_index = Some(idx);
+                } else if remaining < pages_in_range { // 일부만 필요
+                    // start_page는 최신, end_page를 조정하여 remaining 개수를 유지
+                    let new_end = r.start_page.saturating_sub(remaining - 1);
+                    if new_end > r.end_page { // 안전 가드 (정상적으로는 항상 true)
+                        r.end_page = new_end;
+                        let new_pages = r.start_page.saturating_sub(r.end_page) + 1;
+                        r.estimated_products = new_pages * 12;
+                        trim_index = Some(idx + 1); // 이후 range 제거
+                    } else {
+                        // fallback: 유지 (이상 상황)
+                        trim_index = Some(idx + 1);
+                    }
+                }
+                break;
+            } else {
+                accumulated += pages_in_range;
+            }
+        }
+        if let Some(cut) = trim_index {
+            crawling_ranges.truncate(cut);
         }
     }
-    
+
     if crawling_ranges.is_empty() {
-        // 안전 폴백 (최신 1페이지)
-        let last_page = all_pages.first().copied().unwrap_or(1);
-        crawling_ranges.push(PageRange {
-            start_page: last_page,
-            end_page: last_page,
-            estimated_products: 12,
-            reverse_order: true,
-        });
+        // 안전 폴백 (최신 1페이지) - Planner가 비었을 때
+        crawling_ranges.push(PageRange { start_page: 1, end_page: 1, estimated_products: 12, reverse_order: true });
     }
     
     let total_pages: u32 = crawling_ranges.iter().map(|r| {
@@ -1318,6 +1356,10 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
         Ok(v) => v,
         Err(e) => { warn!("⚠️ Failed to read max page/index: {}", e); (None, None) }
     };
+    // Enrich existing DB analysis cache with position info if it was cached earlier without it
+    if let Some(cache_state) = shared_cache.as_ref() {
+        cache_state.enrich_db_analysis_position(db_max_page_id, db_max_index_in_page).await;
+    }
     info!("🧾 DB snapshot: max_page_id={:?} max_index_in_page={:?} total_products_dbMetric={:?}", db_max_page_id, db_max_index_in_page, crawling_plan.db_total_products);
 
     // 입력 스냅샷 구성 (사이트/DB 상태 + 핵심 제한값)
@@ -1335,6 +1377,7 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
 
     // 해시 계산 (공통 헬퍼 사용)
     let plan_hash = compute_plan_hash(&snapshot, &crawling_ranges, &format!("{:?}", crawling_plan.optimization_strategy));
+    info!(target: "kpi.plan", "{{\"event\":\"plan_hash_assigned\",\"plan_id\":\"{}\",\"plan_hash\":\"{}\",\"range_count\":{},\"list_pages_total\":{}}}", plan_id, plan_hash, crawling_ranges.len(), crawling_ranges.iter().map(|r| if r.reverse_order { r.start_page - r.end_page + 1 } else { r.end_page - r.start_page + 1 }).sum::<u32>());
 
     if let Some(cache_state) = shared_cache.as_ref() {
         if let Some(hit) = cache_state.get_cached_execution_plan(&plan_hash).await {
@@ -1344,19 +1387,6 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
         }
     }
 
-    // Partial page reinclusion (if last DB page not fully processed)
-    if let (Some(mp), Some(mi)) = (db_max_page_id, db_max_index_in_page) {
-        if mi < 11 { // 0-based index; full page means 0..11
-            let partial_site_page = site_status.total_pages - mp as u32; // mapping rule
-            let already_included = crawling_ranges.iter().any(|r| {
-                if r.reverse_order { partial_site_page <= r.start_page && partial_site_page >= r.end_page } else { partial_site_page >= r.start_page && partial_site_page <= r.end_page }
-            });
-            if !already_included {
-                info!("🔁 Reinserting partial page {} (db_page_id={}, index_in_page={}) at front of ranges", partial_site_page, mp, mi);
-                crawling_ranges.insert(0, PageRange { start_page: partial_site_page, end_page: partial_site_page, estimated_products: 12, reverse_order: true });
-            }
-        }
-    }
 
     // PlanCache hit 확인 (hash 계산 후 조회) - hash 는 아래에서 이미 계산됨
     if let Some(cache_state) = app.try_state::<SharedStateCache>() {
@@ -1427,8 +1457,8 @@ async fn create_execution_plan(app: &AppHandle) -> Result<(ExecutionPlan, AppCon
     info!("✅ ExecutionPlan created successfully: {} pages across {} batches (hash={})", 
           total_pages, execution_plan.crawling_ranges.len(), execution_plan.plan_hash);
     if let Some(kpi) = &execution_plan.kpi_meta {
-        info!(target: "kpi.execution_plan", "{{\"event\":\"plan_created\",\"hash\":\"{}\",\"total_pages\":{},\"ranges\":{},\"batches\":{},\"strategy\":\"{}\",\"ts\":\"{}\"}}",
-            execution_plan.plan_hash, kpi.total_pages, kpi.total_ranges, kpi.batches, kpi.strategy, kpi.created_at);
+        info!(target: "kpi.plan", "{{\"event\":\"plan_created\",\"plan_id\":\"{}\",\"session_id\":\"{}\",\"list_phase_count\":{},\"total_list_pages\":{},\"strategy\":\"{}\",\"plan_hash\":\"{}\",\"ranges\":{},\"batches\":{},\"ts\":\"{}\"}}",
+            execution_plan.plan_id, execution_plan.session_id, list_phase_count, total_list_pages, kpi.strategy, execution_plan.plan_hash, kpi.total_ranges, kpi.batches, kpi.created_at);
     }
     if let Some(cache_state) = app.try_state::<SharedStateCache>() { cache_state.cache_execution_plan(execution_plan.clone()).await; }
     
@@ -1664,6 +1694,7 @@ async fn execute_session_actor_with_execution_plan(
             let range_start_inst = std::time::Instant::now();
             let pages_in_range = if page_range.reverse_order { page_range.start_page - page_range.end_page + 1 } else { page_range.end_page - page_range.start_page + 1 } as usize;
             let range_batches = (pages_in_range + batch_unit as usize - 1) / batch_unit as usize;
+            info!(target: "kpi.batch", "{{\"event\":\"batch_start\",\"plan_id\":\"{}\",\"session_id\":\"{}\",\"range_idx\":{},\"pages\":{},\"range_batches_est\":{},\"batch_size\":{}}}", execution_plan.plan_id, execution_plan.session_id, range_idx, pages_in_range, range_batches, batch_unit);
             info!("🎯 Range {}/{} start: pages {} to {} ({} pages => {} batches, reverse: {})", 
                     range_idx + 1, execution_plan.crawling_ranges.len(),
                     page_range.start_page, page_range.end_page, pages_in_range, range_batches, page_range.reverse_order);
@@ -1787,6 +1818,7 @@ async fn execute_session_actor_with_execution_plan(
               completed_pages, expected_pages, pct_pages);
     info!("[RangeLoop] PRE-RANGE-FINAL range_idx={} cumulative_batches={} cumulative_pages={} expected_batches={} expected_pages={}", range_idx, completed_batches, completed_pages, expected_batches, expected_pages);
     info!("[RangeLoop] EXIT range_idx={} cumulative_batches={} cumulative_pages={}", range_idx, completed_batches, completed_pages);
+    info!(target: "kpi.batch", "{{\"event\":\"batch_complete\",\"plan_id\":\"{}\",\"session_id\":\"{}\",\"range_idx\":{},\"elapsed_ms\":{},\"cumulative_batches\":{},\"cumulative_pages\":{}}}", execution_plan.plan_id, execution_plan.session_id, range_idx, range_start_inst.elapsed().as_millis(), completed_batches, completed_pages);
     _range_guard.finalized = true; // mark finalized
         // Emit an explicit event for FE/diagnostics that a range has completed
         let _ = actor_event_tx.send(AppEvent::Progress {
@@ -1800,18 +1832,20 @@ async fn execute_session_actor_with_execution_plan(
     }
     // Post-loop integrity check: did we execute all planned ranges?
     if ranges_executed != execution_plan.crawling_ranges.len() {
-        warn!("[RangeLoopAnomaly] ranges_planned={} ranges_executed={} (possible premature termination)", execution_plan.crawling_ranges.len(), ranges_executed);
-        // Emit a progress event so frontend can surface anomaly
+        // Downgraded from warning anomaly to informational integrity summary (false positives were frequent)
+        info!(target: "kpi.range_loop", "{{\"event\":\"range_loop_incomplete\",\"planned\":{},\"executed\":{},\"completed_batches\":{},\"expected_batches\":{},\"completed_pages\":{},\"expected_pages\":{}}}",
+              execution_plan.crawling_ranges.len(), ranges_executed, completed_batches, expected_batches, completed_pages, expected_pages);
         let _ = actor_event_tx.send(AppEvent::Progress {
             session_id: execution_plan.session_id.clone(),
             current_step: ranges_executed as u32,
             total_steps: execution_plan.crawling_ranges.len() as u32,
-            message: format!("Range loop anomaly: executed {}/{} ranges", ranges_executed, execution_plan.crawling_ranges.len()),
+            message: format!("Range loop incomplete: {}/{}", ranges_executed, execution_plan.crawling_ranges.len()),
             percentage: ((completed_pages as f64) / (expected_pages as f64).max(1.0)) * 100.0,
             timestamp: Utc::now(),
         });
     } else {
-        info!("[RangeLoop] All ranges executed successfully ({} of {})", ranges_executed, execution_plan.crawling_ranges.len());
+        info!(target: "kpi.range_loop", "{{\"event\":\"range_loop_complete\",\"planned\":{},\"executed\":{},\"completed_batches\":{},\"expected_batches\":{},\"completed_pages\":{},\"expected_pages\":{}}}",
+              execution_plan.crawling_ranges.len(), ranges_executed, completed_batches, expected_batches, completed_pages, expected_pages);
     }
     }
     
@@ -1838,6 +1872,17 @@ async fn execute_session_actor_with_execution_plan(
         } else { (100.0, completed_pages as u32, vec![], vec![], HashMap::new()) }
     };
     let final_state = if !failed_pages_vec.is_empty() { if completed_batches==expected_batches { "CompletedWithFailures" } else { "CompletedWithFailuresAndDiscrepancy" } } else if completed_batches==expected_batches { "Completed" } else { "CompletedWithDiscrepancy" };
+    let mut mismatch_flags: Vec<&str> = Vec::new();
+    if completed_batches != expected_batches { mismatch_flags.push("batch_count"); }
+    if completed_pages != expected_pages { mismatch_flags.push("page_count"); }
+    if ranges_executed != execution_plan.crawling_ranges.len() { mismatch_flags.push("range_count"); }
+    let mismatch_json = if mismatch_flags.is_empty() { "[]".to_string() } else { format!("[{}]", mismatch_flags.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(",")) };
+    let failures_meta = if failed_pages_vec.is_empty() { "{}".to_string() } else { format!("{{\"failed_pages\":{},\"truncated\":false}}", failed_pages_vec.len()) };
+    info!(target: "kpi.session", "{{\"event\":\"session_summary\",\"session_id\":\"{}\",\"plan_id\":\"{}\",\"final_state\":\"{}\",\"planned_ranges\":{},\"executed_ranges\":{},\"completed_batches\":{},\"expected_batches\":{},\"completed_pages\":{},\"expected_pages\":{},\"failed_count\":{},\"mismatch_flags\":{},\"failures_meta\":{}}}",
+          execution_plan.session_id,
+          execution_plan.plan_id,
+          final_state,
+          execution_plan.crawling_ranges.len(), ranges_executed, completed_batches, expected_batches, completed_pages, expected_pages, failed_pages_vec.len(), mismatch_json, failures_meta);
     let completion_event = AppEvent::SessionCompleted {
         session_id: execution_plan.session_id.clone(),
         summary: SessionSummary {

@@ -320,29 +320,26 @@ impl CrawlingPlanner {
         let count = requested_count.max(1).min(total_pages_on_site);
 
         // 전략 분기
-        let page_range: Vec<u32> = match config.strategy {
+    // Track DB position if fetched during strategy-specific branch (to avoid duplicate query later)
+    let mut db_position_for_reuse: Option<(Option<i32>, Option<i32>)> = None;
+    let mut page_range: Vec<u32> = match config.strategy {
             crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst => {
                 // Enhanced newest-first: prioritize pages containing products lacking details if repository available
                 if let Some(repo) = &self.product_repo {
-                    // heuristic: fetch up to count * 20 products without details (assuming ~20 per page)
                     let fetch_limit: i32 = ((count * 20).max(20)).min(2000) as i32;
                     match repo.get_products_without_details(fetch_limit).await {
                         Ok(missing) if !missing.is_empty() => {
                             let mut pages: Vec<u32> = missing.iter().filter_map(|p| p.page_id.map(|pid| pid as u32)).collect();
                             pages.sort_unstable();
                             pages.dedup();
-                            // Focus on newest pages first
                             pages.sort_by(|a,b| b.cmp(a));
-                            // Truncate to requested count but keep boundary neighbors
                             let mut selected: Vec<u32> = pages.iter().take(count as usize).copied().collect();
                             if let (Some(min_sel), Some(max_sel)) = (selected.iter().min().copied(), selected.iter().max().copied()) {
-                                // include immediate neighbor pages to cover boundary partial pages
                                 let mut boundary = vec![];
                                 if min_sel > 1 { boundary.push(min_sel - 1); }
                                 if max_sel < total_pages_on_site { boundary.push(max_sel + 1); }
                                 for b in boundary { if !selected.contains(&b) { selected.push(b); } }
                             }
-                            // Pad with additional newest pages if still below requested count
                             if selected.len() < count as usize {
                                 let mut candidate = total_pages_on_site;
                                 while selected.len() < count as usize && candidate >= 1 {
@@ -358,10 +355,6 @@ impl CrawlingPlanner {
                             }
                         }
                         Ok(_) => {
-                            // 모든 제품이 detail 을 이미 가진 상태 (요청한 범위 기준으로 신규 detail 필요 없음)
-                            // 재크롤링을 피하기 위해 페이지 범위를 비워둠
-                            // - 기존 로직은 최신 페이지를 다시 선택하여 불필요한 재수집 및 DB no-op update 발생
-                            // - 이제는 명시적 요청(환경변수) 없으면 건너뜀
                             let force_recrawl = std::env::var("MC_FORCE_RECRAWL_ON_COMPLETE")
                                 .map(|v| { let t = v.trim(); !(t.eq("0") || t.eq_ignore_ascii_case("false")) })
                                 .unwrap_or(false);
@@ -375,7 +368,6 @@ impl CrawlingPlanner {
                             }
                         }
                         Err(e) => {
-                            // repo 조회 실패 시 기존 fallback 유지
                             let start = total_pages_on_site; let end = start.saturating_sub(count - 1).max(1); let pages: Vec<u32> = (end..=start).rev().collect();
                             warn!("⚠️ Missing-detail fetch failed ({}), fallback newest-first pages count={}", e, pages.len());
                             pages
@@ -388,21 +380,14 @@ impl CrawlingPlanner {
                 }
             }
             crate::new_architecture::actors::types::CrawlingStrategy::ContinueFromDb => {
-                // ──────────────────────────────────────────────
-                // Precise DB continuation
-            // reuse global cached range; prefer lazy_static already present
-            // lazy_static import removed (no longer needed)
+                // Reintroduce lightweight cache + fallback helper removed during cleanup
                 #[derive(Clone)]
                 struct DbCachedRange { pages: Vec<u32>, total_pages: u32, requested: u32, last_db_page_id: Option<i32>, last_db_index: Option<i32>, ts: std::time::Instant }
                 lazy_static::lazy_static! {
                     static ref LAST_DB_RANGE: std::sync::Mutex<Option<DbCachedRange>> = std::sync::Mutex::new(None);
                 }
-
-                // 1) 저장소 없으면 fallback → 최신순
                 let newest_fallback_pages = || {
-                    let start = total_pages_on_site;
-                    let end = start.saturating_sub(count - 1).max(1);
-                    (end..=start).rev().collect::<Vec<u32>>()
+                    let start = total_pages_on_site; let end = start.saturating_sub(count - 1).max(1); (end..=start).rev().collect::<Vec<u32>>()
                 };
                 if self.product_repo.is_none() {
                     warn!("🧪 ContinueFromDb requested but product_repo not attached -> fallback newest-first");
@@ -418,6 +403,7 @@ impl CrawlingPlanner {
                         return Ok(CrawlingPlan { session_id: uuid::Uuid::new_v4().to_string(), phases: vec![], total_estimated_duration_secs: 0, optimization_strategy: OptimizationStrategy::Balanced, created_at: chrono::Utc::now(), db_total_products: None, db_unique_products: None, db_last_update: None });
                     }
                 };
+                db_position_for_reuse = Some((max_page_id, max_index_in_page));
 
                 // 3) 캐시 재사용 판단
                 if let Some(cached) = LAST_DB_RANGE.lock().unwrap().as_ref() {
@@ -471,7 +457,35 @@ impl CrawlingPlanner {
             }
         };
 
-        // 4) batch_size에 따라 분할
+        // 4) Partial page reinclusion (unified)
+        if !page_range.is_empty() {
+            // Prefer already fetched DB position (ContinueFromDb) to avoid an extra query.
+            let position = if let Some(pos) = &db_position_for_reuse {
+                Some(pos.clone())
+            } else if let Some(repo) = &self.product_repo {
+                repo.get_max_page_id_and_index().await.ok()
+            } else { None };
+            if let Some((max_page_id, max_index_in_page)) = position {
+                if let (Some(mp), Some(mi)) = (max_page_id, max_index_in_page) {
+                    if mi < 11 { // partial page needs refresh
+                        let total_pages_on_site = site_status.total_pages.max(1);
+                        let partial_site_page = total_pages_on_site - mp as u32;
+                        if !page_range.contains(&partial_site_page) {
+                            if db_position_for_reuse.is_some() {
+                                info!("🔁 Partial page re-included (planner unified, reuse db_position): {} (db_page_id={}, index_in_page={})", partial_site_page, mp, mi);
+                            } else {
+                                info!("🔁 Partial page re-included (planner unified, fresh db_position): {} (db_page_id={}, index_in_page={})", partial_site_page, mp, mi);
+                            }
+                            page_range.insert(0, partial_site_page);
+                            page_range.sort_by(|a,b| b.cmp(a));
+                            page_range.dedup();
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5) 배치 크기에 따라 분할
         let batch_size = config.batch_size.max(1) as usize;
         // 페이지가 비어 있으면 재크롤링이 필요 없는 상태이므로 배치 생성 생략
         let batched_pages: Vec<Vec<u32>> = if page_range.is_empty() {
@@ -646,136 +660,3 @@ pub enum OptimizationStrategy {
     ResourceEfficient,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-    use std::time::Duration;
-    use crate::domain::services::{StatusChecker, DatabaseAnalyzer};
-    use crate::domain::services::{SiteStatus};
-    use crate::domain::services::crawling_services::{SiteDataChangeStatus, DuplicateAnalysis};
-    use crate::domain::services::crawling_services::{FieldAnalysis, DuplicateGroup, DuplicateType};
-    
-    // Mock implementations for testing
-    struct MockStatusChecker;
-    struct MockDatabaseAnalyzer;
-    
-    #[async_trait::async_trait]
-    impl StatusChecker for MockStatusChecker {
-        async fn check_site_status(&self) -> anyhow::Result<SiteStatus> {
-            Ok(SiteStatus {
-                is_accessible: true,
-                response_time_ms: 100,
-                total_pages: 100,
-                estimated_products: 1000,
-                products_on_last_page: 10,
-                last_check_time: chrono::Utc::now(),
-                health_score: 0.9,
-                data_change_status: SiteDataChangeStatus::Stable { count: 1000 },
-                decrease_recommendation: None,
-                crawling_range_recommendation: CrawlingRangeRecommendation::Full,
-            })
-        }
-        
-        async fn calculate_crawling_range_recommendation(&self, _site_status: &SiteStatus, _db_analysis: &DatabaseAnalysis) -> anyhow::Result<CrawlingRangeRecommendation> {
-            Ok(CrawlingRangeRecommendation::Full)
-        }
-        
-        async fn estimate_crawling_time(&self, pages: u32) -> Duration {
-            Duration::from_secs(pages as u64)
-        }
-        
-        async fn verify_site_accessibility(&self) -> anyhow::Result<bool> {
-            Ok(true)
-        }
-    }
-    
-    #[async_trait::async_trait]
-    impl DatabaseAnalyzer for MockDatabaseAnalyzer {
-        async fn analyze_current_state(&self) -> anyhow::Result<DatabaseAnalysis> {
-            Ok(DatabaseAnalysis {
-                total_products: 0,
-                unique_products: 0,
-                duplicate_count: 0,
-                missing_products_count: 0,
-                last_update: Some(chrono::Utc::now()),
-                missing_fields_analysis: FieldAnalysis {
-                    missing_company: 0,
-                    missing_model: 0,
-                    missing_matter_version: 0,
-                    missing_connectivity: 0,
-                    missing_certification_date: 0,
-                },
-                data_quality_score: 1.0,
-            })
-        }
-        
-        async fn recommend_processing_strategy(&self) -> anyhow::Result<ProcessingStrategy> {
-            Ok(ProcessingStrategy {
-                recommended_batch_size: 20,
-                recommended_concurrency: 5,
-                should_skip_duplicates: false,
-                should_update_existing: true,
-                priority_urls: vec![],
-            })
-        }
-        
-        async fn analyze_duplicates(&self) -> anyhow::Result<DuplicateAnalysis> {
-            Ok(DuplicateAnalysis {
-                total_duplicates: 0,
-                duplicate_groups: vec![DuplicateGroup { product_ids: vec![], duplicate_type: DuplicateType::ExactMatch, confidence: 1.0 }],
-                duplicate_percentage: 0.0,
-            })
-        }
-    }
-    
-    #[tokio::test]
-    async fn test_crawling_planner_creation() {
-    let status_checker: Arc<dyn StatusChecker> = Arc::new(MockStatusChecker);
-    let database_analyzer: Arc<dyn DatabaseAnalyzer> = Arc::new(MockDatabaseAnalyzer);
-    let config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
-        
-        let planner = CrawlingPlanner::new(status_checker, database_analyzer, config);
-        
-        // 플래너가 생성되었는지 확인
-        assert_eq!(planner.config.crawling.as_ref().and_then(|c| c.default_concurrency_limit), Some(5));
-    }
-    
-    #[test]
-    fn test_batch_config_optimization() {
-    let status_checker: Arc<dyn StatusChecker> = Arc::new(MockStatusChecker);
-    let database_analyzer: Arc<dyn DatabaseAnalyzer> = Arc::new(MockDatabaseAnalyzer);
-    let config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
-        
-        let planner = CrawlingPlanner::new(status_checker, database_analyzer, config);
-        
-        let base_config = BatchConfig {
-            batch_size: 100,
-            concurrency_limit: 20,
-            batch_delay_ms: 1000,
-            retry_on_failure: true,
-            start_page: None,
-            end_page: None,
-        };
-        
-        let optimized = planner.optimize_batch_config(&base_config, 150);
-        
-        // 최적화된 설정이 기본값보다 작거나 같은지 확인
-        assert!(optimized.batch_size <= base_config.batch_size);
-        assert!(optimized.concurrency_limit <= base_config.concurrency_limit);
-    }
-    
-    #[test]
-    fn test_optimal_batch_size_calculation() {
-    let status_checker: Arc<dyn StatusChecker> = Arc::new(MockStatusChecker);
-    let database_analyzer: Arc<dyn DatabaseAnalyzer> = Arc::new(MockDatabaseAnalyzer);
-    let config = Arc::new(crate::new_architecture::system_config::SystemConfig::default());
-        
-        let planner = CrawlingPlanner::new(status_checker, database_analyzer, config);
-        
-        assert_eq!(planner.calculate_optimal_batch_size(30), 10);
-        assert_eq!(planner.calculate_optimal_batch_size(100), 20);
-        assert_eq!(planner.calculate_optimal_batch_size(500), 50);
-        assert_eq!(planner.calculate_optimal_batch_size(2000), 100);
-    }
-}

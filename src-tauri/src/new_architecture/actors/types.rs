@@ -370,6 +370,15 @@ pub enum AppEvent {
         session_id: String,
         detail_id: String,
         page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    batch_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    range_idx: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    batch_index: Option<u32>,
+    /// 이벤트 스코프 힌트 (예: "session" | "batch" 등)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<String>,
         timestamp: DateTime<Utc>,
     },
     DetailTaskCompleted {
@@ -377,6 +386,15 @@ pub enum AppEvent {
         detail_id: String,
         page: Option<u32>,
         duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    batch_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    range_idx: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    batch_index: Option<u32>,
+    /// 이벤트 스코프 힌트 (예: "session" | "batch" 등)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<String>,
         timestamp: DateTime<Utc>,
     },
     DetailTaskFailed {
@@ -385,6 +403,15 @@ pub enum AppEvent {
         page: Option<u32>,
         error: String,
         final_failure: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    batch_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    range_idx: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    batch_index: Option<u32>,
+    /// 이벤트 스코프 힌트 (예: "session" | "batch" 등)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<String>,
         timestamp: DateTime<Utc>,
     },
     /// Detail phase dynamic concurrency reduction triggered

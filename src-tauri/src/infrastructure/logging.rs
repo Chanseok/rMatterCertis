@@ -17,12 +17,13 @@ use std::path::PathBuf;
 use tracing::{info, warn, debug};
 use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::{
-    layer::SubscriberExt,
+    layer::{SubscriberExt, Layer},
     util::SubscriberInitExt,
     fmt::{self, time::FormatTime},
     EnvFilter,
     Registry,
 };
+use tracing_subscriber::filter::filter_fn;
 use chrono::{Utc, FixedOffset};
 use lazy_static::lazy_static;
 use std::sync::Mutex;
@@ -305,6 +306,21 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
             // Store the guard globally to prevent it from being dropped
             LOG_GUARDS.lock().unwrap().push(file_guard);
             
+            // Dedicated events layer (actor-event + kpi.* targets) -> events.log
+            let events_appender = rolling::never(&log_dir, "events.log");
+            let (events_writer, events_guard) = non_blocking(events_appender);
+            LOG_GUARDS.lock().unwrap().push(events_guard);
+            let make_events_filter = || filter_fn(|meta| {
+                let t = meta.target();
+                t.starts_with("actor-event") || t.starts_with("kpi.") || t=="kpi.plan" || t=="kpi.batch" || t=="kpi.session" || t=="kpi.execution_plan"
+            });
+
+            // Filter to exclude actor/kpi targets from the main file so they only go into events.log
+            let exclude_events_filter = filter_fn(|meta| {
+                let t = meta.target();
+                !(t.starts_with("actor-event") || t.starts_with("kpi.") || t=="kpi.plan" || t=="kpi.batch" || t=="kpi.session" || t=="kpi.execution_plan")
+            });
+
             if config.json_format {
                 let file_layer = fmt::Layer::new()
                     .json()
@@ -314,30 +330,49 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
                     .with_thread_ids(true)
                     .with_file(true)
                     .with_line_number(true)
-                    .with_ansi(false);       // No ANSI color codes for file output
+                    .with_ansi(false)
+                    .with_filter(exclude_events_filter.clone());
                 let console_layer = fmt::Layer::new()
                     .with_writer(std::io::stdout)
                     .with_timer(KstTimeFormatter)
-                    .with_target(false);
-                
-                registry.with(file_layer).with(console_layer).init();
+                    .with_target(false)
+                    .with_filter(exclude_events_filter.clone());
+                let events_layer = fmt::Layer::new()
+                    .json()
+                    .with_writer(events_writer)
+                    .with_timer(KstTimeFormatter)
+                    .with_target(true)
+                    .with_thread_ids(false)
+                    .with_file(false)
+                    .with_line_number(false)
+                    .with_ansi(false)
+                    .with_filter(make_events_filter());
+                registry.with(file_layer).with(console_layer).with(events_layer).init();
             } else {
-                // File layer with minimal formatting (time + level + message only)
                 let file_layer = fmt::Layer::new()
                     .with_writer(file_writer)
                     .with_timer(KstTimeFormatter)
-                    .with_target(false)      // No target module info
-                    .with_thread_ids(false) // No thread IDs
-                    .with_file(false)       // No file names
-                    .with_line_number(false) // No line numbers
-                    .with_ansi(false);       // No ANSI color codes for file output
-                // Console layer with detailed info for development
+                    .with_target(false)
+                    .with_thread_ids(false)
+                    .with_file(false)
+                    .with_line_number(false)
+                    .with_ansi(false)
+                    .with_filter(exclude_events_filter.clone());
                 let console_layer = fmt::Layer::new()
                     .with_writer(std::io::stdout)
                     .with_timer(KstTimeFormatter)
-                    .with_target(false);
-                
-                registry.with(file_layer).with(console_layer).init();
+                    .with_target(false)
+                    .with_filter(exclude_events_filter.clone());
+                let events_layer = fmt::Layer::new()
+                    .with_writer(events_writer)
+                    .with_timer(KstTimeFormatter)
+                    .with_target(true)
+                    .with_thread_ids(false)
+                    .with_file(false)
+                    .with_line_number(false)
+                    .with_ansi(false)
+                    .with_filter(make_events_filter());
+                registry.with(file_layer).with(console_layer).with(events_layer).init();
             }
         },
         (true, false) => {
@@ -348,6 +383,19 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
             // Store the guard globally to prevent it from being dropped
             LOG_GUARDS.lock().unwrap().push(file_guard);
             
+            let events_appender = rolling::never(&log_dir, "events.log");
+            let (events_writer, events_guard) = non_blocking(events_appender);
+            LOG_GUARDS.lock().unwrap().push(events_guard);
+            let make_events_filter = || filter_fn(|meta| {
+                let t = meta.target();
+                t.starts_with("actor-event") || t.starts_with("kpi.") || t=="kpi.plan" || t=="kpi.batch" || t=="kpi.session" || t=="kpi.execution_plan"
+            });
+            // Filter to exclude actor/kpi targets from the main file so they only go into events.log
+            let exclude_events_filter = filter_fn(|meta| {
+                let t = meta.target();
+                !(t.starts_with("actor-event") || t.starts_with("kpi.") || t=="kpi.plan" || t=="kpi.batch" || t=="kpi.session" || t=="kpi.execution_plan")
+            });
+
             if config.json_format {
                 let file_layer = fmt::Layer::new()
                     .json()
@@ -357,29 +405,53 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
                     .with_thread_ids(true)
                     .with_file(true)
                     .with_line_number(true)
-                    .with_ansi(false);       // No ANSI color codes for file output
-                
-                registry.with(file_layer).init();
+                    .with_ansi(false)
+                    .with_filter(exclude_events_filter.clone());
+                let events_layer = fmt::Layer::new()
+                    .json()
+                    .with_writer(events_writer)
+                    .with_timer(KstTimeFormatter)
+                    .with_target(true)
+                    .with_thread_ids(false)
+                    .with_file(false)
+                    .with_line_number(false)
+                    .with_ansi(false)
+                    .with_filter(make_events_filter());
+                registry.with(file_layer).with(events_layer).init();
             } else {
-                // File-only layer with minimal formatting (time + level + message only)
                 let file_layer = fmt::Layer::new()
                     .with_writer(file_writer)
                     .with_timer(KstTimeFormatter)
-                    .with_target(false)      // No target module info
-                    .with_thread_ids(false) // No thread IDs
-                    .with_file(false)       // No file names
-                    .with_line_number(false) // No line numbers
-                    .with_ansi(false);       // No ANSI color codes for file output
-                
-                registry.with(file_layer).init();
+                    .with_target(false)
+                    .with_thread_ids(false)
+                    .with_file(false)
+                    .with_line_number(false)
+                    .with_ansi(false)
+                    .with_filter(exclude_events_filter.clone());
+                let events_layer = fmt::Layer::new()
+                    .with_writer(events_writer)
+                    .with_timer(KstTimeFormatter)
+                    .with_target(true)
+                    .with_thread_ids(false)
+                    .with_file(false)
+                    .with_line_number(false)
+                    .with_ansi(false)
+                    .with_filter(make_events_filter());
+                registry.with(file_layer).with(events_layer).init();
             }
         },
         (false, true) => {
             // Console output only with KST time
+            // Exclude actor-event/kpi targets from console as well
+            let exclude_events_filter = filter_fn(|meta| {
+                let t = meta.target();
+                !(t.starts_with("actor-event") || t.starts_with("kpi.") || t=="kpi.plan" || t=="kpi.batch" || t=="kpi.session" || t=="kpi.execution_plan")
+            });
             let console_layer = fmt::Layer::new()
                 .with_writer(std::io::stdout)
                 .with_timer(KstTimeFormatter)
-                .with_target(false);
+                .with_target(false)
+                .with_filter(exclude_events_filter);
             
             registry.with(console_layer).init();
         },

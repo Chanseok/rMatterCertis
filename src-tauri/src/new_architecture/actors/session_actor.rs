@@ -64,6 +64,10 @@ pub struct SessionActor {
     duplicates_skipped: u32,
     // Unified detail crawling accumulation across batches
     aggregated_product_urls: Vec<crate::domain::product_url::ProductUrl>,
+    /// 단일 실행 계획 (세션 동안 불변, 재계산 금지)
+    crawling_plan: Option<std::sync::Arc<crate::new_architecture::services::crawling_planner::CrawlingPlan>>,
+    /// 계획 버전 (향후 재계산 허용 시 증가) 현재 0 또는 1
+    plan_version: u64,
 }
 
 /// 세션 상태 열거형
@@ -71,6 +75,7 @@ pub struct SessionActor {
 pub enum SessionState {
     Idle,
     Starting,
+    Planned, // CrawlingPlan 확보 완료, 실행 전 상태
     Running,
     Paused { reason: String },
     Completing,
@@ -121,6 +126,8 @@ impl SessionActor {
             errors: Vec::new(),
             duplicates_skipped: 0,
             aggregated_product_urls: Vec::new(),
+            crawling_plan: None,
+            plan_version: 0,
         }
     }
     
@@ -165,8 +172,8 @@ impl SessionActor {
         info!("📊 SessionActor {} analyzing crawling range: {} -> {}", 
               self.actor_id, config.end_page, config.start_page);
         
-        // 🔗 CrawlingPlanner로 실행 계획 수립 → 배치별 페이지 집합 생성(SSOT)
-        info!("🧠 SessionActor {} creating CrawlingPlanner and planning batches", self.actor_id);
+    // 🔗 CrawlingPlanner 단일 호출 (SSOT)
+    info!("🧠 [PlanInit] SessionActor {} creating CrawlingPlanner (single invocation)", self.actor_id);
 
         // 서비스 구성
         let http_client = Arc::new(HttpClient::create_from_global_config()
@@ -220,9 +227,33 @@ impl SessionActor {
             if ts.elapsed() <= ttl { Some(status.clone()) } else { None }
         });
     // NOTE: Strategy currently default (NewestFirst) unless caller overrides
-    let (plan, used_site_status) = planner.create_crawling_plan_with_cache(&config, cached).await
+        if self.crawling_plan.is_some() {
+            warn!("[PlanInit] CrawlingPlan already exists for session_id={}, duplicate planning suppressed", session_id);
+        }
+        let (plan, used_site_status) = planner.create_crawling_plan_with_cache(&config, cached).await
             .map_err(|e| SessionError::InitializationFailed(format!("Failed to create crawling plan: {}", e)))?;
-        info!("📋 Crawling plan created: {} phases", plan.phases.len());
+
+        self.plan_version = 1;
+        let list_pages: usize = plan.phases.iter()
+            .filter(|p| matches!(p.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling))
+            .map(|p| p.pages.len()).sum();
+        let detail_pages: usize = plan.phases.iter()
+            .filter(|p| matches!(p.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ProductDetailCrawling))
+            .map(|p| p.pages.len()).sum();
+        info!(
+            "PLAN plan_version={} phases={} opt_strategy={:?} list_pages={} detail_pages={} created_at={}",
+            self.plan_version,
+            plan.phases.len(),
+            plan.optimization_strategy,
+            list_pages,
+            detail_pages,
+            plan.created_at
+        );
+        self.crawling_plan = Some(std::sync::Arc::new(plan.clone()));
+        self.state = SessionState::Planned;
+        debug!("[PlanInit] CrawlingPlan stored (Arc) for session_id={}", session_id);
+        // (이후 실행 단계에서 Running 전환)
+        info!("📋 Crawling plan created: {} phases (state=Planned)", plan.phases.len());
         // 플래너 완료 Progress 이벤트 발행 (플래너 단계 관측용)
         let planning_event = AppEvent::Progress {
             session_id: session_id.clone(),
