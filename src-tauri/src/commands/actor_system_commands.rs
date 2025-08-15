@@ -24,7 +24,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::collections::HashMap;
 use tracing::{info, warn, error};
-use tracing::debug;
 use tauri::{AppHandle, Manager};
 use tokio::sync::{mpsc, broadcast, watch};
 use tokio::time::Duration; // for sleep & timing
@@ -1525,6 +1524,19 @@ async fn execute_session_actor_with_execution_plan(
     site_status: &SiteStatus,
     actor_event_tx: broadcast::Sender<AppEvent>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Install a lightweight panic hook (idempotent) to surface silent panics inside async tasks
+    static SET_HOOK: std::sync::Once = std::sync::Once::new();
+    let tx_clone_for_panic = actor_event_tx.clone();
+    let session_id_for_panic = execution_plan.session_id.clone();
+    SET_HOOK.call_once(|| {
+        std::panic::set_hook(Box::new(move |pi| {
+            let payload = if let Some(s) = pi.payload().downcast_ref::<&str>() { *s } else { "<non-str>" };
+            error!("[PanicHook] panic captured payload='{}' location={:?}", payload, pi.location());
+            // Try best-effort fallback session completion for diagnostics (non-blocking; ignore send errors)
+            let now = Utc::now();
+            let _ = tx_clone_for_panic.send(AppEvent::Progress { session_id: session_id_for_panic.clone(), current_step: 0, total_steps: 0, message: format!("panic: {}", payload), percentage: 0.0, timestamp: now });
+        }));
+    });
     // Scope guard 상태
     use std::sync::atomic::{AtomicBool, Ordering};
     let completed_normally = Arc::new(AtomicBool::new(false));
@@ -1577,6 +1589,7 @@ async fn execute_session_actor_with_execution_plan(
     // 실행 전 해시 재계산 & 검증 (생성 시와 동일한 직렬화 스키마 사용)
     let current_hash = compute_plan_hash(&execution_plan.input_snapshot, &execution_plan.crawling_ranges, &execution_plan.original_strategy);
     {
+        info!("[SessionTrace] BEFORE plan hash verify session_id={}", execution_plan.session_id);
         if current_hash != execution_plan.plan_hash {
             tracing::error!("❌ ExecutionPlan hash mismatch! expected={}, got={}", execution_plan.plan_hash, current_hash);
             return Err("ExecutionPlan integrity check failed".into());
@@ -1584,6 +1597,7 @@ async fn execute_session_actor_with_execution_plan(
             tracing::info!("🔐 ExecutionPlan integrity verified (hash={})", current_hash);
         }
     }
+    info!("[SessionTrace] AFTER plan hash verify session_id={}", execution_plan.session_id);
     
     // 시작 이벤트 방출 (설정 파일 기반 값 사용)
     // 전략 추론: 첫 배치가 마지막 페이지보다 작은 페이지를 포함하면 ContinueFromDb였을 가능성 높음
@@ -1625,9 +1639,29 @@ async fn execute_session_actor_with_execution_plan(
     // 각 범위별로 순차 실행
         // Track how many ranges we actually execute to detect premature loop termination
         let mut ranges_executed: usize = 0;
+        // Guard struct to detect silent drops inside a range before post-batch / final logs
+        struct RangeExecutionGuard {
+            idx: usize,
+            post_batch_logged: bool,
+            finalized: bool,
+            started_at: std::time::Instant,
+        }
+        impl Drop for RangeExecutionGuard {
+            fn drop(&mut self) {
+                // If guard drops without post_batch_logged, we know we never reached that code path
+                if !self.post_batch_logged {
+                    info!("[RangeLoopGuard] DROP without POST-BATCH idx={} elapsed_ms={} (range body aborted before post-range section)", self.idx, self.started_at.elapsed().as_millis());
+                } else if !self.finalized {
+                    info!("[RangeLoopGuard] DROP after POST-BATCH but before FINAL idx={} elapsed_ms={} (finalization skipped)", self.idx, self.started_at.elapsed().as_millis());
+                }
+            }
+        }
         for (range_idx, page_range) in execution_plan.crawling_ranges.iter().enumerate() {
+            let mut _range_guard = RangeExecutionGuard { idx: range_idx, post_batch_logged: false, finalized: false, started_at: std::time::Instant::now() };
             ranges_executed += 1;
             info!("[RangeLoop] ENTER range_idx={} start_page={} end_page={} reverse={} total_ranges={}", range_idx, page_range.start_page, page_range.end_page, page_range.reverse_order, execution_plan.crawling_ranges.len());
+            // Range watchdog: if processing this range takes excessively long without completing batches, warn
+            let range_start_inst = std::time::Instant::now();
             let pages_in_range = if page_range.reverse_order { page_range.start_page - page_range.end_page + 1 } else { page_range.end_page - page_range.start_page + 1 } as usize;
             let range_batches = (pages_in_range + batch_unit as usize - 1) / batch_unit as usize;
             info!("🎯 Range {}/{} start: pages {} to {} ({} pages => {} batches, reverse: {})", 
@@ -1652,6 +1686,8 @@ async fn execute_session_actor_with_execution_plan(
         // Unified inline batch execution (replacing legacy execute_session_actor_with_batches)
         let pages_vec: Vec<u32> = if page_range.start_page > page_range.end_page { (page_range.end_page..=page_range.start_page).rev().collect() } else { (page_range.start_page..=page_range.end_page).collect() };
         for (batch_index, page_chunk) in pages_vec.chunks(execution_plan.batch_size as usize).enumerate() {
+            info!("[RangeLoop] BATCH ENTER range_idx={} batch_index={} pages={:?}", range_idx, batch_index, page_chunk);
+            info!("[RangeLoopTrace] BEFORE execute_real_batch_actor range_idx={} batch_index={}", range_idx, batch_index);
             let batch_id = format!("{}_range{}_batch{}", execution_plan.session_id, range_idx, batch_index);
             let system_config = Arc::new(SystemConfig::default());
             let (control_tx, _control_rx) = mpsc::channel::<ActorCommand>(100);
@@ -1689,6 +1725,7 @@ async fn execute_session_actor_with_execution_plan(
                 }
                 let _ = actor_event_tx.send(AppEvent::BatchFailed { session_id: execution_plan.session_id.clone(), batch_id: batch_id.clone(), error: format!("{}", e), final_failure: true, timestamp: Utc::now() });
                 info!("➡️ Continuing to next batch after failure (policy b)");
+                info!("[RangeLoopTrace] AFTER execute_real_batch_actor (FAILED) range_idx={} batch_index={}", range_idx, batch_index);
                 continue; // 다음 배치 진행
             } else {
                 for p in page_chunk.iter() {
@@ -1709,10 +1746,17 @@ async fn execute_session_actor_with_execution_plan(
                         }
                     }
                 }
+                info!("[RangeLoopTrace] AFTER execute_real_batch_actor (OK) range_idx={} batch_index={} pages={:?}", range_idx, batch_index, page_chunk);
             }
             if batch_index < range_batches - 1 { tokio::time::sleep(Duration::from_millis(500)).await; }
         }
+    info!("[RangeLoop] POST-BATCH range_idx={} executed_batches={} expected_batches={}", range_idx, range_batches, range_batches);
+    _range_guard.post_batch_logged = true; // mark guard state
         // Range result treated as Ok(()) for unified logic
+        let range_elapsed = range_start_inst.elapsed().as_millis();
+        if range_elapsed > 60_000 {
+            warn!("[RangeLoopWatchdog] range_idx={} elapsed_ms={} exceeded_threshold_ms=60000", range_idx, range_elapsed);
+        }
     // Always ok in unified path (errors already handled per batch)
     {
         // Approximate increments (recompute similar to helper)
@@ -1741,7 +1785,9 @@ async fn execute_session_actor_with_execution_plan(
               range_idx + 1,
               completed_batches, expected_batches, pct_batches,
               completed_pages, expected_pages, pct_pages);
+    info!("[RangeLoop] PRE-RANGE-FINAL range_idx={} cumulative_batches={} cumulative_pages={} expected_batches={} expected_pages={}", range_idx, completed_batches, completed_pages, expected_batches, expected_pages);
     info!("[RangeLoop] EXIT range_idx={} cumulative_batches={} cumulative_pages={}", range_idx, completed_batches, completed_pages);
+    _range_guard.finalized = true; // mark finalized
         // Emit an explicit event for FE/diagnostics that a range has completed
         let _ = actor_event_tx.send(AppEvent::Progress {
             session_id: execution_plan.session_id.clone(),

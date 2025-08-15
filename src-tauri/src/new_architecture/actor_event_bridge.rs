@@ -159,6 +159,8 @@ impl ActorEventBridge {
             AppEvent::StageItemCompleted { .. } => "actor-stage-item-completed",
             AppEvent::PageLifecycle { .. } => "actor-page-lifecycle",
             AppEvent::ProductLifecycle { .. } => "actor-product-lifecycle",
+            &AppEvent::ProductLifecycleGroup { .. } => "actor-product-lifecycle-group",
+            &AppEvent::HttpRequestTiming { .. } => "actor-http-request-timing",
             AppEvent::PreflightDiagnostics { .. } => "actor-preflight-diagnostics",
             AppEvent::PersistenceAnomaly { .. } => "actor-persistence-anomaly",
             AppEvent::DatabaseStats { .. } => "actor-database-stats",

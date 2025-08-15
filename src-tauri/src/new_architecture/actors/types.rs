@@ -426,6 +426,34 @@ pub enum AppEvent {
         metrics: Option<SimpleMetrics>,
         timestamp: DateTime<Utc>,
     },
+    /// Grouped product lifecycle aggregation (reduces event volume)
+    ProductLifecycleGroup {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        page_number: Option<u32>,
+        group_size: u32,
+        started: u32,
+        succeeded: u32,
+        failed: u32,
+        duplicates: u32,
+        duration_ms: u64,
+        phase: String, // fetch | persist
+        timestamp: DateTime<Utc>,
+    },
+    /// Fine grained HTTP fetch latency for list or detail product requests
+    HttpRequestTiming {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
+        request_kind: String, // list_page | detail_page
+        target: String,       // URL or logical key
+        page_number: Option<u32>,
+        attempt: u32,
+        latency_ms: u64,
+        timestamp: DateTime<Utc>,
+    },
 
     // === Validation (page_id/index_in_page integrity) events (additive v1) ===
     ValidationStarted {

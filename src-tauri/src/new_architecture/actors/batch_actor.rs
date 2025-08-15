@@ -903,6 +903,14 @@ impl Actor for BatchActor {
                                         &context
                                     ).await {
                                         error!("Failed to process batch: {}", e);
+                                        info!("[BatchActorRun] exiting early after failed batch");
+                                        info!("🏁 BatchActor {} execution loop ended (failure)", self.actor_id);
+                                        return Err(ActorError::CommandProcessingFailed(format!("batch failed: {}", e)));
+                                    } else {
+                                        // 단일 배치 모드: 추가 명령을 기다리지 않고 즉시 종료하여 상위 await가 풀리도록 한다.
+                                        info!("[BatchActorRun] single batch processed successfully — returning to caller");
+                                        info!("🏁 BatchActor {} execution loop ended (single batch success)", self.actor_id);
+                                        return Ok(());
                                     }
                                 }
                                 

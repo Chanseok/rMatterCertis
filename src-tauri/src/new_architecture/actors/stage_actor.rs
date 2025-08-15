@@ -682,6 +682,8 @@ impl StageActor {
                         if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle { session_id: session_id_clone.clone(), batch_id: batch_id_opt.clone(), page_number: *pn, status: "fetch_started".into(), metrics: None, timestamp: Utc::now() }).await {
                             error!("PageLifecycle fetch_started emit failed page={} err={}", pn, e);
                         } else { debug!("Emitted PageLifecycle fetch_started page={}", pn); }
+                        // record timing after HTML retrieval inside process_single_item via HttpRequestTiming event (hook will send completion)
+                        // store start in local variable passed to temp_actor via metadata if needed (simplified omitted for now)
                     }
                     (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) => {
                         let count = urls.urls.len() as u32;
@@ -690,19 +692,21 @@ impl StageActor {
                         if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle { session_id: session_id_clone.clone(), batch_id: batch_id_opt.clone(), page_number: page_hint, status: "detail_scheduled".into(), metrics: Some(metrics), timestamp: Utc::now() }).await {
                             error!("PageLifecycle detail_scheduled emit failed page={} err={}", page_hint, e);
                         } else { debug!("Emitted PageLifecycle detail_scheduled page={} scheduled_details={}", page_hint, count); }
-                        // Aggregate start event (volume reduction)
+                        // Aggregate start event (new ProductLifecycleGroup)
                         debug!("[GroupedEmit] fetch_started_group total_urls={}", count);
-                        if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                        if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycleGroup {
                             session_id: session_id_clone.clone(),
                             batch_id: batch_id_opt.clone(),
                             page_number: Some(page_hint),
-                            product_ref: format!("_batch_urls_{}", count),
-                            status: "fetch_started_group".into(),
-                            retry: None,
-                            duration_ms: None,
-                            metrics: Some(SimpleMetrics::Generic { key: "group_size".into(), value: count.to_string() }),
+                            group_size: count,
+                            started: count,
+                            succeeded: 0,
+                            failed: 0,
+                            duplicates: 0,
+                            duration_ms: 0,
+                            phase: "fetch".into(),
                             timestamp: Utc::now(),
-                        }).await { error!("ProductLifecycle fetch_started_group emit failed err={}", e); }
+                        }).await { error!("ProductLifecycleGroup fetch_started emit failed err={}", e); }
                     }
                     _ => {}
                 }
@@ -749,17 +753,19 @@ impl StageActor {
                                 let total = urls.urls.len() as u32;
                                 let duration_ms = item_start.elapsed().as_millis() as u64;
                                 debug!("[GroupedEmit] fetch_completed_group total_urls={} duration_ms={}", total, duration_ms);
-                                if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycleGroup {
                                     session_id: session_id_clone.clone(),
                                     batch_id: batch_id_opt.clone(),
                                     page_number: Some(page_hint),
-                                    product_ref: format!("_batch_urls_{}", total),
-                                    status: "fetch_completed_group".into(),
-                                    retry: None,
-                                    duration_ms: Some(duration_ms),
-                                    metrics: Some(SimpleMetrics::Generic { key: "group_size".into(), value: total.to_string() }),
+                                    group_size: total,
+                                    started: total,
+                                    succeeded: total,
+                                    failed: 0,
+                                    duplicates: 0,
+                                    duration_ms: duration_ms,
+                                    phase: "fetch".into(),
                                     timestamp: Utc::now(),
-                                }).await { error!("ProductLifecycle fetch_completed_group emit failed err={}", e); }
+                                }).await { error!("ProductLifecycleGroup fetch_completed emit failed err={}", e); }
                             }
                         }
                         // If this is DataSaving stage, perform persistence now (previous arm returned Ok(()))
