@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::collections::HashMap;
 use tracing::{info, warn, error};
+use tracing::debug;
 use tauri::{AppHandle, Manager};
 use tokio::sync::{mpsc, broadcast, watch};
 use tokio::time::Duration; // for sleep & timing
@@ -1616,9 +1617,17 @@ async fn execute_session_actor_with_execution_plan(
     if let Err(e) = actor_event_tx.send(session_event) {
         error!("Failed to send SessionStarted event: {}", e);
     }
+
+    // Diagnostic: dump crawling_ranges structure to trace multi-range execution anomalies
+    // Elevated to info so it appears in production logs for current anomaly investigation (second range not executing)
+    info!("[ExecPlanDump] ranges_count={} details={:?}", execution_plan.crawling_ranges.len(), execution_plan.crawling_ranges.iter().map(|r| (r.start_page, r.end_page, r.reverse_order)).collect::<Vec<_>>());
     
     // 각 범위별로 순차 실행
+        // Track how many ranges we actually execute to detect premature loop termination
+        let mut ranges_executed: usize = 0;
         for (range_idx, page_range) in execution_plan.crawling_ranges.iter().enumerate() {
+            ranges_executed += 1;
+            info!("[RangeLoop] ENTER range_idx={} start_page={} end_page={} reverse={} total_ranges={}", range_idx, page_range.start_page, page_range.end_page, page_range.reverse_order, execution_plan.crawling_ranges.len());
             let pages_in_range = if page_range.reverse_order { page_range.start_page - page_range.end_page + 1 } else { page_range.end_page - page_range.start_page + 1 } as usize;
             let range_batches = (pages_in_range + batch_unit as usize - 1) / batch_unit as usize;
             info!("🎯 Range {}/{} start: pages {} to {} ({} pages => {} batches, reverse: {})", 
@@ -1726,12 +1735,13 @@ async fn execute_session_actor_with_execution_plan(
                 }
             }
         }
-        let pct_batches = (completed_batches as f64 / expected_batches as f64) * 100.0;
+    let pct_batches = (completed_batches as f64 / expected_batches as f64) * 100.0;
         let pct_pages = (completed_pages as f64 / expected_pages as f64) * 100.0;
         info!("✅ Range {} complete | cumulative: {}/{} batches ({:.1}%), {}/{} pages ({:.1}%)",
               range_idx + 1,
               completed_batches, expected_batches, pct_batches,
               completed_pages, expected_pages, pct_pages);
+    info!("[RangeLoop] EXIT range_idx={} cumulative_batches={} cumulative_pages={}", range_idx, completed_batches, completed_pages);
         // Emit an explicit event for FE/diagnostics that a range has completed
         let _ = actor_event_tx.send(AppEvent::Progress {
             session_id: execution_plan.session_id.clone(),
@@ -1741,6 +1751,21 @@ async fn execute_session_actor_with_execution_plan(
             percentage: (completed_pages as f64 / expected_pages as f64) * 100.0,
             timestamp: Utc::now(),
         });
+    }
+    // Post-loop integrity check: did we execute all planned ranges?
+    if ranges_executed != execution_plan.crawling_ranges.len() {
+        warn!("[RangeLoopAnomaly] ranges_planned={} ranges_executed={} (possible premature termination)", execution_plan.crawling_ranges.len(), ranges_executed);
+        // Emit a progress event so frontend can surface anomaly
+        let _ = actor_event_tx.send(AppEvent::Progress {
+            session_id: execution_plan.session_id.clone(),
+            current_step: ranges_executed as u32,
+            total_steps: execution_plan.crawling_ranges.len() as u32,
+            message: format!("Range loop anomaly: executed {}/{} ranges", ranges_executed, execution_plan.crawling_ranges.len()),
+            percentage: ((completed_pages as f64) / (expected_pages as f64).max(1.0)) * 100.0,
+            timestamp: Utc::now(),
+        });
+    } else {
+        info!("[RangeLoop] All ranges executed successfully ({} of {})", ranges_executed, execution_plan.crawling_ranges.len());
     }
     }
     

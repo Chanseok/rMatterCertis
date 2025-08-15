@@ -691,6 +691,7 @@ impl StageActor {
                             error!("PageLifecycle detail_scheduled emit failed page={} err={}", page_hint, e);
                         } else { debug!("Emitted PageLifecycle detail_scheduled page={} scheduled_details={}", page_hint, count); }
                         // Aggregate start event (volume reduction)
+                        debug!("[GroupedEmit] fetch_started_group total_urls={}", count);
                         if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
                             session_id: session_id_clone.clone(),
                             batch_id: batch_id_opt.clone(),
@@ -747,6 +748,7 @@ impl StageActor {
                                 let page_hint = urls.urls.first().map(|u| u.page_id as u32).unwrap_or(0u32);
                                 let total = urls.urls.len() as u32;
                                 let duration_ms = item_start.elapsed().as_millis() as u64;
+                                debug!("[GroupedEmit] fetch_completed_group total_urls={} duration_ms={}", total, duration_ms);
                                 if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                     session_id: session_id_clone.clone(),
                                     batch_id: batch_id_opt.clone(),
