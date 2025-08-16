@@ -5,6 +5,9 @@
 
 import { createStore } from 'solid-js/store';
 
+// Optional dev tab: show only when VITE_SHOW_EVENTS === 'true'
+const SHOW_EVENTS = (import.meta as any).env?.VITE_SHOW_EVENTS === 'true';
+
 export interface TabConfig {
   id: string;
   label: string;
@@ -38,6 +41,18 @@ const [tabState, setTabState] = createStore<TabState>({
         accent: 'from-blue-500 to-indigo-500'
       }
     },
+    // Optional Events tab for debugging (hidden by default)
+    ...(SHOW_EVENTS ? [{
+      id: 'events',
+      label: 'Events',
+      icon: '📡',
+      theme: {
+        bg: 'bg-sky-50',
+        border: 'border-sky-200',
+        text: 'text-sky-700',
+        accent: 'from-sky-500 to-blue-500'
+      }
+    }] : []),
     {
       id: 'settings',
       label: '설정',

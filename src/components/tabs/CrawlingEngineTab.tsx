@@ -18,7 +18,7 @@ import type {
   CrawlingRangeResponse
 } from '../../types/advanced-engine';
 // Session animation/status panel (Actor system shared component)
-import { SessionStatusPanel } from '../actor-system/SessionStatusPanel';
+// Removed Actor Session Status panel from this tab
 import { useActorVisualizationStream } from '../../hooks/useActorVisualizationStream';
 
 export const CrawlingEngineTab: Component = () => {
@@ -495,40 +495,7 @@ export const CrawlingEngineTab: Component = () => {
     }
   };
 
-  // 가짜 Actor 시스템 크롤링 (실제로는 ServiceBased)
-  const startFakeActorSystemWithCalculatedRange = async () => {
-    if (isRunning()) return;
-    
-    setIsRunning(true);
-    addLog(`🎭 가짜 Actor 시스템 크롤링 시작 (실제로는 ServiceBased)`);
-
-    try {
-      const result: any = await invoke('start_actor_system_crawling', {
-        request: {
-          // 🧠 CrawlingPlanner가 모든 범위를 자동 계산하므로 0으로 설정 (By Design)
-          start_page: 0,
-          end_page: 0,
-          concurrency: 64,
-          batch_size: 3,
-          delay_ms: 100
-        }
-      });
-      addLog(`✅ 가짜 Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
-      if (result?.session_id) {
-        window.dispatchEvent(new CustomEvent('actorSessionRefresh', { detail: { sessionId: result.session_id } }));
-        setTimeout(() => window.dispatchEvent(new CustomEvent('actorSessionRefresh', { detail: { sessionId: result.session_id } })), 800);
-      } else {
-        window.dispatchEvent(new CustomEvent('actorSessionRefresh'));
-        setTimeout(() => window.dispatchEvent(new CustomEvent('actorSessionRefresh')), 800);
-      }
-      addLog('🎭 가짜 Actor 시스템이 활성화되었습니다 (실제로는 ServiceBased 엔진).');
-      
-    } catch (error) {
-      console.error('가짜 Actor 시스템 크롤링 시작 실패:', error);
-      addLog(`❌ 가짜 Actor 시스템 크롤링 시작 실패: ${error}`);
-      setIsRunning(false);
-    }
-  };
+  // (removed) 가짜 Actor 시스템 크롤링 핸들러는 UI에서 제외되었습니다
 
   // 진짜 Actor 시스템 설정 기반 크롤링
   const startRealActorSystemWithCalculatedRange = async () => {
@@ -844,14 +811,6 @@ export const CrawlingEngineTab: Component = () => {
   return (
     <div class="min-h-screen bg-gray-50 p-6">
       <div class="max-w-7xl mx-auto space-y-6">
-        {/* Actor Session Status & Concurrency Animation (shared) */}
-        <div class="bg-neutral-900/90 rounded-lg border border-neutral-700 p-4 shadow-sm">
-          <h2 class="text-sm font-semibold text-neutral-200 mb-2 flex items-center gap-2">
-            <span>🎭 Actor Session Status</span>
-            <span class="text-xs text-neutral-500 font-normal">(real-time detail concurrency)</span>
-          </h2>
-          <SessionStatusPanel />
-        </div>
         <div class="mb-8">
           <h1 class="text-3xl font-bold text-gray-900 mb-2">
             🔬 Advanced Crawling Engine
@@ -1200,15 +1159,6 @@ export const CrawlingEngineTab: Component = () => {
                   <span class="text-xs block mt-1">CrawlingPlanner가 자동으로 범위와 배치를 계산합니다</span>
                 </button>
                 
-                {/* Fake Actor System Button */}
-                <button
-                  onClick={startFakeActorSystemWithCalculatedRange}
-                  class="w-full py-3 px-4 bg-orange-600 text-white rounded-md hover:bg-orange-700 font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
-                  disabled={isRunning()}
-                >
-                  🎭 가짜 Actor 시스템으로 크롤링 시작 (ServiceBased 엔진)
-                  <span class="text-xs block mt-1">백엔드에서 자동으로 범위를 계산합니다</span>
-                </button>                
               </div>
             </div>
 

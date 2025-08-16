@@ -11,6 +11,7 @@ import { SettingsTab } from './tabs/SettingsTab';
 import { StatusTab } from './tabs/StatusTab';
 import { LocalDBTab } from './tabs/LocalDBTab';
 import { AnalysisTab } from './tabs/AnalysisTab';
+import SimpleEventDisplay from './SimpleEventDisplay';
 // Archived tabs removed from runtime imports:
 // LiveProductionTab, LiveCrawlingTab, NewArchTestTab, ActorSystemTab,
 // DomainDashboardTab, RealtimeDashboardTab, HierarchicalEventMonitor
@@ -55,6 +56,8 @@ export const AppWithTabs: Component = () => {
         return <LocalDBTab />;
       case 'analysis':
         return <AnalysisTab />;
+      case 'events':
+        return <SimpleEventDisplay />;
       default:
         return <CrawlingEngineTabSimple />;
     }
