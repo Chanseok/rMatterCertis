@@ -1,3 +1,6 @@
+-- MOVED from repository root
+-- See docs/sql/README.md for usage details
+
 -- Production Database Enhancement Script
 -- Adds new features from integrated schema to existing production database
 -- Preserves all existing 5,582 products and their details
