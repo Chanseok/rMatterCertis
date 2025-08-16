@@ -314,31 +314,37 @@ impl WorkerPoolBuilder {
         }
     }
 
+    #[must_use]
     pub fn with_max_concurrency(mut self, max_concurrency: usize) -> Self {
         self.max_total_concurrency = max_concurrency;
         self
     }
 
+    #[must_use]
     pub fn with_list_page_fetcher(mut self, worker: Arc<ListPageFetcher>) -> Self {
         self.list_page_fetcher = Some(worker);
         self
     }
 
+    #[must_use]
     pub fn with_list_page_parser(mut self, worker: Arc<ListPageParser>) -> Self {
         self.list_page_parser = Some(worker);
         self
     }
 
+    #[must_use]
     pub fn with_product_detail_fetcher(mut self, worker: Arc<ProductDetailFetcher>) -> Self {
         self.product_detail_fetcher = Some(worker);
         self
     }
 
+    #[must_use]
     pub fn with_product_detail_parser(mut self, worker: Arc<ProductDetailParser>) -> Self {
         self.product_detail_parser = Some(worker);
         self
     }
 
+    #[must_use]
     pub fn with_db_saver(mut self, worker: Arc<DbSaver>) -> Self {
         self.db_saver = Some(worker);
         self

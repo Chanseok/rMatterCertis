@@ -158,8 +158,8 @@ impl DataQualityAnalyzer {
         }
     }
 
-    pub async fn validate_before_storage(&self, products: &[ProductDetail]) -> Result<Vec<ProductDetail>, String> {
-        let report = self.analyze_product_quality(products).await?;
+    pub fn validate_before_storage(&self, products: &[ProductDetail]) -> Result<Vec<ProductDetail>, String> {
+    let report = self.analyze_product_quality(products)?;
         
         // Log quality report
         println!("Data Quality Analysis:");

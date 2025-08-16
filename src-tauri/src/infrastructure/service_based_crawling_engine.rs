@@ -2145,7 +2145,7 @@ impl ServiceBasedBatchCrawlingEngine {
 
     /// Stage 4: 데이터베이스 배치 저장 (효율성 개선)
     async fn stage4_save_to_database(
-        &mut self,
+        &self,
         products: Vec<(Product, ProductDetail)>,
     ) -> Result<(usize, usize, usize, usize)> {
         info!(

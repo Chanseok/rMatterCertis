@@ -70,7 +70,7 @@ impl StageActor {
 
     /// 실제 크롤링 서비스를 사용하는 OneShot 실행
     pub async fn run_with_real_crawling(
-        mut self,
+        self,
         mut control_rx: tokio::sync::mpsc::Receiver<
             crate::new_architecture::channels::types::ActorCommand,
         >,
@@ -137,7 +137,7 @@ impl StageActor {
 
     /// 실제 크롤링 서비스를 사용한 스테이지 실행
     async fn execute_stage_with_real_crawling(
-        &mut self,
+        &self,
         stage_type: StageType,
         items: Vec<StageItem>,
         concurrency_limit: u32,
@@ -165,7 +165,7 @@ impl StageActor {
 impl crate::new_architecture::actors::BatchActor {
     /// 실제 크롤링 서비스를 사용한 스테이지 실행
     pub async fn execute_stage_with_real_crawling(
-        &mut self,
+        &self,
         stage_type: StageType,
         items: Vec<StageItem>,
         app_config: AppConfig,

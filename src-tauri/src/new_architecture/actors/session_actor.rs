@@ -199,12 +199,14 @@ impl SessionActor {
             ))
         })?);
 
-        // DB 연결 재사용 경로가 없다면 간단히 새로 생성
-        let database_url = crate::infrastructure::database_paths::get_main_database_url();
-        let db_pool = sqlx::SqlitePool::connect(&database_url)
+        // DB 풀 재사용 우선 (글로벌 풀), 필요 시 안전하게 초기화
+        let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
             .await
             .map_err(|e| {
-                SessionError::InitializationFailed(format!("Failed to connect to database: {}", e))
+                SessionError::InitializationFailed(format!(
+                    "Failed to obtain database pool: {}",
+                    e
+                ))
             })?;
         let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
 
@@ -628,7 +630,7 @@ impl SessionActor {
     /// * `session_id` - 일시정지할 세션 ID
     /// * `reason` - 일시정지 이유
     /// * `context` - Actor 컨텍스트
-    async fn handle_pause_session(
+    fn handle_pause_session(
         &mut self,
         session_id: String,
         reason: String,
@@ -676,7 +678,7 @@ impl SessionActor {
     /// # Arguments
     /// * `session_id` - 재개할 세션 ID
     /// * `context` - Actor 컨텍스트
-    async fn handle_resume_session(
+    fn handle_resume_session(
         &mut self,
         session_id: String,
         context: &AppContext,
@@ -718,7 +720,7 @@ impl SessionActor {
     /// * `session_id` - 취소할 세션 ID
     /// * `reason` - 취소 이유
     /// * `context` - Actor 컨텍스트
-    async fn handle_cancel_session(
+    fn handle_cancel_session(
         &mut self,
         session_id: String,
         reason: String,
@@ -916,8 +918,7 @@ impl Actor for SessionActor {
                                         self.active_plan_hash = Some(plan.plan_hash.clone());
                                         info!("🔐 SessionActor {} executing pre-planned ExecutionPlan (hash={})", self.actor_id, plan.plan_hash);
                                         // 서비스 준비 (실패 시 중단)
-                                        let db_url = crate::infrastructure::database_paths::get_main_database_url();
-                                        match sqlx::SqlitePool::connect(&db_url).await {
+                                        match crate::infrastructure::database_connection::get_or_init_global_pool().await {
                                             Ok(db_pool) => {
                                                 let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
                                                 let http_client = match HttpClient::create_from_global_config() {
@@ -980,19 +981,19 @@ impl Actor for SessionActor {
                                 }
 
                                 ActorCommand::PauseSession { session_id, reason } => {
-                                    if let Err(e) = self.handle_pause_session(session_id, reason, &context).await {
+                                    if let Err(e) = self.handle_pause_session(session_id, reason, &context) {
                                         error!("Failed to pause session: {}", e);
                                     }
                                 }
 
                                 ActorCommand::ResumeSession { session_id } => {
-                                    if let Err(e) = self.handle_resume_session(session_id, &context).await {
+                                    if let Err(e) = self.handle_resume_session(session_id, &context) {
                                         error!("Failed to resume session: {}", e);
                                     }
                                 }
 
                                 ActorCommand::CancelSession { session_id, reason } => {
-                                    if let Err(e) = self.handle_cancel_session(session_id, reason, &context).await {
+                                    if let Err(e) = self.handle_cancel_session(session_id, reason, &context) {
                                         error!("Failed to cancel session: {}", e);
                                     }
                                 }

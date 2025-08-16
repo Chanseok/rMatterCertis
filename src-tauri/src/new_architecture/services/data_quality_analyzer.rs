@@ -62,7 +62,7 @@ impl DataQualityAnalyzer {
         Self
     }
 
-    pub async fn analyze_product_quality(
+    pub fn analyze_product_quality(
         &self,
         products: &[ProductDetail],
     ) -> Result<DataQualityReport, String> {
@@ -192,11 +192,11 @@ impl DataQualityAnalyzer {
         }
     }
 
-    pub async fn validate_before_storage(
+    pub fn validate_before_storage(
         &self,
         products: &[ProductDetail],
     ) -> Result<Vec<ProductDetail>, String> {
-        let report = self.analyze_product_quality(products).await?;
+        let report = self.analyze_product_quality(products)?;
 
         // 🚨 CRITICAL: 데이터 수집 실패 진단
         if report.total_products == 0 {
@@ -391,11 +391,11 @@ impl DataQualityAnalyzer {
     }
 
     /// Analyze collected product data and provide storage recommendation
-    pub async fn assess_for_storage(
+    pub fn assess_for_storage(
         &self,
         products: &[ProductDetail],
     ) -> Result<StorageAssessment, String> {
-        let report = self.analyze_product_quality(products).await?;
+        let report = self.analyze_product_quality(products)?;
 
         let critical_issues = report
             .issues

@@ -49,7 +49,7 @@ impl ValidationCoordinator {
         Self { scan_depth }
     }
 
-    pub async fn run(&self) {
+    pub fn run(&self) {
         let start = std::time::Instant::now();
         info!("[VALIDATION] Started scan_depth={}", self.scan_depth);
         // TODO(MI-2): integrate with site state + page fetch actors

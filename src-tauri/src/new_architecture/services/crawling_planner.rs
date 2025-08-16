@@ -254,7 +254,7 @@ impl CrawlingPlanner {
     /// # Returns
     /// * `Ok((CrawlingRangeRecommendation, ProcessingStrategy))` - 결정된 전략
     /// * `Err(ActorError)` - 전략 결정 실패
-    pub async fn determine_crawling_strategy(
+    pub fn determine_crawling_strategy(
         &self,
         site_status: &crate::domain::services::SiteStatus,
         db_analysis: &DatabaseAnalysis,

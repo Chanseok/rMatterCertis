@@ -2079,7 +2079,6 @@ impl StageActor {
 
                 match quality_analyzer
                     .validate_before_storage(&product_details)
-                    .await
                 {
                     Ok(validated_products) => {
                         // 검증된 제품들을 JSON으로 직렬화
@@ -2324,7 +2323,6 @@ impl StageActor {
 
                 match analyzer
                     .validate_before_storage(&product_details.products)
-                    .await
                 {
                     Ok(validated_products) => {
                         info!(

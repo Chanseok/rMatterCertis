@@ -6,7 +6,8 @@
 #![allow(unused_must_use)]
 
 use anyhow::Result;
-use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use std::sync::OnceLock;
 use std::path::Path;
 use tracing::{debug, info, warn};
 
@@ -176,6 +177,30 @@ impl DatabaseConnection {
 
         Ok(())
     }
+}
+
+// -----------------------------------------------------------------------------
+// Global, reusable Sqlite pool (reuse-first; safe fallback to init when absent)
+// -----------------------------------------------------------------------------
+
+static GLOBAL_SQLITE_POOL: OnceLock<SqlitePool> = OnceLock::new();
+
+/// Get the global Sqlite pool if initialized, or initialize it on first use.
+/// Uses the centralized database URL and standard pool options.
+pub async fn get_or_init_global_pool() -> Result<SqlitePool> {
+    if let Some(pool) = GLOBAL_SQLITE_POOL.get() {
+        return Ok(pool.clone());
+    }
+
+    let database_url = crate::infrastructure::database_paths::get_main_database_url();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(crate::infrastructure::config::defaults::MAX_CONCURRENT_REQUESTS)
+        .connect(&database_url)
+        .await?;
+
+    // Best-effort set; if already set by a racy concurrent init, prefer the existing one
+    let _ = GLOBAL_SQLITE_POOL.set(pool.clone());
+    Ok(pool)
 }
 
 #[cfg(test)]

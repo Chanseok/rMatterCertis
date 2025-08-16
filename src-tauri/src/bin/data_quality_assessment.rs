@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sample_products = create_sample_products_from_log();
 
     let analyzer = DataQualityAnalyzer::new();
-    let assessment = analyzer.assess_for_storage(&sample_products).await?;
+    let assessment = analyzer.assess_for_storage(&sample_products)?;
 
     println!("\n🔍 Data Quality Assessment:");
     println!("  📊 Total products: {}", assessment.total_products);

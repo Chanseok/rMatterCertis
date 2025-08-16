@@ -1266,7 +1266,6 @@ async fn calculate_intelligent_crawling_range(
     // 🎯 실제 CrawlingPlanner로 지능형 전략 결정
     let (range_recommendation, processing_strategy) = crawling_planner
         .determine_crawling_strategy(&site_status, &db_analysis)
-        .await
         .map_err(|e| format!("Failed to determine crawling strategy: {}", e))?;
 
     info!(
