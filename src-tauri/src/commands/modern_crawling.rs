@@ -31,18 +31,10 @@ pub async fn get_active_sessions(state: State<'_, AppState>) -> Result<Vec<Strin
 pub async fn get_databasestats(state: State<'_, AppState>) -> Result<DatabaseStats, String> {
     info!("🔍 Getting real database statistics...");
     
-    // Get database URL
-    let database_url = {
-        let app_data_dir = std::env::var("APPDATA")
-            .or_else(|_| std::env::var("HOME").map(|h| format!("{}/.local/share", h)))
-            .unwrap_or_else(|_| "./data".to_string());
-        let data_dir = format!("{}/matter-certis-v2/database", app_data_dir);
-        format!("sqlite:{}/matter_certis.db", data_dir)
-    };
-    
-    // Connect to database
-    let db_pool = sqlx::SqlitePool::connect(&database_url).await
-        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    // Connect to database (global pool)
+    let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
+        .await
+        .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
     
     // Get actual product count
     let total_products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
@@ -129,8 +121,7 @@ pub async fn optimize_database(state: State<'_, AppState>) -> Result<(), String>
     info!("Starting database optimization");
     
     // Connect to database
-    let database_url = get_database_url()?;
-    let db_pool = match sqlx::SqlitePool::connect(&database_url).await {
+    let db_pool = match crate::infrastructure::database_connection::get_or_init_global_pool().await {
         Ok(pool) => pool,
         Err(e) => {
             warn!("Database connection failed during optimization: {}", e);

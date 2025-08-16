@@ -122,10 +122,9 @@ async fn perform_site_analysis() -> Result<SiteAnalysisResult, String> {
         .map_err(|e| format!("Failed to create data extractor: {}", e))?;
 
     // Create database connection and repository for StatusChecker
-    let database_url = crate::infrastructure::get_main_database_url();
-    let db_pool = sqlx::SqlitePool::connect(&database_url)
+    let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
         .await
-        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+        .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
     let product_repo = std::sync::Arc::new(
         crate::infrastructure::IntegratedProductRepository::new(db_pool),
     );
@@ -163,10 +162,9 @@ async fn perform_database_analysis() -> Result<DbAnalysisResult, String> {
     info!("🗄️ Analyzing database state...");
 
     // Create database connection and repository
-    let database_url = crate::infrastructure::get_main_database_url();
-    let db_pool = sqlx::SqlitePool::connect(&database_url)
+    let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
         .await
-        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+        .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
     let product_repo = crate::infrastructure::IntegratedProductRepository::new(db_pool);
 
     // Perform actual database analysis

@@ -48,13 +48,10 @@ impl CrawlingIntegrationService {
 
         let data_extractor = Arc::new(MatterDataExtractor::new()?);
 
-        // 실제 DB 연결 URL 가져오기
-        let database_url = crate::infrastructure::get_main_database_url();
-
-        // DB 연결 풀 생성
-        let db_pool = sqlx::SqlitePool::connect(&database_url)
+        // DB 풀 재사용 (글로벌 풀)
+        let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to connect to database: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to obtain database pool: {}", e))?;
 
         // ProductRepository 초기화 (DB 연결 포함)
         let product_repository = Arc::new(IntegratedProductRepository::new(db_pool));

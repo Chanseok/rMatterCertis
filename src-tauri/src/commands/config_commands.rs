@@ -907,18 +907,10 @@ pub async fn get_crawling_status_check(
         None
     };
 
-    // Get real DB page range analysis using the same database connection pattern
-    let database_url = {
-        let app_data_dir = std::env::var("APPDATA")
-            .or_else(|_| std::env::var("HOME").map(|h| format!("{}/.local/share", h)))
-            .unwrap_or_else(|_| "./data".to_string());
-        let data_dir = format!("{}/matter-certis-v2/database", app_data_dir);
-        format!("sqlite:{}/matter_certis.db", data_dir)
-    };
-
-    let db_pool = sqlx::SqlitePool::connect(&database_url)
+    // Get real DB page range analysis using the global pool
+    let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
         .await
-        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+        .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
 
     let (min_page, max_page) = sqlx::query_as::<_, (Option<i64>, Option<i64>)>(
         "SELECT MIN(CAST(SUBSTR(url, INSTR(url, 'page=') + 5) AS INTEGER)) as min_page,

@@ -101,10 +101,9 @@ pub async fn check_advanced_site_status(
         .map_err(|e| format!("HTTP client create failed: {}", e))?;
     let data_extractor = crate::infrastructure::MatterDataExtractor::new()
         .map_err(|e| format!("Data extractor create failed: {}", e))?;
-    let database_url = crate::infrastructure::get_main_database_url();
-    let db_pool = sqlx::SqlitePool::connect(&database_url)
+    let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
         .await
-        .map_err(|e| format!("DB connect failed: {}", e))?;
+        .map_err(|e| format!("DB pool failed: {}", e))?;
     let product_repo = std::sync::Arc::new(
         crate::infrastructure::IntegratedProductRepository::new(db_pool),
     );

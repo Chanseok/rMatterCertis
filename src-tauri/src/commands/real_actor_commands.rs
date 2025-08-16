@@ -24,7 +24,6 @@ use crate::application::AppState;
 use crate::domain::product::ProductDetail;
 use crate::domain::services::StatusChecker;
 use crate::infrastructure::config::AppConfig;
-use crate::infrastructure::database_paths::get_main_database_url;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository; // StatusChecker trait 임포트
 
 /// 🎭 실제 Actor 크롤링 요청
@@ -612,12 +611,10 @@ async fn execute_real_stage_4_storage(
         return Ok(());
     }
 
-    // 🏗️ 데이터베이스 연결 생성 (중앙집중식 경로 관리 사용)
-    let database_url = get_main_database_url();
-
-    let pool = sqlx::SqlitePool::connect(&database_url)
+    // 🏗️ 데이터베이스 풀 재사용 (중앙집중식 경로 관리 + 글로벌 풀)
+    let pool = crate::infrastructure::database_connection::get_or_init_global_pool()
         .await
-        .map_err(|e| ActorError::DatabaseError(format!("Database connection failed: {}", e)))?;
+        .map_err(|e| ActorError::DatabaseError(format!("Database pool error: {}", e)))?;
 
     let repository = IntegratedProductRepository::new(pool);
 

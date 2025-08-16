@@ -63,13 +63,10 @@ impl AppState {
 
     /// Initialize the shared database connection pool (Modern Rust 2024 - Backend-Only CRUD)
     pub async fn initialize_database_pool(&self) -> Result<(), String> {
-        use crate::infrastructure::database_paths::get_main_database_url;
 
-        let database_url = get_main_database_url();
-
-        let pool = SqlitePool::connect(&database_url)
+        let pool = crate::infrastructure::database_connection::get_or_init_global_pool()
             .await
-            .map_err(|e| format!("Failed to connect to database: {}", e))?;
+            .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
 
         let mut pool_guard = self.database_pool.write().await;
         *pool_guard = Some(pool);

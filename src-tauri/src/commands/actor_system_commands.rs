@@ -258,16 +258,9 @@ async fn bootstrap_and_spawn_session(
                                 .unwrap_or(false)
                         };
                         if need_injection {
-                            // DB connection & repository
-                            let db_url = match std::env::var("DATABASE_URL") {
-                                Ok(v) => v,
-                                Err(_) => {
-                                    crate::infrastructure::database_paths::get_main_database_url()
-                                }
-                            };
+                            // DB connection & repository (use global pool)
                             {
-                                let db_url = db_url.clone();
-                                if let Ok(pool) = sqlx::SqlitePool::connect(&db_url).await {
+                                if let Ok(pool) = crate::infrastructure::database_connection::get_or_init_global_pool().await {
                                     let repo = IntegratedProductRepository::new(pool);
                                     // Collect page_ids from plan slots
                                     let pages: Vec<u32> = exec_clone_for_loop
@@ -3102,8 +3095,7 @@ pub async fn check_page_index_consistency() -> Result<String, String> {
     use std::sync::Arc;
     let http = HttpClient::create_from_global_config().map_err(|e| e.to_string())?;
     let extractor = MatterDataExtractor::new().map_err(|e| e.to_string())?;
-    let db_url = crate::infrastructure::database_paths::get_main_database_url();
-    let pool = sqlx::SqlitePool::connect(&db_url)
+    let pool = crate::infrastructure::database_connection::get_or_init_global_pool()
         .await
         .map_err(|e| e.to_string())?;
     let repo = Arc::new(IntegratedProductRepository::new(pool));

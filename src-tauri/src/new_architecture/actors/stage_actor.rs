@@ -387,11 +387,13 @@ impl StageActor {
         })?;
 
         // 데이터베이스 연결 생성 (기본 경로 사용)
-        let database_url = crate::infrastructure::database_paths::get_main_database_url();
-        let pool = sqlx::SqlitePool::connect(&database_url)
+        let pool = crate::infrastructure::database_connection::get_or_init_global_pool()
             .await
             .map_err(|e| {
-                StageError::ServiceInitialization(format!("Failed to connect to database: {}", e))
+                StageError::ServiceInitialization(format!(
+                    "Failed to obtain database pool: {}",
+                    e
+                ))
             })?;
         let product_repo = Arc::new(IntegratedProductRepository::new(pool));
 
