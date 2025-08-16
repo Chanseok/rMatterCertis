@@ -214,7 +214,11 @@ class ModernCrawlerStore {
   }
   
   get isHealthy(): boolean {
-    return this.state.liveSystemState?.is_healthy ?? false;
+  const s = this.state.liveSystemState;
+  if (!s) return false;
+  // Some backends may not include is_healthy; treat missing as true for now
+  // and read it if present (using a safe narrowing without breaking TS types)
+  return (('is_healthy' in (s as any)) ? (s as any).is_healthy : true) as boolean;
   }
   
   get progressPercentage(): number {

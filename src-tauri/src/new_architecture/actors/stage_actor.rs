@@ -476,12 +476,9 @@ impl StageActor {
     /// 크롤링 엔진 초기화 (임시 구현)
     /// 현재는 시뮬레이션 모드이므로 실제 엔진 초기화는 건너뛰기
     pub fn initialize_default_engines(&mut self) -> Result<(), StageError> {
-        // Phase 3에서는 시뮬레이션 모드로 동작
-        // 실제 크롤링 엔진 초기화는 향후 구현
-        info!(
-            "🔧 StageActor {} initialized with simulation engines",
-            self.actor_id
-        );
+        // No-op in production. Historical simulation path kept for tests/benchmarks via feature.
+        #[cfg(feature = "simulate-details")]
+        info!("🔧 StageActor {} initialized (simulate-details enabled)", self.actor_id);
         Ok(())
     }
 
@@ -2490,7 +2487,8 @@ impl StageActor {
 
     // === 시뮬레이션 함수들 (기존) ===
 
-    /// 리스트 페이지 처리 시뮬레이션 (Phase 3 임시)
+    /// 리스트 페이지 처리 시뮬레이션 (test/dev only)
+    #[cfg(feature = "simulate-details")]
     #[allow(dead_code)]
     async fn simulate_list_page_processing(item: &StageItem) -> Result<(), String> {
         // 임시: 간단한 처리 시뮬레이션

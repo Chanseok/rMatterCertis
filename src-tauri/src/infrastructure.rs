@@ -17,7 +17,7 @@ pub mod logging; // Logging infrastructure
 pub mod parsing; // Modern parsing architecture following the guide
 pub mod parsing_error; // Enhanced error types
 pub mod retry_manager; // 재시도 관리자 - INTEGRATED_PHASE2_PLAN Week 1 Day 3-4
-pub mod service_based_crawling_engine; // New service-based crawling engine
+pub mod service_based_crawling_engine; // Deprecated legacy engine (kept for compatibility; not used in prod commands)
 pub mod simple_http_client;
 pub mod system_broadcaster; // 실시간 시스템 상태 브로드캐스터
 
