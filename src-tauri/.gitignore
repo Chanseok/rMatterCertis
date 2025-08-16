@@ -10,3 +10,6 @@
 **/*.bak
 **/*.backup
 **/*.moved*
+
+# Ignore archived artifacts
+src/application/archive/*.zip

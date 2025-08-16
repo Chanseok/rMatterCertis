@@ -23,6 +23,7 @@ pub use crate::crawling::tasks::TaskResult as PublicTaskResult;
 pub mod db_saver_sqlx; // 실제 SQLX 구현
 pub mod list_page_fetcher;
 pub mod list_page_parser;
+#[cfg(feature = "simulate-details")]
 pub mod mock_db_saver;
 pub mod product_detail_fetcher;
 pub mod product_detail_parser; // 개발용 Mock (임시 유지)
@@ -30,6 +31,7 @@ pub mod product_detail_parser; // 개발용 Mock (임시 유지)
 pub use db_saver_sqlx::DbSaver; // 실제 SQLX 구현 사용
 pub use list_page_fetcher::ListPageFetcher;
 pub use list_page_parser::ListPageParser;
+#[cfg(feature = "simulate-details")]
 pub use mock_db_saver::MockDbSaver;
 pub use product_detail_fetcher::ProductDetailFetcher;
 pub use product_detail_parser::ProductDetailParser; // Mock 추가 (단계적 제거 예정)
