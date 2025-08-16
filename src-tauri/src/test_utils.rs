@@ -1,13 +1,13 @@
 //! Test utilities for rMatterCertis
-//! 
+//!
 //! Provides common testing infrastructure and utilities to ensure tests
 //! are isolated, reliable, and use consistent database setup patterns.
 
-use std::sync::Arc;
-use anyhow::Result;
-use crate::infrastructure::{DatabaseConnection, IntegratedProductRepository};
 use crate::application::integrated_use_cases::IntegratedProductUseCases;
 use crate::domain::session_manager::SessionManager;
+use crate::infrastructure::{DatabaseConnection, IntegratedProductRepository};
+use anyhow::Result;
+use std::sync::Arc;
 
 /// Test database configuration
 pub struct TestDatabase {
@@ -16,7 +16,7 @@ pub struct TestDatabase {
 
 impl TestDatabase {
     /// Create a new in-memory test database
-    /// 
+    ///
     /// This ensures tests are isolated and don't interfere with each other.
     /// Each test gets a fresh, clean database state.
     pub async fn new() -> Result<Self> {
@@ -47,7 +47,7 @@ impl TestContext {
 
         // Create repositories
         let integrated_repo = Arc::new(IntegratedProductRepository::new(pool.clone()));
-        
+
         // Create session manager (in-memory only)
         let session_manager = Arc::new(SessionManager::new());
 
@@ -67,14 +67,18 @@ impl TestContext {
 #[macro_export]
 macro_rules! test_context {
     () => {{
-        $crate::test_utils::TestContext::new().await.expect("Failed to create test context")
+        $crate::test_utils::TestContext::new()
+            .await
+            .expect("Failed to create test context")
     }};
 }
 
 #[macro_export]
 macro_rules! test_db {
     () => {{
-        $crate::test_utils::TestDatabase::new().await.expect("Failed to create test database")
+        $crate::test_utils::TestDatabase::new()
+            .await
+            .expect("Failed to create test database")
     }};
 }
 
@@ -98,7 +102,7 @@ mod tests {
     async fn test_multiple_databases_are_isolated() {
         let db1 = TestDatabase::new().await.unwrap();
         let db2 = TestDatabase::new().await.unwrap();
-        
+
         // Each database should be completely separate
         // This is guaranteed by using "sqlite::memory:" which creates
         // a new in-memory database for each connection

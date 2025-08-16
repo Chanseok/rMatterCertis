@@ -17,7 +17,7 @@ article_count=$(grep -c "<article" /tmp/test_page1.html)
 echo "   Total article elements: $article_count"
 
 # 제품 링크 확인
-product_links=$(grep -o "/csa_product/[^\"]*" /tmp/test_page1.html | wc -l)
+product_links=$(grep -o "/csa_product/[^"]*" /tmp/test_page1.html | wc -l)
 echo "   Product links found: $product_links"
 
 # 476페이지 테스트

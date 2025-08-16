@@ -1,24 +1,23 @@
 //! Application use cases for Matter Certification crawling
-//! 
+//!
 //! Contains the application's use cases and business workflows specific to Matter domain.
 
 use anyhow::{Result, anyhow};
-use std::sync::Arc;
-use std::collections::HashSet;
-use uuid::Uuid;
 use chrono::Utc;
+use std::collections::HashSet;
+use std::sync::Arc;
+use uuid::Uuid;
 
-use crate::domain::entities::{
-    Vendor, Product, MatterProduct, ValidationResult, ValidationSummary, DatabaseSummary
-};
-use crate::domain::repositories::{VendorRepository, ProductRepository};
-use crate::domain::session_manager::{SessionManager, CrawlingSessionState};
 use crate::application::dto::{
-    CreateVendorDto, UpdateVendorDto, VendorResponseDto, ProductResponseDto,
-    CreateMatterProductDto, MatterProductResponseDto,
-    ProductSearchDto, MatterProductFilterDto, ProductSearchResultDto,
-    DatabaseSummaryDto
+    CreateMatterProductDto, CreateVendorDto, DatabaseSummaryDto, MatterProductFilterDto,
+    MatterProductResponseDto, ProductResponseDto, ProductSearchDto, ProductSearchResultDto,
+    UpdateVendorDto, VendorResponseDto,
 };
+use crate::domain::entities::{
+    DatabaseSummary, MatterProduct, Product, ValidationResult, ValidationSummary, Vendor,
+};
+use crate::domain::repositories::{ProductRepository, VendorRepository};
+use crate::domain::session_manager::{CrawlingSessionState, SessionManager};
 
 // ============================================================================
 // DTO-enabled Use Cases for Tauri Commands
@@ -38,9 +37,11 @@ impl VendorUseCases {
     pub async fn create_vendor(&self, dto: CreateVendorDto) -> Result<VendorResponseDto> {
         // Input validation
         if dto.vendor_number == 0 {
-            return Err(anyhow!("Vendor number must be greater than 0 for Matter certification"));
+            return Err(anyhow!(
+                "Vendor number must be greater than 0 for Matter certification"
+            ));
         }
-        
+
         if dto.vendor_name.trim().is_empty() {
             return Err(anyhow!("Vendor name cannot be empty"));
         }
@@ -66,8 +67,14 @@ impl VendorUseCases {
     }
 
     /// Update an existing vendor
-    pub async fn update_vendor(&self, vendor_id: &str, dto: UpdateVendorDto) -> Result<VendorResponseDto> {
-        let mut vendor = self.vendor_repo.find_by_id(vendor_id)
+    pub async fn update_vendor(
+        &self,
+        vendor_id: &str,
+        dto: UpdateVendorDto,
+    ) -> Result<VendorResponseDto> {
+        let mut vendor = self
+            .vendor_repo
+            .find_by_id(vendor_id)
             .await?
             .ok_or_else(|| anyhow!("Vendor not found"))?;
 
@@ -107,7 +114,11 @@ impl VendorUseCases {
     }
 
     /// List all vendors with pagination
-    pub async fn list_vendors(&self, page: u32, limit: u32) -> Result<(Vec<VendorResponseDto>, u32)> {
+    pub async fn list_vendors(
+        &self,
+        page: u32,
+        limit: u32,
+    ) -> Result<(Vec<VendorResponseDto>, u32)> {
         let (vendors, total) = self.vendor_repo.find_all_paginated(page, limit).await?;
         let vendor_dtos = vendors.into_iter().map(VendorResponseDto::from).collect();
         Ok((vendor_dtos, total))
@@ -125,7 +136,7 @@ impl VendorUseCases {
         if !exists {
             return Err(anyhow!("Vendor not found"));
         }
-        
+
         self.vendor_repo.delete(vendor_id).await
     }
 
@@ -151,7 +162,10 @@ impl MatterProductUseCases {
     }
 
     /// Create a new Matter product from DTO
-    pub async fn create_matter_product(&self, dto: CreateMatterProductDto) -> Result<MatterProductResponseDto> {
+    pub async fn create_matter_product(
+        &self,
+        dto: CreateMatterProductDto,
+    ) -> Result<MatterProductResponseDto> {
         // Validate required fields
         if dto.url.trim().is_empty() {
             return Err(anyhow!("Product URL cannot be empty"));
@@ -171,28 +185,30 @@ impl MatterProductUseCases {
             index_in_page: None, // Not provided in this DTO
             id: None,            // Not provided in this DTO
             manufacturer: dto.manufacturer,
-            model: None,         // Not provided in this DTO
+            model: None, // Not provided in this DTO
             device_type: dto.device_type,
             certificate_id: None, // Not provided in this DTO
             certification_date: dto.certification_date,
-            software_version: None,    // Not provided in this DTO
-            hardware_version: None,    // Not provided in this DTO
+            software_version: None, // Not provided in this DTO
+            hardware_version: None, // Not provided in this DTO
             vid: dto.vid,
             pid: dto.pid,
-            family_sku: None,          // Not provided in this DTO
-            family_variant_sku: None,  // Not provided in this DTO
-            firmware_version: None,    // Not provided in this DTO
-            family_id: None,           // Not provided in this DTO
-            tis_trp_tested: None,      // Not provided in this DTO
-            specification_version: None, // Not provided in this DTO
-            transport_interface: None,   // Not provided in this DTO
+            family_sku: None,             // Not provided in this DTO
+            family_variant_sku: None,     // Not provided in this DTO
+            firmware_version: None,       // Not provided in this DTO
+            family_id: None,              // Not provided in this DTO
+            tis_trp_tested: None,         // Not provided in this DTO
+            specification_version: None,  // Not provided in this DTO
+            transport_interface: None,    // Not provided in this DTO
             primary_device_type_id: None, // Not provided in this DTO
             application_categories,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
 
-        self.product_repo.save_matter_product(&matter_product).await?;
+        self.product_repo
+            .save_matter_product(&matter_product)
+            .await?;
         Ok(MatterProductResponseDto::from(matter_product))
     }
 
@@ -203,14 +219,20 @@ impl MatterProductUseCases {
     }
 
     /// List Matter products with advanced filtering
-    pub async fn filter_matter_products(&self, filter: MatterProductFilterDto) -> Result<ProductSearchResultDto> {
-        let products = self.product_repo.filter_matter_products(
-            filter.manufacturer.as_deref(),
-            filter.device_type.as_deref(),
-            filter.vid.as_deref(),
-            filter.certification_date_start.as_deref(),
-            filter.certification_date_end.as_deref(),
-        ).await?;
+    pub async fn filter_matter_products(
+        &self,
+        filter: MatterProductFilterDto,
+    ) -> Result<ProductSearchResultDto> {
+        let products = self
+            .product_repo
+            .filter_matter_products(
+                filter.manufacturer.as_deref(),
+                filter.device_type.as_deref(),
+                filter.vid.as_deref(),
+                filter.certification_date_start.as_deref(),
+                filter.certification_date_end.as_deref(),
+            )
+            .await?;
 
         // Apply pagination
         let total_count = products.len();
@@ -218,14 +240,14 @@ impl MatterProductUseCases {
         let page_size = filter.page_size.unwrap_or(10) as usize;
         let offset = ((page - 1) * page_size as u32) as usize;
 
-        let paginated_products: Vec<MatterProduct> = products
-            .into_iter()
-            .skip(offset)
-            .take(page_size)
-            .collect();
+        let paginated_products: Vec<MatterProduct> =
+            products.into_iter().skip(offset).take(page_size).collect();
 
         Ok(ProductSearchResultDto {
-            products: paginated_products.into_iter().map(MatterProductResponseDto::from).collect(),
+            products: paginated_products
+                .into_iter()
+                .map(MatterProductResponseDto::from)
+                .collect(),
             total_count: total_count as u32,
             page,
             page_size: page_size as u32,
@@ -234,9 +256,15 @@ impl MatterProductUseCases {
     }
 
     /// Get recent Matter products
-    pub async fn get_recent_matter_products(&self, limit: u32) -> Result<Vec<MatterProductResponseDto>> {
+    pub async fn get_recent_matter_products(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<MatterProductResponseDto>> {
         let products = self.product_repo.get_recent_matter_products(limit).await?;
-        Ok(products.into_iter().map(MatterProductResponseDto::from).collect())
+        Ok(products
+            .into_iter()
+            .map(MatterProductResponseDto::from)
+            .collect())
     }
 
     /// Get unique manufacturers
@@ -250,21 +278,33 @@ impl MatterProductUseCases {
     }
 
     /// Get Matter products by manufacturer with DTO conversion
-    pub async fn get_matter_products_by_manufacturer(&self, manufacturer: &str) -> Result<Vec<MatterProductResponseDto>> {
+    pub async fn get_matter_products_by_manufacturer(
+        &self,
+        manufacturer: &str,
+    ) -> Result<Vec<MatterProductResponseDto>> {
         let products = self.product_repo.find_by_manufacturer(manufacturer).await?;
-        Ok(products.into_iter().map(MatterProductResponseDto::from).collect())
+        Ok(products
+            .into_iter()
+            .map(MatterProductResponseDto::from)
+            .collect())
     }
 
     /// Search Matter products by text with DTO conversion
-    pub async fn search_matter_products(&self, search_dto: ProductSearchDto) -> Result<ProductSearchResultDto> {
+    pub async fn search_matter_products(
+        &self,
+        search_dto: ProductSearchDto,
+    ) -> Result<ProductSearchResultDto> {
         let query = search_dto.query.as_deref().unwrap_or("");
         let products = self.product_repo.search_products(query).await?;
-        let product_dtos: Vec<MatterProductResponseDto> = products.into_iter().map(MatterProductResponseDto::from).collect();
-        
+        let product_dtos: Vec<MatterProductResponseDto> = products
+            .into_iter()
+            .map(MatterProductResponseDto::from)
+            .collect();
+
         let total_count = product_dtos.len() as u32;
         let page_size = search_dto.page_size.unwrap_or(50);
         let total_pages = total_count.div_ceil(page_size); // Calculate ceiling division
-        
+
         Ok(ProductSearchResultDto {
             products: product_dtos,
             total_count,
@@ -289,7 +329,10 @@ impl MatterProductUseCases {
     /// Get all Matter products
     pub async fn get_all_matter_products(&self) -> Result<Vec<MatterProductResponseDto>> {
         let products = self.product_repo.get_all_matter_products().await?;
-        Ok(products.into_iter().map(MatterProductResponseDto::from).collect())
+        Ok(products
+            .into_iter()
+            .map(MatterProductResponseDto::from)
+            .collect())
     }
 
     /// Search products with pagination
@@ -316,7 +359,10 @@ impl MatterProductUseCases {
             .collect();
 
         Ok(ProductSearchResultDto {
-            products: paginated_products.into_iter().map(MatterProductResponseDto::from).collect(),
+            products: paginated_products
+                .into_iter()
+                .map(MatterProductResponseDto::from)
+                .collect(),
             total_count: total_count as u32,
             page,
             page_size: page_size as u32,
@@ -325,15 +371,24 @@ impl MatterProductUseCases {
     }
 
     /// Get products by manufacturer
-    pub async fn get_products_by_manufacturer(&self, manufacturer: &str) -> Result<Vec<MatterProductResponseDto>> {
+    pub async fn get_products_by_manufacturer(
+        &self,
+        manufacturer: &str,
+    ) -> Result<Vec<MatterProductResponseDto>> {
         let products = self.product_repo.find_by_manufacturer(manufacturer).await?;
-        Ok(products.into_iter().map(MatterProductResponseDto::from).collect())
+        Ok(products
+            .into_iter()
+            .map(MatterProductResponseDto::from)
+            .collect())
     }
 
     /// Get recent products
     pub async fn get_recent_products(&self, limit: u32) -> Result<Vec<MatterProductResponseDto>> {
         let products = self.product_repo.get_recent_matter_products(limit).await?;
-        Ok(products.into_iter().map(MatterProductResponseDto::from).collect())
+        Ok(products
+            .into_iter()
+            .map(MatterProductResponseDto::from)
+            .collect())
     }
 
     /// Delete a product by URL
@@ -368,8 +423,15 @@ impl CrawlingUseCases {
     }
 
     /// Start a new crawling session (in-memory)
-    pub async fn start_crawling(&self, session_id: &str, start_url: &str, target_domains: Vec<String>) -> Result<()> {
-        self.session_manager.start_session_simple(session_id, start_url, target_domains).await
+    pub async fn start_crawling(
+        &self,
+        session_id: &str,
+        start_url: &str,
+        target_domains: Vec<String>,
+    ) -> Result<()> {
+        self.session_manager
+            .start_session_simple(session_id, start_url, target_domains)
+            .await
     }
 
     /// Update crawling session progress
@@ -379,41 +441,48 @@ impl CrawlingUseCases {
         progress: u32,
         current_step: &str,
     ) -> Result<()> {
-        self.session_manager.update_session_progress(session_id, progress, current_step.to_string()).await
+        self.session_manager
+            .update_session_progress(session_id, progress, current_step.to_string())
+            .await
     }
 
     /// Complete crawling session
     pub async fn complete_crawling(&self, session_id: &str) -> Result<()> {
-        self.session_manager.complete_session_simple(session_id).await
+        self.session_manager
+            .complete_session_simple(session_id)
+            .await
     }
 
     /// Get session status
-    pub async fn get_session_status(&self, session_id: &str) -> Result<Option<CrawlingSessionState>> {
+    pub async fn get_session_status(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<CrawlingSessionState>> {
         self.session_manager.get_session_state(session_id).await
     }
 
     /// Validate products against existing database (Stage 1.5)
     pub async fn validate_products(&self, products: Vec<Product>) -> Result<ValidationResult> {
         let start_time = std::time::Instant::now();
-        
+
         // Get existing URLs from database
         let existing_urls = self.product_repo.get_existing_urls().await?;
-        
+
         // Classify products
         let mut new_products = Vec::new();
         let mut existing_products = Vec::new();
         let mut duplicate_products = Vec::new();
         let mut seen_urls = HashSet::new();
-        
+
         for product in products {
             // Check for duplicates within the current collection
             if seen_urls.contains(&product.url) {
                 duplicate_products.push(product);
                 continue;
             }
-            
+
             seen_urls.insert(product.url.clone());
-            
+
             // Check against existing database
             if existing_urls.contains(&product.url) {
                 existing_products.push(product);
@@ -421,13 +490,13 @@ impl CrawlingUseCases {
                 new_products.push(product);
             }
         }
-        
+
         let processing_time = start_time.elapsed();
-        
+
         let new_products_len = new_products.len();
         let existing_products_len = existing_products.len();
         let duplicate_products_len = duplicate_products.len();
-        
+
         Ok(ValidationResult {
             new_products,
             existing_products,
@@ -473,8 +542,14 @@ impl ProductUseCases {
     }
 
     /// Get paginated Matter products with full details
-    pub async fn get_matter_products(&self, page: u32, limit: u32) -> Result<(Vec<MatterProduct>, u32)> {
-        self.product_repo.get_matter_products_paginated(page, limit).await
+    pub async fn get_matter_products(
+        &self,
+        page: u32,
+        limit: u32,
+    ) -> Result<(Vec<MatterProduct>, u32)> {
+        self.product_repo
+            .get_matter_products_paginated(page, limit)
+            .await
     }
 
     /// Search products by text query
@@ -516,11 +591,17 @@ impl ProductUseCases {
     /// Get all Matter products with DTO conversion
     pub async fn get_all_matter_products(&self) -> Result<Vec<MatterProductResponseDto>> {
         let matter_products = self.product_repo.get_all_matter_products().await?;
-        Ok(matter_products.into_iter().map(MatterProductResponseDto::from).collect())
+        Ok(matter_products
+            .into_iter()
+            .map(MatterProductResponseDto::from)
+            .collect())
     }
 
     /// Search products with pagination and DTO conversion
-    pub async fn search_products_paginated(&self, dto: ProductSearchDto) -> Result<ProductSearchResultDto> {
+    pub async fn search_products_paginated(
+        &self,
+        dto: ProductSearchDto,
+    ) -> Result<ProductSearchResultDto> {
         let all_matter_products = if let Some(query) = &dto.query {
             if !query.trim().is_empty() {
                 self.product_repo.search_products(query).await?
@@ -543,7 +624,10 @@ impl ProductUseCases {
             .collect();
 
         Ok(ProductSearchResultDto {
-            products: paginated_products.into_iter().map(MatterProductResponseDto::from).collect(),
+            products: paginated_products
+                .into_iter()
+                .map(MatterProductResponseDto::from)
+                .collect(),
             total_count: total_count as u32,
             page,
             page_size: page_size as u32,
@@ -552,15 +636,24 @@ impl ProductUseCases {
     }
 
     /// Get products by manufacturer with DTO conversion
-    pub async fn get_products_by_manufacturer(&self, manufacturer: &str) -> Result<Vec<MatterProductResponseDto>> {
+    pub async fn get_products_by_manufacturer(
+        &self,
+        manufacturer: &str,
+    ) -> Result<Vec<MatterProductResponseDto>> {
         let products = self.product_repo.find_by_manufacturer(manufacturer).await?;
-        Ok(products.into_iter().map(MatterProductResponseDto::from).collect())
+        Ok(products
+            .into_iter()
+            .map(MatterProductResponseDto::from)
+            .collect())
     }
 
     /// Get recent products with DTO conversion
     pub async fn get_recent_products(&self, limit: u32) -> Result<Vec<MatterProductResponseDto>> {
         let products = self.product_repo.get_recent_matter_products(limit).await?;
-        Ok(products.into_iter().map(MatterProductResponseDto::from).collect())
+        Ok(products
+            .into_iter()
+            .map(MatterProductResponseDto::from)
+            .collect())
     }
 
     /// Get database summary with DTO conversion

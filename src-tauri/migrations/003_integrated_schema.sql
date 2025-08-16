@@ -130,6 +130,30 @@ CREATE INDEX IF NOT EXISTS idx_crawling_results_started_at ON crawling_results (
 CREATE INDEX IF NOT EXISTS idx_crawling_results_stage ON crawling_results (stage);
 
 -- ====================================================================
+-- PARTIAL SYNC SESSION + OBSERVED SET (for two-phase sync)
+-- ====================================================================
+
+-- Track sync sessions and their coverage (text form to support multi-ranges)
+CREATE TABLE IF NOT EXISTS sync_sessions (
+    session_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,                        -- 'running', 'completed', 'failed'
+    coverage_text TEXT,                          -- e.g., "498-492,489,487-485"
+    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at DATETIME
+);
+
+-- Observed URLs per session and their canonical page positions
+CREATE TABLE IF NOT EXISTS sync_observed (
+    session_id TEXT NOT NULL,
+    url TEXT NOT NULL,
+    page_id INTEGER,
+    index_in_page INTEGER,
+    PRIMARY KEY (session_id, url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_observed_session_page ON sync_observed (session_id, page_id);
+
+-- ====================================================================
 -- DATA INTEGRITY TRIGGERS (Enhanced)
 -- ====================================================================
 

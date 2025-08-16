@@ -1,5 +1,5 @@
 //! Atomic task events for real-time UI visualization
-//! 
+//!
 //! This module defines lightweight, high-frequency events that are emitted
 //! immediately when individual tasks change state, enabling real-time
 //! animation and detailed progress tracking in the UI.
@@ -46,7 +46,7 @@ impl AtomicTaskEvent {
     pub fn event_name() -> &'static str {
         "atomic-task-update"
     }
-    
+
     /// Get the task ID from any variant
     pub fn task_id(&self) -> TaskId {
         match self {
@@ -56,7 +56,7 @@ impl AtomicTaskEvent {
             AtomicTaskEvent::TaskRetrying { task_id, .. } => *task_id,
         }
     }
-    
+
     /// Get the task type from any variant
     pub fn task_type(&self) -> &str {
         match self {
@@ -66,7 +66,7 @@ impl AtomicTaskEvent {
             AtomicTaskEvent::TaskRetrying { task_type, .. } => task_type,
         }
     }
-    
+
     /// Create a TaskStarted event
     pub fn started(task_id: TaskId, task_type: String) -> Self {
         Self::TaskStarted {
@@ -75,7 +75,7 @@ impl AtomicTaskEvent {
             timestamp: chrono::Utc::now(),
         }
     }
-    
+
     /// Create a TaskCompleted event
     pub fn completed(task_id: TaskId, task_type: String, duration_ms: u64) -> Self {
         Self::TaskCompleted {
@@ -85,9 +85,14 @@ impl AtomicTaskEvent {
             timestamp: chrono::Utc::now(),
         }
     }
-    
+
     /// Create a TaskFailed event
-    pub fn failed(task_id: TaskId, task_type: String, error_message: String, retry_count: u32) -> Self {
+    pub fn failed(
+        task_id: TaskId,
+        task_type: String,
+        error_message: String,
+        retry_count: u32,
+    ) -> Self {
         Self::TaskFailed {
             task_id,
             task_type,
@@ -96,7 +101,7 @@ impl AtomicTaskEvent {
             timestamp: chrono::Utc::now(),
         }
     }
-    
+
     /// Create a TaskRetrying event
     pub fn retrying(task_id: TaskId, task_type: String, retry_count: u32, delay_ms: u64) -> Self {
         Self::TaskRetrying {
@@ -134,16 +139,16 @@ impl AtomicEventStats {
     pub fn record_emission(&mut self, event: &AtomicTaskEvent) {
         let now = chrono::Utc::now();
         let time_diff = (now - self.last_emission_time).num_milliseconds() as f64 / 1000.0;
-        
+
         self.events_emitted += 1;
         self.last_emission_time = now;
-        
+
         // Update events per second (exponential moving average)
         if time_diff > 0.0 {
             let current_rate = 1.0 / time_diff;
             self.events_per_second = 0.1 * current_rate + 0.9 * self.events_per_second;
         }
-        
+
         // Update event type counts
         let event_type = match event {
             AtomicTaskEvent::TaskStarted { .. } => "started",
@@ -151,7 +156,10 @@ impl AtomicEventStats {
             AtomicTaskEvent::TaskFailed { .. } => "failed",
             AtomicTaskEvent::TaskRetrying { .. } => "retrying",
         };
-        
-        *self.event_type_counts.entry(event_type.to_string()).or_insert(0) += 1;
+
+        *self
+            .event_type_counts
+            .entry(event_type.to_string())
+            .or_insert(0) += 1;
     }
 }

@@ -1,9 +1,9 @@
 //! Advanced Crawling Engine을 위한 TypeScript 연동 타입
 //! ts-rs를 사용하여 Rust 타입을 TypeScript로 자동 변환
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-use chrono::{DateTime, Utc};
 
 /// Advanced Crawling Engine 설정
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

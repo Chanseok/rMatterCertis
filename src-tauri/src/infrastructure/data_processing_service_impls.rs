@@ -1,14 +1,14 @@
 //! 고급 데이터 처리 서비스 구현체들
-//! 
+//!
 //! domain/services/data_processing_services.rs의 트레이트들에 대한 실제 구현체
 
-use std::collections::HashMap;
-use async_trait::async_trait;
 use anyhow::{Result, anyhow};
-use tracing::{info, warn, debug};
+use async_trait::async_trait;
+use std::collections::HashMap;
+use tracing::{debug, info, warn};
 
-use crate::domain::services::data_processing_services::*;
 use crate::domain::product::Product;
+use crate::domain::services::data_processing_services::*;
 
 /// 중복 제거 서비스 구현체
 pub struct DeduplicationServiceImpl {
@@ -32,8 +32,9 @@ impl DeduplicationServiceImpl {
             total_weight += 0.3;
             if m1.to_lowercase() == m2.to_lowercase() {
                 similarity_score += 0.3;
-            } else if m1.to_lowercase().contains(&m2.to_lowercase()) || 
-                      m2.to_lowercase().contains(&m1.to_lowercase()) {
+            } else if m1.to_lowercase().contains(&m2.to_lowercase())
+                || m2.to_lowercase().contains(&m1.to_lowercase())
+            {
                 similarity_score += 0.15;
             }
         }
@@ -44,7 +45,8 @@ impl DeduplicationServiceImpl {
             if model1.to_lowercase() == model2.to_lowercase() {
                 similarity_score += 0.4;
             } else {
-                let similarity = self.string_similarity(&model1.to_lowercase(), &model2.to_lowercase());
+                let similarity =
+                    self.string_similarity(&model1.to_lowercase(), &model2.to_lowercase());
                 similarity_score += 0.4 * similarity;
             }
         }
@@ -68,7 +70,7 @@ impl DeduplicationServiceImpl {
     fn string_similarity(&self, s1: &str, s2: &str) -> f64 {
         let len1 = s1.len();
         let len2 = s2.len();
-        
+
         if len1 == 0 && len2 == 0 {
             return 1.0;
         }
@@ -78,7 +80,7 @@ impl DeduplicationServiceImpl {
 
         let max_len = len1.max(len2) as f64;
         let distance = levenshtein_distance(s1, s2) as f64;
-        
+
         1.0 - (distance / max_len)
     }
 }
@@ -86,37 +88,43 @@ impl DeduplicationServiceImpl {
 #[async_trait]
 impl DeduplicationService for DeduplicationServiceImpl {
     async fn remove_duplicates(&self, products: Vec<Product>) -> Result<Vec<Product>> {
-        info!("Starting deduplication process for {} products", products.len());
-        
+        info!(
+            "Starting deduplication process for {} products",
+            products.len()
+        );
+
         let mut unique_products = Vec::new();
         let mut processed_count = 0;
 
         for product in products {
             processed_count += 1;
-            
+
             let is_duplicate = self.is_duplicate(&product, &unique_products).await?;
-            
+
             if !is_duplicate {
                 unique_products.push(product);
             } else {
                 debug!("Removed duplicate product: {:?}", product.model);
             }
-            
+
             if processed_count % 100 == 0 {
                 debug!("Processed {} products for deduplication", processed_count);
             }
         }
 
         let removed_count = processed_count - unique_products.len();
-        info!("Deduplication completed: {} unique products, {} duplicates removed", 
-              unique_products.len(), removed_count);
+        info!(
+            "Deduplication completed: {} unique products, {} duplicates removed",
+            unique_products.len(),
+            removed_count
+        );
 
         Ok(unique_products)
     }
 
     async fn analyze_duplicates(&self, products: &[Product]) -> Result<DuplicationAnalysis> {
         info!("Analyzing duplicates in {} products", products.len());
-        
+
         let mut duplicate_groups = Vec::new();
         let mut processed_indices = std::collections::HashSet::new();
 
@@ -150,12 +158,15 @@ impl DeduplicationService for DeduplicationServiceImpl {
                 duplicate_groups.push(DuplicateProductGroup {
                     products: group_products,
                     similarity_score: avg_similarity,
-                    duplicate_type: DuplicationType::SimilarModel { similarity: avg_similarity },
+                    duplicate_type: DuplicationType::SimilarModel {
+                        similarity: avg_similarity,
+                    },
                 });
             }
         }
 
-        let total_duplicates = duplicate_groups.iter()
+        let total_duplicates = duplicate_groups
+            .iter()
             .map(|group| group.products.len() - 1)
             .sum::<usize>() as u32;
 
@@ -193,10 +204,7 @@ pub struct ValidationServiceImpl {
 impl ValidationServiceImpl {
     pub fn new() -> Self {
         Self {
-            required_fields: vec![
-                "manufacturer".to_string(),
-                "model".to_string(),
-            ],
+            required_fields: vec!["manufacturer".to_string(), "model".to_string()],
         }
     }
 
@@ -207,15 +215,23 @@ impl ValidationServiceImpl {
 
         // 필수 필드 존재 여부 (가중치: 0.5)
         max_score += 0.5;
-        let required_filled = self.required_fields.iter()
+        let required_filled = self
+            .required_fields
+            .iter()
             .map(|field| match field.as_str() {
-                "manufacturer" => product.manufacturer.as_ref().map_or(false, |m| !m.trim().is_empty()),
-                "model" => product.model.as_ref().map_or(false, |m| !m.trim().is_empty()),
+                "manufacturer" => product
+                    .manufacturer
+                    .as_ref()
+                    .map_or(false, |m| !m.trim().is_empty()),
+                "model" => product
+                    .model
+                    .as_ref()
+                    .map_or(false, |m| !m.trim().is_empty()),
                 _ => false,
             })
             .filter(|&filled| filled)
             .count();
-        
+
         score += 0.5 * (required_filled as f64 / self.required_fields.len() as f64);
 
         // 선택적 필드 완성도 (가중치: 0.3)
@@ -224,10 +240,11 @@ impl ValidationServiceImpl {
             product.certificate_id.as_ref(),
             // device_type과 certification_date는 ProductDetail에만 있음
         ];
-        let optional_filled = optional_fields.iter()
+        let optional_filled = optional_fields
+            .iter()
             .filter(|field| field.map_or(false, |f| !f.trim().is_empty()))
             .count();
-        
+
         score += 0.3 * (optional_filled as f64 / optional_fields.len() as f64);
 
         // URL 유효성 (가중치: 0.2)
@@ -247,22 +264,25 @@ impl ValidationServiceImpl {
 #[async_trait]
 impl ValidationService for ValidationServiceImpl {
     async fn validate_all(&self, products: Vec<Product>) -> Result<ValidationResult> {
-        info!("Starting validation process for {} products", products.len());
-        
+        info!(
+            "Starting validation process for {} products",
+            products.len()
+        );
+
         let mut valid_products = Vec::new();
         let mut invalid_products = Vec::new();
         let mut common_errors = HashMap::new();
 
         for product in products {
             let validation = self.validate_product(&product).await?;
-            
+
             if validation.is_valid {
                 valid_products.push(product);
             } else {
                 for error in &validation.errors {
                     *common_errors.entry(error.message.clone()).or_insert(0) += 1;
                 }
-                
+
                 invalid_products.push(InvalidProduct {
                     product,
                     validation_errors: validation.errors,
@@ -277,17 +297,21 @@ impl ValidationService for ValidationServiceImpl {
             0.0
         };
 
-        let mut common_error_list: Vec<String> = common_errors.into_iter()
+        let mut common_error_list: Vec<String> = common_errors
+            .into_iter()
             .map(|(error, count)| format!("{} ({} occurrences)", error, count))
             .collect();
         common_error_list.sort_by(|a, b| b.cmp(a)); // 빈도순 정렬
 
-        info!("Validation completed: {} valid, {} invalid products", 
-              valid_products.len(), invalid_products.len());
+        info!(
+            "Validation completed: {} valid, {} invalid products",
+            valid_products.len(),
+            invalid_products.len()
+        );
 
         let valid_count = valid_products.len() as u32;
         let invalid_count = invalid_products.len() as u32;
-        
+
         Ok(ValidationResult {
             valid_products,
             invalid_products,
@@ -307,7 +331,7 @@ impl ValidationService for ValidationServiceImpl {
 
         // 필수 필드 검사
         let field_validation = self.check_required_fields(product).await?;
-        
+
         for missing_field in field_validation.missing_required_fields {
             errors.push(ValidationError {
                 field: missing_field.clone(),
@@ -320,8 +344,10 @@ impl ValidationService for ValidationServiceImpl {
             errors.push(ValidationError {
                 field: format_error.field.clone(),
                 error_type: ValidationErrorType::InvalidFormat,
-                message: format!("Invalid format in field '{}': expected {}, got {}", 
-                               format_error.field, format_error.expected_format, format_error.actual_value),
+                message: format!(
+                    "Invalid format in field '{}': expected {}, got {}",
+                    format_error.field, format_error.expected_format, format_error.actual_value
+                ),
             });
         }
 
@@ -369,21 +395,29 @@ impl ValidationService for ValidationServiceImpl {
         for field in &self.required_fields {
             match field.as_str() {
                 "manufacturer" => {
-                    if product.manufacturer.as_ref().map_or(true, |m| m.trim().is_empty()) {
+                    if product
+                        .manufacturer
+                        .as_ref()
+                        .map_or(true, |m| m.trim().is_empty())
+                    {
                         missing_required_fields.push("manufacturer".to_string());
                     }
-                },
+                }
                 "model" => {
                     if product.model.as_ref().map_or(true, |m| m.trim().is_empty()) {
                         missing_required_fields.push("model".to_string());
                     }
-                },
+                }
                 _ => {}
             }
         }
 
         // 선택적 필드의 빈 값 검사
-        if product.certificate_id.as_ref().map_or(false, |c| c.trim().is_empty()) {
+        if product
+            .certificate_id
+            .as_ref()
+            .map_or(false, |c| c.trim().is_empty())
+        {
             empty_fields.push("certificate_id".to_string());
         }
 
@@ -418,10 +452,10 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
             let cost = if chars1[i - 1] == chars2[j - 1] { 0 } else { 1 };
             matrix[i][j] = std::cmp::min(
                 std::cmp::min(
-                    matrix[i - 1][j] + 1,     // deletion
-                    matrix[i][j - 1] + 1,     // insertion
+                    matrix[i - 1][j] + 1, // deletion
+                    matrix[i][j - 1] + 1, // insertion
                 ),
-                matrix[i - 1][j - 1] + cost,  // substitution
+                matrix[i - 1][j - 1] + cost, // substitution
             );
         }
     }
@@ -445,8 +479,11 @@ impl ConflictResolverImpl {
 #[async_trait]
 impl ConflictResolver for ConflictResolverImpl {
     async fn resolve_conflicts(&self, products: Vec<Product>) -> Result<Vec<Product>> {
-        info!("Starting conflict resolution for {} products", products.len());
-        
+        info!(
+            "Starting conflict resolution for {} products",
+            products.len()
+        );
+
         let conflicts = self.detect_conflicts(&products).await?;
         let resolved_products = products;
 
@@ -457,23 +494,36 @@ impl ConflictResolver for ConflictResolverImpl {
                     if let Some(latest) = conflict_group.conflicting_products.first() {
                         debug!("Resolved conflict by keeping latest: {:?}", latest.model);
                     }
-                },
+                }
                 ResolutionStrategy::KeepMostComplete => {
                     // 가장 완전한 제품 유지 (필드가 많이 채워진 제품)
-                    if let Some(most_complete) = conflict_group.conflicting_products.iter()
-                        .max_by_key(|p| {
+                    if let Some(most_complete) =
+                        conflict_group.conflicting_products.iter().max_by_key(|p| {
                             let mut score = 0;
-                            if p.manufacturer.is_some() { score += 1; }
-                            if p.model.is_some() { score += 1; }
-                            if p.certificate_id.is_some() { score += 1; }
+                            if p.manufacturer.is_some() {
+                                score += 1;
+                            }
+                            if p.model.is_some() {
+                                score += 1;
+                            }
+                            if p.certificate_id.is_some() {
+                                score += 1;
+                            }
                             // device_type은 ProductDetail에만 있으므로 스킵
                             score
-                        }) {
-                        debug!("Resolved conflict by keeping most complete: {:?}", most_complete.model);
+                        })
+                    {
+                        debug!(
+                            "Resolved conflict by keeping most complete: {:?}",
+                            most_complete.model
+                        );
                     }
-                },
+                }
                 _ => {
-                    warn!("Conflict resolution strategy not implemented: {:?}", conflict_group.resolution_strategy);
+                    warn!(
+                        "Conflict resolution strategy not implemented: {:?}",
+                        conflict_group.resolution_strategy
+                    );
                 }
             }
         }
@@ -492,25 +542,31 @@ impl ConflictResolver for ConflictResolverImpl {
                     existing.model.as_ref(),
                     existing.certificate_id.as_ref(),
                     // device_type은 ProductDetail에만 있으므로 스킵
-                ].iter().filter(|f| f.is_some()).count();
+                ]
+                .iter()
+                .filter(|f| f.is_some())
+                .count();
 
                 let new_score = [
                     new.manufacturer.as_ref(),
                     new.model.as_ref(),
                     new.certificate_id.as_ref(),
                     // device_type은 ProductDetail에만 있으므로 스킵
-                ].iter().filter(|f| f.is_some()).count();
+                ]
+                .iter()
+                .filter(|f| f.is_some())
+                .count();
 
                 if new_score >= existing_score {
                     Ok(new.clone())
                 } else {
                     Ok(existing.clone())
                 }
-            },
+            }
             ResolutionStrategy::Merge => {
                 // 필드 병합
                 let mut merged = existing.clone();
-                
+
                 if new.manufacturer.is_some() && existing.manufacturer.is_none() {
                     merged.manufacturer = new.manufacturer.clone();
                 }
@@ -520,14 +576,14 @@ impl ConflictResolver for ConflictResolverImpl {
                 if new.certificate_id.is_some() && existing.certificate_id.is_none() {
                     merged.certificate_id = new.certificate_id.clone();
                 }
-                
+
                 Ok(merged)
-            },
+            }
             ResolutionStrategy::ManualReview => {
                 // 수동 검토가 필요한 경우 기존 제품 유지
                 warn!("Manual review required for conflict resolution");
                 Ok(existing.clone())
-            },
+            }
         }
     }
 
@@ -537,7 +593,10 @@ impl ConflictResolver for ConflictResolverImpl {
 
         // URL 기반으로 그룹화
         for product in products {
-            url_map.entry(product.url.clone()).or_default().push(product);
+            url_map
+                .entry(product.url.clone())
+                .or_default()
+                .push(product);
         }
 
         // 동일한 URL을 가진 제품들이 여러 개인 경우 충돌로 판단
@@ -569,11 +628,14 @@ impl BatchProgressTrackerImpl {
 #[async_trait]
 impl BatchProgressTracker for BatchProgressTrackerImpl {
     async fn update_progress(&self, batch_id: &str, progress: BatchProgress) -> Result<()> {
-        info!("Updating progress for batch {}: {}%", batch_id, progress.progress_percentage);
+        info!(
+            "Updating progress for batch {}: {}%",
+            batch_id, progress.progress_percentage
+        );
         // 실제 구현에서는 진행 상황을 데이터베이스나 메모리에 저장
         Ok(())
     }
-    
+
     async fn get_current_progress(&self, batch_id: &str) -> Result<BatchProgress> {
         info!("Getting current progress for batch {}", batch_id);
         // 실제 구현에서는 저장된 진행 상황을 반환
@@ -588,9 +650,12 @@ impl BatchProgressTracker for BatchProgressTrackerImpl {
             current_stage: "초기화".to_string(),
         })
     }
-    
+
     async fn complete_batch(&self, batch_id: &str, result: BatchResult) -> Result<()> {
-        info!("Completing batch {}: {} items processed", batch_id, result.total_processed);
+        info!(
+            "Completing batch {}: {} items processed",
+            batch_id, result.total_processed
+        );
         // 실제 구현에서는 배치 완료 상태를 저장
         Ok(())
     }
@@ -609,7 +674,7 @@ impl BatchRecoveryServiceImpl {
 impl BatchRecoveryService for BatchRecoveryServiceImpl {
     async fn recover_failed_batch(&self, batch_id: &str) -> Result<RecoveryResult> {
         info!("Attempting to recover failed batch: {}", batch_id);
-        
+
         // 실제 구현에서는 실패 원인 분석 및 복구 시도
         Ok(RecoveryResult {
             success: true,
@@ -618,10 +683,10 @@ impl BatchRecoveryService for BatchRecoveryServiceImpl {
             recovery_actions: vec![RecoveryAction::Retry],
         })
     }
-    
+
     async fn recover_parsing_error(&self, error: &str) -> Result<RecoveryAction> {
         info!("Attempting to recover parsing error: {}", error);
-        
+
         // 실제 구현에서는 파싱 오류 유형에 따른 복구 액션 결정
         if error.contains("HTML structure") {
             Ok(RecoveryAction::UseAlternativeMethod)
@@ -631,13 +696,13 @@ impl BatchRecoveryService for BatchRecoveryServiceImpl {
             Ok(RecoveryAction::Skip)
         }
     }
-    
+
     async fn assess_recoverability(&self, error: &str) -> Result<RecoverabilityAssessment> {
         info!("Assessing recoverability for error: {}", error);
-        
+
         // 실제 구현에서는 오류 유형에 따른 복구 가능성 평가
         let recoverable = !error.contains("permanent") && !error.contains("invalid");
-        
+
         Ok(RecoverabilityAssessment {
             is_recoverable: recoverable,
             confidence: if recoverable { 0.8 } else { 0.1 },
@@ -674,14 +739,14 @@ impl RetryManager for RetryManagerImpl {
         T: Send,
     {
         let mut last_error = None;
-        
+
         for attempt in 1..=self.max_retries {
             match operation() {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     warn!("Attempt {} failed: {}", attempt, e);
                     last_error = Some(e);
-                    
+
                     if attempt < self.max_retries {
                         let delay = self.base_delay_ms * (2_u64.pow(attempt - 1));
                         tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
@@ -689,13 +754,13 @@ impl RetryManager for RetryManagerImpl {
                 }
             }
         }
-        
+
         Err(last_error.unwrap_or_else(|| anyhow!("All retry attempts failed")))
     }
-    
+
     async fn classify_error(&self, error: &str) -> Result<ErrorClassification> {
         info!("Classifying error: {}", error);
-        
+
         let error_type = if error.contains("network") || error.contains("timeout") {
             ErrorType::Network
         } else if error.contains("parse") || error.contains("HTML") {
@@ -705,7 +770,7 @@ impl RetryManager for RetryManagerImpl {
         } else {
             ErrorType::Unknown
         };
-        
+
         Ok(ErrorClassification {
             error_type,
             severity: ErrorSeverity::Medium,
@@ -717,7 +782,7 @@ impl RetryManager for RetryManagerImpl {
             },
         })
     }
-    
+
     async fn determine_retry_strategy(&self, error_type: ErrorType) -> Result<RetryStrategy> {
         let strategy = match error_type {
             ErrorType::Network => RetryStrategy {
@@ -770,7 +835,7 @@ impl RetryManager for RetryManagerImpl {
                 should_retry: false,
             },
         };
-        
+
         Ok(strategy)
     }
 }
@@ -788,52 +853,60 @@ impl ErrorClassifierImpl {
 impl ErrorClassifier for ErrorClassifierImpl {
     async fn classify(&self, error: &str) -> Result<ErrorType> {
         let error_lower = error.to_lowercase();
-        
-        let error_type = if error_lower.contains("network") || 
-                           error_lower.contains("connection") || 
-                           error_lower.contains("timeout") {
+
+        let error_type = if error_lower.contains("network")
+            || error_lower.contains("connection")
+            || error_lower.contains("timeout")
+        {
             ErrorType::Network
-        } else if error_lower.contains("parse") || 
-                  error_lower.contains("html") || 
-                  error_lower.contains("selector") {
+        } else if error_lower.contains("parse")
+            || error_lower.contains("html")
+            || error_lower.contains("selector")
+        {
             ErrorType::Parsing
-        } else if error_lower.contains("database") || 
-                  error_lower.contains("sql") || 
-                  error_lower.contains("sqlite") {
+        } else if error_lower.contains("database")
+            || error_lower.contains("sql")
+            || error_lower.contains("sqlite")
+        {
             ErrorType::Database
         } else {
             ErrorType::Unknown
         };
-        
+
         info!("Classified error '{}' as {:?}", error, error_type);
         Ok(error_type)
     }
-    
+
     async fn assess_severity(&self, error: &str) -> Result<ErrorSeverity> {
         let error_lower = error.to_lowercase();
-        
-        let severity = if error_lower.contains("critical") || 
-                         error_lower.contains("fatal") || 
-                         error_lower.contains("panic") {
+
+        let severity = if error_lower.contains("critical")
+            || error_lower.contains("fatal")
+            || error_lower.contains("panic")
+        {
             ErrorSeverity::Critical
-        } else if error_lower.contains("error") || 
-                  error_lower.contains("failed") {
+        } else if error_lower.contains("error") || error_lower.contains("failed") {
             ErrorSeverity::High
-        } else if error_lower.contains("warning") || 
-                  error_lower.contains("timeout") {
+        } else if error_lower.contains("warning") || error_lower.contains("timeout") {
             ErrorSeverity::Medium
         } else {
             ErrorSeverity::Low
         };
-        
+
         info!("Assessed error severity as {:?} for: {}", severity, error);
         Ok(severity)
     }
-    
-    async fn determine_action(&self, error_type: ErrorType, severity: ErrorSeverity) -> Result<ErrorAction> {
+
+    async fn determine_action(
+        &self,
+        error_type: ErrorType,
+        severity: ErrorSeverity,
+    ) -> Result<ErrorAction> {
         let action = match (error_type, severity) {
             (ErrorType::Network, ErrorSeverity::Low | ErrorSeverity::Medium) => ErrorAction::Retry,
-            (ErrorType::Network, ErrorSeverity::High | ErrorSeverity::Critical) => ErrorAction::Skip,
+            (ErrorType::Network, ErrorSeverity::High | ErrorSeverity::Critical) => {
+                ErrorAction::Skip
+            }
             (ErrorType::Parsing, _) => ErrorAction::Retry,
             (ErrorType::Database, ErrorSeverity::Critical) => ErrorAction::Abort,
             (ErrorType::Database, _) => ErrorAction::Skip,
@@ -844,31 +917,33 @@ impl ErrorClassifier for ErrorClassifierImpl {
             (ErrorType::Unknown, ErrorSeverity::Critical) => ErrorAction::Abort,
             (ErrorType::Unknown, _) => ErrorAction::Skip,
         };
-        
-        info!("Determined action {:?} for error type {:?} with severity {:?}", 
-              action, error_type, severity);
+
+        info!(
+            "Determined action {:?} for error type {:?} with severity {:?}",
+            action, error_type, severity
+        );
         Ok(action)
     }
-    
+
     async fn assess_recoverability(&self, error: &str) -> Result<bool> {
         let error_lower = error.to_lowercase();
-        
+
         // 복구 불가능한 오류들
         let unrecoverable_keywords = [
             "authentication failed",
-            "invalid credentials", 
+            "invalid credentials",
             "permanent failure",
             "fatal error",
             "corrupted data",
-            "invalid format"
+            "invalid format",
         ];
-        
+
         for keyword in &unrecoverable_keywords {
             if error_lower.contains(keyword) {
                 return Ok(false);
             }
         }
-        
+
         // 대부분의 다른 오류들은 복구 가능
         Ok(true)
     }

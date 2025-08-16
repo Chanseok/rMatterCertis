@@ -53,3 +53,11 @@ Cargo.lock
 # Build artifacts
 build/
 out/
+
+# Logs
+*.log
+!src-tauri/target/**/logs/*.log
+
+# Backup artifacts (cleanup)
+*.backup
+*.bak

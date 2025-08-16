@@ -7,15 +7,14 @@
 #![allow(clippy::uninlined_format_args)]
 
 use anyhow::{Result, anyhow};
-use std::sync::Arc;
 use chrono::Utc;
+use std::sync::Arc;
 
+use crate::domain::integrated_product::DatabaseStatistics;
 use crate::domain::product::{
-    Product, ProductDetail, ProductWithDetails, ProductSearchCriteria, 
-    ProductSearchResult, Vendor
+    Product, ProductDetail, ProductSearchCriteria, ProductSearchResult, ProductWithDetails, Vendor,
 };
 use crate::domain::session_manager::CrawlingResult;
-use crate::domain::integrated_product::DatabaseStatistics;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 
 /// Integrated use cases for the new unified schema
@@ -55,7 +54,8 @@ impl IntegratedProductUseCases {
             return Err(anyhow!("Product must exist before adding details"));
         }
 
-        let (_was_updated, _was_created) = self.repo.create_or_update_product_detail(&detail).await?;
+        let (_was_updated, _was_created) =
+            self.repo.create_or_update_product_detail(&detail).await?;
         Ok(())
     }
 
@@ -82,7 +82,10 @@ impl IntegratedProductUseCases {
     }
 
     /// Search products with filters
-    pub async fn search_products(&self, criteria: ProductSearchCriteria) -> Result<ProductSearchResult> {
+    pub async fn search_products(
+        &self,
+        criteria: ProductSearchCriteria,
+    ) -> Result<ProductSearchResult> {
         self.repo.search_products(&criteria).await
     }
 
@@ -100,7 +103,12 @@ impl IntegratedProductUseCases {
     // ===============================
 
     /// Create a new vendor
-    pub async fn create_vendor(&self, vendor_name: String, company_legal_name: Option<String>, _vendor_number: Option<i32>) -> Result<i32> {
+    pub async fn create_vendor(
+        &self,
+        vendor_name: String,
+        company_legal_name: Option<String>,
+        _vendor_number: Option<i32>,
+    ) -> Result<i32> {
         if vendor_name.trim().is_empty() {
             return Err(anyhow!("Vendor name cannot be empty"));
         }
@@ -210,7 +218,7 @@ impl IntegratedProductUseCases {
     /// Validate database integrity
     pub async fn validate_database_integrity(&self) -> Result<DatabaseStatistics> {
         let stats = self.get_database_statistics().await?;
-        
+
         // Log some useful information for debugging
         println!("Database Statistics:");
         println!("  Total Products: {}", stats.total_products);
@@ -219,7 +227,7 @@ impl IntegratedProductUseCases {
         println!("  Unique Manufacturers: {}", stats.unique_manufacturers);
         println!("  Unique Device Types: {}", stats.unique_device_types);
         println!("  Matter Products: {}", stats.matter_products_count);
-        
+
         if let Some(latest_crawl) = &stats.latest_crawl_date {
             println!("  Latest Crawl: {}", latest_crawl);
         }
@@ -230,14 +238,14 @@ impl IntegratedProductUseCases {
 
 /// Helper functions for data conversion and validation
 impl IntegratedProductUseCases {
-        /// Create product from basic crawling data
+    /// Create product from basic crawling data
     pub fn create_product_from_crawl_data(
         url: String,
         manufacturer: Option<String>,
         model: Option<String>,
         certificate_id: Option<String>,
-    _device_type: Option<String>,
-    _certification_date: Option<String>,
+        _device_type: Option<String>,
+        _certification_date: Option<String>,
         page_id: Option<i32>,
         index_in_page: Option<i32>,
     ) -> Product {
@@ -252,10 +260,10 @@ impl IntegratedProductUseCases {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
-        
+
         // Generate ID based on page_id and index_in_page
         product.generate_id();
-        
+
         product
     }
 
@@ -297,7 +305,7 @@ impl IntegratedProductUseCases {
         if url.trim().is_empty() {
             return Err(anyhow!("URL cannot be empty"));
         }
-        
+
         if !url.starts_with("http") {
             return Err(anyhow!("URL must start with http or https"));
         }
@@ -311,7 +319,7 @@ impl IntegratedProductUseCases {
         if manufacturer.trim().is_empty() {
             return Err(anyhow!("Manufacturer name cannot be empty"));
         }
-        
+
         if manufacturer.len() > 255 {
             return Err(anyhow!("Manufacturer name too long (max 255 characters)"));
         }

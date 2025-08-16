@@ -2,7 +2,7 @@
 //!
 //! Pure business objects representing the core concepts of the crawling domain.
 //! These entities have no external dependencies and contain only business logic.
-//! 
+//!
 //! Following Clean Architecture principles, these entities are:
 //! - Independent of frameworks, databases, and external systems
 //! - Focused on business rules and logic
@@ -12,8 +12,8 @@
 #![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Unique identifier for domain entities
@@ -92,8 +92,8 @@ pub struct Product {
     pub manufacturer: Option<String>,   // Manufacturer name
     pub model: Option<String>,          // Model name
     pub certificate_id: Option<String>, // Certificate ID
-    pub page_id: Option<i32>,          // Collected page number
-    pub index_in_page: Option<i32>,    // Order within page
+    pub page_id: Option<i32>,           // Collected page number
+    pub index_in_page: Option<i32>,     // Order within page
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -108,15 +108,15 @@ pub struct MatterProduct {
     pub id: Option<String>,
     pub manufacturer: Option<String>,
     pub model: Option<String>,
-    
+
     // Detailed Matter certification fields
     pub device_type: Option<String>,
     pub certificate_id: Option<String>,
     pub certification_date: Option<String>,
     pub software_version: Option<String>,
     pub hardware_version: Option<String>,
-    pub vid: Option<String>,              // Vendor ID
-    pub pid: Option<String>,              // Product ID
+    pub vid: Option<String>, // Vendor ID
+    pub pid: Option<String>, // Product ID
     pub family_sku: Option<String>,
     pub family_variant_sku: Option<String>,
     pub firmware_version: Option<String>,
@@ -153,23 +153,23 @@ pub struct CrawlerConfig {
     pub products_per_page: u32,          // Products per page (default 12)
     pub auto_add_to_local_db: bool,      // Auto save to DB
     pub auto_status_check: bool,         // Auto status check
-    
+
     // Browser settings
     pub headless_browser: Option<bool>,
     pub crawler_type: Option<CrawlerType>, // "reqwest" or "playwright"
     pub user_agent: Option<String>,
-    
+
     // Performance settings
     pub max_concurrent_tasks: Option<u32>,
-    pub request_delay: Option<u64>,       // Delay between requests (ms)
-    pub request_timeout: Option<u64>,     // Request timeout (ms)
-    
+    pub request_delay: Option<u64>,   // Delay between requests (ms)
+    pub request_timeout: Option<u64>, // Request timeout (ms)
+
     // Batch processing settings
     pub enable_batch_processing: Option<bool>,
-    pub batch_size: Option<u32>,          // Pages per batch (default 30)
-    pub batch_delay_ms: Option<u64>,      // Delay between batches (default 2000ms)
-    pub batch_retry_limit: Option<u32>,   // Batch retry limit
-    
+    pub batch_size: Option<u32>,        // Pages per batch (default 30)
+    pub batch_delay_ms: Option<u64>,    // Delay between batches (default 2000ms)
+    pub batch_retry_limit: Option<u32>, // Batch retry limit
+
     // URL settings
     pub base_url: Option<String>,
     pub matter_filter_url: Option<String>, // Matter filter applied URL

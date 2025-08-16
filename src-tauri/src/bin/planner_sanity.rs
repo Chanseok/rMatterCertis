@@ -1,11 +1,16 @@
 //! Small sanity run to verify CrawlingPlanner newest-first range and batching
 
-use std::sync::Arc;
-use matter_certis_v2_lib::new_architecture::services::crawling_planner::{CrawlingPlanner, PhaseType};
-use matter_certis_v2_lib::new_architecture::system_config::SystemConfig;
+use matter_certis_v2_lib::domain::services::crawling_services::{
+    CrawlingRangeRecommendation, DatabaseAnalysis, DuplicateAnalysis, DuplicateGroup,
+    DuplicateType, FieldAnalysis, ProcessingStrategy, SiteDataChangeStatus, SiteStatus,
+};
+use matter_certis_v2_lib::domain::services::{DatabaseAnalyzer, StatusChecker};
 use matter_certis_v2_lib::new_architecture::actors::types::{CrawlingConfig, CrawlingStrategy};
-use matter_certis_v2_lib::domain::services::{StatusChecker, DatabaseAnalyzer};
-use matter_certis_v2_lib::domain::services::crawling_services::{DatabaseAnalysis, SiteStatus, SiteDataChangeStatus, CrawlingRangeRecommendation, FieldAnalysis, ProcessingStrategy, DuplicateAnalysis, DuplicateGroup, DuplicateType};
+use matter_certis_v2_lib::new_architecture::services::crawling_planner::{
+    CrawlingPlanner, PhaseType,
+};
+use matter_certis_v2_lib::new_architecture::system_config::SystemConfig;
+use std::sync::Arc;
 
 struct MockStatusChecker {
     total_pages: u32,
@@ -23,13 +28,19 @@ impl StatusChecker for MockStatusChecker {
             products_on_last_page: self.products_on_last_page,
             last_check_time: chrono::Utc::now(),
             health_score: 0.95,
-            data_change_status: SiteDataChangeStatus::Stable { count: self.total_pages * 10 },
+            data_change_status: SiteDataChangeStatus::Stable {
+                count: self.total_pages * 10,
+            },
             decrease_recommendation: None,
             crawling_range_recommendation: CrawlingRangeRecommendation::Full,
         })
     }
 
-    async fn calculate_crawling_range_recommendation(&self, _site_status: &SiteStatus, _db_analysis: &DatabaseAnalysis) -> anyhow::Result<CrawlingRangeRecommendation> {
+    async fn calculate_crawling_range_recommendation(
+        &self,
+        _site_status: &SiteStatus,
+        _db_analysis: &DatabaseAnalysis,
+    ) -> anyhow::Result<CrawlingRangeRecommendation> {
         Ok(CrawlingRangeRecommendation::Full)
     }
 
@@ -37,7 +48,9 @@ impl StatusChecker for MockStatusChecker {
         std::time::Duration::from_secs(pages as u64)
     }
 
-    async fn verify_site_accessibility(&self) -> anyhow::Result<bool> { Ok(true) }
+    async fn verify_site_accessibility(&self) -> anyhow::Result<bool> {
+        Ok(true)
+    }
 }
 
 struct MockDatabaseAnalyzer;
@@ -75,7 +88,11 @@ impl DatabaseAnalyzer for MockDatabaseAnalyzer {
     async fn analyze_duplicates(&self) -> anyhow::Result<DuplicateAnalysis> {
         Ok(DuplicateAnalysis {
             total_duplicates: 0,
-            duplicate_groups: vec![DuplicateGroup { product_ids: vec![], duplicate_type: DuplicateType::ExactMatch, confidence: 1.0 }],
+            duplicate_groups: vec![DuplicateGroup {
+                product_ids: vec![],
+                duplicate_type: DuplicateType::ExactMatch,
+                confidence: 1.0,
+            }],
             duplicate_percentage: 0.0,
         })
     }
@@ -88,7 +105,10 @@ async fn main() -> anyhow::Result<()> {
     let last_page_products = 8u32;
 
     // Planner with mocks
-    let status_checker: Arc<dyn StatusChecker> = Arc::new(MockStatusChecker { total_pages, products_on_last_page: last_page_products });
+    let status_checker: Arc<dyn StatusChecker> = Arc::new(MockStatusChecker {
+        total_pages,
+        products_on_last_page: last_page_products,
+    });
     let db_analyzer: Arc<dyn DatabaseAnalyzer> = Arc::new(MockDatabaseAnalyzer);
     let system_config = Arc::new(SystemConfig::default());
     let planner = CrawlingPlanner::new(status_checker, db_analyzer, system_config);
@@ -98,14 +118,14 @@ async fn main() -> anyhow::Result<()> {
         site_url: "https://example.com".into(),
         start_page: 498,
         end_page: 487,
-    // For this standalone sanity binary, use an explicit small concurrency.
-    // The main app path uses config-driven values.
-    concurrency_limit: 3,
+        // For this standalone sanity binary, use an explicit small concurrency.
+        // The main app path uses config-driven values.
+        concurrency_limit: 3,
         batch_size: 9,
         request_delay_ms: 1000,
         timeout_secs: 30,
         max_retries: 1,
-    strategy: CrawlingStrategy::NewestFirst,
+        strategy: CrawlingStrategy::NewestFirst,
     };
 
     let cached = Some(SiteStatus {
@@ -116,12 +136,16 @@ async fn main() -> anyhow::Result<()> {
         products_on_last_page: last_page_products,
         last_check_time: chrono::Utc::now(),
         health_score: 0.95,
-        data_change_status: SiteDataChangeStatus::Stable { count: total_pages * 10 },
+        data_change_status: SiteDataChangeStatus::Stable {
+            count: total_pages * 10,
+        },
         decrease_recommendation: None,
         crawling_range_recommendation: CrawlingRangeRecommendation::Full,
     });
 
-    let (plan, _status) = planner.create_crawling_plan_with_cache(&cfg, cached).await?;
+    let (plan, _status) = planner
+        .create_crawling_plan_with_cache(&cfg, cached)
+        .await?;
 
     println!("phases: {}", plan.phases.len());
     for (i, ph) in plan.phases.iter().enumerate() {
@@ -130,7 +154,9 @@ async fn main() -> anyhow::Result<()> {
                 println!("phase[{i}] List pages ({}): {:?}", ph.pages.len(), ph.pages);
             }
             PhaseType::StatusCheck => println!("phase[{i}] StatusCheck"),
-            PhaseType::ProductDetailCrawling => println!("phase[{i}] Detail ({} pages)", ph.pages.len()),
+            PhaseType::ProductDetailCrawling => {
+                println!("phase[{i}] Detail ({} pages)", ph.pages.len())
+            }
             PhaseType::DataValidation => println!("phase[{i}] Validation"),
             PhaseType::DataSaving => println!("phase[{i}] Saving"),
         }

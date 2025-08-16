@@ -233,7 +233,8 @@ too_many_arguments = "allow"        # 의존성 주입 시 필요
 
 # 🎨 Feature Flags for Clean Architecture
 [features]
-default = ["modern-ui", "event-driven", "telemetry"]
+default = ["modern-ui", "event-driven", "telemetry", "simulate-details"]
+simulate-details = []  # Gate the ProductDetailsActor fallback simulation loop. Disable this in production builds.
 modern-ui = []           # Modern UI components
 event-driven = []        # Event-driven architecture
 telemetry = []          # Telemetry and observability

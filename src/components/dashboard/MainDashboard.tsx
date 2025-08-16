@@ -1,6 +1,7 @@
 // Main Realtime Dashboard - Chart.js 기반 종합 대시보드
 
 import { Component, createSignal, onMount, onCleanup, For, Show } from 'solid-js';
+// Archived UI note: this module is excluded by tsconfig during cleanup/phase-1
 import RealtimeChart from './RealtimeChartNew';
 import type { 
   DashboardState, 

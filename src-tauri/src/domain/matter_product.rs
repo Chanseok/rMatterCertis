@@ -6,37 +6,37 @@ use sqlx::FromRow;
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct MatterProduct {
     pub id: Option<i64>,
-    
+
     // Basic Information
     pub certificate_id: String,
     pub company_name: String,
     pub product_name: String,
     pub description: Option<String>,
-    
+
     // Technical Specifications
     pub firmware_version: Option<String>,
     pub hardware_version: Option<String>,
     pub specification_version: Option<String>,
-    pub product_id: Option<String>, // Hexadecimal ID
-    pub vendor_id: Option<String>,  // Hexadecimal ID
+    pub product_id: Option<String>,             // Hexadecimal ID
+    pub vendor_id: Option<String>,              // Hexadecimal ID
     pub primary_device_type_id: Option<String>, // Hexadecimal ID
-    pub transport_interface: Option<String>, // Comma-separated
-    
+    pub transport_interface: Option<String>,    // Comma-separated
+
     // Certification Details
     pub certified_date: Option<DateTime<Utc>>,
     pub tis_trp_tested: Option<bool>,
     pub compliance_document_url: Option<String>,
-    
+
     // Program Classification
     pub program_type: String, // Default: "Matter"
     pub device_type: Option<String>,
-    
+
     // URLs and Metadata
     pub detail_url: String,
     pub listing_url: Option<String>,
     pub page_number: Option<i32>,
     pub position_in_page: Option<i32>,
-    
+
     // Timestamps
     pub crawled_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -46,7 +46,7 @@ impl MatterProduct {
     /// Create a new MatterProduct with basic information
     pub fn new(
         certificate_id: String,
-        company_name: String, 
+        company_name: String,
         product_name: String,
         detail_url: String,
     ) -> Self {
@@ -77,20 +77,20 @@ impl MatterProduct {
             updated_at: now,
         }
     }
-    
+
     /// Set page metadata (page number and position)
     pub fn with_page_metadata(mut self, page_number: i32, position: i32) -> Self {
         self.page_number = Some(page_number);
         self.position_in_page = Some(position);
         self
     }
-    
+
     /// Set listing URL where this product was found
     pub fn with_listing_url(mut self, listing_url: String) -> Self {
         self.listing_url = Some(listing_url);
         self
     }
-    
+
     /// Update technical specifications from detail page
     #[allow(clippy::too_many_arguments)]
     pub fn update_technical_specs(
@@ -112,7 +112,7 @@ impl MatterProduct {
         self.transport_interface = transport_interface;
         self.updated_at = Utc::now();
     }
-    
+
     /// Update certification details from detail page
     pub fn update_certification_details(
         &mut self,
@@ -133,20 +133,20 @@ pub struct MatterCrawlerConfig {
     // Base URLs
     pub base_url: String,
     pub matter_filter_url: String,
-    
+
     // Rate limiting and performance
     pub rate_limit_ms: u64,
     pub max_concurrent_requests: usize,
     pub request_timeout_seconds: u64,
-    
+
     // Retry configuration
     pub max_retries: u32,
     pub retry_delay_ms: u64,
-    
+
     // Crawling limits
     pub max_pages: Option<u32>,
     pub start_page: u32,
-    
+
     // User agent
     pub user_agent: Option<String>,
 }
@@ -157,7 +157,7 @@ impl Default for MatterCrawlerConfig {
         Self {
             base_url: csa_iot::PRODUCTS_PAGE_GENERAL.to_string(),
             matter_filter_url: csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string(),
-            rate_limit_ms: 1000, // 1 second between requests
+            rate_limit_ms: 1000,        // 1 second between requests
             max_concurrent_requests: 3, // Conservative default
             request_timeout_seconds: 30,
             max_retries: 3,
@@ -207,24 +207,24 @@ impl MatterCrawlingSession {
             current_url: None,
         }
     }
-    
+
     pub fn add_error(&mut self, error: String) {
         self.errors.push(error);
     }
-    
+
     pub fn update_progress(&mut self, current_page: u32, products_found: u32) {
         self.current_page = current_page;
         self.products_found = products_found;
     }
-    
+
     pub fn move_to_details_stage(&mut self) {
         self.stage = CrawlingStage::ProductDetails;
     }
-    
+
     pub fn complete(&mut self) {
         self.stage = CrawlingStage::Completed;
     }
-    
+
     pub fn fail(&mut self, error: String) {
         self.stage = CrawlingStage::Failed;
         self.add_error(error);

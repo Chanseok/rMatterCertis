@@ -57,6 +57,8 @@
       "set_window_position",
       "set_window_size",
       "maximize_window",
+  "show_window",
+  "start_actor_system_crawling",
       "crawl_product_list_page",
       "crawl_product_detail_page",
       "batch_crawl_product_lists",

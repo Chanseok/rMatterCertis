@@ -225,9 +225,43 @@ export const SimpleEventDisplay: Component = () => {
         setIsCrawling(false);
       });
 
+      // 세부 태스크 상태 이벤트 구독
+      const taskUnlisten = await tauriApi.subscribeToTaskStatus((task) => {
+        addEvent({
+          type: 'product',
+          title: '태스크 업데이트',
+          message: `${task.stage}: ${task.status} - ${task.message ?? ''}`,
+          status: task.status === 'Completed' ? 'success' : task.status === 'Failed' ? 'error' : task.status === 'Retrying' ? 'warning' : 'info'
+        });
+      });
+
+      // 데이터베이스 통계 이벤트 구독
+      const dbUnlisten = await tauriApi.subscribeToDatabaseUpdates((stats) => {
+        addEvent({
+          type: 'system',
+          title: '데이터베이스 업데이트',
+          message: `총 제품 ${stats.total_products}, 최근 업데이트 ${stats.last_updated}`,
+          status: 'info'
+        });
+      });
+
+      // 계층형 상세 크롤링 이벤트 구독
+      const detailUnlisten = await tauriApi.subscribeToDetailedCrawlingEvents((ev) => {
+        const name = ev?.event_name || 'detailed-crawling-event';
+        addEvent({
+          type: 'system',
+          title: name,
+          message: typeof ev === 'string' ? ev : JSON.stringify(ev).slice(0, 180),
+          status: 'info'
+        });
+      });
+
       // 정리 함수 등록
       cleanupFunctions = [
         progressUnlisten,
+        taskUnlisten,
+        dbUnlisten,
+        detailUnlisten,
         atomicUnlisten,
         errorUnlisten,
         stageUnlisten,

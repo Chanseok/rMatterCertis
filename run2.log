@@ -1,287 +1,0 @@
-
-> r-matter-certis@0.1.0 tauri:dev
-> tauri dev
-
-     Running BeforeDevCommand (`npm run dev`)
-
-> r-matter-certis@0.1.0 dev
-> vite
-
-
-  VITE v6.3.5  ready in 354 ms
-
-  ➜  Local:   http://localhost:1420/
-     Running DevCommand (`cargo  run --no-default-features --features modern-ui,event-driven,telemetry --color always --`)
-        Info Watching /Users/chanseok/Codes/rMatterCertis/src-tauri for changes...
-[1m[32m   Compiling[0m objc2-exception-helper v0.1.1
-[1m[32m   Compiling[0m ring v0.17.14
-[1m[32m   Compiling[0m libsqlite3-sys v0.30.1
-[1m[33mwarning[0m[1m:[0m matter-certis-v2@0.2.0: Generated unified types index with 29 exports
-[1m[36m    Building[0m [======================>  ] 726/775: objc2-exception-helper(bu...[K[1m[32m   Compiling[0m objc2 v0.6.1
-[1m[36m    Building[0m [======================>  ] 727/775: objc2-exception-helper, l...[1m[36m    Building[0m [======================>  ] 728/775: libsqlite3-sys(build), ob...[1m[36m    Building[0m [======================>  ] 729/775: objc2(build), libsqlite3-...[1m[36m    Building[0m [======================>  ] 730/775: objc2(build), ring(build)...[1m[36m    Building[0m [======================>  ] 731/775: objc2(build), ring(build)   [1m[36m    Building[0m [======================>  ] 732/775: objc2, ring(build)          [K[1m[32m   Compiling[0m objc2-core-foundation v0.3.1
-[1m[32m   Compiling[0m block2 v0.6.1
-[1m[36m    Building[0m [======================>  ] 732/775: block2, objc2-core-founda...[1m[36m    Building[0m [======================>  ] 733/775: block2, objc2-core-founda...[K[1m[32m   Compiling[0m rustls v0.23.29
-[1m[36m    Building[0m [======================>  ] 734/775: ring, block2, objc2-core-...[K[1m[32m   Compiling[0m dispatch2 v0.2.0
-[1m[36m    Building[0m [======================>  ] 734/775: ring, block2, objc2-core-...[1m[36m    Building[0m [======================>  ] 735/775: ring, objc2-core-foundati...[1m[36m    Building[0m [======================>  ] 736/775: ring, objc2-core-foundati...[K[1m[32m   Compiling[0m objc2-foundation v0.3.1
-[1m[32m   Compiling[0m objc2-core-graphics v0.3.1
-[1m[36m    Building[0m [======================>  ] 736/775: ring, objc2-core-foundati...[1m[36m    Building[0m [======================>  ] 737/775: ring, objc2-foundation, r...[K[1m[32m   Compiling[0m rustls-webpki v0.103.4
-[1m[36m    Building[0m [======================>  ] 737/775: ring, objc2-foundation, r...[1m[36m    Building[0m [======================>  ] 738/775: objc2-foundation, rustls-...[1m[36m    Building[0m [======================>  ] 739/775: objc2-foundation, rustls-...[1m[36m    Building[0m [======================>  ] 740/775: objc2-foundation, rustls-...[1m[36m    Building[0m [======================>  ] 741/775: objc2-foundation, rustls(...[1m[36m    Building[0m [======================>  ] 742/775: objc2-foundation, rustls(...[1m[36m    Building[0m [======================>  ] 743/775: objc2-foundation, rustls,...[K[1m[32m   Compiling[0m sqlx-core v0.8.6
-[1m[36m    Building[0m [======================>  ] 743/775: objc2-foundation, rustls,...[1m[36m    Building[0m [=======================> ] 745/775: objc2-foundation, sqlx-co...[K[1m[32m   Compiling[0m sqlx-sqlite v0.8.6
-[1m[32m   Compiling[0m sqlx-postgres v0.8.6
-[1m[36m    Building[0m [=======================> ] 745/775: objc2-foundation, sqlx-sq...[1m[36m    Building[0m [=======================> ] 745/775: objc2-foundation, sqlx-po...[1m[36m    Building[0m [=======================> ] 747/775: objc2-foundation, sqlx-po...[1m[36m    Building[0m [=======================> ] 748/775: objc2-foundation, sqlx-po...[1m[36m    Building[0m [=======================> ] 749/775: objc2-foundation, sqlx-po...[1m[36m    Building[0m [=======================> ] 750/775: objc2-foundation, sqlx-po...[K[1m[32m   Compiling[0m sqlx-macros-core v0.8.6
-[1m[36m    Building[0m [=======================> ] 750/775: objc2-foundation, sqlx-ma...[1m[36m    Building[0m [=======================> ] 751/775: objc2-foundation, sqlx-ma...[K[1m[32m   Compiling[0m sqlx-macros v0.8.6
-[1m[36m    Building[0m [=======================> ] 752/775: objc2-foundation, sqlx-ma...[K[1m[32m   Compiling[0m objc2-core-image v0.3.1
-[1m[32m   Compiling[0m objc2-quartz-core v0.3.1
-[1m[32m   Compiling[0m objc2-core-data v0.3.1
-[1m[32m   Compiling[0m objc2-cloud-kit v0.3.1
-[1m[36m    Building[0m [=======================> ] 752/775: objc2-foundation, objc2-q...[1m[36m    Building[0m [=======================> ] 753/775: objc2-quartz-core, objc2-...[1m[36m    Building[0m [=======================> ] 754/775: objc2-quartz-core, objc2-...[1m[36m    Building[0m [=======================> ] 755/775: objc2-quartz-core, objc2-...[K[1m[32m   Compiling[0m objc2-app-kit v0.3.1
-[1m[36m    Building[0m [=======================> ] 755/775: objc2-app-kit, objc2-quar...[1m[36m    Building[0m [=======================> ] 756/775: objc2-app-kit, objc2-core...[1m[36m    Building[0m [=======================> ] 757/775: objc2-app-kit, sqlx-macros  [K[1m[32m   Compiling[0m sqlx v0.8.6
-[1m[36m    Building[0m [=======================> ] 758/775: objc2-app-kit, sqlx         [1m[36m    Building[0m [=======================> ] 759/775: objc2-app-kit               [K[1m[32m   Compiling[0m objc2-web-kit v0.3.1
-[1m[32m   Compiling[0m tao v0.34.0
-[1m[32m   Compiling[0m muda v0.17.0
-[1m[32m   Compiling[0m window-vibrancy v0.6.0
-[1m[32m   Compiling[0m rfd v0.15.3
-[1m[36m    Building[0m [=======================> ] 759/775: tao, objc2-app-kit, muda,...[1m[36m    Building[0m [=======================> ] 760/775: tao, muda, objc2-web-kit,...[1m[36m    Building[0m [=======================> ] 761/775: tao, muda, objc2-web-kit,...[1m[36m    Building[0m [=======================> ] 762/775: tao, muda, objc2-web-kit    [1m[36m    Building[0m [=======================> ] 763/775: tao, objc2-web-kit          [1m[36m    Building[0m [=======================> ] 764/775: objc2-web-kit               [K[1m[32m   Compiling[0m wry v0.52.1
-[1m[36m    Building[0m [=======================> ] 764/775: wry, objc2-web-kit          [1m[36m    Building[0m [=======================> ] 765/775: wry                         [K[1m[32m   Compiling[0m tauri-runtime-wry v2.7.1
-[1m[36m    Building[0m [=======================> ] 765/775: wry, tauri-runtime-wry      [1m[36m    Building[0m [=======================> ] 766/775: tauri-runtime-wry           [K[1m[32m   Compiling[0m tauri v2.6.2
-[1m[36m    Building[0m [=======================> ] 766/775: tauri-runtime-wry, tauri    [1m[36m    Building[0m [=======================> ] 767/775: tauri                       [K[1m[32m   Compiling[0m tauri-plugin-fs v2.4.0
-[1m[32m   Compiling[0m tauri-plugin-shell v2.3.0
-[1m[32m   Compiling[0m tauri-plugin-opener v2.4.0
-[1m[32m   Compiling[0m tauri-plugin-store v2.3.0
-[1m[36m    Building[0m [=======================> ] 767/775: tauri-plugin-fs, tauri-pl...[1m[36m    Building[0m [=======================> ] 768/775: tauri-plugin-fs, tauri-pl...[1m[36m    Building[0m [=======================> ] 769/775: tauri-plugin-fs, tauri-pl...[1m[36m    Building[0m [=======================> ] 770/775: tauri-plugin-fs, tauri-pl...[1m[36m    Building[0m [=======================> ] 771/775: tauri-plugin-fs             [K[1m[32m   Compiling[0m tauri-plugin-dialog v2.3.0
-[1m[36m    Building[0m [=======================> ] 771/775: tauri-plugin-fs, tauri-pl...[1m[36m    Building[0m [=======================> ] 772/775: tauri-plugin-dialog         [K[1m[32m   Compiling[0m matter-certis-v2 v0.2.0 (/Users/chanseok/Codes/rMatterCertis/src-tauri)
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: unused import: `crate::commands::config_commands`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/commands/system_analysis.rs:18:5[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m18[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse crate::commands::config_commands; // for consistency if needed[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(unused_imports)]` on by default[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: trivial numeric cast: `u32` as `u32`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/infrastructure/crawling_service_impls.rs:888:30[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m888[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let items_per_page = DEFAULT_PRODUCTS_PER_PAGE as u32; // 기존 상수 (검증된 값)[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: cast can be replaced by coercion; this might require a temporary variable[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: requested on the command line with `-W trivial-numeric-casts`[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: unused variable: `start_time`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crawling/orchestrator.rs:470:9[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m470[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    let start_time = Instant::now();[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_start_time`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(unused_variables)]` on by default[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: unused variable: `duration_ms`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crawling/orchestrator.rs:529:17[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m529[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            let duration_ms = duration.as_millis() as u64;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                 [0m[0m[1m[33m^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_duration_ms`[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: unused variable: `executor`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/new_architecture/services/real_crawling_integration.rs:65:9[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m65[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        executor: Arc<RealCrawlingStageExecutor>[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_executor`[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: unused variable: `throughput_rps`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/new_architecture/services/performance_optimizer.rs:220:9[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m220[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        throughput_rps: f64,[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_throughput_rps`[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: unused variable: `throughput_rps`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/new_architecture/services/performance_optimizer.rs:250:9[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m250[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        throughput_rps: f64,[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_throughput_rps`[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: unused variable: `ttl_minutes`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/application/shared_state.rs:448:46[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m448[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn get_valid_calculated_range(&self, ttl_minutes: u64) -> Option<&CalculatedRange> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                              [0m[0m[1m[33m^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_ttl_minutes`[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: fields `database_analyzer` and `app_config` are never read[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/new_architecture/services/crawling_integration.rs:34:5[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m30[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct CrawlingIntegrationService {[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m--------------------------[0m[0m [0m[0m[1m[38;5;12mfields in this struct[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m34[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    database_analyzer: Arc<dyn DatabaseAnalyzer>,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m37[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    app_config: AppConfig,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(dead_code)]` on by default[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: fields `config` and `app_config` are never read[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/new_architecture/services/real_crawling_integration.rs:20:5[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m19[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct RealCrawlingIntegration {[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m-----------------------[0m[0m [0m[0m[1m[38;5;12mfields in this struct[0m
-[0m[1m[38;5;12m20[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    config: Arc<SystemConfig>,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^[0m
-[0m[1m[38;5;12m21[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    app_config: AppConfig,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: method `analyze_field` is never used[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/new_architecture/services/data_quality_analyzer.rs:294:8[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m60[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mimpl DataQualityAnalyzer {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m------------------------[0m[0m [0m[0m[1m[38;5;12mmethod in this implementation[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m294[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn analyze_field(&self, field_name: &str, field_value: &Option<String>) {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[33m^^^^^^^^^^^^^[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: methods `stage2_collect_product_list` and `emit_atomic_task_event` are never used[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/infrastructure/service_based_crawling_engine.rs:954:14[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m515[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mimpl ServiceBasedBatchCrawlingEngine {[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m------------------------------------[0m[0m [0m[0m[1m[38;5;12mmethods in this implementation[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m954[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn stage2_collect_product_list(&self, total_pages: u32, products_on_last_page: u32) -> Result<Vec<ProductUrl>> {[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m2679[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn emit_atomic_task_event(&self, task_id: &str, stage_name: &str, status: TaskStatus, progress: f64, message: Option<String>) {[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: fields `active_page` and `analyzed_at` are never read[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/infrastructure/crawling_service_impls.rs:45:5[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m39[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mstruct PageAnalysisCache {[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m-----------------[0m[0m [0m[0m[1m[38;5;12mfields in this struct[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m45[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    active_page: u32,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m49[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    analyzed_at: std::time::Instant,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `PageAnalysisCache` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: method `discover_from_page` is never used[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/infrastructure/crawling_service_impls.rs:723:14[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m350[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mimpl StatusCheckerImpl {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m----------------------[0m[0m [0m[0m[1m[38;5;12mmethod in this implementation[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m723[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn discover_from_page(&self, start_page: u32) -> Result<u32> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: field `change_percentage` is never read[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/infrastructure/crawling_service_impls.rs:1394:36[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m1394[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Increased { new_products: u32, change_percentage: f64 },[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m---------[0m[0m                      [0m[0m[1m[33m^^^^^^^^^^^^^^^^^[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m|[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12mfield in this variant[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `DataChangeAnalysis` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: field `change_percentage` is never read[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/infrastructure/crawling_service_impls.rs:1395:37[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m1395[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Decreased { lost_products: u32, change_percentage: f64 },[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m---------[0m[0m [0m[0m[1m[38;5;12mfield in this variant[0m[0m [0m[0m[1m[33m^^^^^^^^^^^^^^^^^[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `DataChangeAnalysis` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: field `start_time` is never read[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/infrastructure/crawling_service_impls.rs:1762:9[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m1758[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    TaskStarted {[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m-----------[0m[0m [0m[0m[1m[38;5;12mfield in this variant[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m1762[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        start_time: std::time::Instant,[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `ProductDetailEvent` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: field `timestamp` is never read[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/infrastructure/crawling_service_impls.rs:3058:9[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m3054[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Completed { [0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m---------[0m[0m [0m[0m[1m[38;5;12mfield in this variant[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m3058[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        timestamp: chrono::DateTime<chrono::Utc>,[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `PageEvent` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: associated functions `update_performance_metrics` and `cleanup_chart_data` are never used[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/services/dashboard_service.rs:355:14[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m34[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mimpl RealtimeDashboardService {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m-----------------------------[0m[0m [0m[0m[1m[38;5;12massociated functions in this implementation[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m355[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn update_performance_metrics([0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m443[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn cleanup_chart_data([0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: field `request_timeout` is never read[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/crawling/workers/list_page_fetcher.rs:21:5[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m20[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct ListPageFetcher {[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m---------------[0m[0m [0m[0m[1m[38;5;12mfield in this struct[0m
-[0m[1m[38;5;12m21[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    request_timeout: Duration,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: fields `total_items` and `total_pages` are never read[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crawling/workers/list_page_parser.rs:175:5[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m174[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mstruct PageMetadata {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m------------[0m[0m [0m[0m[1m[38;5;12mfields in this struct[0m
-[0m[1m[38;5;12m175[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    total_items: Option<u32>,[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^[0m
-[0m[1m[38;5;12m176[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    total_pages: Option<u32>,[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `PageMetadata` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: field `flush_interval` is never read[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/crawling/workers/db_saver_sqlx.rs:21:5[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m17[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct DbSaver {[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m-------[0m[0m [0m[0m[1m[38;5;12mfield in this struct[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m21[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    flush_interval: std::time::Duration,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: method `get_db_stats` is never used[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crawling/workers/db_saver_sqlx.rs:158:14[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m24[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mimpl DbSaver {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m------------[0m[0m [0m[0m[1m[38;5;12mmethod in this implementation[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m158[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn get_db_stats(&self) -> Result<DatabaseStats, WorkerError> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[33m^^^^^^^^^^^^[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: fields `batch_size` and `max_concurrency` are never read[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/crawling/workers/mock_db_saver.rs:19:5[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m18[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct MockDbSaver {[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m-----------[0m[0m [0m[0m[1m[38;5;12mfields in this struct[0m
-[0m[1m[38;5;12m19[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    batch_size: usize,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^[0m
-[0m[1m[38;5;12m20[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    max_concurrency: usize,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `MockDbSaver` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2            [K[0m[1m[33mwarning[0m[0m[1m: associated function `process_single_task` is never used[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crawling/orchestrator.rs:371:14[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m127[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mimpl CrawlingOrchestrator {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m-------------------------[0m[0m [0m[0m[1m[38;5;12massociated function in this implementation[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m371[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn process_single_task([0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^[0m
-
-[1m[36m    Building[0m [=======================> ] 773/775: matter-certis-v2                   Error The "beforeDevCommand" terminated with a non-zero status code.

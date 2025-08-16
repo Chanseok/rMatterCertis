@@ -15,7 +15,7 @@ pub enum ConfigError {
         #[from]
         source: config::ConfigError,
     },
-    
+
     #[error("Configuration validation failed: {message}")]
     Validation { message: String },
 }
@@ -29,7 +29,7 @@ pub struct SystemConfig {
     pub monitoring: MonitoringSettings,
     pub channels: ChannelSettings,
     pub actor: ActorSettings,
-    
+
     /// 호환성 필드들 (레거시 지원)
     pub control_buffer_size: Option<usize>,
     pub event_buffer_size: Option<usize>,
@@ -140,11 +140,11 @@ impl RetryPolicy {
     pub fn base_delay(&self) -> Duration {
         Duration::from_millis(self.base_delay_ms)
     }
-    
+
     pub fn max_delay(&self) -> Duration {
         Duration::from_millis(self.max_delay_ms)
     }
-    
+
     pub fn jitter_range(&self) -> Duration {
         Duration::from_millis(self.jitter_range_ms)
     }
@@ -156,46 +156,46 @@ impl SystemConfig {
             .add_source(config::File::with_name(path))
             .add_source(config::Environment::with_prefix("RMATTERCERTIS"))
             .build()?;
-        
+
         let config: Self = settings.try_deserialize()?;
         config.validate()?;
         Ok(config)
     }
-    
+
     pub fn for_environment(env: &str) -> Result<Self, ConfigError> {
         let base_path = "config/default";
         let env_path = &format!("config/{}", env);
-        
+
         let settings = config::Config::builder()
             .add_source(config::File::with_name(base_path))
             .add_source(config::File::with_name(env_path).required(false))
             .add_source(config::Environment::with_prefix("RMATTERCERTIS"))
             .build()?;
-        
+
         let config: Self = settings.try_deserialize()?;
         config.validate()?;
         Ok(config)
     }
-    
+
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.performance.batch_sizes.min_size > self.performance.batch_sizes.max_size {
             return Err(ConfigError::Validation {
                 message: "min_size cannot be greater than max_size".to_string(),
             });
         }
-        
+
         if self.system.session_timeout_secs == 0 {
             return Err(ConfigError::Validation {
                 message: "session_timeout_secs must be greater than 0".to_string(),
             });
         }
-        
+
         Ok(())
     }
-    
+
     pub fn default() -> Self {
         use std::collections::HashMap;
-        
+
         let mut stage_limits = HashMap::new();
         stage_limits.insert("list_collection".to_string(), 5);
         stage_limits.insert("detail_collection".to_string(), 10);
@@ -220,7 +220,9 @@ impl SystemConfig {
                     jitter_range_ms: 500,
                     retry_on_errors: vec![
                         RetryableErrorType::NetworkTimeout,
-                        RetryableErrorType::ServerError { status_range: (500, 599) },
+                        RetryableErrorType::ServerError {
+                            status_range: (500, 599),
+                        },
                         RetryableErrorType::RateLimit,
                     ],
                 },
@@ -232,7 +234,9 @@ impl SystemConfig {
                     jitter_range_ms: 200,
                     retry_on_errors: vec![
                         RetryableErrorType::NetworkTimeout,
-                        RetryableErrorType::ServerError { status_range: (500, 599) },
+                        RetryableErrorType::ServerError {
+                            status_range: (500, 599),
+                        },
                         RetryableErrorType::ParseError,
                     ],
                 },
@@ -298,7 +302,7 @@ impl SystemConfig {
                 max_concurrent_sessions: 10,
                 max_concurrent_batches: 3,
             },
-            
+
             // Phase 3: 통합 컨텍스트 기본값
             // 호환성 필드들
             control_buffer_size: Some(100),

@@ -87,12 +87,7 @@ END;
 
 COMMIT;
 
--- Verification query
-SELECT 
-    'Production Database Enhanced' as status,
-    (SELECT COUNT(*) FROM products) as total_products,
-    (SELECT COUNT(*) FROM product_details) as total_details,
-    (SELECT COUNT(*) FROM vendors) as total_vendors,
-    ROUND(
-        (SELECT COUNT(*) FROM product_details) * 100.0 / (SELECT COUNT(*) FROM products), 2
-    ) as completion_percentage;
+-- Moved to docs/sql/production_enhancement_v2.sql
+-- This file remains as a pointer for compatibility. Please use the version under docs/sql.
+
+.read docs/sql/production_enhancement_v2.sql

@@ -7,23 +7,23 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio_util::sync::CancellationToken;
-use tracing::{info, warn, error, debug};
 use anyhow::Result;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, warn};
 
-use crate::domain::services::crawling_services::{
-    StatusChecker, ProductListCollector, ProductDetailCollector, DatabaseAnalyzer,
-    SiteStatus, CrawlingRangeRecommendation, FieldAnalysis
-};
-use crate::domain::product_url::ProductUrl;
 use crate::domain::product::ProductDetail;
-use crate::infrastructure::crawling_service_impls::{StatusCheckerImpl, ProductListCollectorImpl, CollectorConfig};
-use crate::infrastructure::config::AppConfig;
-use crate::infrastructure::{HttpClient, MatterDataExtractor, IntegratedProductRepository};
-use crate::new_architecture::actor_system::{
-    StageResult, StageError
+use crate::domain::product_url::ProductUrl;
+use crate::domain::services::crawling_services::{
+    CrawlingRangeRecommendation, DatabaseAnalyzer, FieldAnalysis, ProductDetailCollector,
+    ProductListCollector, SiteStatus, StatusChecker,
 };
-use crate::new_architecture::channels::types::{StageType, StageItem};
+use crate::infrastructure::config::AppConfig;
+use crate::infrastructure::crawling_service_impls::{
+    CollectorConfig, ProductListCollectorImpl, StatusCheckerImpl,
+};
+use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
+use crate::new_architecture::actor_system::{StageError, StageResult};
+use crate::new_architecture::channels::types::{StageItem, StageType};
 use crate::new_architecture::config::SystemConfig;
 
 /// 실제 크롤링 서비스와 OneShot Actor 시스템을 연결하는 통합 서비스
@@ -32,39 +32,30 @@ pub struct CrawlingIntegrationService {
     status_checker: Arc<dyn StatusChecker>,
     list_collector: Arc<dyn ProductListCollector>,
     detail_collector: Arc<dyn ProductDetailCollector>,
-    database_analyzer: Arc<dyn DatabaseAnalyzer>,        // REMOVE_CANDIDATE(if still unused)
+    database_analyzer: Arc<dyn DatabaseAnalyzer>, // REMOVE_CANDIDATE(if still unused)
     product_repository: Arc<IntegratedProductRepository>,
-    config: Arc<SystemConfig>,                           // REMOVE_CANDIDATE(if still unused)
-    app_config: AppConfig,                               // REMOVE_CANDIDATE(if still unused)
+    config: Arc<SystemConfig>, // REMOVE_CANDIDATE(if still unused)
+    app_config: AppConfig,     // REMOVE_CANDIDATE(if still unused)
 }
 
 impl CrawlingIntegrationService {
     /// 기존 인프라를 사용하여 통합 서비스 생성
-    pub async fn new(
-        config: Arc<SystemConfig>,
-        app_config: AppConfig,
-    ) -> Result<Self> {
+    pub async fn new(config: Arc<SystemConfig>, app_config: AppConfig) -> Result<Self> {
         // 기존 인프라 서비스들 초기화 (기존 패턴 재사용)
         let http_client = Arc::new(tokio::sync::Mutex::new(
-            HttpClient::create_from_global_config()?
+            HttpClient::create_from_global_config()?,
         ));
-        
-        let data_extractor = Arc::new(
-            MatterDataExtractor::new()?
-        );
-        
-        // 실제 DB 연결 URL 가져오기
-    let database_url = crate::infrastructure::get_main_database_url();
-        
-        // DB 연결 풀 생성
-        let db_pool = sqlx::SqlitePool::connect(&database_url).await
-            .map_err(|e| anyhow::anyhow!("Failed to connect to database: {}", e))?;
-        
+
+        let data_extractor = Arc::new(MatterDataExtractor::new()?);
+
+        // DB 풀 재사용 (글로벌 풀)
+        let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to obtain database pool: {}", e))?;
+
         // ProductRepository 초기화 (DB 연결 포함)
-        let product_repository = Arc::new(
-            IntegratedProductRepository::new(db_pool)
-        );
-        
+        let product_repository = Arc::new(IntegratedProductRepository::new(db_pool));
+
         // StatusChecker 생성 (ProductRepository 포함)
         let http_client_for_checker = http_client.lock().await.clone();
         let data_extractor_for_checker = (*data_extractor).clone();
@@ -75,10 +66,10 @@ impl CrawlingIntegrationService {
             product_repository.clone(),
         ));
         let status_checker: Arc<dyn StatusChecker> = status_checker_impl.clone();
-        
-        // DatabaseAnalyzer는 StatusCheckerImpl 재사용  
+
+        // DatabaseAnalyzer는 StatusCheckerImpl 재사용
         let database_analyzer: Arc<dyn DatabaseAnalyzer> = status_checker_impl.clone();
-        
+
         // ProductListCollector 생성
         let collector_config = CollectorConfig {
             batch_size: app_config.user.batch.batch_size,
@@ -89,22 +80,24 @@ impl CrawlingIntegrationService {
             retry_attempts: 3,
             retry_max: 3,
         };
-        
-        let list_collector: Arc<dyn ProductListCollector> = Arc::new(ProductListCollectorImpl::new(
-            Arc::new(HttpClient::create_from_global_config()?),  // 🔥 Mutex 제거
-            data_extractor.clone(),
-            collector_config.clone(),
-            status_checker_impl.clone(),
-        ));
-        
+
+        let list_collector: Arc<dyn ProductListCollector> =
+            Arc::new(ProductListCollectorImpl::new(
+                Arc::new(HttpClient::create_from_global_config()?), // 🔥 Mutex 제거
+                data_extractor.clone(),
+                collector_config.clone(),
+                status_checker_impl.clone(),
+            ));
+
         // ProductDetailCollector는 ProductListCollectorImpl 재사용 (기존 패턴)
-        let detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(ProductListCollectorImpl::new(
-            Arc::new(HttpClient::create_from_global_config()?),  // 🔥 Mutex 제거
-            data_extractor.clone(),
-            collector_config.clone(),
-            status_checker_impl.clone(),
-        ));
-        
+        let detail_collector: Arc<dyn ProductDetailCollector> =
+            Arc::new(ProductListCollectorImpl::new(
+                Arc::new(HttpClient::create_from_global_config()?), // 🔥 Mutex 제거
+                data_extractor.clone(),
+                collector_config.clone(),
+                status_checker_impl.clone(),
+            ));
+
         Ok(Self {
             status_checker,
             list_collector,
@@ -115,7 +108,7 @@ impl CrawlingIntegrationService {
             app_config,
         })
     }
-    
+
     /// 실제 리스트 수집 단계 실행 (OneShot 결과 반환)
     pub async fn execute_list_collection_stage(
         &self,
@@ -123,9 +116,15 @@ impl CrawlingIntegrationService {
         concurrency_limit: u32,
         cancellation_token: CancellationToken,
     ) -> StageResult {
-        self.execute_list_collection_stage_internal(pages, concurrency_limit, cancellation_token, true).await
+        self.execute_list_collection_stage_internal(
+            pages,
+            concurrency_limit,
+            cancellation_token,
+            true,
+        )
+        .await
     }
-    
+
     /// 사이트 상태 확인 없이 직접 페이지 수집 (중복 방지용)
     pub async fn execute_list_collection_stage_no_site_check(
         &self,
@@ -133,9 +132,15 @@ impl CrawlingIntegrationService {
         concurrency_limit: u32,
         cancellation_token: CancellationToken,
     ) -> StageResult {
-        self.execute_list_collection_stage_internal(pages, concurrency_limit, cancellation_token, false).await
+        self.execute_list_collection_stage_internal(
+            pages,
+            concurrency_limit,
+            cancellation_token,
+            false,
+        )
+        .await
     }
-    
+
     /// 내부 리스트 수집 구현 (사이트 상태 확인 선택적)
     async fn execute_list_collection_stage_internal(
         &self,
@@ -145,19 +150,19 @@ impl CrawlingIntegrationService {
         perform_site_check: bool,
     ) -> StageResult {
         let start_time = Instant::now();
-        
+
         info!(
             pages_count = pages.len(),
             concurrency_limit = concurrency_limit,
             "Starting real list collection stage"
         );
-        
+
         // 설정에서 배치 크기 로드
         let batch_size = self.config.performance.batch_sizes.initial_size.min(50) as usize;
         let mut all_collected_urls = Vec::new();
         let mut successful_pages = Vec::new();
         let mut failed_pages = Vec::new();
-        
+
         // 페이지를 배치로 나누어 처리
         for chunk in pages.chunks(batch_size) {
             // 취소 확인
@@ -170,8 +175,15 @@ impl CrawlingIntegrationService {
                     context: "User cancellation".to_string(),
                 };
             }
-            
-            match self.collect_page_batch_with_retry(chunk, cancellation_token.clone(), perform_site_check).await {
+
+            match self
+                .collect_page_batch_with_retry(
+                    chunk,
+                    cancellation_token.clone(),
+                    perform_site_check,
+                )
+                .await
+            {
                 Ok(batch_result) => {
                     for (page, urls) in batch_result {
                         if urls.is_empty() {
@@ -188,12 +200,12 @@ impl CrawlingIntegrationService {
                 }
             }
         }
-        
+
         let elapsed = start_time.elapsed();
         let total_pages = pages.len() as u32;
         let successful_count = successful_pages.len() as u32;
         let failed_count = failed_pages.len() as u32;
-        
+
         // 결과 분류
         if successful_count == 0 {
             StageResult::FatalError {
@@ -211,13 +223,16 @@ impl CrawlingIntegrationService {
         } else {
             StageResult::Failure {
                 error: StageError::ProcessingError {
-                    message: format!("Partial failure: {} successes, {} failures", successful_count, failed_count),
+                    message: format!(
+                        "Partial failure: {} successes, {} failures",
+                        successful_count, failed_count
+                    ),
                 },
                 partial_results: successful_count,
             }
         }
     }
-    
+
     /// 실제 상세 수집 단계 실행 (OneShot 결과 반환)
     pub async fn execute_detail_collection_stage(
         &self,
@@ -226,19 +241,19 @@ impl CrawlingIntegrationService {
         cancellation_token: CancellationToken,
     ) -> StageResult {
         let start_time = Instant::now();
-        
+
         info!(
             urls_count = product_urls.len(),
             concurrency_limit = concurrency_limit,
             "Starting real detail collection stage"
         );
-        
+
         // 설정에서 배치 크기 로드
         let batch_size = self.config.performance.batch_sizes.initial_size.min(20) as usize;
         let mut all_collected_details = Vec::new();
         let mut successful_urls = Vec::new();
         let mut failed_urls = Vec::new();
-        
+
         // URL을 배치로 나누어 처리
         for chunk in product_urls.chunks(batch_size) {
             // 취소 확인
@@ -251,8 +266,11 @@ impl CrawlingIntegrationService {
                     context: "User cancellation".to_string(),
                 };
             }
-            
-            match self.collect_detail_batch_with_retry(chunk, cancellation_token.clone()).await {
+
+            match self
+                .collect_detail_batch_with_retry(chunk, cancellation_token.clone())
+                .await
+            {
                 Ok(batch_details) => {
                     for detail in batch_details {
                         all_collected_details.push(detail.clone());
@@ -265,12 +283,12 @@ impl CrawlingIntegrationService {
                 }
             }
         }
-        
+
         let elapsed = start_time.elapsed();
         let total_urls = product_urls.len() as u32;
         let successful_count = successful_urls.len() as u32;
         let failed_count = failed_urls.len() as u32;
-        
+
         // 결과 분류
         if successful_count == 0 {
             StageResult::FatalError {
@@ -294,20 +312,20 @@ impl CrawlingIntegrationService {
             }
         }
     }
-    
+
     /// 사이트 상태 분석 실행
     pub async fn execute_site_analysis(&self) -> Result<SiteStatus> {
         info!("Starting real site status analysis");
-        
+
         self.status_checker.check_site_status().await
     }
-    
+
     /// 크롤링 범위 권장사항 계산
     pub async fn calculate_crawling_recommendation(&self) -> Result<CrawlingRangeRecommendation> {
         info!("Calculating real crawling range recommendation with actual DB data");
-        
+
         let site_status = self.status_checker.check_site_status().await?;
-        
+
         // 실제 DB 상태 확인
         let db_stats = self.product_repository.get_database_statistics().await?;
         info!(
@@ -315,7 +333,7 @@ impl CrawlingIntegrationService {
             active_products = db_stats.active_products,
             "Real DB stats retrieved"
         );
-        
+
         // DB 분석을 위한 분석 결과 생성 (실제 DB 데이터 기반)
         let db_analysis = crate::domain::services::crawling_services::DatabaseAnalysis {
             total_products: db_stats.total_products as u32,
@@ -332,10 +350,12 @@ impl CrawlingIntegrationService {
             },
             data_quality_score: 0.8,
         };
-        
-        self.status_checker.calculate_crawling_range_recommendation(&site_status, &db_analysis).await
+
+        self.status_checker
+            .calculate_crawling_range_recommendation(&site_status, &db_analysis)
+            .await
     }
-    
+
     /// 배치 페이지 수집 (재시도 포함)
     async fn collect_page_batch_with_retry(
         &self,
@@ -344,14 +364,17 @@ impl CrawlingIntegrationService {
         perform_site_check: bool,
     ) -> Result<Vec<(u32, Vec<ProductUrl>)>> {
         let mut results = Vec::new();
-        
+
         // 개별 페이지 수집
         for &page in pages {
             if cancellation_token.is_cancelled() {
                 break;
             }
-            
-            match self.collect_single_page_with_retry(page, 3, perform_site_check).await {
+
+            match self
+                .collect_single_page_with_retry(page, 3, perform_site_check)
+                .await
+            {
                 Ok(urls) => {
                     results.push((page, urls));
                 }
@@ -361,10 +384,10 @@ impl CrawlingIntegrationService {
                 }
             }
         }
-        
+
         Ok(results)
     }
-    
+
     /// 단일 페이지 수집 (재시도 포함)
     async fn collect_single_page_with_retry(
         &self,
@@ -377,7 +400,10 @@ impl CrawlingIntegrationService {
             info!(page = page, "🔍 Performing site status check for page");
             self.status_checker.check_site_status().await?
         } else {
-            info!(page = page, "⚡ Skipping site status check - using cached site info");
+            info!(
+                page = page,
+                "⚡ Skipping site status check - using cached site info"
+            );
             // 기본값 사용 (실제로는 캐시된 값을 사용해야 함)
             SiteStatus {
                 total_pages: 495,
@@ -387,22 +413,33 @@ impl CrawlingIntegrationService {
                 response_time_ms: 500,
                 last_check_time: chrono::Utc::now(),
                 health_score: 1.0,
-                data_change_status: crate::domain::services::crawling_services::SiteDataChangeStatus::Stable { count: 5934 },
+                data_change_status:
+                    crate::domain::services::crawling_services::SiteDataChangeStatus::Stable {
+                        count: 5934,
+                    },
                 decrease_recommendation: None,
                 crawling_range_recommendation: CrawlingRangeRecommendation::Partial(5),
             }
         };
         let mut last_error = None;
-        
+
         for attempt in 0..=max_retries {
-            match self.list_collector.collect_single_page(
-                page,
-                site_status.total_pages,
-                site_status.products_on_last_page
-            ).await {
+            match self
+                .list_collector
+                .collect_single_page(
+                    page,
+                    site_status.total_pages,
+                    site_status.products_on_last_page,
+                )
+                .await
+            {
                 Ok(urls) => {
                     if attempt > 0 {
-                        info!(page = page, attempt = attempt, "Page collection succeeded after retry");
+                        info!(
+                            page = page,
+                            attempt = attempt,
+                            "Page collection succeeded after retry"
+                        );
                     }
                     return Ok(urls);
                 }
@@ -410,16 +447,21 @@ impl CrawlingIntegrationService {
                     last_error = Some(e);
                     if attempt < max_retries {
                         let delay = Duration::from_millis(1000 * (2_u64.pow(attempt)));
-                        debug!(page = page, attempt = attempt, delay_ms = delay.as_millis(), "Retrying page collection");
+                        debug!(
+                            page = page,
+                            attempt = attempt,
+                            delay_ms = delay.as_millis(),
+                            "Retrying page collection"
+                        );
                         tokio::time::sleep(delay).await;
                     }
                 }
             }
         }
-        
+
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown error")))
     }
-    
+
     /// 배치 상세 수집 (재시도 포함)
     async fn collect_detail_batch_with_retry(
         &self,
@@ -427,7 +469,9 @@ impl CrawlingIntegrationService {
         cancellation_token: CancellationToken,
     ) -> Result<Vec<ProductDetail>> {
         // 취소 토큰과 함께 실제 상세 수집 호출
-        self.detail_collector.collect_details_with_cancellation(urls, cancellation_token).await
+        self.detail_collector
+            .collect_details_with_cancellation(urls, cancellation_token)
+            .await
     }
 }
 
@@ -442,7 +486,7 @@ impl RealCrawlingStageExecutor {
             integration_service,
         }
     }
-    
+
     /// StageActor에서 호출할 실제 단계 실행 메서드
     pub async fn execute_stage(
         &self,
@@ -453,32 +497,29 @@ impl RealCrawlingStageExecutor {
     ) -> StageResult {
         match stage_type {
             StageType::ListCollection => {
-                let pages: Vec<u32> = items.into_iter()
+                let pages: Vec<u32> = items
+                    .into_iter()
                     .filter_map(|item| match item {
                         StageItem::Page(page) => Some(page),
                         _ => None,
                     })
                     .collect();
-                
-                self.integration_service.execute_list_collection_stage(
-                    pages,
-                    concurrency_limit,
-                    cancellation_token,
-                ).await
+
+                self.integration_service
+                    .execute_list_collection_stage(pages, concurrency_limit, cancellation_token)
+                    .await
             }
-            
+
             StageType::DetailCollection => {
                 // 현재는 URL 아이템이 없으므로 빈 처리
                 // 실제로는 이전 단계에서 수집된 URL을 받아야 함
                 let urls = Vec::new(); // TODO: 실제 URL 전달 구현
-                
-                self.integration_service.execute_detail_collection_stage(
-                    urls,
-                    concurrency_limit,
-                    cancellation_token,
-                ).await
+
+                self.integration_service
+                    .execute_detail_collection_stage(urls, concurrency_limit, cancellation_token)
+                    .await
             }
-            
+
             StageType::DataValidation => {
                 // 데이터 검증 로직 (현재는 성공으로 처리)
                 StageResult::Success {
@@ -486,7 +527,7 @@ impl RealCrawlingStageExecutor {
                     duration_ms: 100,
                 }
             }
-            
+
             StageType::DatabaseSave => {
                 // 데이터베이스 저장 로직 (현재는 성공으로 처리)
                 StageResult::Success {

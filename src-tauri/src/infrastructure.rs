@@ -1,29 +1,29 @@
 //! Infrastructure layer for database connections, parsing, and external integrations
-//! 
+//!
 //! This module provides database connections, session management, HTML parsing,
 //! web crawling, and external service integrations following the guide's architecture.
 
+pub mod advanced_crawling_engine; // Phase 2 advanced crawling engine with data pipeline
+pub mod config; // Configuration constants and helpers
+// pub mod crawling; // Web crawler implementation (deprecated)
+pub mod crawling_engine; // 4-stage batch crawling engine
+pub mod crawling_service_impls; // Service implementations
+pub mod data_processing_service_impls; // Data processing service implementations
 pub mod database_connection;
-pub mod database_paths;  // 중앙집중식 데이터베이스 경로 관리 (Modern Rust 2024)
+pub mod database_paths; // 중앙집중식 데이터베이스 경로 관리 (Modern Rust 2024)
+pub mod html_parser; // HTML parser with integrated tests
 pub mod integrated_product_repository;
-pub mod html_parser;  // HTML parser with integrated tests
+pub mod logging; // Logging infrastructure
+pub mod parsing; // Modern parsing architecture following the guide
+pub mod parsing_error; // Enhanced error types
+pub mod retry_manager; // 재시도 관리자 - INTEGRATED_PHASE2_PLAN Week 1 Day 3-4
+pub mod service_based_crawling_engine; // Deprecated legacy engine (kept for compatibility; not used in prod commands)
 pub mod simple_http_client;
-pub mod parsing_error;  // Enhanced error types
-pub mod parsing;  // Modern parsing architecture following the guide
-pub mod crawling;  // Web crawler implementation
-pub mod crawling_engine;  // 4-stage batch crawling engine
-pub mod service_based_crawling_engine;  // New service-based crawling engine
-pub mod advanced_crawling_engine;  // Phase 2 advanced crawling engine with data pipeline
-pub mod crawling_service_impls;  // Service implementations
-pub mod data_processing_service_impls;  // Data processing service implementations
-pub mod config;  // Configuration constants and helpers
-pub mod logging;  // Logging infrastructure
-pub mod retry_manager;  // 재시도 관리자 - INTEGRATED_PHASE2_PLAN Week 1 Day 3-4
-pub mod system_broadcaster;  // 실시간 시스템 상태 브로드캐스터
+pub mod system_broadcaster; // 실시간 시스템 상태 브로드캐스터
 
 // Temporarily disabled - working on schema compatibility
 // pub mod product_repository;
-// pub mod matter_product_repository; 
+// pub mod matter_product_repository;
 // pub mod crawling_result_repository;
 // pub mod repositories_adapter;
 // pub mod http;
@@ -31,23 +31,26 @@ pub mod system_broadcaster;  // 실시간 시스템 상태 브로드캐스터
 // pub mod crawler;  // Temporarily disabled - will be enabled after repositories are stable
 
 // Re-export commonly used items
+pub use config::csa_iot;
 pub use database_connection::DatabaseConnection;
-pub use database_paths::{DatabasePathManager, get_main_database_url, initialize_database_paths};  // 중앙집중식 경로 관리
+pub use database_paths::{DatabasePathManager, get_main_database_url, initialize_database_paths}; // 중앙집중식 경로 관리
+pub use html_parser::MatterDataExtractor; // HTML parser with integrated tests
 pub use integrated_product_repository::IntegratedProductRepository;
-pub use html_parser::MatterDataExtractor;  // HTML parser with integrated tests
-pub use simple_http_client::HttpClient;
-pub use config::csa_iot;  // CSA-IoT configuration constants
+pub use simple_http_client::HttpClient; // CSA-IoT configuration constants
 
 // Modern parsing and crawling exports following the guide
-pub use parsing::{ParsingConfig, ParsingError, ParsingResult, ProductListParser, ProductDetailParser};
-pub use crawling::WebCrawler;
-pub use crawling_engine::{BatchCrawlingEngine, BatchCrawlingConfig};
+pub use crawling_engine::{BatchCrawlingConfig, BatchCrawlingEngine};
+pub use parsing::{
+    ParsingConfig, ParsingError, ParsingResult, ProductDetailParser, ProductListParser,
+};
 // Legacy ServiceBasedBatchCrawlingEngine fully removed from active path
 pub use advanced_crawling_engine::AdvancedBatchCrawlingEngine;
-pub use crawling_service_impls::{StatusCheckerImpl, ProductListCollectorImpl, CollectorConfig};
-pub use data_processing_service_impls::{DeduplicationServiceImpl, ValidationServiceImpl, ConflictResolverImpl};
-pub use logging::{init_logging, init_logging_with_config, get_log_directory};
-pub use retry_manager::{RetryManager, RetryItem, RetryStats, ErrorClassification};
+pub use crawling_service_impls::{CollectorConfig, ProductListCollectorImpl, StatusCheckerImpl};
+pub use data_processing_service_impls::{
+    ConflictResolverImpl, DeduplicationServiceImpl, ValidationServiceImpl,
+};
+pub use logging::{get_log_directory, init_logging, init_logging_with_config};
+pub use retry_manager::{ErrorClassification, RetryItem, RetryManager, RetryStats};
 
 // Legacy compatibility through adapters
 // pub use repositories_adapter::{SqliteVendorRepository, SqliteProductRepository};

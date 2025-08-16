@@ -1,0 +1,28 @@
+repos:
+  - repo: local
+    hooks:
+      - id: rust-fmt
+        name: rust-fmt
+        entry: bash -lc 'cargo fmt --manifest-path src-tauri/Cargo.toml --all'
+        language: system
+        pass_filenames: false
+      - id: rust-clippy
+        name: rust-clippy
+        entry: bash -lc 'cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings'
+        language: system
+        pass_filenames: false
+      - id: rust-test
+        name: rust-test
+        entry: bash -lc 'cargo test --manifest-path src-tauri/Cargo.toml --all'
+        language: system
+        pass_filenames: false
+      - id: ts-typecheck
+        name: ts-typecheck
+        entry: bash -lc 'npm run -s type-check'
+        language: system
+        pass_filenames: false
+      - id: verify-runtime
+        name: verify-runtime
+        entry: bash -lc 'bash scripts/verify_runtime_plan.sh src-tauri/target/debug/logs/back_front.log || true'
+        language: system
+        pass_filenames: false

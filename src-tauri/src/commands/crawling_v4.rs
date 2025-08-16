@@ -1,20 +1,18 @@
+/*
         product_repo,
         event_emitter_arc, // EventEmitter for real-time events
         config,
         uuid::Uuid::new_v4().to_string(),
         app_config,
     );
-    
     *engine_guard = Some(engine);
-    
     tracing::info!("Crawling engine v4.0 initialized successfully with cancellation support");
-    
     Ok(CrawlingResponse {
         success: true,
         message: "Crawling engine initialized successfully".to_string(),
         data: None,
     })
-}
+*/
 
 /// Start the crawling process
 #[tauri::command]
@@ -341,9 +339,9 @@ async fn calculate_intelligent_crawling_range_v4(
         let data_extractor = crate::infrastructure::MatterDataExtractor::new()
             .map_err(|e| format!("Failed to create data extractor: {}", e))?;
         // Create product repository for StatusCheckerImpl
-        let database_url = get_database_url_v4()?;
-        let db_pool = sqlx::SqlitePool::connect(&database_url).await
-            .map_err(|e| format!("Failed to connect to database: {}", e))?;
+        let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
+            .await
+            .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
         let product_repo = crate::infrastructure::IntegratedProductRepository::new(db_pool);
         let repo_arc = std::sync::Arc::new(product_repo);
 
@@ -377,9 +375,9 @@ async fn calculate_intelligent_crawling_range_v4(
     } else {
         tracing::info!("🔄 Performing fresh DB analysis");
         // Perform fresh DB analysis
-        let database_url = get_database_url_v4()?;
-        let db_pool = sqlx::SqlitePool::connect(&database_url).await
-            .map_err(|e| format!("Failed to connect to database: {}", e))?;
+        let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
+            .await
+            .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
         let product_repo = crate::infrastructure::IntegratedProductRepository::new(db_pool);
         let repo_arc = std::sync::Arc::new(product_repo);
         
@@ -405,9 +403,9 @@ async fn calculate_intelligent_crawling_range_v4(
     let config = config_manager.load_config().await
         .map_err(|e| format!("Failed to get config: {}", e))?;
     // Create product repository
-    let database_url = get_database_url_v4()?;
-    let db_pool = sqlx::SqlitePool::connect(&database_url).await
-        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
+        .await
+        .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
     
     let product_repo = crate::infrastructure::IntegratedProductRepository::new(db_pool);
     let repo_arc = std::sync::Arc::new(product_repo);

@@ -3,7 +3,9 @@ use tauri::AppHandle;
 use tracing::info;
 // chrono is not used directly in this module
 
-use crate::commands::actor_system_commands::{start_actor_system_crawling, ActorCrawlingRequest, CrawlingMode};
+use crate::commands::actor_system_commands::{
+    ActorCrawlingRequest, CrawlingMode, start_actor_system_crawling,
+};
 
 /// 통합 크롤링 요청 구조체
 #[derive(Debug, Deserialize)]
@@ -29,7 +31,7 @@ pub async fn start_unified_crawling(
     request: StartCrawlingRequest,
 ) -> Result<StartCrawlingResponse, String> {
     info!("🚀 통합 크롤링 요청 수신: {:?}", request);
-    
+
     // 단일 경로: Actor 기반
     let crawling_mode = match request.mode.as_deref() {
         Some("advanced") => Some(CrawlingMode::AdvancedEngine),
@@ -49,7 +51,11 @@ pub async fn start_unified_crawling(
     let result = start_actor_system_crawling(app.clone(), actor_req)
         .await
         .map_err(|e| format!("failed to start actor crawling: {}", e))?;
-    Ok(StartCrawlingResponse { success: result.success, message: result.message, session_id: result.session_id })
+    Ok(StartCrawlingResponse {
+        success: result.success,
+        message: result.message,
+        session_id: result.session_id,
+    })
 }
 
 // NOTE: engine_type 제거로 호출 단순화됨. FE는 mode + override_* 만 전달.

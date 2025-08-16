@@ -1,14 +1,14 @@
 //! ProductDetailsActor: ListPages 단계에서 수집된 페이지/슬롯 기반으로 상세 제품 정보를 수집.
 //! Phase 1: Skeleton – 실제 파싱/저장 로직은 후속 구현.
+use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use chrono::Utc;
 use tracing::info;
 // use existing lightweight RNG (fastrand) already in Cargo.toml
 use crate::new_architecture::runtime::session_registry::session_registry;
 
-use crate::new_architecture::channels::types::AppEvent;
 use crate::new_architecture::actors::types::ExecutionPlan;
+use crate::new_architecture::channels::types::AppEvent;
 use crate::new_architecture::context::AppContext;
 
 #[derive(Debug, Clone)]
@@ -41,34 +41,63 @@ impl ProductDetailsActor {
             let registry = session_registry();
             let g = registry.read().await;
             if let Some(entry) = g.get(&self.session_id) {
-                if let Some(ids) = &entry.remaining_detail_ids { if !ids.is_empty() { ids.clone() } else { Vec::new() } } else { Vec::new() }
-            } else { Vec::new() }
+                if let Some(ids) = &entry.remaining_detail_ids {
+                    if !ids.is_empty() {
+                        ids.clone()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
         };
         if detail_ids.is_empty() {
-            // Fallback simulation (development mode)
-            let sim_count = 3usize.min(plan.page_slots.len());
-            let simulated: Vec<String> = (0..sim_count).map(|i| format!("detail_sim_{}", i)).collect();
-            let registry = session_registry();
-            let mut g = registry.write().await;
-            if let Some(entry) = g.get_mut(&self.session_id) {
-                entry.detail_tasks_total = simulated.len() as u64;
-                entry.remaining_detail_ids = Some(simulated.clone());
+            #[cfg(feature = "simulate-details")]
+            {
+                // Fallback simulation (development mode)
+                let sim_count = 3usize.min(plan.page_slots.len());
+                let simulated: Vec<String> = (0..sim_count)
+                    .map(|i| format!("detail_sim_{}", i))
+                    .collect();
+                let registry = session_registry();
+                let mut g = registry.write().await;
+                if let Some(entry) = g.get_mut(&self.session_id) {
+                    entry.detail_tasks_total = simulated.len() as u64;
+                    entry.remaining_detail_ids = Some(simulated.clone());
+                }
+                self.run_internal(simulated, event_tx.clone()).await?;
+                return Ok(());
             }
-            self.run_internal(simulated, event_tx.clone()).await?;
-            return Ok(());
+            #[cfg(not(feature = "simulate-details"))]
+            {
+                // No detail IDs and simulation disabled: skip silently
+                tracing::debug!(
+                    "ProductDetailsActor: no detail_ids and simulate-details disabled; skipping detail run"
+                );
+                return Ok(());
+            }
         } else {
             // Update total if first time
             let registry = session_registry();
             let mut g = registry.write().await;
             if let Some(entry) = g.get_mut(&self.session_id) {
-                if entry.detail_tasks_total == 0 { entry.detail_tasks_total = detail_ids.len() as u64; }
+                if entry.detail_tasks_total == 0 {
+                    entry.detail_tasks_total = detail_ids.len() as u64;
+                }
             }
         }
         self.run_internal(detail_ids, event_tx.clone()).await?;
         Ok(())
     }
 
-    async fn run_internal(&self, detail_ids: Vec<String>, event_tx: tokio::sync::broadcast::Sender<AppEvent>) -> anyhow::Result<()> {
+    async fn run_internal(
+        &self,
+        detail_ids: Vec<String>,
+        event_tx: tokio::sync::broadcast::Sender<AppEvent>,
+    ) -> anyhow::Result<()> {
         let sem = Arc::new(Semaphore::new(self.config.max_concurrency as usize));
         let mut handles = Vec::new();
         for did in detail_ids.clone() {
@@ -186,8 +215,13 @@ impl ProductDetailsActor {
                 drop(permit);
             }));
         }
-        for h in handles { let _ = h.await; }
-        info!("[ProductDetailsActor] detail collection phase done (total={}, completed, failed captured in registry)", detail_ids.len());
+        for h in handles {
+            let _ = h.await;
+        }
+        info!(
+            "[ProductDetailsActor] detail collection phase done (total={}, completed, failed captured in registry)",
+            detail_ids.len()
+        );
         let sem = Arc::new(Semaphore::new(self.config.max_concurrency as usize));
         let mut handles = Vec::new();
         for did in detail_ids.clone() {
@@ -249,8 +283,8 @@ impl ProductDetailsActor {
                             if !e.detail_downshifted {
                                 let processed = (e.detail_tasks_completed + e.detail_tasks_failed).max(1) as f64;
                                 let fail_rate = e.detail_tasks_failed as f64 / processed;
-                                if fail_rate > 0.30 { 
-                                    e.detail_downshifted = true; 
+                                if fail_rate > 0.30 {
+                                    e.detail_downshifted = true;
                                     if e.detail_downshift_timestamp.is_none() {
                                         e.detail_downshift_timestamp = Some(Utc::now());
                                         e.detail_downshift_old_limit = Some(cfg.max_concurrency);
@@ -300,7 +334,9 @@ impl ProductDetailsActor {
                 drop(permit);
             }));
         }
-        for h in handles { let _ = h.await; }
+        for h in handles {
+            let _ = h.await;
+        }
         Ok(())
     }
 }

@@ -1,5 +1,5 @@
 //! Task Lifecycle Event System
-//! 
+//!
 //! 실시간 동시성 시각화를 위한 세밀한 `Task` 생명주기 이벤트 시스템
 //! 각 `AsyncTask`의 모든 상태 변화를 추적하여 프론트엔드에서 완전한 투명성 제공
 
@@ -7,10 +7,10 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::module_name_repetitions)] // TaskLifecycleEvent, TaskExecutionContext 등은 의도적인 반복
 
-use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use ts_rs::TS;
 
 /// `Task` 실행 컨텍스트 - 모든 이벤트가 공통으로 가지는 실행 환경 정보
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -64,29 +64,29 @@ pub struct TaskTypeInfo {
 #[serde(tag = "status", content = "details")]
 pub enum TaskLifecycleEvent {
     /// `Task`가 생성되고 대기열에 추가됨
-    Created { 
-        url: String, 
+    Created {
+        url: String,
         task_type: TaskTypeInfo,
         priority: TaskPriority,
         estimated_completion: DateTime<Utc>,
     },
-    
+
     /// `Task`가 실행 대기열에서 대기 중
-    Queued { 
+    Queued {
         queue_position: u32,
         estimated_start_time: DateTime<Utc>,
         queue_length: u32,
     },
-    
+
     /// `Task` 실행이 시작됨
-    Started { 
+    Started {
         worker_id: String,
         retry_attempt: u32,
         allocated_resources: ResourceAllocation,
     },
-    
+
     /// `Task` 실행 중 진행 상황 업데이트
-    Progress { 
+    Progress {
         stage: String,
         completion_percent: f64,
         current_operation: String,
@@ -94,42 +94,42 @@ pub enum TaskLifecycleEvent {
         items_total: Option<u32>,
         throughput_per_second: Option<f64>,
     },
-    
+
     /// `Task`가 성공적으로 완료됨
-    Succeeded { 
-        duration_ms: u64, 
+    Succeeded {
+        duration_ms: u64,
         result_summary: String,
         items_processed: u32,
         final_throughput: f64,
         resource_usage: ResourceUsage,
     },
-    
+
     /// `Task`가 실패함
-    Failed { 
-        error_message: String, 
+    Failed {
+        error_message: String,
         error_code: String,
         error_category: ErrorCategory,
         is_recoverable: bool,
         stack_trace: Option<String>,
         resource_usage: ResourceUsage,
     },
-    
+
     /// `Task` 재시도 중
-    Retrying { 
-        attempt: u32, 
+    Retrying {
+        attempt: u32,
         max_attempts: u32,
         delay_ms: u64,
         reason: String,
         retry_strategy: RetryStrategy,
     },
-    
+
     /// `Task`가 취소됨
-    Cancelled { 
+    Cancelled {
         reason: String,
         partial_results: Option<String>,
         completion_percent: f64,
     },
-    
+
     /// `Task`가 타임아웃됨
     TimedOut {
         timeout_duration_ms: u64,
@@ -368,13 +368,13 @@ pub enum ConcurrencyEvent {
         context: TaskExecutionContext,
         event: TaskLifecycleEvent,
     },
-    
+
     /// 동시성 상태 스냅샷 (1초마다)
     ConcurrencySnapshot(ConcurrencySnapshot),
-    
+
     /// `AI` 기반 동시성 분석 결과
     ConcurrencyInsight(ConcurrencyInsight),
-    
+
     /// 세션 레벨 이벤트 (크롤링 버튼 클릭부터 완료까지)
     SessionEvent {
         session_id: String,
@@ -382,7 +382,7 @@ pub enum ConcurrencyEvent {
         metadata: HashMap<String, String>,
         timestamp: DateTime<Utc>,
     },
-    
+
     /// 배치 레벨 이벤트 (배치 생성, 시작, 완료)
     BatchEvent {
         session_id: String,
@@ -391,7 +391,7 @@ pub enum ConcurrencyEvent {
         metadata: HashMap<String, String>,
         timestamp: DateTime<Utc>,
     },
-    
+
     /// 스테이지별 작업 이벤트 (ProductList, ProductDetails 구분)
     StageEvent {
         session_id: String,
@@ -504,7 +504,10 @@ pub enum StageType {
     /// 제품 목록 수집 (페이지별 병렬 실행)
     ProductList { page_number: u32, batch_id: String },
     /// 제품 상세정보 수집 (제품별 병렬 실행)
-    ProductDetails { product_id: String, batch_id: String },
+    ProductDetails {
+        product_id: String,
+        batch_id: String,
+    },
     /// 데이터베이스 저장
     DatabaseSave,
 }

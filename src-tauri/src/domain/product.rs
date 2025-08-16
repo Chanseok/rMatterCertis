@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-use chrono::{DateTime, Utc};
 
 /// Product basic information from listing pages
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -104,7 +104,7 @@ impl Product {
             self.id = Some(format!("p{:04}i{:02}", page_id, index_in_page));
         }
     }
-    
+
     /// Generate ID and return the generated value
     pub fn with_generated_id(mut self) -> Self {
         self.generate_id();
@@ -121,7 +121,7 @@ impl ProductDetail {
             self.id = Some(format!("p{:04}i{:02}", page_id, index_in_page));
         }
     }
-    
+
     /// Generate ID and return the generated value
     pub fn with_generated_id(mut self) -> Self {
         self.generate_id();

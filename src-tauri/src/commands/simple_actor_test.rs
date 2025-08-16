@@ -1,5 +1,5 @@
 //! Simple Actor System Test Commands for Tauri Integration
-//! 
+//!
 //! Minimal test commands to verify Actor system functionality in the UI
 
 use serde::{Deserialize, Serialize};
@@ -29,7 +29,7 @@ pub async fn test_new_arch_session_actor(
     _state: State<'_, ActorSystemState>,
 ) -> Result<ActorSystemResponse, String> {
     info!("🧪 Testing SessionActor...");
-    
+
     Ok(ActorSystemResponse {
         success: true,
         message: "SessionActor test completed successfully".to_string(),
@@ -49,7 +49,7 @@ pub async fn test_new_arch_batch_actor(
     _state: State<'_, ActorSystemState>,
 ) -> Result<ActorSystemResponse, String> {
     info!("🧪 Testing BatchActor...");
-    
+
     Ok(ActorSystemResponse {
         success: true,
         message: "BatchActor test completed successfully".to_string(),
@@ -70,7 +70,7 @@ pub async fn test_new_arch_integration(
     _state: State<'_, ActorSystemState>,
 ) -> Result<ActorSystemResponse, String> {
     info!("🧪 Testing Actor system integration...");
-    
+
     Ok(ActorSystemResponse {
         success: true,
         message: "Actor system integration test completed successfully".to_string(),
@@ -92,7 +92,7 @@ pub async fn test_new_arch_channels(
     _state: State<'_, ActorSystemState>,
 ) -> Result<ActorSystemResponse, String> {
     info!("🧪 Testing triple channel system...");
-    
+
     Ok(ActorSystemResponse {
         success: true,
         message: "Triple channel system test completed successfully".to_string(),
@@ -101,7 +101,7 @@ pub async fn test_new_arch_channels(
             "test": "Channels",
             "status": "passed",
             "control_channel": "MPSC - Commands",
-            "data_channel": "OneShot - Results", 
+            "data_channel": "OneShot - Results",
             "event_channel": "MPSC - Events"
         })),
     })
@@ -114,15 +114,15 @@ pub async fn test_new_arch_performance(
     _state: State<'_, ActorSystemState>,
 ) -> Result<ActorSystemResponse, String> {
     info!("🧪 Testing Actor system performance...");
-    
+
     let start_time = std::time::Instant::now();
-    
+
     // Simulate performance test
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-    
+
     let elapsed = start_time.elapsed();
     info!("✅ Performance test completed in {:?}", elapsed);
-    
+
     Ok(ActorSystemResponse {
         success: true,
         message: format!("Performance test completed in {:?}", elapsed),

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use std::fmt;
+use ts_rs::TS;
 
 /// URL과 함께 페이지 위치 정보를 담는 구조체
 /// ProductListCollector에서 ProductDetailCollector로 메타데이터를 전달하기 위해 사용
@@ -24,12 +24,12 @@ impl ProductUrl {
             index_in_page,
         }
     }
-    
+
     /// URL만 추출 (기존 코드와의 호환성을 위해)
     pub fn get_url(&self) -> &str {
         &self.url
     }
-    
+
     /// 메타데이터를 튜플로 반환
     pub fn get_position(&self) -> (i32, i32) {
         (self.page_id, self.index_in_page)
@@ -50,6 +50,10 @@ impl AsRef<str> for ProductUrl {
 
 impl fmt::Display for ProductUrl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} (page: {}, index: {})", self.url, self.page_id, self.index_in_page)
+        write!(
+            f,
+            "{} (page: {}, index: {})",
+            self.url, self.page_id, self.index_in_page
+        )
     }
 }

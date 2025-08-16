@@ -3,19 +3,19 @@
 //! The orchestrator manages the entire crawling workflow, coordinating workers,
 //! task scheduling, and system lifecycle management.
 
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
-use tokio::time::{sleep, interval};
+use tokio::time::{interval, sleep};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn, error, debug};
-use serde::{Deserialize, Serialize};
+use tracing::{debug, error, info, warn};
 
 use crate::crawling::{
-    tasks::*,
-    state::*,
     queues::*,
-    workers::{WorkerPool, Worker},
+    state::*,
+    tasks::*,
+    workers::{Worker, WorkerPool},
 };
 
 /// Get task type name for atomic events
@@ -33,22 +33,22 @@ fn get_task_type_name(task: &CrawlingTask) -> String {
 pub struct CrawlingOrchestrator {
     /// Worker pool for processing tasks
     worker_pool: Arc<WorkerPool>,
-    
+
     /// Task queue manager
     queue_manager: Arc<QueueManager>,
-    
+
     /// Shared state across all components
     shared_state: Arc<SharedState>,
-    
+
     /// Cancellation token for graceful shutdown
     cancellation_token: CancellationToken,
-    
+
     /// Configuration for the orchestrator
     config: OrchestratorConfig,
-    
+
     /// Semaphore for controlling global concurrency
     global_semaphore: Arc<Semaphore>,
-    
+
     /// Task scheduling interval
     scheduler_interval: Duration,
 }
@@ -58,28 +58,28 @@ pub struct CrawlingOrchestrator {
 pub struct OrchestratorConfig {
     /// Maximum number of concurrent tasks across all workers
     pub max_global_concurrency: usize,
-    
+
     /// How often to check for new tasks to schedule
     pub scheduler_interval: Duration,
-    
+
     /// Maximum time to wait for workers to finish during shutdown
     pub shutdown_timeout: Duration,
-    
+
     /// How often to log progress statistics
     pub stats_interval: Duration,
-    
+
     /// Whether to enable automatic retry of failed tasks
     pub auto_retry_enabled: bool,
-    
+
     /// Maximum number of retries for failed tasks
     pub max_retries: u32,
-    
+
     /// Base delay between retries
     pub retry_delay: Duration,
-    
+
     /// Whether to enable backpressure control
     pub backpressure_enabled: bool,
-    
+
     /// Queue size threshold for backpressure
     pub backpressure_threshold: usize,
 }
@@ -135,7 +135,7 @@ impl CrawlingOrchestrator {
         let global_semaphore = Arc::new(Semaphore::new(config.max_global_concurrency));
         let cancellation_token = CancellationToken::new();
         let scheduler_interval = config.scheduler_interval;
-        
+
         Self {
             worker_pool,
             queue_manager,
@@ -149,29 +149,32 @@ impl CrawlingOrchestrator {
 
     /// Start the orchestrator and begin processing tasks
     pub async fn start(&self) -> Result<(), OrchestratorError> {
-        info!("Starting crawling orchestrator with config: {:?}", self.config);
-        
+        info!(
+            "Starting crawling orchestrator with config: {:?}",
+            self.config
+        );
+
         // Initialize system components
         self.initialize_system().await?;
-        
+
         // Start background tasks
         let scheduler_handle = self.start_task_scheduler();
         let stats_handle = self.start_stats_reporter();
         let health_check_handle = self.start_health_checker();
-        
+
         // Wait for cancellation
         self.cancellation_token.cancelled().await;
-        
+
         info!("Orchestrator shutdown requested, stopping background tasks...");
-        
+
         // Cancel background tasks
         scheduler_handle.abort();
         stats_handle.abort();
         health_check_handle.abort();
-        
+
         // Wait for all active tasks to complete
         self.graceful_shutdown().await?;
-        
+
         info!("Orchestrator stopped successfully");
         Ok(())
     }
@@ -179,11 +182,11 @@ impl CrawlingOrchestrator {
     /// Stop the orchestrator gracefully
     pub async fn stop(&self) -> Result<(), OrchestratorError> {
         info!("Stopping orchestrator...");
-        
+
         // Signal shutdown to all components
         self.shared_state.request_shutdown();
         self.cancellation_token.cancel();
-        
+
         // Wait for graceful shutdown
         tokio::time::timeout(self.config.shutdown_timeout, async {
             while self.has_active_tasks().await {
@@ -192,17 +195,19 @@ impl CrawlingOrchestrator {
         })
         .await
         .map_err(|_| OrchestratorError::ShutdownTimeout)?;
-        
+
         Ok(())
     }
 
     /// Add an initial crawling task to start the process
     pub async fn add_initial_task(&self, task: CrawlingTask) -> Result<(), OrchestratorError> {
         info!("Adding initial task: {:?}", task);
-        
-        self.queue_manager.route_task(task).await
+
+        self.queue_manager
+            .route_task(task)
+            .await
             .map_err(|e| OrchestratorError::TaskQueueError(e.to_string()))?;
-        
+
         Ok(())
     }
 
@@ -210,11 +215,11 @@ impl CrawlingOrchestrator {
     pub async fn get_stats(&self) -> OrchestratorStats {
         let stats = self.shared_state.stats.read().await;
         let start_time = std::time::Instant::now(); // Placeholder for now
-        
+
         // Calculate active tasks correctly: total capacity - available permits
         let total_capacity = self.config.max_global_concurrency;
         let active_tasks = total_capacity - self.global_semaphore.available_permits();
-        
+
         OrchestratorStats {
             uptime: start_time.elapsed(),
             total_tasks_processed: stats.total_tasks_created,
@@ -231,13 +236,13 @@ impl CrawlingOrchestrator {
     /// Initialize system components
     async fn initialize_system(&self) -> Result<(), OrchestratorError> {
         info!("Initializing orchestrator system components...");
-        
+
         // Validate worker pool
         // Worker count validation removed as method doesn't exist
-        
+
         // Validate queue manager
         // Add any queue initialization logic here
-        
+
         info!("System components initialized successfully");
         Ok(())
     }
@@ -246,7 +251,7 @@ impl CrawlingOrchestrator {
     fn start_task_scheduler(&self) -> tokio::task::JoinHandle<()> {
         let orchestrator = self.clone_for_task();
         let mut scheduler_interval = interval(self.scheduler_interval);
-        
+
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -268,7 +273,7 @@ impl CrawlingOrchestrator {
     fn start_stats_reporter(&self) -> tokio::task::JoinHandle<()> {
         let orchestrator = self.clone_for_task();
         let mut stats_interval = interval(self.config.stats_interval);
-        
+
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -278,7 +283,7 @@ impl CrawlingOrchestrator {
                     }
                     _ = stats_interval.tick() => {
                         let stats = orchestrator.get_stats().await;
-                        info!("Orchestrator Stats: active_tasks={}, total_processed={}, success_rate={:.2}%, tps={:.2}", 
+                        info!("Orchestrator Stats: active_tasks={}, total_processed={}, success_rate={:.2}%, tps={:.2}",
                               stats.current_active_tasks,
                               stats.total_tasks_processed,
                               (stats.successful_tasks as f64 / stats.total_tasks_processed.max(1) as f64) * 100.0,
@@ -293,7 +298,7 @@ impl CrawlingOrchestrator {
     fn start_health_checker(&self) -> tokio::task::JoinHandle<()> {
         let orchestrator = self.clone_for_task();
         let mut health_interval = interval(Duration::from_secs(30));
-        
+
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -343,11 +348,11 @@ impl CrawlingOrchestrator {
             let queue_manager = self.queue_manager.clone();
             let config = self.config.clone();
             let global_semaphore = self.global_semaphore.clone();
-            
+
             // Move permit management into spawn closure
             tokio::spawn(async move {
                 let _permit = global_semaphore.acquire().await.unwrap();
-                
+
                 // Static function call to avoid lifetime issues
                 let result = process_single_task_static(
                     owned_task,
@@ -356,8 +361,9 @@ impl CrawlingOrchestrator {
                     queue_manager,
                     config,
                     None, // EventEmitter는 나중에 추가
-                ).await;
-                
+                )
+                .await;
+
                 if let Err(e) = result {
                     error!("Task processing failed: {}", e);
                 }
@@ -367,11 +373,10 @@ impl CrawlingOrchestrator {
         Ok(())
     }
 
-
     /// Helper methods for internal operations
     async fn graceful_shutdown(&self) -> Result<(), OrchestratorError> {
         info!("Performing graceful shutdown...");
-        
+
         // Wait for all active tasks to complete
         let shutdown_start = Instant::now();
         while self.has_active_tasks().await {
@@ -381,7 +386,7 @@ impl CrawlingOrchestrator {
             }
             sleep(Duration::from_millis(100)).await;
         }
-        
+
         info!("Graceful shutdown completed");
         Ok(())
     }
@@ -410,7 +415,7 @@ impl CrawlingOrchestrator {
     fn calculate_tasks_per_second(&self, stats: &CrawlingStats, uptime: Duration) -> f64 {
         let total_tasks = stats.total_tasks_processed();
         let uptime_seconds = uptime.as_secs_f64();
-        
+
         if uptime_seconds > 0.0 {
             total_tasks as f64 / uptime_seconds
         } else {
@@ -421,17 +426,23 @@ impl CrawlingOrchestrator {
     async fn perform_health_check(&self) -> Result<(), OrchestratorError> {
         // Check system health
         let stats = self.get_stats().await;
-        
+
         // Check for stuck queues
         if stats.queue_sizes.list_page_fetch > 1000 {
-            warn!("List page fetch queue is very large: {}", stats.queue_sizes.list_page_fetch);
+            warn!(
+                "List page fetch queue is very large: {}",
+                stats.queue_sizes.list_page_fetch
+            );
         }
-        
+
         // Check worker utilization
         if stats.worker_utilization > 95.0 {
-            warn!("Worker utilization is very high: {:.1}%", stats.worker_utilization);
+            warn!(
+                "Worker utilization is very high: {:.1}%",
+                stats.worker_utilization
+            );
         }
-        
+
         Ok(())
     }
 
@@ -461,53 +472,74 @@ pub async fn process_single_task_static(
     let task_for_follow_up = task.clone(); // Clone task for follow-up use
     let task_id = task.task_id(); // 태스크 ID 추출
     let task_type = get_task_type_name(&task); // 태스크 타입 이름
-    
+
     // 🎯 원자적 이벤트: 태스크 시작 알림
     if let Some(emitter) = &event_emitter {
-        let _ = emitter.emit_task_started(
-            task_id.into(), // TaskId를 Uuid로 변환
-            task_type.clone()
-        ).await;
+        let _ = emitter
+            .emit_task_started(
+                task_id.into(), // TaskId를 Uuid로 변환
+                task_type.clone(),
+            )
+            .await;
     }
-    
+
     // Route task to appropriate worker
     let task_result = match &task {
         CrawlingTask::FetchListPage { .. } => {
-            worker_pool.list_page_fetcher().process_task(task, shared_state.clone()).await
+            worker_pool
+                .list_page_fetcher()
+                .process_task(task, shared_state.clone())
+                .await
         }
         CrawlingTask::ParseListPage { .. } => {
-            worker_pool.list_page_parser().process_task(task, shared_state.clone()).await
+            worker_pool
+                .list_page_parser()
+                .process_task(task, shared_state.clone())
+                .await
         }
         CrawlingTask::FetchProductDetail { .. } => {
-            worker_pool.product_detail_fetcher().process_task(task, shared_state.clone()).await
+            worker_pool
+                .product_detail_fetcher()
+                .process_task(task, shared_state.clone())
+                .await
         }
         CrawlingTask::ParseProductDetail { .. } => {
-            worker_pool.product_detail_parser().process_task(task, shared_state.clone()).await
+            worker_pool
+                .product_detail_parser()
+                .process_task(task, shared_state.clone())
+                .await
         }
         CrawlingTask::SaveProduct { .. } => {
-            worker_pool.db_saver().process_task(task, shared_state.clone()).await
+            worker_pool
+                .db_saver()
+                .process_task(task, shared_state.clone())
+                .await
         }
     };
 
     // Handle task result
     match task_result {
-        Ok(TaskResult::Success { task_id, output, duration }) => {
+        Ok(TaskResult::Success {
+            task_id,
+            output,
+            duration,
+        }) => {
             let _duration_ms = duration.as_millis() as u64; // unused: metrics emission currently disabled
-            
+
             // 🎯 원자적 이벤트: 태스크 완료 알림
             if let Some(emitter) = &event_emitter {
-                let _ = emitter.emit_task_completed(
-                    task_id.into(),
-                    task_type.clone(),
-                    _duration_ms
-                ).await;
+                let _ = emitter
+                    .emit_task_completed(task_id.into(), task_type.clone(), _duration_ms)
+                    .await;
             }
-            
+
             // Update shared state with success
             shared_state.record_task_success(task_id, duration).await;
-            
+
             // Generate follow-up tasks if needed
-            if let Some(follow_up_tasks) = generate_follow_up_tasks_static(&output, &task_for_follow_up).await {
+            if let Some(follow_up_tasks) =
+                generate_follow_up_tasks_static(&output, &task_for_follow_up).await
+            {
                 for follow_up_task in follow_up_tasks {
                     if let Err(e) = queue_manager.enqueue_task(follow_up_task).await {
                         error!("Failed to enqueue follow-up task: {}", e);
@@ -515,34 +547,44 @@ pub async fn process_single_task_static(
                 }
             }
         }
-    Ok(TaskResult::Failure { task_id, error, duration, retry_count }) => {
-            
+        Ok(TaskResult::Failure {
+            task_id,
+            error,
+            duration,
+            retry_count,
+        }) => {
             // 🎯 원자적 이벤트: 태스크 실패 알림
             if let Some(emitter) = &event_emitter {
-                let _ = emitter.emit_task_failed(
-                    task_id.into(),
-                    task_type.clone(),
-                    error.to_string(),
-                    retry_count
-                ).await;
+                let _ = emitter
+                    .emit_task_failed(
+                        task_id.into(),
+                        task_type.clone(),
+                        error.to_string(),
+                        retry_count,
+                    )
+                    .await;
             }
-            
+
             // Update shared state with failure
-            shared_state.record_task_failure(task_id, error.clone(), duration).await;
-            
+            shared_state
+                .record_task_failure(task_id, error.clone(), duration)
+                .await;
+
             // Check if we should retry
             if retry_count < config.max_retries {
                 // 🎯 원자적 이벤트: 재시도 알림
                 if let Some(emitter) = &event_emitter {
                     let retry_delay_ms = config.retry_delay.as_millis() as u64;
-                    let _ = emitter.emit_task_retrying(
-                        task_id.into(),
-                        task_type.clone(),
-                        retry_count + 1,
-                        retry_delay_ms
-                    ).await;
+                    let _ = emitter
+                        .emit_task_retrying(
+                            task_id.into(),
+                            task_type.clone(),
+                            retry_count + 1,
+                            retry_delay_ms,
+                        )
+                        .await;
                 }
-                
+
                 // Re-enqueue with incremented retry count
                 let mut retry_task = task_for_follow_up.clone();
                 retry_task.increment_retry_count();
@@ -558,7 +600,7 @@ pub async fn process_single_task_static(
             return Err(OrchestratorError::TaskExecutionError(e.to_string()));
         }
     }
-    
+
     Ok(())
 }
 
@@ -568,11 +610,14 @@ pub async fn generate_follow_up_tasks_static(
     original_task: &CrawlingTask,
 ) -> Option<Vec<CrawlingTask>> {
     use crate::crawling::tasks::TaskOutput;
-    
+
     match output {
         TaskOutput::HtmlContent(html_content) => {
             // List page was fetched, now parse it
-            if let CrawlingTask::FetchListPage { page_number, url, .. } = original_task {
+            if let CrawlingTask::FetchListPage {
+                page_number, url, ..
+            } = original_task
+            {
                 Some(vec![CrawlingTask::ParseListPage {
                     task_id: TaskId::new(),
                     page_number: *page_number,
@@ -585,12 +630,20 @@ pub async fn generate_follow_up_tasks_static(
         }
         TaskOutput::ProductUrls(urls) => {
             // Product URLs were extracted, now fetch each product detail
-            Some(urls.iter().map(|url| CrawlingTask::FetchProductDetail {
-                task_id: TaskId::new(),
-                product_url: url.clone(),
-            }).collect())
+            Some(
+                urls.iter()
+                    .map(|url| CrawlingTask::FetchProductDetail {
+                        task_id: TaskId::new(),
+                        product_url: url.clone(),
+                    })
+                    .collect(),
+            )
         }
-        TaskOutput::ProductDetailHtml { product_id: _, html_content, source_url } => {
+        TaskOutput::ProductDetailHtml {
+            product_id: _,
+            html_content,
+            source_url,
+        } => {
             // Product detail was fetched, now parse it
             Some(vec![CrawlingTask::ParseProductDetail {
                 task_id: TaskId::new(),
@@ -617,19 +670,19 @@ pub async fn generate_follow_up_tasks_static(
 pub enum OrchestratorError {
     #[error("Initialization failed: {0}")]
     InitializationError(String),
-    
+
     #[error("Task queue error: {0}")]
     TaskQueueError(String),
-    
+
     #[error("Worker pool error: {0}")]
     WorkerPoolError(String),
-    
+
     #[error("Task execution error: {0}")]
     TaskExecutionError(String),
-    
+
     #[error("Shutdown timeout exceeded")]
     ShutdownTimeout,
-    
+
     #[error("System health check failed: {0}")]
     HealthCheckError(String),
 }

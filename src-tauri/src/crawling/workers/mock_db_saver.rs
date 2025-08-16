@@ -5,12 +5,12 @@
 //! - 테스트 가능한 구조
 //! - Clean Architecture 준수
 
+use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Instant;
-use async_trait::async_trait;
 
-use crate::crawling::tasks::{TaskResult, TaskOutput, CrawlingTask};
 use crate::crawling::state::SharedState;
+use crate::crawling::tasks::{CrawlingTask, TaskOutput, TaskResult};
 use crate::crawling::workers::{Worker, WorkerError};
 
 /// Mock Database Saver for development
@@ -19,16 +19,20 @@ pub struct MockDbSaver {}
 
 impl MockDbSaver {
     /// Create new mock database saver
-    pub fn new(_batch_size: usize) -> Self { Self {} }
+    pub fn new(_batch_size: usize) -> Self {
+        Self {}
+    }
 
     /// 개발 용이성을 위한 간단한 생성자
-    pub fn new_simple() -> Self { Self {} }
+    pub fn new_simple() -> Self {
+        Self {}
+    }
 }
 
 #[async_trait]
 impl Worker<CrawlingTask> for MockDbSaver {
     type Task = CrawlingTask;
-    
+
     fn worker_id(&self) -> &'static str {
         "MockDbSaver"
     }
@@ -37,7 +41,9 @@ impl Worker<CrawlingTask> for MockDbSaver {
         "MockDbSaver"
     }
 
-    fn max_concurrency(&self) -> usize { 10 }
+    fn max_concurrency(&self) -> usize {
+        10
+    }
 
     async fn process_task(
         &self,
@@ -47,7 +53,10 @@ impl Worker<CrawlingTask> for MockDbSaver {
         let start_time = Instant::now();
 
         match task {
-            CrawlingTask::SaveProduct { task_id, product_data } => {
+            CrawlingTask::SaveProduct {
+                task_id,
+                product_data,
+            } => {
                 // Mock save operation - just log and update stats
                 tracing::info!(
                     "Mock saving product: {} ({})",
@@ -74,7 +83,7 @@ impl Worker<CrawlingTask> for MockDbSaver {
                 })
             }
             _ => Err(WorkerError::ValidationError(
-                "MockDbSaver can only process SaveProduct tasks".to_string()
+                "MockDbSaver can only process SaveProduct tasks".to_string(),
             )),
         }
     }
@@ -83,18 +92,18 @@ impl Worker<CrawlingTask> for MockDbSaver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crawling::tasks::TaskId;
     use crate::crawling::state::CrawlingConfig;
+    use crate::crawling::tasks::TaskId;
 
     #[tokio::test]
     async fn test_mock_db_saver() {
         let saver = MockDbSaver::new(10);
         let shared_state = Arc::new(SharedState::new(CrawlingConfig::default()));
-        
+
         let mut task_product_data = crate::crawling::tasks::TaskProductData::new(
             "test123".to_string(),
             "Test Product".to_string(),
-            "https://example.com/test".to_string()
+            "https://example.com/test".to_string(),
         );
         task_product_data.category = Some("Electronics".to_string());
         task_product_data.manufacturer = Some("Test Company".to_string());
@@ -106,10 +115,14 @@ mod tests {
             product_data: task_product_data,
         };
 
-    let result = saver.process_task(task, shared_state).await;
+        let result = saver.process_task(task, shared_state).await;
         assert!(result.is_ok());
 
-        if let Ok(TaskResult::Success { output: TaskOutput::SaveConfirmation { product_id, .. }, .. }) = result {
+        if let Ok(TaskResult::Success {
+            output: TaskOutput::SaveConfirmation { product_id, .. },
+            ..
+        }) = result
+        {
             assert_eq!(product_id, "test123");
         }
     }

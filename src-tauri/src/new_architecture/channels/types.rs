@@ -5,10 +5,10 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use tokio::sync::{mpsc, oneshot, broadcast, watch};
+use crate::new_architecture::SystemConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use crate::new_architecture::SystemConfig;
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 /// 제어 채널: 명령 하향 전달 (MPSC)
 pub type ControlChannel<T> = mpsc::Sender<T>;
@@ -38,7 +38,7 @@ pub enum ActorCommand {
         total_pages: u32,
         products_on_last_page: u32,
     },
-    
+
     /// 스테이지 실행 명령
     ExecuteStage {
         stage_type: StageType,
@@ -46,22 +46,15 @@ pub enum ActorCommand {
         concurrency_limit: u32,
         timeout_secs: u64,
     },
-    
+
     /// 세션 취소 명령
-    CancelSession {
-        session_id: String,
-        reason: String,
-    },
-    
+    CancelSession { session_id: String, reason: String },
+
     /// 일시 정지 명령
-    PauseSession {
-        session_id: String,
-    },
-    
+    PauseSession { session_id: String },
+
     /// 재개 명령
-    ResumeSession {
-        session_id: String,
-    },
+    ResumeSession { session_id: String },
 }
 
 /// 스테이지 타입 정의
@@ -114,7 +107,8 @@ pub struct ProductDetails {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatedProducts {
     pub products: Vec<crate::domain::product::ProductDetail>,
-    pub validation_report: Option<crate::new_architecture::services::data_quality_analyzer::DataQualityReport>,
+    pub validation_report:
+        Option<crate::new_architecture::services::data_quality_analyzer::DataQualityReport>,
     pub storage_recommendation: StorageRecommendation,
 }
 
@@ -152,10 +146,10 @@ pub struct BatchConfig {
 pub use crate::new_architecture::actors::types::AppEvent;
 
 // 타입들을 frontend_api에서 import
-pub use crate::types::frontend_api::ProductInfo;
 pub use crate::new_architecture::actors::types::{
-    StageSuccessResult, CollectionMetrics, ProcessingMetrics
+    CollectionMetrics, ProcessingMetrics, StageSuccessResult,
 };
+pub use crate::types::frontend_api::ProductInfo;
 
 /// 채널 팩토리 - 설정 기반 채널 생성
 pub struct ChannelFactory {
@@ -166,28 +160,28 @@ impl ChannelFactory {
     pub fn new(config: Arc<SystemConfig>) -> Self {
         Self { config }
     }
-    
+
     /// 설정 기반 제어 채널 생성
     pub fn create_control_channel<T>(&self) -> (ControlChannel<T>, ControlReceiver<T>) {
         mpsc::channel(self.config.channels.control_buffer_size)
     }
-    
+
     /// 설정 기반 이벤트 채널 생성
     pub fn create_event_channel<T: Clone>(&self) -> EventChannel<T> {
         let (tx, _) = broadcast::channel(self.config.channels.event_buffer_size);
         tx
     }
-    
+
     /// 데이터 채널 생성 (OneShot은 크기 설정 불필요)
     pub fn create_data_channel<T>(&self) -> (DataChannel<T>, DataReceiver<T>) {
         oneshot::channel()
     }
-    
+
     /// 취소 채널 생성
     pub fn create_cancellation_channel(&self) -> (CancellationChannel, CancellationReceiver) {
         watch::channel(false)
     }
-    
+
     /// 백프레셔 임계값 확인
     pub fn check_backpressure(&self, current_load: f64) -> bool {
         current_load > self.config.channels.backpressure_threshold
@@ -203,50 +197,50 @@ mod tests {
     fn test_channel_factory_creation() {
         let config = Arc::new(SystemConfig::default());
         let factory = ChannelFactory::new(config.clone());
-        
+
         // 제어 채널 생성 테스트
-    let (tx, _rx) = factory.create_control_channel::<ActorCommand>();
-    assert!(tx.capacity() > 0);
-        
+        let (tx, _rx) = factory.create_control_channel::<ActorCommand>();
+        assert!(tx.capacity() > 0);
+
         // 이벤트 채널 생성 테스트
         let event_tx = factory.create_event_channel::<AppEvent>();
         assert!(event_tx.receiver_count() == 0); // 아직 구독자 없음
-        
+
         // 데이터 채널 생성 테스트
-    let (_data_tx, _data_rx) = factory.create_data_channel::<String>();
+        let (_data_tx, _data_rx) = factory.create_data_channel::<String>();
         // OneShot 채널은 사용 전까지는 특별한 검증이 어려움
     }
-    
+
     #[test]
     fn test_backpressure_check() {
         let config = Arc::new(SystemConfig::default());
         let factory = ChannelFactory::new(config);
-        
+
         // 정상 부하 (80% 미만)
         assert!(!factory.check_backpressure(0.7));
-        
+
         // 백프레셔 발생 (80% 이상)
         assert!(factory.check_backpressure(0.9));
     }
-    
+
     #[tokio::test]
     async fn test_control_channel_communication() {
         let config = Arc::new(SystemConfig::default());
         let factory = ChannelFactory::new(config);
-        
+
         let (tx, mut rx) = factory.create_control_channel::<ActorCommand>();
-        
+
         let test_command = ActorCommand::CancelSession {
             session_id: "test-session".to_string(),
             reason: "test".to_string(),
         };
-        
+
         // 명령 전송
         tx.send(test_command).await.expect("Failed to send command");
-        
+
         // 명령 수신
         let received = rx.recv().await.expect("Failed to receive command");
-        
+
         match received {
             ActorCommand::CancelSession { session_id, reason } => {
                 assert_eq!(session_id, "test-session");

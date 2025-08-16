@@ -1,21 +1,21 @@
 //! 실제 크롤링 기능을 위한 Tauri Commands
 //! Phase C: 완성된 Actor 시스템으로 실제 크롤링 실행
 
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use ts_rs::TS;
-use tauri::{AppHandle, Manager, Emitter};
-use tokio_util::sync::CancellationToken;
-use tracing::{info, error};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager};
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info};
+use ts_rs::TS;
 
-use crate::new_architecture::services::crawling_integration::{
-    CrawlingIntegrationService, RealCrawlingStageExecutor
-};
-use crate::new_architecture::config::SystemConfig;
-use crate::new_architecture::channels::types::{StageType, StageItem};
-use crate::new_architecture::actor_system::StageResult;
 use crate::application::AppState;
+use crate::new_architecture::actor_system::StageResult;
+use crate::new_architecture::channels::types::{StageItem, StageType};
+use crate::new_architecture::config::SystemConfig;
+use crate::new_architecture::services::crawling_integration::{
+    CrawlingIntegrationService, RealCrawlingStageExecutor,
+};
 
 /// 실제 크롤링 요청 구조체
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -112,85 +112,96 @@ pub async fn execute_real_crawling(
     request: RealCrawlingRequest,
 ) -> Result<RealCrawlingResult, String> {
     let session_id = format!("real_crawling_{}", Utc::now().timestamp());
-    
+
     info!(
         session_id = %session_id,
         start_page = request.start_page,
         end_page = request.end_page,
         "🚀 [PHASE C] Starting REAL crawling execution"
     );
-    
+
     let start_time = std::time::Instant::now();
-    
+
     // 1. 설정 로드
     let app_state = app.state::<AppState>();
     let config_guard = app_state.config.read().await;
     let app_config = config_guard.clone();
     drop(config_guard);
-    
+
     // 2. 시스템 설정 생성
     let system_config = Arc::new(SystemConfig::default());
-    
+
     // 3. 크롤링 통합 서비스 생성
     let integration_service = match CrawlingIntegrationService::new(
         system_config.clone(),
         app_config,
-    ).await {
+    )
+    .await
+    {
         Ok(service) => Arc::new(service),
         Err(e) => {
             error!(session_id = %session_id, error = %e, "Failed to create crawling integration service");
             return Err(format!("Failed to initialize crawling service: {}", e));
         }
     };
-    
+
     // 4. 실행기 생성
     let executor = Arc::new(RealCrawlingStageExecutor::new(integration_service.clone()));
-    
+
     // 5. 크롤링 파이프라인 실행
     let mut stage_results = Vec::new();
     let cancellation_token = CancellationToken::new();
-    
+
     // 총 페이지 수 계산
     let total_pages = request.end_page - request.start_page + 1;
     let pages: Vec<u32> = (request.start_page..=request.end_page).collect();
-    
+
     // 진행 상황 알림
-    let _ = app.emit("crawling-progress", RealCrawlingProgress {
-        session_id: session_id.clone(),
-        current_stage: "리스트 수집".to_string(),
-        overall_progress: 0.0,
-        stage_progress: 0.0,
-        processed_items: 0,
-        total_items: total_pages,
-        successful_items: 0,
-        failed_items: 0,
-        elapsed_ms: 0,
-        estimated_remaining_ms: None,
-        status_message: "사이트 상태 확인 및 리스트 수집 시작".to_string(),
-        timestamp: Utc::now(),
-    });
-    
+    let _ = app.emit(
+        "crawling-progress",
+        RealCrawlingProgress {
+            session_id: session_id.clone(),
+            current_stage: "리스트 수집".to_string(),
+            overall_progress: 0.0,
+            stage_progress: 0.0,
+            processed_items: 0,
+            total_items: total_pages,
+            successful_items: 0,
+            failed_items: 0,
+            elapsed_ms: 0,
+            estimated_remaining_ms: None,
+            status_message: "사이트 상태 확인 및 리스트 수집 시작".to_string(),
+            timestamp: Utc::now(),
+        },
+    );
+
     // Phase 1: 리스트 수집
     info!(session_id = %session_id, "📋 Phase 1: List Collection");
     let list_stage_start = std::time::Instant::now();
-    
+
     let list_items: Vec<StageItem> = pages.iter().map(|&p| StageItem::Page(p)).collect();
-    let list_result = executor.execute_stage(
-        StageType::ListCollection,
-        list_items,
-        request.concurrency_limit.unwrap_or(5),
-        cancellation_token.clone(),
-    ).await;
-    
+    let list_result = executor
+        .execute_stage(
+            StageType::ListCollection,
+            list_items,
+            request.concurrency_limit.unwrap_or(5),
+            cancellation_token.clone(),
+        )
+        .await;
+
     let list_duration = list_stage_start.elapsed();
     let list_success = matches!(list_result, StageResult::Success { .. });
-    
+
     stage_results.push(StageResultSummary {
         stage_name: "리스트 수집".to_string(),
         success: list_success,
         processed_items: match &list_result {
-            StageResult::Success { processed_items, .. } => *processed_items,
-            StageResult::Failure { partial_results, .. } => *partial_results,
+            StageResult::Success {
+                processed_items, ..
+            } => *processed_items,
+            StageResult::Failure {
+                partial_results, ..
+            } => *partial_results,
             _ => 0,
         },
         duration_ms: list_duration.as_millis() as u64,
@@ -200,53 +211,68 @@ pub async fn execute_real_crawling(
             None
         },
     });
-    
+
     // 진행 상황 업데이트
-    let _ = app.emit("crawling-progress", RealCrawlingProgress {
-        session_id: session_id.clone(),
-        current_stage: "상세 정보 수집".to_string(),
-        overall_progress: 50.0,
-        stage_progress: 100.0,
-        processed_items: match &list_result {
-            StageResult::Success { processed_items, .. } => *processed_items,
-            _ => 0,
+    let _ = app.emit(
+        "crawling-progress",
+        RealCrawlingProgress {
+            session_id: session_id.clone(),
+            current_stage: "상세 정보 수집".to_string(),
+            overall_progress: 50.0,
+            stage_progress: 100.0,
+            processed_items: match &list_result {
+                StageResult::Success {
+                    processed_items, ..
+                } => *processed_items,
+                _ => 0,
+            },
+            total_items: total_pages,
+            successful_items: match &list_result {
+                StageResult::Success {
+                    processed_items, ..
+                } => *processed_items,
+                StageResult::Failure {
+                    partial_results, ..
+                } => *partial_results,
+                _ => 0,
+            },
+            failed_items: match &list_result {
+                StageResult::Failure {
+                    partial_results, ..
+                } => total_pages - *partial_results,
+                StageResult::FatalError { .. } => total_pages,
+                _ => 0,
+            },
+            elapsed_ms: start_time.elapsed().as_millis() as u64,
+            estimated_remaining_ms: Some(start_time.elapsed().as_millis() as u64), // 대략적 추정
+            status_message: "상세 정보 수집 시작".to_string(),
+            timestamp: Utc::now(),
         },
-        total_items: total_pages,
-        successful_items: match &list_result {
-            StageResult::Success { processed_items, .. } => *processed_items,
-            StageResult::Failure { partial_results, .. } => *partial_results,
-            _ => 0,
-        },
-        failed_items: match &list_result {
-            StageResult::Failure { partial_results, .. } => total_pages - *partial_results,
-            StageResult::FatalError { .. } => total_pages,
-            _ => 0,
-        },
-        elapsed_ms: start_time.elapsed().as_millis() as u64,
-        estimated_remaining_ms: Some(start_time.elapsed().as_millis() as u64), // 대략적 추정
-        status_message: "상세 정보 수집 시작".to_string(),
-        timestamp: Utc::now(),
-    });
-    
+    );
+
     // Phase 2: 상세 정보 수집 (현재는 빈 처리로 성공으로 간주)
     info!(session_id = %session_id, "📦 Phase 2: Detail Collection");
     let detail_stage_start = std::time::Instant::now();
-    
-    let detail_result = executor.execute_stage(
-        StageType::DetailCollection,
-        Vec::new(), // TODO: 실제 URL 리스트 전달
-        request.concurrency_limit.unwrap_or(3),
-        cancellation_token.clone(),
-    ).await;
-    
+
+    let detail_result = executor
+        .execute_stage(
+            StageType::DetailCollection,
+            Vec::new(), // TODO: 실제 URL 리스트 전달
+            request.concurrency_limit.unwrap_or(3),
+            cancellation_token.clone(),
+        )
+        .await;
+
     let detail_duration = detail_stage_start.elapsed();
     let detail_success = matches!(detail_result, StageResult::Success { .. });
-    
+
     stage_results.push(StageResultSummary {
         stage_name: "상세 정보 수집".to_string(),
         success: detail_success,
         processed_items: match &detail_result {
-            StageResult::Success { processed_items, .. } => *processed_items,
+            StageResult::Success {
+                processed_items, ..
+            } => *processed_items,
             _ => 0,
         },
         duration_ms: detail_duration.as_millis() as u64,
@@ -256,25 +282,31 @@ pub async fn execute_real_crawling(
             None
         },
     });
-    
+
     // 최종 결과 계산
     let total_duration = start_time.elapsed();
     let overall_success = list_success && detail_success;
-    
+
     let result = RealCrawlingResult {
         session_id: session_id.clone(),
         success: overall_success,
         processed_pages: total_pages,
         collected_urls: match &list_result {
-            StageResult::Success { processed_items, .. } => *processed_items * 12, // 페이지당 평균 12개 URL 가정
+            StageResult::Success {
+                processed_items, ..
+            } => *processed_items * 12, // 페이지당 평균 12개 URL 가정
             _ => 0,
         },
         collected_details: match &detail_result {
-            StageResult::Success { processed_items, .. } => *processed_items,
+            StageResult::Success {
+                processed_items, ..
+            } => *processed_items,
             _ => 0,
         },
         saved_products: match &detail_result {
-            StageResult::Success { processed_items, .. } => *processed_items,
+            StageResult::Success {
+                processed_items, ..
+            } => *processed_items,
             _ => 0,
         },
         total_duration_ms: total_duration.as_millis() as u64,
@@ -286,17 +318,17 @@ pub async fn execute_real_crawling(
         stage_results,
         completed_at: Utc::now(),
     };
-    
+
     // 완료 알림
     let _ = app.emit("crawling-completed", result.clone());
-    
+
     info!(
         session_id = %session_id,
         success = overall_success,
         duration_ms = total_duration.as_millis(),
         "🎉 [PHASE C] Real crawling execution completed"
     );
-    
+
     Ok(result)
 }
 
@@ -307,19 +339,17 @@ pub async fn get_real_crawling_status(
 ) -> Result<Option<RealCrawlingProgress>, String> {
     // TODO: 세션 상태 추적 시스템 구현
     info!(session_id = %session_id, "📊 Checking real crawling status");
-    
+
     // 현재는 None 반환 (상태 추적 시스템이 구현되면 실제 상태 반환)
     Ok(None)
 }
 
 /// ⏹️ 실제 크롤링 취소
 #[tauri::command]
-pub async fn cancel_real_crawling(
-    session_id: String,
-) -> Result<bool, String> {
+pub async fn cancel_real_crawling(session_id: String) -> Result<bool, String> {
     // TODO: 취소 토큰 시스템 구현
     info!(session_id = %session_id, "🛑 Cancelling real crawling");
-    
+
     // 현재는 성공으로 반환 (취소 시스템이 구현되면 실제 취소 처리)
     Ok(true)
 }

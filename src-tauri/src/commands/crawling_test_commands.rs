@@ -1,20 +1,20 @@
 //! Phase C: 실제 크롤링 테스트 및 개발자 도구
 //! 개발자가 실제 크롤링을 쉽게 테스트하고 디버깅할 수 있는 명령어들
 
-use std::sync::Arc;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
+use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
+use ts_rs::TS;
 
-use crate::new_architecture::services::crawling_integration::{
-    CrawlingIntegrationService, RealCrawlingStageExecutor
-};
-use crate::new_architecture::config::SystemConfig;
-use crate::new_architecture::channels::types::{StageType, StageItem};
-use crate::new_architecture::actor_system::StageResult;
 use crate::application::AppState;
+use crate::new_architecture::actor_system::StageResult;
+use crate::new_architecture::channels::types::{StageItem, StageType};
+use crate::new_architecture::config::SystemConfig;
+use crate::new_architecture::services::crawling_integration::{
+    CrawlingIntegrationService, RealCrawlingStageExecutor,
+};
 
 /// 간단한 크롤링 테스트 요청
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -89,35 +89,33 @@ pub async fn quick_crawling_test(
     test_request: QuickCrawlingTest,
 ) -> Result<CrawlingTestResult, String> {
     let start_time = std::time::Instant::now();
-    
+
     info!("🧪 Starting quick crawling test");
-    
+
     // 기본값 설정
     let test_pages = test_request.test_pages.unwrap_or(2);
     let concurrency = test_request.concurrency.unwrap_or(2);
     let include_details = test_request.include_details.unwrap_or(false);
-    
+
     // 1. 설정 로드
     let app_state = app.state::<AppState>();
     let config_guard = app_state.config.read().await;
     let app_config = config_guard.clone();
     drop(config_guard);
-    
+
     // 2. 시스템 설정 생성
     let system_config = Arc::new(SystemConfig::default());
-    
+
     // 3. 크롤링 통합 서비스 생성
-    let integration_service = match CrawlingIntegrationService::new(
-        system_config.clone(),
-        app_config,
-    ).await {
-        Ok(service) => Arc::new(service),
-        Err(e) => {
-            error!(error = %e, "Failed to create crawling integration service for test");
-            return Err(format!("테스트 서비스 초기화 실패: {}", e));
-        }
-    };
-    
+    let integration_service =
+        match CrawlingIntegrationService::new(system_config.clone(), app_config).await {
+            Ok(service) => Arc::new(service),
+            Err(e) => {
+                error!(error = %e, "Failed to create crawling integration service for test");
+                return Err(format!("테스트 서비스 초기화 실패: {}", e));
+            }
+        };
+
     // 4. 사이트 상태 확인
     let site_status = match integration_service.execute_site_analysis().await {
         Ok(status) => {
@@ -140,56 +138,80 @@ pub async fn quick_crawling_test(
             None
         }
     };
-    
+
     // 5. 실행기 생성
     let executor = Arc::new(RealCrawlingStageExecutor::new(integration_service.clone()));
     let cancellation_token = CancellationToken::new();
-    
+
     // 6. 리스트 수집 테스트
     let pages: Vec<u32> = (1..=test_pages).collect();
     let list_items: Vec<StageItem> = pages.iter().map(|&p| StageItem::Page(p)).collect();
-    
+
     info!(pages = ?pages, "📋 리스트 수집 테스트 시작");
-    let list_result = executor.execute_stage(
-        StageType::ListCollection,
-        list_items,
-        concurrency,
-        cancellation_token.clone(),
-    ).await;
-    
+    let list_result = executor
+        .execute_stage(
+            StageType::ListCollection,
+            list_items,
+            concurrency,
+            cancellation_token.clone(),
+        )
+        .await;
+
     // 7. 결과 분석
     let (success, collected_urls, error_message) = match list_result {
-        StageResult::Success { processed_items, .. } => {
+        StageResult::Success {
+            processed_items, ..
+        } => {
             info!(processed_items = processed_items, "✅ 리스트 수집 성공");
             (true, processed_items * 12, None) // 페이지당 평균 12개 URL 가정
         }
-        StageResult::Failure { partial_results, error } => {
+        StageResult::Failure {
+            partial_results,
+            error,
+        } => {
             warn!(partial_results = partial_results, error = ?error, "⚠️ 부분 성공");
-            (false, partial_results * 12, Some(format!("부분 실패: {:?}", error)))
+            (
+                false,
+                partial_results * 12,
+                Some(format!("부분 실패: {:?}", error)),
+            )
         }
-        StageResult::RecoverableError { error, attempts, .. } => {
+        StageResult::RecoverableError {
+            error, attempts, ..
+        } => {
             warn!(error = ?error, attempts = attempts, "🔄 복구 가능한 에러");
-            (false, 0, Some(format!("복구 가능한 에러 (시도 횟수: {}): {:?}", attempts, error)))
+            (
+                false,
+                0,
+                Some(format!(
+                    "복구 가능한 에러 (시도 횟수: {}): {:?}",
+                    attempts, error
+                )),
+            )
         }
         StageResult::FatalError { error, .. } => {
             error!(error = ?error, "❌ 리스트 수집 실패");
             (false, 0, Some(format!("크롤링 실패: {:?}", error)))
         }
     };
-    
+
     // 8. 상세 수집 테스트 (선택적)
     let collected_details = if include_details && success {
         info!("📦 상세 정보 수집 테스트 시작");
         // 실제로는 수집된 URL을 사용해야 하지만, 테스트에서는 단순화
-        let detail_result = executor.execute_stage(
-            StageType::DetailCollection,
-            Vec::new(),
-            concurrency,
-            cancellation_token.clone(),
-        ).await;
-        
+        let detail_result = executor
+            .execute_stage(
+                StageType::DetailCollection,
+                Vec::new(),
+                concurrency,
+                cancellation_token.clone(),
+            )
+            .await;
+
         match detail_result {
-            StageResult::Success { processed_items, .. } => {
+            StageResult::Success {
+                processed_items, ..
+            } => {
                 info!(processed_items = processed_items, "✅ 상세 수집 성공");
                 processed_items
             }
@@ -201,7 +223,7 @@ pub async fn quick_crawling_test(
     } else {
         0
     };
-    
+
     // 9. 성능 메트릭 계산
     let total_duration = start_time.elapsed();
     let avg_time_per_page = if test_pages > 0 {
@@ -209,14 +231,18 @@ pub async fn quick_crawling_test(
     } else {
         0
     };
-    
+
     let performance_metrics = PerformanceMetrics {
-        avg_urls_per_page: if test_pages > 0 { collected_urls as f64 / test_pages as f64 } else { 0.0 },
+        avg_urls_per_page: if test_pages > 0 {
+            collected_urls as f64 / test_pages as f64
+        } else {
+            0.0
+        },
         network_success_rate: if success { 1.0 } else { 0.5 },
         parsing_success_rate: if success { 1.0 } else { 0.7 },
         estimated_memory_kb: (collected_urls * 2 + collected_details * 10) as u64, // 추정치
     };
-    
+
     let result = CrawlingTestResult {
         success,
         tested_pages: test_pages,
@@ -228,43 +254,39 @@ pub async fn quick_crawling_test(
         site_status,
         performance_metrics,
     };
-    
+
     info!(
         success = success,
         duration_ms = total_duration.as_millis(),
         collected_urls = collected_urls,
         "🧪 빠른 크롤링 테스트 완료"
     );
-    
+
     Ok(result)
 }
 
 /// 🔍 사이트 상태만 확인 (가장 빠른 테스트)
 #[tauri::command]
-pub async fn check_site_status_only(
-    app: AppHandle,
-) -> Result<SiteStatusInfo, String> {
+pub async fn check_site_status_only(app: AppHandle) -> Result<SiteStatusInfo, String> {
     info!("🔍 사이트 상태 확인 시작");
-    
+
     // 설정 로드
     let app_state = app.state::<AppState>();
     let config_guard = app_state.config.read().await;
     let app_config = config_guard.clone();
     drop(config_guard);
-    
+
     // 크롤링 통합 서비스 생성
     let system_config = Arc::new(SystemConfig::default());
-    let integration_service = match CrawlingIntegrationService::new(
-        system_config,
-        app_config,
-    ).await {
+    let integration_service = match CrawlingIntegrationService::new(system_config, app_config).await
+    {
         Ok(service) => service,
         Err(e) => {
             error!(error = %e, "Failed to create integration service");
             return Err(format!("서비스 초기화 실패: {}", e));
         }
     };
-    
+
     // 사이트 상태 확인
     match integration_service.execute_site_analysis().await {
         Ok(status) => {
@@ -275,7 +297,7 @@ pub async fn check_site_status_only(
                 estimated_products = status.estimated_products,
                 "✅ 사이트 상태 확인 완료"
             );
-            
+
             Ok(SiteStatusInfo {
                 accessible: status.is_accessible,
                 response_time_ms: status.response_time_ms,
@@ -297,20 +319,36 @@ pub async fn crawling_performance_benchmark(
     app: AppHandle,
 ) -> Result<Vec<CrawlingTestResult>, String> {
     info!("📊 크롤링 성능 벤치마크 시작");
-    
+
     let mut results = Vec::new();
-    
+
     // 다양한 설정으로 테스트
     let test_configs = vec![
-        QuickCrawlingTest { test_pages: Some(1), concurrency: Some(1), include_details: Some(false) },
-        QuickCrawlingTest { test_pages: Some(2), concurrency: Some(2), include_details: Some(false) },
-        QuickCrawlingTest { test_pages: Some(3), concurrency: Some(3), include_details: Some(false) },
-        QuickCrawlingTest { test_pages: Some(2), concurrency: Some(1), include_details: Some(true) },
+        QuickCrawlingTest {
+            test_pages: Some(1),
+            concurrency: Some(1),
+            include_details: Some(false),
+        },
+        QuickCrawlingTest {
+            test_pages: Some(2),
+            concurrency: Some(2),
+            include_details: Some(false),
+        },
+        QuickCrawlingTest {
+            test_pages: Some(3),
+            concurrency: Some(3),
+            include_details: Some(false),
+        },
+        QuickCrawlingTest {
+            test_pages: Some(2),
+            concurrency: Some(1),
+            include_details: Some(true),
+        },
     ];
-    
+
     for (i, config) in test_configs.into_iter().enumerate() {
         info!(test_number = i + 1, config = ?config, "벤치마크 테스트 실행 중");
-        
+
         match quick_crawling_test(app.clone(), config.clone()).await {
             Ok(result) => {
                 info!(
@@ -342,11 +380,11 @@ pub async fn crawling_performance_benchmark(
                 });
             }
         }
-        
+
         // 테스트 간 잠시 대기
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
-    
+
     info!(completed_tests = results.len(), "📊 성능 벤치마크 완료");
     Ok(results)
 }

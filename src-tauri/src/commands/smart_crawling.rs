@@ -1,19 +1,19 @@
 //! Smart crawling commands - uses the range calculation logic from prompts6
-//! 
+//!
 //! This module provides commands for smart crawling that automatically calculates
 //! the next pages to crawl based on the current database state and site information.
 
 use crate::application::AppState;
-use crate::infrastructure::crawling_service_impls::CrawlingRangeCalculator;
 use crate::domain::events::CrawlingProgress;
-use crate::infrastructure::config::ConfigManager;
 use crate::domain::pagination::CanonicalPageIdCalculator;
-use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::infrastructure::DatabaseConnection;
+use crate::infrastructure::config::ConfigManager;
+use crate::infrastructure::crawling_service_impls::CrawlingRangeCalculator;
+use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use anyhow::Result;
-use tauri::State;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tauri::State;
 use tracing::info;
 
 /// Response for crawling range calculation
@@ -107,14 +107,15 @@ async fn create_product_repo() -> Result<IntegratedProductRepository, String> {
         let data_dir = format!("{}/matter-certis-v2/database", app_data_dir);
         format!("sqlite:{}/matter_certis.db", data_dir)
     };
-    
+
     info!("Using database at: {}", database_url);
-    
-    let db_conn = DatabaseConnection::new(&database_url).await
+
+    let db_conn = DatabaseConnection::new(&database_url)
+        .await
         .map_err(|e| format!("Failed to create database connection: {}", e))?;
-    
+
     let pool = db_conn.pool().clone();
-    
+
     Ok(IntegratedProductRepository::new(pool))
 }
 
@@ -124,41 +125,41 @@ pub async fn calculate_crawling_range(
     _state: State<'_, AppState>,
     request: CrawlingRangeRequest,
 ) -> Result<CrawlingRangeResponse, String> {
-    info!("🎯 Calculating next crawling range with: total_pages={}, products_on_last_page={}", 
-          request.total_pages_on_site, request.products_on_last_page);
+    info!(
+        "🎯 Calculating next crawling range with: total_pages={}, products_on_last_page={}",
+        request.total_pages_on_site, request.products_on_last_page
+    );
 
     // Get configuration
-    let config_manager = ConfigManager::new()
-        .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
-    
-    let config = config_manager.load_config().await
+    let config_manager =
+        ConfigManager::new().map_err(|e| format!("Failed to initialize config manager: {}", e))?;
+
+    let config = config_manager
+        .load_config()
+        .await
         .map_err(|e| format!("Failed to get config: {}", e))?;
 
     // Create product repository
     let product_repo = create_product_repo().await?;
 
     // Create range calculator
-    let range_calculator = CrawlingRangeCalculator::new(
-        Arc::new(product_repo),
-        config,
-    );
+    let range_calculator = CrawlingRangeCalculator::new(Arc::new(product_repo), config);
 
     // Calculate next range
-    let result = range_calculator.calculate_next_crawling_range(
-        request.total_pages_on_site,
-        request.products_on_last_page,
-    ).await
-    .map_err(|e| format!("Failed to calculate crawling range: {}", e))?;
+    let result = range_calculator
+        .calculate_next_crawling_range(request.total_pages_on_site, request.products_on_last_page)
+        .await
+        .map_err(|e| format!("Failed to calculate crawling range: {}", e))?;
 
     // Get progress information
-    let progress = range_calculator.analyze_simple_progress(
-        request.total_pages_on_site,
-        request.products_on_last_page,
-    ).await
-    .map_err(|e| format!("Failed to analyze progress: {}", e))?;
+    let progress = range_calculator
+        .analyze_simple_progress(request.total_pages_on_site, request.products_on_last_page)
+        .await
+        .map_err(|e| format!("Failed to analyze progress: {}", e))?;
 
     // Calculate site information
-    let estimated_total_products = ((request.total_pages_on_site - 1) * 12) + request.products_on_last_page;
+    let estimated_total_products =
+        ((request.total_pages_on_site - 1) * 12) + request.products_on_last_page;
     let site_info = SiteInfo {
         total_pages: request.total_pages_on_site,
         products_on_last_page: request.products_on_last_page,
@@ -168,15 +169,16 @@ pub async fn calculate_crawling_range(
     // Calculate local DB information
     let local_db_info = if progress.current > 0 {
         // DB에 데이터가 있으면 계산기를 사용해서 실제 페이지 번호를 계산
-            let calculator = CanonicalPageIdCalculator::new(
+        let calculator = CanonicalPageIdCalculator::new(
             request.total_pages_on_site,
-            request.products_on_last_page as usize
+            request.products_on_last_page as usize,
         );
-        
+
         let max_page_id = progress.current_batch.unwrap_or(0) as i32;
         let max_index_in_page = 0; // 간단히 0으로 가정 (정확한 값은 DB에서 가져와야 함)
-        
-        if let Some((actual_page, _)) = calculator.reverse_calculate(max_page_id, max_index_in_page) {
+
+        if let Some((actual_page, _)) = calculator.reverse_calculate(max_page_id, max_index_in_page)
+        {
             LocalDbInfo {
                 total_saved_products: progress.current,
                 last_crawled_page: Some(actual_page),
@@ -209,23 +211,28 @@ pub async fn calculate_crawling_range(
             } else {
                 end_page - start_page + 1
             };
-            
+
             let estimated_new_products = total_pages * 12; // 평균 12개 제품/페이지
-            
+
             let crawling_info = CrawlingInfo {
                 pages_to_crawl: Some(total_pages),
                 estimated_new_products: Some(estimated_new_products),
                 strategy: "partial".to_string(),
             };
-            
+
             // CrawlingPlanner 기반 배치 계획 생성
-            info!("🔧 Creating batch plan for range: {} to {}", start_page, end_page);
+            info!(
+                "🔧 Creating batch plan for range: {} to {}",
+                start_page, end_page
+            );
             let batch_plan = create_batch_plan(start_page, end_page).await;
-            
-            let message = format!("Next crawling range: pages {} to {} (total: {} pages)", 
-                                start_page, end_page, total_pages);
+
+            let message = format!(
+                "Next crawling range: pages {} to {} (total: {} pages)",
+                start_page, end_page, total_pages
+            );
             info!("✅ {}", message);
-            
+
             CrawlingRangeResponse {
                 success: true,
                 range: Some((start_page, end_page)),
@@ -243,7 +250,7 @@ pub async fn calculate_crawling_range(
                 estimated_new_products: Some(0),
                 strategy: "none".to_string(),
             };
-            
+
             // 빈 배치 계획
             let batch_plan = BatchPlan {
                 batch_size: 0,
@@ -253,10 +260,10 @@ pub async fn calculate_crawling_range(
                 execution_strategy: "none".to_string(),
                 estimated_duration_seconds: 0,
             };
-            
+
             let message = "All products have been crawled - no more pages to process".to_string();
             info!("🏁 {}", message);
-            
+
             CrawlingRangeResponse {
                 success: true,
                 range: None,
@@ -275,39 +282,54 @@ pub async fn calculate_crawling_range(
 
 /// CrawlingPlanner 기반 배치 계획 생성
 async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
-    info!("🔧 Creating batch plan: start_page={}, end_page={}", start_page, end_page);
-    
+    info!(
+        "🔧 Creating batch plan: start_page={}, end_page={}",
+        start_page, end_page
+    );
+
     // 설정에서 batch_size 가져오기 (비차단 방식; 실패 시 개발 기본값 사용)
     let app_config = match ConfigManager::new() {
         Ok(cm) => match cm.load_config().await {
             Ok(cfg) => cfg,
             Err(e) => {
-                tracing::warn!("⚠️ Failed to load AppConfig for batch plan: {}. Falling back to development defaults.", e);
+                tracing::warn!(
+                    "⚠️ Failed to load AppConfig for batch plan: {}. Falling back to development defaults.",
+                    e
+                );
                 crate::infrastructure::config::AppConfig::for_development()
             }
         },
         Err(e) => {
-            tracing::warn!("⚠️ Failed to initialize ConfigManager for batch plan: {}. Falling back to development defaults.", e);
+            tracing::warn!(
+                "⚠️ Failed to initialize ConfigManager for batch plan: {}. Falling back to development defaults.",
+                e
+            );
             crate::infrastructure::config::AppConfig::for_development()
         }
     };
     let batch_size = app_config.user.batch.batch_size;
     let concurrency_limit = app_config.user.max_concurrent_requests; // ExecutionPlan 경로와 일치
-    
-    info!("📋 Batch plan configuration: batch_size={}, concurrency_limit={}", batch_size, concurrency_limit);
-    
+
+    info!(
+        "📋 Batch plan configuration: batch_size={}, concurrency_limit={}",
+        batch_size, concurrency_limit
+    );
+
     // 페이지 범위 계산
     let pages: Vec<u32> = if start_page >= end_page {
         (end_page..=start_page).rev().collect() // 역순 크롤링
     } else {
         (start_page..=end_page).collect()
     };
-    
+
     let total_pages = pages.len() as u32;
     let total_batches = (total_pages + batch_size - 1) / batch_size; // 올림 계산
-    
-    info!("📊 Batch plan calculation: total_pages={}, total_batches={}", total_pages, total_batches);
-    
+
+    info!(
+        "📊 Batch plan calculation: total_pages={}, total_batches={}",
+        total_pages, total_batches
+    );
+
     // 배치 분할
     let mut batches = Vec::new();
     for (batch_id, chunk) in pages.chunks(batch_size as usize).enumerate() {
@@ -316,15 +338,24 @@ async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
             pages: chunk.to_vec(),
             estimated_products: chunk.len() as u32 * 12, // 평균 12개/페이지
         };
-        info!("🔢 Batch {}: pages={:?}, estimated_products={}", batch_id + 1, chunk, batch_info.estimated_products);
+        info!(
+            "🔢 Batch {}: pages={:?}, estimated_products={}",
+            batch_id + 1,
+            chunk,
+            batch_info.estimated_products
+        );
         batches.push(batch_info);
     }
-    
+
     // 예상 실행 시간 (각 페이지당 2초 + 네트워크 지연)
-    let estimated_duration_seconds = total_pages * 2 + (total_batches * batch_size) / concurrency_limit;
-    
-    info!("✅ Batch plan created successfully: {} batches, estimated duration: {}s", total_batches, estimated_duration_seconds);
-    
+    let estimated_duration_seconds =
+        total_pages * 2 + (total_batches * batch_size) / concurrency_limit;
+
+    info!(
+        "✅ Batch plan created successfully: {} batches, estimated duration: {}s",
+        total_batches, estimated_duration_seconds
+    );
+
     BatchPlan {
         batch_size,
         total_batches,
@@ -345,27 +376,25 @@ pub async fn get_crawling_progress(
     info!("📊 Getting crawling progress information");
 
     // Get configuration
-    let config_manager = ConfigManager::new()
-        .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
-    
-    let config = config_manager.load_config().await
+    let config_manager =
+        ConfigManager::new().map_err(|e| format!("Failed to initialize config manager: {}", e))?;
+
+    let config = config_manager
+        .load_config()
+        .await
         .map_err(|e| format!("Failed to get config: {}", e))?;
 
     // Create product repository
     let product_repo = create_product_repo().await?;
 
     // Create range calculator
-    let range_calculator = CrawlingRangeCalculator::new(
-        Arc::new(product_repo),
-        config,
-    );
+    let range_calculator = CrawlingRangeCalculator::new(Arc::new(product_repo), config);
 
     // Analyze progress
-    let progress = range_calculator.analyze_simple_progress(
-        total_pages_on_site,
-        products_on_last_page,
-    ).await
-    .map_err(|e| format!("Failed to analyze progress: {}", e))?;
+    let progress = range_calculator
+        .analyze_simple_progress(total_pages_on_site, products_on_last_page)
+        .await
+        .map_err(|e| format!("Failed to analyze progress: {}", e))?;
 
     Ok(convert_progress(&progress))
 }
@@ -381,11 +410,15 @@ pub async fn get_database_state_for_range_calculation(
     let product_repo = create_product_repo().await?;
 
     // Get max pageId and indexInPage
-    let (max_page_id, max_index_in_page) = product_repo.get_max_page_id_and_index().await
+    let (max_page_id, max_index_in_page) = product_repo
+        .get_max_page_id_and_index()
+        .await
         .map_err(|e| format!("Failed to get max page ID and index: {}", e))?;
 
     // Get total product count
-    let total_products = product_repo.get_product_count().await
+    let total_products = product_repo
+        .get_product_count()
+        .await
         .map_err(|e| format!("Failed to get product count: {}", e))?;
 
     let info = DatabaseStateInfo {
@@ -395,8 +428,10 @@ pub async fn get_database_state_for_range_calculation(
         has_data: max_page_id.is_some() && max_index_in_page.is_some(),
     };
 
-    info!("✅ Database state: max_page_id={:?}, max_index_in_page={:?}, total_products={}", 
-          info.max_page_id, info.max_index_in_page, info.total_products);
+    info!(
+        "✅ Database state: max_page_id={:?}, max_index_in_page={:?}, total_products={}",
+        info.max_page_id, info.max_index_in_page, info.total_products
+    );
 
     Ok(info)
 }
@@ -429,34 +464,47 @@ pub async fn demo_prompts6_calculation() -> Result<String, String> {
     result.push_str(&format!("  max_page_id: {}\n", max_page_id));
     result.push_str(&format!("  max_index_in_page: {}\n", max_index_in_page));
     result.push_str(&format!("  total_pages_on_site: {}\n", total_pages_on_site));
-    result.push_str(&format!("  products_on_last_page: {}\n", products_on_last_page));
+    result.push_str(&format!(
+        "  products_on_last_page: {}\n",
+        products_on_last_page
+    ));
     result.push_str(&format!("  crawl_page_limit: {}\n", crawl_page_limit));
     result.push_str(&format!("  products_per_page: {}\n\n", products_per_page));
 
     // Step 1: Calculate last saved index
     let last_saved_index = (max_page_id as u32 * products_per_page) + max_index_in_page as u32;
-    result.push_str(&format!("Step 1: lastSavedIndex = ({} * {}) + {} = {}\n", 
-                           max_page_id, products_per_page, max_index_in_page, last_saved_index));
+    result.push_str(&format!(
+        "Step 1: lastSavedIndex = ({} * {}) + {} = {}\n",
+        max_page_id, products_per_page, max_index_in_page, last_saved_index
+    ));
 
     // Step 2: Calculate next product index
     let next_product_index = last_saved_index + 1;
-    result.push_str(&format!("Step 2: nextProductIndex = {} + 1 = {}\n", 
-                           last_saved_index, next_product_index));
+    result.push_str(&format!(
+        "Step 2: nextProductIndex = {} + 1 = {}\n",
+        last_saved_index, next_product_index
+    ));
 
     // Step 3: Calculate total products
     let total_products = ((total_pages_on_site - 1) * products_per_page) + products_on_last_page;
-    result.push_str(&format!("Step 3: totalProducts = (({} - 1) * {}) + {} = {}\n", 
-                           total_pages_on_site, products_per_page, products_on_last_page, total_products));
+    result.push_str(&format!(
+        "Step 3: totalProducts = (({} - 1) * {}) + {} = {}\n",
+        total_pages_on_site, products_per_page, products_on_last_page, total_products
+    ));
 
     // Step 4: Convert to forward index
     let forward_index = (total_products - 1) - next_product_index;
-    result.push_str(&format!("Step 4: forwardIndex = ({} - 1) - {} = {}\n", 
-                           total_products, next_product_index, forward_index));
+    result.push_str(&format!(
+        "Step 4: forwardIndex = ({} - 1) - {} = {}\n",
+        total_products, next_product_index, forward_index
+    ));
 
     // Step 5: Calculate target page number
     let target_page_number = (forward_index / products_per_page) + 1;
-    result.push_str(&format!("Step 5: targetPageNumber = ({} / {}) + 1 = {}\n", 
-                           forward_index, products_per_page, target_page_number));
+    result.push_str(&format!(
+        "Step 5: targetPageNumber = ({} / {}) + 1 = {}\n",
+        forward_index, products_per_page, target_page_number
+    ));
 
     // Step 6: Apply crawl page limit
     let start_page = target_page_number;
@@ -465,11 +513,18 @@ pub async fn demo_prompts6_calculation() -> Result<String, String> {
     } else {
         1
     };
-    result.push_str(&format!("Step 6: startPage = {}, endPage = {} - {} + 1 = {}\n", 
-                           start_page, start_page, crawl_page_limit, end_page));
+    result.push_str(&format!(
+        "Step 6: startPage = {}, endPage = {} - {} + 1 = {}\n",
+        start_page, start_page, crawl_page_limit, end_page
+    ));
 
-    result.push_str(&format!("\n✅ Final result: crawl pages {} to {}\n", start_page, end_page));
-    result.push_str(&format!("🎯 This matches the prompts6 specification exactly!\n"));
+    result.push_str(&format!(
+        "\n✅ Final result: crawl pages {} to {}\n",
+        start_page, end_page
+    ));
+    result.push_str(&format!(
+        "🎯 This matches the prompts6 specification exactly!\n"
+    ));
 
     Ok(result)
 }

@@ -10,7 +10,10 @@ curl -s "https://csa-iot.org/csa-iot_products/?p_keywords&p_type%5B0%5D=14&p_pro
   | sed 's/.*href="\([^"]*\)".*/\1/' \
   | sort | uniq
 
+# 빈 줄
 echo ""
+
+# article.type-product 확인
 echo "=== article.type-product 확인 ==="
 curl -s "https://csa-iot.org/csa-iot_products/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver" \
   | grep -A 5 -B 5 "article.*type-product" \

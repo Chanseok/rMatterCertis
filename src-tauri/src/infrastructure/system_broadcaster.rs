@@ -1,10 +1,12 @@
-use std::time::{Duration, Instant};
-use tokio::time;
-use tauri::{AppHandle, Manager, Emitter};
-use crate::events::{SystemStatePayload, AtomicTaskEvent, LiveSystemState, BatchInfo, StageInfo, DbCursor};
 use crate::application::shared_state::SharedStateCache;
+use crate::events::{
+    AtomicTaskEvent, BatchInfo, DbCursor, LiveSystemState, StageInfo, SystemStatePayload,
+};
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::time;
 use uuid::Uuid;
 
 /// UI 이벤트 페이로드 구조체들
@@ -143,18 +145,22 @@ impl SystemStateBroadcaster {
         let site_analysis = state_cache.site_analysis.read().await;
         let _db_analysis = state_cache.db_analysis.read().await;
         let runtime_state = state_cache.runtime_state.read().await;
-        
+
         // 🔥 애플리케이션 시작 시 강제로 false로 설정하여 잘못된 상태 방지
-        let is_running = runtime_state.is_crawling_active && 
-                        runtime_state.session_target_items.is_some() &&
-                        runtime_state.current_stage.is_some();
-        
+        let is_running = runtime_state.is_crawling_active
+            && runtime_state.session_target_items.is_some()
+            && runtime_state.current_stage.is_some();
+
         // Modern Rust 2024: Backend-Only CRUD를 통한 데이터베이스 접근
-        let app_state = self.app_handle.state::<crate::application::state::AppState>();
-        let db_pool = app_state.get_database_pool().await
+        let app_state = self
+            .app_handle
+            .state::<crate::application::state::AppState>();
+        let db_pool = app_state
+            .get_database_pool()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to get database pool: {}", e))?;
         let db_repo = IntegratedProductRepository::new(db_pool);
-        
+
         // 최근 제품의 page_id, index_in_page 정보 가져오기
         let last_cursor = if let Some(last_product) = db_repo.get_latest_updated_product().await? {
             Some(DbCursor {
@@ -185,7 +191,7 @@ impl SystemStateBroadcaster {
     /// 시스템 상태 브로드캐스트
     pub async fn broadcast_system_state(&mut self) -> anyhow::Result<()> {
         let now = Instant::now();
-        
+
         // 브로드캐스트 간격 체크
         if let Some(last) = self.last_broadcast {
             if now.duration_since(last) < self.broadcast_interval {
@@ -194,12 +200,12 @@ impl SystemStateBroadcaster {
         }
 
         let system_state = self.create_system_state_snapshot().await?;
-        
+
         // 프론트엔드로 이벤트 발송
         self.app_handle.emit("system-state-update", &system_state)?;
-        
+
         self.last_broadcast = Some(now);
-        
+
         Ok(())
     }
 
@@ -212,7 +218,7 @@ impl SystemStateBroadcaster {
     /// Live Production Line 상태 브로드캐스트
     pub async fn broadcast_live_state(&mut self) -> anyhow::Result<()> {
         let basic_state = self.create_system_state_snapshot().await?;
-        
+
         // 현재 배치 정보 생성 (예시)
         let current_batch = if basic_state.is_running {
             Some(BatchInfo {
@@ -270,13 +276,13 @@ impl SystemStateBroadcaster {
     /// 백그라운드 브로드캐스트 태스크 시작
     pub async fn start_background_broadcast(mut self) {
         let mut interval = time::interval(Duration::from_secs(10)); // 10초 간격으로 변경
-        
+
         // 🔥 애플리케이션 시작 시 즉시 브로드캐스트하지 않고 약간의 지연 추가
         tokio::time::sleep(Duration::from_secs(5)).await;
-        
+
         loop {
             interval.tick().await;
-            
+
             if let Err(e) = self.broadcast_system_state().await {
                 eprintln!("❌ Failed to broadcast system state: {}", e);
             }
@@ -287,49 +293,74 @@ impl SystemStateBroadcaster {
     pub fn emit_batch_created(&mut self, page_start: u32, page_end: u32) -> anyhow::Result<()> {
         let batch_id = Uuid::new_v4().to_string();
         self.current_batch_id = Some(batch_id.clone());
-        
+
         let payload = BatchCreatedPayload {
             batch_id: batch_id.clone(),
             page_range: (page_start, page_end),
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        
+
         self.app_handle.emit("batch-created", &payload)?;
         Ok(())
     }
 
     /// 페이지 크롤링 완료 이벤트 발송
-    pub fn emit_page_crawled(&self, page_id: u32, url: String, product_count: u32, success: bool) -> anyhow::Result<()> {
+    pub fn emit_page_crawled(
+        &self,
+        page_id: u32,
+        url: String,
+        product_count: u32,
+        success: bool,
+    ) -> anyhow::Result<()> {
         let payload = PageCrawledPayload {
-            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            batch_id: self
+                .current_batch_id
+                .as_ref()
+                .unwrap_or(&"unknown".to_string())
+                .clone(),
             page_id,
             url,
             product_count,
             status: if success { "completed" } else { "failed" }.to_string(),
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        
+
         self.app_handle.emit("page-crawled", &payload)?;
         Ok(())
     }
 
     /// 제품 수집 완료 이벤트 발송
-    pub fn emit_product_collected(&self, page_id: u32, product_id: String, url: String, success: bool) -> anyhow::Result<()> {
+    pub fn emit_product_collected(
+        &self,
+        page_id: u32,
+        product_id: String,
+        url: String,
+        success: bool,
+    ) -> anyhow::Result<()> {
         let payload = ProductCollectedPayload {
-            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            batch_id: self
+                .current_batch_id
+                .as_ref()
+                .unwrap_or(&"unknown".to_string())
+                .clone(),
             page_id,
             product_id,
             url,
             status: if success { "completed" } else { "failed" }.to_string(),
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        
+
         self.app_handle.emit("product-collected", &payload)?;
         Ok(())
     }
 
     /// 배치 완료 이벤트 발송
-    pub fn emit_batch_completed(&mut self, pages_processed: u32, products_collected: u32, success_rate: f64) -> anyhow::Result<()> {
+    pub fn emit_batch_completed(
+        &mut self,
+        pages_processed: u32,
+        products_collected: u32,
+        success_rate: f64,
+    ) -> anyhow::Result<()> {
         if let Some(batch_id) = &self.current_batch_id {
             let payload = BatchCompletedPayload {
                 batch_id: batch_id.clone(),
@@ -338,9 +369,9 @@ impl SystemStateBroadcaster {
                 success_rate,
                 timestamp: chrono::Utc::now().to_rfc3339(),
             };
-            
+
             self.app_handle.emit("batch-completed", &payload)?;
-            
+
             // 배치 완료 후 ID 초기화
             self.current_batch_id = None;
         }
@@ -360,12 +391,17 @@ impl SystemStateBroadcaster {
     }
 
     /// 🔥 세션 이벤트 발송 (크롤링 라이프사이클)
-    pub fn emit_session_event(&self, session_id: String, event_type: crate::domain::events::SessionEventType, message: String) -> anyhow::Result<()> {
+    pub fn emit_session_event(
+        &self,
+        session_id: String,
+        event_type: crate::domain::events::SessionEventType,
+        message: String,
+    ) -> anyhow::Result<()> {
         use crate::domain::events::{CrawlingEvent, SessionEventType};
-        
+
         let event_name = match event_type {
             SessionEventType::Started => "session-started",
-            SessionEventType::SiteStatusCheck => "session-site-status-check", 
+            SessionEventType::SiteStatusCheck => "session-site-status-check",
             SessionEventType::BatchPlanning => "session-batch-planning",
             SessionEventType::Completed => "session-completed",
             SessionEventType::Failed => "session-failed",
@@ -373,14 +409,14 @@ impl SystemStateBroadcaster {
             SessionEventType::Paused => "session-paused",
             SessionEventType::Resumed => "session-resumed",
         };
-        
+
         let event = CrawlingEvent::SessionLifecycle {
             session_id,
             event_type,
             message,
             timestamp: chrono::Utc::now(),
         };
-        
+
         self.app_handle.emit(event_name, &event)?;
         Ok(())
     }
@@ -391,16 +427,28 @@ impl SystemStateBroadcaster {
             "error": error_message,
             "timestamp": chrono::Utc::now().to_rfc3339(),
         });
-        
+
         self.app_handle.emit("crawling-error", &payload)?;
         Ok(())
     }
 
     // 🔥 재시도 관련 이벤트 발송 메서드들 추가
     /// 재시도 시도 이벤트 발송
-    pub fn emit_retry_attempt(&self, item_id: String, item_type: String, url: String, attempt_number: u32, max_attempts: u32, reason: String) -> anyhow::Result<()> {
+    pub fn emit_retry_attempt(
+        &self,
+        item_id: String,
+        item_type: String,
+        url: String,
+        attempt_number: u32,
+        max_attempts: u32,
+        reason: String,
+    ) -> anyhow::Result<()> {
         let payload = RetryAttemptPayload {
-            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            batch_id: self
+                .current_batch_id
+                .as_ref()
+                .unwrap_or(&"unknown".to_string())
+                .clone(),
             item_id,
             item_type,
             url,
@@ -409,30 +457,51 @@ impl SystemStateBroadcaster {
             reason,
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        
+
         self.app_handle.emit("retry-attempt", &payload)?;
         Ok(())
     }
 
     /// 재시도 성공 이벤트 발송
-    pub fn emit_retry_success(&self, item_id: String, item_type: String, url: String, final_attempt: u32) -> anyhow::Result<()> {
+    pub fn emit_retry_success(
+        &self,
+        item_id: String,
+        item_type: String,
+        url: String,
+        final_attempt: u32,
+    ) -> anyhow::Result<()> {
         let payload = RetrySuccessPayload {
-            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            batch_id: self
+                .current_batch_id
+                .as_ref()
+                .unwrap_or(&"unknown".to_string())
+                .clone(),
             item_id,
             item_type,
             url,
             final_attempt,
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        
+
         self.app_handle.emit("retry-success", &payload)?;
         Ok(())
     }
 
     /// 재시도 최종 실패 이벤트 발송
-    pub fn emit_retry_failed(&self, item_id: String, item_type: String, url: String, total_attempts: u32, final_error: String) -> anyhow::Result<()> {
+    pub fn emit_retry_failed(
+        &self,
+        item_id: String,
+        item_type: String,
+        url: String,
+        total_attempts: u32,
+        final_error: String,
+    ) -> anyhow::Result<()> {
         let payload = RetryFailedPayload {
-            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            batch_id: self
+                .current_batch_id
+                .as_ref()
+                .unwrap_or(&"unknown".to_string())
+                .clone(),
             item_id,
             item_type,
             url,
@@ -440,60 +509,101 @@ impl SystemStateBroadcaster {
             final_error,
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        
+
         self.app_handle.emit("retry-failed", &payload)?;
         Ok(())
     }
 
     // 🔥 DB 저장 관련 이벤트 발송 메서드들 추가
     /// DB 저장 시도 이벤트 발송
-    pub fn emit_database_save_attempt(&self, item_id: String, item_type: String, url: String) -> anyhow::Result<()> {
+    pub fn emit_database_save_attempt(
+        &self,
+        item_id: String,
+        item_type: String,
+        url: String,
+    ) -> anyhow::Result<()> {
         let payload = DatabaseSaveAttemptPayload {
-            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            batch_id: self
+                .current_batch_id
+                .as_ref()
+                .unwrap_or(&"unknown".to_string())
+                .clone(),
             item_id,
             item_type,
             url,
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        
+
         self.app_handle.emit("database-save-attempt", &payload)?;
         Ok(())
     }
 
     /// DB 저장 성공 이벤트 발송
-    pub fn emit_database_save_success(&self, item_id: String, item_type: String, url: String, was_update: bool) -> anyhow::Result<()> {
+    pub fn emit_database_save_success(
+        &self,
+        item_id: String,
+        item_type: String,
+        url: String,
+        was_update: bool,
+    ) -> anyhow::Result<()> {
         let payload = DatabaseSaveSuccessPayload {
-            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            batch_id: self
+                .current_batch_id
+                .as_ref()
+                .unwrap_or(&"unknown".to_string())
+                .clone(),
             item_id,
             item_type,
             url,
             was_update,
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        
+
         self.app_handle.emit("database-save-success", &payload)?;
         Ok(())
     }
 
     /// DB 저장 실패 이벤트 발송
-    pub fn emit_database_save_failed(&self, item_id: String, item_type: String, url: String, error: String) -> anyhow::Result<()> {
+    pub fn emit_database_save_failed(
+        &self,
+        item_id: String,
+        item_type: String,
+        url: String,
+        error: String,
+    ) -> anyhow::Result<()> {
         let payload = DatabaseSaveFailedPayload {
-            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            batch_id: self
+                .current_batch_id
+                .as_ref()
+                .unwrap_or(&"unknown".to_string())
+                .clone(),
             item_id,
             item_type,
             url,
             error,
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        
+
         self.app_handle.emit("database-save-failed", &payload)?;
         Ok(())
     }
 
     /// 배치 진행 상황 업데이트 이벤트 발송
-    pub fn emit_batch_progress(&self, stage: String, progress: f64, items_total: u32, items_completed: u32, items_active: u32, items_failed: u32) -> anyhow::Result<()> {
+    pub fn emit_batch_progress(
+        &self,
+        stage: String,
+        progress: f64,
+        items_total: u32,
+        items_completed: u32,
+        items_active: u32,
+        items_failed: u32,
+    ) -> anyhow::Result<()> {
         let payload = BatchProgressPayload {
-            batch_id: self.current_batch_id.as_ref().unwrap_or(&"unknown".to_string()).clone(),
+            batch_id: self
+                .current_batch_id
+                .as_ref()
+                .unwrap_or(&"unknown".to_string())
+                .clone(),
             stage,
             progress,
             items_total,
@@ -502,19 +612,30 @@ impl SystemStateBroadcaster {
             items_failed,
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        
+
         self.app_handle.emit("batch-progress", &payload)?;
         Ok(())
     }
-    
+
     /// 🔥 새로운 CrawlingEvent 기반 발송 메서드 추가
-    pub fn emit_site_status_check(&self, event: &crate::domain::events::CrawlingEvent) -> anyhow::Result<()> {
+    pub fn emit_site_status_check(
+        &self,
+        event: &crate::domain::events::CrawlingEvent,
+    ) -> anyhow::Result<()> {
         self.app_handle.emit(event.event_name(), event)?;
         Ok(())
     }
 
     /// 🔥 배치 이벤트 발송
-    pub fn emit_batch_event(&self, session_id: String, batch_id: String, stage: crate::domain::events::CrawlingStage, event_type: crate::domain::events::BatchEventType, message: String, metadata: Option<crate::domain::events::BatchMetadata>) -> anyhow::Result<()> {
+    pub fn emit_batch_event(
+        &self,
+        session_id: String,
+        batch_id: String,
+        stage: crate::domain::events::CrawlingStage,
+        event_type: crate::domain::events::BatchEventType,
+        message: String,
+        metadata: Option<crate::domain::events::BatchMetadata>,
+    ) -> anyhow::Result<()> {
         let event = crate::domain::events::CrawlingEvent::BatchEvent {
             session_id,
             batch_id,
@@ -529,7 +650,15 @@ impl SystemStateBroadcaster {
     }
 
     /// 🔥 ProductList 페이지별 이벤트 발송
-    pub fn emit_product_list_page_event(&self, session_id: String, batch_id: String, page_number: u32, event_type: crate::domain::events::PageEventType, message: String, metadata: Option<crate::domain::events::PageMetadata>) -> anyhow::Result<()> {
+    pub fn emit_product_list_page_event(
+        &self,
+        session_id: String,
+        batch_id: String,
+        page_number: u32,
+        event_type: crate::domain::events::PageEventType,
+        message: String,
+        metadata: Option<crate::domain::events::PageMetadata>,
+    ) -> anyhow::Result<()> {
         let event = crate::domain::events::CrawlingEvent::ProductListPageEvent {
             session_id,
             batch_id,
@@ -544,7 +673,16 @@ impl SystemStateBroadcaster {
     }
 
     /// 🔥 제품 상세정보 이벤트 발송
-    pub fn emit_product_detail_event(&self, session_id: String, batch_id: String, product_id: String, product_url: String, event_type: crate::domain::events::ProductEventType, message: String, metadata: Option<crate::domain::events::ProductMetadata>) -> anyhow::Result<()> {
+    pub fn emit_product_detail_event(
+        &self,
+        session_id: String,
+        batch_id: String,
+        product_id: String,
+        product_url: String,
+        event_type: crate::domain::events::ProductEventType,
+        message: String,
+        metadata: Option<crate::domain::events::ProductMetadata>,
+    ) -> anyhow::Result<()> {
         let event = crate::domain::events::CrawlingEvent::ProductDetailEvent {
             session_id,
             batch_id,
@@ -563,7 +701,7 @@ impl SystemStateBroadcaster {
 /// 전역 브로드캐스터 인스턴스 생성 및 시작
 pub fn start_system_broadcaster(app_handle: AppHandle) {
     let broadcaster = SystemStateBroadcaster::new(app_handle);
-    
+
     tokio::spawn(async move {
         broadcaster.start_background_broadcast().await;
     });

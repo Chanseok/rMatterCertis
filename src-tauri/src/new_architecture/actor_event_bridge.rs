@@ -1,15 +1,18 @@
 //! Actor 이벤트 프론트엔드 브릿지
-//! 
+//!
 //! Actor 시스템의 AppEvent를 실제 Tauri 프론트엔드로 전달하는 브릿지 컴포넌트
-//! 설계 의도: 각 Actor, Task 레벨에서 독립적으로 이벤트 발행을 가능하게 하여 
+//! 설계 의도: 각 Actor, Task 레벨에서 독립적으로 이벤트 발행을 가능하게 하여
 //! 낮은 복잡성의 구현으로도 모든 경우를 다 커버할 수 있도록 함
 
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
-use tokio::sync::broadcast;
-use tauri::{AppHandle, Emitter};
-use tracing::{info, warn, error, debug};
-use crate::new_architecture::actors::types::AppEvent;
 use crate::domain::events::CrawlingEvent;
+use crate::new_architecture::actors::types::AppEvent;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+use tauri::{AppHandle, Emitter};
+use tokio::sync::broadcast;
+use tracing::{debug, error, info, warn};
 
 /// Actor 이벤트를 프론트엔드로 전달하는 브릿지
 pub struct ActorEventBridge {
@@ -36,7 +39,10 @@ impl ActorEventBridge {
 
     /// 브릿지 시작 - Actor 이벤트를 프론트엔드로 전달
     pub async fn start(&mut self) {
-        if self.is_active.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        if self
+            .is_active
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
             warn!("ActorEventBridge is already running");
             return;
         }
@@ -62,27 +68,39 @@ impl ActorEventBridge {
             }
         }
 
-        self.is_active.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.is_active
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         info!("🌉 Actor Event Bridge stopped");
     }
 
     /// 브릿지 중지
     pub fn stop(&self) {
-        self.is_active.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.is_active
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Actor 이벤트를 프론트엔드로 전달
+    #[allow(clippy::unused_async)]
     async fn forward_to_frontend(&self, actor_event: AppEvent) -> Result<(), String> {
-    // AppEvent를 프론트엔드가 이해할 수 있는 형태로 변환
-    let (event_name, event_data) = self.convert_actor_event_to_frontend(actor_event.clone())?;
-        
+        // AppEvent를 프론트엔드가 이해할 수 있는 형태로 변환
+        let (event_name, event_data) = self.convert_actor_event_to_frontend(actor_event.clone())?;
+
         // 시퀀스 & backend_ts 주입 (RFC3339)
         let enriched = {
             let mut v = event_data;
             if let Some(obj) = v.as_object_mut() {
-                obj.insert("seq".into(), serde_json::Value::from(self.seq.fetch_add(1, Ordering::SeqCst)));
-                obj.insert("backend_ts".into(), serde_json::Value::from(chrono::Utc::now().to_rfc3339()));
-                obj.insert("event_name".into(), serde_json::Value::from(event_name.clone()));
+                obj.insert(
+                    "seq".into(),
+                    serde_json::Value::from(self.seq.fetch_add(1, Ordering::SeqCst)),
+                );
+                obj.insert(
+                    "backend_ts".into(),
+                    serde_json::Value::from(chrono::Utc::now().to_rfc3339()),
+                );
+                obj.insert(
+                    "event_name".into(),
+                    serde_json::Value::from(event_name.clone()),
+                );
             }
             v
         };
@@ -100,23 +118,41 @@ impl ActorEventBridge {
             let session_id = obj.get("session_id").and_then(|v| v.as_str());
             let batch_id = obj.get("batch_id").and_then(|v| v.as_str());
             // Route this concise line to events.log by using the dedicated target
-            tracing::info!(target: "actor-event", 
+            tracing::info!(target: "actor-event",
                 "🌉 actor-event seq={} name={} variant={} session_id={:?} batch_id={:?}",
                 seq_val, event_name, variant, session_id, batch_id
             );
         }
         // 레거시 PageTask* 이벤트를 사용하는 경로(구 actor_system_commands 기반)에서도
         // UI가 통합된 actor-page-lifecycle 스트림을 받을 수 있도록 합성 이벤트 생성
-        if let Some((derived_name, mut derived_payload)) = self.create_synthetic_page_lifecycle(&actor_event) {
+        // 단, 새로운 파이프라인(StageActor)이 PageLifecycle을 직접 방출하는 경우에는 합성하지 않음
+        if matches!(actor_event, AppEvent::PageLifecycle { .. }) {
+            return Ok(());
+        }
+        if let Some((derived_name, mut derived_payload)) =
+            self.create_synthetic_page_lifecycle(&actor_event)
+        {
             if let Some(obj) = derived_payload.as_object_mut() {
-                obj.insert("seq".into(), serde_json::Value::from(self.seq.fetch_add(1, Ordering::SeqCst)));
-                obj.insert("backend_ts".into(), serde_json::Value::from(chrono::Utc::now().to_rfc3339()));
-                obj.insert("event_name".into(), serde_json::Value::from(derived_name.clone()));
+                obj.insert(
+                    "seq".into(),
+                    serde_json::Value::from(self.seq.fetch_add(1, Ordering::SeqCst)),
+                );
+                obj.insert(
+                    "backend_ts".into(),
+                    serde_json::Value::from(chrono::Utc::now().to_rfc3339()),
+                );
+                obj.insert(
+                    "event_name".into(),
+                    serde_json::Value::from(derived_name.clone()),
+                );
             }
             if let Err(e) = self.app_handle.emit(&derived_name, &derived_payload) {
                 warn!("Failed to emit synthetic page lifecycle event: {}", e);
             } else {
-                debug!("✅ Emitted synthetic page lifecycle event '{}': {:?}", derived_name, derived_payload);
+                debug!(
+                    "✅ Emitted synthetic page lifecycle event '{}': {:?}",
+                    derived_name, derived_payload
+                );
             }
         }
 
@@ -124,8 +160,11 @@ impl ActorEventBridge {
     }
 
     /// AppEvent를 프론트엔드 이벤트로 변환
-    fn convert_actor_event_to_frontend(&self, event: AppEvent) -> Result<(String, serde_json::Value), String> {
-        use serde_json::{Value, Map};
+    fn convert_actor_event_to_frontend(
+        &self,
+        event: AppEvent,
+    ) -> Result<(String, serde_json::Value), String> {
+        use serde_json::{Map, Value};
         // Determine event name (use .. to ignore future fields)
         let event_name = match &event {
             AppEvent::SessionStarted { .. } => "actor-session-started",
@@ -186,10 +225,12 @@ impl ActorEventBridge {
         let flat = if let Value::Object(map) = raw {
             if map.len() == 1 {
                 let mut out = Map::new();
-                if let Some((k,v)) = map.into_iter().next() {
+                if let Some((k, v)) = map.into_iter().next() {
                     out.insert("variant".into(), Value::String(k.clone()));
                     if let Value::Object(inner) = v {
-                        for (ik,iv) in inner.into_iter() { out.insert(ik, iv); }
+                        for (ik, iv) in inner.into_iter() {
+                            out.insert(ik, iv);
+                        }
                     } else {
                         out.insert("value".into(), v);
                     }
@@ -198,7 +239,9 @@ impl ActorEventBridge {
             } else {
                 Value::Object(map)
             }
-        } else { raw };
+        } else {
+            raw
+        };
 
         Ok((event_name.to_string(), flat))
     }
@@ -207,37 +250,45 @@ impl ActorEventBridge {
     #[allow(dead_code)]
     fn convert_to_crawling_event(&self, actor_event: &AppEvent) -> Option<CrawlingEvent> {
         match actor_event {
-            AppEvent::SessionStarted { session_id, .. } => {
-                Some(CrawlingEvent::SessionEvent {
-                    session_id: session_id.clone(),
-                    event_type: crate::domain::events::SessionEventType::Started,
-                    message: "Actor session started".to_string(),
-                    timestamp: chrono::Utc::now(),
-                })
-            }
-            AppEvent::SessionCompleted {  summary, .. } => {
+            AppEvent::SessionStarted { session_id, .. } => Some(CrawlingEvent::SessionEvent {
+                session_id: session_id.clone(),
+                event_type: crate::domain::events::SessionEventType::Started,
+                message: "Actor session started".to_string(),
+                timestamp: chrono::Utc::now(),
+            }),
+            AppEvent::SessionCompleted { summary, .. } => {
                 let result = crate::domain::events::CrawlingResult {
                     total_processed: summary.total_pages_processed,
                     new_items: summary.total_pages_processed, // TODO: 실제 새 아이템 수
-                    updated_items: 0, // TODO: 실제 업데이트된 아이템 수
-                    errors: 0, // TODO: 실제 에러 수
+                    updated_items: 0,                         // TODO: 실제 업데이트된 아이템 수
+                    errors: 0,                                // TODO: 실제 에러 수
                     duration_ms: summary.total_duration_ms,
                     stages_completed: vec![], // TODO: 완료된 스테이지들
-                    start_time: chrono::Utc::now() - chrono::Duration::milliseconds(summary.total_duration_ms as i64),
+                    start_time: chrono::Utc::now()
+                        - chrono::Duration::milliseconds(summary.total_duration_ms as i64),
                     end_time: chrono::Utc::now(),
                     performance_metrics: crate::domain::events::PerformanceMetrics {
                         avg_processing_time_ms: summary.avg_page_processing_time as f64,
                         items_per_second: if summary.total_duration_ms > 0 {
-                            (summary.total_pages_processed as f64 * 1000.0) / summary.total_duration_ms as f64
-                        } else { 0.0 },
+                            (summary.total_pages_processed as f64 * 1000.0)
+                                / summary.total_duration_ms as f64
+                        } else {
+                            0.0
+                        },
                         memory_usage_mb: 0.0, // TODO: 실제 메모리 사용량
                         network_requests: summary.total_pages_processed as u64, // 근사치
-                        cache_hit_rate: 0.0, // TODO: 실제 캐시 히트율
+                        cache_hit_rate: 0.0,  // TODO: 실제 캐시 히트율
                     },
                 };
                 Some(CrawlingEvent::Completed(result))
             }
-            AppEvent::Progress {  current_step, total_steps, percentage, message, .. } => {
+            AppEvent::Progress {
+                current_step,
+                total_steps,
+                percentage,
+                message,
+                ..
+            } => {
                 let progress = crate::domain::events::CrawlingProgress {
                     current: *current_step,
                     total: *total_steps,
@@ -268,10 +319,18 @@ impl ActorEventBridge {
 
     /// PageTaskStarted/Completed/Failed 로부터 actor-page-lifecycle 합성 이벤트 생성
     /// New pipeline(StageActor)에서 이미 PageLifecycle 이벤트를 직접 방출하는 경우에는 합성하지 않음
-    fn create_synthetic_page_lifecycle(&self, event: &AppEvent) -> Option<(String, serde_json::Value)> {
+    fn create_synthetic_page_lifecycle(
+        &self,
+        event: &AppEvent,
+    ) -> Option<(String, serde_json::Value)> {
         use serde_json::json;
         match event {
-            AppEvent::PageTaskStarted { session_id, page, batch_id, .. } => Some((
+            AppEvent::PageTaskStarted {
+                session_id,
+                page,
+                batch_id,
+                ..
+            } => Some((
                 "actor-page-lifecycle".to_string(),
                 json!({
                     "variant": "PageLifecycle",
@@ -280,9 +339,15 @@ impl ActorEventBridge {
                     "page_number": page,
                     "status": "fetch_started",
                     "metrics": serde_json::Value::Null,
-                })
+                }),
             )),
-            AppEvent::PageTaskCompleted { session_id, page, batch_id, duration_ms, .. } => Some((
+            AppEvent::PageTaskCompleted {
+                session_id,
+                page,
+                batch_id,
+                duration_ms,
+                ..
+            } => Some((
                 "actor-page-lifecycle".to_string(),
                 json!({
                     "variant": "PageLifecycle",
@@ -292,9 +357,15 @@ impl ActorEventBridge {
                     "status": "fetch_completed",
                     "metrics": {"kind":"Page", "data": {"url_count": serde_json::Value::Null, "scheduled_details": serde_json::Value::Null, "error": serde_json::Value::Null}},
                     "duration_ms": duration_ms,
-                })
+                }),
             )),
-            AppEvent::PageTaskFailed { session_id, page, batch_id, error, .. } => Some((
+            AppEvent::PageTaskFailed {
+                session_id,
+                page,
+                batch_id,
+                error,
+                ..
+            } => Some((
                 "actor-page-lifecycle".to_string(),
                 json!({
                     "variant": "PageLifecycle",
@@ -303,7 +374,7 @@ impl ActorEventBridge {
                     "page_number": page,
                     "status": "failed",
                     "metrics": {"kind":"Page", "data": {"url_count": serde_json::Value::Null, "scheduled_details": serde_json::Value::Null, "error": error}},
-                })
+                }),
             )),
             _ => None,
         }
@@ -312,11 +383,11 @@ impl ActorEventBridge {
 
 /// Actor Event Bridge 시작 유틸리티 함수
 pub async fn start_actor_event_bridge(
-    app_handle: AppHandle, 
-    event_rx: broadcast::Receiver<AppEvent>
+    app_handle: AppHandle,
+    event_rx: broadcast::Receiver<AppEvent>,
 ) -> Result<tokio::task::JoinHandle<()>, String> {
     let mut bridge = ActorEventBridge::new(app_handle, event_rx);
-    
+
     let handle = tokio::spawn(async move {
         bridge.start().await;
     });

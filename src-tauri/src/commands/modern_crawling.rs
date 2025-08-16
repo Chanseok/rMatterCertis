@@ -31,18 +31,10 @@ pub async fn get_active_sessions(state: State<'_, AppState>) -> Result<Vec<Strin
 pub async fn get_databasestats(state: State<'_, AppState>) -> Result<DatabaseStats, String> {
     info!("🔍 Getting real database statistics...");
     
-    // Get database URL
-    let database_url = {
-        let app_data_dir = std::env::var("APPDATA")
-            .or_else(|_| std::env::var("HOME").map(|h| format!("{}/.local/share", h)))
-            .unwrap_or_else(|_| "./data".to_string());
-        let data_dir = format!("{}/matter-certis-v2/database", app_data_dir);
-        format!("sqlite:{}/matter_certis.db", data_dir)
-    };
-    
-    // Connect to database
-    let db_pool = sqlx::SqlitePool::connect(&database_url).await
-        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    // Connect to database (global pool)
+    let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
+        .await
+        .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
     
     // Get actual product count
     let total_products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
@@ -129,8 +121,7 @@ pub async fn optimize_database(state: State<'_, AppState>) -> Result<(), String>
     info!("Starting database optimization");
     
     // Connect to database
-    let database_url = get_database_url()?;
-    let db_pool = match sqlx::SqlitePool::connect(&database_url).await {
+    let db_pool = match crate::infrastructure::database_connection::get_or_init_global_pool().await {
         Ok(pool) => pool,
         Err(e) => {
             warn!("Database connection failed during optimization: {}", e);
@@ -242,19 +233,8 @@ pub async fn check_site_status(
         config.clone(),
     );
     
-    // Create database analyzer for local DB stats
-    let database_url = get_database_url()?;
-    let db_analyzer: Option<Box<dyn DatabaseAnalyzer>> = match sqlx::SqlitePool::connect(&database_url).await {
-        Ok(_pool) => {
-            // Don't use actual StatusCheckerImpl since it requires complex initialization
-            // Return None to skip database analysis for now
-            None
-        }
-        Err(e) => {
-            warn!("Failed to create database connection: {}", e);
-            None
-        }
-    };
+    // Database analyzer not wired yet; skip heavy init
+    let db_analyzer: Option<Box<dyn DatabaseAnalyzer>> = None;
     
     // Perform the site status check
     let site_check_result = status_checker.check_site_status().await;
@@ -639,10 +619,10 @@ async fn calculate_intelligent_crawling_range(
 ) -> Result<(u32, u32), String> {
     info!("🔍 Calculating intelligent crawling range...");
     
-    // Get database URL and connect
-    let database_url = get_database_url()?;
-    let db_pool = sqlx::SqlitePool::connect(&database_url).await
-        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    // Obtain global database pool
+    let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
+        .await
+        .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
     
     // Create necessary components for range calculation
     let http_client = crate::infrastructure::HttpClient::create_from_global_config()
@@ -742,39 +722,10 @@ pub async fn get_products(
     // Load app config for batch settings
     let app_config = state.get_config().await;
     
-    // Get database URL with fallback mechanisms
-    let database_url = match get_database_url() {
-        Ok(url) => url,
-        Err(e) => {
-            error!("Failed to determine database URL: {}", e);
-            // Fallback to in-memory DB as last resort
-            "sqlite::memory:".to_string()
-        }
-    };
-    
-    // Attempt to connect to the database
-    let db_pool = match sqlx::SqlitePool::connect(&database_url).await {
-        Ok(pool) => pool,
-        Err(e) => {
-            error!("Failed to connect to database at {}: {}", database_url, e);
-            
-            if database_url != "sqlite::memory:" {
-                // Try falling back to in-memory database
-                info!("Falling back to in-memory database");
-                match sqlx::SqlitePool::connect("sqlite::memory:").await {
-                    Ok(memory_pool) => memory_pool,
-                    Err(fallback_err) => {
-                        return Err(format!(
-                            "Failed to connect to primary database ({}) and in-memory fallback: {}", 
-                            e, fallback_err
-                        ));
-                    }
-                }
-            } else {
-                return Err(format!("Failed to connect to database: {}", e));
-            }
-        }
-    };
+    // Obtain global database pool (initialized at startup)
+    let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
+        .await
+        .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
     
     // Ensure database schema exists
     if let Err(e) = ensure_database_schema_exists(&db_pool).await {
@@ -867,39 +818,10 @@ pub async fn get_products(
 pub async fn get_local_dbstats(_state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     info!("Getting local database statistics");
     
-    // Get database URL with fallback mechanisms
-    let database_url = match get_database_url() {
-        Ok(url) => url,
-        Err(e) => {
-            error!("Failed to determine database URL: {}", e);
-            // Fallback to in-memory DB as last resort
-            "sqlite::memory:".to_string()
-        }
-    };
-    
-    // Attempt to connect to the database
-    let db_pool = match sqlx::SqlitePool::connect(&database_url).await {
-        Ok(pool) => pool,
-        Err(e) => {
-            error!("Failed to connect to database at {}: {}", database_url, e);
-            
-            if database_url != "sqlite::memory:" {
-                // Try falling back to in-memory database
-                info!("Falling back to in-memory database");
-                match sqlx::SqlitePool::connect("sqlite::memory:").await {
-                    Ok(memory_pool) => memory_pool,
-                    Err(fallback_err) => {
-                        return Err(format!(
-                            "Failed to connect to primary database ({}) and in-memory fallback: {}", 
-                            e, fallback_err
-                        ));
-                    }
-                }
-            } else {
-                return Err(format!("Failed to connect to database: {}", e));
-            }
-        }
-    };
+    // Obtain global database pool (initialized at startup)
+    let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
+        .await
+        .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
     
     // Ensure database schema exists
     if let Err(e) = ensure_database_schema_exists(&db_pool).await {
@@ -937,7 +859,8 @@ pub async fn get_local_dbstats(_state: State<'_, AppState>) -> Result<serde_json
     
     // Try to get actual DB size if it's a file-based database
     let mut actual_size = None;
-    if !database_url.contains(":memory:") && database_url.starts_with("sqlite:") {
+    let database_url = crate::infrastructure::get_main_database_url();
+    if database_url.starts_with("sqlite:") {
         let file_path = database_url.trim_start_matches("sqlite:");
         if let Ok(metadata) = std::fs::metadata(file_path) {
             if metadata.is_file() {
@@ -952,11 +875,7 @@ pub async fn get_local_dbstats(_state: State<'_, AppState>) -> Result<serde_json
         "lastUpdate": last_update,
         "databaseSize": actual_size.unwrap_or(database_size),
         "indexSize": index_size,
-        "databasePath": if database_url.contains(":memory:") { 
-            "In-memory database" 
-        } else { 
-            database_url.trim_start_matches("sqlite:") 
-        }
+    "databasePath": database_url.trim_start_matches("sqlite:")
     }))
 }
 
@@ -965,39 +884,10 @@ pub async fn get_local_dbstats(_state: State<'_, AppState>) -> Result<serde_json
 pub async fn get_analysis_data(_state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     info!("Getting analysis data");
     
-    // Get database URL with fallback mechanisms
-    let database_url = match get_database_url() {
-        Ok(url) => url,
-        Err(e) => {
-            error!("Failed to determine database URL: {}", e);
-            // Fallback to in-memory DB as last resort
-            "sqlite::memory:".to_string()
-        }
-    };
-    
-    // Attempt to connect to the database
-    let db_pool = match sqlx::SqlitePool::connect(&database_url).await {
-        Ok(pool) => pool,
-        Err(e) => {
-            error!("Failed to connect to database at {}: {}", database_url, e);
-            
-            if database_url != "sqlite::memory:" {
-                // Try falling back to in-memory database
-                info!("Falling back to in-memory database");
-                match sqlx::SqlitePool::connect("sqlite::memory:").await {
-                    Ok(memory_pool) => memory_pool,
-                    Err(fallback_err) => {
-                        return Err(format!(
-                            "Failed to connect to primary database ({}) and in-memory fallback: {}", 
-                            e, fallback_err
-                        ));
-                    }
-                }
-            } else {
-                return Err(format!("Failed to connect to database: {}", e));
-            }
-        }
-    };
+    // Obtain global database pool (initialized at startup)
+    let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
+        .await
+        .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
     
     // Ensure database schema exists
     if let Err(e) = ensure_database_schema_exists(&db_pool).await {
