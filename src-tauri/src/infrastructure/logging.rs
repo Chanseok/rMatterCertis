@@ -587,26 +587,7 @@ pub fn log_system_info() {
     info!("============================================");
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_logging_config_default() {
-        let config = LoggingConfig::default();
-        assert!(!config.level.is_empty());
-        assert!(config.console_output);
-        assert!(config.file_output);
-    }
-
-    #[test]
-    fn test_log_directory_creation() {
-        let log_dir = get_log_directory();
-
-        // The log directory should be deterministic
-        assert!(log_dir.to_string_lossy().ends_with("logs"));
-    }
-}
+// Tests are placed at the end of the file to avoid clippy's items-after-test-module lint
 
 /// Setup frontend logging based on configuration
 fn setup_frontend_logging(log_dir: &PathBuf, config: &LoggingConfig) -> Result<()> {
@@ -763,4 +744,25 @@ pub fn cleanup_logs_keep_latest() -> Result<String> {
             .map(|(p, _)| p.file_name().unwrap_or_default())
             .unwrap_or_default()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_logging_config_default() {
+        let config = LoggingConfig::default();
+        assert!(!config.level.is_empty());
+        assert!(config.console_output);
+        assert!(config.file_output);
+    }
+
+    #[test]
+    fn test_log_directory_creation() {
+        let log_dir = get_log_directory();
+
+        // The log directory should be deterministic
+        assert!(log_dir.to_string_lossy().ends_with("logs"));
+    }
 }

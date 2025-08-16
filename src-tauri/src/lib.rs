@@ -213,13 +213,11 @@ pub fn run() {
     rt.block_on(async {
         let concise_all = std::env::var("MC_CONCISE_ALL")
             .ok()
-            .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
-            .unwrap_or(true);
+            .map_or(true, |v| !(v == "0" || v.eq_ignore_ascii_case("false")));
         let concise = concise_all
             || std::env::var("MC_CONCISE_STARTUP")
                 .ok()
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false);
+                .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
         if concise {
             debug!("🔧 Initializing centralized database system (paths + pool + migrations)...");
         } else {

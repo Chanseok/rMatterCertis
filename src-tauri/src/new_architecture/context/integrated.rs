@@ -118,7 +118,7 @@ impl IntegratedContext {
     }
 
     /// 이벤트 발행 (에러 처리 포함)
-    pub async fn emit_event(&self, event: AppEvent) -> Result<(), EventEmissionError> {
+    pub fn emit_event(&self, event: AppEvent) -> Result<(), EventEmissionError> {
         self.event_tx
             .send(event)
             .map_err(|_| EventEmissionError::ChannelClosed)?;

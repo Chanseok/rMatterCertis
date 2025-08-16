@@ -329,7 +329,6 @@ impl BatchActor {
 
         context
             .emit_event(start_event)
-            .await
             .map_err(|e| BatchError::ContextError(e.to_string()))?;
 
         // 상태를 Processing으로 전환
@@ -392,7 +391,6 @@ impl BatchActor {
                 };
                 context
                     .emit_event(fail_event)
-                    .await
                     .map_err(|e| BatchError::ContextError(e.to_string()))?;
                 return Err(BatchError::StageExecutionFailed(
                     "StatusCheck stage failed - no status check performed".to_string(),
@@ -414,7 +412,6 @@ impl BatchActor {
                 };
                 context
                     .emit_event(fail_event)
-                    .await
                     .map_err(|e| BatchError::ContextError(e.to_string()))?;
                 return Err(BatchError::StageExecutionFailed(
                     "StatusCheck stage failed - site is not accessible".to_string(),
@@ -503,7 +500,6 @@ impl BatchActor {
             };
             context
                 .emit_event(progress_event)
-                .await
                 .map_err(|e| BatchError::ContextError(e.to_string()))?;
         }
 
@@ -523,7 +519,6 @@ impl BatchActor {
             };
             context
                 .emit_event(fail_event)
-                .await
                 .map_err(|e| BatchError::ContextError(e.to_string()))?;
             return Err(BatchError::StageExecutionFailed(
                 "ListPageCrawling stage failed completely".to_string(),
@@ -531,13 +526,11 @@ impl BatchActor {
         }
 
         // Stage 2 결과를 Stage 3 입력으로 변환 또는 누적
-        let product_detail_items = self
-            .transform_stage_output(
-                StageType::ListPageCrawling,
-                initial_items.clone(),
-                &list_page_result,
-            )
-            .await?;
+        let product_detail_items = self.transform_stage_output(
+            StageType::ListPageCrawling,
+            initial_items.clone(),
+            &list_page_result,
+        )?;
 
         let mut detail_result_opt: Option<StageResult> = None;
         if self.defer_detail_crawling {
@@ -574,7 +567,6 @@ impl BatchActor {
                     };
                     context
                         .emit_event(fail_event)
-                        .await
                         .map_err(|er| BatchError::ContextError(er.to_string()))?;
                     self.state = BatchState::Failed {
                         error: format!("Stage 3 failed: {}", e),
@@ -635,7 +627,7 @@ impl BatchActor {
                             percentage: 60.0,
                             timestamp: Utc::now(),
                         };
-                        context.emit_event(progress_event).await
+                        context.emit_event(progress_event)
                             .map_err(|e| BatchError::ContextError(e.to_string()))?;
                     }
             }
@@ -648,15 +640,13 @@ impl BatchActor {
             Vec::new()
         } else {
             // 기존 변환 결과 (각 ProductDetail 단위) → 하나의 ProductDetails StageItem 으로 합쳐 1회 실행
-            let per_item = self
-                .transform_stage_output(
-                    StageType::ProductDetailCrawling,
-                    product_detail_items,
-                    detail_result_opt
-                        .as_ref()
-                        .expect("detail_result present when not deferred"),
-                )
-                .await?;
+            let per_item = self.transform_stage_output(
+                StageType::ProductDetailCrawling,
+                product_detail_items,
+                detail_result_opt
+                    .as_ref()
+                    .expect("detail_result present when not deferred"),
+            )?;
             if per_item.is_empty() {
                 Vec::new()
             } else {
@@ -720,7 +710,6 @@ impl BatchActor {
                 };
                 context
                     .emit_event(fail_event)
-                    .await
                     .map_err(|er| BatchError::ContextError(er.to_string()))?;
                 self.state = BatchState::Failed {
                     error: format!("Stage 4 failed: {}", e),
@@ -744,8 +733,7 @@ impl BatchActor {
                 StageType::DataValidation,
                 data_validation_items,
                 &validation_result,
-            )
-            .await?
+            )?
         };
 
         // Stage 5: DataSaving - 데이터 저장
@@ -770,7 +758,6 @@ impl BatchActor {
                 };
                 context
                     .emit_event(fail_event)
-                    .await
                     .map_err(|er| BatchError::ContextError(er.to_string()))?;
                 self.state = BatchState::Failed {
                     error: format!("Stage 5 failed: {}", e),
@@ -868,7 +855,6 @@ impl BatchActor {
 
         context
             .emit_event(completion_event)
-            .await
             .map_err(|e| BatchError::ContextError(e.to_string()))?;
 
         // TODO: Integrate real DataSaving inserted/updated metrics: requires StageActor -> BatchActor callback.
@@ -919,7 +905,6 @@ impl BatchActor {
         };
         context
             .emit_event(report_event)
-            .await
             .map_err(|e| BatchError::ContextError(e.to_string()))?;
 
         Ok(())
@@ -1297,7 +1282,7 @@ impl BatchActor {
         );
 
         // Stage 실행 순서 정의
-        let stages = vec![
+        let stages = [
             StageType::StatusCheck,
             StageType::ListPageCrawling,
             StageType::ProductDetailCrawling,
@@ -1426,9 +1411,8 @@ impl BatchActor {
             final_result.duration_ms += stage_result.duration_ms;
 
             // 다음 Stage를 위한 입력 데이터 변환
-            current_items = self
-                .transform_stage_output(stage_type.clone(), current_items, &stage_result)
-                .await?;
+            current_items =
+                self.transform_stage_output(stage_type.clone(), current_items, &stage_result)?;
         }
 
         info!("✅ All stages completed in pipeline");
@@ -1436,7 +1420,7 @@ impl BatchActor {
     }
 
     /// Stage 출력을 다음 Stage 입력으로 변환
-    async fn transform_stage_output(
+    fn transform_stage_output(
         &mut self,
         completed_stage: StageType,
         input_items: Vec<StageItem>,

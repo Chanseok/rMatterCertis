@@ -174,7 +174,6 @@ impl SessionActor {
 
         context
             .emit_event(start_event)
-            .await
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
         // 실제 크롤링 실행 로직 시작
@@ -222,7 +221,7 @@ impl SessionActor {
                 reason: Some("initial_db_scan".into()),
                 timestamp: Utc::now(),
             };
-            match context.emit_event(pre_event).await {
+            match context.emit_event(pre_event) {
                 Ok(_) => info!(
                     "[DiagEmit] PreflightDiagnostics initial_db_scan emitted products={} page_range={:?}-{:?}",
                     cnt, minp, maxp
@@ -314,7 +313,6 @@ impl SessionActor {
         };
         context
             .emit_event(planning_event)
-            .await
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
         // 캐시 갱신 및 사용 로그
@@ -337,7 +335,7 @@ impl SessionActor {
                 reason: Some("post_site_status".into()),
                 timestamp: Utc::now(),
             };
-            match context.emit_event(pre_event2).await {
+            match context.emit_event(pre_event2) {
                 Ok(_) => info!(
                     "[DiagEmit] PreflightDiagnostics post_site_status emitted products={} site_total_pages={} page_range={:?}-{:?}",
                     cnt, site_status.total_pages, minp, maxp
@@ -398,7 +396,6 @@ impl SessionActor {
             };
             context
                 .emit_event(progress_event)
-                .await
                 .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
             if let Err(e) = self
@@ -424,7 +421,6 @@ impl SessionActor {
                 };
                 context
                     .emit_event(fail_event)
-                    .await
                     .map_err(|er| SessionError::ContextError(er.to_string()))?;
                 // 일단 다음 배치로 계속 진행 (요구 시 중단 정책으로 변경 가능)
                 continue;
@@ -447,7 +443,6 @@ impl SessionActor {
             };
             context
                 .emit_event(progress_event)
-                .await
                 .map_err(|e| SessionError::ContextError(e.to_string()))?;
         }
 
@@ -535,7 +530,6 @@ impl SessionActor {
 
         context
             .emit_event(completion_event)
-            .await
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
         // === 추가: 세션 리포트 이벤트 발행 ===
@@ -558,7 +552,6 @@ impl SessionActor {
         };
         context
             .emit_event(crawl_report)
-            .await
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
         info!("✅ Session {} completed successfully", session_id);
@@ -673,7 +666,6 @@ impl SessionActor {
 
         context
             .emit_event(pause_event)
-            .await
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
         Ok(())
@@ -715,7 +707,6 @@ impl SessionActor {
 
         context
             .emit_event(resume_event)
-            .await
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
         Ok(())
@@ -756,7 +747,6 @@ impl SessionActor {
 
         context
             .emit_event(cancel_event)
-            .await
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
         // 세션 정리
@@ -935,7 +925,7 @@ impl Actor for SessionActor {
                                                     Err(e) => {
                                                         error!("HTTP client init failed: {}", e);
                                                         let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("HTTP client init failed: {}", e), final_failure: true, timestamp: Utc::now() };
-                                                        if let Err(er) = context.emit_event(fail_event).await { error!("emit fail event error: {}", er); }
+                                                        if let Err(er) = context.emit_event(fail_event) { error!("emit fail event error: {}", er); }
                                                         self.state = SessionState::Failed { error: "http_client_init".into() };
                                                         continue;
                                                     }
@@ -945,7 +935,7 @@ impl Actor for SessionActor {
                                                     Err(e) => {
                                                         error!("Extractor init failed: {}", e);
                                                         let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("Extractor init failed: {}", e), final_failure: true, timestamp: Utc::now() };
-                                                        if let Err(er) = context.emit_event(fail_event).await { error!("emit fail event error: {}", er); }
+                                                        if let Err(er) = context.emit_event(fail_event) { error!("emit fail event error: {}", er); }
                                                         self.state = SessionState::Failed { error: "extractor_init".into() };
                                                         continue;
                                                     }
@@ -954,7 +944,7 @@ impl Actor for SessionActor {
                                                 self.state = SessionState::Running;
                                                 self.start_time = Some(Instant::now());
                                                 let start_event = AppEvent::SessionStarted { session_id: session_id.clone(), config: CrawlingConfig { site_url: "preplanned".into(), start_page: 1, end_page: 1, concurrency_limit: plan.concurrency_limit, batch_size: plan.batch_size, request_delay_ms: 0, timeout_secs: 300, max_retries: 3, strategy: crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst }, timestamp: Utc::now() };
-                                                if let Err(e) = context.emit_event(start_event).await { error!("Failed to emit start event: {}", e); }
+                                                if let Err(e) = context.emit_event(start_event) { error!("Failed to emit start event: {}", e); }
                                                 let site_status = plan.input_snapshot_to_site_status();
                                                 for (idx, range) in plan.crawling_ranges.iter().enumerate() {
                                                     let pages: Vec<u32> = if range.reverse_order { (range.start_page..=range.end_page).rev().collect() } else { (range.start_page..=range.end_page).collect() };
@@ -963,7 +953,7 @@ impl Actor for SessionActor {
                                                         error!("Batch {} failed: {}", batch_id, e);
                                                         self.errors.push(format!("batch {}: {}", batch_id, e));
                                                         let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("Batch {} failed: {}", batch_id, e), final_failure: false, timestamp: Utc::now() };
-                                                        if let Err(er) = context.emit_event(fail_event).await { error!("emit batch fail event error: {}", er); }
+                                                        if let Err(er) = context.emit_event(fail_event) { error!("emit batch fail event error: {}", er); }
                                                     }
                                                     self.processed_batches += 1; self.total_success_count += pages.len() as u32;
                                                     // BatchReport 이벤트에서 누적 중복 스킵을 수신할 수 없으므로 여기서는 BatchActor 내부 누적이 반영된 값 없. 향후 이벤트 브릿지에서 BatchReport 수신 시 합산.
@@ -976,13 +966,13 @@ impl Actor for SessionActor {
                                                 for e in &self.errors { let now = chrono::Utc::now(); map.entry(e.clone()).and_modify(|entry| { entry.0 += 1; entry.2 = now; }).or_insert((1, now, now)); }
                                                 let aggregated: Vec<crate::new_architecture::actors::types::ErrorSummary> = map.into_iter().map(|(k,(count, first, last))| crate::new_architecture::actors::types::ErrorSummary { error_type: k, count, first_occurrence: first, last_occurrence: last }).collect();
                                                 let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / self.total_success_count as u64 } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, duplicates_skipped: self.duplicates_skipped, planned_list_batches: self.processed_batches, executed_list_batches: self.processed_batches, failed_pages_count: 0, failed_page_ids: Vec::new(), total_retry_events: 0, max_retries_single_page: 0, pages_retried: 0, retry_histogram: Vec::new(), products_inserted: 0, products_updated: 0, final_state: "completed".into(), timestamp: Utc::now() };
-                                                if let Err(e) = context.emit_event(AppEvent::SessionCompleted { session_id: session_id.clone(), summary: summary.clone(), timestamp: Utc::now() }).await { error!("emit completion event failed: {}", e); }
-                                                if let Err(e) = context.emit_event(AppEvent::CrawlReportSession { session_id: session_id.clone(), batches_processed: self.processed_batches, total_pages: self.total_success_count, total_success: self.total_success_count, total_failed: 0, total_retries: 0, duration_ms, products_inserted: 0, products_updated: 0, timestamp: Utc::now() }).await { error!("emit crawl report failed: {}", e); }
+                                                if let Err(e) = context.emit_event(AppEvent::SessionCompleted { session_id: session_id.clone(), summary: summary.clone(), timestamp: Utc::now() }) { error!("emit completion event failed: {}", e); }
+                                                if let Err(e) = context.emit_event(AppEvent::CrawlReportSession { session_id: session_id.clone(), batches_processed: self.processed_batches, total_pages: self.total_success_count, total_success: self.total_success_count, total_failed: 0, total_retries: 0, duration_ms, products_inserted: 0, products_updated: 0, timestamp: Utc::now() }) { error!("emit crawl report failed: {}", e); }
                                             }
                                             Err(e) => {
                                                 error!("DB pool init failed: {}", e);
                                                 let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("DB pool init failed: {}", e), final_failure: true, timestamp: Utc::now() };
-                                                if let Err(er) = context.emit_event(fail_event).await { error!("emit fail event error: {}", er); }
+                                                if let Err(er) = context.emit_event(fail_event) { error!("emit fail event error: {}", er); }
                                                 self.state = SessionState::Failed { error: "db_pool_init".into() };
                                             }
                                         }
@@ -1056,7 +1046,7 @@ impl Actor for SessionActor {
                 timestamp: Utc::now(),
             };
 
-            let _ = context.emit_event(completion_event).await;
+            let _ = context.emit_event(completion_event);
         }
 
         info!("🏁 SessionActor {} execution loop ended", self.actor_id);

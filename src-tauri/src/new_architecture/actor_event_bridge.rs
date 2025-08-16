@@ -80,6 +80,7 @@ impl ActorEventBridge {
     }
 
     /// Actor 이벤트를 프론트엔드로 전달
+    #[allow(clippy::unused_async)]
     async fn forward_to_frontend(&self, actor_event: AppEvent) -> Result<(), String> {
         // AppEvent를 프론트엔드가 이해할 수 있는 형태로 변환
         let (event_name, event_data) = self.convert_actor_event_to_frontend(actor_event.clone())?;

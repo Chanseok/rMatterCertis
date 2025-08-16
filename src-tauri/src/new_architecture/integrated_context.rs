@@ -105,7 +105,7 @@ impl IntegratedContext {
     ///
     /// 설계 의도: 각 Actor, Task 레벨에서 독립적으로 이벤트 발행이 가능하게 하여
     /// 낮은 복잡성의 구현으로도 모든 경우를 다 커버할 수 있도록 함
-    pub async fn emit_event(&self, event: AppEvent) -> Result<usize, ContextError> {
+    pub fn emit_event(&self, event: AppEvent) -> Result<usize, ContextError> {
         // 내부 브로드캐스트 채널로 발행 (다른 컴포넌트들이 구독할 수 있도록)
         let subscriber_count = self
             .event_tx
@@ -315,13 +315,10 @@ mod tests {
             timestamp: chrono::Utc::now(),
         };
 
-        // emit_event is async returning Future
-        futures::executor::block_on(async {
-            context
-                .emit_event(event.clone())
-                .await
-                .expect("Should emit event");
-        });
+        // emit_event is synchronous
+        context
+            .emit_event(event.clone())
+            .expect("Should emit event");
 
         let received = event_rx.recv().await.expect("Should receive event");
         match received {

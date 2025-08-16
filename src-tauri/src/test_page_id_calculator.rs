@@ -1,6 +1,49 @@
 use crate::domain::pagination::CanonicalPageIdCalculator as PageIdCalculator;
 
-/// PageIdCalculator 테스트
+/// `PageIdCalculator` 통합 테스트를 위한 public 함수
+pub fn test_page_id_calculator() {
+    println!("=== PageIdCalculator 테스트 시작 ===");
+
+    // 실제 사이트 분석 결과를 시뮬레이션
+    let total_pages = 100;
+    let products_on_last_page = 8;
+
+    let calculator = PageIdCalculator::new(total_pages, products_on_last_page);
+
+    println!(
+        "총 페이지 수: {}, 마지막 페이지 제품 수: {}",
+        total_pages, products_on_last_page
+    );
+
+    // 여러 페이지와 인덱스 조합 테스트
+    let test_cases = vec![
+        (1, 0),   // 첫 번째 페이지, 첫 번째 제품
+        (1, 11),  // 첫 번째 페이지, 마지막 제품
+        (2, 0),   // 두 번째 페이지, 첫 번째 제품
+        (50, 5),  // 중간 페이지, 중간 제품
+        (100, 0), // 마지막 페이지, 첫 번째 제품
+        (100, 7), // 마지막 페이지, 마지막 제품
+    ];
+
+    for (page, index) in test_cases {
+        let result = calculator.calculate(page, index);
+        println!(
+            "페이지 {}, 인덱스 {} -> page_id: {}, index_in_page: {}",
+            page, index, result.page_id, result.index_in_page
+        );
+
+        // 모든 값이 0이 아닌지 확인
+        if result.page_id == 0 || result.index_in_page == 0 {
+            println!("❌ 경고: page_id 또는 index_in_page가 0입니다!");
+        } else {
+            println!("✅ 정상적인 값이 계산되었습니다.");
+        }
+    }
+
+    println!("=== PageIdCalculator 테스트 완료 ===");
+}
+
+/// `PageIdCalculator` 테스트
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,47 +121,4 @@ mod tests {
         assert_ne!(new_result.page_id, 0);
         assert_ne!(new_result.index_in_page, 0);
     }
-}
-
-/// 통합 테스트를 위한 public 함수
-pub fn test_page_id_calculator() {
-    println!("=== PageIdCalculator 테스트 시작 ===");
-
-    // 실제 사이트 분석 결과를 시뮬레이션
-    let total_pages = 100;
-    let products_on_last_page = 8;
-
-    let calculator = PageIdCalculator::new(total_pages, products_on_last_page);
-
-    println!(
-        "총 페이지 수: {}, 마지막 페이지 제품 수: {}",
-        total_pages, products_on_last_page
-    );
-
-    // 여러 페이지와 인덱스 조합 테스트
-    let test_cases = vec![
-        (1, 0),   // 첫 번째 페이지, 첫 번째 제품
-        (1, 11),  // 첫 번째 페이지, 마지막 제품
-        (2, 0),   // 두 번째 페이지, 첫 번째 제품
-        (50, 5),  // 중간 페이지, 중간 제품
-        (100, 0), // 마지막 페이지, 첫 번째 제품
-        (100, 7), // 마지막 페이지, 마지막 제품
-    ];
-
-    for (page, index) in test_cases {
-        let result = calculator.calculate(page, index);
-        println!(
-            "페이지 {}, 인덱스 {} -> page_id: {}, index_in_page: {}",
-            page, index, result.page_id, result.index_in_page
-        );
-
-        // 모든 값이 0이 아닌지 확인
-        if result.page_id == 0 || result.index_in_page == 0 {
-            println!("❌ 경고: page_id 또는 index_in_page가 0입니다!");
-        } else {
-            println!("✅ 정상적인 값이 계산되었습니다.");
-        }
-    }
-
-    println!("=== PageIdCalculator 테스트 완료 ===");
 }

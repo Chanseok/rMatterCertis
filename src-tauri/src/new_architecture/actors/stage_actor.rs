@@ -473,7 +473,7 @@ impl StageActor {
 
     /// 크롤링 엔진 초기화 (임시 구현)
     /// 현재는 시뮬레이션 모드이므로 실제 엔진 초기화는 건너뛰기
-    pub async fn initialize_default_engines(&mut self) -> Result<(), StageError> {
+    pub fn initialize_default_engines(&mut self) -> Result<(), StageError> {
         // Phase 3에서는 시뮬레이션 모드로 동작
         // 실제 크롤링 엔진 초기화는 향후 구현
         info!(
@@ -571,7 +571,6 @@ impl StageActor {
 
         context
             .emit_event(start_event)
-            .await
             .map_err(|e| StageError::ContextError(e.to_string()))?;
 
         // 상태를 Processing으로 전환
@@ -600,7 +599,6 @@ impl StageActor {
                 };
                 context
                     .emit_event(completion_event)
-                    .await
                     .map_err(|e| StageError::ContextError(e.to_string()))?;
                 info!(
                     "✅ Stage {:?} completed successfully: {}/{} items processed",
@@ -620,7 +618,6 @@ impl StageActor {
                 };
                 context
                     .emit_event(timeout_event)
-                    .await
                     .map_err(|e| StageError::ContextError(e.to_string()))?;
                 Err(error)
             }
@@ -638,7 +635,6 @@ impl StageActor {
                 };
                 context
                     .emit_event(failure_event)
-                    .await
                     .map_err(|er| StageError::ContextError(er.to_string()))?;
                 Err(e)
             }
@@ -759,34 +755,28 @@ impl StageActor {
                 let _permit = sem.acquire().await.map_err(|e| {
                     StageError::InitializationFailed(format!("Semaphore error: {}", e))
                 })?;
-                if let Err(e) = ctx_clone
-                    .emit_event(AppEvent::StageItemStarted {
-                        session_id: session_id_clone.clone(),
-                        batch_id: batch_id_opt.clone(),
-                        stage_type: stage_type_clone.clone(),
-                        item_id: base_item.id_string(),
-                        item_type: base_item.item_type_enum(),
-                        timestamp: Utc::now(),
-                    })
-                    .await
-                {
+                if let Err(e) = ctx_clone.emit_event(AppEvent::StageItemStarted {
+                    session_id: session_id_clone.clone(),
+                    batch_id: batch_id_opt.clone(),
+                    stage_type: stage_type_clone.clone(),
+                    item_id: base_item.id_string(),
+                    item_type: base_item.item_type_enum(),
+                    timestamp: Utc::now(),
+                }) {
                     tracing::error!("StageItemStarted emit failed: {}", e);
                 }
 
                 // Lifecycle coarse events AFTER StageItemStarted to preserve ordering
                 match (&stage_type_clone, &base_item) {
                     (StageType::ListPageCrawling, StageItem::Page(pn)) => {
-                        if let Err(e) = ctx_clone
-                            .emit_event(AppEvent::PageLifecycle {
-                                session_id: session_id_clone.clone(),
-                                batch_id: batch_id_opt.clone(),
-                                page_number: *pn,
-                                status: "fetch_started".into(),
-                                metrics: None,
-                                timestamp: Utc::now(),
-                            })
-                            .await
-                        {
+                        if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle {
+                            session_id: session_id_clone.clone(),
+                            batch_id: batch_id_opt.clone(),
+                            page_number: *pn,
+                            status: "fetch_started".into(),
+                            metrics: None,
+                            timestamp: Utc::now(),
+                        }) {
                             error!(
                                 "PageLifecycle fetch_started emit failed page={} err={}",
                                 pn, e
@@ -805,17 +795,14 @@ impl StageActor {
                             error: None,
                         };
                         let page_hint = urls.urls.first().map(|u| u.page_id as u32).unwrap_or(0u32);
-                        if let Err(e) = ctx_clone
-                            .emit_event(AppEvent::PageLifecycle {
-                                session_id: session_id_clone.clone(),
-                                batch_id: batch_id_opt.clone(),
-                                page_number: page_hint,
-                                status: "detail_scheduled".into(),
-                                metrics: Some(metrics),
-                                timestamp: Utc::now(),
-                            })
-                            .await
-                        {
+                        if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle {
+                            session_id: session_id_clone.clone(),
+                            batch_id: batch_id_opt.clone(),
+                            page_number: page_hint,
+                            status: "detail_scheduled".into(),
+                            metrics: Some(metrics),
+                            timestamp: Utc::now(),
+                        }) {
                             error!(
                                 "PageLifecycle detail_scheduled emit failed page={} err={}",
                                 page_hint, e
@@ -828,22 +815,19 @@ impl StageActor {
                         }
                         // Aggregate start event (new ProductLifecycleGroup)
                         debug!("[GroupedEmit] fetch_started_group total_urls={}", count);
-                        if let Err(e) = ctx_clone
-                            .emit_event(AppEvent::ProductLifecycleGroup {
-                                session_id: session_id_clone.clone(),
-                                batch_id: batch_id_opt.clone(),
-                                page_number: Some(page_hint),
-                                group_size: count,
-                                started: count,
-                                succeeded: 0,
-                                failed: 0,
-                                duplicates: 0,
-                                duration_ms: 0,
-                                phase: "fetch".into(),
-                                timestamp: Utc::now(),
-                            })
-                            .await
-                        {
+                        if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycleGroup {
+                            session_id: session_id_clone.clone(),
+                            batch_id: batch_id_opt.clone(),
+                            page_number: Some(page_hint),
+                            group_size: count,
+                            started: count,
+                            succeeded: 0,
+                            failed: 0,
+                            duplicates: 0,
+                            duration_ms: 0,
+                            phase: "fetch".into(),
+                            timestamp: Utc::now(),
+                        }) {
                             error!("ProductLifecycleGroup fetch_started emit failed err={}", e);
                         }
                     }
@@ -858,21 +842,18 @@ impl StageActor {
                             // Emit mapping summary once (PageLifecycle detail_mapping_emitted)
                             if let Some(first_url) = urls_wrapper.urls.first() {
                                 let page_hint = first_url.page_id as u32;
-                                if let Err(e) = ctx_clone
-                                    .emit_event(AppEvent::PageLifecycle {
-                                        session_id: session_id_clone.clone(),
-                                        batch_id: batch_id_opt.clone(),
-                                        page_number: page_hint,
-                                        status: "detail_mapping_emitted".into(),
-                                        metrics: Some(SimpleMetrics::Page {
-                                            url_count: Some(urls_wrapper.urls.len() as u32),
-                                            scheduled_details: Some(urls_wrapper.urls.len() as u32),
-                                            error: None,
-                                        }),
-                                        timestamp: Utc::now(),
-                                    })
-                                    .await
-                                {
+                                if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle {
+                                    session_id: session_id_clone.clone(),
+                                    batch_id: batch_id_opt.clone(),
+                                    page_number: page_hint,
+                                    status: "detail_mapping_emitted".into(),
+                                    metrics: Some(SimpleMetrics::Page {
+                                        url_count: Some(urls_wrapper.urls.len() as u32),
+                                        scheduled_details: Some(urls_wrapper.urls.len() as u32),
+                                        error: None,
+                                    }),
+                                    timestamp: Utc::now(),
+                                }) {
                                     error!(
                                         "PageLifecycle detail_mapping_emitted emit failed page={} err={}",
                                         page_hint, e
@@ -888,8 +869,8 @@ impl StageActor {
                                     let prod_ref = purl.url.clone();
                                     let origin_page = purl.page_id as u32;
                                     // started
-                                    if let Err(e) = ctx_clone
-                                        .emit_event(AppEvent::ProductLifecycle {
+                                    if let Err(e) =
+                                        ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                             session_id: session_id_clone.clone(),
                                             batch_id: batch_id_opt.clone(),
                                             page_number: Some(origin_page),
@@ -900,7 +881,6 @@ impl StageActor {
                                             metrics: None,
                                             timestamp: Utc::now(),
                                         })
-                                        .await
                                     {
                                         error!(
                                             "ProductLifecycle detail_started emit failed ref={} err={}",
@@ -912,8 +892,8 @@ impl StageActor {
                                         Ok(detail) => {
                                             let latency = single_start.elapsed().as_millis() as u64;
                                             // timing
-                                            if let Err(e) = ctx_clone
-                                                .emit_event(AppEvent::HttpRequestTiming {
+                                            if let Err(e) =
+                                                ctx_clone.emit_event(AppEvent::HttpRequestTiming {
                                                     session_id: session_id_clone.clone(),
                                                     batch_id: batch_id_opt.clone(),
                                                     request_kind: "detail_page".into(),
@@ -923,15 +903,14 @@ impl StageActor {
                                                     latency_ms: latency,
                                                     timestamp: Utc::now(),
                                                 })
-                                                .await
                                             {
                                                 error!(
                                                     "HttpRequestTiming detail_page emit failed ref={} err={}",
                                                     prod_ref, e
                                                 );
                                             }
-                                            if let Err(e) = ctx_clone
-                                                .emit_event(AppEvent::ProductLifecycle {
+                                            if let Err(e) =
+                                                ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                                     session_id: session_id_clone.clone(),
                                                     batch_id: batch_id_opt.clone(),
                                                     page_number: Some(origin_page),
@@ -942,7 +921,6 @@ impl StageActor {
                                                     metrics: None,
                                                     timestamp: Utc::now(),
                                                 })
-                                                .await
                                             {
                                                 error!(
                                                     "ProductLifecycle detail_completed emit failed ref={} err={}",
@@ -954,8 +932,8 @@ impl StageActor {
                                         Err(e) => {
                                             let latency = single_start.elapsed().as_millis() as u64;
                                             failures += 1;
-                                            if let Err(emit_err) = ctx_clone
-                                                .emit_event(AppEvent::HttpRequestTiming {
+                                            if let Err(emit_err) =
+                                                ctx_clone.emit_event(AppEvent::HttpRequestTiming {
                                                     session_id: session_id_clone.clone(),
                                                     batch_id: batch_id_opt.clone(),
                                                     request_kind: "detail_page".into(),
@@ -965,15 +943,14 @@ impl StageActor {
                                                     latency_ms: latency,
                                                     timestamp: Utc::now(),
                                                 })
-                                                .await
                                             {
                                                 error!(
                                                     "HttpRequestTiming detail_page (fail) emit failed ref={} err={}",
                                                     prod_ref, emit_err
                                                 );
                                             }
-                                            if let Err(emit_err) = ctx_clone
-                                                .emit_event(AppEvent::ProductLifecycle {
+                                            if let Err(emit_err) =
+                                                ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                                     session_id: session_id_clone.clone(),
                                                     batch_id: batch_id_opt.clone(),
                                                     page_number: Some(origin_page),
@@ -988,7 +965,6 @@ impl StageActor {
                                                     }),
                                                     timestamp: Utc::now(),
                                                 })
-                                                .await
                                             {
                                                 error!(
                                                     "ProductLifecycle detail_failed emit failed ref={} err={}",
@@ -1124,8 +1100,8 @@ impl StageActor {
                                     "[GroupedEmit] fetch_completed_group total_urls={} duration_ms={}",
                                     total, duration_ms
                                 );
-                                if let Err(e) = ctx_clone
-                                    .emit_event(AppEvent::ProductLifecycleGroup {
+                                if let Err(e) =
+                                    ctx_clone.emit_event(AppEvent::ProductLifecycleGroup {
                                         session_id: session_id_clone.clone(),
                                         batch_id: batch_id_opt.clone(),
                                         page_number: Some(page_hint),
@@ -1138,7 +1114,6 @@ impl StageActor {
                                         phase: "fetch".into(),
                                         timestamp: Utc::now(),
                                     })
-                                    .await
                                 {
                                     error!(
                                         "ProductLifecycleGroup fetch_completed emit failed err={}",
@@ -1202,8 +1177,8 @@ impl StageActor {
                                     .unwrap_or(false);
                                 if skip_save {
                                     info!("[Persist] Skipped by env MC_SKIP_DB_SAVE");
-                                    if let Err(e) = ctx_clone
-                                        .emit_event(AppEvent::ProductLifecycle {
+                                    if let Err(e) =
+                                        ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                             session_id: session_id_clone.clone(),
                                             batch_id: batch_id_opt.clone(),
                                             page_number: None,
@@ -1217,7 +1192,6 @@ impl StageActor {
                                             }),
                                             timestamp: Utc::now(),
                                         })
-                                        .await
                                     {
                                         error!(
                                             "ProductLifecycle persist_skipped emit failed err={}",
@@ -1230,8 +1204,8 @@ impl StageActor {
                                         StageItem::ProductDetails(d) => d.products.len() as u32,
                                         _ => 0,
                                     };
-                                    if let Err(e) = ctx_clone
-                                        .emit_event(AppEvent::ProductLifecycle {
+                                    if let Err(e) =
+                                        ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                             session_id: session_id_clone.clone(),
                                             batch_id: batch_id_opt.clone(),
                                             page_number: None,
@@ -1245,7 +1219,6 @@ impl StageActor {
                                             }),
                                             timestamp: Utc::now(),
                                         })
-                                        .await
                                     {
                                         error!(
                                             "ProductLifecycle persist_started emit failed err={}",
@@ -1257,22 +1230,20 @@ impl StageActor {
                                         info!(
                                             "[Persist] Empty batch (attempted_count=0) -> emit persist_empty and skip storage call"
                                         );
-                                        let _ = ctx_clone
-                                            .emit_event(AppEvent::ProductLifecycle {
-                                                session_id: session_id_clone.clone(),
-                                                batch_id: batch_id_opt.clone(),
-                                                page_number: None,
-                                                product_ref: "_batch_persist".into(),
-                                                status: "persist_empty".into(),
-                                                retry: None,
-                                                duration_ms: Some(0),
-                                                metrics: Some(SimpleMetrics::Generic {
-                                                    key: "persist_result".into(),
-                                                    value: "attempted=0".into(),
-                                                }),
-                                                timestamp: Utc::now(),
-                                            })
-                                            .await;
+                                        let _ = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                            session_id: session_id_clone.clone(),
+                                            batch_id: batch_id_opt.clone(),
+                                            page_number: None,
+                                            product_ref: "_batch_persist".into(),
+                                            status: "persist_empty".into(),
+                                            retry: None,
+                                            duration_ms: Some(0),
+                                            metrics: Some(SimpleMetrics::Generic {
+                                                key: "persist_result".into(),
+                                                value: "attempted=0".into(),
+                                            }),
+                                            timestamp: Utc::now(),
+                                        });
                                         return Ok(StageItemResult {
                                             item_id: "data_saving_empty".into(),
                                             item_type: StageItemType::Url {
@@ -1362,8 +1333,8 @@ impl StageActor {
                                                         unchanged
                                                     ),
                                                 };
-                                                let emit_res = ctx_clone
-                                                    .emit_event(AppEvent::ProductLifecycle {
+                                                let emit_res = ctx_clone.emit_event(
+                                                    AppEvent::ProductLifecycle {
                                                         session_id: session_id_clone.clone(),
                                                         batch_id: batch_id_opt.clone(),
                                                         page_number: None,
@@ -1376,8 +1347,8 @@ impl StageActor {
                                                         ),
                                                         metrics: Some(metrics),
                                                         timestamp: Utc::now(),
-                                                    })
-                                                    .await;
+                                                    },
+                                                );
                                                 match emit_res {
                                                     Ok(_) => info!(
                                                         "[PersistEmit] lifecycle emitted status={}",
@@ -1414,7 +1385,7 @@ impl StageActor {
                                                                 inserted,
                                                                 updated,
                                                                 timestamp: Utc::now(),
-                                                            }).await;
+                                                            });
                                                             // LogicalMappingDrift (placeholder): detect unexpected min/max inversion or large gap
                                                             if let (Some(min_p), Some(max_p)) =
                                                                 (minp, maxp)
@@ -1430,7 +1401,7 @@ impl StageActor {
                                                                         inserted,
                                                                         updated,
                                                                         timestamp: Utc::now(),
-                                                                    }).await;
+                                                                    });
                                                                 }
                                                             }
                                                         }
@@ -1443,8 +1414,8 @@ impl StageActor {
                                                     e,
                                                     persist_start.elapsed().as_millis()
                                                 );
-                                                let emit_res = ctx_clone
-                                                    .emit_event(AppEvent::ProductLifecycle {
+                                                let emit_res = ctx_clone.emit_event(
+                                                    AppEvent::ProductLifecycle {
                                                         session_id: session_id_clone.clone(),
                                                         batch_id: batch_id_opt.clone(),
                                                         page_number: None,
@@ -1460,8 +1431,8 @@ impl StageActor {
                                                             value: e.clone(),
                                                         }),
                                                         timestamp: Utc::now(),
-                                                    })
-                                                    .await;
+                                                    },
+                                                );
                                                 if let Err(e2) = emit_res {
                                                     error!(
                                                         "ProductLifecycle persist_failed emit failed err={}",
@@ -1482,29 +1453,26 @@ impl StageActor {
                                 }
                             }
                         }
-                        if let Err(e) = ctx_clone
-                            .emit_event(AppEvent::StageItemCompleted {
-                                session_id: session_id_clone.clone(),
-                                batch_id: batch_id_opt.clone(),
-                                stage_type: stage_type_clone.clone(),
-                                item_id: r.item_id.clone(),
-                                item_type: r.item_type.clone(),
-                                success: true,
-                                error: None,
-                                duration_ms: item_start.elapsed().as_millis() as u64,
-                                retry_count: r.retry_count,
-                                collected_count: r.collected_data.as_ref().map(|d| {
-                                    // JSON 배열일 가능성 높음 → 대략 길이 추정 (간단 처리)
-                                    if d.starts_with('[') {
-                                        d.matches("\"").count() as u32 / 2
-                                    } else {
-                                        1
-                                    }
-                                }),
-                                timestamp: Utc::now(),
-                            })
-                            .await
-                        {
+                        if let Err(e) = ctx_clone.emit_event(AppEvent::StageItemCompleted {
+                            session_id: session_id_clone.clone(),
+                            batch_id: batch_id_opt.clone(),
+                            stage_type: stage_type_clone.clone(),
+                            item_id: r.item_id.clone(),
+                            item_type: r.item_type.clone(),
+                            success: true,
+                            error: None,
+                            duration_ms: item_start.elapsed().as_millis() as u64,
+                            retry_count: r.retry_count,
+                            collected_count: r.collected_data.as_ref().map(|d| {
+                                // JSON 배열일 가능성 높음 → 대략 길이 추정 (간단 처리)
+                                if d.starts_with('[') {
+                                    d.matches("\"").count() as u32 / 2
+                                } else {
+                                    1
+                                }
+                            }),
+                            timestamp: Utc::now(),
+                        }) {
                             tracing::error!("StageItemCompleted emit failed: {}", e);
                         }
                         // Emit lifecycle completion for page or product aggregated result
@@ -1522,17 +1490,14 @@ impl StageActor {
                                     scheduled_details: None,
                                     error: None,
                                 };
-                            if let Err(e) = ctx_clone
-                                .emit_event(AppEvent::PageLifecycle {
-                                    session_id: session_id_clone.clone(),
-                                    batch_id: batch_id_opt.clone(),
-                                    page_number: *pn,
-                                    status: "fetch_completed".into(),
-                                    metrics: Some(metrics),
-                                    timestamp: Utc::now(),
-                                })
-                                .await
-                            {
+                            if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle {
+                                session_id: session_id_clone.clone(),
+                                batch_id: batch_id_opt.clone(),
+                                page_number: *pn,
+                                status: "fetch_completed".into(),
+                                metrics: Some(metrics),
+                                timestamp: Utc::now(),
+                            }) {
                                 error!(
                                     "PageLifecycle fetch_completed emit failed page={} err={}",
                                     pn, e
@@ -1545,23 +1510,20 @@ impl StageActor {
                         if let (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) =
                             (&stage_type_clone, &lifecycle_item)
                         {
-                            if let Err(e) = ctx_clone
-                                .emit_event(AppEvent::ProductLifecycle {
-                                    session_id: session_id_clone.clone(),
-                                    batch_id: batch_id_opt.clone(),
-                                    page_number: urls.urls.first().map(|u| u.page_id as u32),
-                                    product_ref: format!("_batch_urls_{}", urls.urls.len()),
-                                    status: "fetch_completed_group".into(),
-                                    retry: None,
-                                    duration_ms: Some(item_start.elapsed().as_millis() as u64),
-                                    metrics: Some(SimpleMetrics::Generic {
-                                        key: "group_size".into(),
-                                        value: urls.urls.len().to_string(),
-                                    }),
-                                    timestamp: Utc::now(),
-                                })
-                                .await
-                            {
+                            if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                session_id: session_id_clone.clone(),
+                                batch_id: batch_id_opt.clone(),
+                                page_number: urls.urls.first().map(|u| u.page_id as u32),
+                                product_ref: format!("_batch_urls_{}", urls.urls.len()),
+                                status: "fetch_completed_group".into(),
+                                retry: None,
+                                duration_ms: Some(item_start.elapsed().as_millis() as u64),
+                                metrics: Some(SimpleMetrics::Generic {
+                                    key: "group_size".into(),
+                                    value: urls.urls.len().to_string(),
+                                }),
+                                timestamp: Utc::now(),
+                            }) {
                                 error!(
                                     "ProductLifecycle fetch_completed_group emit failed err={}",
                                     e
@@ -1570,24 +1532,21 @@ impl StageActor {
                         }
                     }
                     Err(err) => {
-                        if let Err(e) = ctx_clone
-                            .emit_event(AppEvent::StageItemCompleted {
-                                session_id: session_id_clone.clone(),
-                                batch_id: batch_id_opt.clone(),
-                                stage_type: stage_type_clone.clone(),
-                                item_id: "unknown".into(),
-                                item_type: StageItemType::Url {
-                                    url_type: "unknown".into(),
-                                },
-                                success: false,
-                                error: Some(err.to_string()),
-                                duration_ms: item_start.elapsed().as_millis() as u64,
-                                retry_count: 0,
-                                collected_count: None,
-                                timestamp: Utc::now(),
-                            })
-                            .await
-                        {
+                        if let Err(e) = ctx_clone.emit_event(AppEvent::StageItemCompleted {
+                            session_id: session_id_clone.clone(),
+                            batch_id: batch_id_opt.clone(),
+                            stage_type: stage_type_clone.clone(),
+                            item_id: "unknown".into(),
+                            item_type: StageItemType::Url {
+                                url_type: "unknown".into(),
+                            },
+                            success: false,
+                            error: Some(err.to_string()),
+                            duration_ms: item_start.elapsed().as_millis() as u64,
+                            retry_count: 0,
+                            collected_count: None,
+                            timestamp: Utc::now(),
+                        }) {
                             tracing::error!("StageItemCompleted emit failed: {}", e);
                         }
                         if let (StageType::ListPageCrawling, StageItem::Page(pn)) =
@@ -1599,17 +1558,14 @@ impl StageActor {
                                     scheduled_details: None,
                                     error: Some(err.to_string()),
                                 };
-                            if let Err(e2) = ctx_clone
-                                .emit_event(AppEvent::PageLifecycle {
-                                    session_id: session_id_clone.clone(),
-                                    batch_id: batch_id_opt.clone(),
-                                    page_number: *pn,
-                                    status: "failed".into(),
-                                    metrics: Some(metrics),
-                                    timestamp: Utc::now(),
-                                })
-                                .await
-                            {
+                            if let Err(e2) = ctx_clone.emit_event(AppEvent::PageLifecycle {
+                                session_id: session_id_clone.clone(),
+                                batch_id: batch_id_opt.clone(),
+                                page_number: *pn,
+                                status: "failed".into(),
+                                metrics: Some(metrics),
+                                timestamp: Utc::now(),
+                            }) {
                                 error!("PageLifecycle failed emit failed page={} err={}", pn, e2);
                             } else {
                                 debug!("Emitted PageLifecycle failed page={}", pn);
@@ -1621,20 +1577,17 @@ impl StageActor {
                         {
                             for pu in &urls.urls {
                                 let metrics = crate::new_architecture::actors::types::SimpleMetrics::Product { fields: None, size_bytes: None, error: Some(err.to_string()) };
-                                if let Err(e2) = ctx_clone
-                                    .emit_event(AppEvent::ProductLifecycle {
-                                        session_id: session_id_clone.clone(),
-                                        batch_id: batch_id_opt.clone(),
-                                        page_number: Some(pu.page_id as u32),
-                                        product_ref: pu.url.clone(),
-                                        status: "failed".into(),
-                                        retry: None,
-                                        duration_ms: Some(item_start.elapsed().as_millis() as u64),
-                                        metrics: Some(metrics),
-                                        timestamp: Utc::now(),
-                                    })
-                                    .await
-                                {
+                                if let Err(e2) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                    session_id: session_id_clone.clone(),
+                                    batch_id: batch_id_opt.clone(),
+                                    page_number: Some(pu.page_id as u32),
+                                    product_ref: pu.url.clone(),
+                                    status: "failed".into(),
+                                    retry: None,
+                                    duration_ms: Some(item_start.elapsed().as_millis() as u64),
+                                    metrics: Some(metrics),
+                                    timestamp: Utc::now(),
+                                }) {
                                     error!(
                                         "ProductLifecycle failed emit failed product={} err={}",
                                         pu.url, e2
