@@ -1,10 +1,10 @@
 //! 실시간 크롤링 대시보드를 위한 데이터 타입
 //! Phase C - Option A: UI 대시보드와 Backend 연동
 
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use ts_rs::TS;
 
 /// 실시간 대시보드 상태
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -281,7 +281,11 @@ pub enum DashboardEvent {
     /// 세션 시작
     SessionStarted { session: ActiveCrawlingSession },
     /// 진행 상황 업데이트
-    ProgressUpdate { session_id: String, progress: f64, stage_progress: f64 },
+    ProgressUpdate {
+        session_id: String,
+        progress: f64,
+        stage_progress: f64,
+    },
     /// 성능 메트릭 업데이트
     PerformanceUpdate { metrics: RealtimePerformanceMetrics },
     /// 세션 완료

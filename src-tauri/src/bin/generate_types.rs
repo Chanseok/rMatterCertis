@@ -1,17 +1,23 @@
 // TypeScript 타입 생성을 위한 바이너리
-use matter_certis_v2_lib::types::frontend_api::{
-    AdvancedCrawlingConfig, CrawlingProgressInfo
-};
+use matter_certis_v2_lib::types::frontend_api::{AdvancedCrawlingConfig, CrawlingProgressInfo};
 // Legacy v4 crawling types removed – using placeholder minimal mirrored types if needed
 #[derive(ts_rs::TS)]
 #[ts(export)]
-pub struct CrawlingResponse { pub success: bool, pub message: String }
+pub struct CrawlingResponse {
+    pub success: bool,
+    pub message: String,
+}
 #[derive(ts_rs::TS)]
 #[ts(export)]
-pub struct SystemStatePayload { pub is_running: bool }
+pub struct SystemStatePayload {
+    pub is_running: bool,
+}
 #[derive(ts_rs::TS)]
 #[ts(export)]
-pub struct V4StartCrawlingRequest { pub start_page: u32, pub end_page: u32 }
+pub struct V4StartCrawlingRequest {
+    pub start_page: u32,
+    pub end_page: u32,
+}
 use matter_certis_v2_lib::domain::product::*;
 use matter_certis_v2_lib::domain::product_url::*;
 use matter_certis_v2_lib::domain::services::crawling_services::*;
@@ -19,30 +25,81 @@ use matter_certis_v2_lib::domain::services::crawling_services::*;
 fn main() {
     // ts-rs는 타입이 실제로 사용될 때만 TypeScript 파일을 생성합니다.
     // 이 바이너리는 모든 ts(export) 타입들을 참조하여 생성을 강제합니다.
-    
+
     // 명령어 타입들
-    println!("AdvancedCrawlingConfig: {:?}", std::any::type_name::<AdvancedCrawlingConfig>());
-    println!("CrawlingProgressInfo: {:?}", std::any::type_name::<CrawlingProgressInfo>());
-    println!("SystemStatePayload: {:?}", std::any::type_name::<SystemStatePayload>());
-    println!("CrawlingResponse: {:?}", std::any::type_name::<CrawlingResponse>());
-    println!("V4StartCrawlingRequest: {:?}", std::any::type_name::<V4StartCrawlingRequest>());
-    
+    println!(
+        "AdvancedCrawlingConfig: {:?}",
+        std::any::type_name::<AdvancedCrawlingConfig>()
+    );
+    println!(
+        "CrawlingProgressInfo: {:?}",
+        std::any::type_name::<CrawlingProgressInfo>()
+    );
+    println!(
+        "SystemStatePayload: {:?}",
+        std::any::type_name::<SystemStatePayload>()
+    );
+    println!(
+        "CrawlingResponse: {:?}",
+        std::any::type_name::<CrawlingResponse>()
+    );
+    println!(
+        "V4StartCrawlingRequest: {:?}",
+        std::any::type_name::<V4StartCrawlingRequest>()
+    );
+
     // 도메인 타입들
     println!("Product: {:?}", std::any::type_name::<Product>());
-    println!("ProductDetail: {:?}", std::any::type_name::<ProductDetail>());
+    println!(
+        "ProductDetail: {:?}",
+        std::any::type_name::<ProductDetail>()
+    );
     println!("ProductUrl: {:?}", std::any::type_name::<ProductUrl>());
     println!("SiteStatus: {:?}", std::any::type_name::<SiteStatus>());
-    println!("DatabaseAnalysis: {:?}", std::any::type_name::<DatabaseAnalysis>());
-    println!("FieldAnalysis: {:?}", std::any::type_name::<FieldAnalysis>());
-    println!("DuplicateAnalysis: {:?}", std::any::type_name::<DuplicateAnalysis>());
-    println!("ProcessingStrategy: {:?}", std::any::type_name::<ProcessingStrategy>());
-    println!("CrawlingRangeRecommendation: {:?}", std::any::type_name::<CrawlingRangeRecommendation>());
-    println!("SiteDataChangeStatus: {:?}", std::any::type_name::<SiteDataChangeStatus>());
-    println!("DataDecreaseRecommendation: {:?}", std::any::type_name::<DataDecreaseRecommendation>());
-    println!("RecommendedAction: {:?}", std::any::type_name::<RecommendedAction>());
-    println!("SeverityLevel: {:?}", std::any::type_name::<SeverityLevel>());
-    println!("DuplicateGroup: {:?}", std::any::type_name::<DuplicateGroup>());
-    println!("DuplicateType: {:?}", std::any::type_name::<DuplicateType>());
+    println!(
+        "DatabaseAnalysis: {:?}",
+        std::any::type_name::<DatabaseAnalysis>()
+    );
+    println!(
+        "FieldAnalysis: {:?}",
+        std::any::type_name::<FieldAnalysis>()
+    );
+    println!(
+        "DuplicateAnalysis: {:?}",
+        std::any::type_name::<DuplicateAnalysis>()
+    );
+    println!(
+        "ProcessingStrategy: {:?}",
+        std::any::type_name::<ProcessingStrategy>()
+    );
+    println!(
+        "CrawlingRangeRecommendation: {:?}",
+        std::any::type_name::<CrawlingRangeRecommendation>()
+    );
+    println!(
+        "SiteDataChangeStatus: {:?}",
+        std::any::type_name::<SiteDataChangeStatus>()
+    );
+    println!(
+        "DataDecreaseRecommendation: {:?}",
+        std::any::type_name::<DataDecreaseRecommendation>()
+    );
+    println!(
+        "RecommendedAction: {:?}",
+        std::any::type_name::<RecommendedAction>()
+    );
+    println!(
+        "SeverityLevel: {:?}",
+        std::any::type_name::<SeverityLevel>()
+    );
+    println!(
+        "DuplicateGroup: {:?}",
+        std::any::type_name::<DuplicateGroup>()
+    );
+    println!(
+        "DuplicateType: {:?}",
+        std::any::type_name::<DuplicateType>()
+    );
 
     // Default 생성자로 타입 인스턴스 생성 시도
     let _result = std::panic::catch_unwind(|| {
@@ -50,7 +107,7 @@ fn main() {
         let _: Option<AdvancedCrawlingConfig> = None;
         let _: Option<CrawlingProgressInfo> = None;
         let _: Option<V4StartCrawlingRequest> = None;
-        
+
         // 도메인 타입들
         let _: Option<Product> = None;
         let _: Option<ProductDetail> = None;

@@ -45,12 +45,29 @@ if [[ ! -f "${LOG_FILE}" ]]; then
   echo "[ERR] Log file not found: ${LOG_FILE}" >&2; exit 10
 fi
 
+# Derive sibling logs to support split logging (events.log + back_front.log)
+LOG_DIR=$(dirname "${LOG_FILE}")
+EVENTS_LOG="${LOG_DIR}/events.log"
+BACK_FRONT_LOG="${LOG_DIR}/back_front.log"
+
+# Choose files for different checks
+# - KPI/structured events: prefer events.log if it exists
+# - Stage textual lines: prefer back_front.log if it exists
+KPI_FILE="${LOG_FILE}"
+STAGE_FILE="${LOG_FILE}"
+if [[ -f "${EVENTS_LOG}" ]]; then
+  KPI_FILE="${EVENTS_LOG}"
+fi
+if [[ -f "${BACK_FRONT_LOG}" ]]; then
+  STAGE_FILE="${BACK_FRONT_LOG}"
+fi
+
 plan_lines=$(grep -a "📋 CrawlingPlan created:" "${LOG_FILE}" || true)
 plan_count=$(printf "%s" "${plan_lines}" | grep -c "CrawlingPlan created" || true)
 
 # Fallback: structured plan_created event
 if [[ ${plan_count} -eq 0 ]]; then
-  structured_plan_line=$(grep -a '"event":"plan_created"' "${LOG_FILE}" | tail -n1 || true)
+  structured_plan_line=$(grep -a '"event":"plan_created"' "${KPI_FILE}" | tail -n1 || true)
   if [[ -n "${structured_plan_line}" ]]; then
     plan_count=1
     plan_lines="${structured_plan_line}"
@@ -73,9 +90,9 @@ else
   # Count list phases inside the single legacy plan line
   list_phase_count=$(printf "%s" "${plan_lines}" | grep -o "phase_type: ListPageCrawling" | wc -l | tr -d ' ')
 fi
-# Stage 2 start & completion counts
-stage2_start_count=$(grep -a "Starting Stage 2: ListPageCrawling" "${LOG_FILE}" | wc -l | tr -d ' ')
-stage2_done_count=$(grep -a "Stage 2 (ListPageCrawling) completed" "${LOG_FILE}" | wc -l | tr -d ' ')
+# Stage 2 start & completion counts (from stage/text log file)
+stage2_start_count=$(grep -a "Starting Stage 2: ListPageCrawling" "${STAGE_FILE}" | wc -l | tr -d ' ')
+stage2_done_count=$(grep -a "Stage 2 (ListPageCrawling) completed" "${STAGE_FILE}" | wc -l | tr -d ' ')
 
 if [[ ${list_phase_count} -ne ${stage2_start_count} ]]; then
   echo "[FAIL] Phase/start mismatch: phases=${list_phase_count} starts=${stage2_start_count}"; exit 13
@@ -128,7 +145,7 @@ if [[ ${range_loop_enters} -gt 0 && ${list_phase_count} -eq 0 ]]; then
 fi
 
 # Non-fatal warning if structured incomplete event present
-if grep -a -q '"event":"range_loop_incomplete"' "${LOG_FILE}"; then
+if grep -a -q '"event":"range_loop_incomplete"' "${KPI_FILE}"; then
   echo "[WARN] range_loop_incomplete KPI present (some ranges not executed)";
 fi
 
@@ -136,11 +153,18 @@ fi
 # Structured KPI validation (Step 7)
 # Skip if disabled explicitly
 if [[ "${DISABLE_STRUCTURED_CHECKS:-0}" != "1" ]]; then
-  plan_created_line=$(grep -a 'kpi.plan' "${LOG_FILE}" | grep '"event":"plan_created"' | tail -n1 || true)
-  plan_hash_line=$(grep -a 'kpi.plan' "${LOG_FILE}" | grep '"event":"plan_hash_assigned"' | tail -n1 || true)
-  session_summary_line=$(grep -a 'kpi.session' "${LOG_FILE}" | grep '"event":"session_summary"' | tail -n1 || true)
-  batch_start_lines=$(grep -a 'kpi.batch' "${LOG_FILE}" | grep '"event":"batch_start"' || true)
-  batch_complete_lines=$(grep -a 'kpi.batch' "${LOG_FILE}" | grep '"event":"batch_complete"' || true)
+  plan_created_line=$(grep -a 'kpi.plan' "${KPI_FILE}" | grep '"event":"plan_created"' | tail -n1 || true)
+  plan_hash_line=$(grep -a 'kpi.plan' "${KPI_FILE}" | grep '"event":"plan_hash_assigned"' | tail -n1 || true)
+  session_summary_line=$(grep -a 'kpi.session' "${KPI_FILE}" | grep '"event":"session_summary"' | tail -n1 || true)
+  batch_start_lines=$(grep -a 'kpi.batch' "${KPI_FILE}" | grep '"event":"batch_start"' || true)
+  batch_complete_lines=$(grep -a 'kpi.batch' "${KPI_FILE}" | grep '"event":"batch_complete"' || true)
+
+  # Scope KPI batch events to the latest session_id to avoid cross-session mismatches in aggregated logs
+  session_id_session=$(echo "${session_summary_line}" | sed -E 's/.*"session_id":"([^"]+)".*/\1/' )
+  if [[ -n "${session_id_session}" ]]; then
+    batch_start_lines=$(printf "%s" "${batch_start_lines}" | grep -F '"session_id":"' | grep -F "\"session_id\":\"${session_id_session}\"" || true)
+    batch_complete_lines=$(printf "%s" "${batch_complete_lines}" | grep -F '"session_id":"' | grep -F "\"session_id\":\"${session_id_session}\"" || true)
+  fi
 
   if [[ -z "${session_summary_line}" ]]; then
     echo "[FAIL] Missing session_summary structured event"; exit 22
@@ -199,9 +223,9 @@ if [[ "${DISABLE_STRUCTURED_CHECKS:-0}" != "1" ]]; then
 fi
 
 # Per-product detail lifecycle basic sanity (non-fatal warnings first run)
-detail_started=$(grep -a '"status":"detail_started"' "${LOG_FILE}" | wc -l | tr -d ' ' || true)
-detail_completed=$(grep -a '"status":"detail_completed"' "${LOG_FILE}" | wc -l | tr -d ' ' || true)
-detail_failed=$(grep -a '"status":"detail_failed"' "${LOG_FILE}" | wc -l | tr -d ' ' || true)
+detail_started=$(grep -a '"status":"detail_started"' "${KPI_FILE}" | wc -l | tr -d ' ' || true)
+detail_completed=$(grep -a '"status":"detail_completed"' "${KPI_FILE}" | wc -l | tr -d ' ' || true)
+detail_failed=$(grep -a '"status":"detail_failed"' "${KPI_FILE}" | wc -l | tr -d ' ' || true)
 if [[ ${detail_started} -gt 0 ]]; then
   if [[ $((detail_completed + detail_failed)) -ne ${detail_started} ]]; then
     echo "[WARN] detail_started (${detail_started}) != completed+failed ($((detail_completed + detail_failed)))"

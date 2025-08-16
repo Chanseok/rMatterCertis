@@ -1,12 +1,12 @@
-use tauri::State;
-use serde::{Deserialize, Serialize};
-use ts_rs::TS;
-use tracing::{info, error};
 use chrono::DateTime;
+use serde::{Deserialize, Serialize};
+use tauri::State;
+use tracing::{error, info};
+use ts_rs::TS;
 
 use crate::application::AppState;
-use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
-use crate::domain::product::Product; // 올바른 Product 타입 사용
+use crate::domain::product::Product;
+use crate::infrastructure::integrated_product_repository::IntegratedProductRepository; // 올바른 Product 타입 사용
 
 /// 제품 페이지 응답
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -49,7 +49,7 @@ pub async fn get_products_page(
 ) -> Result<ProductPage, String> {
     let pool = state.get_database_pool().await?;
     let repo = IntegratedProductRepository::new(pool);
-    
+
     match repo.get_products_paginated(page as i32, size as i32).await {
         Ok(products) => {
             // 전체 개수 조회 (향후 최적화 가능)
@@ -60,11 +60,16 @@ pub async fn get_products_page(
                     0
                 }
             };
-            
+
             let has_next = (page + 1) * size < total_count;
-            
-            info!("✅ Retrieved {} products for page {} (size: {})", products.len(), page, size);
-            
+
+            info!(
+                "✅ Retrieved {} products for page {} (size: {})",
+                products.len(),
+                page,
+                size
+            );
+
             Ok(ProductPage {
                 products,
                 total_count,
@@ -88,7 +93,7 @@ pub async fn get_latest_products(
 ) -> Result<Vec<Product>, String> {
     let pool = state.get_database_pool().await?;
     let repo = IntegratedProductRepository::new(pool);
-    
+
     match repo.get_latest_updated_products(limit).await {
         Ok(products) => {
             info!("✅ Retrieved {} latest updated products", products.len());
@@ -103,10 +108,12 @@ pub async fn get_latest_products(
 
 /// 크롤링 상태 조회 (Backend-Only CRUD)
 #[tauri::command]
-pub async fn get_crawling_status_v2(state: State<'_, AppState>) -> Result<CrawlingStatusInfo, String> {
+pub async fn get_crawling_status_v2(
+    state: State<'_, AppState>,
+) -> Result<CrawlingStatusInfo, String> {
     let current_session = state.current_session.read().await;
     let current_progress = state.current_progress.read().await;
-    
+
     let status = CrawlingStatusInfo {
         is_running: current_session.is_some(),
         current_page: Some(current_progress.current),
@@ -114,8 +121,11 @@ pub async fn get_crawling_status_v2(state: State<'_, AppState>) -> Result<Crawli
         last_updated: None, // CrawlingProgress doesn't have last_updated field
         session_id: current_session.as_ref().map(|s| s.id.clone()),
     };
-    
-    info!("✅ Retrieved crawling status: running={}", status.is_running);
+
+    info!(
+        "✅ Retrieved crawling status: running={}",
+        status.is_running
+    );
     Ok(status)
 }
 
@@ -124,40 +134,42 @@ pub async fn get_crawling_status_v2(state: State<'_, AppState>) -> Result<Crawli
 pub async fn get_system_status(state: State<'_, AppState>) -> Result<SystemStatus, String> {
     // 데이터베이스 연결 확인
     let database_connected = state.get_database_pool().await.is_ok();
-    
+
     let (total_products, last_crawl_time) = if database_connected {
         let pool = state.get_database_pool().await?;
         let repo = IntegratedProductRepository::new(pool);
-        
+
         let total = match repo.count_products().await {
             Ok(count) => count as u32,
             Err(_) => 0,
         };
-        
+
         let last_updated = match repo.get_latest_updated_product().await {
             Ok(Some(product)) => Some(product.updated_at),
             _ => None,
         };
-        
+
         (total, last_updated)
     } else {
         (0, None)
     };
-    
+
     // 설정 로딩 상태 확인
     let config_guard = state.config.read().await;
     let config_loaded = true; // config가 항상 로드되어 있음
     drop(config_guard);
-    
+
     let status = SystemStatus {
         database_connected,
         total_products,
         last_crawl_time,
         config_loaded,
     };
-    
-    info!("✅ System status: db_connected={}, total_products={}, config_loaded={}", 
-          status.database_connected, status.total_products, status.config_loaded);
-    
+
+    info!(
+        "✅ System status: db_connected={}, total_products={}, config_loaded={}",
+        status.database_connected, status.total_products, status.config_loaded
+    );
+
     Ok(status)
 }

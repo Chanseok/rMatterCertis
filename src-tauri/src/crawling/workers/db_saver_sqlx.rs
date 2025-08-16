@@ -2,16 +2,16 @@
 //!
 //! Saves parsed product data to the database with optimized batch operations.
 
-use std::sync::Arc;
-use std::time::Instant;
 use async_trait::async_trait;
 use sqlx::{Pool, Sqlite, Transaction};
+use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex;
 
-use crate::crawling::{tasks::*, state::*};
-use crate::domain::value_objects::ProductData;
-use crate::crawling::tasks::TaskProductData;
 use super::{Worker, WorkerError};
+use crate::crawling::tasks::TaskProductData;
+use crate::crawling::{state::*, tasks::*};
+use crate::domain::value_objects::ProductData;
 
 /// Worker that saves product data to the database
 pub struct DbSaver {
@@ -30,13 +30,15 @@ impl DbSaver {
 
     /// Saves a single product to the database
     async fn save_product(&self, product: &ProductData) -> Result<(), WorkerError> {
-        let mut tx = self.pool.begin().await
-            .map_err(|e| WorkerError::DatabaseError(format!("Failed to begin transaction: {}", e)))?;
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            WorkerError::DatabaseError(format!("Failed to begin transaction: {}", e))
+        })?;
 
         self.insert_product(&mut tx, product).await?;
 
-        tx.commit().await
-            .map_err(|e| WorkerError::DatabaseError(format!("Failed to commit transaction: {}", e)))?;
+        tx.commit().await.map_err(|e| {
+            WorkerError::DatabaseError(format!("Failed to commit transaction: {}", e))
+        })?;
 
         Ok(())
     }
@@ -47,28 +49,44 @@ impl DbSaver {
             return Ok(());
         }
 
-        let mut tx = self.pool.begin().await
-            .map_err(|e| WorkerError::DatabaseError(format!("Failed to begin transaction: {}", e)))?;
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            WorkerError::DatabaseError(format!("Failed to begin transaction: {}", e))
+        })?;
 
         for product in products {
             self.insert_product(&mut tx, product).await?;
         }
 
-        tx.commit().await
-            .map_err(|e| WorkerError::DatabaseError(format!("Failed to commit batch transaction: {}", e)))?;
+        tx.commit().await.map_err(|e| {
+            WorkerError::DatabaseError(format!("Failed to commit batch transaction: {}", e))
+        })?;
 
         tracing::info!("Saved batch of {} products to database", products.len());
         Ok(())
     }
 
     /// Inserts a single product into the database within a transaction
-    async fn insert_product(&self, tx: &mut Transaction<'_, Sqlite>, product: &ProductData) -> Result<(), WorkerError> {
+    async fn insert_product(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        product: &ProductData,
+    ) -> Result<(), WorkerError> {
         // Generate ID from page_id and index_in_page if available
-        let generated_id = if let (Some(page_id), Some(index_in_page)) = (product.page_id, product.index_in_page) {
+        let generated_id = if let (Some(page_id), Some(index_in_page)) =
+            (product.page_id, product.index_in_page)
+        {
             format!("p{:04}i{:02}", page_id, index_in_page)
         } else {
             // Fallback ID if pagination coordinates are not available
-            format!("url_{}", product.source_url.as_str().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect::<String>())
+            format!(
+                "url_{}",
+                product
+                    .source_url
+                    .as_str()
+                    .chars()
+                    .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                    .collect::<String>()
+            )
         };
 
         // Use parameterized query instead of sqlx! macro to avoid compilation-time database dependency
@@ -85,7 +103,7 @@ impl DbSaver {
                 index_in_page = excluded.index_in_page,
                 updated_at = excluded.updated_at
         ";
-        
+
         sqlx::query(query)
             .bind(&generated_id)
             .bind(product.source_url.as_str())
@@ -99,7 +117,7 @@ impl DbSaver {
             .execute(&mut **tx)
             .await
             .map_err(|e| WorkerError::DatabaseError(format!("Failed to insert product: {}", e)))?;
-        
+
         // Concise visibility for domain coordinates persistence
         tracing::info!(
             "Successfully inserted product: {} with ID: {} (page_id={}, index_in_page={})",
@@ -108,7 +126,7 @@ impl DbSaver {
             product.page_id.unwrap_or(0),
             product.index_in_page.unwrap_or(0)
         );
-        
+
         Ok(())
     }
 
@@ -129,9 +147,9 @@ impl DbSaver {
 
         let products = buffer.drain(..).collect::<Vec<_>>();
         let count = products.len();
-        
+
         drop(buffer); // Release lock before database operation
-        
+
         self.save_batch(&products).await?;
         Ok(count)
     }
@@ -141,45 +159,52 @@ impl DbSaver {
         sqlx::query("SELECT 1")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| WorkerError::DatabaseError(format!("Database connection validation failed: {}", e)))?;
-        
+            .map_err(|e| {
+                WorkerError::DatabaseError(format!("Database connection validation failed: {}", e))
+            })?;
+
         Ok(())
     }
 
-
     /// Convert TaskProductData to domain ProductData
-    fn convert_task_product_to_domain(&self, task_product: &TaskProductData) -> Result<ProductData, WorkerError> {
+    fn convert_task_product_to_domain(
+        &self,
+        task_product: &TaskProductData,
+    ) -> Result<ProductData, WorkerError> {
         // Create a validated URL
-        let validated_url = crate::domain::value_objects::ValidatedUrl::new(task_product.source_url.clone())
-            .map_err(|e| WorkerError::InvalidInput(format!("Invalid URL: {}", e)))?;
+        let validated_url =
+            crate::domain::value_objects::ValidatedUrl::new(task_product.source_url.clone())
+                .map_err(|e| WorkerError::InvalidInput(format!("Invalid URL: {}", e)))?;
 
         // Generate product ID from page_id and index_in_page if available
-        let product_id = if let (Some(page_id), Some(index_in_page)) = (task_product.page_id, task_product.index_in_page) {
+        let product_id = if let (Some(page_id), Some(index_in_page)) =
+            (task_product.page_id, task_product.index_in_page)
+        {
             format!("p{:04}i{:02}", page_id, index_in_page)
         } else {
             task_product.product_id.clone()
         };
 
         // Create the domain product data with pagination coordinates
-        let mut product_data = ProductData::new(
-            product_id,
-            task_product.name.clone(),
-            validated_url,
-        )
-        .map_err(|e| WorkerError::InvalidInput(format!("Invalid product data: {}", e)))?
-        .with_category(task_product.category.clone())
-        .with_manufacturer(task_product.manufacturer.clone())
-        .with_model(task_product.model.clone())
-        .with_certification(
-            task_product.certification_number.clone(),
-            task_product.certification_date
-                .as_ref()
-                .and_then(|date_str| chrono::DateTime::parse_from_rfc3339(date_str).ok())
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-        );
+        let mut product_data =
+            ProductData::new(product_id, task_product.name.clone(), validated_url)
+                .map_err(|e| WorkerError::InvalidInput(format!("Invalid product data: {}", e)))?
+                .with_category(task_product.category.clone())
+                .with_manufacturer(task_product.manufacturer.clone())
+                .with_model(task_product.model.clone())
+                .with_certification(
+                    task_product.certification_number.clone(),
+                    task_product
+                        .certification_date
+                        .as_ref()
+                        .and_then(|date_str| chrono::DateTime::parse_from_rfc3339(date_str).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc)),
+                );
 
         // Set pagination coordinates if available
-        if let (Some(page_id), Some(index_in_page)) = (task_product.page_id, task_product.index_in_page) {
+        if let (Some(page_id), Some(index_in_page)) =
+            (task_product.page_id, task_product.index_in_page)
+        {
             product_data = product_data.with_pagination_coordinates(page_id, index_in_page);
         }
 
@@ -222,12 +247,19 @@ impl Worker<CrawlingTask> for DbSaver {
         let start_time = Instant::now();
 
         match task {
-            CrawlingTask::SaveProduct { task_id, product_data } => {
+            CrawlingTask::SaveProduct {
+                task_id,
+                product_data,
+            } => {
                 if shared_state.is_shutdown_requested() {
                     return Err(WorkerError::Cancelled);
                 }
 
-                tracing::info!("Saving product: {} - {}", product_data.product_id, product_data.name);
+                tracing::info!(
+                    "Saving product: {} - {}",
+                    product_data.product_id,
+                    product_data.name
+                );
 
                 // Convert TaskProductData to ProductData
                 let domain_product = self.convert_task_product_to_domain(&product_data)?;
@@ -249,7 +281,7 @@ impl Worker<CrawlingTask> for DbSaver {
                 // Update statistics
                 let mut stats = shared_state.stats.write().await;
                 stats.products_saved += 1;
-                
+
                 let duration = start_time.elapsed();
                 stats.record_task_completion("save_product", duration);
 
@@ -269,7 +301,7 @@ impl Worker<CrawlingTask> for DbSaver {
                 })
             }
             _ => Err(WorkerError::ValidationError(
-                "DbSaver can only process SaveProduct tasks".to_string()
+                "DbSaver can only process SaveProduct tasks".to_string(),
             )),
         }
     }
@@ -281,7 +313,7 @@ impl Drop for DbSaver {
         // Note: This is a best-effort cleanup, doesn't handle errors
         let buffer = self.batch_buffer.clone();
         let pool = self.pool.clone();
-        
+
         tokio::spawn(async move {
             if let Ok(mut buffer) = buffer.try_lock() {
                 if !buffer.is_empty() {
@@ -291,8 +323,16 @@ impl Drop for DbSaver {
                         if let Some(mut tx) = tx {
                             for product in &products {
                                 // Generate fallback ID for cleanup
-                                let cleanup_id = format!("cleanup_{}", product.source_url.as_str().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect::<String>());
-                                
+                                let cleanup_id = format!(
+                                    "cleanup_{}",
+                                    product
+                                        .source_url
+                                        .as_str()
+                                        .chars()
+                                        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                                        .collect::<String>()
+                                );
+
                                 // Use parameterized query instead of sqlx! macro
                                 let query = r"
                                     INSERT INTO products (
@@ -307,7 +347,7 @@ impl Drop for DbSaver {
                                         index_in_page = excluded.index_in_page,
                                         updated_at = excluded.updated_at
                                 ";
-                                
+
                                 let _ = sqlx::query(query)
                                     .bind(&cleanup_id)
                                     .bind(product.source_url.as_str())
@@ -321,7 +361,7 @@ impl Drop for DbSaver {
                                     .bind(product.extracted_at)
                                     .execute(tx.as_mut())
                                     .await;
-                                
+
                                 tracing::info!("Inserted product during cleanup: {}", product.name);
                             }
                             let _ = tx.commit().await;
@@ -342,21 +382,22 @@ mod tests {
     async fn batch_management() {
         // Note: This test would need a real database connection
         // For now, we test the batch buffer logic
-        
+
         let mock_pool = Pool::<Sqlite>::connect("sqlite::memory:").await;
         if mock_pool.is_err() {
             // Skip test if no database available
             return;
         }
 
-    let db_saver = DbSaver::new(mock_pool.unwrap());
+        let db_saver = DbSaver::new(mock_pool.unwrap());
 
         // Test batch buffer
         let product = ProductData::new(
             "test123".to_string(),
             "Test Product".to_string(),
             crate::domain::ValidatedUrl::new("https://example.com/test".to_string()).unwrap(),
-        ).unwrap()
+        )
+        .unwrap()
         .with_manufacturer(Some("Test Company".to_string()));
 
         // Add products to batch
@@ -377,7 +418,7 @@ mod tests {
             return;
         }
 
-    let db_saver = DbSaver::new(mock_pool.unwrap());
+        let db_saver = DbSaver::new(mock_pool.unwrap());
 
         assert_eq!(db_saver.worker_name(), "DbSaver");
         assert_eq!(db_saver.max_concurrency(), 4);

@@ -1,11 +1,11 @@
 //! Event types for real-time communication between backend and frontend
-//! 
+//!
 //! This module defines all event types that will be emitted from the Rust backend
 //! to the SolidJS frontend for real-time updates during crawling operations.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 /// Represents the current stage of the crawling process
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -126,11 +126,11 @@ impl CrawlingProgress {
         } else {
             self.percentage = 0.0;
         }
-        
+
         // Calculate elapsed time
         let now = Utc::now();
         self.elapsed_time = (now - start_time).num_seconds().max(0) as u64;
-        
+
         // Estimate remaining time based on current progress
         if self.current > 0 && self.elapsed_time > 0 {
             let items_per_second = self.current as f64 / self.elapsed_time as f64;
@@ -139,11 +139,11 @@ impl CrawlingProgress {
                 self.remaining_time = Some((remaining_items / items_per_second) as u64);
             }
         }
-        
+
         // Update timestamp
         self.timestamp = now;
     }
-    
+
     /// Create a new progress instance with calculated fields
     pub fn new_with_calculation(
         current: u32,
@@ -174,7 +174,7 @@ impl CrawlingProgress {
             errors,
             timestamp: Utc::now(),
         };
-        
+
         progress.calculate_derived_fields(start_time);
         progress
     }
@@ -307,7 +307,7 @@ pub enum CrawlingEvent {
     Completed(CrawlingResult),
     /// 🔥 독립적인 사이트 상태 체크 이벤트 (크롤링 세션과 무관)
     SiteStatusCheck {
-        is_standalone: bool,  // true면 독립적인 체크, false면 크롤링 세션 내 체크
+        is_standalone: bool, // true면 독립적인 체크, false면 크롤링 세션 내 체크
         status: SiteCheckStatus,
         message: String,
         timestamp: DateTime<Utc>,

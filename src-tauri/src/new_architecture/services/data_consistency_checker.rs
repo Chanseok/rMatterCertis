@@ -8,15 +8,15 @@
 //! 3) 역산(reverse_calculate)을 통해 (물리적 페이지, 물리적 인덱스) -> 다시 정방향 calculate 후 동일성 확인
 //! 4) 불일치/경계 오류/범위 초과 등을 집계
 //! 5) JSON 형태 요약 반환 (명세: DataConsistencyReport)
-use std::sync::Arc;
-use serde::{Serialize, Deserialize};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tracing::info;
 
 use crate::domain::pagination::CanonicalPageIdCalculator;
-use sqlx::Row; // trait for row.get
 use crate::domain::services::StatusChecker;
 use crate::infrastructure::IntegratedProductRepository;
+use sqlx::Row; // trait for row.get
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct InconsistentRecord {
@@ -49,26 +49,39 @@ pub struct DataConsistencyChecker {
 }
 
 impl DataConsistencyChecker {
-    pub fn new(status_checker: Arc<dyn StatusChecker>, product_repo: Arc<IntegratedProductRepository>) -> Self {
-        Self { status_checker, product_repo, max_samples: 50 }
+    pub fn new(
+        status_checker: Arc<dyn StatusChecker>,
+        product_repo: Arc<IntegratedProductRepository>,
+    ) -> Self {
+        Self {
+            status_checker,
+            product_repo,
+            max_samples: 50,
+        }
     }
 
-    pub fn with_max_samples(mut self, samples: usize) -> Self { self.max_samples = samples; self }
+    pub fn with_max_samples(mut self, samples: usize) -> Self {
+        self.max_samples = samples;
+        self
+    }
 
     pub async fn run_check(&self) -> Result<DataConsistencyReport> {
         // 1. 사이트 상태 획득
         let site_status = self.status_checker.check_site_status().await?;
-    let total_pages = if site_status.total_pages == 0 { 1 } else { site_status.total_pages };
-    let products_on_last_page = site_status.products_on_last_page; // u32
-    let calculator = CanonicalPageIdCalculator::new(total_pages, products_on_last_page as usize);
+        let total_pages = if site_status.total_pages == 0 {
+            1
+        } else {
+            site_status.total_pages
+        };
+        let products_on_last_page = site_status.products_on_last_page; // u32
+        let calculator =
+            CanonicalPageIdCalculator::new(total_pages, products_on_last_page as usize);
 
         // 2. products 테이블에서 필요한 필드 조회
         // NOTE: compile-time query macros (query!) require offline DB schema; fallback to dynamic query + manual extraction
-        let rows = sqlx::query(
-            "SELECT url, page_id, index_in_page FROM products"
-        )
-        .fetch_all(&*self.product_repo.pool())
-        .await?;
+        let rows = sqlx::query("SELECT url, page_id, index_in_page FROM products")
+            .fetch_all(&*self.product_repo.pool())
+            .await?;
 
         let mut valid = 0u64;
         let mut invalid = 0u64;
@@ -79,14 +92,22 @@ impl DataConsistencyChecker {
             let url: String = row.get("url");
             let stored_page_id: Option<i32> = row.get::<Option<i32>, _>("page_id");
             let stored_index_in_page: Option<i32> = row.get::<Option<i32>, _>("index_in_page");
-            let Some(stored_page_id) = stored_page_id else { skipped_null += 1; continue; };
-            let Some(stored_index_in_page) = stored_index_in_page else { skipped_null += 1; continue; };
+            let Some(stored_page_id) = stored_page_id else {
+                skipped_null += 1;
+                continue;
+            };
+            let Some(stored_index_in_page) = stored_index_in_page else {
+                skipped_null += 1;
+                continue;
+            };
             // 역방향 계산: (page_id, index_in_page) -> (physical_page, physical_index)
             match calculator.reverse_calculate(stored_page_id, stored_index_in_page) {
                 Some((phys_page, phys_index)) => {
                     // 정방향 재계산
                     let recalc = calculator.calculate(phys_page, phys_index);
-                    if recalc.page_id == stored_page_id && recalc.index_in_page == stored_index_in_page {
+                    if recalc.page_id == stored_page_id
+                        && recalc.index_in_page == stored_index_in_page
+                    {
                         valid += 1;
                     } else {
                         invalid += 1;
@@ -132,7 +153,10 @@ impl DataConsistencyChecker {
             sample_inconsistencies: samples,
             max_samples: self.max_samples,
         };
-        info!("🧪 DataConsistencyChecker report: total={} valid={} invalid={} skipped_null={}", report.total_checked, report.valid, report.invalid, report.skipped_null_page_id);
+        info!(
+            "🧪 DataConsistencyChecker report: total={} valid={} invalid={} skipped_null={}",
+            report.total_checked, report.valid, report.invalid, report.skipped_null_page_id
+        );
         Ok(report)
     }
 }

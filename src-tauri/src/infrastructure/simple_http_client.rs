@@ -3,15 +3,15 @@
 //! This module provides a configurable HTTP client optimized for web crawling
 //! with built-in retry logic, rate limiting, and user agent management.
 
-use anyhow::{anyhow, Result};
+use crate::infrastructure::config::WorkerConfig;
+use anyhow::{Result, anyhow};
 use reqwest::{Client, ClientBuilder, Response};
 use scraper::Html;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use tokio::time::{sleep, interval};
 use tokio::sync::{Mutex, Semaphore};
-use tracing::{debug, info, warn, error};
-use crate::infrastructure::config::WorkerConfig;
+use tokio::time::{interval, sleep};
+use tracing::{debug, error, info, warn};
 
 /// Configuration for HTTP client behavior
 #[derive(Debug, Clone)]
@@ -47,7 +47,8 @@ impl Default for HttpClientConfig {
             max_requests_per_second: 10, // Increased default for better performance
             timeout_seconds: 30,
             max_retries: 3,
-            user_agent: "matter-certis-v2/1.0 (Research Tool; +https://github.com/your-repo)".to_string(),
+            user_agent: "matter-certis-v2/1.0 (Research Tool; +https://github.com/your-repo)"
+                .to_string(),
             follow_redirects: true,
         }
     }
@@ -74,9 +75,12 @@ impl GlobalRateLimiter {
             let initial_rate = 50; // Default 50 RPS
             let semaphore = Arc::new(Semaphore::new(initial_rate as usize));
             let current_rate = Arc::new(Mutex::new(initial_rate));
-            
-            info!("🚀 GlobalRateLimiter initialized with {} RPS (Token Bucket)", initial_rate);
-            
+
+            info!(
+                "🚀 GlobalRateLimiter initialized with {} RPS (Token Bucket)",
+                initial_rate
+            );
+
             GlobalRateLimiter {
                 semaphore: semaphore.clone(),
                 current_rate: current_rate.clone(),
@@ -84,36 +88,42 @@ impl GlobalRateLimiter {
             }
         })
     }
-    
+
     async fn update_rate_limit(&self, max_requests_per_second: u32) {
         let mut current_rate = self.current_rate.lock().await;
-        
+
         if *current_rate != max_requests_per_second {
             *current_rate = max_requests_per_second;
-            info!("🔄 Updated global rate limit to {} RPS", max_requests_per_second);
-            
+            info!(
+                "🔄 Updated global rate limit to {} RPS",
+                max_requests_per_second
+            );
+
             // Restart token refill task with new rate
             self.start_refill_task(max_requests_per_second).await;
         }
     }
-    
+
     async fn start_refill_task(&self, rate: u32) {
         let mut handle = self.refill_handle.lock().await;
-        
+
         // Stop existing task
         if let Some(old_handle) = handle.take() {
             old_handle.abort();
         }
-        
+
         if rate == 0 {
             return; // No rate limiting
         }
-        
+
         let semaphore = self.semaphore.clone();
         let refill_interval = Duration::from_millis(1000 / rate as u64);
-        
-        info!("🎯 Starting token refill task: {} tokens per second (interval: {:?})", rate, refill_interval);
-        
+
+        info!(
+            "🎯 Starting token refill task: {} tokens per second (interval: {:?})",
+            rate, refill_interval
+        );
+
         let new_handle = tokio::spawn(async move {
             let mut interval = interval(refill_interval);
             loop {
@@ -123,32 +133,37 @@ impl GlobalRateLimiter {
                 debug!("Token refilled for global rate limiter");
             }
         });
-        
+
         *handle = Some(new_handle);
     }
-    
+
     async fn apply_rate_limit(&self, max_requests_per_second: u32) {
         // Update rate limit if needed
         self.update_rate_limit(max_requests_per_second).await;
-        
+
         if max_requests_per_second == 0 {
             debug!("🔓 No rate limiting applied (max_requests_per_second = 0)");
             return; // No rate limiting
         }
-        
-        debug!("🎫 Attempting to acquire token for HTTP request (rate limit: {} RPS)", max_requests_per_second);
-        
+
+        debug!(
+            "🎫 Attempting to acquire token for HTTP request (rate limit: {} RPS)",
+            max_requests_per_second
+        );
+
         // Acquire a token (permit) from the bucket
         // This will wait if no tokens are available
         let _permit = self.semaphore.acquire().await.unwrap();
-        
+
         info!("🎫 Token acquired for HTTP request");
-        debug!("🎫 Token acquired for HTTP request (global rate: {} RPS)", max_requests_per_second);
-        
+        debug!(
+            "🎫 Token acquired for HTTP request (global rate: {} RPS)",
+            max_requests_per_second
+        );
+
         // Permit is automatically released when _permit goes out of scope
     }
 }
-
 
 /// HTTP client with built-in rate limiting and error handling
 /// Now uses shared global rate limiter for better concurrency performance
@@ -166,16 +181,18 @@ impl HttpClient {
         // Load actual configuration from file instead of using defaults
         let config_manager = crate::infrastructure::config::ConfigManager::new()
             .map_err(|e| anyhow!("Failed to create config manager: {}", e))?;
-        
+
         // Use blocking version to load config synchronously
         let app_config = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                config_manager.load_config().await
-            })
-        }).map_err(|e| anyhow!("Failed to load config: {}", e))?;
-        
-        info!("🔧 HttpClient using config: max_requests_per_second={}", app_config.user.crawling.workers.max_requests_per_second);
-    Self::from_worker_config(&app_config.user.crawling.workers)
+            tokio::runtime::Handle::current().block_on(async { config_manager.load_config().await })
+        })
+        .map_err(|e| anyhow!("Failed to load config: {}", e))?;
+
+        info!(
+            "🔧 HttpClient using config: max_requests_per_second={}",
+            app_config.user.crawling.workers.max_requests_per_second
+        );
+        Self::from_worker_config(&app_config.user.crawling.workers)
     }
 
     /// Create a new HTTP client from WorkerConfig
@@ -220,28 +237,39 @@ impl HttpClient {
     /// Fetch HTML content from a URL with automatic retry and rate limiting
     pub async fn fetch_html(&self, url: &str) -> Result<Html> {
         info!("Fetching HTML from: {}", url);
-        
+
         let mut last_error = None;
-        
+
         for attempt in 1..=self.config.max_retries {
             // Apply global rate limiting
             let rate_limiter = GlobalRateLimiter::get_instance();
             if let Some(label) = &self.context_label {
-                debug!("⚖️ [rate-limit] {} RPS (source: {})", self.config.max_requests_per_second, label);
+                debug!(
+                    "⚖️ [rate-limit] {} RPS (source: {})",
+                    self.config.max_requests_per_second, label
+                );
             } else {
-                debug!("⚖️ [rate-limit] {} RPS", self.config.max_requests_per_second);
+                debug!(
+                    "⚖️ [rate-limit] {} RPS",
+                    self.config.max_requests_per_second
+                );
             }
-            rate_limiter.apply_rate_limit(self.config.max_requests_per_second).await;
-            
+            rate_limiter
+                .apply_rate_limit(self.config.max_requests_per_second)
+                .await;
+
             match self.fetch_html_once(url).await {
                 Ok(html) => {
-                    debug!("Successfully fetched HTML from {} on attempt {}", url, attempt);
+                    debug!(
+                        "Successfully fetched HTML from {} on attempt {}",
+                        url, attempt
+                    );
                     return Ok(html);
                 }
                 Err(e) => {
                     warn!("Attempt {} failed for {}: {}", attempt, url, e);
                     last_error = Some(e);
-                    
+
                     if attempt < self.config.max_retries {
                         // Exponential backoff
                         let delay_seconds = 2_u64.pow(attempt - 1);
@@ -250,7 +278,7 @@ impl HttpClient {
                 }
             }
         }
-        
+
         Err(last_error.unwrap_or_else(|| anyhow!("Unknown error while fetching {}", url)))
     }
 
@@ -258,14 +286,23 @@ impl HttpClient {
     pub async fn fetch_response(&self, url: &str) -> Result<Response> {
         let rate_limiter = GlobalRateLimiter::get_instance();
         if let Some(label) = &self.context_label {
-            debug!("⚖️ [rate-limit] {} RPS (source: {})", self.config.max_requests_per_second, label);
+            debug!(
+                "⚖️ [rate-limit] {} RPS (source: {})",
+                self.config.max_requests_per_second, label
+            );
         } else {
-            debug!("⚖️ [rate-limit] {} RPS", self.config.max_requests_per_second);
+            debug!(
+                "⚖️ [rate-limit] {} RPS",
+                self.config.max_requests_per_second
+            );
         }
-        rate_limiter.apply_rate_limit(self.config.max_requests_per_second).await;
-        
+        rate_limiter
+            .apply_rate_limit(self.config.max_requests_per_second)
+            .await;
+
         info!("🌐 HTTP GET (HttpClient): {}", url);
-        let response = self.client
+        let response = self
+            .client
             .get(url)
             .send()
             .await
@@ -275,7 +312,7 @@ impl HttpClient {
             error!("❌ HTTP error {}: {}", response.status(), url);
             return Err(anyhow!("HTTP error {}: {}", response.status(), url));
         }
-        
+
         // info!("✅ HTTP Response received (HttpClient): {} - Status: {}", url, response.status());
 
         Ok(response)
@@ -289,13 +326,24 @@ impl HttpClient {
         for attempt in 1..=self.config.max_retries {
             let rate_limiter = GlobalRateLimiter::get_instance();
             if let Some(label) = &self.context_label {
-                debug!("⚖️ [rate-limit] {} RPS (source: {})", self.config.max_requests_per_second, label);
+                debug!(
+                    "⚖️ [rate-limit] {} RPS (source: {})",
+                    self.config.max_requests_per_second, label
+                );
             } else {
-                debug!("⚖️ [rate-limit] {} RPS", self.config.max_requests_per_second);
+                debug!(
+                    "⚖️ [rate-limit] {} RPS",
+                    self.config.max_requests_per_second
+                );
             }
-            rate_limiter.apply_rate_limit(self.config.max_requests_per_second).await;
+            rate_limiter
+                .apply_rate_limit(self.config.max_requests_per_second)
+                .await;
 
-            info!("🌐 HTTP GET (attempt {}/{}) : {}", attempt, self.config.max_retries, url);
+            info!(
+                "🌐 HTTP GET (attempt {}/{}) : {}",
+                attempt, self.config.max_retries, url
+            );
             match self.client.get(url).send().await {
                 Ok(resp) => {
                     let status = resp.status();
@@ -319,9 +367,12 @@ impl HttpClient {
                     if retryable && attempt < self.config.max_retries {
                         // Respect Retry-After if present on 429/503
                         let mut delay_secs = 2_u64.pow(attempt - 1);
-                        if let Some(retry_after) = resp.headers().get(reqwest::header::RETRY_AFTER) {
+                        if let Some(retry_after) = resp.headers().get(reqwest::header::RETRY_AFTER)
+                        {
                             if let Ok(s) = retry_after.to_str() {
-                                if let Ok(parsed) = s.parse::<u64>() { delay_secs = parsed.max(delay_secs); }
+                                if let Ok(parsed) = s.parse::<u64>() {
+                                    delay_secs = parsed.max(delay_secs);
+                                }
                             }
                         }
                         tokio::time::sleep(Duration::from_secs(delay_secs)).await;
@@ -348,7 +399,7 @@ impl HttpClient {
     /// Check if the HTTP client is working properly
     pub async fn health_check(&self) -> Result<()> {
         info!("Performing HTTP client health check...");
-        
+
         let test_url = "https://httpbin.org/get";
         match self.fetch_response(test_url).await {
             Ok(response) => {
@@ -356,17 +407,20 @@ impl HttpClient {
                     info!("HTTP client health check passed");
                     Ok(())
                 } else {
-                    Err(anyhow!("Health check failed with status: {}", response.status()))
+                    Err(anyhow!(
+                        "Health check failed with status: {}",
+                        response.status()
+                    ))
                 }
             }
-            Err(e) => Err(anyhow!("Health check failed: {}", e))
+            Err(e) => Err(anyhow!("Health check failed: {}", e)),
         }
     }
 
     /// Single attempt to fetch HTML content
     async fn fetch_html_once(&self, url: &str) -> Result<Html> {
         let response = self.fetch_response(url).await?;
-        
+
         let html_content = response
             .text()
             .await
@@ -382,28 +436,39 @@ impl HttpClient {
     /// Fetch HTML content and return it as a string (Send-compatible)
     pub async fn fetch_html_string(&self, url: &str) -> Result<String> {
         info!("🔄 Starting HTML fetch: {}", url);
-        
+
         let mut last_error = None;
-        
+
         for attempt in 1..=self.config.max_retries {
             // Apply global rate limiting
             let rate_limiter = GlobalRateLimiter::get_instance();
             if let Some(label) = &self.context_label {
-                info!("⚖️ Applying rate limit {} RPS (source: {})", self.config.max_requests_per_second, label);
+                info!(
+                    "⚖️ Applying rate limit {} RPS (source: {})",
+                    self.config.max_requests_per_second, label
+                );
             } else {
-                info!("⚖️ Applying rate limit {} RPS", self.config.max_requests_per_second);
+                info!(
+                    "⚖️ Applying rate limit {} RPS",
+                    self.config.max_requests_per_second
+                );
             }
-            rate_limiter.apply_rate_limit(self.config.max_requests_per_second).await;
-            
+            rate_limiter
+                .apply_rate_limit(self.config.max_requests_per_second)
+                .await;
+
             match self.fetch_html_string_once(url).await {
                 Ok(html) => {
-                    debug!("Successfully fetched HTML from {} on attempt {}", url, attempt);
+                    debug!(
+                        "Successfully fetched HTML from {} on attempt {}",
+                        url, attempt
+                    );
                     return Ok(html);
                 }
                 Err(e) => {
                     warn!("Attempt {} failed for {}: {}", attempt, url, e);
                     last_error = Some(e);
-                    
+
                     if attempt < self.config.max_retries {
                         // Exponential backoff
                         let delay_seconds = 2_u64.pow(attempt - 1);
@@ -412,14 +477,14 @@ impl HttpClient {
                 }
             }
         }
-        
+
         Err(last_error.unwrap_or_else(|| anyhow!("Unknown error while fetching {}", url)))
     }
-    
+
     /// Single attempt to fetch HTML content as string (Send-compatible)
     async fn fetch_html_string_once(&self, url: &str) -> Result<String> {
         let response = self.fetch_response(url).await?;
-        
+
         let html_content = response
             .text()
             .await
@@ -431,7 +496,7 @@ impl HttpClient {
 
         Ok(html_content)
     }
-    
+
     /// Parse HTML from string (non-async, can be called after fetch)
     pub fn parse_html(&self, html_content: &str) -> Html {
         Html::parse_document(html_content)
@@ -458,7 +523,7 @@ mod tests {
             user_agent: "Test Agent".to_string(),
             follow_redirects: false,
         };
-        
+
         let client = HttpClient::with_config(config);
         assert!(client.is_ok());
     }
@@ -489,18 +554,22 @@ mod tests {
         for i in 0..num_requests {
             let client = client.clone();
             let url = format!("https://httpbin.org/delay/0.1?val={}", i);
-            handles.push(tokio::spawn(async move {
-                client.fetch_response(&url).await
-            }));
+            handles.push(tokio::spawn(
+                async move { client.fetch_response(&url).await },
+            ));
         }
 
         let results = futures::future::join_all(handles).await;
         let duration = start.elapsed();
 
         let successful_requests = results.into_iter().filter(|r| r.is_ok()).count();
-        
+
         println!("Rate Limiter Test ({} RPS):", rps);
-        println!("- Executed {} requests in {:.2} seconds.", num_requests, duration.as_secs_f32());
+        println!(
+            "- Executed {} requests in {:.2} seconds.",
+            num_requests,
+            duration.as_secs_f32()
+        );
         println!("- {} requests were successful.", successful_requests);
 
         let expected_duration_min = (num_requests as f32 / rps as f32) * 0.8; // Allow some bursting
@@ -513,7 +582,7 @@ mod tests {
             duration.as_secs_f32(),
             expected_duration_min
         );
-         assert!(
+        assert!(
             duration.as_secs_f32() < expected_duration_max,
             "Execution was too slow. Duration: {:.2}s, Expected Max: {:.2}s",
             duration.as_secs_f32(),

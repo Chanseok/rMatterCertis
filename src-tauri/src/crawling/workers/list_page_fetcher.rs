@@ -6,15 +6,15 @@
 #![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 
+use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use async_trait::async_trait;
 use tokio::time::sleep;
 use url::Url;
 
-use crate::crawling::{tasks::*, state::*};
-use crate::infrastructure::HttpClient;
 use super::{Worker, WorkerError};
+use crate::crawling::{state::*, tasks::*};
+use crate::infrastructure::HttpClient;
 
 /// Worker that fetches HTML content from list pages
 pub struct ListPageFetcher {
@@ -30,34 +30,42 @@ impl ListPageFetcher {
     /// 개발 용이성을 위한 간단한 생성자
     pub fn new_simple() -> Self {
         use crate::infrastructure::config::defaults;
-    Self { max_retries: defaults::MAX_RETRIES }
+        Self {
+            max_retries: defaults::MAX_RETRIES,
+        }
     }
 
     pub async fn fetch_page(&self, url: &str) -> Result<String, WorkerError> {
         let parsed_url = Url::parse(url)
             .map_err(|e| WorkerError::InvalidInput(format!("Invalid URL '{}': {}", url, e)))?;
-        
+
         let http_client = HttpClient::create_from_global_config()
             .map_err(|e| WorkerError::NetworkError(e.to_string()))?;
-        
+
         let response = http_client
             .fetch_response(&parsed_url.to_string())
             .await
             .map_err(|e| WorkerError::NetworkError(e.to_string()))?;
 
         if response.status().is_success() {
-            let text = response.text().await
-                .map_err(|e| WorkerError::NetworkError(format!("Failed to read response body: {}", e)))?;
+            let text = response.text().await.map_err(|e| {
+                WorkerError::NetworkError(format!("Failed to read response body: {}", e))
+            })?;
             Ok(text)
         } else {
-            Err(WorkerError::NetworkError(
-                format!("HTTP request failed with status: {}", response.status())
-            ))
+            Err(WorkerError::NetworkError(format!(
+                "HTTP request failed with status: {}",
+                response.status()
+            )))
         }
     }
 
     /// Fetch page with retry logic and rate limiting
-    async fn fetch_with_retry(&self, url: &str, _shared_state: Arc<SharedState>) -> Result<String, WorkerError> {
+    async fn fetch_with_retry(
+        &self,
+        url: &str,
+        _shared_state: Arc<SharedState>,
+    ) -> Result<String, WorkerError> {
         let mut last_error = None;
 
         for attempt in 0..=self.max_retries {
@@ -70,12 +78,15 @@ impl ListPageFetcher {
                 }
                 Err(e) => {
                     last_error = Some(e);
-                    
+
                     if attempt < self.max_retries {
                         let delay = Duration::from_millis(1000) * (2_u32.pow(attempt)); // Exponential backoff
                         tracing::warn!(
                             "Failed to fetch {} (attempt {}), retrying in {:?}: {}",
-                            url, attempt + 1, delay, last_error.as_ref().unwrap()
+                            url,
+                            attempt + 1,
+                            delay,
+                            last_error.as_ref().unwrap()
                         );
                         sleep(delay).await;
                     }
@@ -83,7 +94,8 @@ impl ListPageFetcher {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| WorkerError::NetworkError("Unknown error during fetch".to_string())))
+        Err(last_error
+            .unwrap_or_else(|| WorkerError::NetworkError("Unknown error during fetch".to_string())))
     }
 
     fn build_list_page_url(&self, page: u32) -> String {
@@ -113,9 +125,13 @@ impl Worker<CrawlingTask> for ListPageFetcher {
         shared_state: Arc<SharedState>,
     ) -> Result<TaskResult, WorkerError> {
         let start_time = Instant::now();
-        
+
         match task {
-            CrawlingTask::FetchListPage { task_id, page_number, url } => {
+            CrawlingTask::FetchListPage {
+                task_id,
+                page_number,
+                url,
+            } => {
                 // Build URL if not provided
                 let target_url = if url.is_empty() {
                     self.build_list_page_url(page_number)
@@ -127,7 +143,7 @@ impl Worker<CrawlingTask> for ListPageFetcher {
                 let html_content = self.fetch_with_retry(&target_url, shared_state).await?;
 
                 let duration = start_time.elapsed();
-                
+
                 Ok(TaskResult::Success {
                     task_id,
                     output: TaskOutput::HtmlContent(html_content),
@@ -135,7 +151,7 @@ impl Worker<CrawlingTask> for ListPageFetcher {
                 })
             }
             _ => Err(WorkerError::ValidationError(
-                "ListPageFetcher can only process FetchListPage tasks".to_string()
+                "ListPageFetcher can only process FetchListPage tasks".to_string(),
             )),
         }
     }
@@ -148,20 +164,14 @@ mod tests {
 
     #[test]
     fn list_page_fetcher_creation() {
-        let fetcher = ListPageFetcher::new(
-            Duration::from_secs(30),
-            3
-        );
+        let fetcher = ListPageFetcher::new(Duration::from_secs(30), 3);
         assert!(fetcher.is_ok());
     }
 
     #[test]
     fn url_building() {
-        let fetcher = ListPageFetcher::new(
-            Duration::from_secs(30),
-            3
-        ).unwrap();
-        
+        let fetcher = ListPageFetcher::new(Duration::from_secs(30), 3).unwrap();
+
         let url = fetcher.build_list_page_url(1);
         assert!(url.contains("page=1"));
         assert!(url.contains("csa-iot.org"));
@@ -169,16 +179,13 @@ mod tests {
 
     #[tokio::test]
     async fn task_validation() {
-        let fetcher = ListPageFetcher::new(
-            Duration::from_secs(30),
-            3
-        ).unwrap();
+        let fetcher = ListPageFetcher::new(Duration::from_secs(30), 3).unwrap();
 
         let config = CrawlingConfig::default();
         let shared_state = Arc::new(SharedState::new(config));
 
-    // Note: previously created a 'valid_task' here only to assert construction; removed as unused.
-        
+        // Note: previously created a 'valid_task' here only to assert construction; removed as unused.
+
         // Invalid task
         let invalid_task = CrawlingTask::SaveProduct {
             task_id: TaskId::new(),

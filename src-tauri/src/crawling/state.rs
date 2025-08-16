@@ -7,14 +7,14 @@
 #![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 
-use std::sync::Arc;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
 
-use crate::crawling::tasks::{TaskId, CrawlingTask};
+use crate::crawling::tasks::{CrawlingTask, TaskId};
 
 // Export CrawlingStatus for public API
 pub use crate::domain::CrawlingStatus as PublicCrawlingStatus;
@@ -24,16 +24,16 @@ pub use crate::domain::CrawlingStatus as PublicCrawlingStatus;
 pub struct SharedState {
     /// Cancellation token for graceful shutdown
     pub cancellation_token: CancellationToken,
-    
+
     /// HTTP request rate limiter
     pub http_semaphore: Arc<Semaphore>,
-    
+
     /// Real-time crawling statistics
     pub stats: Arc<RwLock<CrawlingStats>>,
-    
+
     /// Task tracking and status
     pub task_tracker: Arc<Mutex<TaskTracker>>,
-    
+
     /// Configuration settings
     pub config: Arc<RwLock<CrawlingConfig>>,
 }
@@ -50,12 +50,12 @@ impl SharedState {
             config: Arc::new(RwLock::new(config)),
         }
     }
-    
+
     /// Requests graceful shutdown of all operations
     pub fn request_shutdown(&self) {
         self.cancellation_token.cancel();
     }
-    
+
     /// Checks if shutdown has been requested
     #[must_use]
     pub fn is_shutdown_requested(&self) -> bool {
@@ -69,7 +69,7 @@ impl SharedState {
         if stats.tasks_in_progress > 0 {
             stats.tasks_in_progress -= 1;
         }
-        
+
         let mut tracker = self.task_tracker.lock().await;
         tracker.complete_task(task_id, duration);
     }
@@ -81,7 +81,7 @@ impl SharedState {
         if stats.tasks_in_progress > 0 {
             stats.tasks_in_progress -= 1;
         }
-        
+
         let mut tracker = self.task_tracker.lock().await;
         tracker.fail_task(task_id, error, duration);
     }
@@ -92,49 +92,49 @@ impl SharedState {
 pub struct CrawlingStats {
     /// Total number of tasks created
     pub total_tasks_created: u64,
-    
+
     /// Number of tasks completed successfully
     pub tasks_completed: u64,
-    
+
     /// Number of tasks that failed
     pub tasks_failed: u64,
-    
+
     /// Number of tasks currently in progress
     pub tasks_in_progress: u64,
-    
+
     /// Number of currently active tasks
     pub active_tasks: usize,
-    
+
     /// List pages processed
     pub list_pages_processed: u32,
-    
+
     /// List pages fetched
     pub list_pages_fetched: u64,
-    
+
     /// Product URLs discovered
     pub product_urls_discovered: u64,
-    
+
     /// Product details fetched
     pub product_details_fetched: u64,
-    
+
     /// Product details parsed
     pub product_details_parsed: u64,
-    
+
     /// Products saved to database
     pub products_saved: u64,
-    
+
     /// Current processing rate (tasks per second)
     pub processing_rate: f64,
-    
+
     /// Average task duration by type
     pub avg_task_duration: HashMap<String, Duration>,
-    
+
     /// Queue sizes for monitoring
     pub queue_sizes: QueueSizes,
-    
+
     /// System health status
     pub is_healthy: bool,
-    
+
     /// Timestamp of last update
     pub last_updated: chrono::DateTime<chrono::Utc>,
 }
@@ -157,35 +157,39 @@ impl CrawlingStats {
         }
         self.last_updated = chrono::Utc::now();
     }
-    
+
     /// Records completion of a task
     pub fn record_task_completion(&mut self, task_type: &str, duration: Duration) {
         self.tasks_completed += 1;
         self.tasks_in_progress = self.tasks_in_progress.saturating_sub(1);
-        
+
         // Update average duration for this task type
-        let current_avg = self.avg_task_duration.get(task_type).copied().unwrap_or_default();
-        let new_avg = Duration::from_nanos(
-            (current_avg.as_nanos() as u64 + duration.as_nanos() as u64) / 2
-        );
-        self.avg_task_duration.insert(task_type.to_string(), new_avg);
-        
+        let current_avg = self
+            .avg_task_duration
+            .get(task_type)
+            .copied()
+            .unwrap_or_default();
+        let new_avg =
+            Duration::from_nanos((current_avg.as_nanos() as u64 + duration.as_nanos() as u64) / 2);
+        self.avg_task_duration
+            .insert(task_type.to_string(), new_avg);
+
         self.last_updated = chrono::Utc::now();
     }
-    
+
     /// Records failure of a task
     pub fn record_task_failure(&mut self, _task_type: &str) {
         self.tasks_failed += 1;
         self.tasks_in_progress = self.tasks_in_progress.saturating_sub(1);
         self.last_updated = chrono::Utc::now();
     }
-    
+
     /// Records start of a task
     pub fn record_task_start(&mut self) {
         self.tasks_in_progress += 1;
         self.last_updated = chrono::Utc::now();
     }
-    
+
     /// Gets total number of tasks processed (completed + failed)
     pub fn total_tasks_processed(&self) -> u64 {
         self.tasks_completed + self.tasks_failed
@@ -197,10 +201,10 @@ impl CrawlingStats {
 pub struct TaskTracker {
     /// Currently active tasks
     active_tasks: HashMap<TaskId, TaskStatus>,
-    
+
     /// Task execution history (limited size)
     task_history: Vec<TaskRecord>,
-    
+
     /// Maximum history size
     max_history_size: usize,
 }
@@ -215,7 +219,7 @@ impl TaskTracker {
             max_history_size: 1000,
         }
     }
-    
+
     /// Records the start of a task
     pub fn start_task(&mut self, task: &CrawlingTask) {
         let status = TaskStatus {
@@ -224,15 +228,15 @@ impl TaskTracker {
             started_at: Instant::now(),
             status: TaskState::Running,
         };
-        
+
         self.active_tasks.insert(task.task_id(), status);
     }
-    
+
     /// Records successful completion of a task
     pub fn complete_task(&mut self, task_id: TaskId, duration: Duration) {
         if let Some(mut status) = self.active_tasks.remove(&task_id) {
             status.status = TaskState::Completed;
-            
+
             let record = TaskRecord {
                 task_id,
                 task_type: status.task_type.clone(),
@@ -242,16 +246,16 @@ impl TaskTracker {
                 success: true,
                 error_message: None,
             };
-            
+
             self.add_to_history(record);
         }
     }
-    
+
     /// Records failure of a task
     pub fn fail_task(&mut self, task_id: TaskId, error: String, duration: Duration) {
         if let Some(mut status) = self.active_tasks.remove(&task_id) {
             status.status = TaskState::Failed;
-            
+
             let record = TaskRecord {
                 task_id,
                 task_type: status.task_type.clone(),
@@ -261,26 +265,26 @@ impl TaskTracker {
                 success: false,
                 error_message: Some(error),
             };
-            
+
             self.add_to_history(record);
         }
     }
-    
+
     /// Adds a record to history, maintaining size limit
     fn add_to_history(&mut self, record: TaskRecord) {
         self.task_history.push(record);
-        
+
         if self.task_history.len() > self.max_history_size {
             self.task_history.remove(0);
         }
     }
-    
+
     /// Returns the number of active tasks
     #[must_use]
     pub fn active_task_count(&self) -> usize {
         self.active_tasks.len()
     }
-    
+
     /// Returns task history
     #[must_use]
     pub fn task_history(&self) -> &[TaskRecord] {
@@ -328,28 +332,28 @@ pub struct TaskRecord {
 pub struct CrawlingConfig {
     /// Maximum number of concurrent HTTP requests
     pub max_concurrent_requests: usize,
-    
+
     /// Maximum number of concurrent tasks
     pub max_concurrent_tasks: usize,
-    
+
     /// Request timeout in seconds
     pub request_timeout_seconds: u64,
-    
+
     /// Maximum number of retries for failed requests
     pub max_retries: u32,
-    
+
     /// Base URL for the target website
     pub base_url: String,
-    
+
     /// User agent string for HTTP requests
     pub user_agent: String,
-    
+
     /// Delay between requests (in milliseconds)
     pub request_delay_ms: u64,
-    
+
     /// Maximum number of pages to process
     pub max_pages: Option<u32>,
-    
+
     /// 개발 편의성을 위한 추가 필드들
     pub max_queue_size: usize,
     pub backpressure_threshold: usize,
@@ -406,7 +410,7 @@ mod tests {
     fn shared_state_creation() {
         let config = CrawlingConfig::default();
         let state = SharedState::new(config);
-        
+
         assert!(!state.is_shutdown_requested());
     }
 
@@ -418,10 +422,10 @@ mod tests {
             page_number: 1,
             url: "https://example.com".to_string(),
         };
-        
+
         tracker.start_task(&task);
         assert_eq!(tracker.active_task_count(), 1);
-        
+
         tracker.complete_task(task.task_id(), Duration::from_millis(100));
         assert_eq!(tracker.active_task_count(), 0);
         assert_eq!(tracker.task_history().len(), 1);
@@ -430,10 +434,10 @@ mod tests {
     #[test]
     fn crawling_stats_update() {
         let mut stats = CrawlingStats::default();
-        
+
         stats.record_task_start();
         assert_eq!(stats.tasks_in_progress, 1);
-        
+
         stats.record_task_completion("fetch_list_page", Duration::from_millis(100));
         assert_eq!(stats.tasks_completed, 1);
         assert_eq!(stats.tasks_in_progress, 0);

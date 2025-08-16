@@ -7,11 +7,11 @@
 #![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 
-use std::fmt;
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use crate::domain::{ProductData, ValidatedUrl};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fmt;
+use uuid::Uuid;
 
 /// Unique identifier for crawling tasks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -23,7 +23,7 @@ impl TaskId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
-    
+
     /// Get the inner UUID
     #[must_use]
     pub fn inner(&self) -> Uuid {
@@ -58,7 +58,7 @@ pub enum CrawlingTask {
         page_number: u32,
         url: String,
     },
-    
+
     /// Parse HTML content to extract product URLs
     ParseListPage {
         task_id: TaskId,
@@ -66,20 +66,20 @@ pub enum CrawlingTask {
         html_content: String,
         source_url: String,
     },
-    
+
     /// Fetch HTML content from a product detail page
     FetchProductDetail {
         task_id: TaskId,
         product_url: String,
     },
-    
+
     /// Parse product detail HTML to extract structured data
     ParseProductDetail {
         task_id: TaskId,
         product_url: String,
         html_content: String,
     },
-    
+
     /// Save extracted product data to database
     SaveProduct {
         task_id: TaskId,
@@ -99,7 +99,7 @@ impl CrawlingTask {
             | Self::SaveProduct { task_id, .. } => *task_id,
         }
     }
-    
+
     /// Returns the task type as a string for telemetry
     #[must_use]
     pub const fn task_type(&self) -> &'static str {
@@ -174,38 +174,38 @@ impl TaskProductData {
             index_in_page: None,
         }
     }
-    
+
     /// Builder pattern for optional fields
     #[must_use]
     pub fn with_category(mut self, category: Option<String>) -> Self {
         self.category = category;
         self
     }
-    
+
     #[must_use]
     pub fn with_manufacturer(mut self, manufacturer: Option<String>) -> Self {
         self.manufacturer = manufacturer;
         self
     }
-    
+
     #[must_use]
     pub fn with_model(mut self, model: Option<String>) -> Self {
         self.model = model;
         self
     }
-    
+
     #[must_use]
     pub fn with_certification_number(mut self, cert_number: Option<String>) -> Self {
         self.certification_number = cert_number;
         self
     }
-    
+
     #[must_use]
     pub fn with_certification_date(mut self, cert_date: Option<String>) -> Self {
         self.certification_date = cert_date;
         self
     }
-    
+
     /// Sets pagination coordinates (page_id and index_in_page)
     #[must_use]
     pub fn with_pagination_coordinates(mut self, page_id: i32, index_in_page: i32) -> Self {
@@ -213,7 +213,7 @@ impl TaskProductData {
         self.index_in_page = Some(index_in_page);
         self
     }
-    
+
     /// Adds a key-value pair to the details
     pub fn add_detail(&mut self, key: String, value: String) {
         self.details.insert(key, value);
@@ -221,18 +221,20 @@ impl TaskProductData {
 
     /// Converts TaskProductData to domain ProductData
     pub fn to_product_data(self) -> Result<ProductData, String> {
-        let certification_date = self.certification_date
+        let certification_date = self
+            .certification_date
             .as_ref()
             .and_then(|date_str| chrono::DateTime::parse_from_rfc3339(date_str).ok())
             .map(|dt| dt.with_timezone(&chrono::Utc));
 
         // Generate product ID from page_id and index_in_page if available
-        let product_id = if let (Some(page_id), Some(index_in_page)) = (self.page_id, self.index_in_page) {
-            format!("p{:04}i{:02}", page_id, index_in_page)
-        } else {
-            self.product_id.clone()
-        };
-            
+        let product_id =
+            if let (Some(page_id), Some(index_in_page)) = (self.page_id, self.index_in_page) {
+                format!("p{:04}i{:02}", page_id, index_in_page)
+            } else {
+                self.product_id.clone()
+            };
+
         let product_data = ProductData {
             product_id,
             name: self.name,
@@ -243,7 +245,7 @@ impl TaskProductData {
             certification_date,
             technical_details: self.details,
             compliance_details: HashMap::new(), // Default empty
-            confidence_score: 1.0, // Default confidence
+            confidence_score: 1.0,              // Default confidence
             extracted_at: self.extracted_at,
             source_url: ValidatedUrl::new(self.source_url)
                 .map_err(|e| format!("Invalid URL: {}", e))?,
@@ -257,7 +259,9 @@ impl TaskProductData {
 
 impl From<TaskProductData> for ProductData {
     fn from(task_data: TaskProductData) -> Self {
-        task_data.to_product_data().expect("Failed to convert TaskProductData to ProductData")
+        task_data
+            .to_product_data()
+            .expect("Failed to convert TaskProductData to ProductData")
     }
 }
 
@@ -270,7 +274,7 @@ pub enum TaskResult {
         output: TaskOutput,
         duration: std::time::Duration,
     },
-    
+
     /// Task failed with error
     Failure {
         task_id: TaskId,
@@ -285,20 +289,20 @@ pub enum TaskResult {
 pub enum TaskOutput {
     /// HTML content fetched from a page
     HtmlContent(String),
-    
+
     /// Product URLs extracted from list page
     ProductUrls(Vec<String>),
-    
+
     /// Product detail HTML content
     ProductDetailHtml {
         product_id: String,
         html_content: String,
         source_url: String,
     },
-    
+
     /// Structured product data
     ProductData(TaskProductData),
-    
+
     /// Database save confirmation
     SaveConfirmation {
         product_id: String,
@@ -333,10 +337,11 @@ mod tests {
             "test_id".to_string(),
             "Test Product".to_string(),
             crate::domain::ValidatedUrl::new("https://example.com/product".to_string()).unwrap(),
-        ).unwrap()
+        )
+        .unwrap()
         .with_category(Some("Electronics".to_string()))
         .with_manufacturer(Some("Test Corp".to_string()));
-        
+
         assert_eq!(product.product_id, "test_id");
         assert_eq!(product.name, "Test Product");
         assert_eq!(product.category, Some("Electronics".to_string()));

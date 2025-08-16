@@ -4,13 +4,13 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::sync::Arc;
-use tokio::sync::{mpsc, broadcast};
+use crate::application::events::EventEmitter as ApplicationEventEmitter;
 use crate::new_architecture::{
     channels::types::{ActorCommand, AppEvent, ControlChannel, EventChannel},
     system_config::SystemConfig,
 };
-use crate::application::events::EventEmitter as ApplicationEventEmitter;
+use std::sync::Arc;
+use tokio::sync::{broadcast, mpsc};
 
 /// 취소 채널 타입 정의
 pub type CancellationReceiver = tokio::sync::watch::Receiver<bool>;
@@ -102,19 +102,20 @@ impl IntegratedContext {
     }
 
     /// 이벤트 발행 - Actor 시스템에서 프론트엔드로 직접 전달
-    /// 
+    ///
     /// 설계 의도: 각 Actor, Task 레벨에서 독립적으로 이벤트 발행이 가능하게 하여
     /// 낮은 복잡성의 구현으로도 모든 경우를 다 커버할 수 있도록 함
     pub async fn emit_event(&self, event: AppEvent) -> Result<usize, ContextError> {
         // 내부 브로드캐스트 채널로 발행 (다른 컴포넌트들이 구독할 수 있도록)
-        let subscriber_count = self.event_tx
+        let subscriber_count = self
+            .event_tx
             .send(event)
             .map_err(|_| ContextError::EventBroadcastFailed)?;
 
         // TODO: ActorEventBridge가 이 이벤트를 받아서 프론트엔드로 전달
-        // 현재는 브로드캐스트 채널에만 발행하고, 
+        // 현재는 브로드캐스트 채널에만 발행하고,
         // ActorEventBridge가 이를 수신하여 Tauri emit으로 프론트엔드에 전달
-        
+
         Ok(subscriber_count)
     }
 
@@ -131,19 +132,19 @@ impl IntegratedContext {
     /// 현재 컨텍스트 경로 문자열 생성
     pub fn context_path(&self) -> String {
         let mut path = format!("session:{}", self.session_id);
-        
+
         if let Some(batch_id) = &self.batch_id {
             path.push_str(&format!("/batch:{}", batch_id));
         }
-        
+
         if let Some(stage_id) = &self.stage_id {
             path.push_str(&format!("/stage:{}", stage_id));
         }
-        
+
         if let Some(task_id) = &self.task_id {
             path.push_str(&format!("/task:{}", task_id));
         }
-        
+
         path
     }
 
@@ -188,9 +189,9 @@ impl From<ContextError> for crate::new_architecture::actors::types::ActorError {
         use crate::new_architecture::actors::types::ActorError;
         match err {
             ContextError::ControlChannelSend { message } => ActorError::ChannelError(message),
-            ContextError::EventBroadcastFailed => ActorError::EventBroadcastFailed(
-                "Event broadcast failed".to_string()
-            ),
+            ContextError::EventBroadcastFailed => {
+                ActorError::EventBroadcastFailed("Event broadcast failed".to_string())
+            }
             ContextError::Cancelled => ActorError::Cancelled("Operation cancelled".to_string()),
             ContextError::InvalidState { message } => ActorError::ConfigurationError(message),
         }
@@ -209,7 +210,10 @@ impl IntegratedContextFactory {
     }
 
     /// 새로운 세션용 통합 컨텍스트 생성
-    pub fn create_session_context(&self, session_id: String) -> Result<(IntegratedContext, ContextChannels), ContextError> {
+    pub fn create_session_context(
+        &self,
+        session_id: String,
+    ) -> Result<(IntegratedContext, ContextChannels), ContextError> {
         // 제어 채널 생성
         let control_buffer_size = self.config.control_buffer_size.unwrap_or(100);
         let (control_tx, control_rx) = mpsc::channel(control_buffer_size);
@@ -255,7 +259,7 @@ mod tests {
     async fn test_integrated_context_creation() {
         let config = Arc::new(SystemConfig::default());
         let factory = IntegratedContextFactory::new(config);
-        
+
         let (context, _channels) = factory
             .create_session_context("test-session".to_string())
             .expect("Should create context");
@@ -269,7 +273,7 @@ mod tests {
     async fn test_context_hierarchy() {
         let config = Arc::new(SystemConfig::default());
         let factory = IntegratedContextFactory::new(config);
-        
+
         let (session_context, _) = factory
             .create_session_context("test-session".to_string())
             .expect("Should create context");
@@ -288,7 +292,7 @@ mod tests {
     async fn test_event_emission() {
         let config = Arc::new(SystemConfig::default());
         let factory = IntegratedContextFactory::new(config);
-        
+
         let (context, channels) = factory
             .create_session_context("test-session".to_string())
             .expect("Should create context");
@@ -313,7 +317,10 @@ mod tests {
 
         // emit_event is async returning Future
         futures::executor::block_on(async {
-            context.emit_event(event.clone()).await.expect("Should emit event");
+            context
+                .emit_event(event.clone())
+                .await
+                .expect("Should emit event");
         });
 
         let received = event_rx.recv().await.expect("Should receive event");

@@ -1,18 +1,18 @@
 //! HTML parsing and data extraction for Matter certification data
-//! 
+//!
 //! This module provides specialized extractors for parsing HTML content
 //! from certification websites and extracting product information.
-//! 
+//!
 //! Implementation follows the guide in .local/Rust-Tauri-DOM-Extraction-Guide.md
 
 #![allow(clippy::uninlined_format_args)]
 
-use anyhow::{anyhow, Result};
-use scraper::{Html, Selector, ElementRef};
-use tracing::debug;
-use std::sync::{Arc, RwLock};
-use crate::infrastructure::csa_iot;
 use crate::domain::product::{Product, ProductDetail};
+use crate::infrastructure::csa_iot;
+use anyhow::{Result, anyhow};
+use scraper::{ElementRef, Html, Selector};
+use std::sync::{Arc, RwLock};
+use tracing::debug;
 
 /// Configuration for CSA-IoT website data extraction
 #[derive(Debug, Clone)]
@@ -72,7 +72,8 @@ impl Default for MatterExtractorConfig {
         Self {
             product_list_selectors: ProductListSelectors {
                 // 가이드에 따른 정확한 CSA-IoT 페이지 구조 셀렉터
-                product_container: ".wp-block-crown-blocks-product-index article.product".to_string(), // "div.post-feed article".to_string(),
+                product_container: ".wp-block-crown-blocks-product-index article.product"
+                    .to_string(), // "div.post-feed article".to_string(),
                 product_link: "a".to_string(),
                 manufacturer: "p.entry-company.notranslate".to_string(),
                 model: "h3.entry-title".to_string(),
@@ -113,19 +114,23 @@ impl MatterDataExtractor {
 
     /// Create a new data extractor with custom configuration
     pub fn with_config(config: MatterExtractorConfig) -> Result<Self> {
-        Ok(Self { 
+        Ok(Self {
             config,
             pagination_context: Arc::new(RwLock::new(None)),
         })
     }
     /// Set pagination context for proper pageId and indexInPage calculation
     pub fn set_pagination_context(&self, context: PaginationContext) -> Result<()> {
-        let mut pagination_context = self.pagination_context.write()
+        let mut pagination_context = self
+            .pagination_context
+            .write()
             .map_err(|e| anyhow!("Failed to acquire write lock: {}", e))?;
-        
-        debug!("📊 Pagination context updated: total_pages={}, items_on_last_page={}", 
-               context.total_pages, context.items_on_last_page);
-        
+
+        debug!(
+            "📊 Pagination context updated: total_pages={}, items_on_last_page={}",
+            context.total_pages, context.items_on_last_page
+        );
+
         *pagination_context = Some(context);
         Ok(())
     }
@@ -133,14 +138,14 @@ impl MatterDataExtractor {
     /// Extract product URLs from a product listing page (guide-based approach)
     pub fn extract_product_urls(&self, html: &Html, base_url: &str) -> Result<Vec<String>> {
         debug!("Extracting product URLs from listing page");
-        
+
         let article_selector = Selector::parse("div.post-feed article")
             .map_err(|e| anyhow!("Invalid article selector: {}", e))?;
-        let link_selector = Selector::parse("a")
-            .map_err(|e| anyhow!("Invalid link selector: {}", e))?;
+        let link_selector =
+            Selector::parse("a").map_err(|e| anyhow!("Invalid link selector: {}", e))?;
 
         let mut urls = Vec::new();
-        
+
         for article in html.select(&article_selector) {
             if let Some(link) = article.select(&link_selector).next() {
                 if let Some(href) = link.value().attr("href") {
@@ -166,11 +171,11 @@ impl MatterDataExtractor {
     /// Extract total number of pages from pagination
     pub fn extract_total_pages(&self, html_content: &str) -> Result<u32> {
         let html = Html::parse_document(html_content);
-        
+
         let pagination_selectors = vec![
-            "a[href*='page=']",  // 페이지 링크
-            ".pagination a",     // 페이지네이션 링크
-            ".page-numbers a",   // 워드프레스 스타일
+            "a[href*='page=']", // 페이지 링크
+            ".pagination a",    // 페이지네이션 링크
+            ".page-numbers a",  // 워드프레스 스타일
         ];
 
         let mut max_page = 1u32;
@@ -187,7 +192,7 @@ impl MatterDataExtractor {
                             }
                         }
                     }
-                    
+
                     // 텍스트에서 페이지 번호 추출
                     let text = element.text().collect::<String>();
                     if let Ok(page_num) = text.trim().parse::<u32>() {
@@ -198,11 +203,7 @@ impl MatterDataExtractor {
         }
 
         // "Page X of Y" 형태의 텍스트에서 총 페이지 수 추출
-        let page_info_selectors = vec![
-            ".pagination-info",
-            ".page-info", 
-            ".showing-info",
-        ];
+        let page_info_selectors = vec![".pagination-info", ".page-info", ".showing-info"];
 
         let re = regex::Regex::new(r"(?i)page\s+\d+\s+of\s+(\d+)").unwrap();
 
@@ -228,20 +229,24 @@ impl MatterDataExtractor {
     /// Extract product data from a detail page (returns JSON for flexibility)
     pub fn extract_product_data(&self, html_content: &str) -> Result<serde_json::Value> {
         let html = Html::parse_document(html_content);
-        
+
         let product_detail = self.extract_product_detail(&html, "".to_string())?;
-        
+
         let json_value = serde_json::to_value(product_detail)
             .map_err(|e| anyhow!("Failed to serialize product detail: {}", e))?;
-        
+
         Ok(json_value)
     }
 
     /// Extract basic product information from a page (guide-based main entry point)
-    pub fn extract_basic_product_info(&self, html_content: &str, page_url: &str) -> Result<Vec<Product>> {
+    pub fn extract_basic_product_info(
+        &self,
+        html_content: &str,
+        page_url: &str,
+    ) -> Result<Vec<Product>> {
         debug!("Extracting basic product info from: {}", page_url);
         let html = Html::parse_document(html_content);
-        
+
         if self.is_listing_page(&html, page_url) {
             let page_id = self.extract_page_id_from_url(page_url);
             self.extract_products_from_list(&html, page_id)
@@ -256,12 +261,12 @@ impl MatterDataExtractor {
         if url.contains("page=") || url.contains("products") && !url.contains("csa_product") {
             return true;
         }
-        
+
         if let Ok(article_selector) = Selector::parse("div.post-feed article") {
             let article_count = html.select(&article_selector).count();
             return article_count > 1;
         }
-        
+
         false
     }
 
@@ -281,16 +286,18 @@ impl MatterDataExtractor {
     fn extract_single_product_from_detail_page(&self, html: &Html, url: &str) -> Result<Product> {
         debug!("Extracting single product from detail page: {}", url);
         let now = chrono::Utc::now();
-        
+
         let manufacturer = self.extract_field_text(html, ".manufacturer, .company-info");
         let model = self.extract_field_text(html, "h1.entry-title, h1");
         let certificate_id = self.extract_field_text(html, ".cert-id, .certification-id");
-    // Product 구조체에는 아직 device_type / certification_date 필드가 없어 경고 발생 → 추후 확장 대비 유지
-    let _device_type = self.extract_field_text(html, ".device-type, .category");
-    let _certification_date = self.extract_field_text(html, ".cert-date, .certification-date");
+        // Product 구조체에는 아직 device_type / certification_date 필드가 없어 경고 발생 → 추후 확장 대비 유지
+        let _device_type = self.extract_field_text(html, ".device-type, .category");
+        let _certification_date = self.extract_field_text(html, ".cert-date, .certification-date");
 
-        debug!("Extracted from {}: manufacturer={:?}, model={:?}, cert_id={:?}", 
-               url, manufacturer, model, certificate_id);
+        debug!(
+            "Extracted from {}: manufacturer={:?}, model={:?}, cert_id={:?}",
+            url, manufacturer, model, certificate_id
+        );
 
         Ok(Product {
             id: None, // Will be generated when saved to database
@@ -308,17 +315,19 @@ impl MatterDataExtractor {
     /// Extract basic product information from listing page (guide-based approach)
     pub fn extract_products_from_list(&self, html: &Html, page_id: i32) -> Result<Vec<Product>> {
         debug!("Extracting products from listing page {}", page_id);
-        
+
         let article_selector = Selector::parse("div.post-feed article")
             .map_err(|e| anyhow!("Invalid article selector: {}", e))?;
 
         let mut products = Vec::new();
         let articles: Vec<_> = html.select(&article_selector).collect();
         debug!("Found {} article elements", articles.len());
-        
+
         // Process articles in reverse order to match expected index order (guide approach)
         for (index, article) in articles.iter().rev().enumerate() {
-            if let Ok(product) = self.extract_single_product_from_list(*article, page_id, index as i32) {
+            if let Ok(product) =
+                self.extract_single_product_from_list(*article, page_id, index as i32)
+            {
                 products.push(product);
             }
         }
@@ -330,14 +339,17 @@ impl MatterDataExtractor {
     /// Extract detailed product information from a product detail page (guide-based approach)
     pub fn extract_product_detail(&self, html: &Html, url: String) -> Result<ProductDetail> {
         debug!("Extracting product detail from: {}", url);
-        
+
         let now = chrono::Utc::now();
-        
+
         // Extract basic product information from page headers/title
         let model = self.extract_field_text(html, &self.config.product_detail_selectors.model);
-        let manufacturer = self.extract_field_text(html, "p.company-info, .company-name, .manufacturer, p.entry-company, .entry-company");
-    let device_type = self.extract_field_text(html, "p.device-category, .product-type, .device-type, p.entry-category, .entry-category, h6.entry-category");
-        
+        let manufacturer = self.extract_field_text(
+            html,
+            "p.company-info, .company-name, .manufacturer, p.entry-company, .entry-company",
+        );
+        let device_type = self.extract_field_text(html, "p.device-category, .product-type, .device-type, p.entry-category, .entry-category, h6.entry-category");
+
         let mut detail = ProductDetail {
             url,
             page_id: None,
@@ -370,25 +382,34 @@ impl MatterDataExtractor {
 
         // Extract from information table (guide approach)
         self.extract_from_table(html, &mut detail)?;
-        
-        // Extract from detail list items (guide approach)  
+
+        // Extract from detail list items (guide approach)
         self.extract_from_detail_list(html, &mut detail)?;
 
-        debug!("Extracted product detail: model={:?}, manufacturer={:?}, device_type={:?}, cert_id={:?}",
-               detail.model, detail.manufacturer, detail.device_type, detail.certificate_id);
+        debug!(
+            "Extracted product detail: model={:?}, manufacturer={:?}, device_type={:?}, cert_id={:?}",
+            detail.model, detail.manufacturer, detail.device_type, detail.certificate_id
+        );
 
         Ok(detail)
     }
 
     /// Extract a single product from a list container element (guide-based approach)
-    fn extract_single_product_from_list(&self, article: ElementRef, source_page_id: i32, source_index: i32) -> Result<Product> {
+    fn extract_single_product_from_list(
+        &self,
+        article: ElementRef,
+        source_page_id: i32,
+        source_index: i32,
+    ) -> Result<Product> {
         let now = chrono::Utc::now();
-        
+
         // Calculate proper pageId and indexInPage using pagination context
         // PHASE1-STEP: 기존 context.calculate_page_index -> domain::pagination::PaginationCalculator 로 점진적 이관 예정
         // 현재는 동작 변화 없이 주석 + TODO 만 추가
         let (page_id, index_in_page) = {
-            let pagination_context = self.pagination_context.read()
+            let pagination_context = self
+                .pagination_context
+                .read()
                 .map_err(|e| anyhow!("Failed to acquire read lock: {}", e))?;
             if let Some(ref context) = *pagination_context {
                 // TODO(PaginationRefactor): context 내부 구현이 PaginationCalculator 사용하도록 교체
@@ -398,7 +419,7 @@ impl MatterDataExtractor {
                 (source_page_id, source_index)
             }
         };
-        
+
         // Extract URL - simple and direct approach
         let link_selector = Selector::parse("a").unwrap();
         let url = article
@@ -416,7 +437,7 @@ impl MatterDataExtractor {
             .map(|el| el.text().collect::<Vec<_>>().join("").trim().to_string())
             .filter(|s| !s.is_empty());
 
-        // Extract model - exactly as in guide  
+        // Extract model - exactly as in guide
         let model_selector = Selector::parse("h3.entry-title").unwrap();
         let model = article
             .select(&model_selector)
@@ -427,8 +448,17 @@ impl MatterDataExtractor {
         // Extract certificate ID with fallback logic from guide
         let certificate_id = self.extract_certificate_id_from_article(&article);
 
-        debug!("Extracted from listing article {} (source page {}, index {}): manufacturer={:?}, model={:?}, cert_id={:?} -> pageId={}, indexInPage={}", 
-               source_index, source_page_id, source_index, manufacturer, model, certificate_id, page_id, index_in_page);
+        debug!(
+            "Extracted from listing article {} (source page {}, index {}): manufacturer={:?}, model={:?}, cert_id={:?} -> pageId={}, indexInPage={}",
+            source_index,
+            source_page_id,
+            source_index,
+            manufacturer,
+            model,
+            certificate_id,
+            page_id,
+            index_in_page
+        );
 
         Ok(Product {
             id: None, // Will be generated when saved to database
@@ -448,7 +478,12 @@ impl MatterDataExtractor {
         // Try p.entry-certificate-id first (guide approach)
         let cert_id_p_selector = Selector::parse("p.entry-certificate-id").unwrap();
         if let Some(cert_p_el) = article.select(&cert_id_p_selector).next() {
-            let text = cert_p_el.text().collect::<Vec<_>>().join("").trim().to_string();
+            let text = cert_p_el
+                .text()
+                .collect::<Vec<_>>()
+                .join("")
+                .trim()
+                .to_string();
             if text.starts_with("Certificate ID: ") {
                 return Some(text.replace("Certificate ID: ", "").trim().to_string());
             } else if !text.is_empty() {
@@ -459,7 +494,12 @@ impl MatterDataExtractor {
         // Fallback to span.entry-cert-id (guide approach)
         let cert_id_selector = Selector::parse("span.entry-cert-id").unwrap();
         if let Some(cert_span_el) = article.select(&cert_id_selector).next() {
-            let text = cert_span_el.text().collect::<Vec<_>>().join("").trim().to_string();
+            let text = cert_span_el
+                .text()
+                .collect::<Vec<_>>()
+                .join("")
+                .trim()
+                .to_string();
             if !text.is_empty() {
                 return Some(text);
             }
@@ -472,7 +512,7 @@ impl MatterDataExtractor {
     fn extract_from_table(&self, html: &Html, detail: &mut ProductDetail) -> Result<()> {
         let table_selector = Selector::parse(".product-certificates-table")
             .map_err(|e| anyhow!("Invalid table selector: {}", e))?;
-        
+
         if let Some(table) = html.select(&table_selector).next() {
             let row_selector = Selector::parse("tr").unwrap();
             let cell_selector = Selector::parse("td").unwrap();
@@ -480,8 +520,18 @@ impl MatterDataExtractor {
             for row in table.select(&row_selector) {
                 let cells: Vec<_> = row.select(&cell_selector).collect();
                 if cells.len() >= 2 {
-                    let key = cells[0].text().collect::<Vec<_>>().join("").trim().to_lowercase();
-                    let value = cells[1].text().collect::<Vec<_>>().join("").trim().to_string();
+                    let key = cells[0]
+                        .text()
+                        .collect::<Vec<_>>()
+                        .join("")
+                        .trim()
+                        .to_lowercase();
+                    let value = cells[1]
+                        .text()
+                        .collect::<Vec<_>>()
+                        .join("")
+                        .trim()
+                        .to_string();
 
                     if !value.is_empty() {
                         self.map_table_field(&key, &value, detail);
@@ -489,7 +539,7 @@ impl MatterDataExtractor {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -499,50 +549,50 @@ impl MatterDataExtractor {
         let item_selector = Selector::parse("div.entry-product-details li.item")
             .or_else(|_| Selector::parse("ul.detail-items li.item"))
             .map_err(|e| anyhow!("Invalid detail list item selector: {}", e))?;
-        
-        let label_selector = Selector::parse("span.label")
-            .map_err(|e| anyhow!("Invalid label selector: {}", e))?;
-            
-        let value_selector = Selector::parse("span.value")
-            .map_err(|e| anyhow!("Invalid value selector: {}", e))?;
-        
+
+        let label_selector =
+            Selector::parse("span.label").map_err(|e| anyhow!("Invalid label selector: {}", e))?;
+
+        let value_selector =
+            Selector::parse("span.value").map_err(|e| anyhow!("Invalid value selector: {}", e))?;
+
         // Try to extract from structured list items with label/value spans
         let mut found_items = false;
         for item in html.select(&item_selector) {
             if let (Some(label_el), Some(value_el)) = (
                 item.select(&label_selector).next(),
-                item.select(&value_selector).next()
+                item.select(&value_selector).next(),
             ) {
                 let label = label_el.text().collect::<String>().trim().to_lowercase();
                 let value = value_el.text().collect::<String>().trim().to_string();
-                
+
                 if !value.is_empty() {
                     self.map_detail_field(&label, &value, detail);
                     found_items = true;
                 }
             }
         }
-        
+
         // If we didn't find any items with the span structure, try the old format with colon-separated text
         if !found_items {
             // Fall back to the original selector for backwards compatibility
             let fallback_selector = Selector::parse("div.entry-product-details > div > ul li")
                 .map_err(|e| anyhow!("Invalid fallback list selector: {}", e))?;
-                
+
             for item in html.select(&fallback_selector) {
                 let full_text = item.text().collect::<Vec<_>>().join("").trim().to_string();
-                
+
                 if let Some(colon_index) = full_text.find(':') {
                     let raw_label = full_text[..colon_index].trim().to_lowercase();
                     let raw_value = full_text[colon_index + 1..].trim().to_string();
-                    
+
                     if !raw_value.is_empty() {
                         self.map_detail_field(&raw_label, &raw_value, detail);
                     }
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -550,21 +600,43 @@ impl MatterDataExtractor {
     fn map_table_field(&self, key: &str, value: &str, detail: &mut ProductDetail) {
         match key {
             k if k.contains("certification id") => detail.certificate_id = Some(value.to_string()),
-            k if k.contains("certification date") => detail.certification_date = Some(value.to_string()),
-            k if k.contains("manufacturer") || k.contains("company") => detail.manufacturer = Some(value.to_string()),
+            k if k.contains("certification date") => {
+                detail.certification_date = Some(value.to_string())
+            }
+            k if k.contains("manufacturer") || k.contains("company") => {
+                detail.manufacturer = Some(value.to_string())
+            }
             k if k.contains("vid") => detail.vid = self.parse_numeric_id(value),
             k if k.contains("pid") => detail.pid = self.parse_numeric_id(value),
-            k if k.contains("hardware version") => detail.hardware_version = Some(value.to_string()),
-            k if k.contains("software version") => detail.software_version = Some(value.to_string()),
-            k if k.contains("firmware version") => detail.firmware_version = Some(value.to_string()),
+            k if k.contains("hardware version") => {
+                detail.hardware_version = Some(value.to_string())
+            }
+            k if k.contains("software version") => {
+                detail.software_version = Some(value.to_string())
+            }
+            k if k.contains("firmware version") => {
+                detail.firmware_version = Some(value.to_string())
+            }
             k if k.contains("family id") => detail.family_id = Some(value.to_string()),
             k if k.contains("family sku") => detail.family_sku = Some(value.to_string()),
-            k if k.contains("family variant sku") => detail.family_variant_sku = Some(value.to_string()),
-            k if k.contains("tis") && k.contains("trp tested") => detail.tis_trp_tested = Some(value.to_string()),
-            k if k.contains("specification version") => detail.specification_version = Some(value.to_string()),
-            k if k.contains("transport interface") => detail.transport_interface = Some(value.to_string()),
-            k if k.contains("primary device type id") => detail.primary_device_type_id = Some(value.to_string()),
-            k if k.contains("device type") || k.contains("product type") => detail.device_type = Some(value.to_string()),
+            k if k.contains("family variant sku") => {
+                detail.family_variant_sku = Some(value.to_string())
+            }
+            k if k.contains("tis") && k.contains("trp tested") => {
+                detail.tis_trp_tested = Some(value.to_string())
+            }
+            k if k.contains("specification version") => {
+                detail.specification_version = Some(value.to_string())
+            }
+            k if k.contains("transport interface") => {
+                detail.transport_interface = Some(value.to_string())
+            }
+            k if k.contains("primary device type id") => {
+                detail.primary_device_type_id = Some(value.to_string())
+            }
+            k if k.contains("device type") || k.contains("product type") => {
+                detail.device_type = Some(value.to_string())
+            }
             _ => {} // Ignore unrecognized fields
         }
     }
@@ -572,9 +644,15 @@ impl MatterDataExtractor {
     /// Map detail field to ProductDetail field (guide-based approach)
     fn map_detail_field(&self, label: &str, value: &str, detail: &mut ProductDetail) {
         match label {
-            l if l.contains("manufacturer") || l.contains("company") => detail.manufacturer = Some(value.to_string()),
-            l if l.contains("vendor") || l.contains("vid") => detail.vid = self.parse_numeric_id(value),
-            l if l.contains("product id") || l.contains("pid") => detail.pid = self.parse_numeric_id(value),
+            l if l.contains("manufacturer") || l.contains("company") => {
+                detail.manufacturer = Some(value.to_string())
+            }
+            l if l.contains("vendor") || l.contains("vid") => {
+                detail.vid = self.parse_numeric_id(value)
+            }
+            l if l.contains("product id") || l.contains("pid") => {
+                detail.pid = self.parse_numeric_id(value)
+            }
             l if l.contains("certificate") || l.contains("cert id") => {
                 // Extract certificate ID with regex pattern matching
                 if let Ok(regex) = regex::Regex::new(r"([A-Za-z0-9-]+\d+[-][A-Za-z0-9-]+)") {
@@ -584,33 +662,46 @@ impl MatterDataExtractor {
                         detail.certificate_id = Some(value.to_string());
                     }
                 }
-            },
+            }
             l if l.contains("certification date") || (l.contains("date") && l.contains("cert")) => {
                 detail.certification_date = Some(value.to_string());
-            },
+            }
             l if l.contains("family id") => detail.family_id = Some(value.to_string()),
             l if l.contains("family sku") => detail.family_sku = Some(value.to_string()),
-            l if l.contains("family variant sku") => detail.family_variant_sku = Some(value.to_string()),
-            l if l.contains("firmware version") || (l.contains("firmware") && !l.contains("hardware")) => {
+            l if l.contains("family variant sku") => {
+                detail.family_variant_sku = Some(value.to_string())
+            }
+            l if l.contains("firmware version")
+                || (l.contains("firmware") && !l.contains("hardware")) =>
+            {
                 detail.firmware_version = Some(value.to_string());
-            },
-            l if l.contains("hardware version") || (l.contains("hardware") && !l.contains("firmware")) => {
+            }
+            l if l.contains("hardware version")
+                || (l.contains("hardware") && !l.contains("firmware")) =>
+            {
                 detail.hardware_version = Some(value.to_string());
-            },
+            }
             l if l.contains("software") && !l.contains("hardware") => {
                 detail.software_version = Some(value.to_string());
-            },
-            l if l.contains("tis") && l.contains("trp") => detail.tis_trp_tested = Some(value.to_string()),
+            }
+            l if l.contains("tis") && l.contains("trp") => {
+                detail.tis_trp_tested = Some(value.to_string())
+            }
             l if l.contains("specification version") || l.contains("spec version") => {
                 detail.specification_version = Some(value.to_string());
-            },
-            l if l.contains("transport interface") => detail.transport_interface = Some(value.to_string()),
+            }
+            l if l.contains("transport interface") => {
+                detail.transport_interface = Some(value.to_string())
+            }
             l if l.contains("primary device type") || l.contains("device type id") => {
                 detail.primary_device_type_id = Some(value.to_string());
-            },
-            l if l.contains("device type") || l.contains("product type") || l.contains("category") => {
+            }
+            l if l.contains("device type")
+                || l.contains("product type")
+                || l.contains("category") =>
+            {
                 detail.device_type = Some(value.to_string());
-            },
+            }
             _ => {} // Ignore unrecognized fields
         }
     }
@@ -661,30 +752,37 @@ pub struct PaginationContext {
 impl PaginationContext {
     /// Calculate pageId and indexInPage based on source site page and index
     /// Following the specification in prompts6
-    /// 
+    ///
     /// Note: current_page is 1-based, index_on_page is 1-based (first item on page = 1)
     /// Returns: (pageId, indexInPage) both 0-based where oldest product = (0, 0)
     pub fn calculate_page_index(&self, current_page: u32, index_on_page: u32) -> (i32, i32) {
         // Step 1: Calculate total products on site
         let total_products = (self.total_pages - 1) * self.items_per_page + self.items_on_last_page;
-        
+
         // Step 2: Calculate 0-based index from newest (convert 1-based inputs to 0-based)
         let index_from_newest = (current_page - 1) * self.items_per_page + (index_on_page - 1);
-        
+
         // Step 3: Calculate 0-based index from oldest product (reverse the order)
         let total_index = total_products - 1 - index_from_newest;
-        
+
         // Step 4: Calculate final pageId and indexInPage (both 0-based)
         let page_id = total_index / self.target_page_size;
         let index_in_page = total_index % self.target_page_size;
-        
+
         (page_id as i32, index_in_page as i32)
     }
 
     /// Canonical 계산 방식 (Phase2): domain::pagination::CanonicalPageIdCalculator 사용
     /// current_page: 1-based, zero_based_index: 0-based
-    pub fn calculate_page_index_canonical(&self, current_page: u32, zero_based_index: u32) -> (i32, i32) {
-        let calc = crate::domain::pagination::CanonicalPageIdCalculator::new(self.total_pages, self.items_on_last_page as usize);
+    pub fn calculate_page_index_canonical(
+        &self,
+        current_page: u32,
+        zero_based_index: u32,
+    ) -> (i32, i32) {
+        let calc = crate::domain::pagination::CanonicalPageIdCalculator::new(
+            self.total_pages,
+            self.items_on_last_page as usize,
+        );
         let result = calc.calculate(current_page, zero_based_index as usize);
         (result.page_id, result.index_in_page)
     }
@@ -774,7 +872,7 @@ mod tests {
     fn test_extractor_creation() {
         let extractor = MatterDataExtractor::new();
         assert!(extractor.is_ok());
-        
+
         let extractor = extractor.unwrap();
         assert_eq!(extractor.config.base_url, csa_iot::BASE_URL);
     }
@@ -782,17 +880,17 @@ mod tests {
     #[test]
     fn test_url_resolution() {
         let extractor = MatterDataExtractor::new().unwrap();
-        
+
         assert_eq!(
             extractor.resolve_url("/product/123", "https://example.com"),
             "https://example.com/product/123"
         );
-        
+
         assert_eq!(
             extractor.resolve_url("https://other.com/test", "https://example.com"),
             "https://other.com/test"
         );
-        
+
         assert_eq!(
             extractor.resolve_url("relative/path", "https://example.com"),
             "https://example.com/relative/path"
@@ -802,7 +900,7 @@ mod tests {
     #[test]
     fn test_parse_numeric_id() {
         let extractor = MatterDataExtractor::new().unwrap();
-        
+
         assert_eq!(extractor.parse_numeric_id("123"), Some(123));
         assert_eq!(extractor.parse_numeric_id("0x1A"), Some(26));
         assert_eq!(extractor.parse_numeric_id("0X1A"), Some(26));
@@ -814,23 +912,27 @@ mod tests {
     fn test_page_type_detection() {
         let extractor = MatterDataExtractor::new().unwrap();
         let html = Html::parse_document(SAMPLE_LISTING_HTML);
-        
+
         // Should detect listing pages
         assert!(extractor.is_listing_page(&html, "https://csa-iot.org/csa-iot_products/?page=1"));
         assert!(extractor.is_listing_page(&html, "https://csa-iot.org/products"));
-        
+
         // Should not detect detail pages - use a simple HTML without multiple articles
         let detail_html = Html::parse_document("<html><body><h1>Single Product</h1></body></html>");
-        assert!(!extractor.is_listing_page(&detail_html, "https://csa-iot.org/csa_product/test-123"));
+        assert!(
+            !extractor.is_listing_page(&detail_html, "https://csa-iot.org/csa_product/test-123")
+        );
     }
 
     #[test]
     fn test_product_url_extraction() {
         let extractor = MatterDataExtractor::new().unwrap();
         let html = Html::parse_document(SAMPLE_LISTING_HTML);
-        
-        let urls = extractor.extract_product_urls(&html, "https://csa-iot.org").unwrap();
-        
+
+        let urls = extractor
+            .extract_product_urls(&html, "https://csa-iot.org")
+            .unwrap();
+
         assert_eq!(urls.len(), 3);
         assert!(urls.contains(&"https://csa-iot.org/csa_product/wi-fi-plug-27/".to_string()));
         assert!(urls.contains(&"https://csa-iot.org/csa_product/wi-fi-plug-28/".to_string()));
@@ -841,14 +943,14 @@ mod tests {
     fn test_certificate_id_extraction() {
         let extractor = MatterDataExtractor::new().unwrap();
         let html = Html::parse_document(SAMPLE_LISTING_HTML);
-        
+
         if let Ok(article_selector) = scraper::Selector::parse("div.post-feed article") {
             let articles: Vec<_> = html.select(&article_selector).collect();
-            
+
             // First article should have certificate ID
             let cert_id = extractor.extract_certificate_id_from_article(&articles[0]);
             assert_eq!(cert_id, Some("CSA22059MAT40059-24".to_string()));
-            
+
             // Third article should have no certificate ID
             let cert_id = extractor.extract_certificate_id_from_article(&articles[2]);
             assert_eq!(cert_id, None);
@@ -858,14 +960,16 @@ mod tests {
     #[test]
     fn test_product_list_extraction() {
         let extractor = MatterDataExtractor::new().unwrap();
-        
-        let products = extractor.extract_basic_product_info(
-            SAMPLE_LISTING_HTML, 
-            "https://csa-iot.org/csa-iot_products/?page=1"
-        ).unwrap();
-        
+
+        let products = extractor
+            .extract_basic_product_info(
+                SAMPLE_LISTING_HTML,
+                "https://csa-iot.org/csa-iot_products/?page=1",
+            )
+            .unwrap();
+
         assert_eq!(products.len(), 3);
-        
+
         // Test reverse order processing - first product should be the last in HTML
         let first_product = &products[0];
         assert_eq!(first_product.manufacturer, Some("Test Company".to_string()));
@@ -873,12 +977,18 @@ mod tests {
         assert_eq!(first_product.certificate_id, None);
         assert_eq!(first_product.page_id, Some(1));
         assert_eq!(first_product.index_in_page, Some(0));
-        
+
         // Second product
         let second_product = &products[1];
-        assert_eq!(second_product.manufacturer, Some("Tuya Global Inc.".to_string()));
+        assert_eq!(
+            second_product.manufacturer,
+            Some("Tuya Global Inc.".to_string())
+        );
         assert_eq!(second_product.model, Some("Wi-Fi plug 2".to_string()));
-        assert_eq!(second_product.certificate_id, Some("CSA22060MAT40060-24".to_string()));
+        assert_eq!(
+            second_product.certificate_id,
+            Some("CSA22060MAT40060-24".to_string())
+        );
         assert_eq!(second_product.page_id, Some(1));
         assert_eq!(second_product.index_in_page, Some(1));
     }
@@ -886,15 +996,20 @@ mod tests {
     #[test]
     fn test_product_detail_extraction() {
         let extractor = MatterDataExtractor::new().unwrap();
-        
+
         let html = Html::parse_document(SAMPLE_DETAIL_HTML);
-        let detail = extractor.extract_product_detail(&html, "https://test.com/product/123".to_string()).unwrap();
-        
+        let detail = extractor
+            .extract_product_detail(&html, "https://test.com/product/123".to_string())
+            .unwrap();
+
         assert_eq!(detail.url, "https://test.com/product/123");
         assert_eq!(detail.model, Some("Test Product Detail".to_string()));
         assert_eq!(detail.manufacturer, Some("Test Manufacturer".to_string()));
         assert_eq!(detail.device_type, Some("Test Device Type".to_string()));
-    assert_eq!(detail.certificate_id, Some("CSA12345MAT12345-24".to_string()));
+        assert_eq!(
+            detail.certificate_id,
+            Some("CSA12345MAT12345-24".to_string())
+        );
         assert_eq!(detail.certification_date, Some("2024-01-15".to_string()));
         assert_eq!(detail.vid, Some(0x1234));
         assert_eq!(detail.pid, Some(5678));
@@ -906,7 +1021,7 @@ mod tests {
     fn test_detail_list_extraction() {
         let extractor = MatterDataExtractor::new().unwrap();
         let html = Html::parse_document(SAMPLE_DETAIL_HTML);
-        
+
         let mut detail = ProductDetail {
             url: "test".to_string(),
             page_id: None,
@@ -936,10 +1051,15 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
-        
-        extractor.extract_from_detail_list(&html, &mut detail).unwrap();
-        
-    assert_eq!(detail.certificate_id, Some("CSA12345MAT12345-24".to_string()));
+
+        extractor
+            .extract_from_detail_list(&html, &mut detail)
+            .unwrap();
+
+        assert_eq!(
+            detail.certificate_id,
+            Some("CSA12345MAT12345-24".to_string())
+        );
         assert_eq!(detail.vid, Some(0x1234));
         assert_eq!(detail.pid, Some(5678));
         assert_eq!(detail.hardware_version, Some("1.0".to_string()));
@@ -948,7 +1068,7 @@ mod tests {
     #[test]
     fn test_total_pages_extraction() {
         let extractor = MatterDataExtractor::new().unwrap();
-        
+
         let html_with_pagination = r#"
         <div class="pagination">
             <a href="?page=1">1</a>
@@ -956,7 +1076,7 @@ mod tests {
             <a href="?page=5">5</a>
         </div>
         "#;
-        
+
         let total_pages = extractor.extract_total_pages(html_with_pagination).unwrap();
         assert_eq!(total_pages, 5);
     }
@@ -964,13 +1084,23 @@ mod tests {
     #[test]
     fn test_extract_product_data_json() {
         let extractor = MatterDataExtractor::new().unwrap();
-        
+
         let result = extractor.extract_product_data(SAMPLE_DETAIL_HTML);
         assert!(result.is_ok());
-        
+
         let json = result.unwrap();
-        assert!(json["model"].as_str().unwrap().contains("Test Product Detail"));
-        assert!(json["manufacturer"].as_str().unwrap().contains("Test Manufacturer"));
+        assert!(
+            json["model"]
+                .as_str()
+                .unwrap()
+                .contains("Test Product Detail")
+        );
+        assert!(
+            json["manufacturer"]
+                .as_str()
+                .unwrap()
+                .contains("Test Manufacturer")
+        );
     }
 
     #[test]
@@ -984,16 +1114,16 @@ mod tests {
         };
 
         // Total products = (482-1) * 12 + 2 = 5774
-        
+
         // Test user's specific example: 116th product should be (pageId=9, indexInPage=7)
         // The 116th oldest product corresponds to product index 115 in our 0-based system
         // We need to find which website page/item this corresponds to
-        
+
         // 116 oldest products correspond to products at indices 5774-116 to 5774-1 on website
         // So 116th product (our index 115) = website product 5774-116 = 5658
         // Website product 5658 (0-based) = page 472, item 7 (1-based)
-        // 5658 / 12 = 471 remainder 6, so page 472 (1-based), item 7 (1-based) 
-        
+        // 5658 / 12 = 471 remainder 6, so page 472 (1-based), item 7 (1-based)
+
         let (page_id, index_in_page) = context.calculate_page_index(472, 7);
         assert_eq!(page_id, 9, "116th product should have pageId=9");
         assert_eq!(index_in_page, 7, "116th product should have indexInPage=7");
@@ -1004,11 +1134,14 @@ mod tests {
         assert_eq!(page_id, 0, "Oldest product should have pageId=0");
         assert_eq!(index_in_page, 0, "Oldest product should have indexInPage=0");
 
-        // Test second oldest product: should be at pageId=0, indexInPage=1 
+        // Test second oldest product: should be at pageId=0, indexInPage=1
         // Second oldest product = website product 5772 (0-based) = page 482, item 1
         let (page_id, index_in_page) = context.calculate_page_index(482, 1);
         assert_eq!(page_id, 0, "Second oldest product should have pageId=0");
-        assert_eq!(index_in_page, 1, "Second oldest product should have indexInPage=1");
+        assert_eq!(
+            index_in_page, 1,
+            "Second oldest product should have indexInPage=1"
+        );
 
         // Test newest product: should have highest pageId and indexInPage
         // Newest product = website product 0 (0-based) = page 1, item 1
@@ -1018,4 +1151,3 @@ mod tests {
         assert_eq!(index_in_page, 1, "Newest product should have indexInPage=1");
     }
 }
-

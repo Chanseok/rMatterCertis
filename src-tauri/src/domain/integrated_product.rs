@@ -1,13 +1,15 @@
 //! 통합 제품 도메인 모델
-//! 
+//!
 //! 새로운 통합 스키마를 기반으로 한 제품 관련 도메인 엔티티와 로직을 포함합니다.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use chrono::{DateTime, Utc};
 
 // Re-export types from the product module for compatibility
-pub use super::product::{Product, ProductDetail, ProductWithDetails, Vendor, ProductSearchCriteria, ProductSearchResult};
+pub use super::product::{
+    Product, ProductDetail, ProductSearchCriteria, ProductSearchResult, ProductWithDetails, Vendor,
+};
 pub use super::session_manager::CrawlingResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -160,7 +162,9 @@ impl IntegratedProduct {
 
     /// 제품이 할인 중인지 확인
     pub fn is_on_sale(&self) -> bool {
-        self.calculate_discount_rate().map(|rate| rate > 0.0).unwrap_or(false)
+        self.calculate_discount_rate()
+            .map(|rate| rate > 0.0)
+            .unwrap_or(false)
     }
 
     /// 제품의 데이터 품질 점수 계산
@@ -170,32 +174,66 @@ impl IntegratedProduct {
 
         // 필수 필드 (각 10점)
         max_score += 30.0;
-        if !self.name.is_empty() { score += 10.0; }
-        if !self.category.is_empty() { score += 10.0; }
-        if !self.product_url.is_empty() { score += 10.0; }
+        if !self.name.is_empty() {
+            score += 10.0;
+        }
+        if !self.category.is_empty() {
+            score += 10.0;
+        }
+        if !self.product_url.is_empty() {
+            score += 10.0;
+        }
 
         // 중요 필드 (각 8점)
         max_score += 32.0;
-        if self.price_current.is_some() { score += 8.0; }
-        if self.description.is_some() && !self.description.as_ref().unwrap().is_empty() { score += 8.0; }
-        if self.image_urls.is_some() { score += 8.0; }
-        if self.availability_status != "unknown" { score += 8.0; }
+        if self.price_current.is_some() {
+            score += 8.0;
+        }
+        if self.description.is_some() && !self.description.as_ref().unwrap().is_empty() {
+            score += 8.0;
+        }
+        if self.image_urls.is_some() {
+            score += 8.0;
+        }
+        if self.availability_status != "unknown" {
+            score += 8.0;
+        }
 
         // 추가 정보 필드 (각 5점)
         max_score += 30.0;
-        if self.brand.is_some() { score += 5.0; }
-        if self.rating_average.is_some() { score += 5.0; }
-        if self.specifications.is_some() { score += 5.0; }
-        if self.vendor_product_code.is_some() { score += 5.0; }
-        if self.weight.is_some() { score += 5.0; }
-        if self.dimensions.is_some() { score += 5.0; }
+        if self.brand.is_some() {
+            score += 5.0;
+        }
+        if self.rating_average.is_some() {
+            score += 5.0;
+        }
+        if self.specifications.is_some() {
+            score += 5.0;
+        }
+        if self.vendor_product_code.is_some() {
+            score += 5.0;
+        }
+        if self.weight.is_some() {
+            score += 5.0;
+        }
+        if self.dimensions.is_some() {
+            score += 5.0;
+        }
 
         // 메타데이터 (각 2점)
         max_score += 8.0;
-        if self.tags.is_some() { score += 2.0; }
-        if self.color.is_some() { score += 2.0; }
-        if self.size.is_some() { score += 2.0; }
-        if self.material.is_some() { score += 2.0; }
+        if self.tags.is_some() {
+            score += 2.0;
+        }
+        if self.color.is_some() {
+            score += 2.0;
+        }
+        if self.size.is_some() {
+            score += 2.0;
+        }
+        if self.material.is_some() {
+            score += 2.0;
+        }
 
         (score / max_score * 100.0_f64).round()
     }
@@ -322,7 +360,7 @@ mod tests {
         product.description = Some("Great product".to_string());
         product.brand = Some("TestBrand".to_string());
         product.rating_average = Some(4.5);
-        
+
         let improved_score = product.calculate_data_quality_score();
         assert!(improved_score > basic_score);
     }
@@ -351,13 +389,16 @@ mod tests {
 
         let old_updated_at = original.updated_at;
         std::thread::sleep(std::time::Duration::from_millis(1));
-        
+
         original.update_from_crawl_data(&updated);
 
         assert_eq!(original.name, "New Name");
         assert_eq!(original.category, "New Category");
         assert_eq!(original.price_current, Some(99.99));
-        assert_eq!(original.description, Some("Updated description".to_string()));
+        assert_eq!(
+            original.description,
+            Some("Updated description".to_string())
+        );
         assert!(original.updated_at > old_updated_at);
         assert!(original.data_quality_score.is_some());
     }

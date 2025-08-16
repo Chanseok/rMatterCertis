@@ -57,7 +57,7 @@ pub struct ValidatedUrl {
 
 impl ValidatedUrl {
     /// Creates a new validated URL
-    /// 
+    ///
     /// # Errors
     /// Returns error if URL is invalid or malformed
     pub fn new(url: String) -> Result<Self, UrlError> {
@@ -66,10 +66,8 @@ impl ValidatedUrl {
         }
 
         let parsed = url::Url::parse(&url).map_err(|_| UrlError::InvalidFormat)?;
-        
-        let domain = parsed.host_str()
-            .ok_or(UrlError::NoDomain)?
-            .to_string();
+
+        let domain = parsed.host_str().ok_or(UrlError::NoDomain)?.to_string();
 
         let is_secure = parsed.scheme() == "https";
 
@@ -138,7 +136,7 @@ pub struct ProductData {
 
 impl ProductData {
     /// Creates a new product data instance
-    /// 
+    ///
     /// # Errors
     /// Returns error if required fields are invalid
     pub fn new(
@@ -335,7 +333,7 @@ impl CrawlingProgress {
     pub fn update_page_processed(&mut self, success: bool, products_found: u32) {
         self.processed_pages += 1;
         self.products_found += products_found;
-        
+
         if success {
             self.successful_pages += 1;
         } else {
@@ -346,9 +344,8 @@ impl CrawlingProgress {
         if self.processing_rate > 0.0 {
             let remaining_pages = self.total_pages.saturating_sub(self.processed_pages);
             let remaining_minutes = remaining_pages as f64 / self.processing_rate;
-            self.estimated_completion = Some(
-                chrono::Utc::now() + chrono::Duration::minutes(remaining_minutes as i64)
-            );
+            self.estimated_completion =
+                Some(chrono::Utc::now() + chrono::Duration::minutes(remaining_minutes as i64));
         }
     }
 
@@ -380,11 +377,8 @@ mod tests {
     #[test]
     fn product_data_validation() {
         let url = ValidatedUrl::new("https://example.com".to_string()).unwrap();
-        let product = ProductData::new(
-            "test_id".to_string(),
-            "Test Product".to_string(),
-            url,
-        ).unwrap();
+        let product =
+            ProductData::new("test_id".to_string(), "Test Product".to_string(), url).unwrap();
 
         assert!(product.validate().is_ok());
         assert!(!product.is_complete()); // Missing manufacturer and category

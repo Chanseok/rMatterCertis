@@ -6,73 +6,73 @@
 //! - 의존성 역전 원칙 준수
 //! - 타입 안전성 및 테스트 가능한 구조
 
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use async_trait::async_trait;
 use thiserror::Error;
-use serde::{Deserialize, Serialize};
 
-use crate::crawling::tasks::{TaskResult, CrawlingTask};
 use crate::crawling::state::SharedState;
+use crate::crawling::tasks::{CrawlingTask, TaskResult};
 
 // Re-export for public API (without duplicates)
-pub use crate::crawling::tasks::TaskResult as PublicTaskResult;
 pub use crate::crawling::tasks::TaskOutput as PublicTaskOutput;
+pub use crate::crawling::tasks::TaskResult as PublicTaskResult;
 
 // Modern Rust 2024 - 명시적 모듈 선언 (하위 모듈들)
+pub mod db_saver_sqlx; // 실제 SQLX 구현
 pub mod list_page_fetcher;
-pub mod list_page_parser; 
+pub mod list_page_parser;
+pub mod mock_db_saver;
 pub mod product_detail_fetcher;
-pub mod product_detail_parser;
-pub mod db_saver_sqlx;  // 실제 SQLX 구현
-pub mod mock_db_saver;  // 개발용 Mock (임시 유지)
+pub mod product_detail_parser; // 개발용 Mock (임시 유지)
 
+pub use db_saver_sqlx::DbSaver; // 실제 SQLX 구현 사용
 pub use list_page_fetcher::ListPageFetcher;
 pub use list_page_parser::ListPageParser;
+pub use mock_db_saver::MockDbSaver;
 pub use product_detail_fetcher::ProductDetailFetcher;
-pub use product_detail_parser::ProductDetailParser;
-pub use db_saver_sqlx::DbSaver;  // 실제 SQLX 구현 사용
-pub use mock_db_saver::MockDbSaver;  // Mock 추가 (단계적 제거 예정)
+pub use product_detail_parser::ProductDetailParser; // Mock 추가 (단계적 제거 예정)
 
 /// Clean Architecture 워커 에러 타입
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
 pub enum WorkerError {
     #[error("Network error: {0}")]
     NetworkError(String),
-    
+
     #[error("Parse error: {0}")]
     ParseError(String),
-    
+
     #[error("Database error: {0}")]
     DatabaseError(String),
-    
+
     #[error("Timeout error: {0}")]
     TimeoutError(String),
-    
+
     #[error("Task timeout: {message}")]
     Timeout { message: String },
-    
+
     #[error("Rate limit error: {0}")]
     RateLimitError(String),
-    
+
     #[error("Invalid input: {0}")]
     InvalidInput(String),
-    
+
     #[error("Validation error: {0}")]
     ValidationError(String),
-    
+
     #[error("HTTP error {0}: {1}")]
     HttpError(u16, String),
-    
+
     #[error("Initialization error: {0}")]
     InitializationError(String),
-    
+
     #[error("Task was cancelled")]
     Cancelled,
-    
+
     #[error("Worker unavailable: {0}")]
     WorkerUnavailable(String),
-    
+
     #[error("Configuration error: {0}")]
     ConfigurationError(String),
 }
@@ -85,7 +85,7 @@ where
 {
     /// Associated task type
     type Task;
-    
+
     /// Worker 식별자
     fn worker_id(&self) -> &'static str;
 
@@ -137,7 +137,7 @@ pub struct WorkerPool {
     list_page_parser: Arc<ListPageParser>,
     product_detail_fetcher: Arc<ProductDetailFetcher>,
     product_detail_parser: Arc<ProductDetailParser>,
-    db_saver: Arc<DbSaver>,  // 구체적 타입으로 변경
+    db_saver: Arc<DbSaver>, // 구체적 타입으로 변경
     max_total_concurrency: usize,
     metrics: Arc<tokio::sync::RwLock<WorkerPoolMetrics>>,
 }
@@ -149,7 +149,7 @@ impl WorkerPool {
         list_page_parser: Arc<ListPageParser>,
         product_detail_fetcher: Arc<ProductDetailFetcher>,
         product_detail_parser: Arc<ProductDetailParser>,
-        db_saver: Arc<DbSaver>,  // 구체적 타입으로 변경
+        db_saver: Arc<DbSaver>, // 구체적 타입으로 변경
         max_total_concurrency: usize,
     ) -> Self {
         Self {
@@ -170,19 +170,25 @@ impl WorkerPool {
         shared_state: Arc<SharedState>,
     ) -> Result<TaskResult, WorkerError> {
         let start_time = std::time::Instant::now();
-        
+
         let result = match task {
             CrawlingTask::FetchListPage { .. } => {
-                self.list_page_fetcher.process_task(task, shared_state).await
+                self.list_page_fetcher
+                    .process_task(task, shared_state)
+                    .await
             }
             CrawlingTask::ParseListPage { .. } => {
                 self.list_page_parser.process_task(task, shared_state).await
             }
             CrawlingTask::FetchProductDetail { .. } => {
-                self.product_detail_fetcher.process_task(task, shared_state).await
+                self.product_detail_fetcher
+                    .process_task(task, shared_state)
+                    .await
             }
             CrawlingTask::ParseProductDetail { .. } => {
-                self.product_detail_parser.process_task(task, shared_state).await
+                self.product_detail_parser
+                    .process_task(task, shared_state)
+                    .await
             }
             CrawlingTask::SaveProduct { .. } => {
                 self.db_saver.process_task(task, shared_state).await
@@ -191,7 +197,7 @@ impl WorkerPool {
 
         // 메트릭스 업데이트
         self.update_metrics(start_time, &result).await;
-        
+
         result
     }
 
@@ -233,27 +239,32 @@ impl WorkerPool {
     }
 
     /// 메트릭스 업데이트 (내부 메서드)
-    async fn update_metrics(&self, start_time: std::time::Instant, result: &Result<TaskResult, WorkerError>) {
+    async fn update_metrics(
+        &self,
+        start_time: std::time::Instant,
+        result: &Result<TaskResult, WorkerError>,
+    ) {
         let mut metrics = self.metrics.write().await;
         let duration = start_time.elapsed();
-        
+
         metrics.total_tasks_processed += 1;
         if result.is_err() {
             metrics.total_tasks_failed += 1;
         }
-        
+
         // 평균 처리 시간 계산
         if metrics.total_tasks_processed == 1 {
             metrics.average_processing_time = duration;
         } else {
             // u32로 안전하게 캐스팅하여 Duration 산술 연산 수행
-            let count_minus_one = std::cmp::min(metrics.total_tasks_processed - 1, u32::MAX as u64) as u32;
+            let count_minus_one =
+                std::cmp::min(metrics.total_tasks_processed - 1, u32::MAX as u64) as u32;
             let count = std::cmp::min(metrics.total_tasks_processed, u32::MAX as u64) as u32;
-            
+
             let total_time = metrics.average_processing_time * count_minus_one + duration;
             metrics.average_processing_time = total_time / count;
         }
-        
+
         metrics.last_task_completed = Some(chrono::Utc::now());
     }
 }
@@ -288,7 +299,7 @@ pub struct WorkerPoolBuilder {
     list_page_parser: Option<Arc<ListPageParser>>,
     product_detail_fetcher: Option<Arc<ProductDetailFetcher>>,
     product_detail_parser: Option<Arc<ProductDetailParser>>,
-    db_saver: Option<Arc<DbSaver>>,  // 구체적 타입으로 변경
+    db_saver: Option<Arc<DbSaver>>, // 구체적 타입으로 변경
 }
 
 impl WorkerPoolBuilder {
@@ -334,15 +345,20 @@ impl WorkerPoolBuilder {
     }
 
     pub fn build(self) -> Result<WorkerPool, WorkerError> {
-        let list_page_fetcher = self.list_page_fetcher
-            .ok_or_else(|| WorkerError::ConfigurationError("ListPageFetcher not configured".to_string()))?;
-        let list_page_parser = self.list_page_parser
-            .ok_or_else(|| WorkerError::ConfigurationError("ListPageParser not configured".to_string()))?;
-        let product_detail_fetcher = self.product_detail_fetcher
-            .ok_or_else(|| WorkerError::ConfigurationError("ProductDetailFetcher not configured".to_string()))?;
-        let product_detail_parser = self.product_detail_parser
-            .ok_or_else(|| WorkerError::ConfigurationError("ProductDetailParser not configured".to_string()))?;
-        let db_saver = self.db_saver
+        let list_page_fetcher = self.list_page_fetcher.ok_or_else(|| {
+            WorkerError::ConfigurationError("ListPageFetcher not configured".to_string())
+        })?;
+        let list_page_parser = self.list_page_parser.ok_or_else(|| {
+            WorkerError::ConfigurationError("ListPageParser not configured".to_string())
+        })?;
+        let product_detail_fetcher = self.product_detail_fetcher.ok_or_else(|| {
+            WorkerError::ConfigurationError("ProductDetailFetcher not configured".to_string())
+        })?;
+        let product_detail_parser = self.product_detail_parser.ok_or_else(|| {
+            WorkerError::ConfigurationError("ProductDetailParser not configured".to_string())
+        })?;
+        let db_saver = self
+            .db_saver
             .ok_or_else(|| WorkerError::ConfigurationError("DbSaver not configured".to_string()))?;
 
         Ok(WorkerPool::new(
@@ -368,9 +384,8 @@ mod tests {
 
     #[test]
     fn test_worker_pool_builder() {
-        let builder = WorkerPoolBuilder::new()
-            .with_max_concurrency(20);
-        
+        let builder = WorkerPoolBuilder::new().with_max_concurrency(20);
+
         // 빌더 패턴이 올바르게 동작하는지 확인
         assert_eq!(builder.max_total_concurrency, 20);
     }
@@ -380,7 +395,7 @@ mod tests {
         let error = WorkerError::NetworkError("Test error".to_string());
         let serialized = serde_json::to_string(&error).unwrap();
         let deserialized: WorkerError = serde_json::from_str(&serialized).unwrap();
-        
+
         match deserialized {
             WorkerError::NetworkError(msg) => assert_eq!(msg, "Test error"),
             _ => panic!("Wrong error type"),

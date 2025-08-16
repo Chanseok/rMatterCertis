@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::infrastructure::config::AppConfig;
+use serde::{Deserialize, Serialize};
 
 /// Configuration validation using default values for proposal6.md compliance
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,14 +27,18 @@ impl ValidatedCrawlingConfig {
     /// Create validated configuration from AppConfig using safe defaults
     pub fn from_app_config(app_config: &AppConfig) -> Self {
         Self {
-            max_concurrent_requests: app_config.user.max_concurrent_requests
+            max_concurrent_requests: app_config
+                .user
+                .max_concurrent_requests
                 .min(10) // Max 10 concurrent requests
-                .max(1),  // At least 1
-            request_delay_ms: app_config.user.request_delay_ms
-                .max(500), // At least 500ms delay
-            max_retries: app_config.user.crawling.workers.max_retries
-                .min(5), // Max 5 retries
-            timeout_seconds: app_config.user.crawling.timing.operation_timeout_seconds
+                .max(1), // At least 1
+            request_delay_ms: app_config.user.request_delay_ms.max(500), // At least 500ms delay
+            max_retries: app_config.user.crawling.workers.max_retries.min(5), // Max 5 retries
+            timeout_seconds: app_config
+                .user
+                .crawling
+                .timing
+                .operation_timeout_seconds
                 .min(60) // Max 60 seconds
                 .max(5), // At least 5 seconds
             max_pages: Some(app_config.user.crawling.page_range_limit),
@@ -48,8 +52,13 @@ impl ValidatedCrawlingConfig {
             products_per_page: 12, // Matters.town has 12 products per page
             page_range_limit: app_config.user.crawling.page_range_limit,
             enable_debug_logging: app_config.user.verbose_logging,
-            list_page_max_concurrent: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-            product_detail_max_concurrent: app_config.user.crawling.workers.product_detail_max_concurrent as u32,
+            list_page_max_concurrent: app_config.user.crawling.workers.list_page_max_concurrent
+                as u32,
+            product_detail_max_concurrent: app_config
+                .user
+                .crawling
+                .workers
+                .product_detail_max_concurrent as u32,
         }
     }
 
@@ -85,11 +94,11 @@ impl Default for ValidatedCrawlingConfig {
             // Infrastructure defaults
             batch_size: 50,
             max_retry_attempts: 3,
-            request_timeout_ms: 30000, // 30 seconds in milliseconds
-            products_per_page: 12, // Matters.town has 12 products per page
-            page_range_limit: 20, // Default page range limit
-            enable_debug_logging: false, // Default debug logging off
-            list_page_max_concurrent: 10, // Default list page concurrency
+            request_timeout_ms: 30000,        // 30 seconds in milliseconds
+            products_per_page: 12,            // Matters.town has 12 products per page
+            page_range_limit: 20,             // Default page range limit
+            enable_debug_logging: false,      // Default debug logging off
+            list_page_max_concurrent: 10,     // Default list page concurrency
             product_detail_max_concurrent: 8, // Default product detail concurrency
         }
     }

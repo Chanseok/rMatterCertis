@@ -1,18 +1,18 @@
 //! Event emission system for real-time communication with frontend
-//! 
+//!
 //! This module provides a centralized event emission system that allows
 //! the crawling engine to send real-time updates to the frontend.
 
-use crate::domain::events::{CrawlingEvent, CrawlingProgress, CrawlingTaskStatus, DatabaseStats};
 use crate::domain::atomic_events::AtomicTaskEvent; // 추가
+use crate::domain::events::{CrawlingEvent, CrawlingProgress, CrawlingTaskStatus, DatabaseStats};
 use crate::infrastructure::service_based_crawling_engine::DetailedCrawlingEvent; // 추가
-use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
-use tracing::{debug, error, warn};
-use tokio::sync::{RwLock, mpsc};
-use thiserror::Error;
-use std::time::Duration;
 use futures::future::join_all;
+use std::sync::Arc;
+use std::time::Duration;
+use tauri::{AppHandle, Emitter};
+use thiserror::Error;
+use tokio::sync::{RwLock, mpsc};
+use tracing::{debug, error, warn};
 
 /// 이벤트 발신 관련 오류 타입
 #[derive(Debug, Error)]
@@ -55,19 +55,19 @@ impl EventEmitter {
     /// Create a new event emitter with batching enabled
     pub fn with_batching(app_handle: AppHandle, batch_size: usize, interval_ms: u64) -> Self {
         let (tx, mut rx) = mpsc::channel::<CrawlingEvent>(batch_size * 2);
-        
+
         let emitter = Self {
             app_handle: app_handle.clone(),
             enabled: Arc::new(RwLock::new(true)),
             event_sender: Some(tx),
         };
-        
+
         // 백그라운드 태스크로 이벤트 배치 처리
         let app_handle_clone = app_handle.clone();
         tokio::spawn(async move {
             let mut batch: Vec<CrawlingEvent> = Vec::with_capacity(batch_size);
             let mut interval = tokio::time::interval(Duration::from_millis(interval_ms));
-            
+
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
@@ -99,7 +99,7 @@ impl EventEmitter {
                 }
             }
         });
-        
+
         emitter
     }
 
@@ -107,7 +107,10 @@ impl EventEmitter {
     pub async fn set_enabled(&self, enabled: bool) {
         let mut enabled_guard = self.enabled.write().await;
         *enabled_guard = enabled;
-        debug!("Event emission {}", if enabled { "enabled" } else { "disabled" });
+        debug!(
+            "Event emission {}",
+            if enabled { "enabled" } else { "disabled" }
+        );
     }
 
     /// Check if event emission is enabled
@@ -124,12 +127,14 @@ impl EventEmitter {
 
         // 배치 모드인 경우 이벤트 큐에 추가
         if let Some(sender) = &self.event_sender {
-            return sender.send(event).await
+            return sender
+                .send(event)
+                .await
                 .map_err(|_| EventEmissionError::QueueFull);
         }
 
         let event_name = event.event_name();
-        
+
         match self.app_handle.emit(event_name, &event) {
             Ok(_) => {
                 debug!("Successfully emitted event: {}", event_name);
@@ -189,48 +194,69 @@ impl EventEmitter {
     }
 
     /// Emit crawling completion notification
-    pub async fn emit_completed(&self, result: crate::domain::events::CrawlingResult) -> EventResult {
+    pub async fn emit_completed(
+        &self,
+        result: crate::domain::events::CrawlingResult,
+    ) -> EventResult {
         let event = CrawlingEvent::Completed(result);
         self.emit_event(event).await
     }
 
     /// Emit detailed crawling event for hierarchical event monitor
-    pub async fn emit_detailed_crawling_event(&self, detailed_event: DetailedCrawlingEvent) -> EventResult {
+    pub async fn emit_detailed_crawling_event(
+        &self,
+        detailed_event: DetailedCrawlingEvent,
+    ) -> EventResult {
         // 빠른 경로: 비활성화 검사
         if !self.is_enabled().await {
             return Err(EventEmissionError::Disabled);
         }
 
         let event_name = "detailed-crawling-event";
-        
+
         match self.app_handle.emit(event_name, &detailed_event) {
             Ok(_) => {
-                debug!("Successfully emitted detailed crawling event: {}", event_name);
+                debug!(
+                    "Successfully emitted detailed crawling event: {}",
+                    event_name
+                );
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to emit detailed crawling event {}: {}", event_name, e);
+                error!(
+                    "Failed to emit detailed crawling event {}: {}",
+                    event_name, e
+                );
                 Err(EventEmissionError::TauriError(e))
             }
         }
     }
 
     /// Emit detailed crawling event with JSON payload (for TaskLifecycleEvent)
-    pub async fn emit_detailed_crawling_event_json(&self, json_payload: serde_json::Value) -> EventResult {
+    pub async fn emit_detailed_crawling_event_json(
+        &self,
+        json_payload: serde_json::Value,
+    ) -> EventResult {
         // 빠른 경로: 비활성화 검사
         if !self.is_enabled().await {
             return Err(EventEmissionError::Disabled);
         }
 
         let event_name = "detailed-crawling-event";
-        
+
         match self.app_handle.emit(event_name, &json_payload) {
             Ok(_) => {
-                debug!("Successfully emitted detailed crawling event JSON: {}", event_name);
+                debug!(
+                    "Successfully emitted detailed crawling event JSON: {}",
+                    event_name
+                );
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to emit detailed crawling event JSON {}: {}", event_name, e);
+                error!(
+                    "Failed to emit detailed crawling event JSON {}: {}",
+                    event_name, e
+                );
                 Err(EventEmissionError::TauriError(e))
             }
         }
@@ -248,11 +274,14 @@ impl EventEmitter {
         }
 
         let event_name = AtomicTaskEvent::event_name();
-        
+
         match self.app_handle.emit(event_name, &event) {
             Ok(_) => {
-                debug!("Successfully emitted atomic task event: {} for task {}", 
-                       event_name, event.task_id());
+                debug!(
+                    "Successfully emitted atomic task event: {} for task {}",
+                    event_name,
+                    event.task_id()
+                );
                 Ok(())
             }
             Err(e) => {
@@ -263,25 +292,46 @@ impl EventEmitter {
     }
 
     /// Emit task started event
-    pub async fn emit_task_started(&self, task_id: crate::domain::atomic_events::TaskId, task_type: String) -> EventResult {
+    pub async fn emit_task_started(
+        &self,
+        task_id: crate::domain::atomic_events::TaskId,
+        task_type: String,
+    ) -> EventResult {
         let event = AtomicTaskEvent::started(task_id, task_type);
         self.emit_atomic_task_event(event).await
     }
 
     /// Emit task completed event
-    pub async fn emit_task_completed(&self, task_id: crate::domain::atomic_events::TaskId, task_type: String, duration_ms: u64) -> EventResult {
+    pub async fn emit_task_completed(
+        &self,
+        task_id: crate::domain::atomic_events::TaskId,
+        task_type: String,
+        duration_ms: u64,
+    ) -> EventResult {
         let event = AtomicTaskEvent::completed(task_id, task_type, duration_ms);
         self.emit_atomic_task_event(event).await
     }
 
     /// Emit task failed event
-    pub async fn emit_task_failed(&self, task_id: crate::domain::atomic_events::TaskId, task_type: String, error_message: String, retry_count: u32) -> EventResult {
+    pub async fn emit_task_failed(
+        &self,
+        task_id: crate::domain::atomic_events::TaskId,
+        task_type: String,
+        error_message: String,
+        retry_count: u32,
+    ) -> EventResult {
         let event = AtomicTaskEvent::failed(task_id, task_type, error_message, retry_count);
         self.emit_atomic_task_event(event).await
     }
 
     /// Emit task retrying event
-    pub async fn emit_task_retrying(&self, task_id: crate::domain::atomic_events::TaskId, task_type: String, retry_count: u32, delay_ms: u64) -> EventResult {
+    pub async fn emit_task_retrying(
+        &self,
+        task_id: crate::domain::atomic_events::TaskId,
+        task_type: String,
+        retry_count: u32,
+        delay_ms: u64,
+    ) -> EventResult {
         let event = AtomicTaskEvent::retrying(task_id, task_type, retry_count, delay_ms);
         self.emit_atomic_task_event(event).await
     }
@@ -294,15 +344,15 @@ impl EventEmitter {
     pub async fn emit_batch(&self, events: Vec<CrawlingEvent>) -> Vec<EventResult> {
         // 최적화: 비활성화된 경우 빠르게 리턴
         if !self.is_enabled().await {
-            return events.into_iter()
+            return events
+                .into_iter()
                 .map(|_| Err(EventEmissionError::Disabled))
                 .collect();
         }
 
         // 병렬 이벤트 전송
-        let futures = events.into_iter()
-            .map(|event| self.emit_event(event));
-        
+        let futures = events.into_iter().map(|event| self.emit_event(event));
+
         join_all(futures).await
     }
 }
@@ -340,7 +390,7 @@ impl EventEmitterBuilder {
         self.enabled = enabled;
         self
     }
-    
+
     /// Enable batched event emission
     pub fn with_batching(mut self, batch_size: usize, interval_ms: u64) -> Self {
         self.enable_batching = true;
@@ -352,15 +402,15 @@ impl EventEmitterBuilder {
     /// Build the event emitter
     pub async fn build(self) -> Result<EventEmitter, String> {
         let app_handle = self.app_handle.ok_or("App handle is required")?;
-        
+
         let emitter = if self.enable_batching {
             EventEmitter::with_batching(app_handle, self.batch_size, self.batch_interval_ms)
         } else {
             EventEmitter::new(app_handle)
         };
-        
+
         emitter.set_enabled(self.enabled).await;
-        
+
         Ok(emitter)
     }
 }
@@ -368,44 +418,44 @@ impl EventEmitterBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_event_emitter_basic_operations() {
         // 이 테스트는 EventEmitter의 기본 상태 관리를 테스트합니다
         // 실제 Tauri AppHandle이 없이도 테스트 가능한 부분을 테스트합니다
-        
+
         // EventEmitter는 AppHandle을 필요로 하므로 기본 구조체 생성만 테스트
         let enabled = std::sync::Arc::new(tokio::sync::RwLock::new(true));
         assert!(*enabled.read().await);
-        
+
         // 비활성화 테스트
         *enabled.write().await = false;
         assert!(!*enabled.read().await);
     }
-    
-    #[tokio::test] 
+
+    #[tokio::test]
     async fn test_crawling_progress_serialization() {
         // CrawlingProgress 구조체가 제대로 직렬화되는지 테스트
         let progress = CrawlingProgress::default();
         let serialized = serde_json::to_value(&progress);
         assert!(serialized.is_ok());
-        
+
         let json_value = serialized.unwrap();
         assert!(json_value.is_object());
     }
-    
+
     #[tokio::test]
     async fn test_event_emission_error_types() {
         // EventEmissionError 타입들이 제대로 생성되는지 테스트
         let disabled_error = EventEmissionError::Disabled;
         let serialization_error = EventEmissionError::Serialization("test error".to_string());
         let emission_error = EventEmissionError::Emission("test emission error".to_string());
-        
+
         // 에러 메시지가 제대로 표시되는지 테스트
         let disabled_msg = format!("{}", disabled_error);
         let serialization_msg = format!("{}", serialization_error);
         let emission_msg = format!("{}", emission_error);
-        
+
         assert!(disabled_msg.contains("비활성화"));
         assert!(serialization_msg.contains("test error"));
         assert!(emission_msg.contains("test emission error"));

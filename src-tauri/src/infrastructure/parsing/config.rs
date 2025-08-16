@@ -1,5 +1,5 @@
 //! Parsing configuration for HTML extraction
-//! 
+//!
 //! Centralized configuration for CSS selectors and parsing behavior.
 
 use serde::{Deserialize, Serialize};
@@ -9,22 +9,22 @@ use serde::{Deserialize, Serialize};
 pub struct ParsingConfig {
     /// Base URL for resolving relative links
     pub base_url: String,
-    
+
     /// User agent string for HTTP requests
     pub user_agent: String,
-    
+
     /// Request timeout in milliseconds
     pub timeout_ms: u64,
-    
+
     /// Retry attempts for failed requests
     pub retry_count: u32,
-    
+
     /// Delay between requests to avoid rate limiting
     pub request_delay_ms: u64,
-    
+
     /// Product list selectors
     pub product_list_selectors: ProductListSelectors,
-    
+
     /// Product detail selectors
     pub product_detail_selectors: ProductDetailSelectors,
 }
@@ -49,19 +49,19 @@ impl Default for ParsingConfig {
 pub struct ProductListSelectors {
     /// Selectors for product containers - multiple fallbacks
     pub product_container: Vec<String>,
-    
+
     /// Selectors for product detail page links
     pub product_link: Vec<String>,
-    
+
     /// Selectors for manufacturer/brand name
     pub manufacturer: Vec<String>,
-    
+
     /// Selectors for model/product name
     pub model: Vec<String>,
-    
+
     /// Selectors for certification ID
     pub certificate_id: Vec<String>,
-    
+
     /// Selectors for pagination
     pub pagination: Vec<String>,
 }
@@ -127,7 +127,7 @@ pub struct ProductDetailSelectors {
     pub model: Vec<String>,
     pub category: Vec<String>,
     pub description: Vec<String>,
-    
+
     /// Matter certification specific
     pub vid: Vec<String>,
     pub pid: Vec<String>,
@@ -135,7 +135,7 @@ pub struct ProductDetailSelectors {
     pub certification_date: Vec<String>,
     pub specification_version: Vec<String>,
     pub transport_interface: Vec<String>,
-    
+
     /// Structured data containers
     pub info_table: Vec<String>,
     pub definition_list: Vec<String>,

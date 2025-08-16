@@ -1,7 +1,7 @@
-// 🔄 Phase 2 호환성: actor_system 브릿지 
+// 🔄 Phase 2 호환성: actor_system 브릿지
 // 기존 코드가 찾는 SessionActor, StageActor, ActorError 등을 임시 제공
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 
@@ -97,8 +97,12 @@ impl fmt::Display for StageError {
             StageError::ProcessingError { message } => write!(f, "Processing error: {}", message),
             StageError::NetworkError { message } => write!(f, "Network error: {}", message),
             StageError::TimeoutError { duration } => write!(f, "Timeout error: {:?}", duration),
-            StageError::ConfigurationError { message } => write!(f, "Configuration error: {}", message),
-            StageError::NetworkTimeout { timeout_secs } => write!(f, "Network timeout: {}s", timeout_secs),
+            StageError::ConfigurationError { message } => {
+                write!(f, "Configuration error: {}", message)
+            }
+            StageError::NetworkTimeout { timeout_secs } => {
+                write!(f, "Network timeout: {}s", timeout_secs)
+            }
         }
     }
 }

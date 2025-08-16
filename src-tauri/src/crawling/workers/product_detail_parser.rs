@@ -2,15 +2,15 @@
 //!
 //! Parses individual product detail pages to extract structured product data.
 
-use std::sync::Arc;
-use std::time::Instant;
 use async_trait::async_trait;
-use scraper::{Html, Selector};
 use chrono::{DateTime, Utc};
 use regex::Regex;
+use scraper::{Html, Selector};
+use std::sync::Arc;
+use std::time::Instant;
 
-use crate::crawling::{tasks::*, state::*};
 use super::{Worker, WorkerError};
+use crate::crawling::{state::*, tasks::*};
 
 /// Worker that parses product detail HTML to extract structured data
 pub struct ProductDetailParser {
@@ -35,15 +35,21 @@ impl ProductDetailParser {
     /// 개발 용이성을 위한 간단한 생성자
     pub fn new_simple() -> Self {
         Self {
-            company_name_regex: Regex::new(r"(주식회사|㈜|회사|기업|코퍼레이션|corp|inc|ltd)").unwrap(),
+            company_name_regex: Regex::new(r"(주식회사|㈜|회사|기업|코퍼레이션|corp|inc|ltd)")
+                .unwrap(),
             product_name_regex: Regex::new(r"[^\w\s\-\(\)가-힣]").unwrap(),
             date_regex: Regex::new(r"(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})").unwrap(),
         }
     }
 
-    fn parse_product_data(&self, html: &str, product_id: &str, source_url: &str) -> Result<TaskProductData, WorkerError> {
+    fn parse_product_data(
+        &self,
+        html: &str,
+        product_id: &str,
+        source_url: &str,
+    ) -> Result<TaskProductData, WorkerError> {
         let document = Html::parse_document(html);
-        
+
         // Extract basic product information
         let product_name = self.extract_product_name(&document)?;
         let company_name = self.extract_company_name(&document)?;
@@ -52,7 +58,7 @@ impl ProductDetailParser {
         let expiry_date = self.extract_expiry_date(&document);
         let product_type = self.extract_product_type(&document);
         let status = self.extract_status(&document);
-        
+
         // Extract additional fields
         let manufacturer = self.extract_manufacturer(&document);
         let country_of_origin = self.extract_country_of_origin(&document);
@@ -63,7 +69,7 @@ impl ProductDetailParser {
 
         use crate::crawling::tasks::TaskProductData;
         use std::collections::HashMap;
-        
+
         let mut details = HashMap::new();
         if !company_name.is_empty() {
             details.insert("company_name".to_string(), company_name.clone());
@@ -93,7 +99,10 @@ impl ProductDetailParser {
 
         // 추가 필드들을 details 맵에 저장
         if let Some(registration_date) = registration_date {
-            details.insert("registration_date".to_string(), registration_date.to_rfc3339());
+            details.insert(
+                "registration_date".to_string(),
+                registration_date.to_rfc3339(),
+            );
         }
         if let Some(expiry_date) = expiry_date {
             details.insert("expiry_date".to_string(), expiry_date.to_rfc3339());
@@ -122,7 +131,7 @@ impl ProductDetailParser {
             details,
             extracted_at: chrono::Utc::now(),
             source_url: source_url.to_string(),
-            page_id: None, // Will be set by caller if available
+            page_id: None,       // Will be set by caller if available
             index_in_page: None, // Will be set by caller if available
         })
     }
@@ -149,7 +158,9 @@ impl ProductDetailParser {
             }
         }
 
-        Err(WorkerError::ParseError("Product name not found".to_string()))
+        Err(WorkerError::ParseError(
+            "Product name not found".to_string(),
+        ))
     }
 
     fn extract_company_name(&self, document: &Html) -> Result<String, WorkerError> {
@@ -174,7 +185,9 @@ impl ProductDetailParser {
             }
         }
 
-        Err(WorkerError::ParseError("Company name not found".to_string()))
+        Err(WorkerError::ParseError(
+            "Company name not found".to_string(),
+        ))
     }
 
     fn extract_license_number(&self, document: &Html) -> Option<String> {
@@ -456,7 +469,7 @@ impl ProductDetailParser {
             let year: i32 = captures.get(1)?.as_str().parse().ok()?;
             let month: u32 = captures.get(2)?.as_str().parse().ok()?;
             let day: u32 = captures.get(3)?.as_str().parse().ok()?;
-            
+
             let naive_date = chrono::NaiveDate::from_ymd_opt(year, month, day)?;
             let naive_datetime = naive_date.and_hms_opt(0, 0, 0)?;
             Some(DateTime::from_naive_utc_and_offset(naive_datetime, Utc))
@@ -490,7 +503,11 @@ impl Worker<CrawlingTask> for ProductDetailParser {
         let start_time = Instant::now();
 
         match task {
-            CrawlingTask::ParseProductDetail { task_id, product_url, html_content } => {
+            CrawlingTask::ParseProductDetail {
+                task_id,
+                product_url,
+                html_content,
+            } => {
                 if shared_state.is_shutdown_requested() {
                     return Err(WorkerError::Cancelled);
                 }
@@ -498,12 +515,13 @@ impl Worker<CrawlingTask> for ProductDetailParser {
                 tracing::info!("Parsing product detail: {}", product_url);
 
                 // Parse the HTML content
-                let product_data = self.parse_product_data(&html_content, &product_url, &product_url)?;
+                let product_data =
+                    self.parse_product_data(&html_content, &product_url, &product_url)?;
 
                 // Update statistics
                 let mut stats = shared_state.stats.write().await;
                 stats.product_details_fetched += 1;
-                
+
                 let duration = start_time.elapsed();
                 stats.record_task_completion("parse_product_detail", duration);
 
@@ -521,7 +539,7 @@ impl Worker<CrawlingTask> for ProductDetailParser {
                 })
             }
             _ => Err(WorkerError::ValidationError(
-                "ProductDetailParser can only process ParseProductDetail tasks".to_string()
+                "ProductDetailParser can only process ParseProductDetail tasks".to_string(),
             )),
         }
     }
@@ -541,7 +559,7 @@ mod tests {
     #[test]
     fn date_parsing() {
         let parser = ProductDetailParser::new().unwrap();
-        
+
         assert!(parser.parse_date("2023.12.25").is_some());
         assert!(parser.parse_date("2023-12-25").is_some());
         assert!(parser.parse_date("2023/12/25").is_some());
@@ -551,9 +569,12 @@ mod tests {
     #[test]
     fn text_cleaning() {
         let parser = ProductDetailParser::new().unwrap();
-        
+
         assert_eq!(parser.clean_product_name("테스트 제품™"), "테스트 제품");
-        assert_eq!(parser.clean_company_name("  (주)테스트회사  "), "(주)테스트회사");
+        assert_eq!(
+            parser.clean_company_name("  (주)테스트회사  "),
+            "(주)테스트회사"
+        );
     }
 
     #[tokio::test]
@@ -589,7 +610,11 @@ mod tests {
         let result = parser.process_task(task, shared_state).await;
         assert!(result.is_ok());
 
-        if let Ok(TaskResult::Success { output: TaskOutput::ProductData(data), .. }) = result {
+        if let Ok(TaskResult::Success {
+            output: TaskOutput::ProductData(data),
+            ..
+        }) = result
+        {
             assert_eq!(data.name, "테스트 제품");
             assert_eq!(data.manufacturer, Some("(주)테스트회사".to_string()));
             assert_eq!(data.product_id, "test123");

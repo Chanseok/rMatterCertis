@@ -1,14 +1,14 @@
 //! Data Transfer Objects for Matter Certification domain
-//! 
+//!
 //! Contains DTOs for data exchange between Use Cases and Tauri Commands.
 
 #![allow(missing_docs)]
 #![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 
+use crate::domain::entities::{DatabaseSummary, MatterProduct, Product, Vendor};
+use crate::domain::session_manager::CrawlingSessionState;
 use serde::{Deserialize, Serialize};
-use crate::domain::entities::{Vendor, Product, MatterProduct, DatabaseSummary};
-use crate::domain::session_manager::{CrawlingSessionState};
 
 // ============================================================================
 // Vendor DTOs
@@ -16,10 +16,10 @@ use crate::domain::session_manager::{CrawlingSessionState};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateVendorDto {
-    pub vendor_number: u32,           // Matter 인증 벤더 번호 (숫자)
-    pub vendor_name: String,          // 벤더명
-    pub company_legal_name: String,   // 법인명 (Matter 인증 필수)
-    pub vendor_url: Option<String>,   // 벤더 웹사이트 URL
+    pub vendor_number: u32,                  // Matter 인증 벤더 번호 (숫자)
+    pub vendor_name: String,                 // 벤더명
+    pub company_legal_name: String,          // 법인명 (Matter 인증 필수)
+    pub vendor_url: Option<String>,          // 벤더 웹사이트 URL
     pub csa_assigned_number: Option<String>, // CSA 할당 번호
 }
 
@@ -58,7 +58,7 @@ impl From<Vendor> for VendorResponseDto {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateProductDto {
-    pub url: String,                  // 제품 상세 페이지 URL
+    pub url: String, // 제품 상세 페이지 URL
     pub manufacturer: Option<String>,
     pub model: Option<String>,
     pub certificate_id: Option<String>,
@@ -104,13 +104,13 @@ impl From<Product> for ProductResponseDto {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateMatterProductDto {
-    pub url: String,                  // Product와 연결되는 URL
+    pub url: String, // Product와 연결되는 URL
     pub page_id: Option<u32>,
-    pub json_data: Option<String>,    // Raw JSON data from crawling
-    pub vid: Option<String>,          // Vendor ID (Matter 특화)
-    pub pid: Option<String>,          // Product ID (Matter 특화)
-    pub device_name: Option<String>,  // Device name
-    pub device_type: Option<String>,  // Device type
+    pub json_data: Option<String>,   // Raw JSON data from crawling
+    pub vid: Option<String>,         // Vendor ID (Matter 특화)
+    pub pid: Option<String>,         // Product ID (Matter 특화)
+    pub device_name: Option<String>, // Device name
+    pub device_type: Option<String>, // Device type
     pub manufacturer: Option<String>,
     pub certification_date: Option<String>,
     pub commissioning_method: Option<String>,

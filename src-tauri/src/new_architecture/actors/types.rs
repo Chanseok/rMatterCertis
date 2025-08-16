@@ -1,18 +1,18 @@
 //! Actor 시스템 타입 정의
-//! 
+//!
 //! Actor 간 통신과 이벤트를 위한 핵심 타입들을 정의합니다.
 //! ts-rs를 통해 TypeScript 타입이 자동 생성됩니다.
 
-use serde::{Serialize, Deserialize};
-use ts_rs::TS;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 // 도메인 객체 import 추가
-use crate::domain::product_url::ProductUrl;
 use crate::domain::integrated_product::ProductDetail;
+use crate::domain::product_url::ProductUrl;
 
 /// Actor 간 통신을 위한 통합 명령 타입
-/// 
+///
 /// 시스템의 모든 Actor가 이해할 수 있는 공통 명령 인터페이스입니다.
 /// 계층별로 명령을 구분하여 명확한 책임 분리를 제공합니다.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -24,30 +24,22 @@ pub enum ActorCommand {
         session_id: String,
         config: CrawlingConfig,
     },
-    
+
     /// 세션 일시정지
-    PauseSession {
-        session_id: String,
-        reason: String,
-    },
-    
+    PauseSession { session_id: String, reason: String },
+
     /// 세션 재개
-    ResumeSession {
-        session_id: String,
-    },
-    
+    ResumeSession { session_id: String },
+
     /// 세션 취소
-    CancelSession {
-        session_id: String,
-        reason: String,
-    },
+    CancelSession { session_id: String, reason: String },
 
     /// 미리 생성된 ExecutionPlan을 그대로 실행 (재계획 금지)
     ExecutePrePlanned {
         session_id: String,
         plan: ExecutionPlan,
     },
-    
+
     // === 배치 레벨 명령 ===
     /// 배치 처리
     ProcessBatch {
@@ -56,10 +48,10 @@ pub enum ActorCommand {
         config: BatchConfig,
         batch_size: u32,
         concurrency_limit: u32,
-    total_pages: u32,
-    products_on_last_page: u32,
+        total_pages: u32,
+        products_on_last_page: u32,
     },
-    
+
     // === 스테이지 레벨 명령 ===
     /// 스테이지 실행
     ExecuteStage {
@@ -68,17 +60,17 @@ pub enum ActorCommand {
         concurrency_limit: u32,
         timeout_secs: u64,
     },
-    
+
     // === 시스템 레벨 명령 ===
     /// 시스템 종료
     Shutdown,
-    
+
     /// 헬스 체크
     HealthCheck,
 }
 
 /// Actor 간 전달되는 이벤트
-/// 
+///
 /// 시스템 상태 변화를 알리는 이벤트들입니다.
 /// 이벤트 드리븐 아키텍처의 핵심 구성 요소입니다.
 /// ActorContractVersion: v1
@@ -104,31 +96,31 @@ pub enum AppEvent {
         config: CrawlingConfig,
         timestamp: DateTime<Utc>,
     },
-    
+
     SessionPaused {
         session_id: String,
         reason: String,
         timestamp: DateTime<Utc>,
     },
-    
+
     SessionResumed {
         session_id: String,
         timestamp: DateTime<Utc>,
     },
-    
+
     SessionCompleted {
         session_id: String,
         summary: SessionSummary,
         timestamp: DateTime<Utc>,
     },
-    
+
     SessionFailed {
         session_id: String,
         error: String,
         final_failure: bool,
         timestamp: DateTime<Utc>,
     },
-    
+
     SessionTimeout {
         session_id: String,
         elapsed: u64, // Duration을 milliseconds로 변경
@@ -150,10 +142,11 @@ pub enum AppEvent {
     /// 저장 단계 이상 탐지 (예: 예상 신규/업데이트 없을 때, page_id 역순 불일치 등)
     PersistenceAnomaly {
         session_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")] batch_id: Option<String>,
-        kind: String,        // e.g. "all_noop", "page_id_mismatch"
-        detail: String,      // human readable description
-        attempted: u32,      // attempted product details in this batch stage
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
+        kind: String,   // e.g. "all_noop", "page_id_mismatch"
+        detail: String, // human readable description
+        attempted: u32, // attempted product details in this batch stage
         inserted: u32,
         updated: u32,
         timestamp: DateTime<Utc>,
@@ -162,14 +155,15 @@ pub enum AppEvent {
     /// DB 통계 스냅샷 (진행 중 주기적 보고 용도)
     DatabaseStats {
         session_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")] batch_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
         total_product_details: i64,
         min_page: Option<i32>,
         max_page: Option<i32>,
         note: Option<String>,
         timestamp: DateTime<Utc>,
     },
-    
+
     // === 배치 이벤트 ===
     BatchStarted {
         batch_id: String,
@@ -177,7 +171,7 @@ pub enum AppEvent {
         pages_count: u32,
         timestamp: DateTime<Utc>,
     },
-    
+
     BatchCompleted {
         batch_id: String,
         session_id: String,
@@ -186,7 +180,7 @@ pub enum AppEvent {
         duration: u64, // Duration을 milliseconds로 변경
         timestamp: DateTime<Utc>,
     },
-    
+
     BatchFailed {
         batch_id: String,
         session_id: String,
@@ -194,7 +188,7 @@ pub enum AppEvent {
         final_failure: bool,
         timestamp: DateTime<Utc>,
     },
-    
+
     // === 스테이지 이벤트 ===
     StageStarted {
         stage_type: StageType,
@@ -204,7 +198,7 @@ pub enum AppEvent {
         items_count: u32,
         timestamp: DateTime<Utc>,
     },
-    
+
     StageCompleted {
         stage_type: StageType,
         session_id: String,
@@ -213,7 +207,7 @@ pub enum AppEvent {
         result: StageResult,
         timestamp: DateTime<Utc>,
     },
-    
+
     StageFailed {
         stage_type: StageType,
         session_id: String,
@@ -252,7 +246,7 @@ pub enum AppEvent {
         collected_count: Option<u32>,
         timestamp: DateTime<Utc>,
     },
-    
+
     // === 진행 상황 이벤트 ===
     Progress {
         session_id: String,
@@ -262,7 +256,7 @@ pub enum AppEvent {
         percentage: f64,
         timestamp: DateTime<Utc>,
     },
-    
+
     // === 성능 이벤트 ===
     PerformanceMetrics {
         session_id: String,
@@ -283,13 +277,13 @@ pub enum AppEvent {
         details_failed: u32,
         retries_used: u32,
         duration_ms: u64,
-    /// 중복 제거로 스킵된 Product URL 수 (옵션 - v1 기본 0)
-    #[serde(default)]
-    duplicates_skipped: u32,
-    #[serde(default)]
-    products_inserted: u32,
-    #[serde(default)]
-    products_updated: u32,
+        /// 중복 제거로 스킵된 Product URL 수 (옵션 - v1 기본 0)
+        #[serde(default)]
+        duplicates_skipped: u32,
+        #[serde(default)]
+        products_inserted: u32,
+        #[serde(default)]
+        products_updated: u32,
         timestamp: DateTime<Utc>,
     },
 
@@ -302,10 +296,10 @@ pub enum AppEvent {
         total_failed: u32,
         total_retries: u32,
         duration_ms: u64,
-    #[serde(default)]
-    products_inserted: u32,
-    #[serde(default)]
-    products_updated: u32,
+        #[serde(default)]
+        products_inserted: u32,
+        #[serde(default)]
+        products_updated: u32,
         timestamp: DateTime<Utc>,
     },
 
@@ -370,15 +364,15 @@ pub enum AppEvent {
         session_id: String,
         detail_id: String,
         page: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    batch_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    range_idx: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    batch_index: Option<u32>,
-    /// 이벤트 스코프 힌트 (예: "session" | "batch" 등)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    scope: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        range_idx: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_index: Option<u32>,
+        /// 이벤트 스코프 힌트 (예: "session" | "batch" 등)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<String>,
         timestamp: DateTime<Utc>,
     },
     DetailTaskCompleted {
@@ -386,15 +380,15 @@ pub enum AppEvent {
         detail_id: String,
         page: Option<u32>,
         duration_ms: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    batch_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    range_idx: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    batch_index: Option<u32>,
-    /// 이벤트 스코프 힌트 (예: "session" | "batch" 등)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    scope: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        range_idx: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_index: Option<u32>,
+        /// 이벤트 스코프 힌트 (예: "session" | "batch" 등)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<String>,
         timestamp: DateTime<Utc>,
     },
     DetailTaskFailed {
@@ -403,15 +397,15 @@ pub enum AppEvent {
         page: Option<u32>,
         error: String,
         final_failure: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    batch_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    range_idx: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    batch_index: Option<u32>,
-    /// 이벤트 스코프 힌트 (예: "session" | "batch" 등)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    scope: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        range_idx: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_index: Option<u32>,
+        /// 이벤트 스코프 힌트 (예: "session" | "batch" 등)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<String>,
         timestamp: DateTime<Utc>,
     },
     /// Detail phase dynamic concurrency reduction triggered
@@ -427,29 +421,29 @@ pub enum AppEvent {
     /// Page lifecycle state transition (queued -> fetch_started -> fetch_completed | failed -> urls_extracted)
     PageLifecycle {
         session_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")] 
+        #[serde(skip_serializing_if = "Option::is_none")]
         batch_id: Option<String>,
         page_number: u32,
         status: String,
-        #[serde(skip_serializing_if = "Option::is_none")] 
+        #[serde(skip_serializing_if = "Option::is_none")]
         metrics: Option<SimpleMetrics>,
         timestamp: DateTime<Utc>,
     },
     /// Product lifecycle (optional aggregation level for group fetch) or per-product when available
     ProductLifecycle {
         session_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")] 
+        #[serde(skip_serializing_if = "Option::is_none")]
         batch_id: Option<String>,
         /// Origin page number if known
-        #[serde(skip_serializing_if = "Option::is_none")] 
+        #[serde(skip_serializing_if = "Option::is_none")]
         page_number: Option<u32>,
         product_ref: String, // URL or hashed key
         status: String,
-        #[serde(skip_serializing_if = "Option::is_none")] 
+        #[serde(skip_serializing_if = "Option::is_none")]
         retry: Option<u32>,
-        #[serde(skip_serializing_if = "Option::is_none")] 
+        #[serde(skip_serializing_if = "Option::is_none")]
         duration_ms: Option<u64>,
-        #[serde(skip_serializing_if = "Option::is_none")] 
+        #[serde(skip_serializing_if = "Option::is_none")]
         metrics: Option<SimpleMetrics>,
         timestamp: DateTime<Utc>,
     },
@@ -500,14 +494,14 @@ pub enum AppEvent {
     ValidationDivergenceFound {
         session_id: String,
         physical_page: u32,
-        kind: String,          // first_missing | coord_mismatch | duplicate | gap
-        detail: String,        // human readable
+        kind: String,   // first_missing | coord_mismatch | duplicate | gap
+        detail: String, // human readable
         expected_offset: u64,
         timestamp: DateTime<Utc>,
     },
     ValidationAnomaly {
         session_id: String,
-        code: String,          // duplicate_index | sparse_page | out_of_range
+        code: String, // duplicate_index | sparse_page | out_of_range
         detail: String,
         timestamp: DateTime<Utc>,
     },
@@ -525,7 +519,8 @@ pub enum AppEvent {
     SyncStarted {
         session_id: String,
         ranges: Vec<(u32, u32)>, // (start_oldest, end_newest) inclusive per range
-        #[serde(skip_serializing_if = "Option::is_none")] rate_limit: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rate_limit: Option<u32>,
         timestamp: DateTime<Utc>,
     },
     SyncPageStarted {
@@ -572,11 +567,22 @@ pub enum AppEvent {
 
 // Lightweight TS-friendly metrics container (additive, extensible)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag="kind", content="data")]
+#[serde(tag = "kind", content = "data")]
 pub enum SimpleMetrics {
-    Page { url_count: Option<u32>, scheduled_details: Option<u32>, error: Option<String> },
-    Product { fields: Option<u32>, size_bytes: Option<u32>, error: Option<String> },
-    Generic { key: String, value: String },
+    Page {
+        url_count: Option<u32>,
+        scheduled_details: Option<u32>,
+        error: Option<String>,
+    },
+    Product {
+        fields: Option<u32>,
+        size_bytes: Option<u32>,
+        error: Option<String>,
+    },
+    Generic {
+        key: String,
+        value: String,
+    },
 }
 
 /// High-level crawl phases (extensible)
@@ -595,25 +601,25 @@ pub enum CrawlPhase {
 pub struct CrawlingConfig {
     /// 사이트 URL
     pub site_url: String,
-    
+
     /// 시작 페이지
     pub start_page: u32,
-    
+
     /// 종료 페이지
     pub end_page: u32,
-    
+
     /// 동시 실행 제한
     pub concurrency_limit: u32,
-    
+
     /// 배치 크기
     pub batch_size: u32,
-    
+
     /// 요청 지연 시간 (밀리초)
     pub request_delay_ms: u64,
-    
+
     /// 타임아웃 (초)
     pub timeout_secs: u64,
-    
+
     /// 재시도 횟수
     pub max_retries: u32,
 
@@ -653,19 +659,19 @@ pub enum CrawlingStrategy {
 pub struct BatchConfig {
     /// 배치 크기
     pub batch_size: u32,
-    
+
     /// 동시 실행 제한
     pub concurrency_limit: u32,
-    
+
     /// 배치 간 지연 시간 (밀리초)
     pub batch_delay_ms: u64,
-    
+
     /// 실패 시 재시도 여부
     pub retry_on_failure: bool,
-    
+
     /// 시작 페이지 (옵션)
     pub start_page: Option<u32>,
-    
+
     /// 종료 페이지 (옵션)
     pub end_page: Option<u32>,
 }
@@ -689,16 +695,16 @@ impl Default for BatchConfig {
 pub enum StageType {
     /// 상태 확인
     StatusCheck,
-    
+
     /// 리스트 페이지 크롤링
     ListPageCrawling,
-    
+
     /// 상품 상세 크롤링
     ProductDetailCrawling,
-    
+
     /// 데이터 검증
     DataValidation,
-    
+
     /// 데이터 저장
     DataSaving,
 }
@@ -722,13 +728,13 @@ impl StageType {
 pub struct StageItem {
     /// 아이템 ID
     pub id: String,
-    
+
     /// 아이템 타입
     pub item_type: StageItemType,
-    
+
     /// 처리할 URL
     pub url: String,
-    
+
     /// 메타데이터
     pub metadata: String,
 }
@@ -736,15 +742,19 @@ pub struct StageItem {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub enum StageItemType {
-    Page { page_number: u32 },
-    Product { 
-        page_number: u32
+    Page {
+        page_number: u32,
     },
-    Url { url_type: String },
-    ProductUrls { 
-        urls: Vec<String>  // 간단히 URL 문자열 리스트로 변경
+    Product {
+        page_number: u32,
     },
-    SiteCheck,  // 사이트 상태 확인용 아이템 타입
+    Url {
+        url_type: String,
+    },
+    ProductUrls {
+        urls: Vec<String>, // 간단히 URL 문자열 리스트로 변경
+    },
+    SiteCheck, // 사이트 상태 확인용 아이템 타입
 }
 
 /// 스테이지 결과
@@ -753,16 +763,16 @@ pub enum StageItemType {
 pub struct StageResult {
     /// 처리된 아이템 수
     pub processed_items: u32,
-    
+
     /// 성공한 아이템 수
     pub successful_items: u32,
-    
+
     /// 실패한 아이템 수
     pub failed_items: u32,
-    
+
     /// 처리 시간
     pub duration_ms: u64,
-    
+
     /// 상세 결과
     pub details: Vec<StageItemResult>,
 }
@@ -772,22 +782,22 @@ pub struct StageResult {
 pub struct StageItemResult {
     /// 아이템 ID
     pub item_id: String,
-    
+
     /// 아이템 타입
     pub item_type: StageItemType,
-    
+
     /// 성공 여부
     pub success: bool,
-    
+
     /// 에러 메시지 (실패 시)
     pub error: Option<String>,
-    
+
     /// 처리 시간
     pub duration_ms: u64,
-    
+
     /// 재시도 횟수
     pub retry_count: u32,
-    
+
     /// 수집된 데이터 (JSON 문자열)
     /// ListPageCrawling: ProductURL들의 JSON 배열
     /// ProductDetailCrawling: ProductDetail들의 JSON 배열
@@ -800,7 +810,7 @@ pub struct StageItemResult {
 // =============================================================================
 
 /// 스테이지 결과 데이터
-/// 
+///
 /// JSON 직렬화 대신 타입 안전한 도메인 객체를 직접 반환합니다.
 /// 이는 성능 향상과 타입 안전성을 동시에 제공합니다.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -813,28 +823,28 @@ pub enum StageResultData {
         last_page_products: Option<u32>,
         response_time_ms: u64,
     },
-    
+
     /// 리스트 페이지 크롤링 결과 - ProductUrl 직접 반환
     ProductUrls {
         urls: Vec<ProductUrl>,
         page_number: u32,
         total_found: u32,
     },
-    
+
     /// 상품 상세 크롤링 결과 - ProductDetail 직접 반환
     ProductDetails {
         details: Vec<ProductDetail>,
         successful_count: u32,
         failed_count: u32,
     },
-    
+
     /// 데이터 검증 결과
     ValidationResult {
         validated_count: u32,
         error_count: u32,
         warnings: Vec<String>,
     },
-    
+
     /// 데이터 품질 분석 결과
     QualityAnalysis {
         total_analyzed: u32,
@@ -846,42 +856,42 @@ pub enum StageResultData {
         field_completeness_score: f64,
         recommendations: Vec<String>,
     },
-    
+
     /// 데이터 저장 결과
     SavingResult {
         saved_count: u32,
         duplicates_found: u32,
         database_id_range: Option<(i64, i64)>, // (min_id, max_id)
     },
-    
+
     /// 빈 결과 (처리할 데이터 없음)
     Empty,
 }
 
 /// 개선된 스테이지 아이템 결과
-/// 
+///
 /// collected_data를 StageResultData로 교체하여 타입 안전성 향상
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct EnhancedStageItemResult {
     /// 아이템 ID
     pub item_id: String,
-    
+
     /// 아이템 타입
     pub item_type: StageItemType,
-    
+
     /// 성공 여부
     pub success: bool,
-    
+
     /// 에러 메시지 (실패 시)
     pub error: Option<String>,
-    
+
     /// 처리 시간
     pub duration_ms: u64,
-    
+
     /// 재시도 횟수
     pub retry_count: u32,
-    
+
     /// 수집된 데이터 - 타입 안전한 도메인 객체 직접 반환
     pub collected_data: Option<StageResultData>,
 }
@@ -892,22 +902,22 @@ pub struct EnhancedStageItemResult {
 pub struct SessionSummary {
     /// 세션 ID
     pub session_id: String,
-    
+
     /// 총 처리 시간
     pub total_duration_ms: u64,
-    
+
     /// 총 처리된 페이지 수
     pub total_pages_processed: u32,
-    
+
     /// 총 처리된 상품 수
     pub total_products_processed: u32,
-    
+
     /// 성공률
     pub success_rate: f64,
-    
+
     /// 평균 처리 시간 (페이지당, 밀리초)
     pub avg_page_processing_time: u64,
-    
+
     /// 에러 요약
     pub error_summary: Vec<ErrorSummary>,
 
@@ -920,10 +930,10 @@ pub struct SessionSummary {
     pub pages_retried: u32,
     #[serde(default)]
     pub retry_histogram: Vec<(u32, u32)>, // (retry_count, pages_with_that_count)
-    
+
     /// 처리된 배치 수
     pub processed_batches: u32,
-    
+
     /// 총 성공 수
     pub total_success_count: u32,
 
@@ -942,10 +952,10 @@ pub struct SessionSummary {
     pub failed_pages_count: u32,
     #[serde(default)]
     pub failed_page_ids: Vec<u32>,
-    
+
     /// 최종 상태
     pub final_state: String,
-    
+
     /// 타임스탬프
     pub timestamp: DateTime<Utc>,
 }
@@ -955,13 +965,13 @@ pub struct SessionSummary {
 pub struct ErrorSummary {
     /// 에러 타입
     pub error_type: String,
-    
+
     /// 발생 횟수
     pub count: u32,
-    
+
     /// 첫 번째 발생 시간
     pub first_occurrence: DateTime<Utc>,
-    
+
     /// 마지막 발생 시간
     pub last_occurrence: DateTime<Utc>,
 }
@@ -972,19 +982,19 @@ pub struct ErrorSummary {
 pub struct PerformanceMetrics {
     /// 메모리 사용량 (MB)
     pub memory_usage_mb: f64,
-    
+
     /// CPU 사용률 (%)
     pub cpu_usage_percent: f64,
-    
+
     /// 활성 작업 수
     pub active_tasks_count: u32,
-    
+
     /// 큐 대기 중인 작업 수
     pub queued_tasks_count: u32,
-    
+
     /// 평균 응답 시간 (밀리초)
     pub avg_response_time_ms: f64,
-    
+
     /// 처리량 (작업/초)
     pub throughput_per_second: f64,
 }
@@ -999,25 +1009,25 @@ pub struct PerformanceMetrics {
 pub enum StageError {
     /// 네트워크 연결 실패
     NetworkError { message: String },
-    
+
     /// HTML 파싱 에러
     ParsingError { message: String },
-    
+
     /// 데이터 검증 실패
     ValidationError { message: String },
-    
+
     /// 데이터베이스 에러
     DatabaseError { message: String },
-    
+
     /// 타임아웃 에러
     TimeoutError { timeout_ms: u64 },
-    
+
     /// 설정 에러
     ConfigurationError { message: String },
-    
+
     /// 네트워크 타임아웃
     NetworkTimeout { timeout_ms: u64 },
-    
+
     /// 일반적인 에러
     GenericError { message: String },
 }
@@ -1032,25 +1042,25 @@ pub enum StageError {
 pub struct StageSuccessResult {
     /// 성공적으로 처리된 아이템 수
     pub processed_items: u32,
-    
+
     /// 처리 소요 시간 (밀리초)
     pub duration_ms: u64,
-    
+
     /// 스테이지 처리 시간 (밀리초) - 호환성을 위한 별칭
     pub stage_duration_ms: u64,
-    
+
     /// 처리율 (items/second)
     pub throughput: f64,
-    
+
     /// 성공률 (0.0 ~ 1.0)
     pub success_rate: f64,
-    
+
     /// 추가 메타데이터
     pub metadata: String,
-    
+
     /// 수집 메트릭스
     pub collection_metrics: Option<CollectionMetrics>,
-    
+
     /// 처리 메트릭스
     pub processing_metrics: Option<ProcessingMetrics>,
 }
@@ -1065,31 +1075,31 @@ pub struct StageSuccessResult {
 pub struct CollectionMetrics {
     /// 수집된 총 아이템 수
     pub total_collected: u32,
-    
+
     /// 총 아이템 수 (호환성을 위한 별칭)
     pub total_items: u32,
-    
+
     /// 성공한 아이템 수
     pub successful_items: u32,
-    
+
     /// 실패한 아이템 수  
     pub failed_items: u32,
-    
+
     /// 수집 성공률
     pub collection_rate: f64,
-    
+
     /// 평균 수집 시간 (밀리초)
     pub avg_collection_time_ms: u64,
-    
+
     /// 처리 시간 (밀리초) - 호환성을 위한 별칭
     pub duration_ms: u64,
-    
+
     /// 평균 응답 시간 (밀리초)
     pub avg_response_time_ms: u64,
-    
+
     /// 성공률 (0.0 ~ 1.0)
     pub success_rate: f64,
-    
+
     /// 데이터 품질 점수 (0.0 ~ 1.0)
     pub data_quality_score: f64,
 }
@@ -1100,16 +1110,16 @@ pub struct CollectionMetrics {
 pub struct ProcessingMetrics {
     /// 처리된 총 아이템 수
     pub total_processed: u32,
-    
+
     /// 처리 성공률
     pub processing_rate: f64,
-    
+
     /// 평균 처리 시간 (밀리초)
     pub avg_processing_time_ms: u64,
-    
+
     /// 에러율
     pub error_rate: f64,
-    
+
     /// 재시도율
     pub retry_rate: f64,
 }
@@ -1120,16 +1130,16 @@ pub struct ProcessingMetrics {
 pub struct FailedItem {
     /// 아이템 ID
     pub item_id: String,
-    
+
     /// 아이템 타입
     pub item_type: String,
-    
+
     /// 실패 사유
     pub error_message: String,
-    
+
     /// 재시도 횟수
     pub retry_count: u32,
-    
+
     /// 실패 시각
     pub failed_at: DateTime<Utc>,
 }
@@ -1140,37 +1150,37 @@ pub struct FailedItem {
 pub enum ActorError {
     #[error("이벤트 브로드캐스트 실패: {0}")]
     EventBroadcastFailed(String),
-    
+
     #[error("명령 처리 실패: {0}")]
     CommandProcessingFailed(String),
-    
+
     #[error("채널 통신 오류: {0}")]
     ChannelError(String),
-    
+
     #[error("설정 오류: {0}")]
     ConfigurationError(String),
-    
+
     #[error("타임아웃 발생: {0}")]
     Timeout(String),
-    
+
     #[error("취소됨: {0}")]
     Cancelled(String),
-    
+
     #[error("리소스 부족: {0}")]
     ResourceExhausted(String),
-    
+
     #[error("HTTP 요청 실패: {0}")]
     RequestFailed(String),
-    
+
     #[error("데이터 파싱 실패: {0}")]
     ParsingFailed(String),
-    
+
     #[error("레거시 서비스 오류: {0}")]
     LegacyServiceError(String),
-    
+
     #[error("데이터베이스 오류: {0}")]
     DatabaseError(String),
-    
+
     #[error("알 수 없는 오류: {0}")]
     Unknown(String),
 }
@@ -1183,7 +1193,7 @@ impl From<anyhow::Error> for ActorError {
 }
 
 /// 실행 계획 - CrawlingPlanner에서 생성되어 SessionActor에게 전달
-/// 
+///
 /// 분석-계획-실행 워크플로우를 명확히 분리하기 위한 핵심 구조체입니다.
 /// CrawlingPlanner가 시스템 상태를 분석하여 생성한 최적의 실행 계획을 담습니다.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1191,25 +1201,25 @@ impl From<anyhow::Error> for ActorError {
 pub struct ExecutionPlan {
     /// 실행 계획 ID
     pub plan_id: String,
-    
+
     /// 세션 ID
     pub session_id: String,
-    
+
     /// 크롤링 범위 목록 (여러 범위를 순차 처리)
     pub crawling_ranges: Vec<PageRange>,
-    
+
     /// 배치 크기
     pub batch_size: u32,
-    
+
     /// 동시 실행 제한
     pub concurrency_limit: u32,
-    
+
     /// 예상 소요 시간
     pub estimated_duration_secs: u64,
-    
+
     /// 계획 생성 시간
     pub created_at: DateTime<Utc>,
-    
+
     /// 분석 정보 (디버깅용)
     pub analysis_summary: String,
 
@@ -1254,14 +1264,16 @@ pub struct ExecutionPlanKpi {
 impl ExecutionPlan {
     /// Preplanned 실행 시 최소한의 SiteStatus 형태를 구성 (페이지 처리 통계용)
     pub fn input_snapshot_to_site_status(&self) -> crate::domain::services::SiteStatus {
-        use crate::domain::services::crawling_services::{SiteDataChangeStatus, CrawlingRangeRecommendation};
+        use crate::domain::services::crawling_services::{
+            CrawlingRangeRecommendation, SiteDataChangeStatus,
+        };
         // 안정 상태 count 산출: DB 총량 >0 이면 사용, 아니면 페이지 * 마지막페이지상품수 (대략치)
         let stable_count: u32 = if self.input_snapshot.db_total_products > 0 {
             // u64 -> u32 캐스팅 (과도한 값은 u32::MAX 로 clamp)
             self.input_snapshot.db_total_products.min(u32::MAX as u64) as u32
         } else {
-            let fallback = self.input_snapshot.total_pages
-                * self.input_snapshot.products_on_last_page.max(1);
+            let fallback =
+                self.input_snapshot.total_pages * self.input_snapshot.products_on_last_page.max(1);
             fallback
         };
         crate::domain::services::SiteStatus {
@@ -1273,7 +1285,9 @@ impl ExecutionPlan {
             products_on_last_page: self.input_snapshot.products_on_last_page,
             last_check_time: chrono::Utc::now(),
             health_score: 1.0,
-            data_change_status: SiteDataChangeStatus::Stable { count: stable_count },
+            data_change_status: SiteDataChangeStatus::Stable {
+                count: stable_count,
+            },
             decrease_recommendation: None,
             crawling_range_recommendation: CrawlingRangeRecommendation::Full,
         }
@@ -1301,13 +1315,13 @@ pub struct PlanInputSnapshot {
 pub struct PageRange {
     /// 시작 페이지
     pub start_page: u32,
-    
+
     /// 끝 페이지
     pub end_page: u32,
-    
+
     /// 이 범위의 예상 제품 수
     pub estimated_products: u32,
-    
+
     /// 역순 크롤링 여부
     pub reverse_order: bool,
 }
@@ -1339,10 +1353,10 @@ mod tests {
             session_id: "test-session".to_string(),
             config: CrawlingConfig::default(),
         };
-        
+
         let serialized = serde_json::to_string(&command).unwrap();
         let deserialized: ActorCommand = serde_json::from_str(&serialized).unwrap();
-        
+
         match deserialized {
             ActorCommand::StartCrawling { session_id, .. } => {
                 assert_eq!(session_id, "test-session");
@@ -1358,10 +1372,10 @@ mod tests {
             config: CrawlingConfig::default(),
             timestamp: Utc::now(),
         };
-        
+
         let serialized = serde_json::to_string(&event).unwrap();
         let deserialized: AppEvent = serde_json::from_str(&serialized).unwrap();
-        
+
         match deserialized {
             AppEvent::SessionStarted { session_id, .. } => {
                 assert_eq!(session_id, "test-session");
@@ -1377,19 +1391,19 @@ mod tests {
             successful_items: 95,
             failed_items: 5,
             duration_ms: 60000, // 60 seconds in milliseconds
-            details: vec![
-                StageItemResult {
-                    item_id: "item1".to_string(),
-                    item_type: StageItemType::Url { url_type: "test".to_string() },
-                    success: true,
-                    error: None,
-                    duration_ms: 500,
-                    retry_count: 0,
-                    collected_data: None,
-                }
-            ],
+            details: vec![StageItemResult {
+                item_id: "item1".to_string(),
+                item_type: StageItemType::Url {
+                    url_type: "test".to_string(),
+                },
+                success: true,
+                error: None,
+                duration_ms: 500,
+                retry_count: 0,
+                collected_data: None,
+            }],
         };
-        
+
         assert_eq!(result.processed_items, 100);
         assert_eq!(result.successful_items, 95);
         assert_eq!(result.failed_items, 5);
@@ -1406,7 +1420,7 @@ mod tests {
             avg_response_time_ms: 150.0,
             throughput_per_second: 50.0,
         };
-        
+
         assert_eq!(metrics.memory_usage_mb, 512.0);
         assert_eq!(metrics.cpu_usage_percent, 25.5);
         assert_eq!(metrics.active_tasks_count, 10);

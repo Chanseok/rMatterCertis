@@ -1,10 +1,10 @@
 //! 고급 데이터 처리 서비스 트레이트 정의
-//! 
-//! 이 모듈은 중복 제거, 유효성 검사, 충돌 해결 등의 
+//!
+//! 이 모듈은 중복 제거, 유효성 검사, 충돌 해결 등의
 //! 고급 데이터 처리 기능을 제공하는 서비스들의 인터페이스를 정의합니다.
 
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::product::Product;
@@ -14,10 +14,10 @@ use crate::domain::product::Product;
 pub trait DeduplicationService: Send + Sync {
     /// 제품 목록에서 중복 제거
     async fn remove_duplicates(&self, products: Vec<Product>) -> Result<Vec<Product>>;
-    
+
     /// 중복 제품 분석
     async fn analyze_duplicates(&self, products: &[Product]) -> Result<DuplicationAnalysis>;
-    
+
     /// 중복 검사 (단일 제품)
     async fn is_duplicate(&self, product: &Product, existing: &[Product]) -> Result<bool>;
 }
@@ -27,10 +27,10 @@ pub trait DeduplicationService: Send + Sync {
 pub trait ValidationService: Send + Sync {
     /// 모든 제품 유효성 검사
     async fn validate_all(&self, products: Vec<Product>) -> Result<ValidationResult>;
-    
+
     /// 단일 제품 유효성 검사
     async fn validate_product(&self, product: &Product) -> Result<ProductValidation>;
-    
+
     /// 필수 필드 검사
     async fn check_required_fields(&self, product: &Product) -> Result<FieldValidation>;
 }
@@ -40,10 +40,10 @@ pub trait ValidationService: Send + Sync {
 pub trait ConflictResolver: Send + Sync {
     /// 충돌하는 제품들 해결
     async fn resolve_conflicts(&self, products: Vec<Product>) -> Result<Vec<Product>>;
-    
+
     /// 두 제품 간 충돌 해결
     async fn resolve_product_conflict(&self, existing: &Product, new: &Product) -> Result<Product>;
-    
+
     /// 충돌 감지
     async fn detect_conflicts(&self, products: &[Product]) -> Result<Vec<ConflictGroup>>;
 }
@@ -53,10 +53,10 @@ pub trait ConflictResolver: Send + Sync {
 pub trait BatchProgressTracker: Send + Sync {
     /// 배치 진행 상황 업데이트
     async fn update_progress(&self, batch_id: &str, progress: BatchProgress) -> Result<()>;
-    
+
     /// 현재 진행 상황 조회
     async fn get_current_progress(&self, batch_id: &str) -> Result<BatchProgress>;
-    
+
     /// 배치 완료 처리
     async fn complete_batch(&self, batch_id: &str, result: BatchResult) -> Result<()>;
 }
@@ -66,10 +66,10 @@ pub trait BatchProgressTracker: Send + Sync {
 pub trait BatchRecoveryService: Send + Sync {
     /// 실패한 배치 복구
     async fn recover_failed_batch(&self, batch_id: &str) -> Result<RecoveryResult>;
-    
+
     /// 파싱 오류 복구
     async fn recover_parsing_error(&self, error: &str) -> Result<RecoveryAction>;
-    
+
     /// 복구 가능성 평가
     async fn assess_recoverability(&self, error: &str) -> Result<RecoverabilityAssessment>;
 }
@@ -82,10 +82,10 @@ pub trait RetryManager: Send + Sync {
     where
         F: Send + Fn() -> Result<T>,
         T: Send;
-    
+
     /// 오류 분류
     async fn classify_error(&self, error: &str) -> Result<ErrorClassification>;
-    
+
     /// 재시도 전략 결정
     async fn determine_retry_strategy(&self, error_type: ErrorType) -> Result<RetryStrategy>;
 }
@@ -95,15 +95,19 @@ pub trait RetryManager: Send + Sync {
 pub trait ErrorClassifier: Send + Sync {
     /// 오류 분류
     async fn classify(&self, error: &str) -> Result<ErrorType>;
-    
+
     /// 오류 심각도 평가
     async fn assess_severity(&self, error: &str) -> Result<ErrorSeverity>;
-    
+
     /// 복구 가능성 평가
     async fn assess_recoverability(&self, error: &str) -> Result<bool>;
-    
+
     /// 오류 처리 액션 결정
-    async fn determine_action(&self, error_type: ErrorType, severity: ErrorSeverity) -> Result<ErrorAction>;
+    async fn determine_action(
+        &self,
+        error_type: ErrorType,
+        severity: ErrorSeverity,
+    ) -> Result<ErrorAction>;
 }
 
 /// 오류 처리 액션

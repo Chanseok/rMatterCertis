@@ -1,15 +1,15 @@
 //! Memory-based crawling session state management
-//! 
+//!
 //! Implements the industry-standard approach: "State management layer + save only final results to DB"
 //! This replaces the previous crawling_sessions table with in-memory state management for better performance.
 
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::{Decode, Encode, Type};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use sqlx::{Encode, Decode, Type};
 
 /// Current status of a crawling session
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -29,7 +29,10 @@ impl Type<sqlx::Sqlite> for SessionStatus {
 }
 
 impl<'q> Encode<'q, sqlx::Sqlite> for SessionStatus {
-    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    fn encode_by_ref(
+        &self,
+        buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
+    ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>> {
         let s = match self {
             SessionStatus::Initializing => "Initializing",
             SessionStatus::Running => "Running",
@@ -63,9 +66,9 @@ impl<'r> Decode<'r, sqlx::Sqlite> for SessionStatus {
 /// Current stage of crawling process
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CrawlingStage {
-    ProductList,      // Stage 1: Collecting product URLs
-    ProductDetails,   // Stage 2: Collecting detailed product information
-    MatterDetails,    // Stage 3: Collecting Matter-specific details
+    ProductList,    // Stage 1: Collecting product URLs
+    ProductDetails, // Stage 2: Collecting detailed product information
+    MatterDetails,  // Stage 3: Collecting Matter-specific details
 }
 
 impl Type<sqlx::Sqlite> for CrawlingStage {
@@ -75,7 +78,10 @@ impl Type<sqlx::Sqlite> for CrawlingStage {
 }
 
 impl<'q> Encode<'q, sqlx::Sqlite> for CrawlingStage {
-    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    fn encode_by_ref(
+        &self,
+        buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
+    ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>> {
         let s = match self {
             CrawlingStage::ProductList => "ProductList",
             CrawlingStage::ProductDetails => "ProductDetails",
@@ -144,7 +150,7 @@ pub struct CrawlingResult {
 pub struct SessionManager {
     /// Active sessions in memory
     sessions: Arc<RwLock<HashMap<String, CrawlingSessionState>>>,
-    
+
     /// Performance metrics for estimation
     metrics: Arc<Mutex<SessionMetrics>>,
 }
@@ -246,19 +252,19 @@ impl SessionManager {
         current_url: Option<String>,
     ) -> Result<(), String> {
         let mut sessions = self.sessions.write().await;
-        
+
         if let Some(session) = sessions.get_mut(session_id) {
             session.current_page = current_page;
             session.products_found = products_found;
             session.current_url = current_url;
             session.last_updated_at = Utc::now();
             session.status = SessionStatus::Running;
-            
+
             // Update estimated completion
             if current_page > 0 {
                 session.estimated_completion = self.calculate_eta(session).await;
             }
-            
+
             Ok(())
         } else {
             Err(format!("Session not found: {session_id}"))
@@ -285,7 +291,7 @@ impl SessionManager {
     /// Add error to session
     pub async fn add_error(&self, session_id: &str, error: String) -> Result<(), String> {
         let mut sessions = self.sessions.write().await;
-        
+
         if let Some(session) = sessions.get_mut(session_id) {
             session.errors_count += 1;
             session.error_details.push(error);
@@ -299,7 +305,7 @@ impl SessionManager {
     /// Change session status
     pub async fn set_status(&self, session_id: &str, status: SessionStatus) -> Result<(), String> {
         let mut sessions = self.sessions.write().await;
-        
+
         if let Some(session) = sessions.get_mut(session_id) {
             session.status = status;
             session.last_updated_at = Utc::now();
@@ -310,10 +316,7 @@ impl SessionManager {
     }
 
     /// Complete a session with final status
-    pub async fn complete_session_simple(
-        &self,
-        session_id: &str,
-    ) -> Result<(), anyhow::Error> {
+    pub async fn complete_session_simple(&self, session_id: &str) -> Result<(), anyhow::Error> {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(session_id) {
             session.status = SessionStatus::Completed;
@@ -323,13 +326,17 @@ impl SessionManager {
     }
 
     /// Complete session and prepare final result
-    pub async fn complete_session(&self, session_id: &str, status: SessionStatus) -> Option<CrawlingResult> {
+    pub async fn complete_session(
+        &self,
+        session_id: &str,
+        status: SessionStatus,
+    ) -> Option<CrawlingResult> {
         let mut sessions = self.sessions.write().await;
-        
+
         if let Some(mut session) = sessions.remove(session_id) {
             let completed_at = Utc::now();
             let execution_time = (completed_at - session.started_at).num_seconds() as u32;
-            
+
             session.status = status.clone();
             session.last_updated_at = completed_at;
 
@@ -390,7 +397,10 @@ impl SessionManager {
     }
 
     /// Get session status by ID
-    pub async fn get_session_state(&self, session_id: &str) -> Result<Option<CrawlingSessionState>, anyhow::Error> {
+    pub async fn get_session_state(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<CrawlingSessionState>, anyhow::Error> {
         let sessions = self.sessions.read().await;
         Ok(sessions.get(session_id).cloned())
     }
@@ -398,12 +408,14 @@ impl SessionManager {
     /// Get all active sessions
     pub async fn get_active_sessions(&self) -> Vec<CrawlingSessionState> {
         let sessions = self.sessions.read().await;
-        sessions.values()
-            .filter(|session| matches!(session.status, 
-                SessionStatus::Initializing | 
-                SessionStatus::Running | 
-                SessionStatus::Paused
-            ))
+        sessions
+            .values()
+            .filter(|session| {
+                matches!(
+                    session.status,
+                    SessionStatus::Initializing | SessionStatus::Running | SessionStatus::Paused
+                )
+            })
             .cloned()
             .collect()
     }
@@ -418,7 +430,10 @@ impl SessionManager {
     pub async fn should_continue(&self, session_id: &str) -> bool {
         let sessions = self.sessions.read().await;
         if let Some(session) = sessions.get(session_id) {
-            !matches!(session.status, SessionStatus::Stopped | SessionStatus::Failed)
+            !matches!(
+                session.status,
+                SessionStatus::Stopped | SessionStatus::Failed
+            )
         } else {
             false
         }
@@ -427,7 +442,7 @@ impl SessionManager {
     /// Stop a session (set status to Stopped)
     pub async fn stop_session(&self, session_id: &str) -> Result<(), String> {
         let mut sessions = self.sessions.write().await;
-        
+
         if let Some(session) = sessions.get_mut(session_id) {
             session.status = SessionStatus::Stopped;
             session.last_updated_at = Utc::now();
@@ -441,7 +456,7 @@ impl SessionManager {
     /// Pause a session
     pub async fn pause_session(&self, session_id: &str) -> Result<(), String> {
         let mut sessions = self.sessions.write().await;
-        
+
         if let Some(session) = sessions.get_mut(session_id) {
             session.status = SessionStatus::Paused;
             session.last_updated_at = Utc::now();
@@ -455,7 +470,7 @@ impl SessionManager {
     /// Resume a session
     pub async fn resume_session(&self, session_id: &str) -> Result<(), String> {
         let mut sessions = self.sessions.write().await;
-        
+
         if let Some(session) = sessions.get_mut(session_id) {
             if session.status == SessionStatus::Paused {
                 session.status = SessionStatus::Running;
@@ -463,7 +478,10 @@ impl SessionManager {
                 tracing::info!("▶️  Session {} resumed", session_id);
                 Ok(())
             } else {
-                Err(format!("Session {} is not paused (current status: {:?})", session_id, session.status))
+                Err(format!(
+                    "Session {} is not paused (current status: {:?})",
+                    session_id, session.status
+                ))
             }
         } else {
             Err(format!("Session not found: {session_id}"))
@@ -478,11 +496,11 @@ impl SessionManager {
 
         let elapsed = (Utc::now() - session.started_at).num_seconds() as f64;
         let progress_ratio = session.current_page as f64 / session.total_pages as f64;
-        
+
         if progress_ratio > 0.0 {
             let estimated_total_time = elapsed / progress_ratio;
             let remaining_time = estimated_total_time - elapsed;
-            
+
             Some(Utc::now() + chrono::Duration::seconds(remaining_time as i64))
         } else {
             None
@@ -492,7 +510,7 @@ impl SessionManager {
     /// Update performance metrics for better ETA calculation
     async fn update_metrics(&self, session: &CrawlingSessionState, execution_time: u32) {
         let mut metrics = self.metrics.lock().await;
-        
+
         if session.current_page > 0 {
             let pages_per_second = session.current_page as f64 / execution_time as f64;
             metrics.avg_pages_per_second = if metrics.avg_pages_per_second == 0.0 {
@@ -501,7 +519,7 @@ impl SessionManager {
                 (metrics.avg_pages_per_second + pages_per_second) / 2.0
             };
         }
-        
+
         if session.current_page > 0 {
             let products_per_page = session.products_found as f64 / session.current_page as f64;
             metrics.avg_products_per_page = if metrics.avg_products_per_page == 0.0 {
@@ -510,7 +528,7 @@ impl SessionManager {
                 (metrics.avg_products_per_page + products_per_page) / 2.0
             };
         }
-        
+
         metrics.last_updated = Some(Utc::now());
     }
 }
@@ -537,16 +555,21 @@ mod tests {
         let config = serde_json::json!({"test": true});
 
         // Start session
-        let session_id = manager.start_session(config, 100, CrawlingStage::ProductList).await;
-        
+        let session_id = manager
+            .start_session(config, 100, CrawlingStage::ProductList)
+            .await;
+
         // Check initial state
         let session = manager.get_session(&session_id).await.unwrap();
         assert_eq!(session.status, SessionStatus::Initializing);
         assert_eq!(session.total_pages, 100);
 
         // Update progress
-        manager.update_progress(&session_id, 10, 50, Some("test-url".to_string())).await.unwrap();
-        
+        manager
+            .update_progress(&session_id, 10, 50, Some("test-url".to_string()))
+            .await
+            .unwrap();
+
         // Check updated state
         let session = manager.get_session(&session_id).await.unwrap();
         assert_eq!(session.status, SessionStatus::Running);
@@ -554,7 +577,10 @@ mod tests {
         assert_eq!(session.products_found, 50);
 
         // Complete session
-        let result = manager.complete_session(&session_id, SessionStatus::Completed).await.unwrap();
+        let result = manager
+            .complete_session(&session_id, SessionStatus::Completed)
+            .await
+            .unwrap();
         assert_eq!(result.status, SessionStatus::Completed);
         assert_eq!(result.products_found, 50);
 
@@ -568,20 +594,33 @@ mod tests {
         let config = serde_json::json!({"test": true});
 
         // Start multiple sessions
-        let session1 = manager.start_session(config.clone(), 50, CrawlingStage::ProductList).await;
-        let session2 = manager.start_session(config, 100, CrawlingStage::ProductDetails).await;
+        let session1 = manager
+            .start_session(config.clone(), 50, CrawlingStage::ProductList)
+            .await;
+        let session2 = manager
+            .start_session(config, 100, CrawlingStage::ProductDetails)
+            .await;
 
         // Update both sessions
-        manager.update_progress(&session1, 5, 25, None).await.unwrap();
-        manager.update_progress(&session2, 10, 100, None).await.unwrap();
+        manager
+            .update_progress(&session1, 5, 25, None)
+            .await
+            .unwrap();
+        manager
+            .update_progress(&session2, 10, 100, None)
+            .await
+            .unwrap();
 
         // Check active sessions
         let active = manager.get_active_sessions().await;
         assert_eq!(active.len(), 2);
 
         // Complete one session
-        manager.complete_session(&session1, SessionStatus::Completed).await.unwrap();
-        
+        manager
+            .complete_session(&session1, SessionStatus::Completed)
+            .await
+            .unwrap();
+
         let active = manager.get_active_sessions().await;
         assert_eq!(active.len(), 1);
     }

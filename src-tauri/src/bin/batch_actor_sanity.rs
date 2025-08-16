@@ -7,26 +7,32 @@
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use matter_certis_v2_lib::infrastructure::{
-    HttpClient, MatterDataExtractor, IntegratedProductRepository,
-};
+use matter_certis_v2_lib::domain::services::StatusChecker;
 use matter_certis_v2_lib::infrastructure::config::AppConfig;
+use matter_certis_v2_lib::infrastructure::crawling_service_impls::StatusCheckerImpl;
 use matter_certis_v2_lib::infrastructure::database_connection::DatabaseConnection;
 use matter_certis_v2_lib::infrastructure::database_paths;
-use matter_certis_v2_lib::new_architecture::actors::{BatchActor, types as actor_types, Actor};
+use matter_certis_v2_lib::infrastructure::{
+    HttpClient, IntegratedProductRepository, MatterDataExtractor,
+};
+use matter_certis_v2_lib::new_architecture::actors::{Actor, BatchActor, types as actor_types};
 use matter_certis_v2_lib::new_architecture::context::AppContext;
 use matter_certis_v2_lib::new_architecture::integrated_context::IntegratedContextFactory;
 use matter_certis_v2_lib::new_architecture::system_config::SystemConfig;
-use matter_certis_v2_lib::domain::services::StatusChecker;
-use matter_certis_v2_lib::infrastructure::crawling_service_impls::StatusCheckerImpl;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Use infrastructure logging so concise_startup and ENV overrides apply
     let _ = matter_certis_v2_lib::infrastructure::logging::init_logging();
-    info!("concise_startup_env={:?}", std::env::var("MC_CONCISE_STARTUP").ok());
+    info!(
+        "concise_startup_env={:?}",
+        std::env::var("MC_CONCISE_STARTUP").ok()
+    );
     // Expect MC_SKIP_DB_SAVE to be set by the environment to avoid DB writes
-    info!("MC_SKIP_DB_SAVE={:?}", std::env::var("MC_SKIP_DB_SAVE").ok());
+    info!(
+        "MC_SKIP_DB_SAVE={:?}",
+        std::env::var("MC_SKIP_DB_SAVE").ok()
+    );
 
     info!("🚀 BatchActor sanity runner starting");
 
@@ -47,7 +53,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Real services
     // Label the client so rate-limit provenance appears in logs
-    let http_client = Arc::new(HttpClient::create_from_global_config()?.with_context_label("BatchActor:sanity"));
+    let http_client =
+        Arc::new(HttpClient::create_from_global_config()?.with_context_label("BatchActor:sanity"));
     let data_extractor = Arc::new(MatterDataExtractor::new()?);
     // Initialize database paths and schema (prevents global manager panic and ensures tables)
     database_paths::initialize_database_paths().await?;
@@ -69,11 +76,17 @@ async fn main() -> anyhow::Result<()> {
 
     let (total_pages, products_on_last_page) = match status_checker.check_site_status().await {
         Ok(s) => {
-            info!("🌐 SiteStatus: total_pages={}, products_on_last_page={}", s.total_pages, s.products_on_last_page);
+            info!(
+                "🌐 SiteStatus: total_pages={}, products_on_last_page={}",
+                s.total_pages, s.products_on_last_page
+            );
             (s.total_pages, s.products_on_last_page)
         }
         Err(e) => {
-            warn!("⚠️  Failed to fetch SiteStatus: {}. Using conservative defaults.", e);
+            warn!(
+                "⚠️  Failed to fetch SiteStatus: {}. Using conservative defaults.",
+                e
+            );
             (50u32, 8u32)
         }
     };
@@ -81,15 +94,29 @@ async fn main() -> anyhow::Result<()> {
     // Optionally force a specific page via env to simulate failures (e.g., MC_FAIL_PAGE=9999)
     let pages: Vec<u32> = if let Ok(forced_page_str) = std::env::var("MC_FAIL_PAGE") {
         if let Ok(forced_page) = forced_page_str.parse::<u32>() {
-            info!("⚠️ Forcing sanity run to request page {} (may simulate failures)", forced_page);
+            info!(
+                "⚠️ Forcing sanity run to request page {} (may simulate failures)",
+                forced_page
+            );
             vec![forced_page]
         } else {
-            warn!("Invalid MC_FAIL_PAGE value '{}', falling back to default pages", forced_page_str);
-            if total_pages >= 2 { vec![total_pages, total_pages - 1] } else { vec![total_pages] }
+            warn!(
+                "Invalid MC_FAIL_PAGE value '{}', falling back to default pages",
+                forced_page_str
+            );
+            if total_pages >= 2 {
+                vec![total_pages, total_pages - 1]
+            } else {
+                vec![total_pages]
+            }
         }
     } else {
         // Plan a tiny newest-first page slice: last 2 pages
-        if total_pages >= 2 { vec![total_pages, total_pages - 1] } else { vec![total_pages] }
+        if total_pages >= 2 {
+            vec![total_pages, total_pages - 1]
+        } else {
+            vec![total_pages]
+        }
     };
     info!("📄 Target pages: {:?}", pages);
 
@@ -128,10 +155,14 @@ async fn main() -> anyhow::Result<()> {
         concurrency_limit,
         total_pages,
         products_on_last_page,
-    }).await.expect("Failed to send ProcessBatch");
+    })
+    .await
+    .expect("Failed to send ProcessBatch");
 
     // Shutdown after the run
-    tx.send(actor_types::ActorCommand::Shutdown).await.expect("Failed to send Shutdown");
+    tx.send(actor_types::ActorCommand::Shutdown)
+        .await
+        .expect("Failed to send Shutdown");
 
     actor_task.await.expect("Actor join failed");
     info!("🏁 Sanity run finished");

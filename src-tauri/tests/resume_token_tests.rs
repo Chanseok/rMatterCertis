@@ -15,7 +15,8 @@ async fn resume_token_v2_round_trip_basic() {
         "retries_per_page": [[101,1]],
         "failed_pages": [99],
         "retrying_pages": [100]
-    }).to_string();
+    })
+    .to_string();
 
     // Call resume_from_token tauri command logic directly by invoking the internal function would require refactor.
     // Here we parse and validate expected fields like production code does (mirroring logic subset).
@@ -35,7 +36,8 @@ async fn resume_token_v1_backward_defaults() {
         "remaining_pages": [5,4,3],
         "batch_size": 20,
         "concurrency_limit": 4
-    }).to_string();
+    })
+    .to_string();
     let v: serde_json::Value = serde_json::from_str(&token).unwrap();
     assert!(v.get("remaining_detail_ids").is_none());
     assert!(v.get("detail_retry_counts").is_none());

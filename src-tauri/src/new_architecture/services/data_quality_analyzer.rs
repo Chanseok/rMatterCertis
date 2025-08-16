@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use crate::domain::product::ProductDetail;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataQualityReport {
@@ -62,14 +62,17 @@ impl DataQualityAnalyzer {
         Self
     }
 
-    pub async fn analyze_product_quality(&self, products: &[ProductDetail]) -> Result<DataQualityReport, String> {
+    pub async fn analyze_product_quality(
+        &self,
+        products: &[ProductDetail],
+    ) -> Result<DataQualityReport, String> {
         let mut missing_fields = HashMap::new();
         let mut issues = Vec::new();
         let mut complete_count = 0;
 
         for product in products {
             let completeness = self.analyze_product_completeness(product);
-            
+
             if completeness.is_complete {
                 complete_count += 1;
             }
@@ -107,7 +110,11 @@ impl DataQualityAnalyzer {
         let mut issues = Vec::new();
 
         // Check critical fields based on actual ProductDetail struct
-        if product.manufacturer.as_ref().map_or(true, |s| s.trim().is_empty()) {
+        if product
+            .manufacturer
+            .as_ref()
+            .map_or(true, |s| s.trim().is_empty())
+        {
             missing_fields.push("manufacturer".to_string());
             issues.push(QualityIssue {
                 severity: IssueSeverity::Critical,
@@ -127,7 +134,11 @@ impl DataQualityAnalyzer {
             });
         }
 
-        if product.device_type.as_ref().map_or(true, |s| s.trim().is_empty()) {
+        if product
+            .device_type
+            .as_ref()
+            .map_or(true, |s| s.trim().is_empty())
+        {
             missing_fields.push("device_type".to_string());
             issues.push(QualityIssue {
                 severity: IssueSeverity::Warning,
@@ -137,7 +148,11 @@ impl DataQualityAnalyzer {
             });
         }
 
-        if product.certificate_id.as_ref().map_or(true, |s| s.trim().is_empty()) {
+        if product
+            .certificate_id
+            .as_ref()
+            .map_or(true, |s| s.trim().is_empty())
+        {
             missing_fields.push("certificate_id".to_string());
             issues.push(QualityIssue {
                 severity: IssueSeverity::Warning,
@@ -177,16 +192,21 @@ impl DataQualityAnalyzer {
         }
     }
 
-    pub async fn validate_before_storage(&self, products: &[ProductDetail]) -> Result<Vec<ProductDetail>, String> {
+    pub async fn validate_before_storage(
+        &self,
+        products: &[ProductDetail],
+    ) -> Result<Vec<ProductDetail>, String> {
         let report = self.analyze_product_quality(products).await?;
-        
+
         // 🚨 CRITICAL: 데이터 수집 실패 진단
         if report.total_products == 0 {
             error!("🚨 CRITICAL DATA COLLECTION FAILURE:");
             error!("  📊 Total products analyzed: {}", report.total_products);
             error!("  💥 ROOT CAUSE: No product data was extracted from the pipeline");
             error!("  🔍 LIKELY ISSUES:");
-            error!("    1. 🔗 Data pipeline break: Stage 3 (ProductDetailCrawling) → Stage 4 (DataValidation)");
+            error!(
+                "    1. 🔗 Data pipeline break: Stage 3 (ProductDetailCrawling) → Stage 4 (DataValidation)"
+            );
             error!("    2. 📦 Wrong item type received: Expected ProductUrls, got Page type");
             error!("    3. 🌐 Network/parsing issues during product detail extraction");
             error!("    4. 🏗️ Stage transformation logic not working properly");
@@ -199,29 +219,69 @@ impl DataQualityAnalyzer {
         }
 
         // Decide logging mode (concise vs verbose) using env flag MC_CONCISE_DQ=1/true
-        let concise = std::env::var("MC_CONCISE_DQ").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+        let concise = std::env::var("MC_CONCISE_DQ")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
 
         // Pre-compute issue counts
-        let critical_count = report.issues.iter().filter(|i| matches!(i.severity, IssueSeverity::Critical)).count();
-        let warning_count = report.issues.iter().filter(|i| matches!(i.severity, IssueSeverity::Warning)).count();
-        let info_count = report.issues.iter().filter(|i| matches!(i.severity, IssueSeverity::Info)).count();
+        let critical_count = report
+            .issues
+            .iter()
+            .filter(|i| matches!(i.severity, IssueSeverity::Critical))
+            .count();
+        let warning_count = report
+            .issues
+            .iter()
+            .filter(|i| matches!(i.severity, IssueSeverity::Warning))
+            .count();
+        let info_count = report
+            .issues
+            .iter()
+            .filter(|i| matches!(i.severity, IssueSeverity::Info))
+            .count();
 
         // Storage recommendation (short + long versions)
-        let (storage_recommendation_short, storage_recommendation_long) = if report.quality_score >= 80.0 {
-            ("RECOMMENDED", "🟢 RECOMMENDED - High quality data, safe to store")
-        } else if report.quality_score >= 60.0 {
-            ("CONDITIONAL", "🟡 CONDITIONAL - Moderate quality, review critical issues before storage")
-        } else {
-            ("NOT_RECOMMENDED", "� NOT RECOMMENDED - Low quality data, fix critical issues first")
-        };
+        let (storage_recommendation_short, storage_recommendation_long) =
+            if report.quality_score >= 80.0 {
+                (
+                    "RECOMMENDED",
+                    "🟢 RECOMMENDED - High quality data, safe to store",
+                )
+            } else if report.quality_score >= 60.0 {
+                (
+                    "CONDITIONAL",
+                    "🟡 CONDITIONAL - Moderate quality, review critical issues before storage",
+                )
+            } else {
+                (
+                    "NOT_RECOMMENDED",
+                    "� NOT RECOMMENDED - Low quality data, fix critical issues first",
+                )
+            };
 
-        let json_mode = std::env::var("MC_DQ_JSON").ok().map(|v| v=="1"||v.eq_ignore_ascii_case("true")).unwrap_or(false);
+        let json_mode = std::env::var("MC_DQ_JSON")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         if concise {
             // Build compact missing field summary (max 4 entries)
-            let mut missing: Vec<(String, usize)> = report.missing_fields.iter().map(|(k,v)|(k.clone(),*v)).collect();
-            missing.sort_by(|a,b| b.1.cmp(&a.1));
-            let missing_summary = if missing.is_empty() { "none".to_string() } else {
-                missing.iter().take(4).map(|(k,v)| format!("{}:{}", k, v)).collect::<Vec<_>>().join(",") + if missing.len()>4 { ",…" } else { "" }
+            let mut missing: Vec<(String, usize)> = report
+                .missing_fields
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect();
+            missing.sort_by(|a, b| b.1.cmp(&a.1));
+            let missing_summary = if missing.is_empty() {
+                "none".to_string()
+            } else {
+                missing
+                    .iter()
+                    .take(4)
+                    .map(|(k, v)| format!("{}:{}", k, v))
+                    .collect::<Vec<_>>()
+                    .join(",")
+                    + if missing.len() > 4 { ",…" } else { "" }
             };
             if json_mode {
                 // Emit machine-readable JSON one-liner
@@ -236,7 +296,9 @@ impl DataQualityAnalyzer {
                     "warning":warning_count,
                     "info":info_count,
                     "storage":storage_recommendation_short
-                })) { info!("{}", json); }
+                })) {
+                    info!("{}", json);
+                }
             } else {
                 info!(
                     "DQ summary products={} complete={} incomplete={} score={:.1}% miss=[{}] issues(c={} w={} i={}) storage={}",
@@ -255,7 +317,15 @@ impl DataQualityAnalyzer {
             // Verbose (original) logging retained but condensed to reduce duplication
             info!("🔍 Data Quality Analysis Report:");
             info!("  � Total products analyzed: {}", report.total_products);
-            info!("  ✅ Complete products: {} ({:.1}%)", report.complete_products, if report.total_products > 0 { (report.complete_products as f32 / report.total_products as f32) * 100.0 } else { 0.0 });
+            info!(
+                "  ✅ Complete products: {} ({:.1}%)",
+                report.complete_products,
+                if report.total_products > 0 {
+                    (report.complete_products as f32 / report.total_products as f32) * 100.0
+                } else {
+                    0.0
+                }
+            );
             info!("  ⚠️  Incomplete products: {}", report.incomplete_products);
             info!("  � Overall quality score: {:.2}%", report.quality_score);
             if !report.missing_fields.is_empty() {
@@ -266,38 +336,78 @@ impl DataQualityAnalyzer {
                 }
             }
             if !report.issues.is_empty() {
-                warn!("  � Issues: critical={} warning={} info={} (showing first 3)", critical_count, warning_count, info_count);
+                warn!(
+                    "  � Issues: critical={} warning={} info={} (showing first 3)",
+                    critical_count, warning_count, info_count
+                );
                 for (i, issue) in report.issues.iter().take(3).enumerate() {
-                    warn!("    {}. {} {} in '{}' [{}]", i+1,
-                        match issue.severity { IssueSeverity::Critical=>"CRIT", IssueSeverity::Warning=>"WARN", IssueSeverity::Info=>"INFO" },
-                        match issue.issue_type { IssueType::MissingRequired=>"Missing", IssueType::InvalidFormat=>"Format", IssueType::EmptyValue=>"Empty", IssueType::Duplicate=>"Dup" },
+                    warn!(
+                        "    {}. {} {} in '{}' [{}]",
+                        i + 1,
+                        match issue.severity {
+                            IssueSeverity::Critical => "CRIT",
+                            IssueSeverity::Warning => "WARN",
+                            IssueSeverity::Info => "INFO",
+                        },
+                        match issue.issue_type {
+                            IssueType::MissingRequired => "Missing",
+                            IssueType::InvalidFormat => "Format",
+                            IssueType::EmptyValue => "Empty",
+                            IssueType::Duplicate => "Dup",
+                        },
                         issue.field_name,
-                        issue.product_url.split('/').last().unwrap_or(&issue.product_url));
+                        issue
+                            .product_url
+                            .split('/')
+                            .last()
+                            .unwrap_or(&issue.product_url)
+                    );
                 }
-                if report.issues.len()>3 { info!("    ... {} more", report.issues.len()-3); }
+                if report.issues.len() > 3 {
+                    info!("    ... {} more", report.issues.len() - 3);
+                }
             }
             // Sample only if verbose and products available
             if let Some(sample_product) = products.first() {
-                info!("  🧪 Sample: manf={:?} model={:?} device_type={:?} cert_id={:?} vid={:?} pid={:?}",
-                    sample_product.manufacturer, sample_product.model, sample_product.device_type,
-                    sample_product.certificate_id, sample_product.vid, sample_product.pid);
+                info!(
+                    "  🧪 Sample: manf={:?} model={:?} device_type={:?} cert_id={:?} vid={:?} pid={:?}",
+                    sample_product.manufacturer,
+                    sample_product.model,
+                    sample_product.device_type,
+                    sample_product.certificate_id,
+                    sample_product.vid,
+                    sample_product.pid
+                );
             }
-            info!("  💾 Storage Recommendation: {}", storage_recommendation_long);
+            info!(
+                "  💾 Storage Recommendation: {}",
+                storage_recommendation_long
+            );
         }
-        
+
         // Filter out products with critical issues if needed
         // For now, return all products but log the assessment
         Ok(products.to_vec())
     }
 
-
     /// Analyze collected product data and provide storage recommendation
-    pub async fn assess_for_storage(&self, products: &[ProductDetail]) -> Result<StorageAssessment, String> {
+    pub async fn assess_for_storage(
+        &self,
+        products: &[ProductDetail],
+    ) -> Result<StorageAssessment, String> {
         let report = self.analyze_product_quality(products).await?;
-        
-        let critical_issues = report.issues.iter().filter(|i| matches!(i.severity, IssueSeverity::Critical)).count();
-        let warning_issues = report.issues.iter().filter(|i| matches!(i.severity, IssueSeverity::Warning)).count();
-        
+
+        let critical_issues = report
+            .issues
+            .iter()
+            .filter(|i| matches!(i.severity, IssueSeverity::Critical))
+            .count();
+        let warning_issues = report
+            .issues
+            .iter()
+            .filter(|i| matches!(i.severity, IssueSeverity::Warning))
+            .count();
+
         let recommendation = if report.quality_score >= 80.0 && critical_issues == 0 {
             StorageRecommendation::HighlyRecommended
         } else if report.quality_score >= 60.0 && critical_issues <= 2 {
@@ -307,7 +417,7 @@ impl DataQualityAnalyzer {
         } else {
             StorageRecommendation::NotRecommended
         };
-        
+
         Ok(StorageAssessment {
             total_products: report.total_products,
             quality_score: report.quality_score,
@@ -317,14 +427,22 @@ impl DataQualityAnalyzer {
             summary: self.generate_summary(&report),
         })
     }
-    
+
     fn generate_summary(&self, report: &DataQualityReport) -> String {
         format!(
             "Analyzed {} products: {:.1}% complete, {} critical issues, {} warnings",
             report.total_products,
             report.quality_score,
-            report.issues.iter().filter(|i| matches!(i.severity, IssueSeverity::Critical)).count(),
-            report.issues.iter().filter(|i| matches!(i.severity, IssueSeverity::Warning)).count()
+            report
+                .issues
+                .iter()
+                .filter(|i| matches!(i.severity, IssueSeverity::Critical))
+                .count(),
+            report
+                .issues
+                .iter()
+                .filter(|i| matches!(i.severity, IssueSeverity::Warning))
+                .count()
         )
     }
 }

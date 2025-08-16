@@ -6,16 +6,16 @@
 #![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 
+use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use async_trait::async_trait;
-use tokio::time::sleep;
 use tokio::sync::Semaphore;
+use tokio::time::sleep;
 use url::Url;
 
-use crate::crawling::{tasks::*, state::*};
-use crate::infrastructure::HttpClient;
 use super::{Worker, WorkerError};
+use crate::crawling::{state::*, tasks::*};
+use crate::infrastructure::HttpClient;
 
 /// Worker that fetches product detail pages
 pub struct ProductDetailFetcher {
@@ -53,7 +53,10 @@ impl ProductDetailFetcher {
     }
 
     async fn fetch_with_retry(&self, url: &str) -> Result<String, WorkerError> {
-        let _permit = self.rate_limiter.acquire().await
+        let _permit = self
+            .rate_limiter
+            .acquire()
+            .await
             .map_err(|e| WorkerError::RateLimitError(e.to_string()))?;
 
         let mut last_error = None;
@@ -68,12 +71,15 @@ impl ProductDetailFetcher {
                 }
                 Err(e) => {
                     last_error = Some(e);
-                    
+
                     if attempt < self.max_retries {
                         let delay = self.retry_delay * (2_u32.pow(attempt)); // Exponential backoff
                         tracing::warn!(
                             "Failed to fetch {} (attempt {}), retrying in {:?}: {}",
-                            url, attempt + 1, delay, last_error.as_ref().unwrap()
+                            url,
+                            attempt + 1,
+                            delay,
+                            last_error.as_ref().unwrap()
                         );
                         sleep(delay).await;
                     }
@@ -81,18 +87,18 @@ impl ProductDetailFetcher {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| 
+        Err(last_error.unwrap_or_else(|| {
             WorkerError::NetworkError("Unknown error after retries".to_string())
-        ))
+        }))
     }
 
     async fn fetch_page(&self, url: &str) -> Result<String, WorkerError> {
         let parsed_url = Url::parse(url)
             .map_err(|e| WorkerError::InvalidInput(format!("Invalid URL '{}': {}", url, e)))?;
-        
+
         let http_client = HttpClient::create_from_global_config()
             .map_err(|e| WorkerError::NetworkError(e.to_string()))?;
-        
+
         let response = http_client
             .fetch_response(&parsed_url.to_string())
             .await
@@ -102,7 +108,7 @@ impl ProductDetailFetcher {
         if !response.status().is_success() {
             return Err(WorkerError::HttpError(
                 response.status().as_u16(),
-                format!("HTTP {} for {}", response.status(), url)
+                format!("HTTP {} for {}", response.status(), url),
             ));
         }
 
@@ -110,29 +116,29 @@ impl ProductDetailFetcher {
         if let Some(content_type) = response.headers().get("content-type") {
             let content_type_str = content_type.to_str().unwrap_or("");
             if !content_type_str.contains("text/html") {
-                return Err(WorkerError::ValidationError(
-                    format!("Expected HTML content, got: {}", content_type_str)
-                ));
+                return Err(WorkerError::ValidationError(format!(
+                    "Expected HTML content, got: {}",
+                    content_type_str
+                )));
             }
         }
 
         // Get content
-        let content = response
-            .text()
-            .await
-            .map_err(|e| WorkerError::NetworkError(format!("Failed to read response body: {}", e)))?;
+        let content = response.text().await.map_err(|e| {
+            WorkerError::NetworkError(format!("Failed to read response body: {}", e))
+        })?;
 
         // Validate content is not empty
         if content.trim().is_empty() {
             return Err(WorkerError::ValidationError(
-                "Received empty content".to_string()
+                "Received empty content".to_string(),
             ));
         }
 
         // Basic HTML validation
         if !content.contains("<html") && !content.contains("<HTML") {
             return Err(WorkerError::ValidationError(
-                "Response does not appear to be HTML".to_string()
+                "Response does not appear to be HTML".to_string(),
             ));
         }
 
@@ -185,16 +191,25 @@ impl Worker<CrawlingTask> for ProductDetailFetcher {
         let start_time = Instant::now();
 
         match task {
-            CrawlingTask::FetchProductDetail { task_id, product_url, .. } => {
+            CrawlingTask::FetchProductDetail {
+                task_id,
+                product_url,
+                ..
+            } => {
                 if shared_state.is_shutdown_requested() {
                     return Err(WorkerError::Cancelled);
                 }
 
                 // Extract product ID for logging
-                let product_id = self.extract_product_id(&product_url)
+                let product_id = self
+                    .extract_product_id(&product_url)
                     .unwrap_or_else(|| "unknown".to_string());
 
-                tracing::info!("Fetching product detail: {} (ID: {})", product_url, product_id);
+                tracing::info!(
+                    "Fetching product detail: {} (ID: {})",
+                    product_url,
+                    product_id
+                );
 
                 // Fetch the page content
                 let html_content = self.fetch_with_retry(&product_url).await?;
@@ -202,7 +217,7 @@ impl Worker<CrawlingTask> for ProductDetailFetcher {
                 // Update statistics
                 let mut stats = shared_state.stats.write().await;
                 stats.product_details_fetched += 1;
-                
+
                 let duration = start_time.elapsed();
                 stats.record_task_completion("fetch_product_detail", duration);
 
@@ -224,7 +239,7 @@ impl Worker<CrawlingTask> for ProductDetailFetcher {
                 })
             }
             _ => Err(WorkerError::ValidationError(
-                "ProductDetailFetcher can only process FetchProductDetail tasks".to_string()
+                "ProductDetailFetcher can only process FetchProductDetail tasks".to_string(),
             )),
         }
     }
@@ -236,11 +251,7 @@ mod tests {
 
     #[test]
     fn fetcher_creation() {
-        let fetcher = ProductDetailFetcher::new(
-            10,
-            Duration::from_secs(30),
-            3,
-        );
+        let fetcher = ProductDetailFetcher::new(10, Duration::from_secs(30), 3);
         assert!(fetcher.is_ok());
         assert_eq!(fetcher.unwrap().worker_name(), "ProductDetailFetcher");
     }
@@ -249,27 +260,28 @@ mod tests {
     fn extract_product_id_tests() {
         use std::time::Duration;
         let fetcher = ProductDetailFetcher::new(
-            10, // concurrent_requests
-            Duration::from_secs(30), // request_timeout 
-            3, // max_retries
-        ).expect("Failed to create ProductDetailFetcher");
-        
+            10,                      // concurrent_requests
+            Duration::from_secs(30), // request_timeout
+            3,                       // max_retries
+        )
+        .expect("Failed to create ProductDetailFetcher");
+
         // Test Matter Certis product URLs
         assert_eq!(
             fetcher.extract_product_id("https://csa-iot.org/csa_product/wifi-plug-27/"),
             Some("wifi-plug-27".to_string())
         );
-        
+
         assert_eq!(
             fetcher.extract_product_id("https://csa-iot.org/csa_product/matter-switch-789/"),
             Some("matter-switch-789".to_string())
         );
-        
+
         assert_eq!(
             fetcher.extract_product_id("https://csa-iot.org/csa_product/thread-device-456/"),
             Some("thread-device-456".to_string())
         );
-        
+
         // Test invalid URLs
         assert_eq!(
             fetcher.extract_product_id("https://csa-iot.org/no-product-here"),
@@ -283,12 +295,13 @@ mod tests {
             2, // Only 2 concurrent requests
             Duration::from_secs(30),
             3,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Test that rate limiter allows acquiring permits
         let permit1 = fetcher.rate_limiter.acquire().await;
         let permit2 = fetcher.rate_limiter.acquire().await;
-        
+
         assert!(permit1.is_ok());
         assert!(permit2.is_ok());
 
@@ -302,11 +315,7 @@ mod tests {
 
     #[tokio::test]
     async fn task_processing_validation() {
-        let fetcher = ProductDetailFetcher::new(
-            10,
-            Duration::from_secs(30),
-            3,
-        ).unwrap();
+        let fetcher = ProductDetailFetcher::new(10, Duration::from_secs(30), 3).unwrap();
 
         let config = CrawlingConfig::default();
         let shared_state = Arc::new(SharedState::new(config));
@@ -320,6 +329,9 @@ mod tests {
 
         let result = fetcher.process_task(wrong_task, shared_state).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), WorkerError::ValidationError(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            WorkerError::ValidationError(_)
+        ));
     }
 }

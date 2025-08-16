@@ -1,8 +1,8 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 use crate::application::validated_crawling_config::ValidatedCrawlingConfig;
 use crate::infrastructure::config::AppConfig;
@@ -11,7 +11,7 @@ use crate::infrastructure::config::AppConfig;
 pub trait CacheItem {
     /// 캐시 항목이 만료되었는지 확인
     fn is_expired(&self, ttl: Duration) -> bool;
-    
+
     /// 캐시 항목이 유효한지 확인
     fn is_valid(&self) -> bool;
 }
@@ -39,10 +39,10 @@ impl CacheItem for SiteAnalysisResult {
         let now = Utc::now();
         let age = now.signed_duration_since(self.analyzed_at);
         let ttl_chrono = chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::minutes(5));
-        
+
         age > ttl_chrono
     }
-    
+
     fn is_valid(&self) -> bool {
         self.is_valid
     }
@@ -69,12 +69,12 @@ impl SiteAnalysisResult {
             health_score,
         }
     }
-    
+
     /// 캐시 무효화
     pub fn invalidate(&mut self) {
         self.is_valid = false;
     }
-    
+
     /// 캐시 갱신 (새로운 데이터로 업데이트)
     pub fn refresh(
         &mut self,
@@ -116,10 +116,10 @@ impl CacheItem for DbAnalysisResult {
         let now = Utc::now();
         let age = now.signed_duration_since(self.analyzed_at);
         let ttl_chrono = chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::minutes(10));
-        
+
         age > ttl_chrono
     }
-    
+
     fn is_valid(&self) -> bool {
         self.is_valid
     }
@@ -145,20 +145,20 @@ impl DbAnalysisResult {
             is_valid: true,
         }
     }
-    
+
     /// 다음 크롤링 시작점 계산 (pageId, indexInPage 기반)
     #[must_use]
     pub fn calculate_next_start_position(&self, products_per_page: u32) -> Option<(u32, u32)> {
         if self.is_empty {
             return None;
         }
-        
+
         let page_id = self.max_page_id? as u32;
         let index_in_page = self.max_index_in_page? as u32;
-        
+
         // 다음 인덱스 계산
         let next_index = index_in_page + 1;
-        
+
         if next_index >= products_per_page {
             // 다음 페이지로 이동
             Some((page_id + 1, 0))
@@ -193,10 +193,10 @@ impl CacheItem for CalculatedRange {
         let now = Utc::now();
         let age = now.signed_duration_since(self.calculated_at);
         let ttl_chrono = chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::minutes(3));
-        
+
         age > ttl_chrono
     }
-    
+
     fn is_valid(&self) -> bool {
         self.is_valid && self.start_page > 0 && self.end_page > 0
     }
@@ -205,12 +205,7 @@ impl CacheItem for CalculatedRange {
 impl CalculatedRange {
     /// 계산된 범위 생성
     #[must_use]
-    pub fn new(
-        start_page: u32,
-        end_page: u32,
-        total_pages: u32,
-        is_complete_crawl: bool,
-    ) -> Self {
+    pub fn new(start_page: u32, end_page: u32, total_pages: u32, is_complete_crawl: bool) -> Self {
         Self {
             start_page,
             end_page,
@@ -223,7 +218,7 @@ impl CalculatedRange {
             profile_mode: "intelligent".to_string(),
         }
     }
-    
+
     /// 캐시 무효화
     pub fn invalidate(&mut self) {
         self.is_valid = false;
@@ -269,42 +264,50 @@ impl Default for RuntimeState {
 
 impl CacheItem for CrawlingSessionInfo {
     fn is_expired(&self, ttl: Duration) -> bool {
-        self.start_time.naive_utc() + chrono::Duration::from_std(ttl).unwrap_or_default() < Utc::now().naive_utc()
+        self.start_time.naive_utc() + chrono::Duration::from_std(ttl).unwrap_or_default()
+            < Utc::now().naive_utc()
     }
-    
+
     fn is_valid(&self) -> bool {
         true // Sessions are always valid when present
     }
 }
 
 /// 애플리케이션 전체에서 공유되는 상태 캐시
-/// 
+///
 /// Modern Rust 2024와 Clippy 권고사항을 준수하여 설계된
 /// TTL 기반 캐싱과 설정 기반 동작을 지원하는 중앙 상태 관리 시스템
 #[derive(Debug)]
 pub struct SharedStateCache {
     /// 사이트 분석 결과 캐시 (TTL: 5-10분)
     pub site_analysis: Arc<RwLock<Option<SiteAnalysisResult>>>,
-    
+
     /// DB 분석 결과 캐시 (TTL: 2-5분)
     pub db_analysis: Arc<RwLock<Option<DbAnalysisResult>>>,
-    
+
     /// 계산된 크롤링 범위 캐시 (TTL: 1-3분)
     pub calculated_range: Arc<RwLock<Option<CalculatedRange>>>,
-    
+
     /// 검증된 설정값들 (하드코딩 방지)
     pub validated_config: Arc<RwLock<ValidatedCrawlingConfig>>,
-    
+
     /// 마지막 크롤링 세션 정보
     pub last_crawling_session: Arc<RwLock<Option<CrawlingSessionInfo>>>,
-    
+
     /// 실시간 크롤링 상태 정보 (UI 브로드캐스팅용)
     pub runtime_state: Arc<RwLock<RuntimeState>>,
-    
+
     /// 캐시 생성 시간
     created_at: Instant,
     /// ExecutionPlan 메모리 LRU 캐시 (plan_hash 기반, 최대 5개)
-    pub execution_plan_cache: Arc<RwLock<Vec<(String, crate::new_architecture::actors::types::ExecutionPlan)>>>,
+    pub execution_plan_cache: Arc<
+        RwLock<
+            Vec<(
+                String,
+                crate::new_architecture::actors::types::ExecutionPlan,
+            )>,
+        >,
+    >,
 }
 
 impl Default for SharedStateCache {
@@ -328,12 +331,12 @@ impl SharedStateCache {
             execution_plan_cache: Arc::new(RwLock::new(Vec::with_capacity(5))),
         }
     }
-    
+
     /// 앱 설정에서 검증된 설정으로 초기화
     #[must_use]
     pub fn from_config(app_config: &AppConfig) -> Self {
         let validated_config = ValidatedCrawlingConfig::from_app_config(app_config);
-        
+
         Self {
             site_analysis: Arc::new(RwLock::new(None)),
             db_analysis: Arc::new(RwLock::new(None)),
@@ -347,19 +350,32 @@ impl SharedStateCache {
     }
 
     /// ExecutionPlan 캐시에 저장 (LRU 방식, 중복 제거)
-    pub async fn cache_execution_plan(&self, plan: crate::new_architecture::actors::types::ExecutionPlan) {
+    pub async fn cache_execution_plan(
+        &self,
+        plan: crate::new_architecture::actors::types::ExecutionPlan,
+    ) {
         let mut guard = self.execution_plan_cache.write().await;
-        if let Some(pos) = guard.iter().position(|(h, _)| *h == plan.plan_hash) { guard.remove(pos); }
+        if let Some(pos) = guard.iter().position(|(h, _)| *h == plan.plan_hash) {
+            guard.remove(pos);
+        }
         guard.insert(0, (plan.plan_hash.clone(), plan));
-        if guard.len() > 5 { guard.pop(); }
+        if guard.len() > 5 {
+            guard.pop();
+        }
     }
 
     /// plan_hash 로 ExecutionPlan 조회
-    pub async fn get_cached_execution_plan(&self, hash: &str) -> Option<crate::new_architecture::actors::types::ExecutionPlan> {
+    pub async fn get_cached_execution_plan(
+        &self,
+        hash: &str,
+    ) -> Option<crate::new_architecture::actors::types::ExecutionPlan> {
         let guard = self.execution_plan_cache.read().await;
-        guard.iter().find(|(h, _)| h == hash).map(|(_, p)| p.clone())
+        guard
+            .iter()
+            .find(|(h, _)| h == hash)
+            .map(|(_, p)| p.clone())
     }
-    
+
     /// 현재 검증된 설정 가져오기
     pub async fn get_validated_config(&self) -> ValidatedCrawlingConfig {
         self.validated_config.read().await.clone()
@@ -370,38 +386,48 @@ impl SharedStateCache {
         let new_validated_config = ValidatedCrawlingConfig::from_app_config(app_config);
         let mut config_lock = self.validated_config.write().await;
         *config_lock = new_validated_config;
-        
+
         // 설정 변경 시 관련 캐시도 무효화
         self.clear_calculated_range_async().await;
     }
 
     /// 사이트 분석 결과 저장
     pub async fn set_site_analysis(&self, result: SiteAnalysisResult) {
-        tracing::info!("🏢 사이트 분석 결과 캐시에 저장: {} 페이지, {} 제품", 
-                      result.total_pages, result.estimated_products);
+        tracing::info!(
+            "🏢 사이트 분석 결과 캐시에 저장: {} 페이지, {} 제품",
+            result.total_pages,
+            result.estimated_products
+        );
         let mut guard = self.site_analysis.write().await;
         *guard = Some(result);
     }
-    
+
     /// 유효한 사이트 분석 결과 가져오기 (TTL 검사 포함)
-    pub async fn get_valid_site_analysis_async(&self, ttl_minutes: Option<u64>) -> Option<SiteAnalysisResult> {
+    pub async fn get_valid_site_analysis_async(
+        &self,
+        ttl_minutes: Option<u64>,
+    ) -> Option<SiteAnalysisResult> {
         let ttl = Duration::from_secs((ttl_minutes.unwrap_or(5)) * 60);
         let guard = self.site_analysis.read().await;
-        
+
         if let Some(ref analysis) = *guard {
             let now = Utc::now();
             let age = now.signed_duration_since(analysis.analyzed_at);
-            
+
             if !analysis.is_expired(ttl) && analysis.is_valid() {
-                tracing::info!("🎯 Using cached site analysis (analyzed: {}, age: {} minutes)", 
-                             analysis.analyzed_at.format("%H:%M:%S"), 
-                             age.num_minutes());
+                tracing::info!(
+                    "🎯 Using cached site analysis (analyzed: {}, age: {} minutes)",
+                    analysis.analyzed_at.format("%H:%M:%S"),
+                    age.num_minutes()
+                );
                 return Some(analysis.clone());
             }
-            tracing::warn!("⏰ Site analysis cache expired or invalid (analyzed: {}, age: {} minutes, TTL: {} minutes)", 
-                          analysis.analyzed_at.format("%H:%M:%S"), 
-                          age.num_minutes(),
-                          ttl_minutes.unwrap_or(5));
+            tracing::warn!(
+                "⏰ Site analysis cache expired or invalid (analyzed: {}, age: {} minutes, TTL: {} minutes)",
+                analysis.analyzed_at.format("%H:%M:%S"),
+                age.num_minutes(),
+                ttl_minutes.unwrap_or(5)
+            );
         } else {
             tracing::info!("📭 No cached site analysis found");
         }
@@ -410,15 +436,25 @@ impl SharedStateCache {
 
     /// DB 분석 결과 저장
     pub async fn set_db_analysis(&self, result: DbAnalysisResult) {
-        tracing::info!("💽 DB 분석 결과 캐시에 저장: {} 제품, max_page_id: {:?}, max_index_in_page: {:?}", 
-                      result.total_products, result.max_page_id, result.max_index_in_page);
+        tracing::info!(
+            "💽 DB 분석 결과 캐시에 저장: {} 제품, max_page_id: {:?}, max_index_in_page: {:?}",
+            result.total_products,
+            result.max_page_id,
+            result.max_index_in_page
+        );
         let mut guard = self.db_analysis.write().await;
         *guard = Some(result);
     }
-    
+
     /// 기존 DB 분석 캐시를 page/index 정보로 보강 (None -> Some 으로만 업데이트)
-    pub async fn enrich_db_analysis_position(&self, max_page_id: Option<i32>, max_index_in_page: Option<i32>) {
-        if max_page_id.is_none() && max_index_in_page.is_none() { return; }
+    pub async fn enrich_db_analysis_position(
+        &self,
+        max_page_id: Option<i32>,
+        max_index_in_page: Option<i32>,
+    ) {
+        if max_page_id.is_none() && max_index_in_page.is_none() {
+            return;
+        }
         let mut guard = self.db_analysis.write().await;
         if let Some(ref mut existing) = *guard {
             let mut changed = false;
@@ -431,22 +467,35 @@ impl SharedStateCache {
                 changed = true;
             }
             if changed {
-                tracing::info!("🔄 Enriched cached DB analysis with position: page_id={:?}, index_in_page={:?}", existing.max_page_id, existing.max_index_in_page);
+                tracing::info!(
+                    "🔄 Enriched cached DB analysis with position: page_id={:?}, index_in_page={:?}",
+                    existing.max_page_id,
+                    existing.max_index_in_page
+                );
             }
         }
     }
-    
+
     /// 유효한 DB 분석 결과 가져오기 (TTL 검사 포함)
-    pub async fn get_valid_db_analysis_async(&self, ttl_minutes: Option<u64>) -> Option<DbAnalysisResult> {
+    pub async fn get_valid_db_analysis_async(
+        &self,
+        ttl_minutes: Option<u64>,
+    ) -> Option<DbAnalysisResult> {
         let ttl = Duration::from_secs((ttl_minutes.unwrap_or(2)) * 60);
         let guard = self.db_analysis.read().await;
-        
+
         if let Some(ref analysis) = *guard {
             if !analysis.is_expired(ttl) && analysis.is_valid() {
-                tracing::info!("🎯 Using cached db analysis (age: {:?})", analysis.cached_at.elapsed());
+                tracing::info!(
+                    "🎯 Using cached db analysis (age: {:?})",
+                    analysis.cached_at.elapsed()
+                );
                 return Some(analysis.clone());
             }
-            tracing::warn!("⏰ DB analysis cache expired or invalid (age: {:?})", analysis.cached_at.elapsed());
+            tracing::warn!(
+                "⏰ DB analysis cache expired or invalid (age: {:?})",
+                analysis.cached_at.elapsed()
+            );
         }
 
         None
@@ -472,10 +521,13 @@ impl SharedStateCache {
     }
 
     /// 유효한 계산된 범위 가져오기 (async)
-    pub async fn get_valid_calculated_range_async(&self, ttl_minutes: u64) -> Option<CalculatedRange> {
+    pub async fn get_valid_calculated_range_async(
+        &self,
+        ttl_minutes: u64,
+    ) -> Option<CalculatedRange> {
         let ttl = Duration::from_secs(ttl_minutes * 60);
         let guard = self.calculated_range.read().await;
-        
+
         if let Some(ref range) = *guard {
             if !range.is_expired(ttl) && range.is_valid() {
                 return Some(range.clone());
@@ -510,7 +562,9 @@ impl SharedStateCache {
                 db_guard.is_some() as u8,
                 range_guard.is_some() as u8,
                 session_guard.is_some() as u8,
-            ].iter().sum(),
+            ]
+            .iter()
+            .sum(),
         }
     }
 
@@ -520,19 +574,19 @@ impl SharedStateCache {
         let mut db_guard = self.db_analysis.write().await;
         let mut range_guard = self.calculated_range.write().await;
         let mut session_guard = self.last_crawling_session.write().await;
-        
+
         *site_guard = None;
         *db_guard = None;
         *range_guard = None;
         *session_guard = None;
-        
+
         tracing::info!("🗑️ All caches cleared");
     }
 
     /// 만료된 캐시 정리 (백그라운드에서 주기적으로 실행)
     pub async fn cleanup_expired_caches(&self) {
         let site_ttl = Duration::from_secs(10 * 60); // 10분
-        let db_ttl = Duration::from_secs(5 * 60);    // 5분
+        let db_ttl = Duration::from_secs(5 * 60); // 5분
         let range_ttl = Duration::from_secs(3 * 60); // 3분
 
         // 사이트 분석 캐시 정리
