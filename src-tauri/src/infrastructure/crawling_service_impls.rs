@@ -2653,7 +2653,7 @@ impl ProductDetailCollectorImpl {
 #[async_trait]
 impl ProductDetailCollector for ProductDetailCollectorImpl {
     async fn collect_details(&self, product_urls: &[ProductUrl]) -> Result<Vec<ProductDetail>> {
-        info!("Collecting details for {} products", product_urls.len());
+        debug!("Collecting details for {} products", product_urls.len());
 
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent as usize));
         let http_client = Arc::clone(&self.http_client);
@@ -2737,7 +2737,7 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
             }
         }
 
-        info!("Successfully collected {} product details", details.len());
+        debug!("Successfully collected {} product details", details.len());
         Ok(details)
     }
 

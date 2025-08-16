@@ -6,8 +6,6 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
-use crate::infrastructure::database_connection::DatabaseConnection;
-use crate::infrastructure::database_paths::get_main_database_url;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::new_architecture::config::SystemConfig;
 use crate::new_architecture::services::performance_optimizer::CrawlingPerformanceOptimizer;
@@ -60,18 +58,15 @@ pub async fn init_dashboard_service(app: AppHandle) -> Result<String, String> {
     let system_config = Arc::new(SystemConfig::default());
     let performance_optimizer = Arc::new(CrawlingPerformanceOptimizer::new(system_config));
 
-    // 데이터베이스 연결 생성 (중앙집중식 경로 관리 사용)
-    let database_url = get_main_database_url();
-
-    // 제품 리포지토리 생성
-    let _product_repository = match DatabaseConnection::new(&database_url).await {
-        Ok(db_conn) => {
-            let repo = Arc::new(IntegratedProductRepository::new(db_conn.pool().clone()));
-            info!("✅ Database connection established for dashboard");
+    // 제품 리포지토리 생성 (전역 풀 재사용)
+    let _product_repository = match crate::infrastructure::database_connection::get_or_init_global_pool().await {
+        Ok(pool) => {
+            let repo = Arc::new(IntegratedProductRepository::new(pool));
+            info!("✅ Reused global DB pool for dashboard");
             Some(repo)
         }
         Err(e) => {
-            error!("❌ Failed to connect to database for dashboard: {}", e);
+            error!("❌ Failed to obtain global DB pool for dashboard: {}", e);
             None
         }
     };
@@ -149,6 +144,7 @@ pub async fn get_chart_data(
 }
 
 /// 🚀 크롤링 세션 시작 (대시보드 연동)
+/// Deprecated: Use `start_unified_crawling` to start crawling; this API only initializes dashboard tracking.
 #[tauri::command]
 pub async fn start_dashboard_crawling_session(
     session_id: String,
@@ -158,10 +154,11 @@ pub async fn start_dashboard_crawling_session(
     let service_lock = dashboard_state.service.read().await;
 
     if let Some(service) = service_lock.as_ref() {
+        // 대시보드 추적만 시작 (실제 크롤링은 통합 명령 사용)
         service
             .start_crawling_session(session_id.clone(), total_pages)
             .await?;
-        Ok(format!("Dashboard session started: {}", session_id))
+        Ok(format!("[deprecated] dashboard tracking started: {}", session_id))
     } else {
         Err("Dashboard service not initialized".to_string())
     }

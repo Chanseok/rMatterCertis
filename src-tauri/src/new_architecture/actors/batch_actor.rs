@@ -331,6 +331,15 @@ impl BatchActor {
             .emit_event(start_event)
             .map_err(|e| BatchError::ContextError(e.to_string()))?;
 
+        // KPI: 배치 시작 (구조화 로그)
+        info!(target: "kpi.batch",
+            "{{\"event\":\"batch_started\",\"session_id\":\"{}\",\"batch_id\":\"{}\",\"pages_count\":{},\"ts\":\"{}\"}}",
+            context.session_id,
+            batch_id,
+            pages.len(),
+            chrono::Utc::now()
+        );
+
         // 상태를 Processing으로 전환
         self.state = BatchState::Processing;
 
@@ -856,6 +865,20 @@ impl BatchActor {
         context
             .emit_event(completion_event)
             .map_err(|e| BatchError::ContextError(e.to_string()))?;
+
+        // KPI: 배치 완료 (구조화 로그)
+        info!(target: "kpi.batch",
+            "{{\"event\":\"batch_completed\",\"session_id\":\"{}\",\"batch_id\":\"{}\",\"pages_total\":{},\"pages_success\":{},\"pages_failed\":{},\"duration_ms\":{},\"products_inserted\":{},\"products_updated\":{},\"ts\":\"{}\"}}",
+            context.session_id,
+            batch_id,
+            self.total_pages,
+            self.success_count.max(list_page_result.successful_items),
+            list_page_result.failed_items,
+            self.start_time.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0),
+            self.products_inserted,
+            self.products_updated,
+            chrono::Utc::now()
+        );
 
         // TODO: Integrate real DataSaving inserted/updated metrics: requires StageActor -> BatchActor callback.
         // Current workaround: StageActor logs metrics; future enhancement: channel message carrying counts.

@@ -6,7 +6,11 @@ use matter_certis_v2_lib::new_architecture::runtime::session_registry::{
 
 #[tokio::test]
 async fn status_includes_downshift_metadata_when_set() {
-    let sid = format!("test_{}", Utc::now().timestamp_nanos());
+    let nanos = Utc::now()
+        .timestamp_nanos_opt()
+        .map(|v| v as i128)
+        .unwrap_or_else(|| (Utc::now().timestamp_millis() as i128) * 1_000_000);
+    let sid = format!("test_{}", nanos);
     {
         let registry = session_registry();
         let mut g = registry.write().await;

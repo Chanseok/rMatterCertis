@@ -305,8 +305,10 @@ mod tests {
     use crate::infrastructure::config::AppConfig;
     use std::sync::Arc;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_crawling_integration_service_creation() {
+    // Ensure database paths are initialized for tests using globals
+    let _ = crate::infrastructure::initialize_database_paths().await;
         println!("🧪 크롤링 통합 서비스 생성 테스트 시작");
 
         // 기본 설정 생성
@@ -328,8 +330,10 @@ mod tests {
         println!("🎯 크롤링 통합 서비스 생성 테스트 완료!");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_stage_actor_with_real_crawling() {
+    // Ensure database paths are initialized for tests using globals
+    let _ = crate::infrastructure::initialize_database_paths().await;
         println!("🧪 실제 크롤링을 사용하는 StageActor 테스트 시작");
 
         let batch_id = "test-batch-real".to_string();

@@ -373,8 +373,9 @@ impl CrawlingEngine {
 
     /// 설정을 사용하여 크롤링 엔진을 생성합니다 (인메모리 SQLite DB 사용)
     pub async fn with_config(config: CrawlingConfig) -> Result<Self, CrawlingEngineError> {
-        // 개발용 인메모리 SQLite 데이터베이스 연결
-        let database_pool = sqlx::SqlitePool::connect("sqlite::memory:")
+    // 개발용 인메모리 SQLite 데이터베이스 연결 (테스트 전용 경로)
+    // TODO(refactor): If this code path becomes active again, switch to global pool reuse.
+    let database_pool = sqlx::SqlitePool::connect("sqlite::memory:")
             .await
             .map_err(|e| CrawlingEngineError::DatabaseConnectionError(e.to_string()))?;
 

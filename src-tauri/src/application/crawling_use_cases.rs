@@ -147,14 +147,17 @@ mod tests {
     use crate::infrastructure::database_connection::DatabaseConnection;
     use crate::infrastructure::simple_http_client::HttpClientConfig;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_crawling_config_default() {
         let config = CrawlingConfig::default();
         assert!(config.start_url.contains("csa-iot.org"));
-        assert_eq!(config.max_pages, 10);
+        assert_eq!(
+            config.max_pages,
+            crate::infrastructure::config::defaults::PAGE_RANGE_LIMIT
+        );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_use_cases_creation() {
         // Create test components
         let http_client = HttpClient::with_config(HttpClientConfig::default()).unwrap();

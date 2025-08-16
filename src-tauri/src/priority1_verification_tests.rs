@@ -14,8 +14,10 @@ mod priority1_tests {
     };
 
     /// Priority 1 구현의 핵심 기능 검증 (간소화된 테스트)
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_priority1_implementation_verification() {
+    // Ensure database paths are initialized when creating services that may access DB paths
+    let _ = crate::infrastructure::initialize_database_paths().await;
         println!("🎯 Priority 1 Implementation Verification");
         println!("Target: 3x performance improvement through shared service pattern");
 

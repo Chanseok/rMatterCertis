@@ -156,7 +156,8 @@ pub mod commands {
     pub use real_crawling_commands::*; // Phase C 실제 크롤링 명령어 export
     pub use sync_commands::*; // Partial Sync 명령어 export
 } // Modern Rust 2024 - 명시적 모듈 선언
-pub mod crawling;
+// Deprecated legacy crawling engine module (disabled). See _archive for reference.
+// pub mod crawling;
 
 // Utilities module
 pub mod utils;
@@ -278,6 +279,32 @@ pub fn run() {
             info!("✅ Database connection established successfully");
         }
         db
+    });
+
+    // 2. Eagerly initialize the global Sqlite pool at application startup (managed state)
+    //    This ensures all subsequent code paths reuse a single pool via OnceLock
+    rt.block_on(async {
+        match crate::infrastructure::database_connection::get_or_init_global_pool().await {
+            Ok(_pool) => {
+                let concise_all = std::env::var("MC_CONCISE_ALL")
+                    .ok()
+                    .map_or(true, |v| !(v == "0" || v.eq_ignore_ascii_case("false")));
+                let concise = concise_all
+                    || std::env::var("MC_CONCISE_STARTUP")
+                        .ok()
+                        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+                if concise {
+                    debug!("🧩 Global DB pool initialized at startup (OnceLock)");
+                } else {
+                    info!("🧩 Global DB pool initialized at startup (OnceLock)");
+                }
+            }
+            Err(e) => {
+                error!("❌ Failed to initialize global DB pool at startup: {}", e);
+                eprintln!("Critical error: Global DB pool init failed: {}", e);
+                std::process::exit(1);
+            }
+        }
     });
 
     // Create application state

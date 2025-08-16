@@ -5,7 +5,7 @@
 
 pub mod advanced_crawling_engine; // Phase 2 advanced crawling engine with data pipeline
 pub mod config; // Configuration constants and helpers
-pub mod crawling; // Web crawler implementation
+// pub mod crawling; // Web crawler implementation (deprecated)
 pub mod crawling_engine; // 4-stage batch crawling engine
 pub mod crawling_service_impls; // Service implementations
 pub mod data_processing_service_impls; // Data processing service implementations
@@ -39,7 +39,6 @@ pub use integrated_product_repository::IntegratedProductRepository;
 pub use simple_http_client::HttpClient; // CSA-IoT configuration constants
 
 // Modern parsing and crawling exports following the guide
-pub use crawling::WebCrawler;
 pub use crawling_engine::{BatchCrawlingConfig, BatchCrawlingEngine};
 pub use parsing::{
     ParsingConfig, ParsingError, ParsingResult, ProductDetailParser, ProductListParser,

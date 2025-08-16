@@ -4,7 +4,6 @@
 //! business logic and validation.
 
 use crate::domain::product::{Product, ProductDetail};
-use crate::infrastructure::crawling::WebCrawler;
 use crate::infrastructure::parsing::context::DetailParseContext;
 use crate::infrastructure::parsing::{
     ContextualParser, ParseContext, ParsingConfig, ParsingResult, ProductDetailParser,
@@ -152,22 +151,16 @@ impl ParsingService {
 
 /// Crawler service that combines web crawling with parsing
 pub struct CrawlerService {
-    crawler: WebCrawler,
     parsing_service: Arc<ParsingService>,
 }
 
 impl CrawlerService {
     /// Create a new crawler service
     pub fn new(config: ParsingConfig) -> Result<Self> {
-        let crawler = WebCrawler::new(config.clone()).context("Failed to create web crawler")?;
-
-        let parsing_service =
-            Arc::new(ParsingService::new(config).context("Failed to create parsing service")?);
-
-        Ok(Self {
-            crawler,
-            parsing_service,
-        })
+        let parsing_service = Arc::new(
+            ParsingService::new(config).context("Failed to create parsing service")?,
+        );
+        Ok(Self { parsing_service })
     }
 
     /// Crawl and parse product list from URL
@@ -176,7 +169,15 @@ impl CrawlerService {
         url: &str,
         page_id: u32,
     ) -> Result<Vec<Product>> {
-        let products = self.crawler.crawl_product_list(url, page_id).await?;
+        // Fetch HTML and parse via ParsingService; keep HTTP stack centralized
+        let client = crate::infrastructure::HttpClient::create_from_global_config()
+            .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
+        let html_doc = client
+            .fetch_html(url)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to fetch product list: {}", e))?;
+        let html_str = html_doc.root_element().html();
+        let products = self.parsing_service.parse_product_list(&html_str, page_id)?;
 
         // Validate all products
         for product in &products {
@@ -190,7 +191,14 @@ impl CrawlerService {
 
     /// Crawl and parse product detail from URL
     pub async fn crawl_and_parse_product_detail(&self, url: &str) -> Result<ProductDetail> {
-        let product = self.crawler.crawl_product_detail(url).await?;
+        let client = crate::infrastructure::HttpClient::create_from_global_config()
+            .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
+        let html_doc = client
+            .fetch_html(url)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to fetch product detail: {}", e))?;
+        let html_str = html_doc.root_element().html();
+        let product = self.parsing_service.parse_product_detail(&html_str, url)?;
 
         // Validate product detail
         if let Err(e) = self.parsing_service.validate_product_detail(&product) {
@@ -205,7 +213,22 @@ impl CrawlerService {
         &self,
         urls_and_pages: Vec<(String, u32)>,
     ) -> Vec<Result<Vec<Product>>> {
-        self.crawler.batch_crawl_product_lists(urls_and_pages).await
+        // Simple sequential version to keep surface compatible; can be optimized later
+        let mut results = Vec::with_capacity(urls_and_pages.len());
+        for (url, page_id) in urls_and_pages {
+            let res = async {
+                let client = crate::infrastructure::HttpClient::create_from_global_config()
+                    .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
+                let html_doc = client.fetch_html(&url).await
+                    .map_err(|e| anyhow::anyhow!("Failed to fetch product list: {}", e))?;
+                let html_str = html_doc.root_element().html();
+                self.parsing_service
+                    .parse_product_list(&html_str, page_id)
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))
+            };
+            results.push(res.await);
+        }
+        results
     }
 
     /// Batch crawl multiple product detail pages
@@ -213,17 +236,36 @@ impl CrawlerService {
         &self,
         urls: Vec<String>,
     ) -> Vec<Result<ProductDetail>> {
-        self.crawler.batch_crawl_product_details(urls).await
+        let mut results = Vec::with_capacity(urls.len());
+        for url in urls {
+            let res = async {
+                let client = crate::infrastructure::HttpClient::create_from_global_config()
+                    .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
+                let html_doc = client.fetch_html(&url).await
+                    .map_err(|e| anyhow::anyhow!("Failed to fetch product detail: {}", e))?;
+                let html_str = html_doc.root_element().html();
+                self.parsing_service
+                    .parse_product_detail(&html_str, &url)
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))
+            };
+            results.push(res.await);
+        }
+        results
     }
 
     /// Check if URL has next page
     pub async fn has_next_page(&self, url: &str) -> Result<bool> {
-        self.crawler.has_next_page(url).await
+        let client = crate::infrastructure::HttpClient::create_from_global_config()
+            .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
+        let html_doc = client.fetch_html(url).await
+            .map_err(|e| anyhow::anyhow!("Failed to fetch page: {}", e))?;
+        let html_str = html_doc.root_element().html();
+        Ok(self.parsing_service.has_next_page(&html_str))
     }
 
     /// Get crawler configuration
     pub fn get_config(&self) -> &ParsingConfig {
-        self.crawler.get_config()
+    self.parsing_service.get_config()
     }
 }
 

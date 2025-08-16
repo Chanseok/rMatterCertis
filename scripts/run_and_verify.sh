@@ -15,7 +15,15 @@ mkdir -p "$LOG_DIR"
 
 # Start dev (frontend+tauri via npm script)
 echo "[run_and_verify] starting tauri:dev..."
-(npm run -s tauri:dev > "$ROOT_DIR/run2.log" 2>&1 &) 
+# Capture dev process output optionally; default ON but write inside unified log dir to avoid stray root logs.
+if [[ "${DEV_LOG_CAPTURE:-1}" == "1" ]]; then
+  DEV_PROC_LOG="$LOG_DIR/dev_process.log"
+  echo "[run_and_verify] capturing dev output to $DEV_PROC_LOG"
+  (npm run -s tauri:dev > "$DEV_PROC_LOG" 2>&1 &)
+else
+  echo "[run_and_verify] not capturing dev output (DEV_LOG_CAPTURE=0)"
+  (npm run -s tauri:dev &)
+fi
 TAURI_PID=$!
 echo "[run_and_verify] tauri dev pid=$TAURI_PID"
 

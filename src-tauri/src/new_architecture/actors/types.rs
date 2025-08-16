@@ -561,8 +561,24 @@ pub enum AppEvent {
         skipped: u32,
         failed: u32,
         duration_ms: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        deleted: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        total_pages: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        items_on_last_page: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        anomalies: Option<Vec<SyncAnomalyEntry>>,
         timestamp: DateTime<Utc>,
     },
+}
+
+/// Compact anomaly entry for SyncCompleted summary
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncAnomalyEntry {
+    pub page_id: i32,
+    pub count: i64,
+    pub current_page_number: u32,
 }
 
 // Lightweight TS-friendly metrics container (additive, extensible)
@@ -1343,7 +1359,7 @@ mod tests {
     fn test_batch_config_default() {
         let config = BatchConfig::default();
         assert_eq!(config.batch_size, 20);
-        assert_eq!(config.concurrency_limit, 5);
+    assert_eq!(config.concurrency_limit, 3);
         assert!(config.retry_on_failure);
     }
 

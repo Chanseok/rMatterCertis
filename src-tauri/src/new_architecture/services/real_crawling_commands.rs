@@ -207,8 +207,10 @@ async fn test_oneshot_with_real_crawling() -> Result<String> {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_real_crawling_commands() {
+    // Ensure database paths are initialized for tests using globals
+    let _ = crate::infrastructure::initialize_database_paths().await;
         println!("🧪 실제 크롤링 명령 테스트 시작");
 
         // 크롤링 서비스 초기화 테스트
