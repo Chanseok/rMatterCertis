@@ -99,7 +99,7 @@ if grep -a -q "RangeLoopAnomaly" "${LOG_FILE}"; then
 fi
 
 # Partial page reinclusion occurrences
-ppi_count=$(grep -a "Partial page re-included" "${LOG_FILE}" | wc -l | tr -d ' ')
+ppi_count=$(grep -a "Partial page re-included" "${LOG_FILE}" | wc -l | tr -d ' ' || true)
 if [[ ${ppi_count} -gt 1 ]]; then
   echo "[FAIL] Partial page reinclusion logged more than once (${ppi_count})"; exit 16
 fi
@@ -131,7 +131,7 @@ if [[ ${list_phase_count} -gt 0 ]]; then
 fi
 
 # Legacy range loop duplication check: more than one "[RangeLoop] ENTER" while only 1 phase would be suspicious.
-range_loop_enters=$(grep -a "\[RangeLoop\] ENTER" "${LOG_FILE}" | wc -l | tr -d ' ')
+range_loop_enters=$(grep -a "\[RangeLoop\] ENTER" "${LOG_FILE}" | wc -l | tr -d ' ' || true)
 if [[ ${range_loop_enters} -gt 0 && ${list_phase_count} -eq 0 ]]; then
   echo "[WARN] RangeLoop ENTER logs present but no ListPageCrawling phases (legacy path?)";
 fi
@@ -234,9 +234,9 @@ if [[ -f "${events_log_dir}/events.log" ]]; then
 fi
 
 # DB analysis cache enrichment check
-if grep -a -q '"db_analysis_cache_hit"' "${LOG_FILE}"; then
+if grep -a -q '"db_analysis_cache_hit"' "${KPI_FILE}" 2>/dev/null || true; then
   # If cache hit but DB snapshot shows None for both metrics -> fail
-  if grep -a '🧾 DB snapshot:' "${LOG_FILE}" | tail -n1 | grep -q 'max_page_id=None'; then
+  if (grep -a '🧾 DB snapshot:' "${LOG_FILE}" | tail -n1 || true) | grep -q 'max_page_id=None'; then
     echo "[FAIL] DB analysis cache hit but max_page_id still None (no enrichment)"; exit 18
   fi
 fi

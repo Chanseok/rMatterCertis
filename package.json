@@ -15,6 +15,7 @@
     "tauri:build": "tauri build",
   "type-check": "tsc --noEmit",
   "verify:runtime": "bash scripts/verify_runtime_plan.sh src-tauri/target/debug/logs/back_front.log",
+  "dev:run-and-verify": "bash scripts/run_and_verify.sh",
   "lint:rust": "bash scripts/lint_rust.sh",
   "lint:rust:strict": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
   "verify:fast": "npm run verify:runtime || DISABLE_STRUCTURED_CHECKS=1 bash scripts/verify_runtime_plan.sh src-tauri/target/debug/logs/back_front.log"

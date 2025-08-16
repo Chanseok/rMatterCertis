@@ -5,7 +5,6 @@
 
 use crate::domain::atomic_events::AtomicTaskEvent; // 추가
 use crate::domain::events::{CrawlingEvent, CrawlingProgress, CrawlingTaskStatus, DatabaseStats};
-use crate::infrastructure::service_based_crawling_engine::DetailedCrawlingEvent; // 추가
 use futures::future::join_all;
 use std::sync::Arc;
 use std::time::Duration;
@@ -203,9 +202,9 @@ impl EventEmitter {
     }
 
     /// Emit detailed crawling event for hierarchical event monitor
-    pub async fn emit_detailed_crawling_event(
+    pub async fn emit_detailed_crawling_event<T: serde::Serialize>(
         &self,
-        detailed_event: DetailedCrawlingEvent,
+        detailed_event: T,
     ) -> EventResult {
         // 빠른 경로: 비활성화 검사
         if !self.is_enabled().await {
