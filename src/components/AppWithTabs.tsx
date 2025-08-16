@@ -11,13 +11,9 @@ import { SettingsTab } from './tabs/SettingsTab';
 import { StatusTab } from './tabs/StatusTab';
 import { LocalDBTab } from './tabs/LocalDBTab';
 import { AnalysisTab } from './tabs/AnalysisTab';
-import { LiveProductionTab } from './tabs/LiveProductionTab';
-import { LiveCrawlingTab } from './tabs/LiveCrawlingTab';
-import { NewArchTestTab } from './tabs/NewArchTestTab';
-import { ActorSystemTab } from './tabs/ActorSystemTab';
-import { DomainDashboardTab } from './tabs/DomainDashboardTab';
-import { RealtimeDashboardTab } from './tabs/RealtimeDashboardTab';
-import { HierarchicalEventMonitor } from './HierarchicalEventMonitor';
+// Archived tabs removed from runtime imports:
+// LiveProductionTab, LiveCrawlingTab, NewArchTestTab, ActorSystemTab,
+// DomainDashboardTab, RealtimeDashboardTab, HierarchicalEventMonitor
 import { tabState, restoreLastActiveTab } from '../stores/tabStore';
 let auditEnabled = false; // dev event audit flag
 import { windowState } from '../stores/windowStore';
@@ -55,26 +51,10 @@ export const AppWithTabs: Component = () => {
         return <CrawlingEngineTab />;
       case 'settings':
         return <SettingsTab />;
-      case 'status':
-        return <StatusTab />;
       case 'localDB':
         return <LocalDBTab />;
-      case 'liveProduction':
-        return <LiveProductionTab />; // legacy (will remove after migration)
-      case 'liveCrawling':
-        return <LiveCrawlingTab />;
       case 'analysis':
         return <AnalysisTab />;
-      case 'newArchTest':
-        return <NewArchTestTab />;
-      case 'actorSystem':
-        return <ActorSystemTab />;
-      case 'domainDashboard':
-        return <DomainDashboardTab />;
-      case 'realtimeDashboard':
-        return <RealtimeDashboardTab />;
-      case 'eventDisplay':
-        return <HierarchicalEventMonitor />;
       default:
         return <CrawlingEngineTabSimple />;
     }

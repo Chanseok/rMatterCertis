@@ -8,6 +8,7 @@ pub mod data_queries;                  // Read/query endpoints
 pub mod unified_crawling;              // Single crawling entrypoint (actor-based)
 pub mod validation_commands;           // Validation command
 pub mod sync_commands;                 // Partial sync command
+// pub mod dashboard_commands;          // Archived while UI is disabled
 
 // 모든 명령어를 한곳에서 export
 pub use advanced_engine_api::{

@@ -1157,7 +1157,7 @@ export const CrawlingEngineTab: Component = () => {
                             const batchPlan = crawlingRange()?.batch_plan;
                             if (!batchPlan || !batchPlan.batches.length) return null;
                             
-                            return batchPlan.batches.map((batch) => (
+                            return batchPlan.batches.map((batch: any) => (
                               <div class="text-xs font-mono bg-purple-50 px-2 py-1 rounded">
                                 <span class="text-purple-700">Batch {batch.batch_id + 1}:</span> 
                                 <span class="text-purple-900"> [{batch.pages.join(', ')}]</span>

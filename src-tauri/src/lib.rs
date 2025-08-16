@@ -438,15 +438,14 @@ pub fn run() {
             commands::performance_commands::clear_performance_history,
             commands::performance_commands::start_performance_session,
             commands::performance_commands::end_performance_session,
-            // 🎨 Phase C: Realtime Dashboard Tools
-            commands::dashboard_commands::init_dashboard_service,
-            commands::dashboard_commands::get_dashboard_state,
-            commands::dashboard_commands::get_chart_data,
-            // Removed start_dashboard_crawling_session (unified entrypoint)
-            commands::dashboard_commands::update_dashboard_progress,
-            commands::dashboard_commands::complete_dashboard_crawling_session,
-            commands::dashboard_commands::test_dashboard_integration,
-            commands::dashboard_commands::run_dashboard_demo,
+            // 🎨 Phase C: Realtime Dashboard Tools (temporarily disabled while UI is archived)
+            // commands::dashboard_commands::init_dashboard_service,
+            // commands::dashboard_commands::get_dashboard_state,
+            // commands::dashboard_commands::get_chart_data,
+            // commands::dashboard_commands::update_dashboard_progress,
+            // commands::dashboard_commands::complete_dashboard_crawling_session,
+            // commands::dashboard_commands::test_dashboard_integration,
+            // commands::dashboard_commands::run_dashboard_demo,
             // Settings store commands
             commands::config_commands::get_app_settings,
             commands::config_commands::save_app_settings,

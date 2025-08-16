@@ -24,41 +24,9 @@ export interface TabState {
 }
 
 const [tabState, setTabState] = createStore<TabState>({
-  activeTab: 'liveCrawling',
+  activeTab: 'crawlingEngine',
   tabs: [
-    {
-      id: 'liveCrawling',
-      label: 'Live Crawling',
-      icon: '🟢',
-      theme: {
-        bg: 'bg-gradient-to-br from-emerald-50 to-green-50',
-        border: 'border-emerald-200',
-        text: 'text-emerald-700',
-        accent: 'from-emerald-500 to-green-500'
-      }
-    },
-    {
-      id: 'eventDisplay',
-      label: '계층적 이벤트 모니터',
-      icon: '🌳',
-      theme: {
-        bg: 'bg-gradient-to-br from-green-50 to-emerald-50',
-        border: 'border-green-200',
-        text: 'text-green-700',
-        accent: 'from-green-500 to-emerald-500'
-      }
-    },
-    {
-      id: 'realtimeDashboard',
-      label: '실시간 차트 대시보드',
-      icon: '📊',
-      theme: {
-        bg: 'bg-gradient-to-br from-pink-50 to-rose-50',
-        border: 'border-pink-200',
-        text: 'text-pink-700',
-        accent: 'from-pink-500 to-rose-500'
-      }
-    },
+
     {
       id: 'crawlingEngine',
       label: 'Advanced Engine',
@@ -82,17 +50,6 @@ const [tabState, setTabState] = createStore<TabState>({
       }
     },
     {
-      id: 'status',
-      label: '상태 & 제어',
-      icon: '📊',
-      theme: {
-        bg: 'bg-blue-50',
-        border: 'border-blue-200',
-        text: 'text-blue-700',
-        accent: 'from-blue-500 to-indigo-500'
-      }
-    },
-    {
       id: 'localDB',
       label: '로컬DB',
       icon: '🗄️',
@@ -102,18 +59,7 @@ const [tabState, setTabState] = createStore<TabState>({
         text: 'text-purple-700',
         accent: 'from-purple-500 to-violet-500'
       }
-    },
-    {
-      id: 'liveProduction',
-      label: 'Live Production',
-      icon: '🎬',
-      theme: {
-        bg: 'bg-red-50',
-        border: 'border-red-200',
-        text: 'text-red-700',
-        accent: 'from-red-500 to-pink-500'
-      }
-    },
+  },
     {
       id: 'analysis',
       label: '분석',
@@ -124,40 +70,8 @@ const [tabState, setTabState] = createStore<TabState>({
         text: 'text-amber-700',
         accent: 'from-amber-500 to-orange-500'
       }
-    },
-    {
-      id: 'newArchTest',
-      label: '새 아키텍처 테스트',
-      icon: '🏗️',
-      theme: {
-        bg: 'bg-slate-50',
-        border: 'border-slate-200',
-        text: 'text-slate-700',
-        accent: 'from-slate-500 to-gray-500'
-      }
-    },
-    {
-      id: 'actorSystem',
-      label: 'Actor System',
-      icon: '🎭',
-      theme: {
-        bg: 'bg-gradient-to-br from-purple-50 to-indigo-50',
-        border: 'border-purple-200',
-        text: 'text-purple-700',
-        accent: 'from-purple-500 to-indigo-500'
-      }
-    },
-    {
-      id: 'domainDashboard',
-      label: '도메인 대시보드',
-      icon: '🚀',
-      theme: {
-        bg: 'bg-gradient-to-br from-cyan-50 to-blue-50',
-        border: 'border-cyan-200',
-        text: 'text-cyan-700',
-        accent: 'from-cyan-500 to-blue-500'
-      }
     }
+
     
   ],
   expandedSections: {}
@@ -192,34 +106,9 @@ export const setActiveTab = (tabId: string) => {
 // 탭별 리소스 정리 함수
 const cleanupTabResources = (tabId: string) => {
   switch (tabId) {
-    case 'realtimeDashboard':
-      // Chart.js 대시보드 리소스 정리
-      const chartElements = document.querySelectorAll('.chartjs-render-monitor');
-      chartElements.forEach(element => {
-        // Chart.js 인스턴스 정리
-        const chart = (element as any)?.chart;
-        if (chart && typeof chart.destroy === 'function') {
-          chart.destroy();
-        }
-      });
-      console.log('🧹 Chart.js dashboard resources cleaned up');
-      break;
-    
-    case 'liveProduction':
-      // Live Production 탭 리소스 정리
-      const liveElements = document.querySelectorAll('[data-live-element]');
-      liveElements.forEach(element => {
-        // 이벤트 리스너 제거
-        element.removeEventListener('update', () => {});
-      });
-      console.log('🧹 Live Production resources cleaned up');
-      break;
-    case 'liveCrawling':
-      console.log('🧹 Live Crawling resources cleaned up');
-      break;
+  // Archived tabs removed; basic cleanup only
     
     default:
-      // 기본 정리 작업
       console.log(`🧹 Basic cleanup for tab: ${tabId}`);
       break;
   }
