@@ -65,28 +65,20 @@ fi
 plan_lines=$(grep -a "📋 CrawlingPlan created:" "${LOG_FILE}" || true)
 plan_count=$(printf "%s" "${plan_lines}" | grep -c "CrawlingPlan created" || true)
 
-# Fallback: structured plan_created event
-if [[ ${plan_count} -eq 0 ]]; then
-  structured_plan_line=$(grep -a '"event":"plan_created"' "${KPI_FILE}" | tail -n1 || true)
-  if [[ -n "${structured_plan_line}" ]]; then
-    plan_count=1
-    plan_lines="${structured_plan_line}"
-    structured_mode=1
-  else
-    echo "[FAIL] No CrawlingPlan line (legacy) nor structured plan_created event found"; exit 11
-  fi
-else
-  structured_mode=0
-fi
-
-if [[ ${plan_count} -gt 1 ]]; then
-  echo "[FAIL] Duplicate plan creation entries: ${plan_count}"; exit 12
-fi
-
-if [[ ${structured_mode:-0} -eq 1 ]]; then
-  list_phase_count=$(echo "${plan_lines}" | sed -E 's/.*"list_phase_count":([0-9]+).*/\1/' | head -n1)
+# Prefer structured plan_created event for robustness; fall back to legacy line parsing
+structured_plan_line=$(grep -a '"event":"plan_created"' "${KPI_FILE}" | tail -n1 || true)
+if [[ -n "${structured_plan_line}" ]]; then
+  structured_mode=1
+  list_phase_count=$(echo "${structured_plan_line}" | sed -E 's/.*"list_phase_count":([0-9]+).*/\1/' | head -n1)
   if ! [[ ${list_phase_count} =~ ^[0-9]+$ ]]; then list_phase_count=0; fi
 else
+  structured_mode=0
+  if [[ ${plan_count} -eq 0 ]]; then
+    echo "[FAIL] No CrawlingPlan line (legacy) nor structured plan_created event found"; exit 11
+  fi
+  if [[ ${plan_count} -gt 1 ]]; then
+    echo "[FAIL] Duplicate plan creation entries: ${plan_count}"; exit 12
+  fi
   # Count list phases inside the single legacy plan line
   list_phase_count=$(printf "%s" "${plan_lines}" | grep -o "phase_type: ListPageCrawling" | wc -l | tr -d ' ')
 fi
