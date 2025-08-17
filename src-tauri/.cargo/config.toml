@@ -1,46 +1,35 @@
-# Cargo 빌드 최적화 설정 (Stable 컴파일러용)
+# Cargo 기본 설정 (안정적 테스트 우선)
 [build]
-# lld 링커 사용 (macOS에서 가장 빠른 링커)
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-# 병렬 빌드 최적화 (10 코어 시스템)
-jobs = 10
+# 병렬 빌드 (합리적 기본값)
+jobs = 8
 
-# sccache를 사용한 컴파일 캐싱
+# 개발/테스트에 안전한 기본 환경값
 [env]
-RUSTC_WRAPPER = "sccache"
-# 더 적극적인 캐싱
-SCCACHE_CACHE_SIZE = "10G"
-# 추가 성능 최적화
-CARGO_INCREMENTAL = "0"  # sccache와 incremental compilation 충돌 방지
-RUST_BACKTRACE = "0"  # 개발 중 백트레이스 비활성화로 속도 향상
-# 컴파일 병렬화 최적화 (10 코어 시스템)
-CARGO_BUILD_JOBS = "10"
-# Cargo의 내부 작업들 병렬화
+# 캐시/커스텀 링커 비활성화: 일부 크레이트(lld, objc2, ring)와 충돌 방지
+# 필요 시 로컬에서만 export RUSTC_WRAPPER=sccache 로 활성화하세요.
+# RUSTC_WRAPPER = "sccache"
+
+# 테스트 시에는 incremental 켜서 반복 빌드 속도 개선
+CARGO_INCREMENTAL = "1"
+RUST_BACKTRACE = "0"
+CARGO_BUILD_JOBS = "8"
 CARGO_NET_RETRY = "3"
-# 의존성 빌드 최적화
 CARGO_TARGET_DIR = "target"
-# 추가 링커 속도 최적화 (macOS)
+# 명시적 링커 지정은 유지(기본 clang)하되, 추가 link-arg 최적화는 해제
 CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER = "clang"
 CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER = "clang"
-# 링킹 속도 개선
-RUSTFLAGS_X86_64_APPLE_DARWIN = "-C link-arg=-Wl,-no_compact_unwind"
-RUSTFLAGS_AARCH64_APPLE_DARWIN = "-C link-arg=-Wl,-no_compact_unwind"
 
-# 병렬 컴파일 최적화
+# 타겟별 rustflags: 커스텀 링커/플래그 제거(기본 시스템 링커 사용)
 [target.x86_64-apple-darwin]
 rustflags = [
-    "-C", "link-arg=-fuse-ld=lld",
-    "-C", "target-cpu=native",  # 현재 CPU에 최적화
-    "-C", "link-arg=-Wl,-no_compact_unwind",  # macOS 전용 최적화
+    "-C", "target-cpu=native"
 ]
 
 [target.aarch64-apple-darwin]
 rustflags = [
-    "-C", "link-arg=-fuse-ld=lld", 
-    "-C", "target-cpu=native",  # Apple Silicon 최적화
-    "-C", "link-arg=-Wl,-no_compact_unwind",  # macOS 전용 최적화
+    "-C", "target-cpu=native"
 ]
 
-# 빠른 빌드를 위한 추가 설정
+# 네트워크 설정
 [net]
 git-fetch-with-cli = true
