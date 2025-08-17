@@ -2,7 +2,7 @@
  * SimpleEventDisplay.tsx
  * @description 백엔드에서 전달되는 다양한 이벤트들을 간단하고 직관적으로 표시하는 컴포넌트
  */
-import { Component, createMemo, createSignal, onMount, onCleanup, For, createEffect } from 'solid-js';
+import { Component, createMemo, createSignal, onMount, onCleanup, For, createEffect, Show } from 'solid-js';
 import { tauriApi } from '../services/tauri-api';
 import type { CrawlingProgress, CrawlingResult } from '../types/crawling';
 import type { AtomicTaskEvent } from '../types/events';
@@ -42,6 +42,22 @@ export const SimpleEventDisplay: Component = () => {
     processingRate: 0
   });
   const [isCrawling, setIsCrawling] = createSignal(false);
+  // Final session summary (actor-session-report backed)
+  const [sessionSummary, setSessionSummary] = createSignal<null | {
+    session_id: string;
+    duration_ms: number;
+    batches_processed: number;
+    total_pages: number;
+    total_success: number;
+    total_failed: number;
+    total_retries: number;
+    products_inserted: number;
+    products_updated: number;
+    duplicates_skipped?: number;
+    timestamp?: string;
+  }>(null);
+  // Accumulator for duplicates reported at batch level
+  let _duplicatesAccum = 0;
 
   let cleanupFunctions: (() => void)[] = [];
 
@@ -83,6 +99,9 @@ export const SimpleEventDisplay: Component = () => {
           { name: 'Stage 3: 데이터 검증', current: 0, total: 0, status: 'idle' },
           { name: 'Stage 4: 데이터베이스 저장', current: 0, total: 0, status: 'idle' },
         ]);
+  // reset summary accumulators for new session
+  _duplicatesAccum = 0;
+  setSessionSummary(null);
       }
       if (name === 'actor-session-completed' || name === 'actor-session-failed' || name === 'actor-session-timeout') {
         setIsCrawling(false);
@@ -135,6 +154,27 @@ export const SimpleEventDisplay: Component = () => {
         const total = p?.total_products ?? p?.total ?? statistics().totalProducts;
         if (typeof total === 'number') setStatistics(prev => ({ ...prev, totalProducts: total }));
         setStageStatus('Stage 4: 데이터베이스 저장', 'running');
+      }
+
+      // Batch/session level reports → accumulate and finalize a compact session summary
+      if (name === 'actor-batch-report') {
+        const dup = typeof p?.duplicates_skipped === 'number' ? p.duplicates_skipped : 0;
+        _duplicatesAccum += dup;
+      }
+      if (name === 'actor-session-report') {
+        setSessionSummary({
+          session_id: p?.session_id,
+          duration_ms: Number(p?.duration_ms ?? 0),
+          batches_processed: Number(p?.batches_processed ?? 0),
+          total_pages: Number(p?.total_pages ?? 0),
+          total_success: Number(p?.total_success ?? 0),
+          total_failed: Number(p?.total_failed ?? 0),
+          total_retries: Number(p?.total_retries ?? 0),
+          products_inserted: Number(p?.products_inserted ?? 0),
+          products_updated: Number(p?.products_updated ?? 0),
+          duplicates_skipped: _duplicatesAccum || undefined,
+          timestamp: p?.timestamp || p?.backend_ts,
+        });
       }
 
       // Errors/Anomalies count heuristic
@@ -309,6 +349,15 @@ export const SimpleEventDisplay: Component = () => {
     }
   };
 
+  // Small helpers
+  const fmtMs = (ms: number) => {
+    if (!ms || ms < 1000) return `${ms|0} ms`;
+    const s = Math.floor(ms / 1000);
+    const m = Math.floor(s / 60);
+    const remS = s % 60;
+    return m > 0 ? `${m}m ${remS}s` : `${s}s`;
+  };
+
   const getStageStatusColor = (status: StageProgress['status']) => {
     switch (status) {
       case 'completed': return 'bg-green-500';
@@ -351,7 +400,7 @@ export const SimpleEventDisplay: Component = () => {
         </div>
       </div>
 
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 h-5/6">
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 h-5/6">
         {/* 스테이지 진행 상황 */}
         <div class="bg-white rounded-lg shadow-md p-4">
           <h2 class="text-lg font-semibold text-gray-800 mb-4">처리 단계</h2>
@@ -398,6 +447,20 @@ export const SimpleEventDisplay: Component = () => {
               <div class="text-sm text-gray-600">오류</div>
             </div>
           </div>
+          {/* 최종 세션 요약 (있을 때만 표시) */}
+          <Show when={!!sessionSummary()}>
+            <div class="mt-4 border-t pt-3">
+              <h3 class="text-md font-semibold text-gray-700 mb-2">세션 요약</h3>
+              <div class="grid grid-cols-2 gap-2 text-sm">
+                <div class="text-gray-600">세션</div><div class="text-gray-800 truncate" title={sessionSummary()!.session_id}>{sessionSummary()!.session_id}</div>
+                <div class="text-gray-600">소요시간</div><div class="text-gray-800">{fmtMs(sessionSummary()!.duration_ms)}</div>
+                <div class="text-gray-600">배치</div><div class="text-gray-800">{sessionSummary()!.batches_processed}</div>
+                <div class="text-gray-600">페이지</div><div class="text-gray-800">{sessionSummary()!.total_success}/{sessionSummary()!.total_pages} 성공</div>
+                <div class="text-gray-600">실패/재시도</div><div class="text-gray-800">{sessionSummary()!.total_failed} 실패, {sessionSummary()!.total_retries} 재시도</div>
+                <div class="text-gray-600">DB 저장</div><div class="text-gray-800">+{sessionSummary()!.products_inserted} ins, +{sessionSummary()!.products_updated} upd{sessionSummary()!.duplicates_skipped != null ? `, ${sessionSummary()!.duplicates_skipped} dup` : ''}</div>
+              </div>
+            </div>
+          </Show>
         </div>
 
         {/* 실시간 이벤트 로그 */}

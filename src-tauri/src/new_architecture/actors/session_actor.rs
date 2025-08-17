@@ -581,6 +581,28 @@ impl SessionActor {
             chrono::Utc::now()
         );
 
+        // Mirror a concise human-readable summary to the main backend log (back_front.log)
+        let plan_hash_disp = match &self.active_plan_hash {
+            Some(h) if !h.is_empty() => h.as_str(),
+            _ => "-",
+        };
+        info!(
+            "📊 Session Final Summary | session_id={} state={} duration_ms={} batches={} pages_processed={} success={} failed={} retries={} inserted={} updated={} duplicates={} plan_hash={} ts={}",
+            s.session_id,
+            s.final_state,
+            s.total_duration_ms,
+            s.processed_batches,
+            s.total_pages_processed,
+            s.total_success_count,
+            s.failed_pages_count,
+            s.total_retry_events,
+            s.products_inserted,
+            s.products_updated,
+            s.duplicates_skipped,
+            plan_hash_disp,
+            chrono::Utc::now()
+        );
+
         info!("✅ Session {} completed successfully", session_id);
         Ok(())
     }
@@ -994,6 +1016,38 @@ impl Actor for SessionActor {
                                                 let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / self.total_success_count as u64 } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, duplicates_skipped: self.duplicates_skipped, planned_list_batches: self.processed_batches, executed_list_batches: self.processed_batches, failed_pages_count: 0, failed_page_ids: Vec::new(), total_retry_events: 0, max_retries_single_page: 0, pages_retried: 0, retry_histogram: Vec::new(), products_inserted: 0, products_updated: 0, final_state: "completed".into(), timestamp: Utc::now() };
                                                 if let Err(e) = context.emit_event(AppEvent::SessionCompleted { session_id: session_id.clone(), summary: summary.clone(), timestamp: Utc::now() }) { error!("emit completion event failed: {}", e); }
                                                 if let Err(e) = context.emit_event(AppEvent::CrawlReportSession { session_id: session_id.clone(), batches_processed: self.processed_batches, total_pages: self.total_success_count, total_success: self.total_success_count, total_failed: 0, total_retries: 0, duration_ms, products_inserted: 0, products_updated: 0, timestamp: Utc::now() }) { error!("emit crawl report failed: {}", e); }
+                                                // KPI JSON (events.log)
+                                                info!(target: "kpi.session",
+                                                    "{{\"event\":\"session_final_summary\",\"session_id\":\"{}\",\"final_state\":\"{}\",\"duration_ms\":{},\"processed_batches\":{},\"total_pages_processed\":{},\"total_success_count\":{},\"failed_pages_count\":{},\"total_retry_events\":{},\"products_inserted\":{},\"products_updated\":{},\"duplicates_skipped\":{},\"plan_hash\":null,\"ts\":\"{}\"}}",
+                                                    summary.session_id,
+                                                    summary.final_state,
+                                                    summary.total_duration_ms,
+                                                    summary.processed_batches,
+                                                    summary.total_pages_processed,
+                                                    summary.total_success_count,
+                                                    summary.failed_pages_count,
+                                                    summary.total_retry_events,
+                                                    summary.products_inserted,
+                                                    summary.products_updated,
+                                                    summary.duplicates_skipped,
+                                                    chrono::Utc::now()
+                                                );
+                                                // Human-readable mirror (back_front.log)
+                                                info!(
+                                                    "📊 Session Final Summary | session_id={} state={} duration_ms={} batches={} pages_processed={} success={} failed={} retries={} inserted={} updated={} duplicates={} ts={}",
+                                                    summary.session_id,
+                                                    summary.final_state,
+                                                    summary.total_duration_ms,
+                                                    summary.processed_batches,
+                                                    summary.total_pages_processed,
+                                                    summary.total_success_count,
+                                                    summary.failed_pages_count,
+                                                    summary.total_retry_events,
+                                                    summary.products_inserted,
+                                                    summary.products_updated,
+                                                    summary.duplicates_skipped,
+                                                    chrono::Utc::now()
+                                                );
                                             }
                                             Err(e) => {
                                                 error!("DB pool init failed: {}", e);
