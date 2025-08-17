@@ -253,3 +253,45 @@
 .animate-slide-up {
   animation: slideUp 0.6s ease-out;
 }
+
+/* Subtle one-shot pulse (used for validation progress) */
+.pulse-once {
+  animation: pulseOnce 0.6s ease-out;
+}
+
+@keyframes pulseOnce {
+  0% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.45); /* indigo-500 */
+  }
+  100% {
+    box-shadow: 0 0 0 16px rgba(99, 102, 241, 0);
+  }
+}
+
+/* Quick green flash (used for persist summary update) */
+.flash-save {
+  animation: flashSave 0.8s ease-out;
+}
+
+@keyframes flashSave {
+  0% {
+    background-color: rgba(16, 185, 129, 0.22); /* emerald-500 */
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* Subtle blue flash for DB snapshot updates */
+.flash-db {
+  animation: flashDb 0.8s ease-out;
+}
+
+@keyframes flashDb {
+  0% {
+    background-color: rgba(2, 132, 199, 0.18); /* sky-600 */
+  }
+  100% {
+    background-color: transparent;
+  }
+}

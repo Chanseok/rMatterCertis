@@ -57,19 +57,29 @@ impl ProductDetailsActor {
         if detail_ids.is_empty() {
             #[cfg(feature = "simulate-details")]
             {
-                // Fallback simulation (development mode)
-                let sim_count = 3usize.min(plan.page_slots.len());
-                let simulated: Vec<String> = (0..sim_count)
-                    .map(|i| format!("detail_sim_{}", i))
-                    .collect();
-                let registry = session_registry();
-                let mut g = registry.write().await;
-                if let Some(entry) = g.get_mut(&self.session_id) {
-                    entry.detail_tasks_total = simulated.len() as u64;
-                    entry.remaining_detail_ids = Some(simulated.clone());
+                // Fallback simulation (development mode) will only run when explicitly enabled via env
+                let allow_sim = std::env::var("MC_ENABLE_DETAIL_SIM")
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
+                if allow_sim {
+                    let sim_count = 3usize.min(plan.page_slots.len());
+                    let simulated: Vec<String> = (0..sim_count)
+                        .map(|i| format!("detail_sim_{}", i))
+                        .collect();
+                    let registry = session_registry();
+                    let mut g = registry.write().await;
+                    if let Some(entry) = g.get_mut(&self.session_id) {
+                        entry.detail_tasks_total = simulated.len() as u64;
+                        entry.remaining_detail_ids = Some(simulated.clone());
+                    }
+                    self.run_internal(simulated, event_tx.clone()).await?;
+                    return Ok(());
+                } else {
+                    tracing::debug!(
+                        "ProductDetailsActor: simulate-details feature compiled but disabled via env; skipping detail run"
+                    );
+                    return Ok(());
                 }
-                self.run_internal(simulated, event_tx.clone()).await?;
-                return Ok(());
             }
             #[cfg(not(feature = "simulate-details"))]
             {
