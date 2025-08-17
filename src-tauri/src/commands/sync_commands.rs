@@ -15,6 +15,8 @@ use serde_json::{Map, Value};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use tokio::sync::Semaphore;
+use scraper::Html;
+use std::collections::{HashMap, HashSet};
 
 static SYNC_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -27,6 +29,7 @@ fn emit_actor_event(app: &AppHandle, event: AppEvent) {
         AppEvent::SyncPageCompleted { .. } => "actor-sync-page-completed",
         AppEvent::SyncWarning { .. } => "actor-sync-warning",
         AppEvent::SyncCompleted { .. } => "actor-sync-completed",
+        AppEvent::ProductLifecycle { .. } => "actor-product-lifecycle",
         _ => return,
     };
     // Flatten enum payload to top-level fields for FE convenience (like validation does)
@@ -142,6 +145,150 @@ fn merge_ranges(mut ranges: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
     merged
 }
 
+/// Split a sorted-desc list of pages into batches such that:
+/// - Each batch contains only contiguous pages (diff of 1)
+/// - Each batch size does not exceed `batch_size`
+fn split_into_contiguous_batches(mut pages: Vec<u32>, batch_size: u32) -> Vec<Vec<u32>> {
+    if pages.is_empty() { return Vec::new(); }
+    // Ensure sorted desc and unique
+    pages.sort_unstable_by(|a, b| b.cmp(a));
+    pages.dedup();
+
+    let mut batches: Vec<Vec<u32>> = Vec::new();
+    let mut current: Vec<u32> = Vec::new();
+    let mut last: Option<u32> = None;
+    for p in pages.into_iter() {
+        let contiguous = match last { Some(prev) => prev == p + 1, None => true };
+        if current.is_empty() {
+            current.push(p);
+            last = Some(p);
+            continue;
+        }
+        let reached_limit = current.len() as u32 >= batch_size;
+        if !contiguous || reached_limit {
+            batches.push(std::mem::take(&mut current));
+        }
+        if !contiguous {
+            current.push(p);
+        } else if !reached_limit {
+            current.push(p);
+        } else {
+            // started a new batch due to size limit; seed with current page
+            current.push(p);
+        }
+        last = Some(p);
+    }
+    if !current.is_empty() {
+        batches.push(current);
+    }
+    batches
+}
+
+/// Compress a batch of pages (sorted desc) into range expression like "498-492,489"
+fn compress_pages_to_ranges_expr(mut pages: Vec<u32>) -> String {
+    if pages.is_empty() { return String::new(); }
+    pages.sort_unstable_by(|a, b| b.cmp(a));
+    let mut parts: Vec<String> = Vec::new();
+    let mut start = pages[0];
+    let mut prev = pages[0];
+    for &p in pages.iter().skip(1) {
+        if p + 1 == prev {
+            // still contiguous
+            prev = p;
+            continue;
+        }
+        // break range
+        if start == prev { parts.push(format!("{}", start)); }
+        else { parts.push(format!("{}-{}", start, prev)); }
+        start = p; prev = p;
+    }
+    // flush
+    if start == prev { parts.push(format!("{}", start)); }
+    else { parts.push(format!("{}-{}", start, prev)); }
+    parts.join(",")
+}
+
+/// Run partial sync in sequential batches of contiguous pages.
+/// This behaves identically to `start_partial_sync`, but splits the input ranges into
+/// contiguous page batches (size from config or override) and processes batches sequentially.
+#[tauri::command(async)]
+pub async fn start_batched_sync(
+    app: AppHandle,
+    app_state: State<'_, AppState>,
+    ranges: String,              // e.g., "498-492,489,487-485"
+    batch_size_override: Option<u32>,
+    dry_run: Option<bool>,
+) -> Result<SyncSummary, String> {
+    info!("start_batched_sync args: ranges=\"{}\" batch_size_override={:?} dry_run={:?}", ranges, batch_size_override, dry_run);
+
+    // Load config for default batch size
+    let cfg_manager = ConfigManager::new().map_err(|e| format!("Config manager init failed: {e}"))?;
+    let app_config = cfg_manager
+        .load_config()
+        .await
+        .map_err(|e| format!("Config load failed: {e}"))?;
+    let default_batch = app_config.user.batch.batch_size.max(1);
+    let batch_size = batch_size_override.unwrap_or(default_batch).max(1);
+
+    // 1) Parse the input ranges to concrete page list (desc)
+    let merged = parse_ranges(&ranges)?; // returns vec of (start>=end)
+    let mut pages: Vec<u32> = Vec::new();
+    for (s, e) in merged {
+        let mut p = s;
+        while p >= e {
+            pages.push(p);
+            if p == 0 { break; }
+            p -= 1;
+            if p < e { break; }
+        }
+    }
+    if pages.is_empty() {
+        return Err("No pages resolved from ranges".into());
+    }
+
+    // 2) Split into contiguous batches with size limit
+    let batches = split_into_contiguous_batches(pages, batch_size);
+    info!("Planned {} batches for batched sync (batch_size={})", batches.len(), batch_size);
+
+    // 3) Sequentially process each batch using start_partial_sync
+    let mut total_pages: u32 = 0;
+    let mut total_inserted: u32 = 0;
+    let mut total_updated: u32 = 0;
+    let mut total_skipped: u32 = 0;
+    let mut total_failed: u32 = 0;
+    let mut total_ms: u64 = 0;
+
+    for (i, batch) in batches.into_iter().enumerate() {
+        let expr = compress_pages_to_ranges_expr(batch);
+        info!("[BatchedSync] Running batch {} with expr: {}", i + 1, expr);
+    
+        match start_partial_sync(app.clone(), app_state.clone(), expr, dry_run).await {
+            Ok(sum) => {
+                total_pages = total_pages.saturating_add(sum.pages_processed);
+                total_inserted = total_inserted.saturating_add(sum.inserted);
+                total_updated = total_updated.saturating_add(sum.updated);
+                total_skipped = total_skipped.saturating_add(sum.skipped);
+                total_failed = total_failed.saturating_add(sum.failed);
+                total_ms = total_ms.saturating_add(sum.duration_ms);
+            }
+            Err(e) => {
+                error!("[BatchedSync] Batch {} failed: {}", i + 1, e);
+                // Continue to next batch but record failure
+                total_failed = total_failed.saturating_add(1);
+            }
+        }
+    }
+
+    Ok(SyncSummary {
+        pages_processed: total_pages,
+        inserted: total_inserted,
+        updated: total_updated,
+        skipped: total_skipped,
+        failed: total_failed,
+        duration_ms: total_ms,
+    })
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct SyncSummary {
     pub pages_processed: u32,
@@ -150,6 +297,19 @@ pub struct SyncSummary {
     pub skipped: u32,
     pub failed: u32,
     pub duration_ms: u64,
+}
+
+/// Diagnostic input: specific pages and slot indices to repair
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DiagnosticPageInput {
+    pub physical_page: u32,
+    pub miss_indices: Vec<u32>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DiagnosticSnapshotInput {
+    pub total_pages: u32,
+    pub items_on_last_page: u32,
 }
 
 /// Compute anomaly-driven buffered windows and run partial sync
@@ -426,21 +586,49 @@ pub async fn start_partial_sync(
     );
 
     // Prepare bounded-concurrency processing for all pages across ranges
+    // 경계 보정 확장: 각 지정 범위마다 양방향 이웃 페이지를 함께 포함해 캐논िकल 페이지 경계 누락을 방지
+    // - 오래된 쪽 이웃: start_oldest + 1 (더 오래된 물리 페이지)
+    // - 최신 쪽 이웃: end_newest - 1 (더 최신 물리 페이지)
+    // 예) 단일 페이지 377 지정 시 실행 집합: {378, 376, 377} (범위 포함 시 중복은 HashSet으로 제거)
     let pages_vec: Vec<u32> = {
-        let mut v = Vec::new();
+        use std::collections::HashSet;
+        let mut ordered: Vec<u32> = Vec::new();
+        let mut seen: HashSet<u32> = HashSet::new();
+
         for (start_oldest, end_newest) in ranges.iter().copied() {
+            let span = start_oldest.saturating_sub(end_newest) + 1;
             info!(
                 "Processing sync range: {} -> {} (span={})",
-                start_oldest,
-                end_newest,
-                start_oldest.saturating_sub(end_newest) + 1
+                start_oldest, end_newest, span
             );
-            // Oldest -> newer (consistent with previous behavior)
+
+            // 1) 경계 확장(오래된 쪽): start_oldest 바로 다음(더 오래된) 페이지 포함
+            if start_oldest < total_pages {
+                let extra_older = start_oldest + 1;
+                if !seen.contains(&extra_older) {
+                    ordered.push(extra_older);
+                    seen.insert(extra_older);
+                }
+            }
+
+            // 2) 경계 확장(최신 쪽): end_newest 바로 이전(더 최신) 페이지 포함
+            if end_newest > 1 {
+                let extra_newer = end_newest - 1;
+                if !seen.contains(&extra_newer) {
+                    ordered.push(extra_newer);
+                    seen.insert(extra_newer);
+                }
+            }
+
+            // 3) 원래 범위 Oldest -> Newer 순으로 추가 (start_oldest, start_oldest-1, ..., end_newest)
             for p in (end_newest..=start_oldest).rev() {
-                v.push(p);
+                if !seen.contains(&p) {
+                    ordered.push(p);
+                    seen.insert(p);
+                }
             }
         }
-        v
+        ordered
     };
 
     let max_concurrent = app_config.user.crawling.workers.list_page_max_concurrent.max(1);
@@ -623,7 +811,44 @@ pub async fn start_partial_sync(
                 }
             };
 
+            // 0) 우선순위 재정렬: products에는 존재하지만 product_details에 미존재한 URL을 먼저 처리
+            let mut missing_first: Vec<usize> = Vec::new();
+            let mut remaining: Vec<usize> = Vec::new();
             for (i, url) in product_urls.iter().enumerate() {
+                let has_product = match sqlx::query_scalar::<_, i64>(
+                    "SELECT 1 FROM products WHERE url = ? LIMIT 1",
+                )
+                .bind(url)
+                .fetch_optional(&mut *tx)
+                .await
+                {
+                    Ok(opt) => opt.is_some(),
+                    Err(_) => false,
+                };
+                if has_product {
+                    let has_details = match sqlx::query_scalar::<_, i64>(
+                        "SELECT 1 FROM product_details WHERE url = ? LIMIT 1",
+                    )
+                    .bind(url)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    {
+                        Ok(opt) => opt.is_some(),
+                        Err(_) => false,
+                    };
+                    if has_details {
+                        remaining.push(i);
+                    } else {
+                        missing_first.push(i);
+                    }
+                } else {
+                    remaining.push(i);
+                }
+            }
+
+            for idx in missing_first.into_iter().chain(remaining.into_iter()) {
+                let i = idx;
+                let url = &product_urls[i];
                 let calc = calculator.calculate(physical_page, i);
                 if is_dry_run {
                     page_skipped += 1; // dry-run counts as skipped
@@ -692,6 +917,13 @@ pub async fn start_partial_sync(
 
                 match row {
                     None => {
+                        // Log attempt to insert a missing product
+                        info!(target: "kpi.sync", "{}",
+                            format!(
+                                r#"{{"event":"product_upsert","action":"insert_attempt","page":{},"page_id":{},"index":{},"url":"{}"}}"#,
+                                physical_page, calc.page_id, calc.index_in_page, url
+                            )
+                        );
                         let res = sqlx::query(
                             "INSERT INTO products (url, page_id, index_in_page) VALUES (?, ?, ?)",
                         )
@@ -704,6 +936,241 @@ pub async fn start_partial_sync(
                             Ok(_) => {
                                 page_inserted += 1;
                                 inserted_c.fetch_add(1, Ordering::SeqCst);
+                                // Success logs + FE lifecycle
+                                info!(target: "kpi.sync", "{}",
+                                    format!(
+                                        r#"{{"event":"product_upsert","action":"inserted","page":{},"page_id":{},"index":{},"url":"{}"}}"#,
+                                        physical_page, calc.page_id, calc.index_in_page, url
+                                    )
+                                );
+                                emit_actor_event(
+                                    &app,
+                                    AppEvent::ProductLifecycle {
+                                        session_id: session_id.clone(),
+                                        batch_id: None,
+                                        page_number: Some(physical_page),
+                                        product_ref: url.clone(),
+                                        status: "product_inserted".into(),
+                                        retry: None,
+                                        duration_ms: None,
+                                        metrics: None,
+                                        timestamp: Utc::now(),
+                                    },
+                                );
+                                // Insert or update product_details for all observed products (always fetch details)
+                                // 변경: Sync(Partial) 동작은 페이지 목록에서 수집된 모든 제품에 대해 상세 정보를 수집/업서트합니다.
+                                //      기존에는 product_details가 불완전한 경우에만 수집했으나, 요구사항에 따라 항상 시도합니다.
+                                {
+                                    // Fetch + parse with retry per configured detail count
+                                    let max_detail_retries = app_config.user.crawling.product_detail_retry_count.max(1);
+                                    let mut success = false;
+                                    for attempt in 1..=max_detail_retries {
+                                        match http.fetch_response(url).await {
+                                            Ok(resp) => match resp.text().await {
+                                                Ok(body) => {
+                                                    let extracted = {
+                                                        let doc = Html::parse_document(&body);
+                                                        extractor.extract_product_detail(&doc, url.clone())
+                                                    };
+                                                    match extracted {
+                                                        Ok(mut detail) => {
+                                                            detail.page_id = Some(calc.page_id);
+                                                            detail.index_in_page = Some(calc.index_in_page);
+                                                            if detail.id.is_none() {
+                                                                detail.id = Some(format!("p{:04}i{:02}", calc.page_id, calc.index_in_page));
+                                                            }
+                                                            let program_type = Some(detail.program_type.unwrap_or_else(|| "Matter".to_string()));
+                                                            if let Err(e) = sqlx::query(
+                                                                r#"INSERT INTO product_details (
+                                                                    url, page_id, index_in_page, id, manufacturer, model, device_type,
+                                                                    certificate_id, certification_date, software_version, hardware_version, firmware_version,
+                                                                    specification_version, vid, pid, family_sku, family_variant_sku, family_id,
+                                                                    tis_trp_tested, transport_interface, primary_device_type_id, application_categories,
+                                                                    description, compliance_document_url, program_type
+                                                                ) VALUES (
+                                                                    ?, ?, ?, ?, ?, ?, ?,
+                                                                    ?, ?, ?, ?, ?,
+                                                                    ?, ?, ?, ?, ?, ?,
+                                                                    ?, ?, ?, ?,
+                                                                    ?, ?, ?
+                                                                ) ON CONFLICT(url) DO UPDATE SET
+                                                                    page_id=COALESCE(excluded.page_id, product_details.page_id),
+                                                                    index_in_page=COALESCE(excluded.index_in_page, product_details.index_in_page),
+                                                                    id=COALESCE(excluded.id, product_details.id),
+                                                                    manufacturer=COALESCE(excluded.manufacturer, product_details.manufacturer),
+                                                                    model=COALESCE(excluded.model, product_details.model),
+                                                                    device_type=COALESCE(excluded.device_type, product_details.device_type),
+                                                                    certificate_id=COALESCE(excluded.certificate_id, product_details.certificate_id),
+                                                                    certification_date=COALESCE(excluded.certification_date, product_details.certification_date),
+                                                                    software_version=COALESCE(excluded.software_version, product_details.software_version),
+                                                                    hardware_version=COALESCE(excluded.hardware_version, product_details.hardware_version),
+                                                                    firmware_version=COALESCE(excluded.firmware_version, product_details.firmware_version),
+                                                                    specification_version=COALESCE(excluded.specification_version, product_details.specification_version),
+                                                                    vid=COALESCE(excluded.vid, product_details.vid),
+                                                                    pid=COALESCE(excluded.pid, product_details.pid),
+                                                                    family_sku=COALESCE(excluded.family_sku, product_details.family_sku),
+                                                                    family_variant_sku=COALESCE(excluded.family_variant_sku, product_details.family_variant_sku),
+                                                                    family_id=COALESCE(excluded.family_id, product_details.family_id),
+                                                                    tis_trp_tested=COALESCE(excluded.tis_trp_tested, product_details.tis_trp_tested),
+                                                                    transport_interface=COALESCE(excluded.transport_interface, product_details.transport_interface),
+                                                                    primary_device_type_id=COALESCE(excluded.primary_device_type_id, product_details.primary_device_type_id),
+                                                                    application_categories=COALESCE(excluded.application_categories, product_details.application_categories),
+                                                                    description=COALESCE(excluded.description, product_details.description),
+                                                                    compliance_document_url=COALESCE(excluded.compliance_document_url, product_details.compliance_document_url),
+                                                                    program_type=COALESCE(excluded.program_type, product_details.program_type),
+                                                                    updated_at=CURRENT_TIMESTAMP
+                                                                "#,
+                                                            )
+                                                            .bind(&detail.url)
+                                                            .bind(detail.page_id)
+                                                            .bind(detail.index_in_page)
+                                                            .bind(detail.id)
+                                                            .bind(detail.manufacturer)
+                                                            .bind(detail.model)
+                                                            .bind(detail.device_type)
+                                                            .bind(detail.certificate_id)
+                                                            .bind(detail.certification_date)
+                                                            .bind(detail.software_version)
+                                                            .bind(detail.hardware_version)
+                                                            .bind(detail.firmware_version)
+                                                            .bind(detail.specification_version)
+                                                            .bind(detail.vid)
+                                                            .bind(detail.pid)
+                                                            .bind(detail.family_sku)
+                                                            .bind(detail.family_variant_sku)
+                                                            .bind(detail.family_id)
+                                                            .bind(detail.tis_trp_tested)
+                                                            .bind(detail.transport_interface)
+                                                            .bind(detail.primary_device_type_id)
+                                                            .bind(detail.application_categories)
+                                                            .bind(detail.description)
+                                                            .bind(detail.compliance_document_url)
+                                                            .bind(program_type)
+                                                            .execute(&mut *tx)
+                                                            .await
+                                                            {
+                                                                emit_actor_event(
+                                                                    &app,
+                                                                    AppEvent::SyncWarning {
+                                                                        session_id: session_id.clone(),
+                                                                        code: "details_insert_failed".into(),
+                                                                        detail: format!("{}: {}", url, e),
+                                                                        timestamp: Utc::now(),
+                                                                    },
+                                                                );
+                                                                info!(target: "kpi.sync", "{}",
+                                                                    format!(
+                                                                        r#"{{"event":"details_upsert","action":"insert_failed","page":{},"page_id":{},"index":{},"url":"{}","attempt":{},"max":{},"error":"{}"}}"#,
+                                                                        physical_page, calc.page_id, calc.index_in_page, url, attempt, max_detail_retries, e
+                                                                    )
+                                                                );
+                                                            } else if let Ok(res) = sqlx::query(
+                                                                r#"SELECT changes() as affected"#,
+                                                            )
+                                                            .fetch_one(&mut *tx)
+                                                            .await
+                                                            {
+                                                                let affected: i64 = res.get::<i64, _>("affected");
+                                                                emit_actor_event(
+                                                                    &app,
+                                                                    AppEvent::ProductLifecycle {
+                                                                        session_id: session_id.clone(),
+                                                                        batch_id: None,
+                                                                        page_number: Some(physical_page),
+                                                                        product_ref: url.clone(),
+                                                                        status: if affected > 0 { "details_persisted".into() } else { "details_skipped_exists".into() },
+                                                                        retry: Some(attempt - 1),
+                                                                        duration_ms: None,
+                                                                        metrics: None,
+                                                                        timestamp: Utc::now(),
+                                                                    },
+                                                                );
+                                                                info!(target: "kpi.sync", "{}",
+                                                                    format!(
+                                                                        r#"{{"event":"details_upsert","action":"{}","page":{},"page_id":{},"index":{},"url":"{}","attempt":{},"max":{}}}"#,
+                                                                        if affected > 0 { "inserted" } else { "skipped_exists" },
+                                                                        physical_page, calc.page_id, calc.index_in_page, url, attempt, max_detail_retries
+                                                                    )
+                                                                );
+                                                                success = true;
+                                                                break;
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            emit_actor_event(
+                                                                &app,
+                                                                AppEvent::SyncWarning {
+                                                                    session_id: session_id.clone(),
+                                                                    code: "details_extract_failed".into(),
+                                                                    detail: format!("{}: {}", url, e),
+                                                                    timestamp: Utc::now(),
+                                                                },
+                                                            );
+                                                            info!(target: "kpi.sync", "{}",
+                                                                format!(
+                                                                    r#"{{"event":"details_upsert","action":"extract_failed","page":{},"page_id":{},"index":{},"url":"{}","attempt":{},"max":{},"error":"{}"}}"#,
+                                                                    physical_page, calc.page_id, calc.index_in_page, url, attempt, max_detail_retries, e
+                                                                )
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    emit_actor_event(
+                                                        &app,
+                                                        AppEvent::SyncWarning {
+                                                            session_id: session_id.clone(),
+                                                            code: "details_read_failed".into(),
+                                                            detail: format!("{}: {}", url, e),
+                                                            timestamp: Utc::now(),
+                                                        },
+                                                    );
+                                                    info!(target: "kpi.sync", "{}",
+                                                        format!(
+                                                            r#"{{"event":"details_upsert","action":"read_failed","page":{},"page_id":{},"index":{},"url":"{}","attempt":{},"max":{},"error":"{}"}}"#,
+                                                            physical_page, calc.page_id, calc.index_in_page, url, attempt, max_detail_retries, e
+                                                        )
+                                                    );
+                                                }
+                                            },
+                                            Err(e) => {
+                                                emit_actor_event(
+                                                    &app,
+                                                    AppEvent::SyncWarning {
+                                                        session_id: session_id.clone(),
+                                                        code: "details_fetch_failed".into(),
+                                                        detail: format!("{}: {}", url, e),
+                                                        timestamp: Utc::now(),
+                                                    },
+                                                );
+                                                info!(target: "kpi.sync", "{}",
+                                                    format!(
+                                                        r#"{{"event":"details_upsert","action":"fetch_failed","page":{},"page_id":{},"index":{},"url":"{}","attempt":{},"max":{},"error":"{}"}}"#,
+                                                        physical_page, calc.page_id, calc.index_in_page, url, attempt, max_detail_retries, e
+                                                    )
+                                                );
+                                            }
+                                        }
+                                        if attempt < max_detail_retries && !success {
+                                            let backoff_ms = 200u64 * (1u64 << (attempt - 1));
+                                            info!(target: "kpi.sync", "{}",
+                                                format!(
+                                                    r#"{{"event":"details_retry_attempt","page":{},"page_id":{},"index":{},"url":"{}","next_delay_ms":{},"attempt":{},"max":{}}}"#,
+                                                    physical_page, calc.page_id, calc.index_in_page, url, backoff_ms, attempt, max_detail_retries
+                                                )
+                                            );
+                                            tokio::time::sleep(std::time::Duration::from_millis(backoff_ms + (physical_page as u64 % 23))).await;
+                                        }
+                                    }
+                                    if !success {
+                                        info!(target: "kpi.sync", "{}",
+                                            format!(
+                                                r#"{{"event":"details_retry_exhausted","page":{},"page_id":{},"index":{},"url":"{}","max":{}}}"#,
+                                                physical_page, calc.page_id, calc.index_in_page, url, max_detail_retries
+                                            )
+                                        );
+                                    }
+                                }
                             }
                             Err(e) => {
                                 page_failed += 1;
@@ -717,10 +1184,30 @@ pub async fn start_partial_sync(
                                         timestamp: Utc::now(),
                                     },
                                 );
+                                info!(target: "kpi.sync", "{}",
+                                    format!(
+                                        r#"{{"event":"product_upsert","action":"insert_failed","page":{},"page_id":{},"index":{},"url":"{}","error":"{}"}}"#,
+                                        physical_page, calc.page_id, calc.index_in_page, url, e
+                                    )
+                                );
+                                emit_actor_event(
+                                    &app,
+                                    AppEvent::ProductLifecycle {
+                                        session_id: session_id.clone(),
+                                        batch_id: None,
+                                        page_number: Some(physical_page),
+                                        product_ref: url.clone(),
+                                        status: "product_insert_failed".into(),
+                                        retry: None,
+                                        duration_ms: None,
+                                        metrics: None,
+                                        timestamp: Utc::now(),
+                                    },
+                                );
                             }
                         }
                         // Best-effort: also reflect position on product_details if exists
-                        if let Err(e) = sqlx::query(
+                        match sqlx::query(
                             "UPDATE product_details SET page_id = ?, index_in_page = ?, updated_at = CURRENT_TIMESTAMP WHERE url = ?",
                         )
                         .bind(calc.page_id)
@@ -729,15 +1216,31 @@ pub async fn start_partial_sync(
                         .execute(&mut *tx)
                         .await
                         {
-                            emit_actor_event(
-                                &app,
-                                AppEvent::SyncWarning {
-                                    session_id: session_id.clone(),
-                                    code: "details_update_failed".into(),
-                                    detail: format!("{}: {}", url, e),
-                                    timestamp: Utc::now(),
-                                },
-                            );
+                            Ok(res) => {
+                                info!(target: "kpi.sync", "{}",
+                                    format!(
+                                        r#"{{"event":"details_position_sync","action":"updated","affected":{},"page":{},"page_id":{},"index":{},"url":"{}"}}"#,
+                                        res.rows_affected(), physical_page, calc.page_id, calc.index_in_page, url
+                                    )
+                                );
+                            }
+                            Err(e) => {
+                                emit_actor_event(
+                                    &app,
+                                    AppEvent::SyncWarning {
+                                        session_id: session_id.clone(),
+                                        code: "details_update_failed".into(),
+                                        detail: format!("{}: {}", url, e),
+                                        timestamp: Utc::now(),
+                                    },
+                                );
+                                info!(target: "kpi.sync", "{}",
+                                    format!(
+                                        r#"{{"event":"details_position_sync","action":"update_failed","page":{},"page_id":{},"index":{},"url":"{}","error":"{}"}}"#,
+                                        physical_page, calc.page_id, calc.index_in_page, url, e
+                                    )
+                                );
+                            }
                         }
                     }
                     Some(r) => {
@@ -750,6 +1253,12 @@ pub async fn start_partial_sync(
                             _ => true,
                         };
                         if needs_update {
+                            info!(target: "kpi.sync", "{}",
+                                format!(
+                                    r#"{{"event":"product_upsert","action":"update_attempt","page":{},"page_id":{},"index":{},"url":"{}"}}"#,
+                                    physical_page, calc.page_id, calc.index_in_page, url
+                                )
+                            );
                             let res = sqlx::query(
                                 "UPDATE products SET page_id = ?, index_in_page = ?, updated_at = CURRENT_TIMESTAMP WHERE url = ?",
                             )
@@ -762,6 +1271,26 @@ pub async fn start_partial_sync(
                                 Ok(_) => {
                                     page_updated += 1;
                                     updated_c.fetch_add(1, Ordering::SeqCst);
+                                    info!(target: "kpi.sync", "{}",
+                                        format!(
+                                            r#"{{"event":"product_upsert","action":"updated","page":{},"page_id":{},"index":{},"url":"{}"}}"#,
+                                            physical_page, calc.page_id, calc.index_in_page, url
+                                        )
+                                    );
+                                    emit_actor_event(
+                                        &app,
+                                        AppEvent::ProductLifecycle {
+                                            session_id: session_id.clone(),
+                                            batch_id: None,
+                                            page_number: Some(physical_page),
+                                            product_ref: url.clone(),
+                                            status: "product_updated".into(),
+                                            retry: None,
+                                            duration_ms: None,
+                                            metrics: None,
+                                            timestamp: Utc::now(),
+                                        },
+                                    );
                                 }
                                 Err(e) => {
                                     page_failed += 1;
@@ -775,14 +1304,54 @@ pub async fn start_partial_sync(
                                             timestamp: Utc::now(),
                                         },
                                     );
+                                    info!(target: "kpi.sync", "{}",
+                                        format!(
+                                            r#"{{"event":"product_upsert","action":"update_failed","page":{},"page_id":{},"index":{},"url":"{}","error":"{}"}}"#,
+                                            physical_page, calc.page_id, calc.index_in_page, url, e
+                                        )
+                                    );
+                                    emit_actor_event(
+                                        &app,
+                                        AppEvent::ProductLifecycle {
+                                            session_id: session_id.clone(),
+                                            batch_id: None,
+                                            page_number: Some(physical_page),
+                                            product_ref: url.clone(),
+                                            status: "product_update_failed".into(),
+                                            retry: None,
+                                            duration_ms: None,
+                                            metrics: None,
+                                            timestamp: Utc::now(),
+                                        },
+                                    );
                                 }
                             }
                         } else {
                             page_skipped += 1;
                             skipped_c.fetch_add(1, Ordering::SeqCst);
+                            info!(target: "kpi.sync", "{}",
+                                format!(
+                                    r#"{{"event":"product_upsert","action":"skipped_nochange","page":{},"page_id":{},"index":{},"url":"{}"}}"#,
+                                    physical_page, calc.page_id, calc.index_in_page, url
+                                )
+                            );
+                            emit_actor_event(
+                                &app,
+                                AppEvent::ProductLifecycle {
+                                    session_id: session_id.clone(),
+                                    batch_id: None,
+                                    page_number: Some(physical_page),
+                                    product_ref: url.clone(),
+                                    status: "product_skipped_nochange".into(),
+                                    retry: None,
+                                    duration_ms: None,
+                                    metrics: None,
+                                    timestamp: Utc::now(),
+                                },
+                            );
                         }
                         // Keep product_details in sync as well (best-effort regardless of change)
-                        if let Err(e) = sqlx::query(
+                        match sqlx::query(
                             "UPDATE product_details SET page_id = ?, index_in_page = ?, updated_at = CURRENT_TIMESTAMP WHERE url = ?",
                         )
                         .bind(calc.page_id)
@@ -791,15 +1360,253 @@ pub async fn start_partial_sync(
                         .execute(&mut *tx)
                         .await
                         {
-                            emit_actor_event(
-                                &app,
-                                AppEvent::SyncWarning {
-                                    session_id: session_id.clone(),
-                                    code: "details_update_failed".into(),
-                                    detail: format!("{}: {}", url, e),
-                                    timestamp: Utc::now(),
-                                },
-                            );
+                            Ok(res) => {
+                                info!(target: "kpi.sync", "{}",
+                                    format!(
+                                        r#"{{"event":"details_position_sync","action":"updated","affected":{},"page":{},"page_id":{},"index":{},"url":"{}"}}"#,
+                                        res.rows_affected(), physical_page, calc.page_id, calc.index_in_page, url
+                                    )
+                                );
+                            }
+                            Err(e) => {
+                                emit_actor_event(
+                                    &app,
+                                    AppEvent::SyncWarning {
+                                        session_id: session_id.clone(),
+                                        code: "details_update_failed".into(),
+                                        detail: format!("{}: {}", url, e),
+                                        timestamp: Utc::now(),
+                                    },
+                                );
+                                info!(target: "kpi.sync", "{}",
+                                    format!(
+                                        r#"{{"event":"details_position_sync","action":"update_failed","page":{},"page_id":{},"index":{},"url":"{}","error":"{}"}}"#,
+                                        physical_page, calc.page_id, calc.index_in_page, url, e
+                                    )
+                                );
+                            }
+                        }
+                        // 추가: 기존 제품이지만 product_details에 미존재한 경우에 한해 상세 수집/업서트 수행 (우선순위 처리됨)
+                        let details_missing = match sqlx::query_scalar::<_, i64>(
+                            "SELECT 1 FROM product_details WHERE url = ? LIMIT 1",
+                        )
+                        .bind(url)
+                        .fetch_optional(&mut *tx)
+                        .await
+                        {
+                            Ok(opt) => opt.is_none(),
+                            Err(_) => false,
+                        };
+                        if details_missing {
+                            let max_detail_retries = app_config.user.crawling.product_detail_retry_count.max(1);
+                            let mut success = false;
+                            for attempt in 1..=max_detail_retries {
+                                match http.fetch_response(url).await {
+                                    Ok(resp) => match resp.text().await {
+                                        Ok(body) => {
+                                            let extracted = {
+                                                let doc = Html::parse_document(&body);
+                                                extractor.extract_product_detail(&doc, url.clone())
+                                            };
+                                            match extracted {
+                                                Ok(mut detail) => {
+                                                    detail.page_id = Some(calc.page_id);
+                                                    detail.index_in_page = Some(calc.index_in_page);
+                                                    if detail.id.is_none() {
+                                                        detail.id = Some(format!("p{:04}i{:02}", calc.page_id, calc.index_in_page));
+                                                    }
+                                                    let program_type = Some(detail.program_type.unwrap_or_else(|| "Matter".to_string()));
+                                                    if let Err(e) = sqlx::query(
+                                                        r#"INSERT INTO product_details (
+                                                            url, page_id, index_in_page, id, manufacturer, model, device_type,
+                                                            certificate_id, certification_date, software_version, hardware_version, firmware_version,
+                                                            specification_version, vid, pid, family_sku, family_variant_sku, family_id,
+                                                            tis_trp_tested, transport_interface, primary_device_type_id, application_categories,
+                                                            description, compliance_document_url, program_type
+                                                        ) VALUES (
+                                                            ?, ?, ?, ?, ?, ?, ?,
+                                                            ?, ?, ?, ?, ?,
+                                                            ?, ?, ?, ?, ?, ?,
+                                                            ?, ?, ?, ?,
+                                                            ?, ?, ?
+                                                        ) ON CONFLICT(url) DO UPDATE SET
+                                                            page_id=COALESCE(excluded.page_id, product_details.page_id),
+                                                            index_in_page=COALESCE(excluded.index_in_page, product_details.index_in_page),
+                                                            id=COALESCE(excluded.id, product_details.id),
+                                                            manufacturer=COALESCE(excluded.manufacturer, product_details.manufacturer),
+                                                            model=COALESCE(excluded.model, product_details.model),
+                                                            device_type=COALESCE(excluded.device_type, product_details.device_type),
+                                                            certificate_id=COALESCE(excluded.certificate_id, product_details.certificate_id),
+                                                            certification_date=COALESCE(excluded.certification_date, product_details.certification_date),
+                                                            software_version=COALESCE(excluded.software_version, product_details.software_version),
+                                                            hardware_version=COALESCE(excluded.hardware_version, product_details.hardware_version),
+                                                            firmware_version=COALESCE(excluded.firmware_version, product_details.firmware_version),
+                                                            specification_version=COALESCE(excluded.specification_version, product_details.specification_version),
+                                                            vid=COALESCE(excluded.vid, product_details.vid),
+                                                            pid=COALESCE(excluded.pid, product_details.pid),
+                                                            family_sku=COALESCE(excluded.family_sku, product_details.family_sku),
+                                                            family_variant_sku=COALESCE(excluded.family_variant_sku, product_details.family_variant_sku),
+                                                            family_id=COALESCE(excluded.family_id, product_details.family_id),
+                                                            tis_trp_tested=COALESCE(excluded.tis_trp_tested, product_details.tis_trp_tested),
+                                                            transport_interface=COALESCE(excluded.transport_interface, product_details.transport_interface),
+                                                            primary_device_type_id=COALESCE(excluded.primary_device_type_id, product_details.primary_device_type_id),
+                                                            application_categories=COALESCE(excluded.application_categories, product_details.application_categories),
+                                                            description=COALESCE(excluded.description, product_details.description),
+                                                            compliance_document_url=COALESCE(excluded.compliance_document_url, product_details.compliance_document_url),
+                                                            program_type=COALESCE(excluded.program_type, product_details.program_type),
+                                                            updated_at=CURRENT_TIMESTAMP
+                                                        "#,
+                                                    )
+                                                    .bind(&detail.url)
+                                                    .bind(detail.page_id)
+                                                    .bind(detail.index_in_page)
+                                                    .bind(detail.id)
+                                                    .bind(detail.manufacturer)
+                                                    .bind(detail.model)
+                                                    .bind(detail.device_type)
+                                                    .bind(detail.certificate_id)
+                                                    .bind(detail.certification_date)
+                                                    .bind(detail.software_version)
+                                                    .bind(detail.hardware_version)
+                                                    .bind(detail.firmware_version)
+                                                    .bind(detail.specification_version)
+                                                    .bind(detail.vid)
+                                                    .bind(detail.pid)
+                                                    .bind(detail.family_sku)
+                                                    .bind(detail.family_variant_sku)
+                                                    .bind(detail.family_id)
+                                                    .bind(detail.tis_trp_tested)
+                                                    .bind(detail.transport_interface)
+                                                    .bind(detail.primary_device_type_id)
+                                                    .bind(detail.application_categories)
+                                                    .bind(detail.description)
+                                                    .bind(detail.compliance_document_url)
+                                                    .bind(program_type)
+                                                    .execute(&mut *tx)
+                                                    .await
+                                                    {
+                                                        emit_actor_event(
+                                                            &app,
+                                                            AppEvent::SyncWarning {
+                                                                session_id: session_id.clone(),
+                                                                code: "details_insert_failed".into(),
+                                                                detail: format!("{}: {}", url, e),
+                                                                timestamp: Utc::now(),
+                                                            },
+                                                        );
+                                                        info!(target: "kpi.sync", "{}",
+                                                            format!(
+                                                                r#"{{"event":"details_upsert","action":"insert_failed","page":{},"page_id":{},"index":{},"url":"{}","attempt":{},"max":{},"error":"{}"}}"#,
+                                                                physical_page, calc.page_id, calc.index_in_page, url, attempt, max_detail_retries, e
+                                                            )
+                                                        );
+                                                    } else if let Ok(res) = sqlx::query(
+                                                        r#"SELECT changes() as affected"#,
+                                                    )
+                                                    .fetch_one(&mut *tx)
+                                                    .await
+                                                    {
+                                                        let affected: i64 = res.get::<i64, _>("affected");
+                                                        emit_actor_event(
+                                                            &app,
+                                                            AppEvent::ProductLifecycle {
+                                                                session_id: session_id.clone(),
+                                                                batch_id: None,
+                                                                page_number: Some(physical_page),
+                                                                product_ref: url.clone(),
+                                                                status: if affected > 0 { "details_persisted".into() } else { "details_skipped_exists".into() },
+                                                                retry: Some(attempt - 1),
+                                                                duration_ms: None,
+                                                                metrics: None,
+                                                                timestamp: Utc::now(),
+                                                            },
+                                                        );
+                                                        info!(target: "kpi.sync", "{}",
+                                                            format!(
+                                                                r#"{{"event":"details_upsert","action":"{}","page":{},"page_id":{},"index":{},"url":"{}","attempt":{},"max":{}}}"#,
+                                                                if affected > 0 { "inserted" } else { "skipped_exists" },
+                                                                physical_page, calc.page_id, calc.index_in_page, url, attempt, max_detail_retries
+                                                            )
+                                                        );
+                                                        success = true;
+                                                        break;
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    emit_actor_event(
+                                                        &app,
+                                                        AppEvent::SyncWarning {
+                                                            session_id: session_id.clone(),
+                                                            code: "details_extract_failed".into(),
+                                                            detail: format!("{}: {}", url, e),
+                                                            timestamp: Utc::now(),
+                                                        },
+                                                    );
+                                                    info!(target: "kpi.sync", "{}",
+                                                        format!(
+                                                            r#"{{"event":"details_upsert","action":"extract_failed","page":{},"page_id":{},"index":{},"url":"{}","attempt":{},"max":{},"error":"{}"}}"#,
+                                                            physical_page, calc.page_id, calc.index_in_page, url, attempt, max_detail_retries, e
+                                                        )
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            emit_actor_event(
+                                                &app,
+                                                AppEvent::SyncWarning {
+                                                    session_id: session_id.clone(),
+                                                    code: "details_read_failed".into(),
+                                                    detail: format!("{}: {}", url, e),
+                                                    timestamp: Utc::now(),
+                                                },
+                                            );
+                                            info!(target: "kpi.sync", "{}",
+                                                format!(
+                                                    r#"{{"event":"details_upsert","action":"read_failed","page":{},"page_id":{},"index":{},"url":"{}","attempt":{},"max":{},"error":"{}"}}"#,
+                                                    physical_page, calc.page_id, calc.index_in_page, url, attempt, max_detail_retries, e
+                                                )
+                                            );
+                                        }
+                                    },
+                                    Err(e) => {
+                                        emit_actor_event(
+                                            &app,
+                                            AppEvent::SyncWarning {
+                                                session_id: session_id.clone(),
+                                                code: "details_fetch_failed".into(),
+                                                detail: format!("{}: {}", url, e),
+                                                timestamp: Utc::now(),
+                                            },
+                                        );
+                                        info!(target: "kpi.sync", "{}",
+                                            format!(
+                                                r#"{{"event":"details_upsert","action":"fetch_failed","page":{},"page_id":{},"index":{},"url":"{}","attempt":{},"max":{},"error":"{}"}}"#,
+                                                physical_page, calc.page_id, calc.index_in_page, url, attempt, max_detail_retries, e
+                                            )
+                                        );
+                                    }
+                                }
+                                if attempt < max_detail_retries && !success {
+                                    let shift = attempt - 1;
+                                    let backoff_ms = 200u64 * (1u64 << shift);
+                                    info!(target: "kpi.sync", "{}",
+                                        format!(
+                                            r#"{{"event":"details_retry_attempt","page":{},"page_id":{},"index":{},"url":"{}","next_delay_ms":{},"attempt":{},"max":{}}}"#,
+                                            physical_page, calc.page_id, calc.index_in_page, url, backoff_ms, attempt, max_detail_retries
+                                        )
+                                    );
+                                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms + (physical_page as u64 % 23))).await;
+                                }
+                            }
+                            if !success {
+                                info!(target: "kpi.sync", "{}",
+                                    format!(
+                                        r#"{{"event":"details_retry_exhausted","page":{},"page_id":{},"index":{},"url":"{}","max":{}}}"#,
+                                        physical_page, calc.page_id, calc.index_in_page, url, max_detail_retries
+                                    )
+                                );
+                            }
                         }
                     }
                 }
@@ -1023,4 +1830,395 @@ pub async fn start_partial_sync(
         failed,
         duration_ms,
     })
+}
+
+/// Run sync for an explicit set of physical page numbers.
+/// This builds a comma-separated list of single-page ranges (no merges)
+/// to avoid policy-based span clamping in partial sync, then delegates to `start_partial_sync`.
+#[tauri::command(async)]
+pub async fn start_sync_pages(
+    app: AppHandle,
+    app_state: State<'_, AppState>,
+    mut pages: Vec<u32>,
+    dry_run: Option<bool>,
+) -> Result<SyncSummary, String> {
+    if pages.is_empty() {
+        return Err("No pages provided".into());
+    }
+    // Deduplicate and sort descending (newest first, consistent with ranges parse ordering)
+    pages.sort_unstable();
+    pages.dedup();
+    pages.reverse();
+    // Build expression like "498,497,489" (each as a singleton)
+    let expr = pages
+        .into_iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    start_partial_sync(app, app_state, expr, dry_run).await
+}
+
+/// Run a diagnostic-driven sync for specific pages and slot indices.
+/// Only the specified indices on each page will be processed (precise repair).
+#[tauri::command(async)]
+pub async fn start_diagnostic_sync(
+    app: AppHandle,
+    app_state: State<'_, AppState>,
+    pages: Vec<DiagnosticPageInput>,
+    snapshot: Option<DiagnosticSnapshotInput>,
+    dry_run: Option<bool>,
+) -> Result<SyncSummary, String> {
+    if pages.is_empty() {
+        return Err("No diagnostic pages provided".into());
+    }
+
+    // Build page -> indices map and a sorted page list (desc)
+    let mut index_map: HashMap<u32, HashSet<usize>> = HashMap::new();
+    for p in pages {
+        let set: HashSet<usize> = p.miss_indices.into_iter().map(|v| v as usize).collect();
+        if !set.is_empty() {
+            index_map.insert(p.physical_page, set);
+        }
+    }
+    if index_map.is_empty() {
+        return Err("All diagnostic pages had empty miss_indices".into());
+    }
+    let mut pages_vec: Vec<u32> = index_map.keys().copied().collect();
+    pages_vec.sort_unstable();
+    pages_vec.dedup();
+    pages_vec.reverse();
+
+    // Load infra
+    let cfg_manager = ConfigManager::new().map_err(|e| format!("Config manager init failed: {e}"))?;
+    let app_config = cfg_manager
+        .load_config()
+        .await
+        .map_err(|e| format!("Config load failed: {e}"))?;
+    let http = app_config.create_http_client().map_err(|e| e.to_string())?;
+    let extractor = MatterDataExtractor::new().map_err(|e| e.to_string())?;
+    let pool = app_state
+        .get_database_pool()
+        .await
+        .map_err(|e| format!("DB pool unavailable: {e}"))?;
+
+    // Discover or use snapshot for site meta
+    let (total_pages, items_on_last_page, newest_html, oldest_html, oldest_page) = if let Some(s) = snapshot {
+        // Use provided snapshot only; avoid extra network calls for edges in precise-repair mode
+        let newest_html = String::new();
+        let oldest_html = String::new();
+        let oldest_page = s.total_pages;
+        (s.total_pages, s.items_on_last_page as usize, newest_html, oldest_html, oldest_page)
+    } else {
+        let newest_url = csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
+        let newest_html = match http.fetch_response(&newest_url).await {
+            Ok(resp) => resp.text().await.map_err(|e| e.to_string())?,
+            Err(e) => return Err(e.to_string()),
+        };
+        let total_pages = extractor
+            .extract_total_pages(&newest_html)
+            .unwrap_or(1)
+            .max(1);
+        let oldest_page = total_pages;
+        let oldest_html = if oldest_page == 1 {
+            newest_html.clone()
+        } else {
+            let oldest_url = csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &oldest_page.to_string());
+            match http.fetch_response(&oldest_url).await {
+                Ok(resp) => resp.text().await.map_err(|e| e.to_string())?,
+                Err(e) => return Err(e.to_string()),
+            }
+        };
+        let items_on_last_page = extractor
+            .extract_product_urls_from_content(&oldest_html)
+            .map_err(|e| e.to_string())?
+            .len();
+        (total_pages, items_on_last_page, newest_html, oldest_html, oldest_page)
+    };
+    let calculator = CanonicalPageIdCalculator::new(total_pages, items_on_last_page);
+
+    // Emit start event
+    let session_id = format!("sync-{}", Utc::now().format("%Y%m%d%H%M%S"));
+    emit_actor_event(
+        &app,
+        AppEvent::SyncStarted {
+            session_id: session_id.clone(),
+            ranges: pages_vec.iter().map(|p| (*p, *p)).collect(),
+            rate_limit: Some(app_config.user.crawling.workers.max_requests_per_second),
+            timestamp: Utc::now(),
+        },
+    );
+
+    let max_concurrent = app_config.user.crawling.workers.list_page_max_concurrent.max(1);
+    let semaphore = Arc::new(Semaphore::new(max_concurrent));
+    let pages_processed = Arc::new(AtomicU32::new(0));
+    let inserted = Arc::new(AtomicU32::new(0));
+    let updated = Arc::new(AtomicU32::new(0));
+    let skipped = Arc::new(AtomicU32::new(0));
+    let failed = Arc::new(AtomicU32::new(0));
+
+    let app_handle = app.clone();
+    let pool_arc = pool.clone();
+    let http_client = http.clone();
+    let extractor_global = extractor.clone();
+    let calculator_global = calculator.clone();
+    let dry = dry_run.unwrap_or(false);
+
+    let mut handles = Vec::with_capacity(pages_vec.len());
+    for physical_page in pages_vec {
+        let selected = index_map.get(&physical_page).cloned().unwrap_or_default();
+        if selected.is_empty() { continue; }
+        let permit = semaphore.clone().acquire_owned();
+        let app = app_handle.clone();
+        let session_id = session_id.clone();
+        let pool = pool_arc.clone();
+        let http = http_client.clone();
+        let extractor = extractor_global.clone();
+        let calculator = calculator_global.clone();
+        let newest_html_clone = newest_html.clone();
+        let oldest_html_clone = oldest_html.clone();
+        let pages_processed_c = pages_processed.clone();
+        let inserted_c = inserted.clone();
+        let updated_c = updated.clone();
+        let skipped_c = skipped.clone();
+        let failed_c = failed.clone();
+
+        let handle = tokio::spawn(async move {
+            let _permit = match permit.await { Ok(p) => p, Err(e) => { error!("Failed to acquire semaphore: {}", e); return; } };
+
+            emit_actor_event(&app, AppEvent::SyncPageStarted { session_id: session_id.clone(), physical_page, timestamp: Utc::now() });
+
+            // Fetch page HTML (same retry logic as partial sync but simplified)
+            // expected item count for observability (not used for gating here)
+            // let expected_count = if physical_page == oldest_page { items_on_last_page as u32 } else { 12u32 };
+            let max_retries = app_config.user.crawling.product_list_retry_count.max(1);
+            let mut attempt = 0u32;
+            let mut product_urls: Vec<String> = Vec::new();
+            loop {
+                let use_cache = attempt == 0 && (physical_page == oldest_page || physical_page == 1);
+                let page_html = if use_cache {
+                    if physical_page == oldest_page { oldest_html_clone.clone() } else { newest_html_clone.clone() }
+                } else {
+                    let url = csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &physical_page.to_string());
+                    match http.fetch_response(&url).await { Ok(resp) => resp.text().await.unwrap_or_default(), Err(_) => String::new() }
+                };
+                if !page_html.is_empty() {
+                    if let Ok(v) = extractor.extract_product_urls_from_content(&page_html) { product_urls = v; }
+                }
+                if !product_urls.is_empty() || attempt >= max_retries { break; }
+                tokio::time::sleep(std::time::Duration::from_millis(200 * (1u64 << attempt))).await;
+                attempt += 1;
+            }
+
+            // Begin transaction
+            let mut tx = match pool.begin().await { Ok(t) => t, Err(e) => { failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "tx_begin_failed".into(), detail: format!("page {}: {}", physical_page, e), timestamp: Utc::now() }); return; } };
+
+            let mut page_inserted = 0u32; let mut page_updated = 0u32; let mut page_skipped = 0u32; let mut page_failed = 0u32;
+            for i in 0..product_urls.len() {
+                if !selected.contains(&i) { continue; }
+                let url = match product_urls.get(i) { Some(u) => u.clone(), None => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); continue; } };
+                let calc = calculator.calculate(physical_page, i);
+                if dry { page_skipped += 1; emit_actor_event(&app, AppEvent::SyncUpsertProgress { session_id: session_id.clone(), physical_page, inserted: page_inserted, updated: page_updated, skipped: page_skipped, failed: page_failed, timestamp: Utc::now() }); continue; }
+
+                // Upsert product row (same as partial)
+                let row = sqlx::query("SELECT page_id, index_in_page FROM products WHERE url = ? LIMIT 1").bind(&url).fetch_optional(&mut *tx).await;
+                let row = match row { Ok(r) => r, Err(e) => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "select_failed".into(), detail: format!("{}: {}", url, e), timestamp: Utc::now() }); continue; } };
+                match row {
+                    None => {
+                        let res = sqlx::query("INSERT INTO products (url, page_id, index_in_page) VALUES (?, ?, ?)").bind(&url).bind(calc.page_id).bind(calc.index_in_page).execute(&mut *tx).await;
+                        match res { Ok(_) => { page_inserted += 1; inserted_c.fetch_add(1, Ordering::SeqCst); }, Err(e) => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "insert_failed".into(), detail: format!("{}: {}", url, e), timestamp: Utc::now() }); } }
+                    }
+                    Some(r) => {
+                        let db_pid: Option<i64> = r.get("page_id"); let db_idx: Option<i64> = r.get("index_in_page");
+                        let needs_update = match (db_pid, db_idx) { (Some(p), Some(ix)) => p as i32 != calc.page_id || ix as i32 != calc.index_in_page, _ => true };
+                        if needs_update {
+                            match sqlx::query("UPDATE products SET page_id = ?, index_in_page = ?, updated_at = CURRENT_TIMESTAMP WHERE url = ?").bind(calc.page_id).bind(calc.index_in_page).bind(&url).execute(&mut *tx).await { Ok(_) => { page_updated += 1; updated_c.fetch_add(1, Ordering::SeqCst); }, Err(e) => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "update_failed".into(), detail: format!("{}: {}", url, e), timestamp: Utc::now() }); } }
+                        } else { page_skipped += 1; skipped_c.fetch_add(1, Ordering::SeqCst); }
+                    }
+                }
+
+                // Upsert or repair product_details if missing or incomplete
+                let mut details_is_complete = false;
+                if let Ok(Some(r)) = sqlx::query("SELECT manufacturer, model, device_type, certificate_id FROM product_details WHERE url = ? LIMIT 1").bind(&url).fetch_optional(&mut *tx).await {
+                    let man: Option<String> = r.get("manufacturer"); let model: Option<String> = r.get("model"); let dtype: Option<String> = r.get("device_type"); let cert: Option<String> = r.get("certificate_id");
+                    details_is_complete = man.is_some() && model.is_some() && dtype.is_some() && cert.is_some();
+                }
+                if !details_is_complete {
+                    let max_detail_retries = app_config.user.crawling.product_detail_retry_count.max(1);
+                    let mut success = false;
+                    for attempt in 1..=max_detail_retries {
+                        // Fetch detail page
+                        let fetched = http.fetch_response(&url).await;
+                        if let Ok(resp) = fetched {
+                            if let Ok(body) = resp.text().await {
+                                // Extract in a limited scope to avoid carrying non-Send Html across await
+                                let extracted = {
+                                    let doc = Html::parse_document(&body);
+                                    extractor.extract_product_detail(&doc, url.clone())
+                                };
+                                match extracted {
+                                    Ok(mut detail) => {
+                                        detail.page_id = Some(calc.page_id);
+                                        detail.index_in_page = Some(calc.index_in_page);
+                                        if detail.id.is_none() {
+                                            detail.id = Some(format!("p{:04}i{:02}", calc.page_id, calc.index_in_page));
+                                        }
+                                        let program_type = Some(
+                                            detail
+                                                .program_type
+                                                .unwrap_or_else(|| "Matter".to_string()),
+                                        );
+                                        // Upsert (fill missing fields)
+                                        let upsert_res = sqlx::query(
+                                            r#"INSERT INTO product_details (
+                                                url, page_id, index_in_page, id, manufacturer, model, device_type,
+                                                certificate_id, certification_date, software_version, hardware_version, firmware_version,
+                                                specification_version, vid, pid, family_sku, family_variant_sku, family_id,
+                                                tis_trp_tested, transport_interface, primary_device_type_id, application_categories,
+                                                description, compliance_document_url, program_type
+                                            ) VALUES (
+                                                ?, ?, ?, ?, ?, ?, ?,
+                                                ?, ?, ?, ?, ?,
+                                                ?, ?, ?, ?, ?, ?,
+                                                ?, ?, ?, ?,
+                                                ?, ?, ?
+                                            ) ON CONFLICT(url) DO UPDATE SET
+                                                page_id=COALESCE(excluded.page_id, product_details.page_id),
+                                                index_in_page=COALESCE(excluded.index_in_page, product_details.index_in_page),
+                                                id=COALESCE(excluded.id, product_details.id),
+                                                manufacturer=COALESCE(excluded.manufacturer, product_details.manufacturer),
+                                                model=COALESCE(excluded.model, product_details.model),
+                                                device_type=COALESCE(excluded.device_type, product_details.device_type),
+                                                certificate_id=COALESCE(excluded.certificate_id, product_details.certificate_id),
+                                                certification_date=COALESCE(excluded.certification_date, product_details.certification_date),
+                                                software_version=COALESCE(excluded.software_version, product_details.software_version),
+                                                hardware_version=COALESCE(excluded.hardware_version, product_details.hardware_version),
+                                                firmware_version=COALESCE(excluded.firmware_version, product_details.firmware_version),
+                                                specification_version=COALESCE(excluded.specification_version, product_details.specification_version),
+                                                vid=COALESCE(excluded.vid, product_details.vid),
+                                                pid=COALESCE(excluded.pid, product_details.pid),
+                                                family_sku=COALESCE(excluded.family_sku, product_details.family_sku),
+                                                family_variant_sku=COALESCE(excluded.family_variant_sku, product_details.family_variant_sku),
+                                                family_id=COALESCE(excluded.family_id, product_details.family_id),
+                                                tis_trp_tested=COALESCE(excluded.tis_trp_tested, product_details.tis_trp_tested),
+                                                transport_interface=COALESCE(excluded.transport_interface, product_details.transport_interface),
+                                                primary_device_type_id=COALESCE(excluded.primary_device_type_id, product_details.primary_device_type_id),
+                                                application_categories=COALESCE(excluded.application_categories, product_details.application_categories),
+                                                description=COALESCE(excluded.description, product_details.description),
+                                                compliance_document_url=COALESCE(excluded.compliance_document_url, product_details.compliance_document_url),
+                                                program_type=COALESCE(excluded.program_type, product_details.program_type),
+                                                updated_at=CURRENT_TIMESTAMP
+                                        "#,
+                                        )
+                                        .bind(&detail.url)
+                                        .bind(detail.page_id)
+                                        .bind(detail.index_in_page)
+                                        .bind(detail.id)
+                                        .bind(detail.manufacturer)
+                                        .bind(detail.model)
+                                        .bind(detail.device_type)
+                                        .bind(detail.certificate_id)
+                                        .bind(detail.certification_date)
+                                        .bind(detail.software_version)
+                                        .bind(detail.hardware_version)
+                                        .bind(detail.firmware_version)
+                                        .bind(detail.specification_version)
+                                        .bind(detail.vid)
+                                        .bind(detail.pid)
+                                        .bind(detail.family_sku)
+                                        .bind(detail.family_variant_sku)
+                                        .bind(detail.family_id)
+                                        .bind(detail.tis_trp_tested)
+                                        .bind(detail.transport_interface)
+                                        .bind(detail.primary_device_type_id)
+                                        .bind(detail.application_categories)
+                                        .bind(detail.description)
+                                        .bind(detail.compliance_document_url)
+                                        .bind(program_type)
+                                        .execute(&mut *tx)
+                                        .await;
+                                        if upsert_res.is_ok() {
+                                            success = true;
+                                            break;
+                                        }
+                                    }
+                                    Err(_) => {
+                                        // parse failed; will retry
+                                    }
+                                }
+                            }
+                        }
+                        if !success && attempt < max_detail_retries {
+                            let shift = (attempt - 1);
+                            let base = 1u64.checked_shl(shift).unwrap_or(u64::MAX / 200);
+                            let delay: u64 = 200u64.saturating_mul(base);
+                            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        }
+                    }
+                    if !success {
+                        page_failed += 1;
+                        failed_c.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }
+
+            if let Err(e) = tx.commit().await {
+                failed_c.fetch_add(1, Ordering::SeqCst);
+                emit_actor_event(
+                    &app,
+                    AppEvent::SyncWarning {
+                        session_id: session_id.clone(),
+                        code: "tx_commit_failed".into(),
+                        detail: format!("page {}: {}", physical_page, e),
+                        timestamp: Utc::now(),
+                    },
+                );
+            }
+
+            pages_processed_c.fetch_add(1, Ordering::SeqCst);
+            emit_actor_event(
+                &app,
+                AppEvent::SyncPageCompleted {
+                    session_id: session_id.clone(),
+                    physical_page,
+                    inserted: page_inserted,
+                    updated: page_updated,
+                    skipped: page_skipped,
+                    failed: page_failed,
+                    ms: 0,
+                    timestamp: Utc::now(),
+                },
+            );
+        });
+        handles.push(handle);
+    }
+
+    for h in handles {
+        let _ = h.await;
+    }
+    let summary = SyncSummary {
+        pages_processed: pages_processed.load(Ordering::SeqCst),
+        inserted: inserted.load(Ordering::SeqCst),
+        updated: updated.load(Ordering::SeqCst),
+        skipped: skipped.load(Ordering::SeqCst),
+        failed: failed.load(Ordering::SeqCst),
+        duration_ms: 0,
+    };
+    emit_actor_event(
+        &app,
+        AppEvent::SyncCompleted {
+            session_id: format!("sync-{}", Utc::now().format("%Y%m%d%H%M%S")),
+            pages_processed: summary.pages_processed,
+            inserted: summary.inserted,
+            updated: summary.updated,
+            skipped: summary.skipped,
+            failed: summary.failed,
+            duration_ms: summary.duration_ms,
+            deleted: None,
+            total_pages: Some(total_pages),
+            items_on_last_page: Some(items_on_last_page as u32),
+            anomalies: None,
+            timestamp: Utc::now(),
+        },
+    );
+    Ok(summary)
 }

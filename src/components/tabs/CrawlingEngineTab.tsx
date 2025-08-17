@@ -1012,6 +1012,30 @@ export const CrawlingEngineTab: Component = () => {
                 >
                   Dry-run
                 </button>
+                <button
+                  onClick={async () => {
+                    // Use same range derivation as partial button
+                    let rangesExpr = (valRangeExpr() && valRangeExpr().trim()) ? valRangeExpr().trim() : (lastValidationExpr() || '');
+                    if (!rangesExpr) {
+                      const rng = lastValidationRange();
+                      if (!rng) { addLog('⚠️ Batched Sync 불가: 최근 Validation 범위 정보가 없습니다. 먼저 Validation을 실행하세요.'); return; }
+                      rangesExpr = `${rng.start}-${rng.end}`;
+                    }
+                    setIsSyncing(true);
+                    addLog(`📦 Batched Sync 시작: ${rangesExpr}`);
+                    try {
+                      const res = await tauriApi.startBatchedSync(rangesExpr);
+                      addLog(`✅ Batched Sync 완료: ${JSON.stringify(res)}`);
+                    } catch (e) {
+                      addLog(`❌ Batched Sync 실패: ${e}`);
+                    } finally { setIsSyncing(false); }
+                  }}
+                  class={`px-3 py-1.5 text-sm rounded-md transition-colors ${isSyncing() ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}`}
+                  disabled={isSyncing()}
+                  title="연속 페이지를 배치로 묶어 순차 실행 (Partial과 동일 Flow)"
+                >
+                  📦 Batched Sync
+                </button>
               </div>
               <Show when={rangeNotice()}>
                 <div class="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded p-2">

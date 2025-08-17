@@ -22,7 +22,8 @@
   "precommit": "bash scripts/precommit.sh",
   "audit:grep": "bash scripts/grep_audit.sh",
   "archive:backups": "bash scripts/archive_backups.sh",
-  "db:dedup-urls": "bash scripts/sqlite_dedup_by_url.sh"
+  "db:dedup-urls": "bash scripts/sqlite_dedup_by_url.sh",
+  "check:list": "node scripts/check_csa_list_pages.mjs"
   },
   "license": "MIT",
   "dependencies": {

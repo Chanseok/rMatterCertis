@@ -456,7 +456,10 @@ pub fn run() {
             crate::commands_integrated::reset_product_storage,
             commands::validation_commands::start_validation,
             commands::sync_commands::start_partial_sync, // TODO: Add other commands as they are implemented
+            commands::sync_commands::start_batched_sync,
             commands::sync_commands::start_repair_sync,
+            commands::sync_commands::start_sync_pages,
+            commands::sync_commands::start_diagnostic_sync,
             commands::db_diagnostics::scan_db_pagination_mismatches,
             commands::db_cleanup::cleanup_duplicate_urls
                                                         // Most commands are temporarily disabled for compilation

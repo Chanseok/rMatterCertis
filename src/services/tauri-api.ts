@@ -171,11 +171,50 @@ export class TauriApiService {
   }
 
   /**
+   * Start a batched sync that splits the given ranges into contiguous-page batches
+   * and processes each batch sequentially using the Partial flow.
+   */
+  async startBatchedSync(ranges: string, batchSizeOverride?: number, dryRun?: boolean): Promise<any> {
+    return await invoke<any>('start_batched_sync', {
+      ranges,
+      batchSizeOverride: batchSizeOverride ?? null,
+      dryRun: dryRun ?? null,
+    } as any);
+  }
+
+  /**
    * Start an anomaly-repair sync sweep around divergent pages.
    */
   async startRepairSync(buffer?: number, dryRun?: boolean): Promise<any> {
     return await invoke<any>('start_repair_sync', {
       buffer: buffer ?? null,
+      dryRun: dryRun ?? null,
+    } as any);
+  }
+
+  /**
+   * Start a sync for explicit physical page numbers (e.g., [498, 496, 489]).
+   */
+  async startSyncPages(pages: number[], dryRun?: boolean): Promise<any> {
+    return await invoke<any>('start_sync_pages', {
+      pages,
+      dryRun: dryRun ?? null,
+    } as any);
+  }
+
+  /**
+   * Start a diagnostic-driven sync for specific pages and slot indices.
+   * pages: [{ physical_page, miss_indices }]
+   * snapshot is optional; if omitted backend will fetch site meta.
+   */
+  async startDiagnosticSync(
+    pages: Array<{ physical_page: number; miss_indices: number[] }>,
+    snapshot?: { total_pages: number; items_on_last_page: number },
+    dryRun?: boolean
+  ): Promise<any> {
+    return await invoke<any>('start_diagnostic_sync', {
+      pages,
+      snapshot: snapshot ?? null,
       dryRun: dryRun ?? null,
     } as any);
   }

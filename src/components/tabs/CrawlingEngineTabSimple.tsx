@@ -55,12 +55,33 @@ export default function CrawlingEngineTabSimple() {
       setDiagLoading(true);
       const res = await tauriApi.scanDbPaginationMismatches();
       setDiagResult(res);
-      addLog('🔎 DB pagination mismatch scan completed');
     } catch (e) {
-      addLog('❌ DB mismatch scan failed: ' + (e as any)?.message);
+      addLog(`❌ Diagnostics 실패: ${e}`);
     } finally {
       setDiagLoading(false);
     }
+  };
+  // Build ranges from current diagnostics (missing pages -> contiguous ranges)
+  const deriveRangesFromDiagnostics = (): string | null => {
+    const diag = diagResult();
+    if (!diag) return null;
+    const pages: number[] = (diag.group_summaries || [])
+      .filter((g: any) => g.status && g.status !== 'ok' && (g.missing_indices?.length || 0) > 0)
+      .map((g: any) => g.current_page_number)
+      .filter((p: any) => typeof p === 'number' && p > 0);
+    if (pages.length === 0) return null;
+    // compress contiguous desc pages to ranges expr
+    const uniq = Array.from(new Set(pages)).sort((a,b)=>b-a);
+    let parts: string[] = [];
+    let start = uniq[0];
+    let prev = uniq[0];
+    for (const p of uniq.slice(1)) {
+      if (p + 1 === prev) { prev = p; continue; }
+      parts.push(start === prev ? `${start}` : `${start}-${prev}`);
+      start = p; prev = p;
+    }
+    parts.push(start === prev ? `${start}` : `${start}-${prev}`);
+    return parts.join(',');
   };
   const runUrlCleanup = async () => {
     try {
@@ -241,8 +262,71 @@ export default function CrawlingEngineTabSimple() {
         : await tauriApi.startRepairSync();
       addLog(`✅ Sync 완료: ${JSON.stringify(res)}`);
     } catch (e) {
-      console.error(e);
       addLog(`❌ Sync 실패: ${e}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const syncMissingPagesFromDiagnostics = async () => {
+    if (isSyncing()) return;
+    const diag = diagResult();
+    if (!diag) {
+      addLog('⚠️ 먼저 진단을 실행하세요.');
+      return;
+    }
+    // Collect physical pages where group status indicates holes/sparse and we have current_page_number
+    const pages: number[] = (diag.group_summaries || [])
+      .filter((g: any) => g.status && g.status !== 'ok' && (g.missing_indices?.length || 0) > 0)
+      .map((g: any) => g.current_page_number)
+      .filter((p: any) => typeof p === 'number' && p > 0);
+    const uniquePages = Array.from(new Set(pages));
+    if (uniquePages.length === 0) {
+      addLog('ℹ️ 누락 항목이 있는 물리 페이지가 없습니다.');
+      return;
+    }
+    setIsSyncing(true);
+    addLog(`🔁 진단 선택 페이지만 Sync: [${uniquePages.join(', ')}]`);
+    try {
+      const res = await tauriApi.startSyncPages(uniquePages);
+      addLog(`✅ 부분 Sync 완료: ${JSON.stringify(res)}`);
+      // Re-run diagnostics to show before/after
+      await runDiagnostics();
+    } catch (e) {
+      addLog(`❌ 부분 Sync 실패: ${e}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // 정밀 복구 실행: 현재 진단 결과에서 각 페이지의 누락 슬롯(index)만 정확히 채움
+  const runPreciseDiagnosticRepair = async () => {
+    const diag = diagResult();
+    if (!diag) {
+      addLog('⚠️ 먼저 진단을 실행하세요.');
+      return;
+    }
+    // group_summaries에서 status!=ok 이고 missing_indices가 존재하는 항목을 모아 payload 구성
+    const groups: Array<{ physical_page: number; miss_indices: number[] }> = [];
+    for (const g of (diag.group_summaries || [])) {
+      const miss = (g.missing_indices || []).filter((n: any) => Number.isInteger(n) && n >= 0 && n < 12);
+      const phys = g.current_page_number;
+      if (!phys || miss.length === 0) continue;
+      groups.push({ physical_page: phys as number, miss_indices: miss.map((x: number) => Number(x)) });
+    }
+    if (groups.length === 0) {
+      addLog('ℹ️ 정밀 복구 대상이 없습니다. (누락 슬롯 없음)');
+      return;
+    }
+    setIsSyncing(true);
+    addLog(`🧩 정밀 복구 실행: ${groups.length}개 페이지 (슬롯 지정)`);
+    try {
+      // 스냅샷은 생략(백엔드가 알아서 최신 사이트 메타 조회), 필요 시 diag의 total_pages_site/items_on_last_page를 넣을 수 있음
+      const res = await tauriApi.startDiagnosticSync(groups);
+      addLog(`✅ 정밀 복구 완료: ${JSON.stringify(res)}`);
+      await runDiagnostics();
+    } catch (e) {
+      addLog(`❌ 정밀 복구 실패: ${e}`);
     } finally {
       setIsSyncing(false);
     }
@@ -658,6 +742,12 @@ export default function CrawlingEngineTabSimple() {
               <button class={`px-3 py-1 text-sm rounded ${cleanupLoading() ? 'bg-gray-200 text-gray-500' : 'bg-rose-600 text-white hover:bg-rose-700'}`} disabled={cleanupLoading()} onClick={runUrlCleanup}>
                 {cleanupLoading() ? '정리 중…' : 'URL 중복 제거'}
               </button>
+              <button class={`px-3 py-1 text-sm rounded ${isSyncing() ? 'bg-gray-200 text-gray-500' : 'bg-teal-600 text-white hover:bg-teal-700'}`} disabled={isSyncing()} onClick={syncMissingPagesFromDiagnostics}>
+                {isSyncing() ? '동기화 중…' : '누락 페이지만 동기화'}
+              </button>
+                <button class={`px-3 py-1 text-sm rounded ${isSyncing() ? 'bg-gray-200 text-gray-500' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`} disabled={isSyncing()} onClick={runPreciseDiagnosticRepair}>
+                  {isSyncing() ? '동기화 중…' : '정밀 복구 실행'}
+                </button>
             </div>
           </div>
           <Show when={diagResult()} fallback={<p class="text-xs text-gray-500">로컬 DB의 page_id/index_in_page 정합성을 검사합니다. 실행을 눌러 결과를 확인하세요.</p>}>
@@ -665,7 +755,7 @@ export default function CrawlingEngineTabSimple() {
               <div class="flex gap-4">
                 <span>총 제품: <b>{diagResult()?.total_products ?? 0}</b></span>
                 <span>DB 최대 page_id: <b>{diagResult()?.max_page_id_db ?? '-'}</b></span>
-                <span>사이트 총 페이지: <b>{diagResult()?.total_pages_site ?? '-'}</b></span>
+                <span>사이트 총 페이지: <b>{diagResult()?.total_pages ?? '-'}</b></span>
                 <span>마지막 페이지 아이템: <b>{diagResult()?.items_on_last_page ?? '-'}</b></span>
               </div>
               <div>
@@ -967,6 +1057,70 @@ export default function CrawlingEngineTabSimple() {
               }`}
             >
               {isSyncing() ? 'Sync 실행 중...' : '🔄 Sync 실행'}
+            </button>
+            <button
+              onClick={async () => {
+                if (isSyncing()) return;
+                let ranges = (syncRanges() || '').trim();
+                if (!ranges) {
+                  const auto = deriveRangesFromDiagnostics();
+                  if (auto) {
+                    setSyncRanges(auto);
+                    addLog(`🔁 Diagnostics 기반 범위 자동설정: ${auto}`);
+                    ranges = auto;
+                  } else {
+                    addLog('⚠️ 먼저 Sync 범위를 입력하거나, 진단을 실행해 주세요. 예: 498-492,489');
+                    return;
+                  }
+                }
+                setIsSyncing(true);
+                addLog(`🔄 Partial 모드(이 범위) Sync 실행: ${ranges}`);
+                try {
+                  const res = await tauriApi.startPartialSync(ranges);
+                  addLog(`✅ Partial Sync 완료: ${JSON.stringify(res)}`);
+                } catch (e) {
+                  addLog(`❌ Partial Sync 실패: ${e}`);
+                } finally { setIsSyncing(false); }
+              }}
+              disabled={isSyncing()}
+              class={`px-4 py-2 rounded-lg font-medium text-white ${
+                isSyncing() ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+              }`}
+              title="Partial 모드로 이 범위만 실행"
+            >
+              이 범위 Sync 실행
+            </button>
+            <button
+              onClick={async () => {
+                if (isSyncing()) return;
+                let ranges = (syncRanges() || '').trim();
+                if (!ranges) {
+                  const auto = deriveRangesFromDiagnostics();
+                  if (auto) {
+                    setSyncRanges(auto);
+                    addLog(`🔁 Diagnostics 기반 범위 자동설정: ${auto}`);
+                    ranges = auto;
+                  } else {
+                    addLog('⚠️ 먼저 Sync 범위를 입력하거나, 진단을 실행해 주세요. 예: 498-492,489');
+                    return;
+                  }
+                }
+                setIsSyncing(true);
+                addLog(`📦 순차 실행(연속 페이지 배치): ${ranges}`);
+                try {
+                  const res = await tauriApi.startBatchedSync(ranges);
+                  addLog(`✅ 순차 실행 완료: ${JSON.stringify(res)}`);
+                } catch (e) {
+                  addLog(`❌ 순차 실행 실패: ${e}`);
+                } finally { setIsSyncing(false); }
+              }}
+              disabled={isSyncing()}
+              class={`px-4 py-2 rounded-lg font-medium text-white ${
+                isSyncing() ? 'bg-gray-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'
+              }`}
+              title="연속 페이지를 배치로 묶어 순차 실행 (Partial과 동일 Flow)"
+            >
+              순차 실행
             </button>
           </div>
           <button
