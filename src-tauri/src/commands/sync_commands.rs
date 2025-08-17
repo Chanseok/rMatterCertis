@@ -2148,7 +2148,7 @@ pub async fn start_diagnostic_sync(
                             }
                         }
                         if !success && attempt < max_detail_retries {
-                            let shift = (attempt - 1);
+                                    let shift = attempt - 1;
                             let base = 1u64.checked_shl(shift).unwrap_or(u64::MAX / 200);
                             let delay: u64 = 200u64.saturating_mul(base);
                             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;

@@ -33,7 +33,7 @@ impl ProductDetailsActor {
     pub async fn run(
         &self,
         _context: Arc<AppContext>,
-        plan: Arc<ExecutionPlan>,
+    _plan: Arc<ExecutionPlan>,
         event_tx: tokio::sync::broadcast::Sender<AppEvent>,
     ) -> anyhow::Result<()> {
         // Fetch injected detail IDs from registry (set after ListPages phase). If absent, fallback to small simulated set.
