@@ -696,6 +696,33 @@ impl SystemStateBroadcaster {
         self.app_handle.emit(event.event_name(), &event)?;
         Ok(())
     }
+
+    /// 🔥 동시성 상태 이벤트 발송
+    pub fn emit_concurrency_event(
+        &self,
+        event: crate::domain::events::ConcurrencyEvent,
+    ) -> anyhow::Result<()> {
+        self.app_handle.emit(event.event_name(), &event)?;
+        Ok(())
+    }
+
+    /// 🔥 Validation 이벤트 발송
+    pub fn emit_validation_event(
+        &self,
+        event: crate::domain::events::ValidationEvent,
+    ) -> anyhow::Result<()> {
+        self.app_handle.emit(event.event_name(), &event)?;
+        Ok(())
+    }
+
+    /// 🔥 DB 저장 이벤트 발송
+    pub fn emit_db_save_event(
+        &self,
+        event: crate::domain::events::DatabaseSaveEvent,
+    ) -> anyhow::Result<()> {
+        self.app_handle.emit(event.event_name(), &event)?;
+        Ok(())
+    }
 }
 
 /// 전역 브로드캐스터 인스턴스 생성 및 시작

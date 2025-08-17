@@ -4,7 +4,15 @@
 //! the crawling engine to send real-time updates to the frontend.
 
 use crate::domain::atomic_events::AtomicTaskEvent; // 추가
-use crate::domain::events::{CrawlingEvent, CrawlingProgress, CrawlingTaskStatus, DatabaseStats};
+use crate::domain::events::{
+    CrawlingEvent,
+    CrawlingProgress,
+    CrawlingTaskStatus,
+    DatabaseStats,
+    ConcurrencyEvent,
+    ValidationEvent,
+    DatabaseSaveEvent,
+};
 use futures::future::join_all;
 use std::sync::Arc;
 use std::time::Duration;
@@ -353,6 +361,46 @@ impl EventEmitter {
         let futures = events.into_iter().map(|event| self.emit_event(event));
 
         join_all(futures).await
+    }
+
+    // =========================================================================
+    // 확장: 독립 이벤트 스트림 emit 헬퍼들
+    // =========================================================================
+
+    /// Emit a concurrency status event
+    pub async fn emit_concurrency_event(&self, event: ConcurrencyEvent) -> EventResult {
+        if !self.is_enabled().await {
+            return Err(EventEmissionError::Disabled);
+        }
+        let event_name = event.event_name();
+        match self.app_handle.emit(event_name, &event) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(EventEmissionError::TauriError(e)),
+        }
+    }
+
+    /// Emit a validation event
+    pub async fn emit_validation_event(&self, event: ValidationEvent) -> EventResult {
+        if !self.is_enabled().await {
+            return Err(EventEmissionError::Disabled);
+        }
+        let event_name = event.event_name();
+        match self.app_handle.emit(event_name, &event) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(EventEmissionError::TauriError(e)),
+        }
+    }
+
+    /// Emit a database save event
+    pub async fn emit_db_save_event(&self, event: DatabaseSaveEvent) -> EventResult {
+        if !self.is_enabled().await {
+            return Err(EventEmissionError::Disabled);
+        }
+        let event_name = event.event_name();
+        match self.app_handle.emit(event_name, &event) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(EventEmissionError::TauriError(e)),
+        }
     }
 }
 

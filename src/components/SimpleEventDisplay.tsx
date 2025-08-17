@@ -2,10 +2,11 @@
  * SimpleEventDisplay.tsx
  * @description 백엔드에서 전달되는 다양한 이벤트들을 간단하고 직관적으로 표시하는 컴포넌트
  */
-import { Component, createSignal, onMount, onCleanup, For } from 'solid-js';
+import { Component, createMemo, createSignal, onMount, onCleanup, For, createEffect } from 'solid-js';
 import { tauriApi } from '../services/tauri-api';
 import type { CrawlingProgress, CrawlingResult } from '../types/crawling';
 import type { AtomicTaskEvent } from '../types/events';
+import { eventStore } from '../stores/eventStore';
 
 interface EventItem {
   id: string;
@@ -25,7 +26,6 @@ interface StageProgress {
 
 export const SimpleEventDisplay: Component = () => {
   // State
-  const [events, setEvents] = createSignal<EventItem[]>([]);
   const [stageProgress, setStageProgress] = createSignal<StageProgress[]>([
     { name: 'Stage 0: 상태 확인', current: 0, total: 1, status: 'idle' },
     { name: 'Stage 1: 제품 목록 수집', current: 0, total: 0, status: 'idle' },
@@ -45,28 +45,147 @@ export const SimpleEventDisplay: Component = () => {
 
   let cleanupFunctions: (() => void)[] = [];
 
+  // Map actor stage names to our display labels
+  const mapStageName = (stageName?: string): string | undefined => {
+    if (!stageName) return undefined;
+    const s = stageName.toLowerCase();
+    if (s.includes('status') || s.includes('check')) return 'Stage 0: 상태 확인';
+    if (s.includes('listpage') || s.includes('productlist') || s.includes('list')) return 'Stage 1: 제품 목록 수집';
+    if (s.includes('detail') || s.includes('productdetail')) return 'Stage 2: 세부 정보 수집';
+    if (s.includes('validation')) return 'Stage 3: 데이터 검증';
+    if (s.includes('saving') || s.includes('database')) return 'Stage 4: 데이터베이스 저장';
+    return undefined;
+  };
+
+  // Fold global actor events to update stage/status/stat counters
+  const processedIds = new Set<string>();
+  const incStageCurrent = (label: string) => setStageProgress(prev => prev.map(s => s.name === label ? { ...s, current: s.current + 1 } : s));
+  const setStageTotal = (label: string, total: number) => setStageProgress(prev => prev.map(s => s.name === label ? { ...s, total } : s));
+  const setStageStatus = (label: string, status: StageProgress['status']) => setStageProgress(prev => prev.map(s => s.name === label ? { ...s, status } : s));
+
+  createEffect(() => {
+    const items = eventStore.events();
+    // process from oldest to newest to preserve ordering
+    for (let i = items.length - 1; i >= 0; i--) {
+      const ev = items[i];
+      if (processedIds.has(ev.id)) continue;
+      const name = ev.name || '';
+      const p: any = ev.payload || {};
+
+      // Session lifecycle
+      if (name === 'actor-session-started') {
+        setIsCrawling(true);
+        // reset stages for new run
+        setStageProgress([
+          { name: 'Stage 0: 상태 확인', current: 0, total: 1, status: 'running' },
+          { name: 'Stage 1: 제품 목록 수집', current: 0, total: 0, status: 'idle' },
+          { name: 'Stage 2: 세부 정보 수집', current: 0, total: 0, status: 'idle' },
+          { name: 'Stage 3: 데이터 검증', current: 0, total: 0, status: 'idle' },
+          { name: 'Stage 4: 데이터베이스 저장', current: 0, total: 0, status: 'idle' },
+        ]);
+      }
+      if (name === 'actor-session-completed' || name === 'actor-session-failed' || name === 'actor-session-timeout') {
+        setIsCrawling(false);
+        setStageProgress(prev => prev.map(s => ({ ...s, status: name === 'actor-session-completed' ? 'completed' : 'error' })));
+      }
+
+      // Batch info can hint totals for Stage 1
+      if (name === 'actor-batch-started') {
+        const totalPages = p?.pages_in_batch ?? p?.pages ?? p?.items_total ?? 0;
+        if (totalPages > 0) setStageTotal('Stage 1: 제품 목록 수집', totalPages);
+      }
+
+      // Stage lifecycle
+      if (name === 'actor-stage-started') {
+        const label = mapStageName(p?.stage_name);
+        if (label) setStageStatus(label, 'running');
+      }
+      if (name === 'actor-stage-completed') {
+        const label = mapStageName(p?.stage_name);
+        if (label) {
+          setStageStatus(label, 'completed');
+          // if items_processed is available, set totals/current accordingly
+          if (typeof p?.items_processed === 'number') {
+            setStageTotal(label, p.items_processed);
+            // show as fully completed
+            setStageProgress(prev => prev.map(s => s.name === label ? { ...s, current: p.items_processed } : s));
+          }
+        }
+      }
+      if (name === 'actor-stage-failed') {
+        const label = mapStageName(p?.stage_name);
+        if (label) setStageStatus(label, 'error');
+      }
+
+      // Per-item task progress heuristics
+      if (name === 'actor-page-task-completed') {
+        incStageCurrent('Stage 1: 제품 목록 수집');
+      }
+      if (name === 'actor-detail-task-completed') {
+        incStageCurrent('Stage 2: 세부 정보 수집');
+      }
+
+      // Validation → Stage 3
+      if (name === 'actor-validation-started') setStageStatus('Stage 3: 데이터 검증', 'running');
+      if (name === 'actor-validation-completed') setStageStatus('Stage 3: 데이터 검증', 'completed');
+
+      // Persistence/DB → Stage 4
+      if (name === 'actor-persistence-anomaly') setStageStatus('Stage 4: 데이터베이스 저장', 'error');
+      if (name === 'actor-database-stats') {
+        const total = p?.total_products ?? p?.total ?? statistics().totalProducts;
+        if (typeof total === 'number') setStatistics(prev => ({ ...prev, totalProducts: total }));
+        setStageStatus('Stage 4: 데이터베이스 저장', 'running');
+      }
+
+      // Errors/Anomalies count heuristic
+      if (name.includes('error') || name.includes('failed') || name === 'actor-validation-anomaly' || name === 'actor-validation-divergence') {
+        setStatistics(prev => ({ ...prev, errorItems: prev.errorItems + 1 }));
+      }
+
+      // New/Updated heuristic (try to read fields if present)
+      if (name === 'actor-product-lifecycle' || name === 'actor-product-lifecycle-group') {
+        const inserted = p?.inserted ?? p?.persist_inserted ?? p?.new_items ?? 0;
+        const updated = p?.updated ?? p?.persist_updated ?? p?.updated_items ?? 0;
+        if (inserted || updated) {
+          setStatistics(prev => ({ ...prev, newItems: prev.newItems + (inserted || 0), updatedItems: prev.updatedItems + (updated || 0) }));
+        }
+      }
+
+      processedIds.add(ev.id);
+    }
+  });
+
+  // Map global buffered events to local display items (latest first, cap 50)
+  const displayedEvents = createMemo<EventItem[]>(() => {
+    const items = eventStore.events();
+    return items.slice(0, 50).map((g) => {
+      const status: EventItem['status'] = /error|failed/i.test(g.name) ? 'error' : 'info';
+      let type: EventItem['type'] = 'system';
+      if (/stage|progress/i.test(g.name)) type = 'stage';
+      if (/product|detail|task/i.test(g.name)) type = 'product';
+      if (/db|database/i.test(g.name)) type = 'system';
+      if (/error|failed/i.test(g.name)) type = 'error';
+      return {
+        id: g.id,
+        timestamp: new Date(g.ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        type,
+        title: g.name,
+        message: typeof g.payload === 'string' ? g.payload : JSON.stringify(g.payload).slice(0, 180),
+        status,
+      } as EventItem;
+    });
+  });
+
   // 테스트용 크롤링 시작 함수
   const startTestCrawling = async () => {
     try {
-      setIsCrawling(true);
-      addEvent({
-        type: 'system',
-        title: '크롤링 시작',
-        message: '테스트 크롤링을 시작합니다...',
-        status: 'info'
-      });
+  setIsCrawling(true);
 
       // 백엔드 크롤링 API 호출 (간단한 테스트용)
       await tauriApi.startCrawling(5); // 5페이지까지 크롤링
 
     } catch (error) {
-      setIsCrawling(false);
-      addEvent({
-        type: 'error',
-        title: '크롤링 시작 실패',
-        message: `오류: ${error}`,
-        status: 'error'
-      });
+  setIsCrawling(false);
     }
   };
 
@@ -74,36 +193,9 @@ export const SimpleEventDisplay: Component = () => {
   const stopCrawling = async () => {
     try {
       await tauriApi.stopCrawling();
-      setIsCrawling(false);
-      addEvent({
-        type: 'system',
-        title: '크롤링 중지',
-        message: '크롤링이 중지되었습니다.',
-        status: 'warning'
-      });
+  setIsCrawling(false);
     } catch (error) {
-      addEvent({
-        type: 'error',
-        title: '크롤링 중지 실패',
-        message: `오류: ${error}`,
-        status: 'error'
-      });
     }
-  };
-
-  // 이벤트 추가 함수
-  const addEvent = (event: Omit<EventItem, 'id' | 'timestamp'>) => {
-    const newEvent: EventItem = {
-      ...event,
-      id: Math.random().toString(36).substr(2, 9),
-      timestamp: new Date().toLocaleTimeString('ko-KR', { 
-        hour: '2-digit', 
-        minute: '2-digit', 
-        second: '2-digit' 
-      })
-    };
-    
-    setEvents(prev => [newEvent, ...prev.slice(0, 49)]); // 최대 50개 유지
   };
 
   // Stage 진행 상황 업데이트
@@ -122,14 +214,6 @@ export const SimpleEventDisplay: Component = () => {
     try {
       // 크롤링 진행 상황 이벤트 구독
       const progressUnlisten = await tauriApi.subscribeToProgress((progress) => {
-        const percentage = progress.percentage ?? 0;
-        addEvent({
-          type: 'system',
-          title: '진행 상황 업데이트',
-          message: `${progress.current_stage}: ${progress.current}/${progress.total} (${percentage.toFixed(1)}%)`,
-          status: 'info'
-        });
-
         // Stage 진행 상황 업데이트
         updateStageProgress(progress.current_stage, progress.current, progress.total, 'running');
         
@@ -143,55 +227,16 @@ export const SimpleEventDisplay: Component = () => {
 
       // 원자적 작업 이벤트 구독
       const atomicUnlisten = await tauriApi.subscribeToAtomicTaskUpdates((event) => {
-        let status: EventItem['status'] = 'info';
-        let title = '작업 진행';
-        
-        switch (event.status) {
-          case 'Success':
-            status = 'success';
-            title = '작업 완료';
-            break;
-          case 'Error':
-            status = 'error';
-            title = '작업 실패';
-            break;
-          case 'Active':
-            status = 'info';
-            title = '작업 실행 중';
-            break;
-          case 'Retrying':
-            status = 'warning';
-            title = '작업 재시도';
-            break;
-        }
-
-        addEvent({
-          type: 'product',
-          title,
-          message: `${event.stage_name}: ${event.task_id.slice(0, 8)}... (${(event.progress * 100).toFixed(1)}%)`,
-          status
-        });
+  // Optional: update progress derived from atomic events as needed
       });
 
       // 에러 이벤트 구독
       const errorUnlisten = await tauriApi.subscribeToErrors((error) => {
-        addEvent({
-          type: 'error',
-          title: '오류 발생',
-          message: `${error.stage}: ${error.message}`,
-          status: 'error'
-        });
+  // Could update error counters if desired
       });
 
       // 스테이지 변경 이벤트 구독
       const stageUnlisten = await tauriApi.subscribeToStageChange((data) => {
-        addEvent({
-          type: 'stage',
-          title: '스테이지 전환',
-          message: `${data.from} → ${data.to}: ${data.message}`,
-          status: 'info'
-        });
-
         // 이전 스테이지 완료 처리
         setStageProgress(prev => prev.map(stage => 
           stage.name.includes(data.from) ? { ...stage, status: 'completed' } : stage
@@ -203,13 +248,6 @@ export const SimpleEventDisplay: Component = () => {
         const successRate = result.total_processed > 0 ? 
           ((result.total_processed - result.errors) / result.total_processed) * 100 : 0;
           
-        addEvent({
-          type: 'system',
-          title: '크롤링 완료',
-          message: `총 ${result.total_processed}개 항목 처리 완료 (성공률: ${successRate.toFixed(1)}%)`,
-          status: 'success'
-        });
-
         updateStatistics({
           totalProducts: result.total_processed,
           newItems: result.new_items,
@@ -227,33 +265,17 @@ export const SimpleEventDisplay: Component = () => {
 
       // 세부 태스크 상태 이벤트 구독
       const taskUnlisten = await tauriApi.subscribeToTaskStatus((task) => {
-        addEvent({
-          type: 'product',
-          title: '태스크 업데이트',
-          message: `${task.stage}: ${task.status} - ${task.message ?? ''}`,
-          status: task.status === 'Completed' ? 'success' : task.status === 'Failed' ? 'error' : task.status === 'Retrying' ? 'warning' : 'info'
-        });
+        // No-op for log; could drive a per-stage metric if needed
       });
 
       // 데이터베이스 통계 이벤트 구독
       const dbUnlisten = await tauriApi.subscribeToDatabaseUpdates((stats) => {
-        addEvent({
-          type: 'system',
-          title: '데이터베이스 업데이트',
-          message: `총 제품 ${stats.total_products}, 최근 업데이트 ${stats.last_updated}`,
-          status: 'info'
-        });
+        // Optional: reflect DB stats in a card
       });
 
       // 계층형 상세 크롤링 이벤트 구독
       const detailUnlisten = await tauriApi.subscribeToDetailedCrawlingEvents((ev) => {
-        const name = ev?.event_name || 'detailed-crawling-event';
-        addEvent({
-          type: 'system',
-          title: name,
-          message: typeof ev === 'string' ? ev : JSON.stringify(ev).slice(0, 180),
-          status: 'info'
-        });
+        // No-op for log; the global store already buffers these
       });
 
       // 정리 함수 등록
@@ -269,13 +291,7 @@ export const SimpleEventDisplay: Component = () => {
       ];
 
     } catch (error) {
-      console.error('이벤트 구독 설정 중 오류:', error);
-      addEvent({
-        type: 'error',
-        title: '시스템 오류',
-        message: '이벤트 구독을 설정할 수 없습니다.',
-        status: 'error'
-      });
+  console.error('이벤트 구독 설정 중 오류:', error);
     }
   });
 
@@ -326,7 +342,7 @@ export const SimpleEventDisplay: Component = () => {
           </div>
         </div>
         <div class="flex gap-4 text-sm text-gray-600">
-          <span>총 이벤트: {events().length}</span>
+          <span>총 이벤트: {displayedEvents().length}</span>
           <span>처리율: {statistics().processingRate.toFixed(1)}%</span>
           <span>총 제품: {statistics().totalProducts}</span>
           <span class={`font-semibold ${isCrawling() ? 'text-green-600' : 'text-gray-500'}`}>
@@ -346,7 +362,7 @@ export const SimpleEventDisplay: Component = () => {
                   <div class="flex justify-between items-center">
                     <span class="text-sm font-medium text-gray-700">{stage.name}</span>
                     <span class="text-xs text-gray-500">
-                      {stage.current}/{stage.total}
+                      {stage.total > 0 ? `${stage.current}/${stage.total}` : ''}
                     </span>
                   </div>
                   <div class="w-full bg-gray-200 rounded-full h-2">
@@ -388,7 +404,7 @@ export const SimpleEventDisplay: Component = () => {
         <div class="bg-white rounded-lg shadow-md p-4">
           <h2 class="text-lg font-semibold text-gray-800 mb-4">실시간 이벤트</h2>
           <div class="h-80 overflow-y-auto space-y-2">
-            <For each={events()}>
+            <For each={displayedEvents()}>
               {(event) => (
                 <div class={`p-3 rounded-lg border-l-4 ${getStatusColor(event.status)}`}>
                   <div class="flex justify-between items-start mb-1">

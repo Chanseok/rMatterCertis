@@ -451,7 +451,8 @@ pub fn run() {
             commands::config_commands::save_app_settings,
             crate::commands_integrated::reset_product_storage,
             commands::validation_commands::start_validation,
-            commands::sync_commands::start_partial_sync // TODO: Add other commands as they are implemented
+            commands::sync_commands::start_partial_sync, // TODO: Add other commands as they are implemented
+            commands::sync_commands::start_repair_sync
                                                         // Most commands are temporarily disabled for compilation
         ]);
 

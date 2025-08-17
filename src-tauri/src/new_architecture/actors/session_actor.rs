@@ -491,42 +491,44 @@ impl SessionActor {
         );
         self.state = SessionState::Completed;
 
-        // 완료 이벤트 발행
+        // 완료 이벤트 발행 (집계된 요약 사용)
+        let aggregated_summary = self.create_session_summary().unwrap_or(SessionSummary {
+            session_id: session_id.clone(),
+            total_duration_ms: self
+                .start_time
+                .map(|t| t.elapsed().as_millis() as u64)
+                .unwrap_or(0),
+            total_pages_processed: self.total_success_count,
+            total_products_processed: self.products_inserted + self.products_updated,
+            success_rate: if self.total_success_count > 0 { 1.0 } else { 0.0 },
+            avg_page_processing_time: if self.total_success_count > 0 {
+                self.start_time
+                    .map(|t| t.elapsed().as_millis() as u64 / self.total_success_count as u64)
+                    .unwrap_or(0)
+            } else {
+                0
+            },
+            error_summary: Vec::new(),
+            total_retry_events: 0,
+            max_retries_single_page: 0,
+            pages_retried: 0,
+            retry_histogram: Vec::new(),
+            processed_batches: self.processed_batches,
+            total_success_count: self.total_success_count,
+            duplicates_skipped: self.duplicates_skipped,
+            planned_list_batches: planned_batches_count as u32,
+            executed_list_batches: self.processed_batches,
+            failed_pages_count: 0,
+            failed_page_ids: Vec::new(),
+            products_inserted: self.products_inserted,
+            products_updated: self.products_updated,
+            final_state: "completed".to_string(),
+            timestamp: Utc::now(),
+        });
+
         let completion_event = AppEvent::SessionCompleted {
             session_id: session_id.clone(),
-            summary: SessionSummary {
-                session_id: session_id.clone(),
-                total_duration_ms: self
-                    .start_time
-                    .map(|t| t.elapsed().as_millis() as u64)
-                    .unwrap_or(0),
-                total_pages_processed: self.total_success_count,
-                total_products_processed: 0, // TODO: 실제 제품 수 계산
-                success_rate: 1.0,           // TODO: 실제 성공률 계산
-                avg_page_processing_time: self
-                    .start_time
-                    .map(|t| {
-                        t.elapsed().as_millis() as u64
-                            / std::cmp::max(self.total_success_count as u64, 1)
-                    })
-                    .unwrap_or(0),
-                error_summary: Vec::new(), // TODO: 실제 에러 수집
-                processed_batches: self.processed_batches,
-                total_success_count: self.total_success_count,
-                duplicates_skipped: self.duplicates_skipped,
-                planned_list_batches: planned_batches_count as u32,
-                executed_list_batches: self.processed_batches,
-                failed_pages_count: 0,
-                failed_page_ids: Vec::new(),
-                total_retry_events: 0,
-                max_retries_single_page: 0,
-                pages_retried: 0,
-                retry_histogram: Vec::new(),
-                products_inserted: 0,
-                products_updated: 0,
-                final_state: "completed".to_string(),
-                timestamp: Utc::now(),
-            },
+            summary: aggregated_summary.clone(),
             timestamp: Utc::now(),
         };
 
@@ -548,13 +550,36 @@ impl SessionActor {
             total_failed: 0,  // TODO: 배치 결과 수집 시 합산
             total_retries: 0, // TODO: 배치 리포트 기반 합산
             duration_ms,
-            products_inserted: 0,
-            products_updated: 0,
+            products_inserted: self.products_inserted,
+            products_updated: self.products_updated,
             timestamp: Utc::now(),
         };
         context
             .emit_event(crawl_report)
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
+
+        // === KPI: 최종 세션 요약 로그 (DB 저장 내역 포함) ===
+        let plan_hash_json = match &self.active_plan_hash {
+            Some(h) => format!("\"{}\"", h),
+            None => "null".to_string(),
+        };
+        let s = &aggregated_summary;
+        info!(target: "kpi.session",
+            "{{\"event\":\"session_final_summary\",\"session_id\":\"{}\",\"final_state\":\"{}\",\"duration_ms\":{},\"processed_batches\":{},\"total_pages_processed\":{},\"total_success_count\":{},\"failed_pages_count\":{},\"total_retry_events\":{},\"products_inserted\":{},\"products_updated\":{},\"duplicates_skipped\":{},\"plan_hash\":{},\"ts\":\"{}\"}}",
+            s.session_id,
+            s.final_state,
+            s.total_duration_ms,
+            s.processed_batches,
+            s.total_pages_processed,
+            s.total_success_count,
+            s.failed_pages_count,
+            s.total_retry_events,
+            s.products_inserted,
+            s.products_updated,
+            s.duplicates_skipped,
+            plan_hash_json,
+            chrono::Utc::now()
+        );
 
         info!("✅ Session {} completed successfully", session_id);
         Ok(())

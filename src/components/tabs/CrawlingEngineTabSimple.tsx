@@ -1,12 +1,19 @@
-import { createSignal, Show, onMount, For } from 'solid-js';
+import { createSignal, Show, onMount, onCleanup, For } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import { CrawlingRangeRequest, CrawlingRangeResponse } from '../../types/advanced-engine';
+// Types are relaxed locally to avoid tight coupling during integration
+import { tauriApi } from '../../services/tauri-api';
+import EventConsole from '../dev/EventConsole';
 
 export default function CrawlingEngineTabSimple() {
   const [isRunning, setIsRunning] = createSignal(false);
-  const [crawlingRange, setCrawlingRange] = createSignal<CrawlingRangeResponse | null>(null);
+  const [crawlingRange, setCrawlingRange] = createSignal<any | null>(null);
   const [statusMessage, setStatusMessage] = createSignal<string>('크롤링 준비 완료');
   const [logs, setLogs] = createSignal<string[]>([]);
+  const [showConsole, setShowConsole] = createSignal<boolean>(true);
+  const [isValidating, setIsValidating] = createSignal(false);
+  const [isSyncing, setIsSyncing] = createSignal(false);
+  const [syncRanges, setSyncRanges] = createSignal<string>('');
+  const [validationPages, setValidationPages] = createSignal<number | ''>('');
 
   // 크롤링 범위 계산
   const calculateCrawlingRange = async () => {
@@ -24,14 +31,14 @@ export default function CrawlingEngineTabSimple() {
       const siteStatus = siteStatusResponse.data;
       addLog(`✅ 사이트 상태 확인 완료: ${siteStatus.total_pages}페이지, 마지막 페이지 ${siteStatus.products_on_last_page}개 제품`);
       
-      const request: CrawlingRangeRequest = {
+  const request: any = {
         total_pages_on_site: siteStatus.total_pages,
         products_on_last_page: siteStatus.products_on_last_page,
       };
       
       addLog(`📋 크롤링 범위 계산 요청: ${request.total_pages_on_site}페이지, 마지막 페이지 ${request.products_on_last_page}개 제품`);
       
-      const response = await invoke<CrawlingRangeResponse>('calculate_crawling_range', { request });
+  const response = await invoke<any>('calculate_crawling_range', { request });
       setCrawlingRange(response);
       
       const startPage = response.range?.[0] || 0;
@@ -43,61 +50,53 @@ export default function CrawlingEngineTabSimple() {
     }
   };  
   
-  // 가짜 Actor 시스템 크롤링 (실제로는 ServiceBased 엔진 사용)
-  const startFakeActorCrawling = async () => {
+  // 통합 Actor 기반 크롤링 (경량 설정)
+  const startLightUnified = async () => {
     if (isRunning()) return;
-    
+
     setIsRunning(true);
-    setStatusMessage('🎭 가짜 Actor 시스템 크롤링 시작 중...');
-    addLog('🎭 가짜 Actor 시스템 크롤링 시작 (실제로는 ServiceBased 엔진)');
+    setStatusMessage('🎭 통합 파이프라인(라이트) 시작 중...');
+    addLog('🎭 통합 파이프라인 시작 (라이트 설정)');
 
     try {
-      const result = await invoke('start_actor_system_crawling', {
-        start_page: 0,     // 프론트엔드에서는 범위를 지정하지 않음 (CrawlingPlanner가 계산)
-        end_page: 0,       // 프론트엔드에서는 범위를 지정하지 않음 (CrawlingPlanner가 계산)
-        concurrency: 8,
-        batch_size: 3,
-        delay_ms: 100
+      const res = await tauriApi.startUnifiedCrawling({
+        mode: 'advanced',
+        overrideConcurrency: 8,
+        overrideBatchSize: 3,
+        delayMs: 100,
       });
-      addLog(`✅ 가짜 Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
-      setStatusMessage('🎭 가짜 Actor 시스템 실행 중');
-      
+      addLog(`✅ 통합 파이프라인(라이트) 세션 시작: ${JSON.stringify(res)}`);
+      setStatusMessage('🎭 통합 파이프라인 실행 중 (라이트)');
     } catch (error) {
-      console.error('가짜 Actor 시스템 크롤링 시작 실패:', error);
-      addLog(`❌ 가짜 Actor 시스템 크롤링 시작 실패: ${error}`);
+      console.error('통합 파이프라인(라이트) 시작 실패:', error);
+      addLog(`❌ 통합 파이프라인(라이트) 시작 실패: ${error}`);
       setStatusMessage('크롤링 실패');
-    } finally {
-      setTimeout(() => setIsRunning(false), 3000); // 3초 후 완료로 처리
+      setIsRunning(false);
     }
   };
 
-  // 진짜 Actor 시스템 크롤링 시작
-  const startRealActorCrawling = async () => {
+  // 통합 Actor 기반 크롤링 (하이 설정)
+  const startUnifiedAdvanced = async () => {
     if (isRunning()) return;
-    
+
     setIsRunning(true);
-    setStatusMessage('🎭 진짜 Actor 시스템 크롤링 시작 중...');
-    addLog('🎭 진짜 Actor 시스템 크롤링 시작');
+    setStatusMessage('🎭 통합 파이프라인(하이) 시작 중...');
+    addLog('🎭 통합 파이프라인 시작 (하이 설정)');
 
     try {
-      const result = await invoke('start_actor_system_crawling', {
-        request: {
-          start_page: 0,     // By Design: 프론트엔드에서 범위 지정하지 않음
-          end_page: 0,       // By Design: 프론트엔드에서 범위 지정하지 않음
-          concurrency: 64,
-          batch_size: 3,
-          delay_ms: 100
-        }
+      const res = await tauriApi.startUnifiedCrawling({
+        mode: 'advanced',
+        overrideConcurrency: 64,
+        overrideBatchSize: 3,
+        delayMs: 100,
       });
-      addLog(`✅ 진짜 Actor 시스템 크롤링 세션 시작: ${JSON.stringify(result)}`);
-      setStatusMessage('🎭 진짜 Actor 시스템 실행 중 (설정 기반)');
-      
+      addLog(`✅ 통합 파이프라인(하이) 세션 시작: ${JSON.stringify(res)}`);
+      setStatusMessage('🎭 통합 파이프라인 실행 중 (하이)');
     } catch (error) {
-      console.error('진짜 Actor 시스템 크롤링 시작 실패:', error);
-      addLog(`❌ 진짜 Actor 시스템 크롤링 시작 실패: ${error}`);
+      console.error('통합 파이프라인(하이) 시작 실패:', error);
+      addLog(`❌ 통합 파이프라인(하이) 시작 실패: ${error}`);
       setStatusMessage('크롤링 실패');
-    } finally {
-      setTimeout(() => setIsRunning(false), 5000); // 5초 후 완료로 처리
+      setIsRunning(false);
     }
   };
 
@@ -129,8 +128,97 @@ export default function CrawlingEngineTabSimple() {
     setLogs(prev => [`[${timestamp}] ${message}`, ...prev.slice(0, 19)]);
   };
 
+  // Validation run
+  const startValidationRun = async () => {
+    if (isValidating()) return;
+    setIsValidating(true);
+    addLog('🧪 Validation 시작');
+    try {
+      const res = await tauriApi.startValidation({
+        scanPages: typeof validationPages() === 'number' ? (validationPages() as number) : undefined,
+      });
+      addLog(`✅ Validation 요청 완료: ${JSON.stringify(res)}`);
+    } catch (e) {
+      console.error(e);
+      addLog(`❌ Validation 실패: ${e}`);
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  // Sync run
+  const startSyncRun = async () => {
+    if (isSyncing()) return;
+    setIsSyncing(true);
+    const ranges = syncRanges().trim();
+    addLog(`🔄 Sync 시작 ${ranges ? `(범위: ${ranges})` : '(자동 범위)'}`);
+    try {
+      const res = ranges
+        ? await tauriApi.startPartialSync(ranges)
+        : await tauriApi.startRepairSync();
+      addLog(`✅ Sync 완료: ${JSON.stringify(res)}`);
+    } catch (e) {
+      console.error(e);
+      addLog(`❌ Sync 실패: ${e}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   onMount(() => {
     calculateCrawlingRange();
+
+    const unsubs: Array<() => void> = [];
+
+    // Listen to unified Actor session lifecycle to toggle buttons/status
+    tauriApi
+      .subscribeToActorBridgeEvents((name, payload) => {
+        if (name === 'actor-session-started') {
+          setIsRunning(true);
+          setStatusMessage('크롤링 실행 중 (세션 시작)');
+          addLog('🎬 세션 시작');
+        }
+        if (name === 'actor-session-completed') {
+          setIsRunning(false);
+          setStatusMessage('크롤링 완료');
+          addLog('🏁 세션 완료');
+        }
+        if (name === 'actor-session-failed') {
+          setIsRunning(false);
+          setStatusMessage('크롤링 실패');
+          addLog(`❌ 세션 실패: ${JSON.stringify(payload)}`);
+        }
+        if (name === 'actor-session-timeout' || name === 'actor-shutdown-completed') {
+          setIsRunning(false);
+          setStatusMessage('크롤링 종료');
+          addLog('🛑 세션 종료');
+        }
+      })
+      .then((un) => unsubs.push(un))
+      .catch((e) => console.warn('[CrawlingEngineTabSimple] actor bridge subscribe failed', e));
+
+    // Legacy completion/stopped fallbacks
+    tauriApi
+      .subscribeToCompletion(() => {
+        setIsRunning(false);
+        setStatusMessage('크롤링 완료');
+        addLog('🏁 완료 이벤트 수신');
+      })
+      .then((un) => unsubs.push(un))
+      .catch(() => {});
+
+    tauriApi
+      .subscribeToCrawlingStopped(() => {
+        setIsRunning(false);
+        setStatusMessage('크롤링 중지됨');
+        addLog('⏹️ 중지 이벤트 수신');
+      })
+      .then((un) => unsubs.push(un))
+      .catch(() => {});
+
+    onCleanup(() => {
+      unsubs.forEach((u) => u());
+    });
   });
 
   return (
@@ -241,7 +329,7 @@ export default function CrawlingEngineTabSimple() {
         </Show>
 
         {/* 제어 버튼 */}
-        <div class="flex space-x-4 mb-6">
+  <div class="flex flex-wrap gap-4 mb-6 items-end">
           <button
             onClick={startSmartCrawling}
             disabled={isRunning()}
@@ -255,7 +343,7 @@ export default function CrawlingEngineTabSimple() {
           </button>
           
           <button
-            onClick={startRealActorCrawling}
+            onClick={startUnifiedAdvanced}
             disabled={isRunning()}
             class={`px-6 py-3 rounded-lg font-medium text-white ${
               isRunning() 
@@ -263,11 +351,11 @@ export default function CrawlingEngineTabSimple() {
                 : 'bg-purple-600 hover:bg-purple-700'
             }`}
           >
-            {isRunning() ? '진짜 Actor 실행 중...' : '🎭 진짜 Actor 시스템 크롤링'}
+            {isRunning() ? '통합 파이프라인 실행 중...' : '🎭 통합 파이프라인 (하이)'}
           </button>
           
           <button
-            onClick={startFakeActorCrawling}
+            onClick={startLightUnified}
             disabled={isRunning()}
             class={`px-6 py-3 rounded-lg font-medium text-white ${
               isRunning() 
@@ -275,7 +363,7 @@ export default function CrawlingEngineTabSimple() {
                 : 'bg-orange-600 hover:bg-orange-700'
             }`}
           >
-            {isRunning() ? '가짜 Actor 실행 중...' : '🎭 가짜 Actor 시스템 크롤링'}
+            {isRunning() ? '통합 파이프라인 실행 중...' : '🎭 통합 파이프라인 (라이트)'}
           </button>
           
           <button
@@ -284,6 +372,54 @@ export default function CrawlingEngineTabSimple() {
             class="px-6 py-3 rounded-lg font-medium text-blue-600 border border-blue-600 hover:bg-blue-50 disabled:opacity-50"
           >
             📊 범위 다시 계산
+          </button>
+          {/* Validation Controls */}
+          <div class="flex items-center gap-2">
+            <input
+              type="number"
+              min="1"
+              class="w-28 px-3 py-2 border rounded-md text-sm"
+              placeholder="검증 페이지 수"
+              value={validationPages() as any}
+              onInput={(e) => {
+                const v = (e.currentTarget.value || '').trim();
+                setValidationPages(v === '' ? '' : Number(v));
+              }}
+            />
+            <button
+              onClick={startValidationRun}
+              disabled={isValidating()}
+              class={`px-4 py-2 rounded-lg font-medium text-white ${
+                isValidating() ? 'bg-gray-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'
+              }`}
+            >
+              {isValidating() ? '검증 실행 중...' : '🧪 Validation 실행'}
+            </button>
+          </div>
+          {/* Sync Controls */}
+          <div class="flex items-center gap-2">
+            <input
+              type="text"
+              class="w-64 px-3 py-2 border rounded-md text-sm"
+              placeholder="Sync 범위 (예: 498-492,489,487-485)"
+              value={syncRanges()}
+              onInput={(e) => setSyncRanges(e.currentTarget.value)}
+            />
+            <button
+              onClick={startSyncRun}
+              disabled={isSyncing()}
+              class={`px-4 py-2 rounded-lg font-medium text-white ${
+                isSyncing() ? 'bg-gray-400 cursor-not-allowed' : 'bg-teal-600 hover:bg-teal-700'
+              }`}
+            >
+              {isSyncing() ? 'Sync 실행 중...' : '🔄 Sync 실행'}
+            </button>
+          </div>
+          <button
+            onClick={() => setShowConsole(!showConsole())}
+            class="px-6 py-3 rounded-lg font-medium text-gray-700 border border-gray-300 hover:bg-gray-50"
+          >
+            {showConsole() ? '🧪 이벤트 콘솔 숨기기' : '🧪 이벤트 콘솔 보기'}
           </button>
         </div>
 
@@ -303,6 +439,14 @@ export default function CrawlingEngineTabSimple() {
             </Show>
           </div>
         </div>
+
+        {/* Actor 이벤트 콘솔 (개발용) */}
+        <Show when={showConsole()}>
+          <div class="mt-6 border rounded-lg">
+            <div class="px-4 py-2 border-b bg-gray-50 text-sm text-gray-700">Actor 이벤트 콘솔</div>
+            <EventConsole />
+          </div>
+        </Show>
       </div>
     </div>
   );
