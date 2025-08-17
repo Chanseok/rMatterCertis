@@ -27,6 +27,27 @@ pub struct IntegratedProductRepository {
 }
 
 impl IntegratedProductRepository {
+    /// Normalize URL for consistent storage and comparison
+    /// - Trims whitespace
+    /// - Lowercases the hostname
+    /// - Leaves path/query as-is (CSA URLs are case-sensitive there)
+    fn normalize_url(url: &str) -> String {
+        let trimmed = url.trim();
+        if let Ok(mut parsed) = url::Url::parse(trimmed) {
+            if let Some(host) = parsed.host_str() {
+                let lower = host.to_ascii_lowercase();
+                // Only replace host if changed
+                if lower != host {
+                    // Rebuild with lowercased host
+                    let _ = parsed.set_host(Some(&lower));
+                }
+            }
+            parsed.to_string()
+        } else {
+            // Fallback to trimmed original
+            trimmed.to_string()
+        }
+    }
     /// Expose underlying pool reference (read-only operations convenience)
     pub fn pool(&self) -> &sqlx::SqlitePool {
         &self.pool
@@ -79,9 +100,11 @@ impl IntegratedProductRepository {
     /// Returns: (was_updated: bool, was_created: bool)
     pub async fn create_or_update_product(&self, product: &Product) -> Result<(bool, bool)> {
         let now = chrono::Utc::now();
+    // Normalize URL to ensure consistent storage and matching
+    let normalized_url = Self::normalize_url(&product.url);
 
         // Check if product already exists
-        let existing = self.get_product_by_url(&product.url).await?;
+    let existing = self.get_product_by_url(&normalized_url).await?;
 
         if let Some(existing_product) = existing {
             // 🔍 지능적 비교: 실제 변경사항이 있는지 확인
@@ -106,7 +129,7 @@ impl IntegratedProductRepository {
                 .bind(product.page_id)
                 .bind(product.index_in_page)
                 .bind(now)
-                .bind(&product.url)
+                .bind(&normalized_url)
                 .execute(&*self.pool)
                 .await?;
 
@@ -152,7 +175,7 @@ impl IntegratedProductRepository {
                 ",
             )
             .bind(&generated_id)  // Add generated_id
-            .bind(&product.url)
+            .bind(&normalized_url)
             .bind(&product.manufacturer)
             .bind(&product.model)
             .bind(&product.certificate_id)
@@ -178,7 +201,12 @@ impl IntegratedProductRepository {
         let now = chrono::Utc::now();
 
         // 기존 ProductDetail 확인
-        let existing = self.get_product_detail_by_url(&detail.url).await?;
+    // Apply normalization to reduce accidental duplicates
+    let normalized_url = Self::normalize_url(&detail.url);
+    let mut detail = detail.clone();
+    detail.url = normalized_url;
+
+    let existing = self.get_product_detail_by_url(&detail.url).await?;
 
         if let Some(existing_detail) = existing {
             // 🔍 지능적 비교: 빈 필드 채우기 + 실제 변경사항 확인
@@ -465,18 +493,44 @@ impl IntegratedProductRepository {
                 }
             });
 
-            sqlx::query(
-                r"
-                INSERT INTO product_details 
-                (url, page_id, index_in_page, id, manufacturer, model, device_type,
-                 certificate_id, certification_date, software_version, hardware_version,
-                 vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
-                 tis_trp_tested, specification_version, transport_interface, 
-                 primary_device_type_id, application_categories, description,
-                 compliance_document_url, program_type, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ",
-            )
+                        sqlx::query(
+                                r"
+                                INSERT INTO product_details 
+                                (url, page_id, index_in_page, id, manufacturer, model, device_type,
+                                 certificate_id, certification_date, software_version, hardware_version,
+                                 vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
+                                 tis_trp_tested, specification_version, transport_interface, 
+                                 primary_device_type_id, application_categories, description,
+                                 compliance_document_url, program_type, created_at, updated_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                ON CONFLICT(url) DO UPDATE SET
+                                    page_id = excluded.page_id,
+                                    index_in_page = excluded.index_in_page,
+                                    id = excluded.id,
+                                    manufacturer = excluded.manufacturer,
+                                    model = excluded.model,
+                                    device_type = excluded.device_type,
+                                    certificate_id = excluded.certificate_id,
+                                    certification_date = excluded.certification_date,
+                                    software_version = excluded.software_version,
+                                    hardware_version = excluded.hardware_version,
+                                    vid = excluded.vid,
+                                    pid = excluded.pid,
+                                    family_sku = excluded.family_sku,
+                                    family_variant_sku = excluded.family_variant_sku,
+                                    firmware_version = excluded.firmware_version,
+                                    family_id = excluded.family_id,
+                                    tis_trp_tested = excluded.tis_trp_tested,
+                                    specification_version = excluded.specification_version,
+                                    transport_interface = excluded.transport_interface,
+                                    primary_device_type_id = excluded.primary_device_type_id,
+                                    application_categories = excluded.application_categories,
+                                    description = excluded.description,
+                                    compliance_document_url = excluded.compliance_document_url,
+                                    program_type = excluded.program_type,
+                                    updated_at = excluded.updated_at
+                                ",
+                        )
             .bind(&detail.url)
             .bind(detail.page_id)
             .bind(detail.index_in_page)
@@ -579,13 +633,14 @@ impl IntegratedProductRepository {
 
     /// Get product by URL
     pub async fn get_product_by_url(&self, url: &str) -> Result<Option<Product>> {
-        let row = sqlx::query(
+    let normalized_url = Self::normalize_url(url);
+    let row = sqlx::query(
             r"
             SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
             FROM products WHERE url = ?
             ",
         )
-        .bind(url)
+    .bind(&normalized_url)
         .fetch_optional(&*self.pool)
         .await?;
 
@@ -622,7 +677,8 @@ impl IntegratedProductRepository {
 
     /// Get product detail by URL
     pub async fn get_product_detail_by_url(&self, url: &str) -> Result<Option<ProductDetail>> {
-        let row = sqlx::query(
+    let normalized_url = Self::normalize_url(url);
+    let row = sqlx::query(
             r"
             SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
                    certificate_id, certification_date, software_version, hardware_version,
@@ -633,7 +689,7 @@ impl IntegratedProductRepository {
             FROM product_details WHERE url = ?
             ",
         )
-        .bind(url)
+    .bind(&normalized_url)
         .fetch_optional(&*self.pool)
         .await?;
 

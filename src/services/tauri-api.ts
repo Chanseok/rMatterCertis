@@ -763,6 +763,28 @@ export class TauriApiService {
     }
   }
 
+  /**
+   * Scan DB for pagination mismatches (page_id/index_in_page invariants)
+   */
+  async scanDbPaginationMismatches(): Promise<any> {
+    try {
+      return await invoke<any>('scan_db_pagination_mismatches');
+    } catch (error) {
+      throw new Error(`Failed to scan DB pagination mismatches: ${error}`);
+    }
+  }
+
+  /**
+   * Cleanup duplicate rows by URL across products and product_details.
+   */
+  async cleanupDuplicateUrls(): Promise<any> {
+    try {
+      return await invoke<any>('cleanup_duplicate_urls');
+    } catch (error) {
+      throw new Error(`Failed to cleanup duplicate URLs: ${error}`);
+    }
+  }
+
   // ❌ REMOVED: getFrontendConfig - 설정 전송 API 제거 (아키텍처 원칙 준수)
 
   /**

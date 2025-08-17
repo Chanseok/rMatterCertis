@@ -21,7 +21,8 @@
   "verify:fast": "npm run verify:runtime || DISABLE_STRUCTURED_CHECKS=1 bash scripts/verify_runtime_plan.sh src-tauri/target/debug/logs/back_front.log",
   "precommit": "bash scripts/precommit.sh",
   "audit:grep": "bash scripts/grep_audit.sh",
-  "archive:backups": "bash scripts/archive_backups.sh"
+  "archive:backups": "bash scripts/archive_backups.sh",
+  "db:dedup-urls": "bash scripts/sqlite_dedup_by_url.sh"
   },
   "license": "MIT",
   "dependencies": {

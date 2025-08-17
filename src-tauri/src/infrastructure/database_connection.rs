@@ -155,6 +155,75 @@ impl DatabaseConnection {
             }
         }
 
+        // Apply 005_add_product_id.sql if products.id is missing
+        let has_products_id_col: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM pragma_table_info('products') WHERE name='id' LIMIT 1;",
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+
+        if has_products_id_col.is_none() {
+            if concise {
+                debug!("🧩 Applying migration 005_add_product_id.sql (products.id)");
+            } else {
+                info!("🧩 Applying migration 005_add_product_id.sql (products.id)");
+            }
+            let migration_path = std::path::Path::new("migrations/005_add_product_id.sql");
+            if migration_path.exists() {
+                let migration_sql = fs::read_to_string(migration_path)?;
+                sqlx::query(&migration_sql).execute(&self.pool).await?;
+            } else {
+                let migration_sql = include_str!("../../migrations/005_add_product_id.sql");
+                sqlx::query(migration_sql).execute(&self.pool).await?;
+            }
+            if concise {
+                debug!("✅ Migration 005 applied");
+            } else {
+                info!("✅ Migration 005 applied");
+            }
+        } else if !concise {
+            debug!("ℹ️ Migration 005 not needed (products.id exists)");
+        }
+
+        // Apply 006_add_unique_slot_index.sql if unique slot indexes are missing
+        let has_ux_products_slot: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='ux_products_slot' LIMIT 1;",
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+
+        let has_ux_product_details_slot: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='ux_product_details_slot' LIMIT 1;",
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+
+        if has_ux_products_slot.is_none() || has_ux_product_details_slot.is_none() {
+            if concise {
+                debug!("🧩 Applying migration 006_add_unique_slot_index.sql (unique slot indexes)");
+            } else {
+                info!("🧩 Applying migration 006_add_unique_slot_index.sql (unique slot indexes)");
+            }
+            let migration_path = std::path::Path::new("migrations/006_add_unique_slot_index.sql");
+            if migration_path.exists() {
+                let migration_sql = fs::read_to_string(migration_path)?;
+                sqlx::query(&migration_sql).execute(&self.pool).await?;
+            } else {
+                let migration_sql = include_str!("../../migrations/006_add_unique_slot_index.sql");
+                sqlx::query(migration_sql).execute(&self.pool).await?;
+            }
+            if concise {
+                debug!("✅ Migration 006 applied");
+            } else {
+                info!("✅ Migration 006 applied");
+            }
+        } else if !concise {
+            debug!("ℹ️ Migration 006 not needed (unique slot indexes exist)");
+        }
+
         // Report on database status
         let product_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products")
             .fetch_one(&self.pool)

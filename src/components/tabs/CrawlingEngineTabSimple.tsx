@@ -46,6 +46,37 @@ export default function CrawlingEngineTabSimple() {
   // Animation toggles
   const [validationPulse, setValidationPulse] = createSignal(false);
   const [persistFlash, setPersistFlash] = createSignal(false);
+  // Stage X: DB mismatch diagnostics
+  const [diagLoading, setDiagLoading] = createSignal(false);
+  const [diagResult, setDiagResult] = createSignal<any | null>(null);
+  const [cleanupLoading, setCleanupLoading] = createSignal(false);
+  const runDiagnostics = async () => {
+    try {
+      setDiagLoading(true);
+      const res = await tauriApi.scanDbPaginationMismatches();
+      setDiagResult(res);
+      addLog('🔎 DB pagination mismatch scan completed');
+    } catch (e) {
+      addLog('❌ DB mismatch scan failed: ' + (e as any)?.message);
+    } finally {
+      setDiagLoading(false);
+    }
+  };
+  const runUrlCleanup = async () => {
+    try {
+      setCleanupLoading(true);
+      const res = await tauriApi.cleanupDuplicateUrls();
+      addLog(
+        `🧹 중복 제거 완료: URL기준 products ${res.products_removed}, details ${res.product_details_removed} 삭제 | 슬롯기준(page_id,index) products ${res.slot_products_removed}, details ${res.slot_product_details_removed} 삭제 | 남은 URL중복 products ${res.remaining_duplicates_products}, details ${res.remaining_duplicates_product_details} | 남은 슬롯중복 products ${res.remaining_slot_duplicates_products}, details ${res.remaining_slot_duplicates_product_details}`
+      );
+      // Refresh diagnostics after cleanup for convenience
+      await runDiagnostics();
+    } catch (e) {
+      addLog('❌ URL 중복 제거 실패: ' + (e as any)?.message);
+    } finally {
+      setCleanupLoading(false);
+    }
+  };
   // Stage 4: DB snapshot (latest observed)
   const [dbSnapshot, setDbSnapshot] = createSignal<{
     total?: number;
@@ -614,6 +645,60 @@ export default function CrawlingEngineTabSimple() {
               })()}%` }}></div>
             </div>
           </div>
+        </div>
+
+        {/* Stage X: DB Pagination Diagnostics */}
+        <div class="bg-white rounded-lg border p-4 mb-6">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-md font-semibold text-gray-800">Stage X: DB Pagination Diagnostics</h3>
+            <div class="flex gap-2">
+              <button class={`px-3 py-1 text-sm rounded ${diagLoading() ? 'bg-gray-200 text-gray-500' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`} disabled={diagLoading()} onClick={runDiagnostics}>
+                {diagLoading() ? '진단 중…' : '진단 실행'}
+              </button>
+              <button class={`px-3 py-1 text-sm rounded ${cleanupLoading() ? 'bg-gray-200 text-gray-500' : 'bg-rose-600 text-white hover:bg-rose-700'}`} disabled={cleanupLoading()} onClick={runUrlCleanup}>
+                {cleanupLoading() ? '정리 중…' : 'URL 중복 제거'}
+              </button>
+            </div>
+          </div>
+          <Show when={diagResult()} fallback={<p class="text-xs text-gray-500">로컬 DB의 page_id/index_in_page 정합성을 검사합니다. 실행을 눌러 결과를 확인하세요.</p>}>
+            <div class="text-xs text-gray-700 space-y-2">
+              <div class="flex gap-4">
+                <span>총 제품: <b>{diagResult()?.total_products ?? 0}</b></span>
+                <span>DB 최대 page_id: <b>{diagResult()?.max_page_id_db ?? '-'}</b></span>
+                <span>사이트 총 페이지: <b>{diagResult()?.total_pages_site ?? '-'}</b></span>
+                <span>마지막 페이지 아이템: <b>{diagResult()?.items_on_last_page ?? '-'}</b></span>
+              </div>
+              <div>
+                <b>이상 그룹</b>
+                <ul class="list-disc ml-5">
+                  <For each={(diagResult()?.group_summaries ?? []).filter((g: any) => g.status !== 'ok')}>
+                    {(g: any) => (
+                      <li>
+                        page_id {g.page_id}{g.current_page_number != null ? ` (물리 ${g.current_page_number})` : ''}: status={g.status} count={g.count} distinct={g.distinct_indices}
+                        {g.duplicate_indices?.length ? ` dup=${g.duplicate_indices.join(',')}` : ''}
+                        {g.missing_indices?.length ? ` miss=${g.missing_indices.join(',')}` : ''}
+                        {g.out_of_range_count ? ` oob=${g.out_of_range_count}` : ''}
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </div>
+              <Show when={(diagResult()?.duplicate_positions ?? []).length > 0}>
+                <div>
+                  <b>중복 위치 샘플</b>
+                  <ul class="list-disc ml-5">
+                    <For each={(diagResult()?.duplicate_positions ?? []).slice(0, 20)}>
+                      {(d: any) => (
+                        <li>
+                          page_id {d.page_id}{d.current_page_number != null ? ` (물리 ${d.current_page_number})` : ''}, index {d.index_in_page}: {d.urls?.length ?? 0}개 URL
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </div>
+              </Show>
+            </div>
+          </Show>
         </div>
 
   {/* Stage3/Stage4/Stage5 Mini Panels */}

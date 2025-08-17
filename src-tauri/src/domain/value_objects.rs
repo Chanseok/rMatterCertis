@@ -65,14 +65,20 @@ impl ValidatedUrl {
             return Err(UrlError::Empty);
         }
 
-        let parsed = url::Url::parse(&url).map_err(|_| UrlError::InvalidFormat)?;
+        // Normalize incoming URL before validation
+        let normalized = normalize_url_str(&url);
 
-        let domain = parsed.host_str().ok_or(UrlError::NoDomain)?.to_string();
+        let parsed = url::Url::parse(&normalized).map_err(|_| UrlError::InvalidFormat)?;
+
+        let domain = parsed
+            .host_str()
+            .ok_or(UrlError::NoDomain)?
+            .to_ascii_lowercase();
 
         let is_secure = parsed.scheme() == "https";
 
         Ok(Self {
-            url,
+            url: normalized,
             is_secure,
             domain,
         })
@@ -100,6 +106,25 @@ impl ValidatedUrl {
     #[must_use]
     pub fn is_from_domain(&self, domain: &str) -> bool {
         self.domain.contains(domain)
+    }
+}
+
+/// Normalize a URL string by trimming and lowercasing the host portion only.
+fn normalize_url_str(input: &str) -> String {
+    let trimmed = input.trim();
+    if let Ok(mut parsed) = url::Url::parse(trimmed) {
+        // Lowercase only the host; keep path/query/fragment as-is
+        if let Some(host) = parsed.host_str() {
+            let lower = host.to_ascii_lowercase();
+            if lower != host {
+                // Ignore error; if setting host fails, fallback to original parsed URL
+                let _ = parsed.set_host(Some(&lower));
+            }
+        }
+        parsed.to_string()
+    } else {
+        // Fallback to trimmed if cannot parse (validation will error later)
+        trimmed.to_string()
     }
 }
 

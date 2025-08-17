@@ -144,6 +144,8 @@ pub mod commands {
     pub mod system_analysis; // 시스템 분석 명령어
     pub mod unified_crawling; // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
     pub mod validation_commands; // ✅ Validation pass commands (page/index integrity) // 🔄 Partial Sync (recrawl + DB upsert)
+    pub mod db_diagnostics; // 🧪 DB pagination mismatch scan
+    pub mod db_cleanup; // 🧹 DB URL duplicate cleanup
 
     // Re-export commonly used commands
     // simple_crawling re-export removed (deprecated stub only)
@@ -155,6 +157,8 @@ pub mod commands {
     pub use performance_commands::*; // Phase C 성능 최적화 명령어 export
     pub use real_crawling_commands::*; // Phase C 실제 크롤링 명령어 export
     pub use sync_commands::*; // Partial Sync 명령어 export
+    pub use db_diagnostics::*; // DB diagnostics 명령어 export
+    pub use db_cleanup::*; // DB cleanup 명령어 export
 } // Modern Rust 2024 - 명시적 모듈 선언
 // Deprecated legacy crawling engine module (disabled). See _archive for reference.
 // pub mod crawling;
@@ -452,7 +456,9 @@ pub fn run() {
             crate::commands_integrated::reset_product_storage,
             commands::validation_commands::start_validation,
             commands::sync_commands::start_partial_sync, // TODO: Add other commands as they are implemented
-            commands::sync_commands::start_repair_sync
+            commands::sync_commands::start_repair_sync,
+            commands::db_diagnostics::scan_db_pagination_mismatches,
+            commands::db_cleanup::cleanup_duplicate_urls
                                                         // Most commands are temporarily disabled for compilation
         ]);
 

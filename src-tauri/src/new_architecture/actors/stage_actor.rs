@@ -2585,7 +2585,7 @@ impl StageActor {
                         "[PersistExec] upsert detail idx={} url={} page_id={:?}",
                         idx, detail.url, detail.page_id
                     );
-                    match product_repo.create_or_update_product_detail(&detail).await {
+                    match product_repo.create_or_update_product_detail(detail).await {
                         Ok((was_updated, was_created)) => {
                             if was_created {
                                 inserted += 1;
@@ -2642,7 +2642,7 @@ impl StageActor {
                         "[PersistExec] upsert validated detail idx={} url={} page_id={:?}",
                         idx, detail.url, detail.page_id
                     );
-                    match product_repo.create_or_update_product_detail(&detail).await {
+                    match product_repo.create_or_update_product_detail(detail).await {
                         Ok((was_updated, was_created)) => {
                             if was_created {
                                 inserted += 1;
