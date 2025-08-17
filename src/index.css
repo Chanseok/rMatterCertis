@@ -340,3 +340,178 @@
     background-color: transparent;
   }
 }
+
+  /* ===================== */
+  /* Start button wave FX  */
+  /* ===================== */
+  .start-wave-root {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+  }
+  .start-wave-circle {
+    position: absolute;
+    top: var(--y, 50%);
+    left: var(--x, 50%);
+    width: 24px;
+    height: 24px;
+    transform: translate(-50%, -50%) scale(0);
+    border-radius: 9999px;
+    background: radial-gradient(circle at center, rgba(59, 130, 246, 0.35), rgba(99, 102, 241, 0.2) 40%, rgba(59, 130, 246, 0.05) 70%, rgba(59, 130, 246, 0) 80%);
+    filter: blur(2px);
+    will-change: transform, opacity;
+  }
+  .start-wave-circle.wave-up { animation: waveBurstUp 900ms cubic-bezier(.2,.7,.2,1) forwards; }
+  .start-wave-circle.wave-down { animation: waveBurstDown 900ms cubic-bezier(.2,.7,.2,1) forwards; }
+  .start-wave-circle.wave-ring { animation: waveRing 950ms ease-out forwards; background: transparent; border: 2px solid rgba(59, 130, 246, 0.5); }
+
+  @keyframes waveBurstUp {
+    0% { opacity: 0.65; transform: translate(-50%, -50%) scale(0); }
+    60% { opacity: 0.5; }
+    100% { opacity: 0; transform: translate(-50%, calc(-50% - 20vh)) scale(45); }
+  }
+  @keyframes waveBurstDown {
+    0% { opacity: 0.65; transform: translate(-50%, -50%) scale(0); }
+    60% { opacity: 0.5; }
+    100% { opacity: 0; transform: translate(-50%, calc(-50% + 20vh)) scale(45); }
+  }
+  @keyframes waveRing {
+    0% { opacity: 0.9; transform: translate(-50%, -50%) scale(0.2); border-color: rgba(59, 130, 246, 0.6); }
+    70% { opacity: 0.25; }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(55); border-color: rgba(59, 130, 246, 0); }
+  }
+
+  .start-wave-wash {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(1200px 600px at var(--x, 50%) var(--y, 50%), rgba(99,102,241,0.08), rgba(59,130,246,0.04) 40%, rgba(59,130,246,0) 70%);
+    animation: waveWash 900ms ease-out forwards;
+  }
+  @keyframes waveWash {
+    0% { opacity: 0.4; }
+    100% { opacity: 0; }
+  }
+
+  /* ================================ */
+  /* Z-axis Surface Ripple (start FX) */
+  /* ================================ */
+  .surface-ripple-grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    perspective: 900px;
+    transform-style: preserve-3d;
+    overflow: hidden;
+  }
+  .surface-ripple-row {
+    position: absolute;
+    left: 0; right: 0;
+    height: var(--rowH, 4%);
+    top: var(--rowTop, 0%);
+    background: linear-gradient(to bottom, rgba(99,102,241,0.00), rgba(59,130,246,0.10), rgba(99,102,241,0.00));
+    mix-blend-mode: overlay;
+    opacity: 0;
+    will-change: transform, opacity;
+    transform: translateZ(0);
+  }
+  .surface-ripple-row.surf-up { animation: rippleRowUp 950ms cubic-bezier(.2,.7,.2,1) var(--delay, 0ms) forwards; }
+  .surface-ripple-row.surf-down { animation: rippleRowDown 950ms cubic-bezier(.2,.7,.2,1) var(--delay, 0ms) forwards; }
+
+  @keyframes rippleRowUp {
+    0% { opacity: 0; transform: translateZ(0); }
+    28% { opacity: .38; transform: translateZ(var(--amp, 0px)); }
+    65% { opacity: .14; }
+    100% { opacity: 0; transform: translateZ(0); }
+  }
+  @keyframes rippleRowDown {
+    0% { opacity: 0; transform: translateZ(0); }
+    28% { opacity: .38; transform: translateZ(var(--amp, 0px)); }
+    65% { opacity: .14; }
+    100% { opacity: 0; transform: translateZ(0); }
+  }
+
+  .surface-ripple-wash {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(var(--dir, to bottom), rgba(59,130,246,0.15), rgba(59,130,246,0.06) 45%, rgba(59,130,246,0) 70%);
+    mix-blend-mode: soft-light;
+  }
+  .surface-ripple-wash.wash-up { animation: rippleWashUp 1000ms ease-out forwards; }
+  .surface-ripple-wash.wash-down { animation: rippleWashDown 1000ms ease-out forwards; }
+  @keyframes rippleWashUp { 0% { opacity: .28; transform: translateY(8px); } 100% { opacity: 0; transform: translateY(-12vh); } }
+  @keyframes rippleWashDown { 0% { opacity: .28; transform: translateY(-8px); } 100% { opacity: 0; transform: translateY(12vh); } }
+
+  /* Dramatic transition effects for Calculated Crawling Range */
+  .range-transition-ring {
+    position: relative;
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.6);
+    animation: ringPulse 900ms ease-out 1 both;
+  }
+
+  @keyframes ringPulse {
+    0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.6); }
+    80% { box-shadow: 0 0 0 18px rgba(59, 130, 246, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+  }
+
+  .shatter-line {
+    display: inline-block;
+    will-change: transform, opacity;
+  }
+  .shatter-char {
+    display: inline-block;
+    will-change: transform, opacity, filter;
+    animation: shatterFly 600ms cubic-bezier(.15,.85,.25,1) forwards;
+  }
+
+  @keyframes shatterFly {
+    0% { opacity: 1; transform: translate(0, 0) rotate(0deg) scale(1); filter: none; }
+    35% { opacity: 0.6; filter: blur(1px); }
+    100% { opacity: 0; transform: translate(var(--dx, 0px), var(--dy, 0px)) rotate(var(--rot, 0deg)) scale(0.85); filter: blur(2px); }
+  }
+
+  .drum-line { display: inline-flex; perspective: 1000px; }
+  .drum-in {
+    display: inline-block;
+    transform-origin: 50% 50%;
+    backface-visibility: hidden;
+  transform-style: preserve-3d;
+  will-change: transform, opacity, filter;
+  animation: drumIn 750ms cubic-bezier(.2,.8,.2,1) forwards;
+  animation-delay: var(--delay, 0ms);
+  }
+
+  @keyframes drumIn {
+    0% {
+      opacity: 0;
+      transform: rotateX(120deg) rotateY(12deg) translateY(-6px) scale(0.94);
+      filter: blur(2px);
+    }
+    55% {
+      opacity: 1;
+      transform: rotateX(-12deg) rotateY(-3deg) translateY(1px) scale(1.03);
+    }
+    100% {
+      opacity: 1;
+      transform: rotateX(0deg) rotateY(0deg) translateY(0) scale(1);
+      filter: none;
+    }
+  }
+
+  /* Simple CSS confetti pieces (fallback to CSS if no canvas) */
+  .confetti-piece {
+    position: absolute;
+    width: var(--cw, 6px); height: var(--ch, 10px);
+    border-radius: 1px;
+    opacity: 0;
+    will-change: transform, opacity, filter;
+    animation: confettiBurst 850ms cubic-bezier(.15,.85,.25,1) forwards;
+  }
+
+  @keyframes confettiBurst {
+    0% { opacity: 0; transform: translate(0, 0) rotate(0deg); filter: none; }
+    12% { opacity: 1; }
+    100% { opacity: 0; transform: translate(var(--cx, 0px), var(--cy, 0px)) rotate(var(--crot, 0deg)); filter: blur(0.5px); }
+  }

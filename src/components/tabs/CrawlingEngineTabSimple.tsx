@@ -19,6 +19,53 @@ export default function CrawlingEngineTabSimple() {
   // Auto re-plan from backend after a session completes
   const [nextPlan, setNextPlan] = createSignal<any | null>(null);
 
+  // Dramatic transition for Calculated Crawling Range
+  const [rangeFxKey, setRangeFxKey] = createSignal(0);
+  const [rangeFxActive, setRangeFxActive] = createSignal(false);
+  const [confettiPieces, setConfettiPieces] = createSignal<Array<{x:number;y:number;color:string;rx:number;ry:number;rot:number;cw?:number;ch?:number}>>([]);
+  const [rangePrevSnapshot, setRangePrevSnapshot] = createSignal<{
+    start: number; end: number; total: number; coverText: string;
+  } | null>(null);
+  let rangePanelRef: HTMLDivElement | undefined;
+
+  // Split text into animated particles (shatter)
+  const renderShatterText = (text: string) => text.split('').map((ch) => {
+    const mag = 140 + Math.random() * 160; // stronger spread
+    const theta = (Math.random() * Math.PI * 1.3) - (Math.PI * 0.65);
+    const dx = Math.cos(theta) * mag;
+    const dy = Math.sin(theta) * mag - 20; // upward bias
+    const rot = (Math.random() - 0.5) * 200;
+    const style = { '--dx': `${dx}px`, '--dy': `${dy}px`, '--rot': `${rot}deg` } as any;
+    return <span class="shatter-char" style={style} aria-hidden="true">{ch}</span>;
+  });
+
+  // Drum-roll in for new text
+  const renderDrumText = (text: string) => text.split('').map((ch, i) => (
+    <span class="drum-in" style={{ '--delay': `${i * 35}ms` } as any}>{ch}</span>
+  ));
+
+  // Lightweight CSS confetti
+  const triggerConfetti = (n = 48) => {
+    if (!rangePanelRef) return;
+    const colors = ['#60A5FA', '#34D399', '#FBBF24', '#F472B6', '#A78BFA', '#22D3EE'];
+    const pieces = Array.from({ length: n }, () => {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 90 + Math.random() * 160; // farther burst
+      const cw = 4 + Math.random() * 8; // width 4~12
+      const ch = 6 + Math.random() * 14; // height 6~20
+      return { x: 0, y: 0, color: colors[Math.floor(Math.random() * colors.length)], rx: Math.cos(angle) * dist, ry: Math.sin(angle) * dist, rot: (Math.random() - 0.5) * 220, cw, ch };
+    });
+    setConfettiPieces(pieces);
+    setTimeout(() => setConfettiPieces([]), 950);
+  };
+
+  const playRangeTransition = () => {
+    setRangeFxActive(true);
+    setRangeFxKey(k => k + 1);
+    triggerConfetti();
+    setTimeout(() => setRangeFxActive(false), 720);
+  };
+
   // Optimistically apply a planner result to the Calculated Crawling Range panel
   const applyPlanToCalculatedRange = (plan: any) => {
     try {
@@ -147,6 +194,27 @@ export default function CrawlingEngineTabSimple() {
   const [effectsOn, setEffectsOn] = createSignal(true);
   // Sync input pulse highlight
   const [syncPulse, setSyncPulse] = createSignal(false);
+
+  // Start button surface ripple FX (Z-axis undulation)
+  const [surfaceRipples, setSurfaceRipples] = createSignal<Array<{ id:number; x:number; y:number; dir:'up'|'down'; impactRow:number }>>([]);
+  let rippleIdSeq = 1;
+  const SURFACE_ROWS = 24;
+  const surfaceRowIndex = Array.from({ length: SURFACE_ROWS }, (_, i) => i);
+  const triggerStartWave = (evt?: MouseEvent) => {
+    // Compute click point in viewport; fallback to center
+    const x = evt?.clientX ?? window.innerWidth / 2;
+    const y = evt?.clientY ?? window.innerHeight / 2;
+    const impactRow = Math.max(0, Math.min(SURFACE_ROWS - 1, Math.floor((y / window.innerHeight) * SURFACE_ROWS)));
+    const idUp = rippleIdSeq++;
+    const idDown = rippleIdSeq++;
+    setSurfaceRipples(prev => [
+      ...prev,
+      { id: idUp, x, y, dir: 'up', impactRow },
+      { id: idDown, x, y, dir: 'down', impactRow },
+    ]);
+    // Auto cleanup after animations
+    setTimeout(() => setSurfaceRipples(prev => prev.filter(r => r.id !== idUp && r.id !== idDown)), 1200);
+  };
 
   // 크롤링 범위 계산
   const calculateCrawlingRange = async () => {
@@ -397,6 +465,16 @@ export default function CrawlingEngineTabSimple() {
           setStatusMessage('크롤링 완료');
           addLog('🏁 세션 완료');
           setBatchInfo(prev => ({ ...prev }));
+          // Play transition on session complete as well (helps visibility)
+          try {
+            const prev = crawlingRange();
+            const prevStart = (prev?.range?.[0] ?? 0) as number;
+            const prevEnd = (prev?.range?.[1] ?? 0) as number;
+            const prevTotal = (prev?.progress?.total_products ?? 0) as number;
+            const prevCover = `${(prev?.progress?.progress_percentage?.toFixed?.(1) ?? '0.0')}%`;
+            setRangePrevSnapshot({ start: prevStart, end: prevEnd, total: prevTotal, coverText: String(prevCover) });
+            if (effectsOn()) playRangeTransition();
+          } catch {}
           // Recompute crawling range so the UI reflects the newly planned range
           calculateCrawlingRange();
         }
@@ -419,10 +497,18 @@ export default function CrawlingEngineTabSimple() {
         if (name === 'actor-next-plan-ready') {
           try {
             const plan = (payload && payload.plan) || payload;
+            // Take snapshot before values change
+            const prev = crawlingRange();
+            const prevStart = (prev?.range?.[0] ?? 0) as number;
+            const prevEnd = (prev?.range?.[1] ?? 0) as number;
+            const prevTotal = (prev?.progress?.total_products ?? 0) as number;
+            const prevCover = `${(prev?.progress?.progress_percentage?.toFixed?.(1) ?? '0.0')}%`;
+            setRangePrevSnapshot({ start: prevStart, end: prevEnd, total: prevTotal, coverText: String(prevCover) });
             setNextPlan(plan);
             addLog('🧭 다음 실행 계획 수신');
             // Optimistically reflect into the Calculated Range panel
             applyPlanToCalculatedRange(plan);
+            if (effectsOn()) playRangeTransition();
             // Update the calculated crawling range panel using backend planner
             calculateCrawlingRange();
           } catch (e) {
@@ -1013,15 +1099,39 @@ export default function CrawlingEngineTabSimple() {
 
         {/* 크롤링 범위 정보 */}
         <Show when={crawlingRange()}>
-          <div class="bg-gray-50 rounded-lg p-4 mb-6">
-            <h3 class="text-lg font-semibold text-gray-900 mb-3">📊 계산된 크롤링 범위</h3>
+          <div ref={el => (rangePanelRef = el!)} class={`bg-gray-50 rounded-lg p-4 mb-6 ${rangeFxActive() ? 'range-transition-ring' : ''}`}>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-lg font-semibold text-gray-900">📊 계산된 크롤링 범위</h3>
+              <button
+                class="text-xs px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+                onClick={() => {
+                  const prev = crawlingRange();
+                  const prevStart = (prev?.range?.[0] ?? 0) as number;
+                  const prevEnd = (prev?.range?.[1] ?? 0) as number;
+                  const prevTotal = (prev?.progress?.total_products ?? 0) as number;
+                  const prevCover = `${(prev?.progress?.progress_percentage?.toFixed?.(1) ?? '0.0')}%`;
+                  setRangePrevSnapshot({ start: prevStart, end: prevEnd, total: prevTotal, coverText: String(prevCover) });
+                  if (effectsOn()) playRangeTransition();
+                }}
+                disabled={!effectsOn()}
+                title={effectsOn() ? '계산된 범위 효과 미리보기' : '효과가 꺼져 있습니다'}
+              >효과 미리보기</button>
+            </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div class="text-center">
-                <div class="text-2xl font-bold text-blue-600">{crawlingRange()?.range?.[0] || 0}</div>
+                <div class="text-2xl font-bold text-blue-600">
+                  <Show when={rangeFxActive()} fallback={<span class="drum-line">{renderDrumText(String(crawlingRange()?.range?.[0] || 0))}</span>}>
+                    <span class="shatter-line">{renderShatterText(String((rangePrevSnapshot()?.start ?? (crawlingRange()?.range?.[0] || 0))))}</span>
+                  </Show>
+                </div>
                 <div class="text-sm text-gray-600">시작 페이지</div>
               </div>
               <div class="text-center">
-                <div class="text-2xl font-bold text-green-600">{crawlingRange()?.range?.[1] || 0}</div>
+                <div class="text-2xl font-bold text-green-600">
+                  <Show when={rangeFxActive()} fallback={<span class="drum-line">{renderDrumText(String(crawlingRange()?.range?.[1] || 0))}</span>}>
+                    <span class="shatter-line">{renderShatterText(String((rangePrevSnapshot()?.end ?? (crawlingRange()?.range?.[1] || 0))))}</span>
+                  </Show>
+                </div>
                 <div class="text-sm text-gray-600">종료 페이지</div>
               </div>
               <div class="text-center">
@@ -1032,11 +1142,27 @@ export default function CrawlingEngineTabSimple() {
               </div>
               <div class="text-center">
                 <div class="text-2xl font-bold text-orange-600">
-                  {crawlingRange()?.progress?.progress_percentage.toFixed(1) || 0}%
+                  <Show when={rangeFxActive()} fallback={<span class="drum-line">{renderDrumText(`${(crawlingRange()?.progress?.progress_percentage.toFixed(1) || 0)}%`)}</span>}>
+                    <span class="shatter-line">{renderShatterText(String(rangePrevSnapshot()?.coverText ?? `${(crawlingRange()?.progress?.progress_percentage.toFixed(1) || 0)}%`))}</span>
+                  </Show>
                 </div>
                 <div class="text-sm text-gray-600">커버리지</div>
               </div>
             </div>
+
+            {/* Confetti overlay */}
+            <Show when={confettiPieces().length > 0}>
+              <div class="relative">
+                <div class="pointer-events-none absolute inset-0 overflow-visible" aria-hidden="true">
+          <For each={confettiPieces()}>{(p) => (
+                    <span
+                      class="confetti-piece"
+            style={{ left: '50%', top: '0', background: p.color, '--cx': `${p.rx}px`, '--cy': `${p.ry}px`, '--crot': `${p.rot}deg`, '--cw': `${p.cw}px`, '--ch': `${p.ch}px` } as any}
+                    />
+                  )}</For>
+                </div>
+              </div>
+            </Show>
 
             {/* 사이트 정보 섹션 */}
             <div class="border-t pt-4">
@@ -1100,7 +1226,7 @@ export default function CrawlingEngineTabSimple() {
   {/* 제어 버튼 */}
   <div class="flex flex-wrap gap-4 mb-6 items-end">
           <button
-            onClick={startSmartCrawling}
+            onClick={(e) => { triggerStartWave(e as unknown as MouseEvent); startSmartCrawling(); }}
             disabled={isRunning()}
             class={`px-6 py-3 rounded-lg font-medium text-white ripple ${
               isRunning() 
@@ -1112,7 +1238,7 @@ export default function CrawlingEngineTabSimple() {
           </button>
           
           <button
-            onClick={startUnifiedAdvanced}
+            onClick={(e) => { triggerStartWave(e as unknown as MouseEvent); startUnifiedAdvanced(); }}
             disabled={isRunning()}
             class={`px-6 py-3 rounded-lg font-medium text-white ripple ${
               isRunning() 
@@ -1124,7 +1250,7 @@ export default function CrawlingEngineTabSimple() {
           </button>
           
           <button
-            onClick={startLightUnified}
+            onClick={(e) => { triggerStartWave(e as unknown as MouseEvent); startLightUnified(); }}
             disabled={isRunning()}
             class={`px-6 py-3 rounded-lg font-medium text-white ripple ${
               isRunning() 
@@ -1142,6 +1268,39 @@ export default function CrawlingEngineTabSimple() {
           >
             📊 범위 다시 계산
           </button>
+
+          {/* Surface ripple preview button */}
+          <button
+            onClick={(e) => triggerStartWave(e as unknown as MouseEvent)}
+            disabled={isRunning()}
+            class={`px-3 py-2 rounded-lg font-medium border text-gray-700 hover:bg-gray-50 ${
+              isRunning() ? 'opacity-50 cursor-not-allowed' : 'border-gray-300'
+            }`}
+            title="UI 표면 파동 효과 미리보기"
+          >파도 미리보기</button>
+
+          {/* Global surface ripple overlay */}
+          <div class="start-wave-root" aria-hidden="true">
+            <For each={surfaceRipples()}>{(r) => (
+              <div class="surface-ripple-grid" style={{ '--x': `${r.x}px`, '--y': `${r.y}px` } as any}>
+                {/* directional wash */}
+                <div class={`surface-ripple-wash ${r.dir === 'up' ? 'wash-up' : 'wash-down'}`} style={{ '--dir': r.dir === 'up' ? 'to top' : 'to bottom' } as any} />
+                {/* rows */}
+                <For each={surfaceRowIndex}>{(idx) => {
+                  const dist = Math.abs(idx - r.impactRow);
+                  const delay = Math.max(0, (dist * 22));
+                  // amplitude decreases with distance, stronger near impact
+                  const amp = Math.max(0, 26 - dist * 2.2); // px
+                  return (
+                    <div
+                      class={`surface-ripple-row ${r.dir === 'up' ? 'surf-up' : 'surf-down'}`}
+                      style={{ '--rowH': `${100 / SURFACE_ROWS}%`, '--rowTop': `${(idx as number) * (100 / SURFACE_ROWS)}%`, '--delay': `${delay}ms`, '--amp': `${amp}px` } as any}
+                    />
+                  );
+                }}</For>
+              </div>
+            )}</For>
+          </div>
           {/* Validation Controls */}
           <div class="flex items-center gap-2">
             <input
