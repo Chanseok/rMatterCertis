@@ -14,6 +14,28 @@ export default function CrawlingEngineTabSimple() {
   const [isSyncing, setIsSyncing] = createSignal(false);
   const [syncRanges, setSyncRanges] = createSignal<string>('');
   const [validationPages, setValidationPages] = createSignal<number | ''>('');
+  // Auto re-plan from backend after a session completes
+  const [nextPlan, setNextPlan] = createSignal<any | null>(null);
+
+  // Optimistically apply a planner result to the Calculated Crawling Range panel
+  const applyPlanToCalculatedRange = (plan: any) => {
+    try {
+      const phases = (plan?.phases || []) as any[];
+      const pages: number[] = phases.flatMap((p: any) => Array.isArray(p?.pages) ? (p.pages as number[]) : []);
+      const uniq = Array.from(new Set(pages)).filter(n => Number.isFinite(n)).sort((a,b)=>b-a);
+      if (uniq.length === 0) return;
+      const start = uniq[0];
+      const end = uniq[uniq.length - 1];
+      setCrawlingRange(prev => ({
+        ...(prev || {}),
+        range: [start, end],
+        crawling_info: {
+          ...((prev as any)?.crawling_info || {}),
+          pages_to_crawl: uniq.length,
+        },
+      }));
+    } catch {}
+  };
   // Batch progress (best-effort estimation)
   const [batchInfo, setBatchInfo] = createSignal<{ current: number; totalEstimated?: number; batchId?: string; pagesInBatch?: number }>({ current: 0 });
   // Lightweight runtime monitor for Stage 1 (list pages) and Stage 2 (detail)
@@ -368,6 +390,8 @@ export default function CrawlingEngineTabSimple() {
           setStatusMessage('크롤링 완료');
           addLog('🏁 세션 완료');
           setBatchInfo(prev => ({ ...prev }));
+          // Recompute crawling range so the UI reflects the newly planned range
+          calculateCrawlingRange();
         }
         if (name === 'actor-session-failed') {
           setIsRunning(false);
@@ -380,6 +404,23 @@ export default function CrawlingEngineTabSimple() {
           setStatusMessage('크롤링 종료');
           addLog('🛑 세션 종료');
           setBatchInfo(prev => ({ ...prev }));
+          // Refresh planned range after abnormal end as well
+          calculateCrawlingRange();
+        }
+
+        // Post-session auto re-plan (NextPlanReady)
+        if (name === 'actor-next-plan-ready') {
+          try {
+            const plan = (payload && payload.plan) || payload;
+            setNextPlan(plan);
+            addLog('🧭 다음 실행 계획 수신');
+            // Optimistically reflect into the Calculated Range panel
+            applyPlanToCalculatedRange(plan);
+            // Update the calculated crawling range panel using backend planner
+            calculateCrawlingRange();
+          } catch (e) {
+            console.warn('[CrawlingEngineTabSimple] next-plan parse failed', e);
+          }
         }
 
         // Estimate totals from batch starts (pages in batch)
@@ -638,6 +679,71 @@ export default function CrawlingEngineTabSimple() {
               </Show>
             </div>
           </div>
+          {/* Next plan preview panel */}
+          <Show when={nextPlan()}>
+            <div class="mt-3 p-3 rounded-lg border border-indigo-200 bg-indigo-50">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-sm font-semibold text-indigo-900">🧭 다음 실행 계획 준비됨</div>
+                  <div class="text-xs text-indigo-800 mt-1">
+                    {(() => {
+                      try {
+                        const plan: any = nextPlan();
+                        const phases = (plan?.phases || []) as any[];
+                        const pages: number[] = phases.flatMap((p: any) => Array.isArray(p?.pages) ? (p.pages as number[]) : []);
+                        const uniq = Array.from(new Set(pages)).sort((a,b)=>b-a);
+                        const sample = uniq.slice(0, Math.min(24, uniq.length));
+                        return (
+                          <span>
+                            단계 {phases.length}개 • 페이지 {uniq.length}개
+                            <span class="block mt-0.5 font-mono text-[11px] text-indigo-900">
+                              {sample.join(', ')}{uniq.length>sample.length ? ' …' : ''}
+                            </span>
+                          </span>
+                        );
+                      } catch { return <span>요약 표시 오류</span>; }
+                    })()}
+                  </div>
+                </div>
+                <div class="shrink-0 flex flex-col items-end gap-1">
+                  <button
+                    class="px-2.5 py-1 text-xs rounded bg-indigo-600 text-white hover:bg-indigo-700"
+                    title="이 계획의 페이지를 Sync 범위 입력에 적용"
+                    onClick={() => {
+                      try {
+                        const plan: any = nextPlan();
+                        const phases = (plan?.phases || []) as any[];
+                        const pages: number[] = phases.flatMap((p: any) => Array.isArray(p?.pages) ? (p.pages as number[]) : []);
+                        const uniq = Array.from(new Set(pages)).sort((a,b)=>b-a);
+                        let parts: string[] = [];
+                        if (uniq.length) {
+                          let start = uniq[0];
+                          let prev = uniq[0];
+                          for (const pg of uniq.slice(1)) {
+                            if (pg + 1 === prev) { prev = pg; continue; }
+                            parts.push(start === prev ? `${start}` : `${start}-${prev}`);
+                            start = pg; prev = pg;
+                          }
+                          parts.push(start === prev ? `${start}` : `${start}-${prev}`);
+                        }
+                        const expr = parts.join(',');
+                        if (expr) {
+                          setSyncRanges(expr);
+                          addLog(`🧭 다음 계획 적용 → Sync 범위: ${expr}`);
+                        }
+                      } catch (e) {
+                        console.warn('apply next plan failed', e);
+                      }
+                    }}
+                  >계획 적용 → Sync</button>
+                  <button
+                    class="px-2.5 py-1 text-xs rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    onClick={() => setNextPlan(null)}
+                  >숨기기</button>
+                </div>
+              </div>
+            </div>
+          </Show>
         </div>
 
         {/* Stage1/Stage2 Runtime Monitor */}

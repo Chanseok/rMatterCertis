@@ -656,6 +656,7 @@ export class TauriApiService {
       'actor-performance-metrics',
       'actor-batch-report',
       'actor-session-report',
+  'actor-next-plan-ready',
       // Phases / Shutdown
       'actor-phase-started',
       'actor-phase-completed',
@@ -707,6 +708,23 @@ export class TauriApiService {
       }
     }
     return () => unsubs.forEach((u) => u());
+  }
+
+  /**
+   * Convenience: subscribe and also fan-out critical actor events as DOM CustomEvents for simple components
+   */
+  async bridgeToDomEvents(): Promise<() => void> {
+    return this.subscribeToActorBridgeEvents((name, payload) => {
+      if (name === 'actor-session-completed') {
+        window.dispatchEvent(new CustomEvent('actor-session-completed', { detail: payload }));
+      }
+      if (name === 'actor-session-report') {
+        window.dispatchEvent(new CustomEvent('actor-session-report', { detail: payload }));
+      }
+      if (name === 'actor-next-plan-ready') {
+        window.dispatchEvent(new CustomEvent('actor-next-plan-ready', { detail: payload }));
+      }
+    });
   }
 
   /**

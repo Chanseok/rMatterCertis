@@ -220,6 +220,7 @@ impl ActorEventBridge {
             AppEvent::SessionPaused { .. } => "actor-session-paused",
             AppEvent::SessionResumed { .. } => "actor-session-resumed",
             AppEvent::SessionCompleted { .. } => "actor-session-completed",
+            AppEvent::NextPlanReady { .. } => "actor-next-plan-ready",
             AppEvent::SessionFailed { .. } => "actor-session-failed",
             AppEvent::SessionTimeout { .. } => "actor-session-timeout",
             AppEvent::BatchStarted { .. } => "actor-batch-started",

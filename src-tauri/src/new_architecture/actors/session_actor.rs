@@ -532,7 +532,7 @@ impl SessionActor {
             timestamp: Utc::now(),
         };
 
-        context
+    context
             .emit_event(completion_event)
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
@@ -564,7 +564,7 @@ impl SessionActor {
             None => "null".to_string(),
         };
         let s = &aggregated_summary;
-        info!(target: "kpi.session",
+    info!(target: "kpi.session",
             "{{\"event\":\"session_final_summary\",\"session_id\":\"{}\",\"final_state\":\"{}\",\"duration_ms\":{},\"processed_batches\":{},\"total_pages_processed\":{},\"total_success_count\":{},\"failed_pages_count\":{},\"total_retry_events\":{},\"products_inserted\":{},\"products_updated\":{},\"duplicates_skipped\":{},\"plan_hash\":{},\"ts\":\"{}\"}}",
             s.session_id,
             s.final_state,
@@ -604,6 +604,72 @@ impl SessionActor {
         );
 
         info!("✅ Session {} completed successfully", session_id);
+
+        // === 세션 종료 후: 다음 계획 자동 수립 및 이벤트 발행 ===
+        // 사이트 상태/DB 분석을 다시 수행하여 다음 크롤링 범위를 계산하고 UI에 전달
+        let http_client2 = Arc::new(HttpClient::create_from_global_config().map_err(|e| {
+            SessionError::InitializationFailed(format!("Failed to create HttpClient: {}", e))
+        })?);
+        let data_extractor2 = Arc::new(MatterDataExtractor::new().map_err(|e| {
+            SessionError::InitializationFailed(format!(
+                "Failed to create MatterDataExtractor: {}",
+                e
+            ))
+        })?);
+        let db_pool2 = crate::infrastructure::database_connection::get_or_init_global_pool()
+            .await
+            .map_err(|e| {
+                SessionError::InitializationFailed(format!(
+                    "Failed to obtain database pool: {}",
+                    e
+                ))
+            })?;
+        let product_repo2 = Arc::new(IntegratedProductRepository::new(db_pool2));
+
+        let status_checker2: Arc<dyn StatusChecker> = Arc::new(StatusCheckerImpl::with_product_repo(
+            (*http_client2).clone(),
+            (*data_extractor2).clone(),
+            AppConfig::for_development(),
+            Arc::clone(&product_repo2),
+        ));
+        let db_analyzer2: Arc<dyn DatabaseAnalyzer> =
+            Arc::new(DatabaseAnalyzerImpl::new(Arc::clone(&product_repo2)));
+        let planner2 = CrawlingPlanner::new(
+            status_checker2.clone(),
+            db_analyzer2,
+            Arc::clone(&context.config),
+        )
+        .with_repository(Arc::clone(&product_repo2));
+
+        // 기본 전략: 방금 사용한 config를 기반으로 동일 전략 재활용(필요 시 조정 가능)
+        let next_config = CrawlingConfig {
+            site_url: config.site_url.clone(),
+            start_page: config.start_page,
+            end_page: config.end_page,
+            concurrency_limit: config.concurrency_limit,
+            batch_size: config.batch_size,
+            request_delay_ms: config.request_delay_ms,
+            timeout_secs: config.timeout_secs,
+            max_retries: config.max_retries,
+            strategy: config.strategy.clone(),
+        };
+        let (next_plan, _used_site_status) = planner2
+            .create_crawling_plan_with_cache(&next_config, None)
+            .await
+            .map_err(|e| SessionError::InitializationFailed(format!(
+                "Failed to create next crawling plan: {}",
+                e
+            )))?;
+
+        let next_event = AppEvent::NextPlanReady {
+            session_id: session_id.clone(),
+            plan: next_plan.clone(),
+            timestamp: Utc::now(),
+        };
+        context
+            .emit_event(next_event)
+            .map_err(|e| SessionError::ContextError(e.to_string()))?;
+
         Ok(())
     }
 
