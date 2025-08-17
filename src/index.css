@@ -214,6 +214,17 @@
   }
 }
 
+/* Horizontal shake for attention (e.g., downshift badge) */
+@keyframes shakeX {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}
+
+.shake-x {
+  animation: shakeX 0.35s ease-in-out 1;
+}
+
 @keyframes slideUp {
   from {
     opacity: 0;
@@ -245,9 +256,43 @@
   }
 }
 
+/* Accordion (height/opacity) */
+@keyframes accordionIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.accordion-in { animation: accordionIn 0.25s ease-out; }
+
+/* Button ripple (basic) */
+.ripple {
+  position: relative;
+  overflow: hidden;
+}
+.ripple::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle, rgba(255,255,255,0.35) 10%, rgba(255,255,255,0) 70%);
+  transform: scale(0);
+  opacity: 0;
+}
+.ripple:active::after {
+  transition: transform 0.35s ease-out, opacity 0.45s ease-out;
+  transform: scale(4);
+  opacity: 1;
+}
+
 /* Custom utility classes */
 .animate-fade-in {
   animation: fadeIn 0.5s ease-out;
+}
+
+/* Respect user preferences to reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 .animate-slide-up {

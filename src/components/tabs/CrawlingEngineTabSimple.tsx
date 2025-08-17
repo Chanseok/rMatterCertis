@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core';
 // Types are relaxed locally to avoid tight coupling during integration
 import { tauriApi } from '../../services/tauri-api';
 import EventConsole from '../dev/EventConsole';
+import { usePulse } from '../../hooks/usePulse';
+import CountUp from '../common/CountUp';
 
 export default function CrawlingEngineTabSimple() {
   const [isRunning, setIsRunning] = createSignal(false);
@@ -52,6 +54,9 @@ export default function CrawlingEngineTabSimple() {
   const detailFailedFinal = new Set<string>(); // detail_ids that finally failed
   const detailAttempts = new Map<string, number>(); // detail_id -> attempts
   const [downshiftInfo, setDownshiftInfo] = createSignal<null | { newLimit?: number; reason?: string }>(null);
+  // UI pulses for counters
+  const [stage1Pulse, triggerStage1Pulse] = usePulse(300);
+  const [stage2Pulse, triggerStage2Pulse] = usePulse(300);
   // Stage 3: Validation stats (lightweight)
   const [validationStats, setValidationStats] = createSignal({
     started: false,
@@ -140,6 +145,8 @@ export default function CrawlingEngineTabSimple() {
   const [dbFlash, setDbFlash] = createSignal(false);
   // Global effects toggle
   const [effectsOn, setEffectsOn] = createSignal(true);
+  // Sync input pulse highlight
+  const [syncPulse, setSyncPulse] = createSignal(false);
 
   // 크롤링 범위 계산
   const calculateCrawlingRange = async () => {
@@ -458,8 +465,9 @@ export default function CrawlingEngineTabSimple() {
               return { ...prev, started, inflight };
             });
           }
+          if (effectsOn()) triggerStage1Pulse();
         }
-        if (name === 'actor-page-task-completed') {
+  if (name === 'actor-page-task-completed') {
           const pageNum = Number(payload?.page ?? NaN);
           if (!Number.isFinite(pageNum)) return;
           if (!pageCompleted.has(pageNum)) pageCompleted.add(pageNum);
@@ -470,8 +478,9 @@ export default function CrawlingEngineTabSimple() {
             const inflight = Math.max(0, started - (completed + prev.failed));
             return { ...prev, started, completed, inflight };
           });
+          if (effectsOn()) triggerStage1Pulse();
         }
-    if (name === 'actor-page-task-failed') {
+  if (name === 'actor-page-task-failed') {
           const pageNum = Number(payload?.page ?? NaN);
           if (!Number.isFinite(pageNum)) return;
           const final = Boolean(payload?.final_failure);
@@ -489,6 +498,7 @@ export default function CrawlingEngineTabSimple() {
             const inflight = Math.max(0, started - (prev.completed + failed));
             return { ...prev, started, failed, inflight };
           });
+          if (effectsOn()) triggerStage1Pulse();
         }
         // Stage 2 (product detail) itemized - deduplicate by detail_id and track retries
   if (name === 'actor-detail-task-started') {
@@ -506,8 +516,9 @@ export default function CrawlingEngineTabSimple() {
               return { ...prev, started, inflight };
             });
           }
+          if (effectsOn()) triggerStage2Pulse();
         }
-        if (name === 'actor-detail-task-completed') {
+  if (name === 'actor-detail-task-completed') {
           const isBatchScope = (payload?.batch_id != null) || (payload?.scope === 'batch');
           if (!isBatchScope) return; // ignore session-scoped/simulated events
           const id = String(payload?.detail_id ?? '');
@@ -523,8 +534,9 @@ export default function CrawlingEngineTabSimple() {
             const inflight = Math.max(0, started - (completed + prev.failed));
             return { ...prev, started, completed, inflight };
           });
+          if (effectsOn()) triggerStage2Pulse();
         }
-    if (name === 'actor-detail-task-failed') {
+  if (name === 'actor-detail-task-failed') {
           const isBatchScope = (payload?.batch_id != null) || (payload?.scope === 'batch');
           if (!isBatchScope) return; // ignore session-scoped/simulated events
           const id = String(payload?.detail_id ?? '');
@@ -547,6 +559,7 @@ export default function CrawlingEngineTabSimple() {
             const inflight = Math.max(0, started - (prev.completed + failed));
             return { ...prev, started, failed, inflight };
           });
+          if (effectsOn()) triggerStage2Pulse();
         }
         if (name === 'actor-detail-concurrency-downshifted') {
           setDownshiftInfo({ newLimit: payload?.new_limit, reason: payload?.reason });
@@ -681,7 +694,7 @@ export default function CrawlingEngineTabSimple() {
           </div>
           {/* Next plan preview panel */}
           <Show when={nextPlan()}>
-            <div class="mt-3 p-3 rounded-lg border border-indigo-200 bg-indigo-50">
+            <div class="mt-3 p-3 rounded-lg border border-indigo-200 bg-indigo-50 animate-slide-up">
               <div class="flex items-start justify-between gap-3">
                 <div>
                   <div class="text-sm font-semibold text-indigo-900">🧭 다음 실행 계획 준비됨</div>
@@ -730,6 +743,8 @@ export default function CrawlingEngineTabSimple() {
                         if (expr) {
                           setSyncRanges(expr);
                           addLog(`🧭 다음 계획 적용 → Sync 범위: ${expr}`);
+                          setSyncPulse(true);
+                          setTimeout(() => setSyncPulse(false), 400);
                         }
                       } catch (e) {
                         console.warn('apply next plan failed', e);
@@ -747,7 +762,7 @@ export default function CrawlingEngineTabSimple() {
         </div>
 
         {/* Stage1/Stage2 Runtime Monitor */}
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+  <div class={`grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 ${stage1Pulse() ? 'pulse-once' : ''}`}>
           <div class={`bg-white rounded-lg border p-4 ${validationPulse() ? 'pulse-once' : ''}`}>
             <div class="flex items-center justify-between mb-2">
               <h3 class="text-md font-semibold text-gray-800">Stage 1: 제품 목록 수집</h3>
@@ -762,28 +777,28 @@ export default function CrawlingEngineTabSimple() {
             </div>
             <div class="grid grid-cols-5 gap-2 text-center">
               <div class="bg-blue-50 rounded p-2">
-                <div class="text-xl font-bold text-blue-600">{pageStats().started}</div>
+                <div class="text-xl font-bold text-blue-600"><CountUp value={pageStats().started} /></div>
                 <div class="text-xs text-gray-600">시작</div>
               </div>
               <div class="bg-emerald-50 rounded p-2">
-                <div class="text-xl font-bold text-emerald-600">{pageStats().completed}</div>
+                <div class="text-xl font-bold text-emerald-600"><CountUp value={pageStats().completed} /></div>
                 <div class="text-xs text-gray-600">완료</div>
               </div>
               <div class="bg-amber-50 rounded p-2">
-                <div class="text-xl font-bold text-amber-600">{pageStats().inflight}</div>
+                <div class="text-xl font-bold text-amber-600"><CountUp value={pageStats().inflight} /></div>
                 <div class="text-xs text-gray-600">진행중</div>
               </div>
               <div class="bg-rose-50 rounded p-2">
-                <div class="text-xl font-bold text-rose-600">{pageStats().failed}</div>
+                <div class="text-xl font-bold text-rose-600"><CountUp value={pageStats().failed} /></div>
                 <div class="text-xs text-gray-600">실패</div>
               </div>
               <div class="bg-violet-50 rounded p-2">
-                <div class="text-xl font-bold text-violet-600">{pageStats().retried}</div>
+                <div class="text-xl font-bold text-violet-600"><CountUp value={pageStats().retried} /></div>
                 <div class="text-xs text-gray-600">재시도</div>
               </div>
             </div>
             <div class="mt-2 w-full bg-gray-200 rounded-full h-2">
-              <div class="h-2 rounded-full bg-blue-500 transition-all" style={{ width: `${(() => {
+              <div class="progress-fill rounded-full" style={{ width: `${(() => {
                 const cr = crawlingRange();
                 const fallback = (cr?.crawling_info?.pages_to_crawl ?? (((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1) || 0)) as number;
                 const denom = pageStats().totalEstimated || fallback || 0;
@@ -792,11 +807,11 @@ export default function CrawlingEngineTabSimple() {
             </div>
           </div>
 
-          <div class="bg-white rounded-lg border p-4">
+          <div class={`bg-white rounded-lg border p-4 ${stage2Pulse() ? 'pulse-once' : ''}`}> 
             <div class="flex items-center justify-between mb-2">
               <h3 class="text-md font-semibold text-gray-800">Stage 2: 세부 정보 수집</h3>
               <Show when={!!downshiftInfo()}>
-                <span class="text-[10px] px-2 py-1 bg-yellow-100 text-yellow-700 rounded" title={downshiftInfo()?.reason || ''}>↓ 제한 {downshiftInfo()?.newLimit ?? '-'}
+                <span class="text-[10px] px-2 py-1 bg-yellow-100 text-yellow-700 rounded shake-x" title={downshiftInfo()?.reason || ''}>↓ 제한 {downshiftInfo()?.newLimit ?? '-'}
                 </span>
               </Show>
               <span class="text-xs text-gray-500">
@@ -808,28 +823,28 @@ export default function CrawlingEngineTabSimple() {
             </div>
             <div class="grid grid-cols-5 gap-2 text-center">
               <div class="bg-blue-50 rounded p-2">
-                <div class="text-xl font-bold text-blue-600">{detailStats().started}</div>
+                <div class="text-xl font-bold text-blue-600"><CountUp value={detailStats().started} /></div>
                 <div class="text-xs text-gray-600">시작</div>
               </div>
               <div class="bg-emerald-50 rounded p-2">
-                <div class="text-xl font-bold text-emerald-600">{detailStats().completed}</div>
+                <div class="text-xl font-bold text-emerald-600"><CountUp value={detailStats().completed} /></div>
                 <div class="text-xs text-gray-600">완료</div>
               </div>
               <div class="bg-amber-50 rounded p-2">
-                <div class="text-xl font-bold text-amber-600">{detailStats().inflight}</div>
+                <div class="text-xl font-bold text-amber-600"><CountUp value={detailStats().inflight} /></div>
                 <div class="text-xs text-gray-600">진행중</div>
               </div>
               <div class="bg-rose-50 rounded p-2">
-                <div class="text-xl font-bold text-rose-600">{detailStats().failed}</div>
+                <div class="text-xl font-bold text-rose-600"><CountUp value={detailStats().failed} /></div>
                 <div class="text-xs text-gray-600">실패</div>
               </div>
               <div class="bg-violet-50 rounded p-2">
-                <div class="text-xl font-bold text-violet-600">{detailStats().retried}</div>
+                <div class="text-xl font-bold text-violet-600"><CountUp value={detailStats().retried} /></div>
                 <div class="text-xs text-gray-600">재시도</div>
               </div>
             </div>
             <div class="mt-2 w-full bg-gray-200 rounded-full h-2">
-              <div class="h-2 rounded-full bg-purple-500 transition-all" style={{ width: `${(() => {
+              <div class="progress-fill rounded-full" style={{ width: `${(() => {
                 const denom = (crawlingRange()?.crawling_info?.estimated_new_products as number) || detailStats().started || 0;
                 return denom > 0 ? Math.min(100, (detailStats().completed / denom) * 100) : 0;
               })()}%` }}></div>
@@ -909,19 +924,19 @@ export default function CrawlingEngineTabSimple() {
             </div>
             <div class="grid grid-cols-4 gap-2 text-center">
               <div class="bg-indigo-50 rounded p-2">
-                <div class="text-xl font-bold text-indigo-600">{validationStats().targetPages}</div>
+                <div class="text-xl font-bold text-indigo-600">{effectsOn() ? <CountUp value={validationStats().targetPages} /> : validationStats().targetPages}</div>
                 <div class="text-xs text-gray-600">대상 페이지</div>
               </div>
               <div class="bg-emerald-50 rounded p-2">
-                <div class="text-xl font-bold text-emerald-600">{validationStats().pagesScanned}</div>
+                <div class="text-xl font-bold text-emerald-600">{effectsOn() ? <CountUp value={validationStats().pagesScanned} /> : validationStats().pagesScanned}</div>
                 <div class="text-xs text-gray-600">스캔</div>
               </div>
               <div class="bg-amber-50 rounded p-2">
-                <div class="text-xl font-bold text-amber-600">{validationStats().divergences}</div>
+                <div class="text-xl font-bold text-amber-600">{effectsOn() ? <CountUp value={validationStats().divergences} /> : validationStats().divergences}</div>
                 <div class="text-xs text-gray-600">불일치</div>
               </div>
               <div class="bg-rose-50 rounded p-2">
-                <div class="text-xl font-bold text-rose-600">{validationStats().anomalies}</div>
+                <div class="text-xl font-bold text-rose-600">{effectsOn() ? <CountUp value={validationStats().anomalies} /> : validationStats().anomalies}</div>
                 <div class="text-xs text-gray-600">이상</div>
               </div>
             </div>
@@ -946,19 +961,23 @@ export default function CrawlingEngineTabSimple() {
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
               <div class="bg-sky-50 rounded p-2">
-                <div class="text-xl font-bold text-sky-600">{dbSnapshot().total ?? '-'}</div>
+                <div class="text-xl font-bold text-sky-600">{effectsOn() && typeof dbSnapshot().total === 'number' ? <CountUp value={dbSnapshot().total as number} /> : (dbSnapshot().total ?? '-')}</div>
                 <div class="text-xs text-gray-600">총 상세 수</div>
               </div>
               <div class="bg-purple-50 rounded p-2">
-                <div class="text-xl font-bold text-purple-600">{dbSnapshot().minPage ?? '-'}</div>
+                <div class="text-xl font-bold text-purple-600">{effectsOn() && typeof dbSnapshot().minPage === 'number' ? <CountUp value={dbSnapshot().minPage as number} /> : (dbSnapshot().minPage ?? '-')}</div>
                 <div class="text-xs text-gray-600">DB 최소 페이지</div>
               </div>
               <div class="bg-purple-50 rounded p-2">
-                <div class="text-xl font-bold text-purple-600">{dbSnapshot().maxPage ?? '-'}</div>
+                <div class="text-xl font-bold text-purple-600">{effectsOn() && typeof dbSnapshot().maxPage === 'number' ? <CountUp value={dbSnapshot().maxPage as number} /> : (dbSnapshot().maxPage ?? '-')}</div>
                 <div class="text-xs text-gray-600">DB 최대 페이지</div>
               </div>
               <div class="bg-emerald-50 rounded p-2">
-                <div class="text-xl font-bold text-emerald-600">{dbSnapshot().inserted ?? 0}/{dbSnapshot().updated ?? 0}</div>
+                <div class="text-xl font-bold text-emerald-600">
+                  {effectsOn() ? <CountUp value={dbSnapshot().inserted ?? 0} /> : (dbSnapshot().inserted ?? 0)}
+                  /
+                  {effectsOn() ? <CountUp value={dbSnapshot().updated ?? 0} /> : (dbSnapshot().updated ?? 0)}
+                </div>
                 <div class="text-xs text-gray-600">삽입/업데이트(세션)</div>
               </div>
             </div>
@@ -972,19 +991,19 @@ export default function CrawlingEngineTabSimple() {
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
               <div class="bg-blue-50 rounded p-2">
-                <div class="text-xl font-bold text-blue-600">{persistStats().attempted}</div>
+                <div class="text-xl font-bold text-blue-600">{effectsOn() ? <CountUp value={persistStats().attempted} /> : persistStats().attempted}</div>
                 <div class="text-xs text-gray-600">시도</div>
               </div>
               <div class="bg-emerald-50 rounded p-2">
-                <div class="text-xl font-bold text-emerald-600">{persistStats().succeeded}</div>
+                <div class="text-xl font-bold text-emerald-600">{effectsOn() ? <CountUp value={persistStats().succeeded} /> : persistStats().succeeded}</div>
                 <div class="text-xs text-gray-600">성공</div>
               </div>
               <div class="bg-rose-50 rounded p-2">
-                <div class="text-xl font-bold text-rose-600">{persistStats().failed}</div>
+                <div class="text-xl font-bold text-rose-600">{effectsOn() ? <CountUp value={persistStats().failed} /> : persistStats().failed}</div>
                 <div class="text-xs text-gray-600">실패</div>
               </div>
               <div class="bg-amber-50 rounded p-2">
-                <div class="text-xl font-bold text-amber-600">{persistStats().duplicates}</div>
+                <div class="text-xl font-bold text-amber-600">{effectsOn() ? <CountUp value={persistStats().duplicates} /> : persistStats().duplicates}</div>
                 <div class="text-xs text-gray-600">중복</div>
               </div>
             </div>
@@ -1083,7 +1102,7 @@ export default function CrawlingEngineTabSimple() {
           <button
             onClick={startSmartCrawling}
             disabled={isRunning()}
-            class={`px-6 py-3 rounded-lg font-medium text-white ${
+            class={`px-6 py-3 rounded-lg font-medium text-white ripple ${
               isRunning() 
                 ? 'bg-gray-400 cursor-not-allowed' 
                 : 'bg-blue-600 hover:bg-blue-700'
@@ -1095,7 +1114,7 @@ export default function CrawlingEngineTabSimple() {
           <button
             onClick={startUnifiedAdvanced}
             disabled={isRunning()}
-            class={`px-6 py-3 rounded-lg font-medium text-white ${
+            class={`px-6 py-3 rounded-lg font-medium text-white ripple ${
               isRunning() 
                 ? 'bg-gray-400 cursor-not-allowed' 
                 : 'bg-purple-600 hover:bg-purple-700'
@@ -1107,7 +1126,7 @@ export default function CrawlingEngineTabSimple() {
           <button
             onClick={startLightUnified}
             disabled={isRunning()}
-            class={`px-6 py-3 rounded-lg font-medium text-white ${
+            class={`px-6 py-3 rounded-lg font-medium text-white ripple ${
               isRunning() 
                 ? 'bg-gray-400 cursor-not-allowed' 
                 : 'bg-orange-600 hover:bg-orange-700'
@@ -1119,7 +1138,7 @@ export default function CrawlingEngineTabSimple() {
           <button
             onClick={calculateCrawlingRange}
             disabled={isRunning()}
-            class="px-6 py-3 rounded-lg font-medium text-blue-600 border border-blue-600 hover:bg-blue-50 disabled:opacity-50"
+            class="px-6 py-3 rounded-lg font-medium text-blue-600 border border-blue-600 hover:bg-blue-50 disabled:opacity-50 ripple"
           >
             📊 범위 다시 계산
           </button>
@@ -1139,7 +1158,7 @@ export default function CrawlingEngineTabSimple() {
             <button
               onClick={startValidationRun}
               disabled={isValidating()}
-              class={`px-4 py-2 rounded-lg font-medium text-white ${
+              class={`px-4 py-2 rounded-lg font-medium text-white ripple ${
                 isValidating() ? 'bg-gray-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'
               }`}
             >
@@ -1150,7 +1169,7 @@ export default function CrawlingEngineTabSimple() {
           <div class="flex items-center gap-2">
             <input
               type="text"
-              class="w-64 px-3 py-2 border rounded-md text-sm"
+              class={`w-64 px-3 py-2 border rounded-md text-sm ${syncPulse() && effectsOn() ? 'flash-db' : ''}`}
               placeholder="Sync 범위 (예: 498-492,489,487-485)"
               value={syncRanges()}
               onInput={(e) => setSyncRanges(e.currentTarget.value)}
@@ -1158,7 +1177,7 @@ export default function CrawlingEngineTabSimple() {
             <button
               onClick={startSyncRun}
               disabled={isSyncing()}
-              class={`px-4 py-2 rounded-lg font-medium text-white ${
+              class={`px-4 py-2 rounded-lg font-medium text-white ripple ${
                 isSyncing() ? 'bg-gray-400 cursor-not-allowed' : 'bg-teal-600 hover:bg-teal-700'
               }`}
             >
@@ -1189,7 +1208,7 @@ export default function CrawlingEngineTabSimple() {
                 } finally { setIsSyncing(false); }
               }}
               disabled={isSyncing()}
-              class={`px-4 py-2 rounded-lg font-medium text-white ${
+              class={`px-4 py-2 rounded-lg font-medium text-white ripple ${
                 isSyncing() ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
               }`}
               title="Partial 모드로 이 범위만 실행"
@@ -1221,7 +1240,7 @@ export default function CrawlingEngineTabSimple() {
                 } finally { setIsSyncing(false); }
               }}
               disabled={isSyncing()}
-              class={`px-4 py-2 rounded-lg font-medium text-white ${
+              class={`px-4 py-2 rounded-lg font-medium text-white ripple ${
                 isSyncing() ? 'bg-gray-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'
               }`}
               title="연속 페이지를 배치로 묶어 순차 실행 (Partial과 동일 Flow)"

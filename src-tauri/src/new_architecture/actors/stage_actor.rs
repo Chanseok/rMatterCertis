@@ -787,13 +787,40 @@ impl StageActor {
                         // store start in local variable passed to temp_actor via metadata if needed (simplified omitted for now)
                     }
                     (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) => {
-                        let count = urls.urls.len() as u32;
+                        // Pre-filter URLs by DB state: only crawl details for URLs missing in product_details
+                        let mut filtered_urls: Vec<crate::domain::product_url::ProductUrl> = Vec::new();
+                        let prefiltered_total = urls.urls.len() as u32;
+                        let mut filtered_duplicates = 0u32;
+                        if let Some(repo) = &product_repo_clone {
+                            for u in &urls.urls {
+                                match repo.get_product_detail_by_url(&u.url).await {
+                                    Ok(existing) => {
+                                        if existing.is_some() {
+                                            // Skip already detailed URL
+                                            filtered_duplicates += 1;
+                                        } else {
+                                            filtered_urls.push(u.clone());
+                                        }
+                                    }
+                                    Err(e) => {
+                                        // On DB error, be conservative and crawl
+                                        tracing::warn!("[DetailFilter] DB check failed for url={} err={}", u.url, e);
+                                        filtered_urls.push(u.clone());
+                                    }
+                                }
+                            }
+                        } else {
+                            // No repository available; fallback to original list
+                            filtered_urls = urls.urls.clone();
+                        }
+
+                        let count = filtered_urls.len() as u32;
                         let metrics = crate::new_architecture::actors::types::SimpleMetrics::Page {
-                            url_count: None,
+                            url_count: Some(prefiltered_total),
                             scheduled_details: Some(count),
                             error: None,
                         };
-                        let page_hint = urls.urls.first().map(|u| u.page_id as u32).unwrap_or(0u32);
+                        let page_hint = filtered_urls.first().map(|u| u.page_id as u32).or_else(|| urls.urls.first().map(|u| u.page_id as u32)).unwrap_or(0u32);
                         if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle {
                             session_id: session_id_clone.clone(),
                             batch_id: batch_id_opt.clone(),
@@ -808,12 +835,12 @@ impl StageActor {
                             );
                         } else {
                             debug!(
-                                "Emitted PageLifecycle detail_scheduled page={} scheduled_details={}",
-                                page_hint, count
+                                "Emitted PageLifecycle detail_scheduled page={} scheduled_details={} (prefiltered={}, duplicates_skipped={})",
+                                page_hint, count, prefiltered_total, filtered_duplicates
                             );
                         }
                         // Aggregate start event (new ProductLifecycleGroup)
-                        debug!("[GroupedEmit] fetch_started_group total_urls={}", count);
+                        debug!("[GroupedEmit] fetch_started_group total_urls={} (skipped={})", count, filtered_duplicates);
                         if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycleGroup {
                             session_id: session_id_clone.clone(),
                             batch_id: batch_id_opt.clone(),
@@ -822,7 +849,7 @@ impl StageActor {
                             started: count,
                             succeeded: 0,
                             failed: 0,
-                            duplicates: 0,
+                            duplicates: filtered_duplicates,
                             duration_ms: 0,
                             phase: "fetch".into(),
                             timestamp: Utc::now(),
@@ -839,7 +866,26 @@ impl StageActor {
                     match &base_item {
                         StageItem::ProductUrls(urls_wrapper) => {
                             // Emit mapping summary once (PageLifecycle detail_mapping_emitted)
-                            if let Some(first_url) = urls_wrapper.urls.first() {
+                            // Determine the filtered list again for this item scope (kept small and explicit)
+                            let mut filtered_urls: Vec<crate::domain::product_url::ProductUrl> = Vec::new();
+                            if let Some(repo) = &product_repo_clone {
+                                for u in &urls_wrapper.urls {
+                                    match repo.get_product_detail_by_url(&u.url).await {
+                                        Ok(existing) => {
+                                            if existing.is_some() {
+                                                // skip duplicates
+                                            } else {
+                                                filtered_urls.push(u.clone());
+                                            }
+                                        }
+                                        Err(e) => { tracing::warn!("[DetailFilter] DB check failed for url={} err={}", u.url, e); filtered_urls.push(u.clone()); }
+                                    }
+                                }
+                            } else {
+                                filtered_urls = urls_wrapper.urls.clone();
+                            }
+
+                            if let Some(first_url) = filtered_urls.first() {
                                 let page_hint = first_url.page_id as u32;
                                 if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle {
                                     session_id: session_id_clone.clone(),
@@ -848,7 +894,7 @@ impl StageActor {
                                     status: "detail_mapping_emitted".into(),
                                     metrics: Some(SimpleMetrics::Page {
                                         url_count: Some(urls_wrapper.urls.len() as u32),
-                                        scheduled_details: Some(urls_wrapper.urls.len() as u32),
+                                        scheduled_details: Some(filtered_urls.len() as u32),
                                         error: None,
                                     }),
                                     timestamp: Utc::now(),
@@ -861,10 +907,10 @@ impl StageActor {
                             }
 
                             let mut collected: Vec<crate::domain::product::ProductDetail> =
-                                Vec::with_capacity(urls_wrapper.urls.len());
+                                Vec::with_capacity(filtered_urls.len());
                             let mut failures: u32 = 0;
                             if let Some(collector) = &product_detail_collector_clone {
-                                for purl in &urls_wrapper.urls {
+                                for purl in &filtered_urls {
                                     let prod_ref = purl.url.clone();
                                     let origin_page = purl.page_id as u32;
                                     // Emit fine-grained detail task start for UI/KPI fidelity
@@ -1035,9 +1081,9 @@ impl StageActor {
                             };
                             let product_details_wrapper = ProductDetails {
                                 products: collected.clone(),
-                                source_urls: urls_wrapper.urls.clone(),
+                                source_urls: filtered_urls.clone(),
                                 extraction_stats: ExtractionStats {
-                                    attempted: urls_wrapper.urls.len() as u32,
+                                    attempted: filtered_urls.len() as u32,
                                     successful: collected.len() as u32,
                                     failed: failures,
                                     empty_responses: 0,
