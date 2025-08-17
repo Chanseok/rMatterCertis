@@ -369,17 +369,17 @@
   @keyframes waveBurstUp {
     0% { opacity: 0.65; transform: translate(-50%, -50%) scale(0); }
     60% { opacity: 0.5; }
-    100% { opacity: 0; transform: translate(-50%, calc(-50% - 20vh)) scale(45); }
+    100% { opacity: 0; transform: translate(-50%, calc(-50% - 20vh)) scale(var(--scale, 45)); }
   }
   @keyframes waveBurstDown {
     0% { opacity: 0.65; transform: translate(-50%, -50%) scale(0); }
     60% { opacity: 0.5; }
-    100% { opacity: 0; transform: translate(-50%, calc(-50% + 20vh)) scale(45); }
+    100% { opacity: 0; transform: translate(-50%, calc(-50% + 20vh)) scale(var(--scale, 45)); }
   }
   @keyframes waveRing {
     0% { opacity: 0.9; transform: translate(-50%, -50%) scale(0.2); border-color: rgba(59, 130, 246, 0.6); }
     70% { opacity: 0.25; }
-    100% { opacity: 0; transform: translate(-50%, -50%) scale(55); border-color: rgba(59, 130, 246, 0); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(calc(var(--scale, 45) * 1.2)); border-color: rgba(59, 130, 246, 0); }
   }
 
   .start-wave-wash {
@@ -393,55 +393,6 @@
     100% { opacity: 0; }
   }
 
-  /* ================================ */
-  /* Z-axis Surface Ripple (start FX) */
-  /* ================================ */
-  .surface-ripple-grid {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    perspective: 900px;
-    transform-style: preserve-3d;
-    overflow: hidden;
-  }
-  .surface-ripple-row {
-    position: absolute;
-    left: 0; right: 0;
-    height: var(--rowH, 4%);
-    top: var(--rowTop, 0%);
-    background: linear-gradient(to bottom, rgba(99,102,241,0.00), rgba(59,130,246,0.10), rgba(99,102,241,0.00));
-    mix-blend-mode: overlay;
-    opacity: 0;
-    will-change: transform, opacity;
-    transform: translateZ(0);
-  }
-  .surface-ripple-row.surf-up { animation: rippleRowUp 950ms cubic-bezier(.2,.7,.2,1) var(--delay, 0ms) forwards; }
-  .surface-ripple-row.surf-down { animation: rippleRowDown 950ms cubic-bezier(.2,.7,.2,1) var(--delay, 0ms) forwards; }
-
-  @keyframes rippleRowUp {
-    0% { opacity: 0; transform: translateZ(0); }
-    28% { opacity: .38; transform: translateZ(var(--amp, 0px)); }
-    65% { opacity: .14; }
-    100% { opacity: 0; transform: translateZ(0); }
-  }
-  @keyframes rippleRowDown {
-    0% { opacity: 0; transform: translateZ(0); }
-    28% { opacity: .38; transform: translateZ(var(--amp, 0px)); }
-    65% { opacity: .14; }
-    100% { opacity: 0; transform: translateZ(0); }
-  }
-
-  .surface-ripple-wash {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: linear-gradient(var(--dir, to bottom), rgba(59,130,246,0.15), rgba(59,130,246,0.06) 45%, rgba(59,130,246,0) 70%);
-    mix-blend-mode: soft-light;
-  }
-  .surface-ripple-wash.wash-up { animation: rippleWashUp 1000ms ease-out forwards; }
-  .surface-ripple-wash.wash-down { animation: rippleWashDown 1000ms ease-out forwards; }
-  @keyframes rippleWashUp { 0% { opacity: .28; transform: translateY(8px); } 100% { opacity: 0; transform: translateY(-12vh); } }
-  @keyframes rippleWashDown { 0% { opacity: .28; transform: translateY(-8px); } 100% { opacity: 0; transform: translateY(12vh); } }
 
   /* Dramatic transition effects for Calculated Crawling Range */
   .range-transition-ring {

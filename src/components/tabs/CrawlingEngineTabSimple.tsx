@@ -195,25 +195,37 @@ export default function CrawlingEngineTabSimple() {
   // Sync input pulse highlight
   const [syncPulse, setSyncPulse] = createSignal(false);
 
-  // Start button surface ripple FX (Z-axis undulation)
-  const [surfaceRipples, setSurfaceRipples] = createSignal<Array<{ id:number; x:number; y:number; dir:'up'|'down'; impactRow:number }>>([]);
-  let rippleIdSeq = 1;
-  const SURFACE_ROWS = 24;
-  const surfaceRowIndex = Array.from({ length: SURFACE_ROWS }, (_, i) => i);
-  const triggerStartWave = (evt?: MouseEvent) => {
-    // Compute click point in viewport; fallback to center
-    const x = evt?.clientX ?? window.innerWidth / 2;
-    const y = evt?.clientY ?? window.innerHeight / 2;
-    const impactRow = Math.max(0, Math.min(SURFACE_ROWS - 1, Math.floor((y / window.innerHeight) * SURFACE_ROWS)));
-    const idUp = rippleIdSeq++;
-    const idDown = rippleIdSeq++;
-    setSurfaceRipples(prev => [
-      ...prev,
-      { id: idUp, x, y, dir: 'up', impactRow },
-      { id: idDown, x, y, dir: 'down', impactRow },
-    ]);
+  // Start button circular wave FX (restored)
+  const [waveBursts, setWaveBursts] = createSignal<Array<{ id:number; x:number; y:number; kind:'up'|'down'|'ring' }>>([]);
+  let waveIdSeq = 1;
+  const triggerStartWave = (evt?: MouseEvent | PointerEvent) => {
+    // Compute click point in viewport; fallback to the center of the pressed button, else screen center
+    let x: number | undefined = (evt as any)?.clientX;
+    let y: number | undefined = (evt as any)?.clientY;
+    if ((x == null || y == null) && (evt as any)?.currentTarget) {
+      try {
+        const el = (evt as any).currentTarget as HTMLElement;
+        const rect = el.getBoundingClientRect();
+        x = rect.left + rect.width / 2;
+        y = rect.top + rect.height / 2;
+      } catch {}
+    }
+    if (x == null || y == null) {
+      x = window.innerWidth / 2;
+      y = window.innerHeight / 2;
+    }
+    // Compute scale to fill the viewport from the click point
+    const dx = Math.max(x, window.innerWidth - x);
+    const dy = Math.max(y, window.innerHeight - y);
+    const radius = Math.hypot(dx, dy);
+    const baseRadius = 12; // starting diameter ~24px, so radius ~12
+    const fillScale = Math.max(35, (radius / baseRadius));
+    const idUp = waveIdSeq++;
+    const idDown = waveIdSeq++;
+    const idRing = waveIdSeq++;
+    setWaveBursts(prev => [...prev, { id:idUp, x, y, kind:'up' }, { id:idDown, x, y, kind:'down' }, { id:idRing, x, y, kind:'ring' }]);
     // Auto cleanup after animations
-    setTimeout(() => setSurfaceRipples(prev => prev.filter(r => r.id !== idUp && r.id !== idDown)), 1200);
+    setTimeout(() => setWaveBursts(prev => prev.filter(w => w.id !== idUp && w.id !== idDown && w.id !== idRing)), 1000);
   };
 
   // 크롤링 범위 계산
@@ -1276,29 +1288,25 @@ export default function CrawlingEngineTabSimple() {
             class={`px-3 py-2 rounded-lg font-medium border text-gray-700 hover:bg-gray-50 ${
               isRunning() ? 'opacity-50 cursor-not-allowed' : 'border-gray-300'
             }`}
-            title="UI 표면 파동 효과 미리보기"
+            title="원형 파동 효과 미리보기"
           >파도 미리보기</button>
 
-          {/* Global surface ripple overlay */}
+          {/* Global start-wave overlay (circular) */}
           <div class="start-wave-root" aria-hidden="true">
-            <For each={surfaceRipples()}>{(r) => (
-              <div class="surface-ripple-grid" style={{ '--x': `${r.x}px`, '--y': `${r.y}px` } as any}>
-                {/* directional wash */}
-                <div class={`surface-ripple-wash ${r.dir === 'up' ? 'wash-up' : 'wash-down'}`} style={{ '--dir': r.dir === 'up' ? 'to top' : 'to bottom' } as any} />
-                {/* rows */}
-                <For each={surfaceRowIndex}>{(idx) => {
-                  const dist = Math.abs(idx - r.impactRow);
-                  const delay = Math.max(0, (dist * 22));
-                  // amplitude decreases with distance, stronger near impact
-                  const amp = Math.max(0, 26 - dist * 2.2); // px
-                  return (
-                    <div
-                      class={`surface-ripple-row ${r.dir === 'up' ? 'surf-up' : 'surf-down'}`}
-                      style={{ '--rowH': `${100 / SURFACE_ROWS}%`, '--rowTop': `${(idx as number) * (100 / SURFACE_ROWS)}%`, '--delay': `${delay}ms`, '--amp': `${amp}px` } as any}
-                    />
-                  );
-                }}</For>
-              </div>
+            <For each={waveBursts()}>{(w) => (
+              <>
+                <div
+                  class={`start-wave-circle ${w.kind === 'up' ? 'wave-up' : w.kind === 'down' ? 'wave-down' : 'wave-ring'}`}
+                  style={{ '--x': `${w.x}px`, '--y': `${w.y}px`, '--scale': `${(() => {
+                    const dx = Math.max(w.x, window.innerWidth - w.x);
+                    const dy = Math.max(w.y, window.innerHeight - w.y);
+                    const radius = Math.hypot(dx, dy);
+                    const baseRadius = 12;
+                    return Math.max(35, (radius / baseRadius));
+                  })()}` } as any}
+                />
+                {w.kind === 'up' && <div class="start-wave-wash" style={{ '--x': `${w.x}px`, '--y': `${w.y}px` } as any} />}
+              </>
             )}</For>
           </div>
           {/* Validation Controls */}
