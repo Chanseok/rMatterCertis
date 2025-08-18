@@ -636,7 +636,7 @@ export class TauriApiService {
   async subscribeToActorBridgeEvents(
     callback: (eventName: string, payload: any) => void
   ): Promise<() => void> {
-    const names = [
+  const names = [
       // Session
       'actor-session-started',
       'actor-session-paused',
@@ -697,6 +697,22 @@ export class TauriApiService {
     ];
 
     const unsubs: UnlistenFn[] = [];
+    // Prefer unified stream if backend emits generalized-only 'actor-event'.
+    // When present, we map enriched.payload.event_name back to the legacy name
+    // so existing UI callbacks keep working without changes.
+    try {
+      const unUnified = await listen<any>('actor-event', (evt) => {
+        const p = evt?.payload ?? {};
+        const originalName = typeof p.event_name === 'string' ? p.event_name : 'actor-event';
+        callback(originalName, p);
+      });
+      unsubs.push(unUnified);
+      this.eventListeners.set('actor-event', unUnified);
+    } catch (e) {
+      // If the channel doesn't exist, ignore.
+      console.debug('[ActorBridge] unified channel not available yet:', e);
+    }
+
     for (const name of names) {
       try {
         const un = await listen<any>(name, (evt) => callback(name, evt.payload));

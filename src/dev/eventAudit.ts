@@ -2,6 +2,7 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event';
 // Lightweight in-memory event audit. (FS write removed for portability / missing fs plugin)
 
 const EVENT_NAMES = [
+  'actor-event', // unified stream (when generalized-only flag is ON)
   'actor-session-started','actor-session-completed','actor-session-failed','actor-session-report',
   'actor-batch-started','actor-batch-completed','actor-batch-failed','actor-batch-report',
   'actor-page-task-started','actor-page-task-completed','actor-page-task-failed',
