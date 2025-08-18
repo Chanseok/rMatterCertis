@@ -343,10 +343,10 @@ impl crate::new_architecture::actors::BatchActor {
                 let urls_strs: Vec<String> = urls.iter().map(|u| u.url.clone()).collect();
                 let item_started = std::time::Instant::now();
                 match integration_service
-                    .collect_details_detailed(urls.clone(), cancellation_token.clone())
+                    .collect_details_detailed_with_meta(urls.clone(), cancellation_token.clone())
                     .await
                 {
-                    Ok(collected_details) => {
+                    Ok((collected_details, retry_count, duration_ms)) => {
                         let success = !collected_details.is_empty();
                         if success { successful += 1; } else { failed += 1; }
                         let collected_data = if success {
@@ -375,8 +375,8 @@ impl crate::new_architecture::actors::BatchActor {
                             item_type: crate::new_architecture::actors::types::StageItemType::ProductUrls { urls: urls_strs.clone() },
                             success,
                             error: if success { None } else { Some("no details".to_string()) },
-                            duration_ms: item_started.elapsed().as_millis() as u64,
-                            retry_count: 0,
+                            duration_ms: duration_ms.max(item_started.elapsed().as_millis() as u64),
+                            retry_count,
                             collected_data,
                         });
                     }

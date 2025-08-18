@@ -376,6 +376,18 @@ impl CrawlingIntegrationService {
             .map_err(|e| anyhow::anyhow!("{}", e))
     }
 
+    /// 상세 수집 결과(+메타: retry_count, duration_ms)를 반환 (per-item detailed bridging 용)
+    pub async fn collect_details_detailed_with_meta(
+        &self,
+        urls: Vec<ProductUrl>,
+        cancellation_token: CancellationToken,
+    ) -> anyhow::Result<(Vec<ProductDetail>, u32, u64)> {
+        self
+            .collect_detail_batch_with_retry_with_meta(&urls, cancellation_token, 2)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
     /// 사이트 상태 분석 실행
     pub async fn execute_site_analysis(&self) -> Result<SiteStatus> {
         info!("Starting real site status analysis");
@@ -610,6 +622,39 @@ impl CrawlingIntegrationService {
         self.detail_collector
             .collect_details_with_cancellation(urls, cancellation_token)
             .await
+    }
+
+    /// 배치 상세 수집 (재시도 및 메타 포함)
+    async fn collect_detail_batch_with_retry_with_meta(
+        &self,
+        urls: &[ProductUrl],
+        cancellation_token: CancellationToken,
+        max_retries: u32,
+    ) -> Result<(Vec<ProductDetail>, u32, u64)> {
+        let started = std::time::Instant::now();
+        let mut last_error: Option<anyhow::Error> = None;
+        for attempt in 0..=max_retries {
+            match self
+                .detail_collector
+                .collect_details_with_cancellation(urls, cancellation_token.clone())
+                .await
+            {
+                Ok(details) => {
+                    let duration_ms = started.elapsed().as_millis() as u64;
+                    return Ok((details, attempt, duration_ms));
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < max_retries {
+                        let delay = Duration::from_millis(1000 * (2_u64.pow(attempt)));
+                        debug!(attempt = attempt, delay_ms = delay.as_millis(), "Retrying detail collection (meta)");
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown error")))
     }
 }
 
