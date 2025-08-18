@@ -641,6 +641,77 @@ impl HttpClient {
 mod tests {
     use super::*;
     use std::time::Instant;
+    use std::net::SocketAddr;
+    use tokio::net::TcpListener;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+
+    async fn start_test_server() -> (SocketAddr, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let cnt_clone = counter.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = match listener.accept().await {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+
+                let mut buf = vec![0u8; 1024];
+                let _ = socket.read(&mut buf).await; // best-effort
+                let req = String::from_utf8_lossy(&buf);
+                let first_line = req.lines().next().unwrap_or("");
+
+                // naive path detection
+                let path = if let Some(start) = first_line.find(' ') {
+                    if let Some(end) = first_line[start + 1..].find(' ') {
+                        &first_line[start + 1..start + 1 + end]
+                    } else { "/" }
+                } else { "/" };
+
+                match path {
+                    "/retry2ok" => {
+                        let n = cnt_clone.fetch_add(1, Ordering::SeqCst);
+                        if n < 2 {
+                            // 429 with Retry-After: 0
+                            let resp = b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0\r\nContent-Length: 0\r\n\r\n";
+                            let _ = socket.write_all(resp).await;
+                        } else {
+                            let body = b"ok";
+                            let resp = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                                body.len()
+                            );
+                            let _ = socket.write_all(resp.as_bytes()).await;
+                            let _ = socket.write_all(body).await;
+                        }
+                    }
+                    "/slow" => {
+                        // Write headers then delay body to let cancellation kick in
+                        let body = b"delayed";
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = socket.write_all(resp.as_bytes()).await;
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        let _ = socket.write_all(body).await;
+                    }
+                    _ => {
+                        let body = b"ok";
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = socket.write_all(resp.as_bytes()).await;
+                        let _ = socket.write_all(body).await;
+                    }
+                }
+            }
+        });
+        (addr, counter)
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_client_creation() {
@@ -668,6 +739,42 @@ mod tests {
         // This might fail in CI without internet, so we just test it doesn't panic
         let result = client.health_check().await;
         println!("Health check result: {:?}", result);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_retry_policy_429_then_ok() {
+        let (addr, _cnt) = start_test_server().await;
+        let cfg = HttpClientConfig { max_requests_per_second: 100, timeout_seconds: 5, max_retries: 3, user_agent: "test".into(), follow_redirects: false };
+        let client = HttpClient::with_config(cfg).unwrap();
+        let url = format!("http://{}/retry2ok", addr);
+        let resp = client.fetch_response_with_policy(&url).await.expect("should eventually succeed");
+        assert!(resp.status().is_success());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_cancellation_before_start() {
+        let cfg = HttpClientConfig { max_requests_per_second: 100, timeout_seconds: 5, max_retries: 1, user_agent: "test".into(), follow_redirects: false };
+        let client = HttpClient::with_config(cfg).unwrap();
+        let token = CancellationToken::new();
+        token.cancel();
+        let res = client.fetch_html_string_with_cancel("http://127.0.0.1:9/nowhere", &token).await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_cancellation_during_body() {
+        let (addr, _cnt) = start_test_server().await;
+        let cfg = HttpClientConfig { max_requests_per_second: 100, timeout_seconds: 5, max_retries: 1, user_agent: "test".into(), follow_redirects: false };
+        let client = HttpClient::with_config(cfg).unwrap();
+        let token = CancellationToken::new();
+        let url = format!("http://{}/slow", addr);
+        let h = tokio::spawn({ let client = client.clone(); let token = token.clone(); async move {
+            client.fetch_html_string_with_cancel(&url, &token).await
+        }});
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        token.cancel();
+        let res = h.await.unwrap();
+        assert!(res.is_err());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
