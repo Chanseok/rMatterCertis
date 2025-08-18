@@ -1184,9 +1184,12 @@ impl BatchActor {
     // --- Internal adapters for template executor bridging ---
     fn map_stage_type_to_channels(stage: &StageType) -> Option<ch_types::StageType> {
         match stage {
-            StageType::StatusCheck => None, // not supported by template executor; fall back to legacy path
-            StageType::ListPageCrawling => Some(ch_types::StageType::ListCollection),
-            StageType::ProductDetailCrawling => Some(ch_types::StageType::DetailCollection),
+            // Not supported by template executor (or requires per-item details we don't have yet)
+            // Keep legacy path for functional pipeline until we enrich result bridging.
+            StageType::StatusCheck => None,
+            StageType::ListPageCrawling => None,
+            StageType::ProductDetailCrawling => None,
+            // Safe to route via template executor (doesn't require details for transforms)
             StageType::DataValidation => Some(ch_types::StageType::DataValidation),
             StageType::DataSaving => Some(ch_types::StageType::DatabaseSave),
         }
