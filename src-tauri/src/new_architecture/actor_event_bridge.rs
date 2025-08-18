@@ -13,6 +13,7 @@ use std::sync::{
 use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
+use crate::infrastructure::features::feature_events_generalized_only;
 
 /// Actor 이벤트를 프론트엔드로 전달하는 브릿지
 pub struct ActorEventBridge {
@@ -104,8 +105,20 @@ impl ActorEventBridge {
             }
             v
         };
+        // Generalized-only 모드: 단일 채널로 통일된 이벤트를 방출하고 종료
+        if feature_events_generalized_only() {
+            let unified_name = "actor-event";
+            self.app_handle
+                .emit(unified_name, &enriched)
+                .map_err(|e| format!("Tauri emit failed: {}", e))?;
+            debug!(
+                "✅ Forwarded generalized Actor event '{}' (original={})",
+                unified_name, event_name
+            );
+            return Ok(());
+        }
 
-    // Tauri emit을 통해 프론트엔드로 전송
+        // 레거시 호환: 기존 이벤트명으로 전송
         self.app_handle
             .emit(&event_name, &enriched)
             .map_err(|e| format!("Tauri emit failed: {}", e))?;
