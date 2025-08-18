@@ -340,6 +340,8 @@ impl crate::new_architecture::actors::BatchActor {
             for (idx, urls_wrapper) in product_urls_items.into_iter().enumerate() {
                 // Collect details for this item
                 let urls = urls_wrapper.urls.clone();
+                let urls_strs: Vec<String> = urls.iter().map(|u| u.url.clone()).collect();
+                let item_started = std::time::Instant::now();
                 match integration_service
                     .collect_details_detailed(urls.clone(), cancellation_token.clone())
                     .await
@@ -370,10 +372,10 @@ impl crate::new_architecture::actors::BatchActor {
 
                         details.push(crate::new_architecture::actors::types::StageItemResult {
                             item_id: format!("product_urls:{}", idx),
-                            item_type: crate::new_architecture::actors::types::StageItemType::ProductUrls { urls: Vec::new() },
+                            item_type: crate::new_architecture::actors::types::StageItemType::ProductUrls { urls: urls_strs.clone() },
                             success,
                             error: if success { None } else { Some("no details".to_string()) },
-                            duration_ms: 0,
+                            duration_ms: item_started.elapsed().as_millis() as u64,
                             retry_count: 0,
                             collected_data,
                         });
@@ -383,10 +385,10 @@ impl crate::new_architecture::actors::BatchActor {
                         failed += 1;
                         details.push(crate::new_architecture::actors::types::StageItemResult {
                             item_id: format!("product_urls:{}", idx),
-                            item_type: crate::new_architecture::actors::types::StageItemType::ProductUrls { urls: Vec::new() },
+                            item_type: crate::new_architecture::actors::types::StageItemType::ProductUrls { urls: urls_strs.clone() },
                             success: false,
                             error: Some(format!("{}", e)),
-                            duration_ms: 0,
+                            duration_ms: item_started.elapsed().as_millis() as u64,
                             retry_count: 0,
                             collected_data: None,
                         });
