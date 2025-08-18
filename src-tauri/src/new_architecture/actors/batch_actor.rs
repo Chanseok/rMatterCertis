@@ -19,6 +19,10 @@ use super::types::{ActorCommand, ActorError, BatchConfig, StageResult, StageType
 use crate::new_architecture::actors::StageActor;
 use crate::new_architecture::actors::types::AppEvent;
 use crate::new_architecture::channels::types::{ProductUrls, StageItem};
+use crate::new_architecture::{
+    actor_system as actor_sys,
+    channels::types as ch_types,
+};
 use crate::new_architecture::context::AppContext;
 
 // 실제 서비스 imports 추가
@@ -1177,6 +1181,53 @@ impl Actor for BatchActor {
 }
 
 impl BatchActor {
+    // --- Internal adapters for template executor bridging ---
+    fn map_stage_type_to_channels(stage: &StageType) -> Option<ch_types::StageType> {
+        match stage {
+            StageType::StatusCheck => None, // not supported by template executor; fall back to legacy path
+            StageType::ListPageCrawling => Some(ch_types::StageType::ListCollection),
+            StageType::ProductDetailCrawling => Some(ch_types::StageType::DetailCollection),
+            StageType::DataValidation => Some(ch_types::StageType::DataValidation),
+            StageType::DataSaving => Some(ch_types::StageType::DatabaseSave),
+        }
+    }
+
+    fn map_stage_result_from_actor_system(
+        src: actor_sys::StageResult,
+        items_len: usize,
+    ) -> StageResult {
+        match src {
+            actor_sys::StageResult::Success {
+                processed_items,
+                duration_ms,
+            } => StageResult {
+                processed_items,
+                successful_items: processed_items,
+                failed_items: (items_len as u32).saturating_sub(processed_items),
+                duration_ms,
+                details: Vec::new(),
+            },
+            actor_sys::StageResult::Failure {
+                error: _,
+                partial_results,
+            } => StageResult {
+                processed_items: partial_results,
+                successful_items: partial_results,
+                failed_items: (items_len as u32).saturating_sub(partial_results),
+                duration_ms: 0,
+                details: Vec::new(),
+            },
+            actor_sys::StageResult::RecoverableError { .. }
+            | actor_sys::StageResult::FatalError { .. } => StageResult {
+                processed_items: 0,
+                successful_items: 0,
+                failed_items: items_len as u32,
+                duration_ms: 0,
+                details: Vec::new(),
+            },
+        }
+    }
+
     /// 개별 Stage를 StageActor로 실행
     /// TODO: StageItemCompleted 이벤트 수신 채널 도입하여 products_inserted/products_updated 실시간 반영
     /// # Arguments
@@ -1209,11 +1260,16 @@ impl BatchActor {
 
         // Feature-gated: Use real-crawling stage executor template path when enabled
         if crate::infrastructure::features::feature_stage_executor_template() {
-            // Note: Template path currently ignores concurrency_limit; it derives limits from SystemConfig.
-            let result = self
-                .execute_stage_with_real_crawling(stage_type, items, app_config.clone())
-                .await;
-            return Ok(result);
+            if let Some(ch_stage) = Self::map_stage_type_to_channels(&stage_type) {
+                let items_len = items.len();
+                // Note: Template path currently ignores concurrency_limit; it derives limits from SystemConfig.
+                let actor_res = self
+                    .execute_stage_with_real_crawling(ch_stage, items, app_config.clone())
+                    .await;
+                let bridged = Self::map_stage_result_from_actor_system(actor_res, items_len);
+                return Ok(bridged);
+            }
+            // If not supported (e.g., StatusCheck), fall through to legacy path
         }
 
         // StageActor 생성 (실제 서비스들과 함께)
@@ -1271,11 +1327,16 @@ impl BatchActor {
 
         // Feature-gated: Use real-crawling stage executor template path when enabled
         if crate::infrastructure::features::feature_stage_executor_template() {
-            // Hints are currently not consumed by the template executor; safe to ignore during migration.
-            let result = self
-                .execute_stage_with_real_crawling(stage_type, items, app_config.clone())
-                .await;
-            return Ok(result);
+            if let Some(ch_stage) = Self::map_stage_type_to_channels(&stage_type) {
+                let items_len = items.len();
+                // Hints are currently not consumed by the template executor; safe to ignore during migration.
+                let actor_res = self
+                    .execute_stage_with_real_crawling(ch_stage, items, app_config.clone())
+                    .await;
+                let bridged = Self::map_stage_result_from_actor_system(actor_res, items_len);
+                return Ok(bridged);
+            }
+            // If not supported, fall through to legacy path
         }
         let app_config = self.app_config.as_ref().ok_or_else(|| {
             BatchError::ServiceNotAvailable("AppConfig not initialized".to_string())
