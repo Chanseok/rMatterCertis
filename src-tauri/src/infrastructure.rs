@@ -20,6 +20,7 @@ pub mod retry_manager; // 재시도 관리자 - INTEGRATED_PHASE2_PLAN Week 1 Da
 pub mod service_based_crawling_engine; // Deprecated legacy engine (kept for compatibility; not used in prod commands)
 pub mod simple_http_client;
 pub mod system_broadcaster; // 실시간 시스템 상태 브로드캐스터
+pub mod features; // Feature flags for phased rollout
 
 // Temporarily disabled - working on schema compatibility
 // pub mod product_repository;
