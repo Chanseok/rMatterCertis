@@ -249,6 +249,40 @@ impl CrawlingIntegrationService {
         Ok(result)
     }
 
+    /// 페이지별 상세 URL 수집 결과(+메타: retry_count, duration_ms)를 반환
+    ///
+    /// 반환값: Vec<(page_number, Vec<ProductUrl>, retry_count, duration_ms)>
+    pub async fn collect_pages_detailed_with_meta(
+        &self,
+        pages: Vec<u32>,
+        perform_site_check: bool,
+        cancellation_token: CancellationToken,
+    ) -> anyhow::Result<Vec<(u32, Vec<ProductUrl>, u32, u64)>> {
+        let mut results: Vec<(u32, Vec<ProductUrl>, u32, u64)> = Vec::new();
+
+        for &page in &pages {
+            if cancellation_token.is_cancelled() {
+                break;
+            }
+
+            match self
+                .collect_single_page_with_retry_with_meta(page, 3, perform_site_check)
+                .await
+            {
+                Ok((urls, retry_count, duration_ms)) => {
+                    results.push((page, urls, retry_count, duration_ms));
+                }
+                Err(e) => {
+                    warn!(page = page, error = %e, "Failed to collect page after retries");
+                    // 실패한 경우에도 형식을 유지하되 빈 URL과 시도 횟수/소요시간 0으로 채움
+                    results.push((page, Vec::new(), 3, 0));
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     /// 실제 상세 수집 단계 실행 (OneShot 결과 반환)
     pub async fn execute_detail_collection_stage(
         &self,
@@ -481,6 +515,81 @@ impl CrawlingIntegrationService {
                             attempt = attempt,
                             delay_ms = delay.as_millis(),
                             "Retrying page collection"
+                        );
+                        tokio::time::sleep(delay).await;
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown error")))
+    }
+
+    /// 단일 페이지 수집 (재시도 및 메타데이터 포함)
+    async fn collect_single_page_with_retry_with_meta(
+        &self,
+        page: u32,
+        max_retries: u32,
+        perform_site_check: bool,
+    ) -> Result<(Vec<ProductUrl>, u32, u64)> {
+        let site_status = if perform_site_check {
+            info!(page = page, "Performing site status check for page (meta)");
+            self.status_checker.check_site_status().await?
+        } else {
+            info!(
+                page = page,
+                "Skipping site status check - using cached site info (meta)"
+            );
+            SiteStatus {
+                total_pages: 495,
+                products_on_last_page: 6,
+                is_accessible: true,
+                estimated_products: 5934,
+                response_time_ms: 500,
+                last_check_time: chrono::Utc::now(),
+                health_score: 1.0,
+                data_change_status:
+                    crate::domain::services::crawling_services::SiteDataChangeStatus::Stable {
+                        count: 5934,
+                    },
+                decrease_recommendation: None,
+                crawling_range_recommendation: CrawlingRangeRecommendation::Partial(5),
+            }
+        };
+
+        let mut last_error = None;
+        let started = std::time::Instant::now();
+
+        for attempt in 0..=max_retries {
+            match self
+                .list_collector
+                .collect_single_page(
+                    page,
+                    site_status.total_pages,
+                    site_status.products_on_last_page,
+                )
+                .await
+            {
+                Ok(urls) => {
+                    if attempt > 0 {
+                        info!(
+                            page = page,
+                            attempt = attempt,
+                            "Page collection succeeded after retry (meta)"
+                        );
+                    }
+                    let duration_ms = started.elapsed().as_millis() as u64;
+                    return Ok((urls, attempt, duration_ms));
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < max_retries {
+                        let delay = Duration::from_millis(1000 * (2_u64.pow(attempt)));
+                        debug!(
+                            page = page,
+                            attempt = attempt,
+                            delay_ms = delay.as_millis(),
+                            "Retrying page collection (meta)"
                         );
                         tokio::time::sleep(delay).await;
                     }

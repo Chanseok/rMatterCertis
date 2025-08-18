@@ -442,7 +442,7 @@ impl crate::new_architecture::actors::BatchActor {
             let perform_site_check = true;
 
             let page_results = match integration_service
-                .collect_pages_detailed(pages.clone(), perform_site_check, cancellation_token)
+                .collect_pages_detailed_with_meta(pages.clone(), perform_site_check, cancellation_token)
                 .await
             {
                 Ok(r) => r,
@@ -462,7 +462,7 @@ impl crate::new_architecture::actors::BatchActor {
             let mut successful = 0u32;
             let mut failed = 0u32;
             let mut details: Vec<crate::new_architecture::actors::types::StageItemResult> = Vec::new();
-            for (page, urls) in page_results.into_iter() {
+            for (page, urls, retry_count, duration_ms) in page_results.into_iter() {
                 let success = !urls.is_empty();
                 if success { successful += 1; } else { failed += 1; }
                 let collected_data = if success {
@@ -476,8 +476,8 @@ impl crate::new_architecture::actors::BatchActor {
                     item_type: crate::new_architecture::actors::types::StageItemType::Page { page_number: page },
                     success,
                     error: if success { None } else { Some("no urls".to_string()) },
-                    duration_ms: 0,
-                    retry_count: 0,
+                    duration_ms,
+                    retry_count,
                     collected_data,
                 });
             }
