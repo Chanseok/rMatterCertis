@@ -9,6 +9,10 @@ use anyhow::{Result, Context};
 use governor::{Quota, RateLimiter, state::{direct::NotKeyed, InMemoryState}, clock::DefaultClock};
 use std::num::NonZeroU32;
 use tokio_util::sync::CancellationToken;
+use crate::infrastructure::features::feature_http_client_unified;
+
+// Avoid name clash with this module's HttpClient by aliasing the unified client types
+use super::simple_http_client as unified;
 
 /// HTTP client configuration for crawling
 #[derive(Debug, Clone, serde::Serialize)]
@@ -37,6 +41,8 @@ pub struct HttpClient {
     client: Client,
     rate_limiter: RateLimiter<NotKeyed, InMemoryState, DefaultClock>,
     config: HttpClientConfig,
+    /// When feature flag MC_FEATURE_HTTP_CLIENT_UNIFIED=true, delegate to the new unified client
+    unified: Option<unified::HttpClient>,
 }
 
 impl HttpClient {
@@ -77,15 +83,37 @@ impl HttpClient {
         );
         let rate_limiter = RateLimiter::direct(quota);
 
-        Ok(Self {
-            client,
-            rate_limiter,
-            config,
-        })
+        // Optionally create the unified client backend
+        let unified = if feature_http_client_unified() {
+            // Map legacy config to unified config
+            let ucfg = unified::HttpClientConfig {
+                max_requests_per_second: config.max_requests_per_second,
+                timeout_seconds: config.timeout_seconds,
+                // Conservative default retries when using legacy facade
+                max_retries: 3,
+                user_agent: config.user_agent.clone(),
+                follow_redirects: config.follow_redirects,
+            };
+            match unified::HttpClient::with_config(ucfg) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    tracing::warn!("Failed to init unified HttpClient, falling back to legacy: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        Ok(Self { client, rate_limiter, config, unified })
     }
 
     /// Fetch a URL with rate limiting and error handling
     pub async fn get(&self, url: &str) -> Result<Response> {
+        if let Some(u) = &self.unified {
+            // Delegate to unified client
+            return u.fetch_response(url);
+        }
         // Wait for rate limiter
         self.rate_limiter.until_ready().await;
 
@@ -111,15 +139,20 @@ impl HttpClient {
 
     /// Fetch URL and return text content
     pub async fn get_text(&self, url: &str) -> Result<String> {
+        if let Some(u) = &self.unified {
+            return u.fetch_html_string(url);
+        }
         let response = self.get(url).await?;
         let text = response.text().await
             .with_context(|| format!("Failed to read response body from: {url}"))?;
-        
         Ok(text)
     }
 
     /// Fetch URL and return text content with cancellation support
     pub async fn get_text_with_cancellation(&self, url: &str, cancellation_token: CancellationToken) -> Result<String> {
+        if let Some(u) = &self.unified {
+            return u.fetch_html_string_with_cancel(url, &cancellation_token);
+        }
         // Check cancellation before starting
         if cancellation_token.is_cancelled() {
             anyhow::bail!("Request cancelled before starting");
@@ -175,6 +208,9 @@ impl HttpClient {
             return Ok(true);
         }
 
+    // Even when using unified backend, keep legacy robots.txt behavior here to avoid introducing
+    // new semantics; we can later move to a proper robots parser in the unified client.
+
         // Parse base URL for robots.txt
         let parsed_url = reqwest::Url::parse(url)
             .context("Invalid URL format")?;
@@ -219,6 +255,21 @@ mod tests {
         let config = HttpClientConfig::default();
         let client = HttpClient::new(config);
         assert!(client.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_unified_flag_does_not_break_construction() {
+        // Ensure construction works regardless of flag; we don't assert env here to avoid flakiness
+        std::env::remove_var("MC_FEATURE_HTTP_CLIENT_UNIFIED");
+        let config = HttpClientConfig::default();
+        let client = HttpClient::new(config.clone()).unwrap();
+        // Enable flag and construct again
+        std::env::set_var("MC_FEATURE_HTTP_CLIENT_UNIFIED", "1");
+        let client2 = HttpClient::new(config).unwrap();
+        // Clean up
+        std::env::remove_var("MC_FEATURE_HTTP_CLIENT_UNIFIED");
+        // Just ensure both clients exist and have same basics
+        assert_eq!(client.config().timeout_seconds, client2.config().timeout_seconds);
     }
 
     #[tokio::test]
