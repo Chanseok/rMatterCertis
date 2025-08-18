@@ -105,7 +105,7 @@ impl ActorEventBridge {
             v
         };
 
-        // Tauri emit을 통해 프론트엔드로 전송
+    // Tauri emit을 통해 프론트엔드로 전송
         self.app_handle
             .emit(&event_name, &enriched)
             .map_err(|e| format!("Tauri emit failed: {}", e))?;
@@ -123,6 +123,55 @@ impl ActorEventBridge {
                 seq_val, event_name, variant, session_id, batch_id
             );
         }
+        // 추가: 세션 단위 최종 보고가 들어오면 일반 로그에도 요약을 남겨 back_front.log에서 확인 가능하게 함
+        if let AppEvent::CrawlReportSession {
+            session_id,
+            batches_processed,
+            total_pages,
+            total_success,
+            total_failed,
+            total_retries,
+            duration_ms,
+            products_inserted,
+            products_updated,
+            timestamp,
+        } = &actor_event
+        {
+            info!(
+                "📊 Session Final Report | session_id={} duration_ms={} batches={} pages_total={} success={} failed={} retries={} inserted={} updated={} ts={}",
+                session_id,
+                duration_ms,
+                batches_processed,
+                total_pages,
+                total_success,
+                total_failed,
+                total_retries,
+                products_inserted,
+                products_updated,
+                timestamp.to_rfc3339()
+            );
+        }
+
+        // 보강: CrawlReportSession 이 없고 SessionCompleted 로만 종료되는 경로(레거시 오케스트레이션 포함)를 위해
+        // SessionCompleted(summary) 수신 시에도 메인 로그에 인간 친화적 요약을 남긴다.
+        if let AppEvent::SessionCompleted { summary, .. } = &actor_event {
+            info!(
+                "📊 Session Final Summary | session_id={} state={} duration_ms={} batches={} pages_processed={} success={} failed={} retries={} inserted={} updated={} duplicates={} ts={}",
+                summary.session_id,
+                summary.final_state,
+                summary.total_duration_ms,
+                summary.processed_batches,
+                summary.total_pages_processed,
+                summary.total_success_count,
+                summary.failed_pages_count,
+                summary.total_retry_events,
+                summary.products_inserted,
+                summary.products_updated,
+                summary.duplicates_skipped,
+                chrono::Utc::now().to_rfc3339()
+            );
+        }
+
         // 레거시 PageTask* 이벤트를 사용하는 경로(구 actor_system_commands 기반)에서도
         // UI가 통합된 actor-page-lifecycle 스트림을 받을 수 있도록 합성 이벤트 생성
         // 단, 새로운 파이프라인(StageActor)이 PageLifecycle을 직접 방출하는 경우에는 합성하지 않음
@@ -171,6 +220,7 @@ impl ActorEventBridge {
             AppEvent::SessionPaused { .. } => "actor-session-paused",
             AppEvent::SessionResumed { .. } => "actor-session-resumed",
             AppEvent::SessionCompleted { .. } => "actor-session-completed",
+            AppEvent::NextPlanReady { .. } => "actor-next-plan-ready",
             AppEvent::SessionFailed { .. } => "actor-session-failed",
             AppEvent::SessionTimeout { .. } => "actor-session-timeout",
             AppEvent::BatchStarted { .. } => "actor-batch-started",

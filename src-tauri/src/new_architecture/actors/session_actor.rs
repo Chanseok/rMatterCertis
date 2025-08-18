@@ -491,46 +491,48 @@ impl SessionActor {
         );
         self.state = SessionState::Completed;
 
-        // 완료 이벤트 발행
+        // 완료 이벤트 발행 (집계된 요약 사용)
+        let aggregated_summary = self.create_session_summary().unwrap_or(SessionSummary {
+            session_id: session_id.clone(),
+            total_duration_ms: self
+                .start_time
+                .map(|t| t.elapsed().as_millis() as u64)
+                .unwrap_or(0),
+            total_pages_processed: self.total_success_count,
+            total_products_processed: self.products_inserted + self.products_updated,
+            success_rate: if self.total_success_count > 0 { 1.0 } else { 0.0 },
+            avg_page_processing_time: if self.total_success_count > 0 {
+                self.start_time
+                    .map(|t| t.elapsed().as_millis() as u64 / self.total_success_count as u64)
+                    .unwrap_or(0)
+            } else {
+                0
+            },
+            error_summary: Vec::new(),
+            total_retry_events: 0,
+            max_retries_single_page: 0,
+            pages_retried: 0,
+            retry_histogram: Vec::new(),
+            processed_batches: self.processed_batches,
+            total_success_count: self.total_success_count,
+            duplicates_skipped: self.duplicates_skipped,
+            planned_list_batches: planned_batches_count as u32,
+            executed_list_batches: self.processed_batches,
+            failed_pages_count: 0,
+            failed_page_ids: Vec::new(),
+            products_inserted: self.products_inserted,
+            products_updated: self.products_updated,
+            final_state: "completed".to_string(),
+            timestamp: Utc::now(),
+        });
+
         let completion_event = AppEvent::SessionCompleted {
             session_id: session_id.clone(),
-            summary: SessionSummary {
-                session_id: session_id.clone(),
-                total_duration_ms: self
-                    .start_time
-                    .map(|t| t.elapsed().as_millis() as u64)
-                    .unwrap_or(0),
-                total_pages_processed: self.total_success_count,
-                total_products_processed: 0, // TODO: 실제 제품 수 계산
-                success_rate: 1.0,           // TODO: 실제 성공률 계산
-                avg_page_processing_time: self
-                    .start_time
-                    .map(|t| {
-                        t.elapsed().as_millis() as u64
-                            / std::cmp::max(self.total_success_count as u64, 1)
-                    })
-                    .unwrap_or(0),
-                error_summary: Vec::new(), // TODO: 실제 에러 수집
-                processed_batches: self.processed_batches,
-                total_success_count: self.total_success_count,
-                duplicates_skipped: self.duplicates_skipped,
-                planned_list_batches: planned_batches_count as u32,
-                executed_list_batches: self.processed_batches,
-                failed_pages_count: 0,
-                failed_page_ids: Vec::new(),
-                total_retry_events: 0,
-                max_retries_single_page: 0,
-                pages_retried: 0,
-                retry_histogram: Vec::new(),
-                products_inserted: 0,
-                products_updated: 0,
-                final_state: "completed".to_string(),
-                timestamp: Utc::now(),
-            },
+            summary: aggregated_summary.clone(),
             timestamp: Utc::now(),
         };
 
-        context
+    context
             .emit_event(completion_event)
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
@@ -548,15 +550,126 @@ impl SessionActor {
             total_failed: 0,  // TODO: 배치 결과 수집 시 합산
             total_retries: 0, // TODO: 배치 리포트 기반 합산
             duration_ms,
-            products_inserted: 0,
-            products_updated: 0,
+            products_inserted: self.products_inserted,
+            products_updated: self.products_updated,
             timestamp: Utc::now(),
         };
         context
             .emit_event(crawl_report)
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
+        // === KPI: 최종 세션 요약 로그 (DB 저장 내역 포함) ===
+        let plan_hash_json = match &self.active_plan_hash {
+            Some(h) => format!("\"{}\"", h),
+            None => "null".to_string(),
+        };
+        let s = &aggregated_summary;
+    info!(target: "kpi.session",
+            "{{\"event\":\"session_final_summary\",\"session_id\":\"{}\",\"final_state\":\"{}\",\"duration_ms\":{},\"processed_batches\":{},\"total_pages_processed\":{},\"total_success_count\":{},\"failed_pages_count\":{},\"total_retry_events\":{},\"products_inserted\":{},\"products_updated\":{},\"duplicates_skipped\":{},\"plan_hash\":{},\"ts\":\"{}\"}}",
+            s.session_id,
+            s.final_state,
+            s.total_duration_ms,
+            s.processed_batches,
+            s.total_pages_processed,
+            s.total_success_count,
+            s.failed_pages_count,
+            s.total_retry_events,
+            s.products_inserted,
+            s.products_updated,
+            s.duplicates_skipped,
+            plan_hash_json,
+            chrono::Utc::now()
+        );
+
+        // Mirror a concise human-readable summary to the main backend log (back_front.log)
+        let plan_hash_disp = match &self.active_plan_hash {
+            Some(h) if !h.is_empty() => h.as_str(),
+            _ => "-",
+        };
+        info!(
+            "📊 Session Final Summary | session_id={} state={} duration_ms={} batches={} pages_processed={} success={} failed={} retries={} inserted={} updated={} duplicates={} plan_hash={} ts={}",
+            s.session_id,
+            s.final_state,
+            s.total_duration_ms,
+            s.processed_batches,
+            s.total_pages_processed,
+            s.total_success_count,
+            s.failed_pages_count,
+            s.total_retry_events,
+            s.products_inserted,
+            s.products_updated,
+            s.duplicates_skipped,
+            plan_hash_disp,
+            chrono::Utc::now()
+        );
+
         info!("✅ Session {} completed successfully", session_id);
+
+        // === 세션 종료 후: 다음 계획 자동 수립 및 이벤트 발행 ===
+        // 사이트 상태/DB 분석을 다시 수행하여 다음 크롤링 범위를 계산하고 UI에 전달
+        let http_client2 = Arc::new(HttpClient::create_from_global_config().map_err(|e| {
+            SessionError::InitializationFailed(format!("Failed to create HttpClient: {}", e))
+        })?);
+        let data_extractor2 = Arc::new(MatterDataExtractor::new().map_err(|e| {
+            SessionError::InitializationFailed(format!(
+                "Failed to create MatterDataExtractor: {}",
+                e
+            ))
+        })?);
+        let db_pool2 = crate::infrastructure::database_connection::get_or_init_global_pool()
+            .await
+            .map_err(|e| {
+                SessionError::InitializationFailed(format!(
+                    "Failed to obtain database pool: {}",
+                    e
+                ))
+            })?;
+        let product_repo2 = Arc::new(IntegratedProductRepository::new(db_pool2));
+
+        let status_checker2: Arc<dyn StatusChecker> = Arc::new(StatusCheckerImpl::with_product_repo(
+            (*http_client2).clone(),
+            (*data_extractor2).clone(),
+            AppConfig::for_development(),
+            Arc::clone(&product_repo2),
+        ));
+        let db_analyzer2: Arc<dyn DatabaseAnalyzer> =
+            Arc::new(DatabaseAnalyzerImpl::new(Arc::clone(&product_repo2)));
+        let planner2 = CrawlingPlanner::new(
+            status_checker2.clone(),
+            db_analyzer2,
+            Arc::clone(&context.config),
+        )
+        .with_repository(Arc::clone(&product_repo2));
+
+        // 기본 전략: 방금 사용한 config를 기반으로 동일 전략 재활용(필요 시 조정 가능)
+        let next_config = CrawlingConfig {
+            site_url: config.site_url.clone(),
+            start_page: config.start_page,
+            end_page: config.end_page,
+            concurrency_limit: config.concurrency_limit,
+            batch_size: config.batch_size,
+            request_delay_ms: config.request_delay_ms,
+            timeout_secs: config.timeout_secs,
+            max_retries: config.max_retries,
+            strategy: config.strategy.clone(),
+        };
+        let (next_plan, _used_site_status) = planner2
+            .create_crawling_plan_with_cache(&next_config, None)
+            .await
+            .map_err(|e| SessionError::InitializationFailed(format!(
+                "Failed to create next crawling plan: {}",
+                e
+            )))?;
+
+        let next_event = AppEvent::NextPlanReady {
+            session_id: session_id.clone(),
+            plan: next_plan.clone(),
+            timestamp: Utc::now(),
+        };
+        context
+            .emit_event(next_event)
+            .map_err(|e| SessionError::ContextError(e.to_string()))?;
+
         Ok(())
     }
 
@@ -969,6 +1082,38 @@ impl Actor for SessionActor {
                                                 let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / self.total_success_count as u64 } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, duplicates_skipped: self.duplicates_skipped, planned_list_batches: self.processed_batches, executed_list_batches: self.processed_batches, failed_pages_count: 0, failed_page_ids: Vec::new(), total_retry_events: 0, max_retries_single_page: 0, pages_retried: 0, retry_histogram: Vec::new(), products_inserted: 0, products_updated: 0, final_state: "completed".into(), timestamp: Utc::now() };
                                                 if let Err(e) = context.emit_event(AppEvent::SessionCompleted { session_id: session_id.clone(), summary: summary.clone(), timestamp: Utc::now() }) { error!("emit completion event failed: {}", e); }
                                                 if let Err(e) = context.emit_event(AppEvent::CrawlReportSession { session_id: session_id.clone(), batches_processed: self.processed_batches, total_pages: self.total_success_count, total_success: self.total_success_count, total_failed: 0, total_retries: 0, duration_ms, products_inserted: 0, products_updated: 0, timestamp: Utc::now() }) { error!("emit crawl report failed: {}", e); }
+                                                // KPI JSON (events.log)
+                                                info!(target: "kpi.session",
+                                                    "{{\"event\":\"session_final_summary\",\"session_id\":\"{}\",\"final_state\":\"{}\",\"duration_ms\":{},\"processed_batches\":{},\"total_pages_processed\":{},\"total_success_count\":{},\"failed_pages_count\":{},\"total_retry_events\":{},\"products_inserted\":{},\"products_updated\":{},\"duplicates_skipped\":{},\"plan_hash\":null,\"ts\":\"{}\"}}",
+                                                    summary.session_id,
+                                                    summary.final_state,
+                                                    summary.total_duration_ms,
+                                                    summary.processed_batches,
+                                                    summary.total_pages_processed,
+                                                    summary.total_success_count,
+                                                    summary.failed_pages_count,
+                                                    summary.total_retry_events,
+                                                    summary.products_inserted,
+                                                    summary.products_updated,
+                                                    summary.duplicates_skipped,
+                                                    chrono::Utc::now()
+                                                );
+                                                // Human-readable mirror (back_front.log)
+                                                info!(
+                                                    "📊 Session Final Summary | session_id={} state={} duration_ms={} batches={} pages_processed={} success={} failed={} retries={} inserted={} updated={} duplicates={} ts={}",
+                                                    summary.session_id,
+                                                    summary.final_state,
+                                                    summary.total_duration_ms,
+                                                    summary.processed_batches,
+                                                    summary.total_pages_processed,
+                                                    summary.total_success_count,
+                                                    summary.failed_pages_count,
+                                                    summary.total_retry_events,
+                                                    summary.products_inserted,
+                                                    summary.products_updated,
+                                                    summary.duplicates_skipped,
+                                                    chrono::Utc::now()
+                                                );
                                             }
                                             Err(e) => {
                                                 error!("DB pool init failed: {}", e);

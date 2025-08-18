@@ -2852,6 +2852,18 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
 
 impl ProductDetailCollectorImpl {
     /// 🔥 동시성을 보장하는 이벤트 기반 제품 상세정보 수집 메서드 (비동기 이벤트 큐 사용)
+    ///
+    /// Errors
+    /// Returns an error if HTTP fetching or parsing fails for all tasks in a way that prevents
+    /// producing any results. Partial failures are logged and skipped; successful details are
+    /// still returned.
+    ///
+    /// Panics
+    /// This function does not intentionally panic. Internal task joins are awaited safely.
+    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cognitive_complexity)]
+    #[allow(clippy::missing_errors_doc)]
+    #[allow(clippy::missing_panics_doc)]
     pub async fn collect_details_with_async_events(
         &self,
         product_urls: &[ProductUrl],

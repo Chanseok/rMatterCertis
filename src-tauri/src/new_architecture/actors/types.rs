@@ -114,6 +114,13 @@ pub enum AppEvent {
         timestamp: DateTime<Utc>,
     },
 
+    /// 세션 종료 후, 다음 크롤링 범위를 위한 신규 계획(플래너 결과)을 전달
+    NextPlanReady {
+        session_id: String,
+        plan: crate::new_architecture::services::crawling_planner::CrawlingPlan,
+        timestamp: DateTime<Utc>,
+    },
+
     SessionFailed {
         session_id: String,
         error: String,

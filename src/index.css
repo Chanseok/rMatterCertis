@@ -214,6 +214,17 @@
   }
 }
 
+/* Horizontal shake for attention (e.g., downshift badge) */
+@keyframes shakeX {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}
+
+.shake-x {
+  animation: shakeX 0.35s ease-in-out 1;
+}
+
 @keyframes slideUp {
   from {
     opacity: 0;
@@ -245,11 +256,213 @@
   }
 }
 
+/* Accordion (height/opacity) */
+@keyframes accordionIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.accordion-in { animation: accordionIn 0.25s ease-out; }
+
+/* Button ripple (basic) */
+.ripple {
+  position: relative;
+  overflow: hidden;
+}
+.ripple::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle, rgba(255,255,255,0.35) 10%, rgba(255,255,255,0) 70%);
+  transform: scale(0);
+  opacity: 0;
+}
+.ripple:active::after {
+  transition: transform 0.35s ease-out, opacity 0.45s ease-out;
+  transform: scale(4);
+  opacity: 1;
+}
+
 /* Custom utility classes */
 .animate-fade-in {
   animation: fadeIn 0.5s ease-out;
 }
 
+/* Respect user preferences to reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 .animate-slide-up {
   animation: slideUp 0.6s ease-out;
 }
+
+/* Subtle one-shot pulse (used for validation progress) */
+.pulse-once {
+  animation: pulseOnce 0.6s ease-out;
+}
+
+@keyframes pulseOnce {
+  0% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.45); /* indigo-500 */
+  }
+  100% {
+    box-shadow: 0 0 0 16px rgba(99, 102, 241, 0);
+  }
+}
+
+/* Quick green flash (used for persist summary update) */
+.flash-save {
+  animation: flashSave 0.8s ease-out;
+}
+
+@keyframes flashSave {
+  0% {
+    background-color: rgba(16, 185, 129, 0.22); /* emerald-500 */
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* Subtle blue flash for DB snapshot updates */
+.flash-db {
+  animation: flashDb 0.8s ease-out;
+}
+
+@keyframes flashDb {
+  0% {
+    background-color: rgba(2, 132, 199, 0.18); /* sky-600 */
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+  /* ===================== */
+  /* Start button wave FX  */
+  /* ===================== */
+  .start-wave-root {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+  }
+  .start-wave-circle {
+    position: absolute;
+    top: var(--y, 50%);
+    left: var(--x, 50%);
+    width: 24px;
+    height: 24px;
+    transform: translate(-50%, -50%) scale(0);
+    border-radius: 9999px;
+    background: radial-gradient(circle at center, rgba(59, 130, 246, 0.35), rgba(99, 102, 241, 0.2) 40%, rgba(59, 130, 246, 0.05) 70%, rgba(59, 130, 246, 0) 80%);
+    filter: blur(2px);
+    will-change: transform, opacity;
+  }
+  .start-wave-circle.wave-up { animation: waveBurstUp 900ms cubic-bezier(.2,.7,.2,1) forwards; }
+  .start-wave-circle.wave-down { animation: waveBurstDown 900ms cubic-bezier(.2,.7,.2,1) forwards; }
+  .start-wave-circle.wave-ring { animation: waveRing 950ms ease-out forwards; background: transparent; border: 2px solid rgba(59, 130, 246, 0.5); }
+
+  @keyframes waveBurstUp {
+    0% { opacity: 0.65; transform: translate(-50%, -50%) scale(0); }
+    60% { opacity: 0.5; }
+    100% { opacity: 0; transform: translate(-50%, calc(-50% - 20vh)) scale(var(--scale, 45)); }
+  }
+  @keyframes waveBurstDown {
+    0% { opacity: 0.65; transform: translate(-50%, -50%) scale(0); }
+    60% { opacity: 0.5; }
+    100% { opacity: 0; transform: translate(-50%, calc(-50% + 20vh)) scale(var(--scale, 45)); }
+  }
+  @keyframes waveRing {
+    0% { opacity: 0.9; transform: translate(-50%, -50%) scale(0.2); border-color: rgba(59, 130, 246, 0.6); }
+    70% { opacity: 0.25; }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(calc(var(--scale, 45) * 1.2)); border-color: rgba(59, 130, 246, 0); }
+  }
+
+  .start-wave-wash {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(1200px 600px at var(--x, 50%) var(--y, 50%), rgba(99,102,241,0.08), rgba(59,130,246,0.04) 40%, rgba(59,130,246,0) 70%);
+    animation: waveWash 900ms ease-out forwards;
+  }
+  @keyframes waveWash {
+    0% { opacity: 0.4; }
+    100% { opacity: 0; }
+  }
+
+
+  /* Dramatic transition effects for Calculated Crawling Range */
+  .range-transition-ring {
+    position: relative;
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.6);
+    animation: ringPulse 900ms ease-out 1 both;
+  }
+
+  @keyframes ringPulse {
+    0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.6); }
+    80% { box-shadow: 0 0 0 18px rgba(59, 130, 246, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+  }
+
+  .shatter-line {
+    display: inline-block;
+    will-change: transform, opacity;
+  }
+  .shatter-char {
+    display: inline-block;
+    will-change: transform, opacity, filter;
+    animation: shatterFly 600ms cubic-bezier(.15,.85,.25,1) forwards;
+  }
+
+  @keyframes shatterFly {
+    0% { opacity: 1; transform: translate(0, 0) rotate(0deg) scale(1); filter: none; }
+    35% { opacity: 0.6; filter: blur(1px); }
+    100% { opacity: 0; transform: translate(var(--dx, 0px), var(--dy, 0px)) rotate(var(--rot, 0deg)) scale(0.85); filter: blur(2px); }
+  }
+
+  .drum-line { display: inline-flex; perspective: 1000px; }
+  .drum-in {
+    display: inline-block;
+    transform-origin: 50% 50%;
+    backface-visibility: hidden;
+  transform-style: preserve-3d;
+  will-change: transform, opacity, filter;
+  animation: drumIn 750ms cubic-bezier(.2,.8,.2,1) forwards;
+  animation-delay: var(--delay, 0ms);
+  }
+
+  @keyframes drumIn {
+    0% {
+      opacity: 0;
+      transform: rotateX(120deg) rotateY(12deg) translateY(-6px) scale(0.94);
+      filter: blur(2px);
+    }
+    55% {
+      opacity: 1;
+      transform: rotateX(-12deg) rotateY(-3deg) translateY(1px) scale(1.03);
+    }
+    100% {
+      opacity: 1;
+      transform: rotateX(0deg) rotateY(0deg) translateY(0) scale(1);
+      filter: none;
+    }
+  }
+
+  /* Simple CSS confetti pieces (fallback to CSS if no canvas) */
+  .confetti-piece {
+    position: absolute;
+    width: var(--cw, 6px); height: var(--ch, 10px);
+    border-radius: 1px;
+    opacity: 0;
+    will-change: transform, opacity, filter;
+    animation: confettiBurst 850ms cubic-bezier(.15,.85,.25,1) forwards;
+  }
+
+  @keyframes confettiBurst {
+    0% { opacity: 0; transform: translate(0, 0) rotate(0deg); filter: none; }
+    12% { opacity: 1; }
+    100% { opacity: 0; transform: translate(var(--cx, 0px), var(--cy, 0px)) rotate(var(--crot, 0deg)); filter: blur(0.5px); }
+  }

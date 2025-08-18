@@ -139,20 +139,79 @@ impl MatterDataExtractor {
     pub fn extract_product_urls(&self, html: &Html, base_url: &str) -> Result<Vec<String>> {
         debug!("Extracting product URLs from listing page");
 
-        let article_selector = Selector::parse("div.post-feed article")
+        // Primary container observed across most pages
+        let primary_article_selector = Selector::parse("div.post-feed article")
             .map_err(|e| anyhow!("Invalid article selector: {}", e))?;
+        // Fallback container seen on some pages/themes
+        let fallback_article_selector = Selector::parse(
+            ".wp-block-crown-blocks-product-index article.product",
+        )
+        .ok();
         let link_selector =
             Selector::parse("a").map_err(|e| anyhow!("Invalid link selector: {}", e))?;
 
-        let mut urls = Vec::new();
+        let mut urls: Vec<String> = Vec::new();
 
-        for article in html.select(&article_selector) {
-            if let Some(link) = article.select(&link_selector).next() {
-                if let Some(href) = link.value().attr("href") {
-                    let url = self.resolve_url(href, base_url);
-                    // Filter for actual product pages
-                    if url.contains("/csa_product/") && !url.contains("/csa-iot_products/") {
-                        urls.push(url);
+        // Helper to scan a set of article nodes and push the first valid product link per article
+        let mut scan_articles = |articles: Vec<ElementRef>| {
+            for article in articles {
+                let mut chosen: Option<String> = None;
+                for link in article.select(&link_selector) {
+                    if let Some(href) = link.value().attr("href") {
+                        let url = self.resolve_url(href, base_url);
+                        // Pick the first anchor that clearly points to a product page
+                        if url.contains("/csa_product/") && !url.contains("/csa-iot_products/") {
+                            chosen = Some(url);
+                            break; // stop at the first matching product link in this article
+                        }
+                    }
+                }
+                if let Some(u) = chosen {
+                    urls.push(u);
+                }
+            }
+        };
+
+        let primary: Vec<_> = html.select(&primary_article_selector).collect();
+        debug!("Found {} primary article elements", primary.len());
+        scan_articles(primary);
+
+        // If we extracted fewer than 12 products on a non-terminal page, try a fallback container
+        if urls.len() < 12 {
+            if let Some(fallback_sel) = &fallback_article_selector {
+                let fallback: Vec<_> = html.select(fallback_sel).collect();
+                if !fallback.is_empty() {
+                    debug!(
+                        "Primary extraction yielded {} items; trying fallback container ({} elems)",
+                        urls.len(),
+                        fallback.len()
+                    );
+                    // Track already seen URLs to avoid duplicates while preserving order
+                    let mut seen: std::collections::HashSet<String> =
+                        urls.iter().cloned().collect();
+                    // Temporarily collect fallback URLs, then extend if new
+                    let mut fb_urls: Vec<String> = Vec::new();
+                    for article in fallback {
+                        let mut chosen: Option<String> = None;
+                        for link in article.select(&link_selector) {
+                            if let Some(href) = link.value().attr("href") {
+                                let url = self.resolve_url(href, base_url);
+                                if url.contains("/csa_product/") && !url.contains("/csa-iot_products/") {
+                                    chosen = Some(url);
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some(u) = chosen {
+                            if !seen.contains(&u) {
+                                fb_urls.push(u.clone());
+                                seen.insert(u);
+                            }
+                        }
+                    }
+                    if !fb_urls.is_empty() {
+                        debug!("Fallback added {} additional URLs", fb_urls.len());
+                        urls.extend(fb_urls);
                     }
                 }
             }
@@ -316,15 +375,15 @@ impl MatterDataExtractor {
     pub fn extract_products_from_list(&self, html: &Html, page_id: i32) -> Result<Vec<Product>> {
         debug!("Extracting products from listing page {}", page_id);
 
-        let article_selector = Selector::parse("div.post-feed article")
+        let article_selector = Selector::parse("div.post-feed article, .wp-block-crown-blocks-product-index article.product")
             .map_err(|e| anyhow!("Invalid article selector: {}", e))?;
 
         let mut products = Vec::new();
-        let articles: Vec<_> = html.select(&article_selector).collect();
+    let articles: Vec<_> = html.select(&article_selector).collect();
         debug!("Found {} article elements", articles.len());
 
-        // Process articles in reverse order to match expected index order (guide approach)
-        for (index, article) in articles.iter().rev().enumerate() {
+    // Process articles in reverse order to match expected index order (guide approach)
+    for (index, article) in articles.iter().rev().enumerate() {
             if let Ok(product) =
                 self.extract_single_product_from_list(*article, page_id, index as i32)
             {

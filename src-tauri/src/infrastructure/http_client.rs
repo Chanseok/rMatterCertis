@@ -4,7 +4,7 @@
 //! with respect for server resources and proper error handling.
 
 use std::time::Duration;
-use reqwest::{Client, Response, header::{HeaderMap, HeaderValue, USER_AGENT}};
+use reqwest::{Client, Response, header::{HeaderMap, HeaderValue, USER_AGENT, ACCEPT, ACCEPT_LANGUAGE}};
 use anyhow::{Result, Context};
 use governor::{Quota, RateLimiter, state::{direct::NotKeyed, InMemoryState}, clock::DefaultClock};
 use std::num::NonZeroU32;
@@ -42,12 +42,20 @@ pub struct HttpClient {
 impl HttpClient {
     /// Create a new HTTP client with the given configuration
     pub fn new(config: HttpClientConfig) -> Result<Self> {
-        // Setup headers
+        // Setup headers (browser-like defaults)
         let mut headers = HeaderMap::new();
         headers.insert(
             USER_AGENT,
             HeaderValue::from_str(&config.user_agent)
                 .context("Invalid user agent")?
+        );
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+        );
+        headers.insert(
+            ACCEPT_LANGUAGE,
+            HeaderValue::from_static("en-US,en;q=0.9"),
         );
 
         // Build reqwest client

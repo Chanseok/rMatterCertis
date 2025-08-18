@@ -25,6 +25,11 @@ pub struct StartCrawlingResponse {
 }
 
 /// 통합 크롤링 명령어 (Actor 시스템 진입점)
+///
+/// # Errors
+/// Returns `Err(String)` when the actor system fails to start crawling
+/// (for example, invalid parameters, internal initialization errors,
+/// or runtime failures reported by the actor entrypoint).
 #[tauri::command]
 pub async fn start_unified_crawling(
     app: AppHandle,

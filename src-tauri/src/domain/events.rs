@@ -468,6 +468,24 @@ pub struct PageMetadata {
     pub load_time_ms: u64,
     /// 페이지 크기 (바이트)
     pub page_size_bytes: u64,
+    /// (옵션) 상세 상태 - 요청/대기/파싱 등 세분화
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub processing_state: Option<PageProcessingState>,
+    /// (옵션) 타임아웃 설정값(ms)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_setting_ms: Option<u64>,
+    /// (옵션) 현재 시도 횟수
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_attempt: Option<u32>,
+    /// (옵션) 전체 처리 소요시간(ms)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_processing_time_ms: Option<u64>,
+    /// (옵션) 요청 전송 시각
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_sent_at: Option<DateTime<Utc>>,
+    /// (옵션) 응답 수신 시각
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_received_at: Option<DateTime<Utc>>,
 }
 
 /// 🔥 제품 메타데이터
@@ -485,6 +503,15 @@ pub struct ProductMetadata {
     pub page_size_bytes: u64,
     /// 재시도 횟수
     pub retry_count: u32,
+    /// (옵션) 현재 시도 횟수(표시용)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_attempt: Option<u32>,
+    /// (옵션) 요청 전송 시각
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_sent_at: Option<DateTime<Utc>>,
+    /// (옵션) 응답 수신 시각
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_received_at: Option<DateTime<Utc>>,
 }
 
 impl CrawlingEvent {
@@ -505,4 +532,119 @@ impl CrawlingEvent {
             CrawlingEvent::SessionLifecycle { .. } => "session-lifecycle",
         }
     }
+}
+
+// ========================================================================
+// 확장: 세분화된 상태 및 신규 이벤트 (독립 이벤트 스트림)
+// ========================================================================
+
+/// 페이지 처리의 세분화된 상태
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PageProcessingState {
+    /// 대기열에 있음
+    Queued,
+    /// 요청 전송됨
+    RequestSent,
+    /// 응답 대기 중
+    AwaitingResponse,
+    /// 응답 수신됨
+    ResponseReceived,
+    /// 파싱/처리 중
+    Processing,
+    /// 완료됨
+    Completed,
+    /// 실패(사유 포함 가능)
+    Failed,
+    /// 재시도(n)
+    Retrying,
+}
+
+/// 동시성 상태 브로드캐스트 (저주파)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ConcurrencyEvent {
+    ConcurrentBatchStarted {
+        session_id: String,
+        batch_id: String,
+        stage: CrawlingStage,
+        concurrent_tasks: u32,
+        max_concurrency: u32,
+        timestamp: DateTime<Utc>,
+    },
+    ConcurrentTaskStatusUpdate {
+        session_id: String,
+        batch_id: String,
+        active_tasks: u32,
+        queued_tasks: u32,
+        completed_tasks: u32,
+        failed_tasks: u32,
+        timestamp: DateTime<Utc>,
+    },
+}
+
+impl ConcurrencyEvent {
+    pub fn event_name(&self) -> &'static str { "concurrency-event" }
+}
+
+/// Validation 단계 상세 이벤트
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ValidationEvent {
+    ValidationStarted { batch_id: String, total_items: u32, timestamp: DateTime<Utc> },
+    ValidationIssueFound {
+        batch_id: String,
+        item_id: String,
+        issue_type: ValidationIssueType,
+        details: String,
+        timestamp: DateTime<Utc>,
+    },
+    ValidationCompleted { batch_id: String, passed: u32, failed: u32, timestamp: DateTime<Utc> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ValidationIssueType {
+    MissingRequiredField,
+    InvalidDataFormat,
+    DuplicateEntry,
+    DataInconsistency,
+}
+
+impl ValidationEvent {
+    pub fn event_name(&self) -> &'static str { "validation-event" }
+}
+
+/// 데이터베이스 저장 단계 상세 이벤트
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DatabaseSaveEvent {
+    SaveBatchStarted { batch_id: String, total_items: u32, timestamp: DateTime<Utc> },
+    SaveItemResult {
+        batch_id: String,
+        item_id: String,
+        page_number: u32,
+        index_in_page: u32,
+        result: SaveResult,
+        reason: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
+    SaveBatchCompleted {
+        batch_id: String,
+        saved: u32,
+        skipped: u32,
+        failed: u32,
+        failed_items: Vec<FailedSaveItem>,
+        timestamp: DateTime<Utc>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SaveResult { Saved, Skipped, Failed }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailedSaveItem {
+    pub page_number: u32,
+    pub index_in_page: u32,
+    pub product_url: String,
+    pub reason: String,
+}
+
+impl DatabaseSaveEvent {
+    pub fn event_name(&self) -> &'static str { "db-save-event" }
 }

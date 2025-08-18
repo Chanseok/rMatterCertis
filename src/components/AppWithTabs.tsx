@@ -18,6 +18,7 @@ import SimpleEventDisplay from './SimpleEventDisplay';
 import { tabState, restoreLastActiveTab } from '../stores/tabStore';
 let auditEnabled = false; // dev event audit flag
 import { windowState } from '../stores/windowStore';
+import { eventStore } from '../stores/eventStore';
 
 export const AppWithTabs: Component = () => {
   const currentTab = createMemo(() => tabState.activeTab);
@@ -27,6 +28,9 @@ export const AppWithTabs: Component = () => {
     console.log('🚀 AppWithTabs 초기화 시작...');
     
     try {
+  // 전역 이벤트 스토어 초기화 (비활성 탭이어도 이벤트 버퍼링)
+  await eventStore.initOnce();
+
       // 윈도우 상태 복원 (위치, 크기, 줌 레벨, 마지막 탭 등)
       await windowState.restoreState();
       
@@ -49,7 +53,8 @@ export const AppWithTabs: Component = () => {
   const renderTabContent = () => {
     switch (currentTab()) {
       case 'crawlingEngine':
-        return <CrawlingEngineTab />;
+  // Use the Simple variant (unified start + EventConsole) for Advanced Engine tab
+  return <CrawlingEngineTabSimple />;
       case 'settings':
         return <SettingsTab />;
       case 'localDB':
@@ -59,7 +64,7 @@ export const AppWithTabs: Component = () => {
       case 'events':
         return <SimpleEventDisplay />;
       default:
-        return <CrawlingEngineTabSimple />;
+  return <CrawlingEngineTabSimple />;
     }
   };
 

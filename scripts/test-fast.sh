@@ -10,9 +10,17 @@ cd "$(dirname "$0")/.."
 # Change to src-tauri directory
 cd src-tauri
 
-# Set environment variables for faster builds
+# Set environment variables for faster, stable builds
 export CARGO_INCREMENTAL=1
 export RUST_LOG=warn
+
+# Avoid global overrides that break tests (sccache/lld, etc.)
+unset RUSTC_WRAPPER
+unset SCCACHE_CACHE_SIZE
+unset SCCACHE_DIR
+unset SCCACHE_ERROR_LOG
+# Clear custom flags that may inject unsupported link args
+export RUSTFLAGS=""
 
 echo "🚀 Running fast Rust tests..."
 

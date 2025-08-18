@@ -787,13 +787,40 @@ impl StageActor {
                         // store start in local variable passed to temp_actor via metadata if needed (simplified omitted for now)
                     }
                     (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) => {
-                        let count = urls.urls.len() as u32;
+                        // Pre-filter URLs by DB state: only crawl details for URLs missing in product_details
+                        let mut filtered_urls: Vec<crate::domain::product_url::ProductUrl> = Vec::new();
+                        let prefiltered_total = urls.urls.len() as u32;
+                        let mut filtered_duplicates = 0u32;
+                        if let Some(repo) = &product_repo_clone {
+                            for u in &urls.urls {
+                                match repo.get_product_detail_by_url(&u.url).await {
+                                    Ok(existing) => {
+                                        if existing.is_some() {
+                                            // Skip already detailed URL
+                                            filtered_duplicates += 1;
+                                        } else {
+                                            filtered_urls.push(u.clone());
+                                        }
+                                    }
+                                    Err(e) => {
+                                        // On DB error, be conservative and crawl
+                                        tracing::warn!("[DetailFilter] DB check failed for url={} err={}", u.url, e);
+                                        filtered_urls.push(u.clone());
+                                    }
+                                }
+                            }
+                        } else {
+                            // No repository available; fallback to original list
+                            filtered_urls = urls.urls.clone();
+                        }
+
+                        let count = filtered_urls.len() as u32;
                         let metrics = crate::new_architecture::actors::types::SimpleMetrics::Page {
-                            url_count: None,
+                            url_count: Some(prefiltered_total),
                             scheduled_details: Some(count),
                             error: None,
                         };
-                        let page_hint = urls.urls.first().map(|u| u.page_id as u32).unwrap_or(0u32);
+                        let page_hint = filtered_urls.first().map(|u| u.page_id as u32).or_else(|| urls.urls.first().map(|u| u.page_id as u32)).unwrap_or(0u32);
                         if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle {
                             session_id: session_id_clone.clone(),
                             batch_id: batch_id_opt.clone(),
@@ -808,12 +835,12 @@ impl StageActor {
                             );
                         } else {
                             debug!(
-                                "Emitted PageLifecycle detail_scheduled page={} scheduled_details={}",
-                                page_hint, count
+                                "Emitted PageLifecycle detail_scheduled page={} scheduled_details={} (prefiltered={}, duplicates_skipped={})",
+                                page_hint, count, prefiltered_total, filtered_duplicates
                             );
                         }
                         // Aggregate start event (new ProductLifecycleGroup)
-                        debug!("[GroupedEmit] fetch_started_group total_urls={}", count);
+                        debug!("[GroupedEmit] fetch_started_group total_urls={} (skipped={})", count, filtered_duplicates);
                         if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycleGroup {
                             session_id: session_id_clone.clone(),
                             batch_id: batch_id_opt.clone(),
@@ -822,7 +849,7 @@ impl StageActor {
                             started: count,
                             succeeded: 0,
                             failed: 0,
-                            duplicates: 0,
+                            duplicates: filtered_duplicates,
                             duration_ms: 0,
                             phase: "fetch".into(),
                             timestamp: Utc::now(),
@@ -839,7 +866,26 @@ impl StageActor {
                     match &base_item {
                         StageItem::ProductUrls(urls_wrapper) => {
                             // Emit mapping summary once (PageLifecycle detail_mapping_emitted)
-                            if let Some(first_url) = urls_wrapper.urls.first() {
+                            // Determine the filtered list again for this item scope (kept small and explicit)
+                            let mut filtered_urls: Vec<crate::domain::product_url::ProductUrl> = Vec::new();
+                            if let Some(repo) = &product_repo_clone {
+                                for u in &urls_wrapper.urls {
+                                    match repo.get_product_detail_by_url(&u.url).await {
+                                        Ok(existing) => {
+                                            if existing.is_some() {
+                                                // skip duplicates
+                                            } else {
+                                                filtered_urls.push(u.clone());
+                                            }
+                                        }
+                                        Err(e) => { tracing::warn!("[DetailFilter] DB check failed for url={} err={}", u.url, e); filtered_urls.push(u.clone()); }
+                                    }
+                                }
+                            } else {
+                                filtered_urls = urls_wrapper.urls.clone();
+                            }
+
+                            if let Some(first_url) = filtered_urls.first() {
                                 let page_hint = first_url.page_id as u32;
                                 if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle {
                                     session_id: session_id_clone.clone(),
@@ -848,7 +894,7 @@ impl StageActor {
                                     status: "detail_mapping_emitted".into(),
                                     metrics: Some(SimpleMetrics::Page {
                                         url_count: Some(urls_wrapper.urls.len() as u32),
-                                        scheduled_details: Some(urls_wrapper.urls.len() as u32),
+                                        scheduled_details: Some(filtered_urls.len() as u32),
                                         error: None,
                                     }),
                                     timestamp: Utc::now(),
@@ -861,12 +907,28 @@ impl StageActor {
                             }
 
                             let mut collected: Vec<crate::domain::product::ProductDetail> =
-                                Vec::with_capacity(urls_wrapper.urls.len());
+                                Vec::with_capacity(filtered_urls.len());
                             let mut failures: u32 = 0;
                             if let Some(collector) = &product_detail_collector_clone {
-                                for purl in &urls_wrapper.urls {
+                                for purl in &filtered_urls {
                                     let prod_ref = purl.url.clone();
                                     let origin_page = purl.page_id as u32;
+                                    // Emit fine-grained detail task start for UI/KPI fidelity
+                                    if let Err(e) = ctx_clone.emit_event(AppEvent::DetailTaskStarted {
+                                        session_id: session_id_clone.clone(),
+                                        detail_id: prod_ref.clone(),
+                                        page: Some(origin_page),
+                                        batch_id: batch_id_opt.clone(),
+                                        range_idx: None,
+                                        batch_index: None,
+                                        scope: Some("batch".into()),
+                                        timestamp: Utc::now(),
+                                    }) {
+                                        error!(
+                                            "DetailTaskStarted emit failed ref={} err={}",
+                                            prod_ref, e
+                                        );
+                                    }
                                     // started
                                     if let Err(e) =
                                         ctx_clone.emit_event(AppEvent::ProductLifecycle {
@@ -905,6 +967,23 @@ impl StageActor {
                                             {
                                                 error!(
                                                     "HttpRequestTiming detail_page emit failed ref={} err={}",
+                                                    prod_ref, e
+                                                );
+                                            }
+                                            // Emit fine-grained detail task completed
+                                            if let Err(e) = ctx_clone.emit_event(AppEvent::DetailTaskCompleted {
+                                                session_id: session_id_clone.clone(),
+                                                detail_id: prod_ref.clone(),
+                                                page: Some(origin_page),
+                                                duration_ms: latency,
+                                                batch_id: batch_id_opt.clone(),
+                                                range_idx: None,
+                                                batch_index: None,
+                                                scope: Some("batch".into()),
+                                                timestamp: Utc::now(),
+                                            }) {
+                                                error!(
+                                                    "DetailTaskCompleted emit failed ref={} err={}",
                                                     prod_ref, e
                                                 );
                                             }
@@ -948,6 +1027,24 @@ impl StageActor {
                                                     prod_ref, emit_err
                                                 );
                                             }
+                                            // Emit fine-grained detail task failed (final_failure=true)
+                                            if let Err(emit_err) = ctx_clone.emit_event(AppEvent::DetailTaskFailed {
+                                                session_id: session_id_clone.clone(),
+                                                detail_id: prod_ref.clone(),
+                                                page: Some(origin_page),
+                                                error: e.to_string(),
+                                                final_failure: true,
+                                                batch_id: batch_id_opt.clone(),
+                                                range_idx: None,
+                                                batch_index: None,
+                                                scope: Some("batch".into()),
+                                                timestamp: Utc::now(),
+                                            }) {
+                                                error!(
+                                                    "DetailTaskFailed emit failed ref={} err={}",
+                                                    prod_ref, emit_err
+                                                );
+                                            }
                                             if let Err(emit_err) =
                                                 ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                                     session_id: session_id_clone.clone(),
@@ -984,9 +1081,9 @@ impl StageActor {
                             };
                             let product_details_wrapper = ProductDetails {
                                 products: collected.clone(),
-                                source_urls: urls_wrapper.urls.clone(),
+                                source_urls: filtered_urls.clone(),
                                 extraction_stats: ExtractionStats {
-                                    attempted: urls_wrapper.urls.len() as u32,
+                                    attempted: filtered_urls.len() as u32,
                                     successful: collected.len() as u32,
                                     failed: failures,
                                     empty_responses: 0,
@@ -1088,6 +1185,107 @@ impl StageActor {
                 };
                 match &result {
                     Ok(r) => {
+                        // Emit Validation events in aggregate for DataValidation stage
+                        if matches!(stage_type_clone, StageType::DataValidation) {
+                            // Attempt to decode collected data to count items
+                            let (products_found, products_checked, divergences, anomalies) = (|| {
+                                if let Some(json) = &r.collected_data {
+                                    // collected_data for DataValidation is serialized validated products Vec<ProductDetail>
+                    let parsed: Result<Vec<crate::domain::product::ProductDetail>, _> = serde_json::from_str(json);
+                    if let Ok(validated) = parsed {
+                                        let found = validated.len() as u32;
+                                        // Derive anomalies/divergences from DataQualityReport
+                                        let report = crate::new_architecture::services::data_quality_analyzer::DataQualityAnalyzer::new()
+                                            .analyze_product_quality(&validated)
+                                            .ok();
+                                        let (div_ct, anom_ct) = if let Some(rep) = report {
+                                            let dup = rep
+                                                .issues
+                                                .iter()
+                                                .filter(|i| matches!(i.issue_type, crate::new_architecture::services::data_quality_analyzer::IssueType::Duplicate))
+                                                .count() as u32;
+                                            let anom = rep
+                                                .issues
+                                                .iter()
+                                                .filter(|i| matches!(i.severity, crate::new_architecture::services::data_quality_analyzer::IssueSeverity::Critical | crate::new_architecture::services::data_quality_analyzer::IssueSeverity::Warning))
+                                                .count() as u32;
+                                            (dup, anom)
+                                        } else {
+                                            (0u32, 0u32)
+                                        };
+                                        return (found, found as u64, div_ct, anom_ct);
+                                    }
+                                }
+                                (0u32, 0u64, 0u32, 0u32)
+                })();
+                            let _ = ctx_clone.emit_event(AppEvent::ValidationStarted {
+                                session_id: session_id_clone.clone(),
+                                scan_pages: 1,
+                                total_pages_site: None,
+                                timestamp: Utc::now(),
+                            });
+                            let _ = ctx_clone.emit_event(AppEvent::ValidationPageScanned {
+                                session_id: session_id_clone.clone(),
+                                physical_page: 0,
+                                products_found,
+                                assigned_start_offset: 0,
+                                assigned_end_offset: products_found.saturating_sub(1) as u64,
+                                timestamp: Utc::now(),
+                            });
+                            let _ = ctx_clone.emit_event(AppEvent::ValidationCompleted {
+                                session_id: session_id_clone.clone(),
+                                pages_scanned: 1,
+                                products_checked,
+                                divergences,
+                                anomalies,
+                                duration_ms: item_start.elapsed().as_millis() as u64,
+                                timestamp: Utc::now(),
+                            });
+                            // Emit a few anomaly details to console if present
+                            if let Some(json) = &r.collected_data {
+                                if let Ok(validated) = serde_json::from_str::<Vec<crate::domain::product::ProductDetail>>(json) {
+                                    if let Ok(rep) = crate::new_architecture::services::data_quality_analyzer::DataQualityAnalyzer::new().analyze_product_quality(&validated) {
+                                        for issue in rep.issues.iter().take(3) {
+                                            let code = match issue.issue_type {
+                                                crate::new_architecture::services::data_quality_analyzer::IssueType::Duplicate => "duplicate_index",
+                                                crate::new_architecture::services::data_quality_analyzer::IssueType::MissingRequired => "missing_required",
+                                                crate::new_architecture::services::data_quality_analyzer::IssueType::InvalidFormat => "invalid_format",
+                                                crate::new_architecture::services::data_quality_analyzer::IssueType::EmptyValue => "empty_value",
+                                            };
+                                            let detail = format!(
+                                                "{} {} in '{}'",
+                                                match issue.severity { crate::new_architecture::services::data_quality_analyzer::IssueSeverity::Critical => "CRIT", crate::new_architecture::services::data_quality_analyzer::IssueSeverity::Warning => "WARN", crate::new_architecture::services::data_quality_analyzer::IssueSeverity::Info => "INFO" },
+                                                match issue.issue_type { crate::new_architecture::services::data_quality_analyzer::IssueType::MissingRequired => "Missing", crate::new_architecture::services::data_quality_analyzer::IssueType::InvalidFormat => "Format", crate::new_architecture::services::data_quality_analyzer::IssueType::EmptyValue => "Empty", crate::new_architecture::services::data_quality_analyzer::IssueType::Duplicate => "Dup" },
+                                                issue.field_name
+                                            );
+                                            let _ = ctx_clone.emit_event(AppEvent::ValidationAnomaly {
+                                                session_id: session_id_clone.clone(),
+                                                code: code.into(),
+                                                detail,
+                                                timestamp: Utc::now(),
+                                            });
+                                        }
+                                        // Emit some divergence events (duplicates) for live counting
+                                        let mut dup_emitted = 0u32;
+                                        for issue in rep.issues.iter() {
+                                            if let crate::new_architecture::services::data_quality_analyzer::IssueType::Duplicate = issue.issue_type {
+                                                let detail = format!("Duplicate in '{}' (url={})", issue.field_name, issue.product_url);
+                                                let _ = ctx_clone.emit_event(AppEvent::ValidationDivergenceFound {
+                                                    session_id: session_id_clone.clone(),
+                                                    physical_page: 0,
+                                                    kind: "duplicate".into(),
+                                                    detail,
+                                                    expected_offset: 0,
+                                                    timestamp: Utc::now(),
+                                                });
+                                                dup_emitted += 1;
+                                                if dup_emitted >= 5 { break; }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         // For grouped product detail crawling, emit a grouped completion event summarizing counts
                         if let StageType::ProductDetailCrawling = stage_type_clone {
                             if let StageItem::ProductUrls(ref urls) = lifecycle_item {
@@ -1348,6 +1546,40 @@ impl StageActor {
                                                         timestamp: Utc::now(),
                                                     },
                                                 );
+
+                                                // Emit DatabaseStats event for Stage 4 UI visibility
+                                                if let Some(repo) = product_repo_for_persist.as_ref() {
+                                                    if let Ok((total_count, min_page, max_page, _)) = repo.get_product_detail_stats().await {
+                                                        let note = if inserted > 0 || updated > 0 {
+                                                            Some(format!("Batch persisted: {} inserted, {} updated", inserted, updated))
+                                                        } else {
+                                                            Some("Batch persisted: no changes".into())
+                                                        };
+                                                        let _ = ctx_clone.emit_event(AppEvent::DatabaseStats {
+                                                            session_id: session_id_clone.clone(),
+                                                            batch_id: batch_id_opt.clone(),
+                                                            total_product_details: total_count,
+                                                            min_page,
+                                                            max_page,
+                                                            note,
+                                                            timestamp: Utc::now(),
+                                                        });
+                                                        // Emit grouped persistence lifecycle snapshot for UI animation (Stage 5)
+                                                        let _ = ctx_clone.emit_event(AppEvent::ProductLifecycleGroup {
+                                                            session_id: session_id_clone.clone(),
+                                                            batch_id: batch_id_opt.clone(),
+                                                            page_number: None,
+                                                            group_size: attempted,
+                                                            started: attempted,
+                                                            succeeded: inserted + updated,
+                                                            failed: (attempted.saturating_sub(inserted + updated)),
+                                                            duplicates: duplicates_ct,
+                                                            duration_ms: persist_start.elapsed().as_millis() as u64,
+                                                            phase: "persist".into(),
+                                                            timestamp: Utc::now(),
+                                                        });
+                                                    }
+                                                }
                                                 match emit_res {
                                                     Ok(_) => info!(
                                                         "[PersistEmit] lifecycle emitted status={}",
@@ -2088,7 +2320,7 @@ impl StageActor {
                     }
                     Err(e) => {
                         error!("❌ Data validation failed: {}", e);
-                        (Err(format!("Data validation failed: {}", e)), None, 0)
+                        (Err(e), None, 0)
                     }
                 }
             }
@@ -2399,7 +2631,7 @@ impl StageActor {
                         "[PersistExec] upsert detail idx={} url={} page_id={:?}",
                         idx, detail.url, detail.page_id
                     );
-                    match product_repo.create_or_update_product_detail(&detail).await {
+                    match product_repo.create_or_update_product_detail(detail).await {
                         Ok((was_updated, was_created)) => {
                             if was_created {
                                 inserted += 1;
@@ -2456,7 +2688,7 @@ impl StageActor {
                         "[PersistExec] upsert validated detail idx={} url={} page_id={:?}",
                         idx, detail.url, detail.page_id
                     );
-                    match product_repo.create_or_update_product_detail(&detail).await {
+                    match product_repo.create_or_update_product_detail(detail).await {
                         Ok((was_updated, was_created)) => {
                             if was_created {
                                 inserted += 1;

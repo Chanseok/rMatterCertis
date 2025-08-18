@@ -34,6 +34,26 @@ export class TauriApiService {
   // =========================================================================
 
   /**
+   * Start the unified Actor-based crawling pipeline.
+   * mode: 'advanced' | 'live' to align with UI tabs. Overrides are optional.
+   */
+  async startUnifiedCrawling(options: {
+    mode?: 'advanced' | 'live';
+    overrideBatchSize?: number;
+    overrideConcurrency?: number;
+    delayMs?: number;
+  } = {}): Promise<{ success: boolean; message: string; session_id?: string }> {
+    const req = {
+      mode: options.mode,
+      override_batch_size: options.overrideBatchSize,
+      override_concurrency: options.overrideConcurrency,
+      delay_ms: options.delayMs,
+    };
+    const res = await invoke<any>('start_unified_crawling', { request: req });
+    return res as { success: boolean; message: string; session_id?: string };
+  }
+
+  /**
    * Start a new crawling session with page range
    */
   async startCrawling(startPage?: number, endPage?: number): Promise<string> {
@@ -121,6 +141,83 @@ export class TauriApiService {
   // =========================================================================
   // Status and Data Retrieval Commands
   // =========================================================================
+
+  /**
+   * Start a validation pass against the database/site. Oldest-forward with optional range.
+   */
+  async startValidation(options: {
+    scanPages?: number;
+    startPhysicalPage?: number;
+    endPhysicalPage?: number;
+    rangesExpr?: string;
+  } = {}): Promise<any> {
+    const args = {
+      scanPages: options.scanPages ?? null,
+      startPhysicalPage: options.startPhysicalPage ?? null,
+      endPhysicalPage: options.endPhysicalPage ?? null,
+      rangesExpr: options.rangesExpr ?? null,
+    } as any;
+    return await invoke<any>('start_validation', args);
+  }
+
+  /**
+   * Start a partial sync over provided ranges string (e.g., "498-492,489,487-485").
+   */
+  async startPartialSync(ranges: string, dryRun?: boolean): Promise<any> {
+    return await invoke<any>('start_partial_sync', {
+      ranges,
+      dryRun: dryRun ?? null,
+    } as any);
+  }
+
+  /**
+   * Start a batched sync that splits the given ranges into contiguous-page batches
+   * and processes each batch sequentially using the Partial flow.
+   */
+  async startBatchedSync(ranges: string, batchSizeOverride?: number, dryRun?: boolean): Promise<any> {
+    return await invoke<any>('start_batched_sync', {
+      ranges,
+      batchSizeOverride: batchSizeOverride ?? null,
+      dryRun: dryRun ?? null,
+    } as any);
+  }
+
+  /**
+   * Start an anomaly-repair sync sweep around divergent pages.
+   */
+  async startRepairSync(buffer?: number, dryRun?: boolean): Promise<any> {
+    return await invoke<any>('start_repair_sync', {
+      buffer: buffer ?? null,
+      dryRun: dryRun ?? null,
+    } as any);
+  }
+
+  /**
+   * Start a sync for explicit physical page numbers (e.g., [498, 496, 489]).
+   */
+  async startSyncPages(pages: number[], dryRun?: boolean): Promise<any> {
+    return await invoke<any>('start_sync_pages', {
+      pages,
+      dryRun: dryRun ?? null,
+    } as any);
+  }
+
+  /**
+   * Start a diagnostic-driven sync for specific pages and slot indices.
+   * pages: [{ physical_page, miss_indices }]
+   * snapshot is optional; if omitted backend will fetch site meta.
+   */
+  async startDiagnosticSync(
+    pages: Array<{ physical_page: number; miss_indices: number[] }>,
+    snapshot?: { total_pages: number; items_on_last_page: number },
+    dryRun?: boolean
+  ): Promise<any> {
+    return await invoke<any>('start_diagnostic_sync', {
+      pages,
+      snapshot: snapshot ?? null,
+      dryRun: dryRun ?? null,
+    } as any);
+  }
 
   /**
    * Get the current crawling progress and status
@@ -265,6 +362,45 @@ export class TauriApiService {
     });
     
     this.eventListeners.set('crawling-progress', unlisten);
+    return unlisten;
+  }
+
+  /**
+   * Subscribe to concurrency broadcast events (optional)
+   */
+  async subscribeToConcurrency(
+    callback: (event: any) => void
+  ): Promise<UnlistenFn> {
+    const unlisten = await listen<any>('concurrency-event', (event) => {
+      callback(event.payload);
+    });
+    this.eventListeners.set('concurrency-event', unlisten);
+    return unlisten;
+  }
+
+  /**
+   * Subscribe to validation detailed events (optional)
+   */
+  async subscribeToValidation(
+    callback: (event: any) => void
+  ): Promise<UnlistenFn> {
+    const unlisten = await listen<any>('validation-event', (event) => {
+      callback(event.payload);
+    });
+    this.eventListeners.set('validation-event', unlisten);
+    return unlisten;
+  }
+
+  /**
+   * Subscribe to database save detailed events (optional)
+   */
+  async subscribeToDbSave(
+    callback: (event: any) => void
+  ): Promise<UnlistenFn> {
+    const unlisten = await listen<any>('db-save-event', (event) => {
+      callback(event.payload);
+    });
+    this.eventListeners.set('db-save-event', unlisten);
     return unlisten;
   }
 
@@ -494,6 +630,104 @@ export class TauriApiService {
   // =========================================================================
 
   /**
+   * Subscribe to all Actor bridge events emitted by the Rust ActorEventBridge.
+   * This listens to a curated set of 'actor-*' event names and invokes the callback with (eventName, payload).
+   */
+  async subscribeToActorBridgeEvents(
+    callback: (eventName: string, payload: any) => void
+  ): Promise<() => void> {
+    const names = [
+      // Session
+      'actor-session-started',
+      'actor-session-paused',
+      'actor-session-resumed',
+      'actor-session-completed',
+      'actor-session-failed',
+      'actor-session-timeout',
+      // Batch/Stage
+      'actor-batch-started',
+      'actor-batch-completed',
+      'actor-batch-failed',
+      'actor-stage-started',
+      'actor-stage-completed',
+      'actor-stage-failed',
+      // Progress / Metrics / Reports
+      'actor-progress',
+      'actor-performance-metrics',
+      'actor-batch-report',
+      'actor-session-report',
+  'actor-next-plan-ready',
+      // Phases / Shutdown
+      'actor-phase-started',
+      'actor-phase-completed',
+      'actor-phase-aborted',
+      'actor-shutdown-requested',
+      'actor-shutdown-completed',
+      // Page & Detail lifecycle (Stage2/3)
+      'actor-page-task-started',
+      'actor-page-task-completed',
+      'actor-page-task-failed',
+      'actor-detail-task-started',
+      'actor-detail-task-completed',
+      'actor-detail-task-failed',
+      'actor-detail-concurrency-downshifted',
+      'actor-stage-item-started',
+      'actor-stage-item-completed',
+      // High-level lifecycle and timing
+      'actor-page-lifecycle',
+      'actor-product-lifecycle',
+      'actor-product-lifecycle-group',
+      'actor-http-request-timing',
+      // Validation / Persistence / DB
+      'actor-preflight-diagnostics',
+      'actor-persistence-anomaly',
+      'actor-database-stats',
+      'actor-validation-started',
+      'actor-validation-page-scanned',
+      'actor-validation-divergence',
+      'actor-validation-anomaly',
+      'actor-validation-completed',
+      // Sync (optional)
+      'actor-sync-started',
+      'actor-sync-page-started',
+      'actor-sync-upsert-progress',
+      'actor-sync-page-completed',
+      'actor-sync-warning',
+      'actor-sync-completed',
+    ];
+
+    const unsubs: UnlistenFn[] = [];
+    for (const name of names) {
+      try {
+        const un = await listen<any>(name, (evt) => callback(name, evt.payload));
+        this.eventListeners.set(name, un);
+        unsubs.push(un);
+      } catch (e) {
+        // If some names are not emitted in a build, ignore subscription failures.
+        console.warn(`[ActorBridge] Failed to subscribe '${name}':`, e);
+      }
+    }
+    return () => unsubs.forEach((u) => u());
+  }
+
+  /**
+   * Convenience: subscribe and also fan-out critical actor events as DOM CustomEvents for simple components
+   */
+  async bridgeToDomEvents(): Promise<() => void> {
+    return this.subscribeToActorBridgeEvents((name, payload) => {
+      if (name === 'actor-session-completed') {
+        window.dispatchEvent(new CustomEvent('actor-session-completed', { detail: payload }));
+      }
+      if (name === 'actor-session-report') {
+        window.dispatchEvent(new CustomEvent('actor-session-report', { detail: payload }));
+      }
+      if (name === 'actor-next-plan-ready') {
+        window.dispatchEvent(new CustomEvent('actor-next-plan-ready', { detail: payload }));
+      }
+    });
+  }
+
+  /**
    * Unsubscribe from a specific event type
    */
   unsubscribeFromEvent(eventType: string): void {
@@ -583,6 +817,28 @@ export class TauriApiService {
       return await invoke<any>('get_site_config');
     } catch (error) {
       throw new Error(`Failed to get site config: ${error}`);
+    }
+  }
+
+  /**
+   * Scan DB for pagination mismatches (page_id/index_in_page invariants)
+   */
+  async scanDbPaginationMismatches(): Promise<any> {
+    try {
+      return await invoke<any>('scan_db_pagination_mismatches');
+    } catch (error) {
+      throw new Error(`Failed to scan DB pagination mismatches: ${error}`);
+    }
+  }
+
+  /**
+   * Cleanup duplicate rows by URL across products and product_details.
+   */
+  async cleanupDuplicateUrls(): Promise<any> {
+    try {
+      return await invoke<any>('cleanup_duplicate_urls');
+    } catch (error) {
+      throw new Error(`Failed to cleanup duplicate URLs: ${error}`);
     }
   }
 

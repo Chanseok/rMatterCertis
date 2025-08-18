@@ -5,7 +5,7 @@
 
 use crate::infrastructure::config::WorkerConfig;
 use anyhow::{Result, anyhow};
-use reqwest::{Client, ClientBuilder, Response};
+use reqwest::{Client, ClientBuilder, Response, header::{HeaderMap, HeaderValue, ACCEPT, ACCEPT_LANGUAGE}};
 use scraper::Html;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -208,9 +208,22 @@ impl HttpClient {
 
     /// Create a new HTTP client with custom configuration
     pub fn with_config(config: HttpClientConfig) -> Result<Self> {
+        // Set browser-like defaults to minimize server-side variance
+        let mut default_headers = HeaderMap::new();
+        // Match the diagnostic script behavior
+        default_headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+        );
+        default_headers.insert(
+            ACCEPT_LANGUAGE,
+            HeaderValue::from_static("en-US,en;q=0.9"),
+        );
+
         let client = ClientBuilder::new()
             .timeout(Duration::from_secs(config.timeout_seconds))
             .user_agent(&config.user_agent)
+            .default_headers(default_headers)
             .cookie_store(true)
             .gzip(true)
             .redirect(if config.follow_redirects {
