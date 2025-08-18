@@ -297,6 +297,92 @@ impl crate::new_architecture::actors::BatchActor {
 
         result
     }
+        /// Stage 2용: 페이지별 상세 URL 결과를 수집하여 레거시 StageResult(details 포함)로 브리징
+        pub async fn execute_list_collection_with_details(
+            &self,
+            pages: Vec<u32>,
+            app_config: AppConfig,
+        ) -> crate::new_architecture::actors::types::StageResult {
+            let config_arc = match self.config.as_ref() {
+                Some(cfg) => cfg.clone(),
+                None => {
+                    return crate::new_architecture::actors::types::StageResult {
+                        processed_items: 0,
+                        successful_items: 0,
+                        failed_items: pages.len() as u32,
+                        duration_ms: 0,
+                        details: Vec::new(),
+                    };
+                }
+            };
+
+            let integration_service = match CrawlingIntegrationService::new(config_arc.clone(), app_config).await {
+                Ok(service) => Arc::new(service),
+                Err(e) => {
+                    error!(error = %e, "Failed to create crawling integration service");
+                    return crate::new_architecture::actors::types::StageResult {
+                        processed_items: 0,
+                        successful_items: 0,
+                        failed_items: pages.len() as u32,
+                        duration_ms: 0,
+                        details: Vec::new(),
+                    };
+                }
+            };
+
+            let cancellation_token = tokio_util::sync::CancellationToken::new();
+            let started = std::time::Instant::now();
+            let perform_site_check = true;
+
+            let page_results = match integration_service
+                .collect_pages_detailed(pages.clone(), perform_site_check, cancellation_token)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    error!(error = %e, "List detail collection failed");
+                    return crate::new_architecture::actors::types::StageResult {
+                        processed_items: 0,
+                        successful_items: 0,
+                        failed_items: pages.len() as u32,
+                        duration_ms: 0,
+                        details: Vec::new(),
+                    };
+                }
+            };
+
+            // Map into legacy StageResult with per-item details
+            let mut successful = 0u32;
+            let mut failed = 0u32;
+            let mut details: Vec<crate::new_architecture::actors::types::StageItemResult> = Vec::new();
+            for (page, urls) in page_results.into_iter() {
+                let success = !urls.is_empty();
+                if success { successful += 1; } else { failed += 1; }
+                let collected_data = if success {
+                    match serde_json::to_string(&urls) {
+                        Ok(json) => Some(json),
+                        Err(_) => None,
+                    }
+                } else { None };
+                details.push(crate::new_architecture::actors::types::StageItemResult {
+                    item_id: format!("page:{}", page),
+                    item_type: crate::new_architecture::actors::types::StageItemType::Page { page_number: page },
+                    success,
+                    error: if success { None } else { Some("no urls".to_string()) },
+                    duration_ms: 0,
+                    retry_count: 0,
+                    collected_data,
+                });
+            }
+
+            crate::new_architecture::actors::types::StageResult {
+                processed_items: successful + failed,
+                successful_items: successful,
+                failed_items: failed,
+                duration_ms: started.elapsed().as_millis() as u64,
+                details,
+            }
+        }
 }
 
 #[cfg(test)]

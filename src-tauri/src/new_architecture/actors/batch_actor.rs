@@ -1263,16 +1263,32 @@ impl BatchActor {
 
         // Feature-gated: Use real-crawling stage executor template path when enabled
         if crate::infrastructure::features::feature_stage_executor_template() {
-            if let Some(ch_stage) = Self::map_stage_type_to_channels(&stage_type) {
-                let items_len = items.len();
-                // Note: Template path currently ignores concurrency_limit; it derives limits from SystemConfig.
-                let actor_res = self
-                    .execute_stage_with_real_crawling(ch_stage, items, app_config.clone())
-                    .await;
-                let bridged = Self::map_stage_result_from_actor_system(actor_res, items_len);
-                return Ok(bridged);
+            match stage_type {
+                // Stage 2: use detailed bridge to preserve per-item details for transforms
+                StageType::ListPageCrawling => {
+                    let pages: Vec<u32> = items
+                        .iter()
+                        .filter_map(|it| if let StageItem::Page(p) = it { Some(*p) } else { None })
+                        .collect();
+                    let actor_res = self
+                        .execute_list_collection_with_details(pages, app_config.clone())
+                        .await;
+                    // actor_res is already legacy StageResult with details populated
+                    return Ok(actor_res);
+                }
+                _ => {
+                    if let Some(ch_stage) = Self::map_stage_type_to_channels(&stage_type) {
+                        let items_len = items.len();
+                        // Note: Template path currently ignores concurrency_limit; it derives limits from SystemConfig.
+                        let actor_res = self
+                            .execute_stage_with_real_crawling(ch_stage, items, app_config.clone())
+                            .await;
+                        let bridged = Self::map_stage_result_from_actor_system(actor_res, items_len);
+                        return Ok(bridged);
+                    }
+                }
             }
-            // If not supported (e.g., StatusCheck), fall through to legacy path
+            // Not supported stages fall through to legacy path
         }
 
         // StageActor 생성 (실제 서비스들과 함께)

@@ -233,6 +233,22 @@ impl CrawlingIntegrationService {
         }
     }
 
+    /// 페이지별 상세 URL 수집 결과를 반환 (per-page detailed results)
+    ///
+    /// 반환값: Vec<(page_number, Vec<ProductUrl>)>
+    pub async fn collect_pages_detailed(
+        &self,
+        pages: Vec<u32>,
+        perform_site_check: bool,
+        cancellation_token: CancellationToken,
+    ) -> anyhow::Result<Vec<(u32, Vec<ProductUrl>)>> {
+        // 동일한 내부 배치 수집 로직 재사용
+        let result = self
+            .collect_page_batch_with_retry(&pages, cancellation_token, perform_site_check)
+            .await?;
+        Ok(result)
+    }
+
     /// 실제 상세 수집 단계 실행 (OneShot 결과 반환)
     pub async fn execute_detail_collection_stage(
         &self,
