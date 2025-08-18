@@ -828,6 +828,27 @@ impl BatchActor {
             .start_time
             .map(|s| s.elapsed().as_millis() as u64)
             .unwrap_or(0);
+
+        // 보조 지표: Stage 2/3 per-item duration 합계 집계 및 구조화 로그
+        let stage2_duration_sum: u64 = list_page_result
+            .details
+            .iter()
+            .map(|d| d.duration_ms)
+            .sum();
+        let stage3_duration_sum: u64 = if self.defer_detail_crawling {
+            0
+        } else {
+            detail_result_opt
+                .as_ref()
+                .map(|r| r.details.iter().map(|d| d.duration_ms).sum())
+                .unwrap_or(0)
+        };
+        info!(target: "kpi.batch", "{{\"event\":\"batch_stage_durations\",\"batch_id\":\"{}\",\"stage2_duration_ms_total\":{},\"stage3_duration_ms_total\":{},\"ts\":\"{}\"}}",
+            batch_id,
+            stage2_duration_sum,
+            stage3_duration_sum,
+            chrono::Utc::now()
+        );
         info!(
             "📦 [Batch SUMMARY] actor={}, batch_id={}, pages_total={}, success_items={}, failed_items={}, retries_used≈{}, duration_ms={}, products_inserted={}, products_updated={}, deferred_detail={}",
             self.actor_id,
@@ -1264,6 +1285,13 @@ impl BatchActor {
         // Feature-gated: Use real-crawling stage executor template path when enabled
         if crate::infrastructure::features::feature_stage_executor_template() {
             match stage_type {
+                // Stage 1: route StatusCheck via real-crawling bridge
+                StageType::StatusCheck => {
+                    let actor_res = self
+                        .execute_status_check_with_details(app_config.clone())
+                        .await;
+                    return Ok(actor_res);
+                }
                 // Stage 2: use detailed bridge to preserve per-item details for transforms
                 StageType::ListPageCrawling => {
                     let pages: Vec<u32> = items

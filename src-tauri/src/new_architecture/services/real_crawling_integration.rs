@@ -163,6 +163,84 @@ impl StageActor {
 
 /// BatchActor 확장: 실제 크롤링 서비스를 사용하는 OneShot 스테이지 실행
 impl crate::new_architecture::actors::BatchActor {
+        /// Stage 1용: 사이트 상태 점검을 수행하고 레거시 StageResult(details 포함)로 브리징
+        pub async fn execute_status_check_with_details(
+            &self,
+            app_config: AppConfig,
+        ) -> crate::new_architecture::actors::types::StageResult {
+            let config_arc = match self.config.as_ref() {
+                Some(cfg) => cfg.clone(),
+                None => {
+                    return crate::new_architecture::actors::types::StageResult {
+                        processed_items: 0,
+                        successful_items: 0,
+                        failed_items: 1,
+                        duration_ms: 0,
+                        details: Vec::new(),
+                    };
+                }
+            };
+
+            let integration_service = match CrawlingIntegrationService::new(config_arc.clone(), app_config).await {
+                Ok(service) => Arc::new(service),
+                Err(e) => {
+                    error!(error = %e, "Failed to create crawling integration service");
+                    return crate::new_architecture::actors::types::StageResult {
+                        processed_items: 0,
+                        successful_items: 0,
+                        failed_items: 1,
+                        duration_ms: 0,
+                        details: Vec::new(),
+                    };
+                }
+            };
+
+            let started = std::time::Instant::now();
+            let mut details: Vec<crate::new_architecture::actors::types::StageItemResult> = Vec::new();
+
+            match integration_service.execute_site_analysis().await {
+                Ok(site_status) => {
+                    let collected_data = serde_json::to_string(&site_status).ok();
+                    details.push(crate::new_architecture::actors::types::StageItemResult {
+                        item_id: "site_status_check:0".to_string(),
+                        item_type: crate::new_architecture::actors::types::StageItemType::SiteCheck,
+                        success: true,
+                        error: None,
+                        duration_ms: started.elapsed().as_millis() as u64,
+                        retry_count: 0,
+                        collected_data,
+                    });
+
+                    crate::new_architecture::actors::types::StageResult {
+                        processed_items: 1,
+                        successful_items: 1,
+                        failed_items: 0,
+                        duration_ms: started.elapsed().as_millis() as u64,
+                        details,
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "Site status analysis failed");
+                    details.push(crate::new_architecture::actors::types::StageItemResult {
+                        item_id: "site_status_check:0".to_string(),
+                        item_type: crate::new_architecture::actors::types::StageItemType::SiteCheck,
+                        success: false,
+                        error: Some(format!("{}", e)),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                        retry_count: 0,
+                        collected_data: None,
+                    });
+
+                    crate::new_architecture::actors::types::StageResult {
+                        processed_items: 1,
+                        successful_items: 0,
+                        failed_items: 1,
+                        duration_ms: started.elapsed().as_millis() as u64,
+                        details,
+                    }
+                }
+            }
+        }
     /// 실제 크롤링 서비스를 사용한 스테이지 실행
     pub async fn execute_stage_with_real_crawling(
         &self,
