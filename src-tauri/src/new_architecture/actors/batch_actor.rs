@@ -156,6 +156,47 @@ pub enum BatchError {
 }
 
 impl BatchActor {
+    /// 내부 보조: Stage 2/3 per-item duration 합계 산출
+    pub(crate) fn compute_stage_duration_sums(
+        list_page_result: &StageResult,
+        detail_result_opt: Option<&StageResult>,
+        defer_detail_crawling: bool,
+    ) -> (u64, u64) {
+        let stage2_duration_sum: u64 = list_page_result
+            .details
+            .iter()
+            .map(|d| d.duration_ms)
+            .sum();
+        let stage3_duration_sum: u64 = if defer_detail_crawling {
+            0
+        } else {
+            detail_result_opt
+                .map(|r| r.details.iter().map(|d| d.duration_ms).sum())
+                .unwrap_or(0)
+        };
+        (stage2_duration_sum, stage3_duration_sum)
+    }
+
+    /// 내부 보조: 전체 retries_used 산출 (Stage 2 + Stage 3, 지연 수집 시 Stage 2만)
+    pub(crate) fn compute_retries_used(
+        list_page_result: &StageResult,
+        detail_result_opt: Option<&StageResult>,
+        defer_detail_crawling: bool,
+    ) -> u32 {
+        let stage2_retries: u32 = list_page_result
+            .details
+            .iter()
+            .map(|d| d.retry_count)
+            .sum();
+        if defer_detail_crawling {
+            stage2_retries
+        } else {
+            let stage3_retries: u32 = detail_result_opt
+                .map(|r| r.details.iter().map(|d| d.retry_count).sum())
+                .unwrap_or(0);
+            stage2_retries.saturating_add(stage3_retries)
+        }
+    }
     /// 새로운 BatchActor 인스턴스 생성 (기본)
     ///
     /// # Arguments
@@ -830,19 +871,8 @@ impl BatchActor {
             .unwrap_or(0);
 
         // 보조 지표: Stage 2/3 per-item duration 합계 집계 및 구조화 로그
-        let stage2_duration_sum: u64 = list_page_result
-            .details
-            .iter()
-            .map(|d| d.duration_ms)
-            .sum();
-        let stage3_duration_sum: u64 = if self.defer_detail_crawling {
-            0
-        } else {
-            detail_result_opt
-                .as_ref()
-                .map(|r| r.details.iter().map(|d| d.duration_ms).sum())
-                .unwrap_or(0)
-        };
+        let (stage2_duration_sum, stage3_duration_sum) =
+            Self::compute_stage_duration_sums(&list_page_result, detail_result_opt.as_ref(), self.defer_detail_crawling);
         info!(target: "kpi.batch", "{{\"event\":\"batch_stage_durations\",\"batch_id\":\"{}\",\"stage2_duration_ms_total\":{},\"stage3_duration_ms_total\":{},\"ts\":\"{}\"}}",
             batch_id,
             stage2_duration_sum,
@@ -856,19 +886,7 @@ impl BatchActor {
             self.total_pages,
             saving_result.successful_items,
             saving_result.failed_items,
-            {
-                let stage2_retries: u32 =
-                    list_page_result.details.iter().map(|d| d.retry_count).sum();
-                if self.defer_detail_crawling {
-                    stage2_retries
-                } else {
-                    let stage3_retries: u32 = detail_result_opt
-                        .as_ref()
-                        .map(|r| r.details.iter().map(|d| d.retry_count).sum())
-                        .unwrap_or(0);
-                    stage2_retries.saturating_add(stage3_retries)
-                }
-            },
+            Self::compute_retries_used(&list_page_result, detail_result_opt.as_ref(), self.defer_detail_crawling),
             duration_ms,
             self.products_inserted,
             self.products_updated,
@@ -925,16 +943,7 @@ impl BatchActor {
                 validation_result.failed_items,
             )
         };
-        let stage2_retries: u32 = list_page_result.details.iter().map(|d| d.retry_count).sum();
-        let retries_used = if self.defer_detail_crawling {
-            stage2_retries
-        } else {
-            let stage3_retries: u32 = detail_result_opt
-                .as_ref()
-                .map(|r| r.details.iter().map(|d| d.retry_count).sum())
-                .unwrap_or(0);
-            stage2_retries.saturating_add(stage3_retries)
-        };
+    let retries_used = Self::compute_retries_used(&list_page_result, detail_result_opt.as_ref(), self.defer_detail_crawling);
         let report_event = AppEvent::BatchReport {
             session_id: context.session_id.clone(),
             batch_id: batch_id.clone(),
@@ -1046,6 +1055,69 @@ impl BatchActor {
         } else {
             0.0
         }
+    }
+}
+
+#[cfg(test)]
+mod batch_actor_metrics_tests {
+    use super::*;
+    use crate::new_architecture::actors::{StageItemResult, StageItemType, StageResult};
+
+    fn mk_item(duration_ms: u64, retry_count: u32, success: bool) -> StageItemResult {
+        StageItemResult {
+            item_id: "t".into(),
+            item_type: StageItemType::SiteCheck,
+            success,
+            error: None,
+            duration_ms,
+            retry_count,
+            collected_data: None,
+        }
+    }
+
+    fn mk_result(items: &[(u64, u32, bool)]) -> StageResult {
+        StageResult {
+            processed_items: items.len() as u32,
+            successful_items: items.iter().filter(|(_, _, s)| *s).count() as u32,
+            failed_items: items.iter().filter(|(_, _, s)| !*s).count() as u32,
+            duration_ms: items.iter().map(|(d, _, _)| *d).sum(),
+            details: items
+                .iter()
+                .map(|(d, r, s)| mk_item(*d, *r, *s))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn test_compute_stage_duration_sums_no_defer() {
+        let list_res = mk_result(&[(10, 1, true), (20, 0, false)]);
+        let det_res = mk_result(&[(5, 2, true), (7, 0, true)]);
+        let (s2, s3) = BatchActor::compute_stage_duration_sums(&list_res, Some(&det_res), false);
+        assert_eq!(s2, 30);
+        assert_eq!(s3, 12);
+    }
+
+    #[test]
+    fn test_compute_stage_duration_sums_defer() {
+        let list_res = mk_result(&[(10, 1, true), (20, 0, false)]);
+        let (s2, s3) = BatchActor::compute_stage_duration_sums(&list_res, None, true);
+        assert_eq!(s2, 30);
+        assert_eq!(s3, 0);
+    }
+
+    #[test]
+    fn test_compute_retries_used_no_defer() {
+        let list_res = mk_result(&[(10, 1, true), (20, 0, false)]); // sum=1
+        let det_res = mk_result(&[(5, 2, true), (7, 3, true)]); // sum=5
+        let retries = BatchActor::compute_retries_used(&list_res, Some(&det_res), false);
+        assert_eq!(retries, 6);
+    }
+
+    #[test]
+    fn test_compute_retries_used_defer() {
+        let list_res = mk_result(&[(10, 1, true), (20, 2, false)]); // sum=3
+        let retries = BatchActor::compute_retries_used(&list_res, None, true);
+        assert_eq!(retries, 3);
     }
 }
 
