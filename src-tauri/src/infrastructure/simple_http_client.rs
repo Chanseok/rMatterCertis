@@ -11,6 +11,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::{interval, sleep};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// Configuration for HTTP client behavior
@@ -336,6 +337,55 @@ impl HttpClient {
         Ok(response)
     }
 
+    /// Fetch raw response with cancellation support
+    /// This mirrors `fetch_response` but cooperates with a CancellationToken.
+    pub async fn fetch_response_with_cancel(
+        &self,
+        url: &str,
+        cancellation_token: &CancellationToken,
+    ) -> Result<Response> {
+        // Apply global rate limiting with cancellation support
+        let rate_limiter = GlobalRateLimiter::get_instance();
+        if let Some(label) = &self.context_label {
+            debug!(
+                "⚖️ [rate-limit] {} RPS (source: {})",
+                self.config.max_requests_per_second, label
+            );
+        } else {
+            debug!(
+                "⚖️ [rate-limit] {} RPS",
+                self.config.max_requests_per_second
+            );
+        }
+
+        tokio::select! {
+            _ = rate_limiter.apply_rate_limit(self.config.max_requests_per_second) => {},
+            _ = cancellation_token.cancelled() => {
+                return Err(anyhow!("Request cancelled during rate limiting"));
+            }
+        }
+
+        info!("🌐 HTTP GET (HttpClient,cancel-aware): {}", url);
+
+        // Perform request with cancellation
+        let response = tokio::select! {
+            res = self.client.get(url).send() => {
+                res.map_err(|e| anyhow!("HTTP request failed: {}", e))?
+            },
+            _ = cancellation_token.cancelled() => {
+                warn!("🛑 HTTP request cancelled: {}", url);
+                return Err(anyhow!("HTTP request cancelled"));
+            }
+        };
+
+        if !response.status().is_success() {
+            error!("❌ HTTP error {}: {}", response.status(), url);
+            return Err(anyhow!("HTTP error {}: {}", response.status(), url));
+        }
+
+        Ok(response)
+    }
+
     /// Fetch response with retry policy based on HTTP status codes and network errors
     pub async fn fetch_response_with_policy(&self, url: &str) -> Result<Response> {
         use reqwest::StatusCode;
@@ -489,6 +539,72 @@ impl HttpClient {
 
                     if attempt < self.config.max_retries {
                         // Exponential backoff
+                        let delay_seconds = 2_u64.pow(attempt - 1);
+                        sleep(Duration::from_secs(delay_seconds)).await;
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow!("Unknown error while fetching {}", url)))
+    }
+
+    /// Fetch HTML content as string with cancellation support
+    pub async fn fetch_html_string_with_cancel(
+        &self,
+        url: &str,
+        cancellation_token: &CancellationToken,
+    ) -> Result<String> {
+        info!("🔄 Starting HTML fetch (cancel-aware): {}", url);
+
+        let mut last_error = None;
+
+        for attempt in 1..=self.config.max_retries {
+            // Apply global rate limiting (cancel-aware)
+            let rate_limiter = GlobalRateLimiter::get_instance();
+            if let Some(label) = &self.context_label {
+                info!(
+                    "⚖️ Applying rate limit {} RPS (source: {})",
+                    self.config.max_requests_per_second, label
+                );
+            } else {
+                info!(
+                    "⚖️ Applying rate limit {} RPS",
+                    self.config.max_requests_per_second
+                );
+            }
+
+            tokio::select! {
+                _ = rate_limiter.apply_rate_limit(self.config.max_requests_per_second) => {},
+                _ = cancellation_token.cancelled() => {
+                    return Err(anyhow!("Request cancelled during rate limiting"));
+                }
+            }
+
+            // Do the request
+            match self.fetch_response_with_cancel(url, cancellation_token).await {
+                Ok(response) => {
+                    // Read body with cancellation
+                    let text = tokio::select! {
+                        res = response.text() => {
+                            res.map_err(|e| anyhow!("Failed to read response body: {}", e))?
+                        },
+                        _ = cancellation_token.cancelled() => {
+                            warn!("🛑 Response reading cancelled for URL: {}", url);
+                            return Err(anyhow!("Response reading cancelled"));
+                        }
+                    };
+
+                    if text.is_empty() {
+                        return Err(anyhow!("Empty response from {}", url));
+                    }
+                    return Ok(text);
+                }
+                Err(e) => {
+                    warn!("Attempt {} failed for {}: {}", attempt, url, e);
+                    last_error = Some(e);
+
+                    if attempt < self.config.max_retries {
                         let delay_seconds = 2_u64.pow(attempt - 1);
                         sleep(Duration::from_secs(delay_seconds)).await;
                     }
