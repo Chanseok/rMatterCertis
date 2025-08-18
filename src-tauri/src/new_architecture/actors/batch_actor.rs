@@ -1443,7 +1443,7 @@ impl BatchActor {
         use crate::new_architecture::channels::types::StageItem;
 
         info!(
-            "� Starting Stage pipeline processing for {} pages",
+            "Starting Stage pipeline processing for {} pages",
             pages.len()
         );
 
