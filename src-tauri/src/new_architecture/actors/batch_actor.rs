@@ -1276,6 +1276,20 @@ impl BatchActor {
                     // actor_res is already legacy StageResult with details populated
                     return Ok(actor_res);
                 }
+                // Stage 3: use detailed bridge to collect ProductDetails per ProductUrls item
+                StageType::ProductDetailCrawling => {
+                    // Extract ProductUrls wrappers from items for bridging
+                    let url_wrappers: Vec<crate::new_architecture::channels::types::ProductUrls> = items
+                        .iter()
+                        .filter_map(|it| {
+                            if let StageItem::ProductUrls(urls) = it { Some(urls.clone()) } else { None }
+                        })
+                        .collect();
+                    let actor_res = self
+                        .execute_detail_collection_with_details(url_wrappers, app_config.clone())
+                        .await;
+                    return Ok(actor_res);
+                }
                 _ => {
                     if let Some(ch_stage) = Self::map_stage_type_to_channels(&stage_type) {
                         let items_len = items.len();

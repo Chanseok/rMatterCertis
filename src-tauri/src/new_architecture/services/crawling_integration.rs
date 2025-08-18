@@ -329,6 +329,19 @@ impl CrawlingIntegrationService {
         }
     }
 
+    /// 상세 수집 결과를 도메인 객체로 직접 반환 (per-item detailed bridging 용)
+    pub async fn collect_details_detailed(
+        &self,
+        urls: Vec<ProductUrl>,
+        cancellation_token: CancellationToken,
+    ) -> anyhow::Result<Vec<ProductDetail>> {
+        // 내부 배치 수집 로직 재사용
+        self
+            .collect_detail_batch_with_retry(&urls, cancellation_token)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
     /// 사이트 상태 분석 실행
     pub async fn execute_site_analysis(&self) -> Result<SiteStatus> {
         info!("Starting real site status analysis");

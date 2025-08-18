@@ -297,6 +297,111 @@ impl crate::new_architecture::actors::BatchActor {
 
         result
     }
+        /// Stage 3용: ProductUrls 입력을 받아 ProductDetails를 수집하고 레거시 StageResult(details 포함)로 브리징
+        pub async fn execute_detail_collection_with_details(
+            &self,
+            product_urls_items: Vec<crate::new_architecture::channels::types::ProductUrls>,
+            app_config: AppConfig,
+        ) -> crate::new_architecture::actors::types::StageResult {
+            let config_arc = match self.config.as_ref() {
+                Some(cfg) => cfg.clone(),
+                None => {
+                    return crate::new_architecture::actors::types::StageResult {
+                        processed_items: 0,
+                        successful_items: 0,
+                        failed_items: product_urls_items.len() as u32,
+                        duration_ms: 0,
+                        details: Vec::new(),
+                    };
+                }
+            };
+
+            let integration_service = match CrawlingIntegrationService::new(config_arc.clone(), app_config).await {
+                Ok(service) => Arc::new(service),
+                Err(e) => {
+                    error!(error = %e, "Failed to create crawling integration service");
+                    return crate::new_architecture::actors::types::StageResult {
+                        processed_items: 0,
+                        successful_items: 0,
+                        failed_items: product_urls_items.len() as u32,
+                        duration_ms: 0,
+                        details: Vec::new(),
+                    };
+                }
+            };
+
+            let cancellation_token = tokio_util::sync::CancellationToken::new();
+            let started = std::time::Instant::now();
+
+            let mut successful = 0u32;
+            let mut failed = 0u32;
+            let mut details: Vec<crate::new_architecture::actors::types::StageItemResult> = Vec::new();
+
+            for (idx, urls_wrapper) in product_urls_items.into_iter().enumerate() {
+                // Collect details for this item
+                let urls = urls_wrapper.urls.clone();
+                match integration_service
+                    .collect_details_detailed(urls.clone(), cancellation_token.clone())
+                    .await
+                {
+                    Ok(collected_details) => {
+                        let success = !collected_details.is_empty();
+                        if success { successful += 1; } else { failed += 1; }
+                        let collected_data = if success {
+                            // Wrap into channels::types::ProductDetails for downstream transforms
+                            let attempted = urls.len() as u32;
+                            let successful_count = collected_details.len() as u32;
+                            let failed_count = attempted.saturating_sub(successful_count);
+                            let wrapper = crate::new_architecture::channels::types::ProductDetails {
+                                products: collected_details,
+                                source_urls: urls,
+                                extraction_stats: crate::new_architecture::channels::types::ExtractionStats {
+                                    attempted,
+                                    successful: successful_count,
+                                    failed: failed_count,
+                                    empty_responses: 0,
+                                },
+                            };
+                            match serde_json::to_string(&wrapper) {
+                                Ok(json) => Some(json),
+                                Err(_) => None,
+                            }
+                        } else { None };
+
+                        details.push(crate::new_architecture::actors::types::StageItemResult {
+                            item_id: format!("product_urls:{}", idx),
+                            item_type: crate::new_architecture::actors::types::StageItemType::ProductUrls { urls: Vec::new() },
+                            success,
+                            error: if success { None } else { Some("no details".to_string()) },
+                            duration_ms: 0,
+                            retry_count: 0,
+                            collected_data,
+                        });
+                    }
+                    Err(e) => {
+                        error!(idx = idx, error = %e, "Detail collection failed for ProductUrls item");
+                        failed += 1;
+                        details.push(crate::new_architecture::actors::types::StageItemResult {
+                            item_id: format!("product_urls:{}", idx),
+                            item_type: crate::new_architecture::actors::types::StageItemType::ProductUrls { urls: Vec::new() },
+                            success: false,
+                            error: Some(format!("{}", e)),
+                            duration_ms: 0,
+                            retry_count: 0,
+                            collected_data: None,
+                        });
+                    }
+                }
+            }
+
+            crate::new_architecture::actors::types::StageResult {
+                processed_items: successful + failed,
+                successful_items: successful,
+                failed_items: failed,
+                duration_ms: started.elapsed().as_millis() as u64,
+                details,
+            }
+        }
         /// Stage 2용: 페이지별 상세 URL 결과를 수집하여 레거시 StageResult(details 포함)로 브리징
         pub async fn execute_list_collection_with_details(
             &self,
