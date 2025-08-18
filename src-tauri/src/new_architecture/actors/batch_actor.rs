@@ -1207,6 +1207,15 @@ impl BatchActor {
             BatchError::ServiceNotAvailable("AppConfig not initialized".to_string())
         })?;
 
+        // Feature-gated: Use real-crawling stage executor template path when enabled
+        if crate::infrastructure::features::feature_stage_executor_template() {
+            // Note: Template path currently ignores concurrency_limit; it derives limits from SystemConfig.
+            let result = self
+                .execute_stage_with_real_crawling(stage_type, items, app_config.clone())
+                .await;
+            return Ok(result);
+        }
+
         // StageActor 생성 (실제 서비스들과 함께)
         let mut stage_actor = StageActor::new_with_services(
             format!("stage_{}_{}", stage_type.as_str(), self.actor_id),
@@ -1256,6 +1265,18 @@ impl BatchActor {
                 "IntegratedProductRepository not initialized".to_string(),
             )
         })?;
+        let app_config = self.app_config.as_ref().ok_or_else(|| {
+            BatchError::ServiceNotAvailable("AppConfig not initialized".to_string())
+        })?;
+
+        // Feature-gated: Use real-crawling stage executor template path when enabled
+        if crate::infrastructure::features::feature_stage_executor_template() {
+            // Hints are currently not consumed by the template executor; safe to ignore during migration.
+            let result = self
+                .execute_stage_with_real_crawling(stage_type, items, app_config.clone())
+                .await;
+            return Ok(result);
+        }
         let app_config = self.app_config.as_ref().ok_or_else(|| {
             BatchError::ServiceNotAvailable("AppConfig not initialized".to_string())
         })?;
