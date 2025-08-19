@@ -1966,7 +1966,7 @@ impl StageActor {
 
         debug!("Processing item {} for stage {:?}", item_id, stage_type);
 
-        // 0) Optional StageLogic dispatch (Phase 3): currently only for ListPageCrawling
+        // 0) Optional StageLogic dispatch (Phase 3): use strategy if available for this stage
         if let (Some(factory), Some(app_cfg), Some(http), Some(extractor), Some(repo)) = (
             self.strategy_factory.as_ref(),
             self.app_config.clone(),
@@ -1974,17 +1974,15 @@ impl StageActor {
             self.data_extractor.clone(),
             self._product_repo.clone(),
         ) {
-            if matches!(stage_type, StageType::ListPageCrawling) {
-                if let Some(logic) = factory.logic_for(&stage_type) {
-                    let deps = Deps { http, extractor, repo };
-                    let input = StageInput { stage_type: stage_type.clone(), item: item.clone(), config: app_cfg, deps };
-                    match logic.execute(input).await {
-                        Ok(StageOutput { result }) => {
-                            return Ok(result);
-                        }
-                        Err(e) => {
-                            return Err(StageError::ItemProcessingFailed { item_id: item_id.clone(), error: e.to_string() });
-                        }
+            if let Some(logic) = factory.logic_for(&stage_type) {
+                let deps = Deps { http, extractor, repo };
+                let input = StageInput { stage_type: stage_type.clone(), item: item.clone(), config: app_cfg, deps };
+                match logic.execute(input).await {
+                    Ok(StageOutput { result }) => {
+                        return Ok(result);
+                    }
+                    Err(e) => {
+                        return Err(StageError::ItemProcessingFailed { item_id: item_id.clone(), error: e.to_string() });
                     }
                 }
             }
