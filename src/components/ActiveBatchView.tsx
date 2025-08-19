@@ -221,8 +221,8 @@ const TaskItemCard: Component<TaskItemCardProps> = (props) => {
   return (
     <div class={`
       p-3 rounded-lg border transition-all duration-200 
-      ${getStatusColor(props.item.status)}
-      ${isAnimating() ? 'animate-pulse scale-105' : ''}
+  ${getStatusColor(props.item.status)}
+  ${isAnimating() ? 'animate-pulse' : ''}
     `}>
       <div class="flex items-center justify-between">
         <div class="flex items-center space-x-2">

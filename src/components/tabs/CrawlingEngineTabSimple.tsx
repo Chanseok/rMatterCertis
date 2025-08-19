@@ -817,7 +817,7 @@ export default function CrawlingEngineTabSimple() {
           </div>
           {/* Next plan preview panel */}
           <Show when={nextPlan()}>
-            <div class="mt-3 p-3 rounded-lg border border-indigo-200 bg-indigo-50 animate-slide-up">
+            <div class="mt-3 p-3 rounded-lg border border-indigo-200 bg-indigo-50 transition-opacity duration-300 opacity-100">
               <div class="flex items-start justify-between gap-3">
                 <div>
                   <div class="text-sm font-semibold text-indigo-900">🧭 다음 실행 계획 준비됨</div>

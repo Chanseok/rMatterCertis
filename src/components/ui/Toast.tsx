@@ -147,8 +147,8 @@ const Toast = (props: ToastProps) => {
           class={`
             fixed z-50 
             ${getPositionClasses()}
-            transform transition-all duration-300 ease-in-out
-            ${visible() ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}
+            transition-opacity duration-300 ease-in-out
+            ${visible() ? 'opacity-100' : 'opacity-0 pointer-events-none'}
           `}
         >
           <div

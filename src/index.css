@@ -8,7 +8,7 @@
   }
 
   .card:hover {
-  @apply transform -translate-y-0.5;
+  /* removed transform lift to avoid mixing with shadows on same layer (macOS CoreAnimation warning) */
   /* avoid animating box-shadow on transformed layers */
   }
 
@@ -26,7 +26,7 @@
   }
 
   .btn-primary:hover {
-    @apply transform -translate-y-0.5;
+  /* removed transform lift to avoid shadow+transform on same element */
   }
 
   .btn-danger {
@@ -35,7 +35,7 @@
   }
 
   .btn-danger:hover {
-    @apply transform -translate-y-0.5;
+  /* removed transform lift to avoid shadow+transform on same element */
   }
 
   .text-gradient {
@@ -113,7 +113,7 @@
   }
 
   .hover-lift:hover {
-    @apply transform -translate-y-1;
+  /* disabled transform lift globally to avoid CoreAnimation warnings on macOS */
   }
 
   .tab-btn {
@@ -394,8 +394,8 @@
   }
 
 
-  /* Dramatic transition for Calculated Range without box-shadow (avoid CA shadow warnings) */
-  .range-transition-ring { position: relative; }
+  /* Dramatic transition for Calculated Range (no transform/box-shadow to avoid CA warnings) */
+  .range-transition-ring { position: relative; isolation: isolate; }
   .range-transition-ring::after {
     content: '';
     position: absolute;
@@ -403,58 +403,43 @@
     border: 3px solid rgba(59, 130, 246, 0.55); /* sky/indigo tone */
     border-radius: 12px;
     pointer-events: none;
-    transform: scale(0.92);
     opacity: 0.85;
     animation: ringBorderPulse 900ms ease-out 1 both;
   }
   @keyframes ringBorderPulse {
-    0%   { transform: scale(0.92); opacity: 0.85; }
-    80%  { transform: scale(1.10); opacity: 0.12; }
-    100% { transform: scale(1.12); opacity: 0; }
+    0%   { opacity: 0.85; }
+    70%  { opacity: 0.18; }
+    100% { opacity: 0; }
   }
 
   .shatter-line {
     display: inline-block;
-    will-change: transform, opacity;
+    will-change: opacity;
   }
   .shatter-char {
     display: inline-block;
-    will-change: transform, opacity, filter;
-    animation: shatterFly 600ms cubic-bezier(.15,.85,.25,1) forwards;
+    will-change: opacity, filter, letter-spacing;
+    animation: shatterFade 600ms cubic-bezier(.15,.85,.25,1) forwards;
   }
 
-  @keyframes shatterFly {
-    0% { opacity: 1; transform: translate(0, 0) rotate(0deg) scale(1); filter: none; }
-    35% { opacity: 0.6; filter: blur(1px); }
-    100% { opacity: 0; transform: translate(var(--dx, 0px), var(--dy, 0px)) rotate(var(--rot, 0deg)) scale(0.85); filter: blur(2px); }
+  @keyframes shatterFade {
+    0% { opacity: 1; filter: none; letter-spacing: 0; }
+    35% { opacity: 0.6; filter: blur(0.5px); letter-spacing: 0.5px; }
+    100% { opacity: 0; filter: blur(1px); letter-spacing: 1px; }
   }
 
-  .drum-line { display: inline-flex; perspective: 1000px; }
+  .drum-line { display: inline-flex; }
   .drum-in {
     display: inline-block;
-    transform-origin: 50% 50%;
-    backface-visibility: hidden;
-  transform-style: preserve-3d;
-  will-change: transform, opacity, filter;
-  animation: drumIn 750ms cubic-bezier(.2,.8,.2,1) forwards;
-  animation-delay: var(--delay, 0ms);
+    will-change: opacity, filter;
+    animation: drumFade 750ms cubic-bezier(.2,.8,.2,1) forwards;
+    animation-delay: var(--delay, 0ms);
   }
 
-  @keyframes drumIn {
-    0% {
-      opacity: 0;
-      transform: rotateX(120deg) rotateY(12deg) translateY(-6px) scale(0.94);
-      filter: blur(2px);
-    }
-    55% {
-      opacity: 1;
-      transform: rotateX(-12deg) rotateY(-3deg) translateY(1px) scale(1.03);
-    }
-    100% {
-      opacity: 1;
-      transform: rotateX(0deg) rotateY(0deg) translateY(0) scale(1);
-      filter: none;
-    }
+  @keyframes drumFade {
+    0% { opacity: 0; filter: blur(2px); }
+    55% { opacity: 1; filter: blur(1px); }
+    100% { opacity: 1; filter: none; }
   }
 
   /* Simple CSS confetti pieces (fallback to CSS if no canvas) */
@@ -463,12 +448,12 @@
     width: var(--cw, 6px); height: var(--ch, 10px);
     border-radius: 1px;
     opacity: 0;
-    will-change: transform, opacity, filter;
-    animation: confettiBurst 850ms cubic-bezier(.15,.85,.25,1) forwards;
+    will-change: opacity, filter;
+    animation: confettiShimmer 850ms cubic-bezier(.15,.85,.25,1) forwards;
   }
 
-  @keyframes confettiBurst {
-    0% { opacity: 0; transform: translate(0, 0) rotate(0deg); filter: none; }
-    12% { opacity: 1; }
-    100% { opacity: 0; transform: translate(var(--cx, 0px), var(--cy, 0px)) rotate(var(--crot, 0deg)); filter: blur(0.5px); }
+  @keyframes confettiShimmer {
+    0% { opacity: 0; filter: none; }
+    20% { opacity: 1; filter: blur(0.2px); }
+    100% { opacity: 0; filter: blur(0.6px); }
   }
