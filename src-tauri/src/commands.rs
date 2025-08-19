@@ -9,13 +9,11 @@
 // Modern Rust 2024 - 명시적 모듈 선언
 pub mod config_commands; // legacy modules removed
 pub mod smart_crawling;
-pub mod simple_crawling;        // Phase 1: 설정 파일 기반 간단한 크롤링
 pub mod actor_system_commands;  // 새로운 Actor 시스템 명령어
 pub mod system_analysis;        // 시스템 분석 명령어
 
 // Re-export all commands
 pub use config_commands::*; // Only non-legacy exports retained
 pub use smart_crawling::*;
-pub use simple_crawling::*;
 pub use actor_system_commands::*;
 pub use system_analysis::*;

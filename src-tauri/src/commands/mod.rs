@@ -1,9 +1,8 @@
 //! Tauri 명령어 모듈
 //! 프론트엔드와 백엔드 간의 API 인터페이스
 
-pub mod advanced_engine_api;           // Advanced status/info endpoints (실행 엔트리 제거)
+pub mod advanced_engine_api;           // Advanced status/info endpoints
 pub mod config_commands;               // Configuration & window state commands
-// simple_crawling 모듈 제거: start_smart_crawling → unified_crawling 경로로 통합 (MI-1 Cleanup)
 pub mod data_queries;                  // Read/query endpoints
 pub mod unified_crawling;              // Single crawling entrypoint (actor-based)
 pub mod validation_commands;           // Validation command
@@ -36,9 +35,7 @@ pub use data_queries::{
     get_system_status,
 };
 
-pub use unified_crawling::{
-    start_unified_crawling,
-};
+pub use unified_crawling::start_unified_crawling;
 
 pub use validation_commands::start_validation;
 pub use sync_commands::start_partial_sync;

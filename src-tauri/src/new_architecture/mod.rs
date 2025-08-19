@@ -15,6 +15,7 @@ pub mod config;
 pub mod events;
 pub mod runtime;
 pub mod services; // session registry & runtime helpers
+pub mod stages; // Phase 3: StageLogic strategies
 
 // 🔄 Phase 4: 타입 동기화 및 ts-rs 통합 (새로 추가)
 pub mod ts_gen;

@@ -138,7 +138,6 @@ pub mod commands {
     pub mod real_actor_commands; // 🎭 진짜 Actor 시스템 명령어
     pub mod real_crawling_commands; // 🚀 Phase C: 실제 크롤링 기능
     pub mod simple_actor_test;
-    pub mod simple_crawling; // Phase 1: 설정 파일 기반 간단한 크롤링
     pub mod smart_crawling;
     pub mod sync_commands;
     pub mod system_analysis; // 시스템 분석 명령어
@@ -148,7 +147,7 @@ pub mod commands {
     pub mod db_cleanup; // 🧹 DB URL duplicate cleanup
 
     // Re-export commonly used commands
-    // simple_crawling re-export removed (deprecated stub only)
+    // simple_crawling removed
     pub use advanced_engine_api::*; // Advanced Engine 명령어 export
     pub use config_commands::*; // Config and window management 명령어 export
     pub use crawling_test_commands::*; // Phase C 테스트 명령어 export

@@ -218,10 +218,12 @@ export const CrawlingEngineTab: Component = () => {
       addLog(`🚀 Smart Crawling 시작 - 백엔드가 자동으로 최적 범위 계산`);
       
       // ✅ 새로운 방식: 백엔드가 설정 파일을 읽고 자동으로 크롤링 시작
+      /*
       const session = await invoke<CrawlingSession>('start_smart_crawling');
       
       setCurrentSessionId(session.session_id);
       addLog(`✅ 크롤링 세션 시작: ${session.session_id}`);
+      */
       
     } catch (error) {
       setIsRunning(false);

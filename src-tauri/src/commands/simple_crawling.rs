@@ -1,4 +1,4 @@
-//! Deprecated simple_crawling module (fully stubbed).
-//! All previous logic migrated to `unified_crawling`.
+//! [REMOVED] Deprecated simple_crawling module
+//! Use `unified_crawling::start_unified_crawling` instead.
 
-// (No exports)
+// Intentionally empty.

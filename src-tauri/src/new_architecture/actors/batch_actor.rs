@@ -7,7 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use chrono::Utc;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -19,10 +19,10 @@ use super::types::{ActorCommand, ActorError, BatchConfig, StageResult, StageType
 use crate::new_architecture::actors::StageActor;
 use crate::new_architecture::actors::types::AppEvent;
 use crate::new_architecture::channels::types::{ProductUrls, StageItem};
-use crate::new_architecture::{
-    actor_system as actor_sys,
-    channels::types as ch_types,
-};
+// use crate::new_architecture::{
+//     actor_system as actor_sys,
+//     channels::types as ch_types,
+// };
 use crate::new_architecture::context::AppContext;
 // Bring real crawling bridge extensions into scope
 // real_crawling_integration provides inherent methods on BatchActor via extension impl; no direct import needed here.
@@ -31,6 +31,8 @@ use crate::new_architecture::context::AppContext;
 use crate::domain::services::SiteStatus;
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
+
+// Architecture note: StageActor is the single canonical execution path.
 
 /// BatchActor: 배치 단위의 크롤링 작업 관리
 ///
@@ -1277,58 +1279,6 @@ impl Actor for BatchActor {
 }
 
 impl BatchActor {
-    // --- Internal adapters for template executor bridging ---
-    fn map_stage_type_to_channels(stage: &StageType) -> Option<ch_types::StageType> {
-        match stage {
-            // Not supported by template executor (or requires per-item details we don't have yet)
-            // Keep legacy path for functional pipeline until we enrich result bridging.
-            StageType::StatusCheck => None,
-            StageType::ListPageCrawling => None,
-            StageType::ProductDetailCrawling => None,
-            // Safe to route via template executor (doesn't require details for transforms)
-            StageType::DataValidation => Some(ch_types::StageType::DataValidation),
-            // IMPORTANT: DataSaving must run through StageActor for real persistence.
-            // The template executor currently returns a stub result and does not write to DB.
-            // Hence, keep DataSaving on the legacy StageActor path.
-            StageType::DataSaving => None,
-        }
-    }
-
-    fn map_stage_result_from_actor_system(
-        src: actor_sys::StageResult,
-        items_len: usize,
-    ) -> StageResult {
-        match src {
-            actor_sys::StageResult::Success {
-                processed_items,
-                duration_ms,
-            } => StageResult {
-                processed_items,
-                successful_items: processed_items,
-                failed_items: (items_len as u32).saturating_sub(processed_items),
-                duration_ms,
-                details: Vec::new(),
-            },
-            actor_sys::StageResult::Failure {
-                error: _,
-                partial_results,
-            } => StageResult {
-                processed_items: partial_results,
-                successful_items: partial_results,
-                failed_items: (items_len as u32).saturating_sub(partial_results),
-                duration_ms: 0,
-                details: Vec::new(),
-            },
-            actor_sys::StageResult::RecoverableError { .. }
-            | actor_sys::StageResult::FatalError { .. } => StageResult {
-                processed_items: 0,
-                successful_items: 0,
-                failed_items: items_len as u32,
-                duration_ms: 0,
-                details: Vec::new(),
-            },
-        }
-    }
 
     /// 개별 Stage를 StageActor로 실행
     /// TODO: StageItemCompleted 이벤트 수신 채널 도입하여 products_inserted/products_updated 실시간 반영
@@ -1360,206 +1310,7 @@ impl BatchActor {
             BatchError::ServiceNotAvailable("AppConfig not initialized".to_string())
         })?;
 
-        // Feature-gated: Use real-crawling stage executor template path when enabled
-        if crate::infrastructure::features::feature_stage_executor_template() {
-            debug!(
-                has_system_config = self.config.is_some(),
-                "[Bridge] Stage executor template enabled"
-            );
-            match stage_type {
-                // Stage 1: route StatusCheck via real-crawling bridge
-                StageType::StatusCheck => {
-                    // Emit StageStarted for template path
-                    let _ = context.emit_event(AppEvent::StageStarted {
-                        stage_type: StageType::StatusCheck,
-                        session_id: context.session_id.clone(),
-                        batch_id: self.batch_id.clone(),
-                        items_count: 1,
-                        timestamp: Utc::now(),
-                    });
-                    let actor_res = self
-                        .execute_status_check_with_details(app_config.clone())
-                        .await;
-                    // Emit StageCompleted for template path
-                    let _ = context.emit_event(AppEvent::StageCompleted {
-                        stage_type: StageType::StatusCheck,
-                        session_id: context.session_id.clone(),
-                        batch_id: self.batch_id.clone(),
-                        result: actor_res.clone(),
-                        timestamp: Utc::now(),
-                    });
-                    return Ok(actor_res);
-                }
-                // Stage 2: use detailed bridge to preserve per-item details for transforms
-                StageType::ListPageCrawling => {
-                    let pages: Vec<u32> = items
-                        .iter()
-                        .filter_map(|it| if let StageItem::Page(p) = it { Some(*p) } else { None })
-                        .collect();
-                    // Emit StageStarted for template path
-                    let _ = context.emit_event(AppEvent::StageStarted {
-                        stage_type: StageType::ListPageCrawling,
-                        session_id: context.session_id.clone(),
-                        batch_id: self.batch_id.clone(),
-                        items_count: pages.len() as u32,
-                        timestamp: Utc::now(),
-                    });
-                    let actor_res = self
-                        .execute_list_collection_with_details(pages, app_config.clone())
-                        .await;
-                    // Emit StageCompleted for template path
-                    let _ = context.emit_event(AppEvent::StageCompleted {
-                        stage_type: StageType::ListPageCrawling,
-                        session_id: context.session_id.clone(),
-                        batch_id: self.batch_id.clone(),
-                        result: actor_res.clone(),
-                        timestamp: Utc::now(),
-                    });
-                    // actor_res is already legacy StageResult with details populated
-                    return Ok(actor_res);
-                }
-                // Stage 3: use detailed bridge to collect ProductDetails per ProductUrls item
-                StageType::ProductDetailCrawling => {
-                    // Extract ProductUrls wrappers from items for bridging
-                    let url_wrappers: Vec<crate::new_architecture::channels::types::ProductUrls> = items
-                        .iter()
-                        .filter_map(|it| {
-                            if let StageItem::ProductUrls(urls) = it { Some(urls.clone()) } else { None }
-                        })
-                        .collect();
-                    if url_wrappers.is_empty() {
-                        warn!("[Bridge] ProductDetailCrawling received 0 ProductUrls items; returning empty result");
-                    }
-                    debug!(
-                        batches = url_wrappers.len(),
-                        "[Bridge] ProductDetailCrawling: executing detail collection for url batches"
-                    );
-                    // Emit StageStarted for template path
-                    let _ = context.emit_event(AppEvent::StageStarted {
-                        stage_type: StageType::ProductDetailCrawling,
-                        session_id: context.session_id.clone(),
-                        batch_id: self.batch_id.clone(),
-                        items_count: url_wrappers.len() as u32,
-                        timestamp: Utc::now(),
-                    });
-                    let actor_res = self
-                        .execute_detail_collection_with_details(url_wrappers, app_config.clone())
-                        .await;
-
-                    // Emit per-detail AppEvents for UI/log parity with legacy StageActor
-                    // Strategy: For each StageItemResult, parse collected_data (ProductDetails wrapper)
-                    // to determine successful detail URLs. Then emit DetailTaskStarted and
-                    // DetailTaskCompleted/Failed per URL with best-effort duration split.
-                    if let Some(batch_id_str) = self.batch_id.clone() {
-                        for item_res in &actor_res.details {
-                            // Attempt to deserialize the wrapper to obtain products and source_urls with page hints
-                            let mut success_urls: HashSet<String> = HashSet::new();
-                            let mut url_page_map: HashMap<String, Option<u32>> = HashMap::new();
-                            let mut attempted_urls: Vec<String> = Vec::new();
-
-                            if let Some(data) = &item_res.collected_data {
-                                if data.starts_with('{') {
-                                    if let Ok(wrapper) = serde_json::from_str::<crate::new_architecture::channels::types::ProductDetails>(data) {
-                                        for p in &wrapper.products { success_urls.insert(p.url.clone()); }
-                                        for u in &wrapper.source_urls { url_page_map.insert(u.url.clone(), Some(u.page_id as u32)); attempted_urls.push(u.url.clone()); }
-                                    } else {
-                                        // Fallback to StageItemType URLs when JSON parse fails
-                                        if let crate::new_architecture::actors::types::StageItemType::ProductUrls { urls } = &item_res.item_type {
-                                            attempted_urls.extend(urls.iter().cloned());
-                                        }
-                                    }
-                                }
-                            }
-                            if attempted_urls.is_empty() {
-                                if let crate::new_architecture::actors::types::StageItemType::ProductUrls { urls } = &item_res.item_type {
-                                    attempted_urls.extend(urls.iter().cloned());
-                                }
-                            }
-
-                            let per_item_duration = if !attempted_urls.is_empty() { item_res.duration_ms / attempted_urls.len() as u64 } else { 0 };
-
-                            for url in attempted_urls {
-                                let page_opt = url_page_map.get(&url).copied().flatten();
-                                // started
-                                let _ = context.emit_event(AppEvent::DetailTaskStarted {
-                                    session_id: context.session_id.clone(),
-                                    detail_id: url.clone(),
-                                    page: page_opt,
-                                    batch_id: Some(batch_id_str.clone()),
-                                    range_idx: None,
-                                    batch_index: None,
-                                    scope: Some("batch".to_string()),
-                                    timestamp: chrono::Utc::now(),
-                                });
-                                if success_urls.contains(&url) && item_res.success {
-                                    let _ = context.emit_event(AppEvent::DetailTaskCompleted {
-                                        session_id: context.session_id.clone(),
-                                        detail_id: url.clone(),
-                                        page: page_opt,
-                                        duration_ms: per_item_duration,
-                                        batch_id: Some(batch_id_str.clone()),
-                                        range_idx: None,
-                                        batch_index: None,
-                                        scope: Some("batch".to_string()),
-                                        timestamp: chrono::Utc::now(),
-                                    });
-                                } else {
-                                    let _ = context.emit_event(AppEvent::DetailTaskFailed {
-                                        session_id: context.session_id.clone(),
-                                        detail_id: url.clone(),
-                                        page: page_opt,
-                                        error: "detail_missing".to_string(),
-                                        final_failure: true,
-                                        batch_id: Some(batch_id_str.clone()),
-                                        range_idx: None,
-                                        batch_index: None,
-                                        scope: Some("batch".to_string()),
-                                        timestamp: chrono::Utc::now(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                    // Emit StageCompleted for template path
-                    let _ = context.emit_event(AppEvent::StageCompleted {
-                        stage_type: StageType::ProductDetailCrawling,
-                        session_id: context.session_id.clone(),
-                        batch_id: self.batch_id.clone(),
-                        result: actor_res.clone(),
-                        timestamp: Utc::now(),
-                    });
-                    return Ok(actor_res);
-                }
-                _ => {
-                    if let Some(ch_stage) = Self::map_stage_type_to_channels(&stage_type) {
-                        let items_len = items.len();
-                        // Emit StageStarted for template path (DataValidation/DataSaving)
-                        let _ = context.emit_event(AppEvent::StageStarted {
-                            stage_type: stage_type.clone(),
-                            session_id: context.session_id.clone(),
-                            batch_id: self.batch_id.clone(),
-                            items_count: items_len as u32,
-                            timestamp: Utc::now(),
-                        });
-                        // Note: Template path currently ignores concurrency_limit; it derives limits from SystemConfig.
-                        let actor_res = self
-                            .execute_stage_with_real_crawling(ch_stage, items, app_config.clone())
-                            .await;
-                        let bridged = Self::map_stage_result_from_actor_system(actor_res, items_len);
-                        // Emit StageCompleted for template path (DataValidation/DataSaving)
-                        let _ = context.emit_event(AppEvent::StageCompleted {
-                            stage_type: stage_type.clone(),
-                            session_id: context.session_id.clone(),
-                            batch_id: self.batch_id.clone(),
-                            result: bridged.clone(),
-                            timestamp: Utc::now(),
-                        });
-                        return Ok(bridged);
-                    }
-                }
-            }
-            // Not supported stages fall through to legacy path
-        }
+    // Canonical path: StageActor only
 
         // StageActor 생성 (실제 서비스들과 함께)
         let mut stage_actor = StageActor::new_with_services(
@@ -1570,6 +1321,10 @@ impl BatchActor {
             Arc::clone(product_repo),
             app_config.clone(),
         );
+        // Inject StageLogic factory (Phase 3 guarded dispatch)
+        stage_actor = stage_actor.with_strategy_factory(Arc::new(
+            crate::new_architecture::stages::DefaultStageLogicFactory,
+        ));
 
         // StageActor로 Stage 실행 (실제 items 전달)
         let stage_result = stage_actor
@@ -1614,23 +1369,9 @@ impl BatchActor {
             BatchError::ServiceNotAvailable("AppConfig not initialized".to_string())
         })?;
 
-        // Feature-gated: Use real-crawling stage executor template path when enabled
-        if crate::infrastructure::features::feature_stage_executor_template() {
-            if let Some(ch_stage) = Self::map_stage_type_to_channels(&stage_type) {
-                let items_len = items.len();
-                // Hints are currently not consumed by the template executor; safe to ignore during migration.
-                let actor_res = self
-                    .execute_stage_with_real_crawling(ch_stage, items, app_config.clone())
-                    .await;
-                let bridged = Self::map_stage_result_from_actor_system(actor_res, items_len);
-                return Ok(bridged);
-            }
-            // If not supported, fall through to legacy path
-        }
-        let app_config = self.app_config.as_ref().ok_or_else(|| {
-            BatchError::ServiceNotAvailable("AppConfig not initialized".to_string())
-        })?;
+    // Template bridge disabled: always use StageActor path
 
+        // canonical StageActor path below
         let mut stage_actor = StageActor::new_with_services(
             format!("stage_{}_{}", stage_type.as_str(), self.actor_id),
             self.batch_id.clone().unwrap_or_default(),
@@ -1639,6 +1380,9 @@ impl BatchActor {
             Arc::clone(product_repo),
             app_config.clone(),
         );
+        stage_actor = stage_actor.with_strategy_factory(Arc::new(
+            crate::new_architecture::stages::DefaultStageLogicFactory,
+        ));
 
         if let (Some(tp), Some(plp)) = (total_pages_hint, products_on_last_page_hint) {
             stage_actor.set_site_pagination_hints(tp, plp);
@@ -1706,7 +1450,7 @@ impl BatchActor {
             );
 
             // 🔥 Phase 1: 실제 서비스와 함께 StageActor 생성
-            let mut stage_actor = if let (
+            let stage_actor = if let (
                 Some(http_client),
                 Some(data_extractor),
                 Some(product_repo),
@@ -1776,6 +1520,10 @@ impl BatchActor {
                 (5, 300)
             };
 
+            // Activate StageLogic in pipeline path as well
+            let mut stage_actor = stage_actor.with_strategy_factory(Arc::new(
+                crate::new_architecture::stages::DefaultStageLogicFactory,
+            ));
             let stage_result = stage_actor
                 .execute_stage(
                     stage_type.clone(),

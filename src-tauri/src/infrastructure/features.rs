@@ -2,7 +2,7 @@
 //!
 //! Source of truth: environment variables (no config coupling for now).
 //! - MC_FEATURE_HTTP_CLIENT_UNIFIED (default: false)
-//! - MC_FEATURE_STAGE_EXECUTOR_TEMPLATE (default: false)
+//! - MC_FEATURE_STAGE_EXECUTOR_TEMPLATE (deprecated, permanently enabled)
 //! - MC_FEATURE_EVENTS_GENERALIZED_ONLY (default: true)
 //!
 //! Values: "1"/"true" enable, "0"/"false" disable (case-insensitive)
@@ -51,7 +51,8 @@ pub fn feature_http_client_unified() -> bool {
 
 /// Use Stage executor template + strategy pattern path
 pub fn feature_stage_executor_template() -> bool {
-    read_flag("MC_FEATURE_STAGE_EXECUTOR_TEMPLATE", false)
+    // Permanently enabled. Legacy path removed.
+    true
 }
 
 /// Emit only generalized events (and optionally deprecate stage-specific ones)
@@ -69,22 +70,22 @@ mod tests {
         #[allow(clippy::unwrap_used)]
         super::test_env::TEST_ENV.lock().unwrap().clear();
 
-        assert!(!feature_http_client_unified());
-        assert!(!feature_stage_executor_template());
-        assert!(feature_events_generalized_only());
+    assert!(!feature_http_client_unified());
+    assert!(feature_stage_executor_template());
+    assert!(feature_events_generalized_only());
     }
 
     #[test]
     fn explicit_values_parse() {
         // Set values in test env map
         let mut map = super::test_env::TEST_ENV.lock().unwrap();
-        map.insert("MC_FEATURE_HTTP_CLIENT_UNIFIED".into(), "1".into());
-        map.insert("MC_FEATURE_STAGE_EXECUTOR_TEMPLATE".into(), "true".into());
-        map.insert("MC_FEATURE_EVENTS_GENERALIZED_ONLY".into(), "0".into());
+    map.insert("MC_FEATURE_HTTP_CLIENT_UNIFIED".into(), "1".into());
+    map.insert("MC_FEATURE_STAGE_EXECUTOR_TEMPLATE".into(), "false".into()); // ignored now
+    map.insert("MC_FEATURE_EVENTS_GENERALIZED_ONLY".into(), "0".into());
         drop(map);
 
-        assert!(feature_http_client_unified());
-        assert!(feature_stage_executor_template());
-        assert!(!feature_events_generalized_only());
+    assert!(feature_http_client_unified());
+    assert!(feature_stage_executor_template());
+    assert!(!feature_events_generalized_only());
     }
 }

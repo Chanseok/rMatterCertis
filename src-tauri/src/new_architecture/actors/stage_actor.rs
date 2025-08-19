@@ -30,6 +30,8 @@ use crate::new_architecture::actors::types::{
 use crate::new_architecture::channels::types::StageItem;
 use crate::new_architecture::context::AppContext;
 use thiserror::Error;
+// StageLogic (strategy) scaffold
+use crate::new_architecture::stages::traits::{StageLogicFactory, StageInput, Deps, StageOutput};
 
 // NOTE: 원래 파일 상단이 손상되어 재작성. 아래 기존 구현들과 연결되도록 동일한 타입/impl 유지.
 
@@ -92,6 +94,8 @@ pub struct StageActor {
     // 힌트
     site_total_pages_hint: Option<u32>,
     products_on_last_page_hint: Option<u32>,
+    // Optional strategy factory for StageLogic-based execution (Phase 3)
+    strategy_factory: Option<Arc<dyn StageLogicFactory + Send + Sync>>, 
 }
 
 // Prevent duplicate DataSaving executions per (session_id,batch_id)
@@ -193,7 +197,14 @@ impl StageActor {
             app_config: None,
             site_total_pages_hint: None,
             products_on_last_page_hint: None,
+            strategy_factory: None,
         }
+    }
+
+    /// Inject a StageLogic factory (strategy dispatch). Safe no-op if not provided.
+    pub fn with_strategy_factory(mut self, factory: Arc<dyn StageLogicFactory + Send + Sync>) -> Self {
+        self.strategy_factory = Some(factory);
+        self
     }
 
     // (Early duplicate progress helpers removed; canonical versions near file end)
@@ -307,6 +318,7 @@ impl StageActor {
             app_config: Some(app_config),
             site_total_pages_hint: None,
             products_on_last_page_hint: None,
+            strategy_factory: None,
         }
     }
 
@@ -349,6 +361,7 @@ impl StageActor {
             app_config: None,
             site_total_pages_hint: None,
             products_on_last_page_hint: None,
+            strategy_factory: None,
         }
     }
 
@@ -1132,6 +1145,7 @@ impl StageActor {
                                 app_config: None,
                                 site_total_pages_hint,
                                 products_on_last_page_hint,
+                                strategy_factory: None,
                             };
                             let res = temp_actor
                                 .process_single_item(
@@ -1170,6 +1184,7 @@ impl StageActor {
                         app_config: None,
                         site_total_pages_hint,
                         products_on_last_page_hint,
+                        strategy_factory: None,
                     };
                     let res = temp_actor
                         .process_single_item(
@@ -1951,7 +1966,31 @@ impl StageActor {
 
         debug!("Processing item {} for stage {:?}", item_id, stage_type);
 
-        // 스테이지 타입별 처리 로직 - 수집된 데이터와 성공 여부를 함께 반환
+        // 0) Optional StageLogic dispatch (Phase 3): currently only for ListPageCrawling
+        if let (Some(factory), Some(app_cfg), Some(http), Some(extractor), Some(repo)) = (
+            self.strategy_factory.as_ref(),
+            self.app_config.clone(),
+            self.http_client.clone(),
+            self.data_extractor.clone(),
+            self._product_repo.clone(),
+        ) {
+            if matches!(stage_type, StageType::ListPageCrawling) {
+                if let Some(logic) = factory.logic_for(&stage_type) {
+                    let deps = Deps { http, extractor, repo };
+                    let input = StageInput { stage_type: stage_type.clone(), item: item.clone(), config: app_cfg, deps };
+                    match logic.execute(input).await {
+                        Ok(StageOutput { result }) => {
+                            return Ok(result);
+                        }
+                        Err(e) => {
+                            return Err(StageError::ItemProcessingFailed { item_id: item_id.clone(), error: e.to_string() });
+                        }
+                    }
+                }
+            }
+        }
+
+        // 1) 기존 스테이지 타입별 처리 로직 - 수집된 데이터와 성공 여부를 함께 반환
         let (success, collected_data, retries_used) = match stage_type {
             StageType::StatusCheck => {
                 if let Some(checker) = status_checker {

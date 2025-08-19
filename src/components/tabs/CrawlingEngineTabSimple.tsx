@@ -313,28 +313,7 @@ export default function CrawlingEngineTabSimple() {
     }
   };
 
-  // 스마트 크롤링 시작 (Phase 1: 설정 파일 기반)
-  const startSmartCrawling = async () => {
-    if (isRunning()) return;
-    
-    setIsRunning(true);
-    setStatusMessage('크롤링 시작 중...');
-    addLog('🚀 스마트 크롤링 시작');
-
-    try {
-      const result = await invoke('start_smart_crawling');
-      addLog(`✅ 크롤링 세션 시작: ${JSON.stringify(result)}`);
-      setStatusMessage('크롤링 실행 중');
-      
-      // 실제 구현에서는 여기에 크롤링 진행 상황 모니터링 추가
-      
-    } catch (error) {
-      console.error('크롤링 시작 실패:', error);
-      addLog(`❌ 크롤링 시작 실패: ${error}`);
-      setStatusMessage('크롤링 준비 완료');
-      setIsRunning(false);
-    }
-  };
+  // ... (legacy simple crawling entry removed)
 
   const addLog = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -1262,17 +1241,7 @@ export default function CrawlingEngineTabSimple() {
 
   {/* 제어 버튼 */}
   <div class="flex flex-wrap gap-4 mb-6 items-end">
-          <button
-            onClick={(e) => { triggerStartWave(e as unknown as MouseEvent); startSmartCrawling(); }}
-            disabled={isRunning()}
-            class={`px-6 py-3 rounded-lg font-medium text-white ripple ${
-              isRunning() 
-                ? 'bg-gray-400 cursor-not-allowed' 
-                : 'bg-blue-600 hover:bg-blue-700'
-            }`}
-          >
-            {isRunning() ? '크롤링 실행 중...' : '🚀 스마트 크롤링 시작'}
-          </button>
+          {/* Legacy simple crawling button removed */}
           
           <button
             onClick={(e) => { triggerStartWave(e as unknown as MouseEvent); startUnifiedAdvanced(); }}
