@@ -62,9 +62,10 @@ export const SimpleEventDisplay: Component = () => {
   let cleanupFunctions: (() => void)[] = [];
 
   // Map actor stage names to our display labels
-  const mapStageName = (stageName?: string): string | undefined => {
-    if (!stageName) return undefined;
-    const s = stageName.toLowerCase();
+  // Accept either stage_name (legacy) or stage_type (current) values.
+  const mapStageName = (stageNameOrType?: string): string | undefined => {
+    if (!stageNameOrType) return undefined;
+    const s = stageNameOrType.toLowerCase();
     if (s.includes('status') || s.includes('check')) return 'Stage 0: 상태 확인';
     if (s.includes('listpage') || s.includes('productlist') || s.includes('list')) return 'Stage 1: 제품 목록 수집';
     if (s.includes('detail') || s.includes('productdetail')) return 'Stage 2: 세부 정보 수집';
@@ -116,18 +117,21 @@ export const SimpleEventDisplay: Component = () => {
 
       // Stage lifecycle
       if (name === 'actor-stage-started') {
-        const label = mapStageName(p?.stage_name);
+        // Stage type comes as `stage_type` (e.g., "ListPageCrawling"), keep legacy fallback `stage_name`.
+        const label = mapStageName(p?.stage_type || p?.stage_name);
         if (label) setStageStatus(label, 'running');
       }
       if (name === 'actor-stage-completed') {
-        const label = mapStageName(p?.stage_name);
+        const label = mapStageName(p?.stage_type || p?.stage_name);
         if (label) {
           setStageStatus(label, 'completed');
-          // if items_processed is available, set totals/current accordingly
-          if (typeof p?.items_processed === 'number') {
-            setStageTotal(label, p.items_processed);
-            // show as fully completed
-            setStageProgress(prev => prev.map(s => s.name === label ? { ...s, current: p.items_processed } : s));
+          // items_processed is nested under `result.processed_items` in new actor events
+          const processed = typeof p?.result?.processed_items === 'number'
+            ? p.result.processed_items
+            : (typeof p?.items_processed === 'number' ? p.items_processed : undefined);
+          if (typeof processed === 'number') {
+            setStageTotal(label, processed);
+            setStageProgress(prev => prev.map(s => s.name === label ? { ...s, current: processed } : s));
           }
         }
       }
@@ -151,7 +155,8 @@ export const SimpleEventDisplay: Component = () => {
       // Persistence/DB → Stage 4
       if (name === 'actor-persistence-anomaly') setStageStatus('Stage 4: 데이터베이스 저장', 'error');
       if (name === 'actor-database-stats') {
-        const total = p?.total_products ?? p?.total ?? statistics().totalProducts;
+        // Accept both legacy total_products and new total_product_details
+        const total = p?.total_product_details ?? p?.total_products ?? p?.total ?? statistics().totalProducts;
         if (typeof total === 'number') setStatistics(prev => ({ ...prev, totalProducts: total }));
         setStageStatus('Stage 4: 데이터베이스 저장', 'running');
       }

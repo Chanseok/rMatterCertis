@@ -2068,6 +2068,9 @@ impl StageActor {
                             .await
                             {
                                 Ok(product_details) => {
+                                    if product_details.is_empty() {
+                                        warn!("⚠️ ProductDetailCollector returned 0 details for {} urls", product_urls.urls.len());
+                                    }
                                     info!(
                                         "✅ Successfully collected {} product details",
                                         product_details.len()
@@ -2147,6 +2150,7 @@ impl StageActor {
                         ) {
                             (Some(tp), Some(plp)) => (tp, plp),
                             _ => {
+                        
                                 // 최후의 수단으로 알려진 값 사용
                                 let fallback = (498u32, 8u32);
                                 info!(
@@ -2439,6 +2443,7 @@ impl StageActor {
                 ) {
                     (Some(tp), Some(plp)) => (tp, plp),
                     _ => {
+                                
                         if let Some(checker) = &self.status_checker {
                             match checker.check_site_status().await {
                                 Ok(s) => (s.total_pages, s.products_on_last_page),

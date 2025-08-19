@@ -3,15 +3,17 @@
 /* Custom component styles */
 @layer components {
   .card {
-    @apply bg-white/80 dark:bg-gray-800/80 rounded-2xl shadow-xl border border-white/20 dark:border-gray-700/50 backdrop-blur-xl transition-all duration-300;
+  @apply bg-white/80 dark:bg-gray-800/80 rounded-2xl border border-white/20 dark:border-gray-700/50 backdrop-blur-xl duration-300;
+  transition-property: transform, background-color, border-color, opacity;
   }
 
   .card:hover {
-    @apply shadow-2xl transform -translate-y-0.5;
+  @apply transform -translate-y-0.5;
+  /* avoid animating box-shadow on transformed layers */
   }
 
   .card-glass {
-    @apply bg-white/10 dark:bg-gray-900/20 rounded-2xl border border-white/20 dark:border-gray-700/30 backdrop-blur-2xl shadow-2xl;
+  @apply bg-white/10 dark:bg-gray-900/20 rounded-2xl border border-white/20 dark:border-gray-700/30 backdrop-blur-2xl;
   }
 
   .card-body {
@@ -19,23 +21,21 @@
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center px-6 py-3 text-sm font-semibold rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white focus:ring-4 focus:ring-blue-500/50 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed backdrop-blur-sm;
-    box-shadow: 0 4px 14px 0 rgba(59, 130, 246, 0.4);
+  @apply inline-flex items-center justify-center px-6 py-3 text-sm font-semibold rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white focus:ring-4 focus:ring-blue-500/50 duration-300 disabled:opacity-50 disabled:cursor-not-allowed backdrop-blur-sm;
+  transition-property: transform, background-color, border-color, opacity, color;
   }
 
   .btn-primary:hover {
     @apply transform -translate-y-0.5;
-    box-shadow: 0 8px 25px 0 rgba(59, 130, 246, 0.6);
   }
 
   .btn-danger {
-    @apply inline-flex items-center justify-center px-6 py-3 text-sm font-semibold rounded-xl bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-700 hover:to-pink-700 text-white focus:ring-4 focus:ring-red-500/50 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed backdrop-blur-sm;
-    box-shadow: 0 4px 14px 0 rgba(239, 68, 68, 0.4);
+  @apply inline-flex items-center justify-center px-6 py-3 text-sm font-semibold rounded-xl bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-700 hover:to-pink-700 text-white focus:ring-4 focus:ring-red-500/50 duration-300 disabled:opacity-50 disabled:cursor-not-allowed backdrop-blur-sm;
+  transition-property: transform, background-color, border-color, opacity, color;
   }
 
   .btn-danger:hover {
     @apply transform -translate-y-0.5;
-    box-shadow: 0 8px 25px 0 rgba(239, 68, 68, 0.6);
   }
 
   .text-gradient {
@@ -299,17 +299,17 @@
   animation: slideUp 0.6s ease-out;
 }
 
-/* Subtle one-shot pulse (used for validation progress) */
+/* Subtle one-shot pulse without box-shadow (avoids CoreAnimation shadowOffset warnings on macOS) */
 .pulse-once {
-  animation: pulseOnce 0.6s ease-out;
+  animation: borderPulseOnce 0.6s ease-out;
 }
 
-@keyframes pulseOnce {
+@keyframes borderPulseOnce {
   0% {
-    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.45); /* indigo-500 */
+    border-color: rgba(99, 102, 241, 0.55); /* indigo-500 */
   }
   100% {
-    box-shadow: 0 0 0 16px rgba(99, 102, 241, 0);
+    border-color: rgba(99, 102, 241, 0);
   }
 }
 
@@ -394,17 +394,23 @@
   }
 
 
-  /* Dramatic transition effects for Calculated Crawling Range */
-  .range-transition-ring {
-    position: relative;
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.6);
-    animation: ringPulse 900ms ease-out 1 both;
+  /* Dramatic transition for Calculated Range without box-shadow (avoid CA shadow warnings) */
+  .range-transition-ring { position: relative; }
+  .range-transition-ring::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border: 3px solid rgba(59, 130, 246, 0.55); /* sky/indigo tone */
+    border-radius: 12px;
+    pointer-events: none;
+    transform: scale(0.92);
+    opacity: 0.85;
+    animation: ringBorderPulse 900ms ease-out 1 both;
   }
-
-  @keyframes ringPulse {
-    0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.6); }
-    80% { box-shadow: 0 0 0 18px rgba(59, 130, 246, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+  @keyframes ringBorderPulse {
+    0%   { transform: scale(0.92); opacity: 0.85; }
+    80%  { transform: scale(1.10); opacity: 0.12; }
+    100% { transform: scale(1.12); opacity: 0; }
   }
 
   .shatter-line {

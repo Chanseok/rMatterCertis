@@ -663,7 +663,7 @@ export default function CrawlingEngineTabSimple() {
           setDownshiftInfo({ newLimit: payload?.new_limit, reason: payload?.reason });
         }
 
-        // Stage 3 (Validation) events
+  // Stage 3 (Validation) events
         if (name === 'actor-validation-started') {
           const target = Number(payload?.scan_pages ?? 0) || 0;
           setValidationStats({ started: true, completed: false, targetPages: target, pagesScanned: 0, divergences: 0, anomalies: 0, productsChecked: 0, lastPage: null, lastAssignedStart: null, lastAssignedEnd: null });
@@ -699,6 +699,31 @@ export default function CrawlingEngineTabSimple() {
             divergences: Number(payload?.divergences ?? prev.divergences) || prev.divergences,
             anomalies: Number(payload?.anomalies ?? prev.anomalies) || prev.anomalies,
           }));
+        }
+
+        // Fallback: If backend emits only generic stage events for Validation, reflect them here
+        if (name === 'actor-stage-started') {
+          const t = String(payload?.stage_type || payload?.stage_name || '').toLowerCase();
+          if (t.includes('validation')) {
+            const total = Number(payload?.items_count ?? 0) || 0;
+            setValidationStats(prev => ({
+              ...prev,
+              started: true,
+              completed: false,
+              targetPages: total || prev.targetPages,
+            }));
+          }
+        }
+        if (name === 'actor-stage-completed') {
+          const t = String(payload?.stage_type || payload?.stage_name || '').toLowerCase();
+          if (t.includes('validation')) {
+            const processed = Number(payload?.result?.processed_items ?? 0) || 0;
+            setValidationStats(prev => ({
+              ...prev,
+              completed: true,
+              pagesScanned: processed > 0 ? processed : prev.pagesScanned,
+            }));
+          }
         }
 
         // Stage 4 (DB) snapshots and session summary
@@ -859,9 +884,9 @@ export default function CrawlingEngineTabSimple() {
           </Show>
         </div>
 
-        {/* Stage1/Stage2 Runtime Monitor */}
+  {/* Stage1/Stage2 Runtime Monitor */}
   <div class={`grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 ${stage1Pulse() ? 'pulse-once' : ''}`}>
-          <div class={`bg-white rounded-lg border p-4 ${validationPulse() ? 'pulse-once' : ''}`}>
+    <div class={`bg-white rounded-lg border p-4 ${stage1Pulse() ? 'pulse-once' : ''}`}>
             <div class="flex items-center justify-between mb-2">
               <h3 class="text-md font-semibold text-gray-800">Stage 1: 제품 목록 수집</h3>
               <span class="text-xs text-gray-500">

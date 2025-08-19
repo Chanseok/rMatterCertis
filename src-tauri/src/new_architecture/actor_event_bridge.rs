@@ -5,7 +5,7 @@
 //! 낮은 복잡성의 구현으로도 모든 경우를 다 커버할 수 있도록 함
 
 use crate::domain::events::CrawlingEvent;
-use crate::new_architecture::actors::types::AppEvent;
+use crate::new_architecture::actors::types::{AppEvent, SimpleMetrics};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -111,6 +111,146 @@ impl ActorEventBridge {
             self.app_handle
                 .emit(unified_name, &enriched)
                 .map_err(|e| format!("Tauri emit failed: {}", e))?;
+            // Also write a concise info-level line to events.log so stage/page/detail events are visible
+            if let Some(obj) = enriched.as_object() {
+                let variant = obj.get("variant").and_then(|v| v.as_str()).unwrap_or("?");
+                let seq_val = obj.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
+                let session_id = obj.get("session_id").and_then(|v| v.as_str());
+                let batch_id = obj.get("batch_id").and_then(|v| v.as_str());
+                tracing::info!(target: "actor-event",
+                    "🌉 actor-event seq={} name={} variant={} session_id={:?} batch_id={:?}",
+                    seq_val, unified_name, variant, session_id, batch_id
+                );
+            } else {
+                tracing::info!(target: "actor-event",
+                    "🌉 actor-event name={} (unstructured)", unified_name
+                );
+            }
+            // Specialized concise lines per important variants to improve ProductDetail visibility
+            match &actor_event {
+                AppEvent::ProductLifecycle {
+                    session_id,
+                    batch_id,
+                    page_number,
+                    product_ref,
+                    status,
+                    duration_ms,
+                    ..
+                } => {
+                    tracing::info!(target: "actor-event",
+                        "[ProductLifecycle] status={} ref={} page={:?} batch={:?} dur_ms={:?} session={}",
+                        status, product_ref, page_number, batch_id, duration_ms, session_id
+                    );
+                }
+                AppEvent::ProductLifecycleGroup {
+                    session_id,
+                    batch_id,
+                    page_number,
+                    group_size,
+                    started,
+                    succeeded,
+                    failed,
+                    duplicates,
+                    duration_ms,
+                    phase,
+                    ..
+                } => {
+                    tracing::info!(target: "actor-event",
+                        "[ProductLifecycleGroup] phase={} size={} started={} ok={} fail={} dup={} page={:?} batch={:?} dur_ms={} session={}",
+                        phase, group_size, started, succeeded, failed, duplicates, page_number, batch_id, duration_ms, session_id
+                    );
+                }
+                AppEvent::DetailTaskStarted {
+                    session_id,
+                    detail_id,
+                    page,
+                    batch_id,
+                    range_idx,
+                    batch_index,
+                    ..
+                } => {
+                    tracing::info!(target: "actor-event",
+                        "[DetailTask] started id={} page={:?} batch={:?} range_idx={:?} idx={:?} session={}",
+                        detail_id, page, batch_id, range_idx, batch_index, session_id
+                    );
+                }
+                AppEvent::DetailTaskCompleted {
+                    session_id,
+                    detail_id,
+                    page,
+                    duration_ms,
+                    batch_id,
+                    ..
+                } => {
+                    tracing::info!(target: "actor-event",
+                        "[DetailTask] completed id={} page={:?} batch={:?} dur_ms={} session={}",
+                        detail_id, page, batch_id, duration_ms, session_id
+                    );
+                }
+                AppEvent::DetailTaskFailed {
+                    session_id,
+                    detail_id,
+                    page,
+                    error,
+                    final_failure,
+                    batch_id,
+                    ..
+                } => {
+                    tracing::info!(target: "actor-event",
+                        "[DetailTask] failed id={} page={:?} batch={:?} final={} err={} session={}",
+                        detail_id, page, batch_id, final_failure, error, session_id
+                    );
+                }
+                AppEvent::DatabaseStats {
+                    session_id,
+                    batch_id,
+                    total_product_details,
+                    min_page,
+                    max_page,
+                    note,
+                    ..
+                } => {
+                    tracing::info!(target: "actor-event",
+                        "[DatabaseStats] total={} range={:?}-{:?} note={:?} batch={:?} session={}",
+                        total_product_details, min_page, max_page, note, batch_id, session_id
+                    );
+                }
+                AppEvent::PageLifecycle {
+                    session_id,
+                    batch_id,
+                    page_number,
+                    status,
+                    metrics,
+                    ..
+                } => {
+                    // Extract a couple key metrics if available
+                    let (urls, scheduled, err) = match metrics {
+                        Some(SimpleMetrics::Page { url_count, scheduled_details, error }) => (
+                            url_count.unwrap_or(0),
+                            scheduled_details.unwrap_or(0),
+                            error.as_deref().unwrap_or("")
+                        ),
+                        _ => (0, 0, ""),
+                    };
+                    tracing::info!(target: "actor-event",
+                        "[PageLifecycle] status={} page={} urls={} scheduled={} err='{}' batch={:?} session={}",
+                        status, page_number, urls, scheduled, err, batch_id, session_id
+                    );
+                }
+                AppEvent::StageStarted { stage_type, session_id, batch_id, items_count, .. } => {
+                    tracing::info!(target: "actor-event",
+                        "[Stage] started stage={} items={} batch={:?} session={}",
+                        stage_type.as_str(), items_count, batch_id, session_id
+                    );
+                }
+                AppEvent::StageCompleted { stage_type, session_id, batch_id, result, .. } => {
+                    tracing::info!(target: "actor-event",
+                        "[Stage] completed stage={} processed={} ok={} fail={} dur_ms={} batch={:?} session={}",
+                        stage_type.as_str(), result.processed_items, result.successful_items, result.failed_items, result.duration_ms, batch_id, session_id
+                    );
+                }
+                _ => {}
+            }
             debug!(
                 "✅ Forwarded generalized Actor event '{}' (original={})",
                 unified_name, event_name

@@ -425,6 +425,13 @@ impl crate::new_architecture::actors::BatchActor {
                     .await
                 {
                     Ok((collected_details, retry_count, duration_ms)) => {
+                        if collected_details.is_empty() {
+                            warn!(
+                                idx = idx,
+                                urls = urls_strs.len(),
+                                "Detail collection returned 0 details for item"
+                            );
+                        }
                         let success = !collected_details.is_empty();
                         if success { successful += 1; } else { failed += 1; }
                         let collected_data = if success {

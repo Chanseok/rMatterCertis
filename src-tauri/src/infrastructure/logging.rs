@@ -8,6 +8,12 @@
 //! - Log files stored relative to executable location
 //! - KST (Korea Standard Time) timezone support
 //! - Separate backend and frontend log files
+//!
+//! Note on macOS CoreAnimation warnings: The console may show noisy system-level warnings
+//! like "CoreAnimation: [CATransformLayer] shadowRadius" originating from the OS compositor.
+//! These are not emitted by this application. We restrict our console/file outputs to
+//! our own targets and dedicated `actor-event`/`kpi.*` targets. If further suppression is needed,
+//! run with MC_CONCISE_STARTUP=1 or adjust module filters in LoggingConfig.
 
 #![allow(clippy::uninlined_format_args)]
 #![allow(clippy::needless_borrows_for_generic_args)]

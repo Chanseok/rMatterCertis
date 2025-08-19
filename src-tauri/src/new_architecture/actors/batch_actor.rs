@@ -7,7 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use chrono::Utc;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -24,6 +24,8 @@ use crate::new_architecture::{
     channels::types as ch_types,
 };
 use crate::new_architecture::context::AppContext;
+// Bring real crawling bridge extensions into scope
+// real_crawling_integration provides inherent methods on BatchActor via extension impl; no direct import needed here.
 
 // 실제 서비스 imports 추가
 use crate::domain::services::SiteStatus;
@@ -270,7 +272,8 @@ impl BatchActor {
             success_count: 0,
             failure_count: 0,
             concurrency_limiter: None,
-            config: None,
+            // Provide a default SystemConfig so template/bridge execution paths have required settings
+            config: Some(Arc::new(crate::new_architecture::config::SystemConfig::default())),
             // 실제 서비스 의존성 주입
             http_client: Some(http_client),
             data_extractor: Some(data_extractor),
@@ -1284,7 +1287,10 @@ impl BatchActor {
             StageType::ProductDetailCrawling => None,
             // Safe to route via template executor (doesn't require details for transforms)
             StageType::DataValidation => Some(ch_types::StageType::DataValidation),
-            StageType::DataSaving => Some(ch_types::StageType::DatabaseSave),
+            // IMPORTANT: DataSaving must run through StageActor for real persistence.
+            // The template executor currently returns a stub result and does not write to DB.
+            // Hence, keep DataSaving on the legacy StageActor path.
+            StageType::DataSaving => None,
         }
     }
 
@@ -1356,12 +1362,32 @@ impl BatchActor {
 
         // Feature-gated: Use real-crawling stage executor template path when enabled
         if crate::infrastructure::features::feature_stage_executor_template() {
+            debug!(
+                has_system_config = self.config.is_some(),
+                "[Bridge] Stage executor template enabled"
+            );
             match stage_type {
                 // Stage 1: route StatusCheck via real-crawling bridge
                 StageType::StatusCheck => {
+                    // Emit StageStarted for template path
+                    let _ = context.emit_event(AppEvent::StageStarted {
+                        stage_type: StageType::StatusCheck,
+                        session_id: context.session_id.clone(),
+                        batch_id: self.batch_id.clone(),
+                        items_count: 1,
+                        timestamp: Utc::now(),
+                    });
                     let actor_res = self
                         .execute_status_check_with_details(app_config.clone())
                         .await;
+                    // Emit StageCompleted for template path
+                    let _ = context.emit_event(AppEvent::StageCompleted {
+                        stage_type: StageType::StatusCheck,
+                        session_id: context.session_id.clone(),
+                        batch_id: self.batch_id.clone(),
+                        result: actor_res.clone(),
+                        timestamp: Utc::now(),
+                    });
                     return Ok(actor_res);
                 }
                 // Stage 2: use detailed bridge to preserve per-item details for transforms
@@ -1370,9 +1396,25 @@ impl BatchActor {
                         .iter()
                         .filter_map(|it| if let StageItem::Page(p) = it { Some(*p) } else { None })
                         .collect();
+                    // Emit StageStarted for template path
+                    let _ = context.emit_event(AppEvent::StageStarted {
+                        stage_type: StageType::ListPageCrawling,
+                        session_id: context.session_id.clone(),
+                        batch_id: self.batch_id.clone(),
+                        items_count: pages.len() as u32,
+                        timestamp: Utc::now(),
+                    });
                     let actor_res = self
                         .execute_list_collection_with_details(pages, app_config.clone())
                         .await;
+                    // Emit StageCompleted for template path
+                    let _ = context.emit_event(AppEvent::StageCompleted {
+                        stage_type: StageType::ListPageCrawling,
+                        session_id: context.session_id.clone(),
+                        batch_id: self.batch_id.clone(),
+                        result: actor_res.clone(),
+                        timestamp: Utc::now(),
+                    });
                     // actor_res is already legacy StageResult with details populated
                     return Ok(actor_res);
                 }
@@ -1385,19 +1427,133 @@ impl BatchActor {
                             if let StageItem::ProductUrls(urls) = it { Some(urls.clone()) } else { None }
                         })
                         .collect();
+                    if url_wrappers.is_empty() {
+                        warn!("[Bridge] ProductDetailCrawling received 0 ProductUrls items; returning empty result");
+                    }
+                    debug!(
+                        batches = url_wrappers.len(),
+                        "[Bridge] ProductDetailCrawling: executing detail collection for url batches"
+                    );
+                    // Emit StageStarted for template path
+                    let _ = context.emit_event(AppEvent::StageStarted {
+                        stage_type: StageType::ProductDetailCrawling,
+                        session_id: context.session_id.clone(),
+                        batch_id: self.batch_id.clone(),
+                        items_count: url_wrappers.len() as u32,
+                        timestamp: Utc::now(),
+                    });
                     let actor_res = self
                         .execute_detail_collection_with_details(url_wrappers, app_config.clone())
                         .await;
+
+                    // Emit per-detail AppEvents for UI/log parity with legacy StageActor
+                    // Strategy: For each StageItemResult, parse collected_data (ProductDetails wrapper)
+                    // to determine successful detail URLs. Then emit DetailTaskStarted and
+                    // DetailTaskCompleted/Failed per URL with best-effort duration split.
+                    if let Some(batch_id_str) = self.batch_id.clone() {
+                        for item_res in &actor_res.details {
+                            // Attempt to deserialize the wrapper to obtain products and source_urls with page hints
+                            let mut success_urls: HashSet<String> = HashSet::new();
+                            let mut url_page_map: HashMap<String, Option<u32>> = HashMap::new();
+                            let mut attempted_urls: Vec<String> = Vec::new();
+
+                            if let Some(data) = &item_res.collected_data {
+                                if data.starts_with('{') {
+                                    if let Ok(wrapper) = serde_json::from_str::<crate::new_architecture::channels::types::ProductDetails>(data) {
+                                        for p in &wrapper.products { success_urls.insert(p.url.clone()); }
+                                        for u in &wrapper.source_urls { url_page_map.insert(u.url.clone(), Some(u.page_id as u32)); attempted_urls.push(u.url.clone()); }
+                                    } else {
+                                        // Fallback to StageItemType URLs when JSON parse fails
+                                        if let crate::new_architecture::actors::types::StageItemType::ProductUrls { urls } = &item_res.item_type {
+                                            attempted_urls.extend(urls.iter().cloned());
+                                        }
+                                    }
+                                }
+                            }
+                            if attempted_urls.is_empty() {
+                                if let crate::new_architecture::actors::types::StageItemType::ProductUrls { urls } = &item_res.item_type {
+                                    attempted_urls.extend(urls.iter().cloned());
+                                }
+                            }
+
+                            let per_item_duration = if !attempted_urls.is_empty() { item_res.duration_ms / attempted_urls.len() as u64 } else { 0 };
+
+                            for url in attempted_urls {
+                                let page_opt = url_page_map.get(&url).copied().flatten();
+                                // started
+                                let _ = context.emit_event(AppEvent::DetailTaskStarted {
+                                    session_id: context.session_id.clone(),
+                                    detail_id: url.clone(),
+                                    page: page_opt,
+                                    batch_id: Some(batch_id_str.clone()),
+                                    range_idx: None,
+                                    batch_index: None,
+                                    scope: Some("batch".to_string()),
+                                    timestamp: chrono::Utc::now(),
+                                });
+                                if success_urls.contains(&url) && item_res.success {
+                                    let _ = context.emit_event(AppEvent::DetailTaskCompleted {
+                                        session_id: context.session_id.clone(),
+                                        detail_id: url.clone(),
+                                        page: page_opt,
+                                        duration_ms: per_item_duration,
+                                        batch_id: Some(batch_id_str.clone()),
+                                        range_idx: None,
+                                        batch_index: None,
+                                        scope: Some("batch".to_string()),
+                                        timestamp: chrono::Utc::now(),
+                                    });
+                                } else {
+                                    let _ = context.emit_event(AppEvent::DetailTaskFailed {
+                                        session_id: context.session_id.clone(),
+                                        detail_id: url.clone(),
+                                        page: page_opt,
+                                        error: "detail_missing".to_string(),
+                                        final_failure: true,
+                                        batch_id: Some(batch_id_str.clone()),
+                                        range_idx: None,
+                                        batch_index: None,
+                                        scope: Some("batch".to_string()),
+                                        timestamp: chrono::Utc::now(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    // Emit StageCompleted for template path
+                    let _ = context.emit_event(AppEvent::StageCompleted {
+                        stage_type: StageType::ProductDetailCrawling,
+                        session_id: context.session_id.clone(),
+                        batch_id: self.batch_id.clone(),
+                        result: actor_res.clone(),
+                        timestamp: Utc::now(),
+                    });
                     return Ok(actor_res);
                 }
                 _ => {
                     if let Some(ch_stage) = Self::map_stage_type_to_channels(&stage_type) {
                         let items_len = items.len();
+                        // Emit StageStarted for template path (DataValidation/DataSaving)
+                        let _ = context.emit_event(AppEvent::StageStarted {
+                            stage_type: stage_type.clone(),
+                            session_id: context.session_id.clone(),
+                            batch_id: self.batch_id.clone(),
+                            items_count: items_len as u32,
+                            timestamp: Utc::now(),
+                        });
                         // Note: Template path currently ignores concurrency_limit; it derives limits from SystemConfig.
                         let actor_res = self
                             .execute_stage_with_real_crawling(ch_stage, items, app_config.clone())
                             .await;
                         let bridged = Self::map_stage_result_from_actor_system(actor_res, items_len);
+                        // Emit StageCompleted for template path (DataValidation/DataSaving)
+                        let _ = context.emit_event(AppEvent::StageCompleted {
+                            stage_type: stage_type.clone(),
+                            session_id: context.session_id.clone(),
+                            batch_id: self.batch_id.clone(),
+                            result: bridged.clone(),
+                            timestamp: Utc::now(),
+                        });
                         return Ok(bridged);
                     }
                 }

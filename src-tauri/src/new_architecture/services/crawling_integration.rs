@@ -89,14 +89,32 @@ impl CrawlingIntegrationService {
                 status_checker_impl.clone(),
             ));
 
-        // ProductDetailCollector는 ProductListCollectorImpl 재사용 (기존 패턴)
-        let detail_collector: Arc<dyn ProductDetailCollector> =
-            Arc::new(ProductListCollectorImpl::new(
-                Arc::new(HttpClient::create_from_global_config()?), // 🔥 Mutex 제거
+        // ProductDetailCollector: 실제 상세 수집 전용 구현 사용
+        // 상세 단계는 리스트 단계와 다른 동시성 한도를 사용할 수 있으므로 별도 CollectorConfig 구성
+        let detail_config = CollectorConfig {
+            batch_size: app_config.user.batch.batch_size,
+            max_concurrent: app_config
+                .user
+                .crawling
+                .workers
+                .product_detail_max_concurrent as u32,
+            concurrency: app_config
+                .user
+                .crawling
+                .workers
+                .product_detail_max_concurrent as u32,
+            delay_between_requests: Duration::from_millis(app_config.user.request_delay_ms),
+            delay_ms: app_config.user.request_delay_ms,
+            retry_attempts: 3,
+            retry_max: 3,
+        };
+        let detail_collector: Arc<dyn ProductDetailCollector> = Arc::new(
+            crate::infrastructure::crawling_service_impls::ProductDetailCollectorImpl::new(
+                Arc::new(HttpClient::create_from_global_config()?),
                 data_extractor.clone(),
-                collector_config.clone(),
-                status_checker_impl.clone(),
-            ));
+                detail_config,
+            ),
+        );
 
         Ok(Self {
             status_checker,
@@ -619,6 +637,10 @@ impl CrawlingIntegrationService {
         cancellation_token: CancellationToken,
     ) -> Result<Vec<ProductDetail>> {
         // 취소 토큰과 함께 실제 상세 수집 호출
+        info!(
+            urls_count = urls.len(),
+            "[Integration] collect_detail_batch_with_retry starting"
+        );
         self.detail_collector
             .collect_details_with_cancellation(urls, cancellation_token)
             .await
@@ -633,6 +655,7 @@ impl CrawlingIntegrationService {
     ) -> Result<(Vec<ProductDetail>, u32, u64)> {
         let started = std::time::Instant::now();
         let mut last_error: Option<anyhow::Error> = None;
+    info!(urls_count = urls.len(), max_retries = max_retries, "[Integration] collect_detail_batch_with_retry_with_meta starting");
         for attempt in 0..=max_retries {
             match self
                 .detail_collector
@@ -640,6 +663,7 @@ impl CrawlingIntegrationService {
                 .await
             {
                 Ok(details) => {
+            debug!(attempt = attempt, details_count = details.len(), "[Integration] detail collection succeeded");
                     let duration_ms = started.elapsed().as_millis() as u64;
                     return Ok((details, attempt, duration_ms));
                 }

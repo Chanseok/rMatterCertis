@@ -79,7 +79,7 @@ pub enum ActorCommand {
 /// - Progress: Progress { session_id, current_step, total_steps, percentage }
 /// - Batch: BatchStarted/Completed/Failed { batch_id, session_id, timestamp }
 /// - Stage: StageStarted/Completed/Failed { stage_type, session_id, batch_id? }
-/// - Persistence diagnostics: ProductLifecycle { status, metrics? }, PersistenceAnomaly { kind, detail }
+/// - Persistence diagnostics: `ProductLifecycle` { status, metrics? }, `PersistenceAnomaly` { kind, detail }
 /// - Metrics snapshots: DatabaseStats { total_product_details, min_page, max_page }
 /// UI 소비자는 최소 session_id + timestamp 조합을 키로 사용하고, 선택적으로 batch_id / stage_type 으로 세분화 렌더링.
 ///

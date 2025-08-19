@@ -108,21 +108,25 @@ const Modal = (props: ModalProps) => {
           aria-modal="true"
           aria-labelledby={local.title ? 'modal-title' : undefined}
         >
-          {/* Modal Content */}
+          {/* Modal Content (split to avoid shadow + transform on same layer) */}
           <div
             class={`
-              relative w-full 
               ${getSizeClasses()}
-              bg-white 
-              rounded-lg 
-              shadow-xl
-              transform transition-all duration-300
+              transition-all duration-300
               ${local.open ? 'scale-100 opacity-100' : 'scale-95 opacity-0'}
-              ${local.class || ''}
             `}
-            onClick={(e) => e.stopPropagation()}
-            {...others}
           >
+            <div
+              class={`
+                relative w-full
+                bg-white 
+                rounded-lg 
+                shadow-xl
+                ${local.class || ''}
+              `}
+              onClick={(e) => e.stopPropagation()}
+              {...others}
+            >
             {/* Header */}
             <Show when={local.title || local.showCloseButton !== false}>
               <div class="flex items-center justify-between p-6 border-b border-gray-200">
@@ -182,6 +186,7 @@ const Modal = (props: ModalProps) => {
                 </div>
               </Show>
             </Show>
+            </div>
           </div>
         </div>
       </Portal>

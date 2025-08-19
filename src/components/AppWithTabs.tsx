@@ -3,7 +3,7 @@
  * SolidJS-UI-Implementation-Guide.md를 기반으로 구현
  */
 
-import { Component, createMemo, onMount } from 'solid-js';
+import { Component, Show, createMemo, onMount } from 'solid-js';
 import { AppLayout } from './layout/AppLayout';
 import CrawlingEngineTabSimple from './tabs/CrawlingEngineTabSimple';
 import { CrawlingEngineTab } from './tabs/CrawlingEngineTab';
@@ -50,27 +50,26 @@ export const AppWithTabs: Component = () => {
     }
   });
 
-  const renderTabContent = () => {
-    switch (currentTab()) {
-      case 'crawlingEngine':
-  // Use the Simple variant (unified start + EventConsole) for Advanced Engine tab
-  return <CrawlingEngineTabSimple />;
-      case 'settings':
-        return <SettingsTab />;
-      case 'localDB':
-        return <LocalDBTab />;
-      case 'analysis':
-        return <AnalysisTab />;
-      case 'events':
-        return <SimpleEventDisplay />;
-      default:
-  return <CrawlingEngineTabSimple />;
-    }
-  };
-
   return (
     <AppLayout>
-      {renderTabContent()}
+      {/* Advanced Engine tab: keep mounted to preserve state across tab switches */}
+      <div class={currentTab() === 'crawlingEngine' ? '' : 'hidden'}>
+        <CrawlingEngineTabSimple />
+      </div>
+
+      {/* Other tabs: mount/unmount as before */}
+      <Show when={currentTab() === 'settings'}>
+        <SettingsTab />
+      </Show>
+      <Show when={currentTab() === 'localDB'}>
+        <LocalDBTab />
+      </Show>
+      <Show when={currentTab() === 'analysis'}>
+        <AnalysisTab />
+      </Show>
+      <Show when={currentTab() === 'events'}>
+        <SimpleEventDisplay />
+      </Show>
     </AppLayout>
   );
 };
