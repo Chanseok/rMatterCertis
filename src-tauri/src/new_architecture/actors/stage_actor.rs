@@ -2988,7 +2988,14 @@ impl StageActor {
 
         // HTTP 클라이언트로 URL에서 HTML 가져오기
         let response = http_client
-            .fetch_response(url)
+            .fetch_response_with_options(
+                url,
+                &crate::infrastructure::simple_http_client::RequestOptions {
+                    user_agent_override: None, // could be overridden at call site if needed
+                    referer: Some(crate::infrastructure::config::csa_iot::PRODUCTS_BASE.to_string()),
+                    skip_robots_check: false,
+                },
+            )
             .await
             .map_err(|e| ActorError::RequestFailed(format!("HTTP request failed: {}", e)))?;
 

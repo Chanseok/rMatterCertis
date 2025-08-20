@@ -367,7 +367,14 @@ pub fn run() {
                 }
                 info!("✅ Event emitter initialized");
 
-                // 3. Start system state broadcaster (10s intervals)
+                // 3. Initialize unified HTTP client (shared)
+                if let Err(e) = state.initialize_http_client().await {
+                    error!("❌ Failed to initialize HTTP client: {}", e);
+                    return;
+                }
+                info!("✅ HTTP client initialized (shared)");
+
+                // 4. Start system state broadcaster (10s intervals)
                 info!("� Starting system state broadcaster...");
                 crate::infrastructure::system_broadcaster::start_system_broadcaster(
                     app_handle.clone(),

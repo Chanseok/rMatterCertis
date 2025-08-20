@@ -114,6 +114,25 @@ tail -f ./target/debug/logs/app.log  # 실시간 로그 모니터링
 - **[🏗️ ARCHITECTURE](./guide/ARCHITECTURE_OVERVIEW.md)** - 실제 코드와 100% 동기화된 아키텍처
 - **[📖 DOCUMENTATION](./guide/DOCUMENTATION_GUIDELINES.md)** - 문서-코드 동기화 원칙
 
+## ⚙️ 설정 요약 (신규 키)
+
+- user.crawling.workers.user_agent_sync: Sync/Validation 경로에서 사용할 UA(선택). 없으면 기본 user_agent 사용.
+- user.crawling.workers.respect_robots_txt: true 시 robots.txt 간단 허용/차단 체크 수행.
+
+예시(JSON 조각):
+
+{
+  "user": {
+    "crawling": {
+      "workers": {
+        "user_agent": "Mozilla/5.0 (...Chrome/125 Safari/537.36)",
+        "user_agent_sync": "Mozilla/5.0 (compatible; rMatterSync/1.0; +https://example.com/bot)",
+        "respect_robots_txt": true
+      }
+    }
+  }
+}
+
 ## 🏆 Phase 1 완전 달성! (2025.06.30)
 
 ### ✅ 로깅 시스템 완전 구현

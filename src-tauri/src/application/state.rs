@@ -38,6 +38,9 @@ pub struct AppState {
     /// Application configuration
     pub config: Arc<RwLock<crate::infrastructure::config::AppConfig>>,
 
+    /// Shared HTTP client (unified, rate-limited)
+    pub http_client: Arc<RwLock<Option<crate::infrastructure::simple_http_client::HttpClient>>>,
+
     /// Session start time for calculating elapsed time
     pub session_start_time: Arc<RwLock<Option<chrono::DateTime<Utc>>>>,
 
@@ -56,6 +59,7 @@ impl AppState {
             current_progress: Arc::new(RwLock::new(CrawlingProgress::default())),
             database_stats: Arc::new(RwLock::new(None)),
             config: Arc::new(RwLock::new(config)),
+            http_client: Arc::new(RwLock::new(None)),
             session_start_time: Arc::new(RwLock::new(None)),
             crawling_cancellation_token: Arc::new(RwLock::new(None)),
         }
@@ -72,6 +76,28 @@ impl AppState {
         *pool_guard = Some(pool);
         // Note: Log message moved to lib.rs setup to avoid duplication
         Ok(())
+    }
+
+    /// Initialize the shared HTTP client from the current configuration
+    pub async fn initialize_http_client(&self) -> Result<(), String> {
+        let cfg = { self.config.read().await.clone() };
+        let client = cfg
+            .create_http_client()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+        let mut guard = self.http_client.write().await;
+        *guard = Some(client);
+        Ok(())
+    }
+
+    /// Get a cloned HTTP client for use in commands
+    pub async fn get_http_client(
+        &self,
+    ) -> Result<crate::infrastructure::simple_http_client::HttpClient, String> {
+        let guard = self.http_client.read().await;
+        match guard.as_ref() {
+            Some(c) => Ok(c.clone()),
+            None => Err("HTTP client not initialized. Call initialize_http_client() first.".to_string()),
+        }
     }
 
     /// Get a cloned database pool for use in commands

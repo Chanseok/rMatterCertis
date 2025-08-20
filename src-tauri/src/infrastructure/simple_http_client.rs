@@ -5,7 +5,7 @@
 
 use crate::infrastructure::config::WorkerConfig;
 use anyhow::{Result, anyhow};
-use reqwest::{Client, ClientBuilder, Response, header::{HeaderMap, HeaderValue, ACCEPT, ACCEPT_LANGUAGE}};
+use reqwest::{Client, ClientBuilder, Response, Url, header::{HeaderMap, HeaderValue, USER_AGENT, REFERER, ACCEPT, ACCEPT_LANGUAGE}};
 use scraper::Html;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -13,6 +13,14 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::time::{interval, sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
+
+/// Per-request options to override UA, referer, and toggle robots for a single call
+#[derive(Debug, Default, Clone)]
+pub struct RequestOptions {
+    pub user_agent_override: Option<String>,
+    pub referer: Option<String>,
+    pub skip_robots_check: bool,
+}
 
 /// Configuration for HTTP client behavior
 #[derive(Debug, Clone)]
@@ -27,6 +35,8 @@ pub struct HttpClientConfig {
     pub user_agent: String,
     /// Whether to follow redirects
     pub follow_redirects: bool,
+    /// Respect robots.txt when crawling (simple allow/disallow check)
+    pub respect_robots_txt: bool,
 }
 
 impl HttpClientConfig {
@@ -38,6 +48,7 @@ impl HttpClientConfig {
             max_retries: worker_config.max_retries,
             user_agent: worker_config.user_agent.clone(),
             follow_redirects: worker_config.follow_redirects,
+            respect_robots_txt: worker_config.respect_robots_txt,
         }
     }
 }
@@ -51,6 +62,7 @@ impl Default for HttpClientConfig {
             user_agent: "matter-certis-v2/1.0 (Research Tool; +https://github.com/your-repo)"
                 .to_string(),
             follow_redirects: true,
+            respect_robots_txt: false,
         }
     }
 }
@@ -241,7 +253,6 @@ impl HttpClient {
             context_label: None,
         })
     }
-
     /// Set a human-readable context label for logging provenance (returns self for chaining)
     pub fn with_context_label(mut self, label: &str) -> Self {
         self.context_label = Some(label.to_string());
@@ -251,6 +262,99 @@ impl HttpClient {
     /// Update the context label after construction
     pub fn set_context_label(&mut self, label: &str) {
         self.context_label = Some(label.to_string());
+    }
+    fn build_request(&self, url: &str, opts: &RequestOptions) -> Result<reqwest::RequestBuilder> {
+        let mut rb = self.client.get(url);
+        if let Some(ua) = &opts.user_agent_override {
+            rb = rb.header(USER_AGENT, ua);
+        }
+        if let Some(referer) = &opts.referer {
+            rb = rb.header(REFERER, referer);
+        }
+        Ok(rb)
+    }
+
+    /// Public variant to perform a GET with custom options (UA override, referer, skip robots)
+    pub async fn fetch_response_with_options(&self, url: &str, opts: &RequestOptions) -> Result<Response> {
+        let rate_limiter = GlobalRateLimiter::get_instance();
+        if let Some(label) = &self.context_label {
+            debug!(
+                "⚖️ [rate-limit] {} RPS (source: {})",
+                self.config.max_requests_per_second, label
+            );
+        } else {
+            debug!(
+                "⚖️ [rate-limit] {} RPS",
+                self.config.max_requests_per_second
+            );
+        }
+        rate_limiter
+            .apply_rate_limit(self.config.max_requests_per_second)
+            .await;
+
+        if self.config.respect_robots_txt && !opts.skip_robots_check && !self.robots_allowed(url).await? {
+            warn!("robots.txt disallows: {}", url);
+            return Err(anyhow!("Blocked by robots.txt: {}", url));
+        }
+
+        info!("🌐 HTTP GET (HttpClient,opts): {}", url);
+        let response = self.build_request(url, opts)?
+            .send()
+            .await
+            .map_err(|e| anyhow!("HTTP request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            error!("❌ HTTP error {}: {}", response.status(), url);
+            return Err(anyhow!("HTTP error {}: {}", response.status(), url));
+        }
+
+        Ok(response)
+    }
+
+    async fn robots_allowed(&self, target_url: &str) -> Result<bool> {
+        if !self.config.respect_robots_txt {
+            return Ok(true);
+        }
+        // Parse base origin
+        let url = Url::parse(target_url).map_err(|e| anyhow!("Invalid URL {}: {}", target_url, e))?;
+        let robots_url = format!("{}://{}/robots.txt", url.scheme(), url.host_str().unwrap_or(""));
+        // Best-effort fetch; if fails, allow by default
+        let resp = match self.client.get(&robots_url).send().await {
+            Ok(r) => r,
+            Err(_) => return Ok(true),
+        };
+        if !resp.status().is_success() {
+            return Ok(true);
+        }
+        let text = resp.text().await.unwrap_or_default();
+        if text.is_empty() { return Ok(true); }
+        // Super-simple check: if a line says Disallow: / then deny everything; otherwise allow
+        // Optionally, we could parse path-specific disallows that match the URL path.
+        for line in text.lines() {
+            let l = line.trim();
+            if l.starts_with('#') { continue; }
+            if l.to_ascii_lowercase().starts_with("user-agent:") {
+                // Not differentiating per-agent in this lightweight pass
+                continue;
+            }
+            if l.to_ascii_lowercase().starts_with("disallow:") {
+                let rule = l[9..].trim();
+                if rule == "/" {
+                    return Ok(false);
+                }
+                // Basic path prefix match
+                if !rule.is_empty() {
+                    if let Some(path) = url.path().strip_prefix('/') {
+                        if path.starts_with(rule.trim_start_matches('/')) {
+                            return Ok(false);
+                        }
+                    } else if url.path().starts_with(rule) {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+        Ok(true)
     }
 
     /// Fetch HTML content from a URL with automatic retry and rate limiting
@@ -319,10 +423,14 @@ impl HttpClient {
             .apply_rate_limit(self.config.max_requests_per_second)
             .await;
 
+        // robots.txt check if enabled
+        if self.config.respect_robots_txt && !self.robots_allowed(url).await? {
+            warn!("robots.txt disallows: {}", url);
+            return Err(anyhow!("Blocked by robots.txt: {}", url));
+        }
+
         info!("🌐 HTTP GET (HttpClient): {}", url);
-        let response = self
-            .client
-            .get(url)
+        let response = self.build_request(url, &RequestOptions::default())?
             .send()
             .await
             .map_err(|e| anyhow!("HTTP request failed: {}", e))?;
@@ -365,11 +473,17 @@ impl HttpClient {
             }
         }
 
+        // robots.txt check if enabled
+        if self.config.respect_robots_txt && !self.robots_allowed(url).await? {
+            warn!("robots.txt disallows: {}", url);
+            return Err(anyhow!("Blocked by robots.txt: {}", url));
+        }
+
         info!("🌐 HTTP GET (HttpClient,cancel-aware): {}", url);
 
         // Perform request with cancellation
         let response = tokio::select! {
-            res = self.client.get(url).send() => {
+            res = self.build_request(url, &RequestOptions::default())?.send() => {
                 res.map_err(|e| anyhow!("HTTP request failed: {}", e))?
             },
             _ = cancellation_token.cancelled() => {
@@ -408,11 +522,17 @@ impl HttpClient {
                 .apply_rate_limit(self.config.max_requests_per_second)
                 .await;
 
+            // robots.txt check if enabled
+            if self.config.respect_robots_txt && !self.robots_allowed(url).await? {
+                warn!("robots.txt disallows: {}", url);
+                return Err(anyhow!("Blocked by robots.txt: {}", url));
+            }
+
             info!(
                 "🌐 HTTP GET (attempt {}/{}) : {}",
                 attempt, self.config.max_retries, url
             );
-            match self.client.get(url).send().await {
+            match self.build_request(url, &RequestOptions::default())?.send().await {
                 Ok(resp) => {
                     let status = resp.status();
                     if status.is_success() {
@@ -487,7 +607,7 @@ impl HttpClient {
 
     /// Single attempt to fetch HTML content
     async fn fetch_html_once(&self, url: &str) -> Result<Html> {
-        let response = self.fetch_response(url).await?;
+    let response = self.fetch_response(url).await?;
 
         let html_content = response
             .text()
@@ -617,7 +737,7 @@ impl HttpClient {
 
     /// Single attempt to fetch HTML content as string (Send-compatible)
     async fn fetch_html_string_once(&self, url: &str) -> Result<String> {
-        let response = self.fetch_response(url).await?;
+    let response = self.fetch_response(url).await?;
 
         let html_content = response
             .text()
@@ -727,6 +847,7 @@ mod tests {
             max_retries: 2,
             user_agent: "Test Agent".to_string(),
             follow_redirects: false,
+            respect_robots_txt: false,
         };
 
         let client = HttpClient::with_config(config);
@@ -744,7 +865,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retry_policy_429_then_ok() {
         let (addr, _cnt) = start_test_server().await;
-        let cfg = HttpClientConfig { max_requests_per_second: 100, timeout_seconds: 5, max_retries: 3, user_agent: "test".into(), follow_redirects: false };
+    let cfg = HttpClientConfig { max_requests_per_second: 100, timeout_seconds: 5, max_retries: 3, user_agent: "test".into(), follow_redirects: false, respect_robots_txt: false };
         let client = HttpClient::with_config(cfg).unwrap();
         let url = format!("http://{}/retry2ok", addr);
         let resp = client.fetch_response_with_policy(&url).await.expect("should eventually succeed");
@@ -753,7 +874,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_cancellation_before_start() {
-        let cfg = HttpClientConfig { max_requests_per_second: 100, timeout_seconds: 5, max_retries: 1, user_agent: "test".into(), follow_redirects: false };
+    let cfg = HttpClientConfig { max_requests_per_second: 100, timeout_seconds: 5, max_retries: 1, user_agent: "test".into(), follow_redirects: false, respect_robots_txt: false };
         let client = HttpClient::with_config(cfg).unwrap();
         let token = CancellationToken::new();
         token.cancel();
@@ -764,7 +885,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_cancellation_during_body() {
         let (addr, _cnt) = start_test_server().await;
-        let cfg = HttpClientConfig { max_requests_per_second: 100, timeout_seconds: 5, max_retries: 1, user_agent: "test".into(), follow_redirects: false };
+    let cfg = HttpClientConfig { max_requests_per_second: 100, timeout_seconds: 5, max_retries: 1, user_agent: "test".into(), follow_redirects: false, respect_robots_txt: false };
         let client = HttpClient::with_config(cfg).unwrap();
         let token = CancellationToken::new();
         let url = format!("http://{}/slow", addr);

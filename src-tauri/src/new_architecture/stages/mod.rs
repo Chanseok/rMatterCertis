@@ -10,7 +10,7 @@ mod strategies {
     pub struct StatusCheckLogic;
     pub struct ProductDetailLogic;
     pub struct DataValidationLogic;
-    // DataSaving remains handled by the StageActor template to preserve persistence side-effects
+    pub struct DataSavingLogic;
 
     #[async_trait::async_trait]
     impl StageLogic for ListPageLogic {
@@ -205,6 +205,45 @@ mod strategies {
             Ok(StageOutput { result })
         }
     }
+
+    #[async_trait::async_trait]
+    impl StageLogic for DataSavingLogic {
+        async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
+            let st = input.stage_type.clone();
+            if !matches!(st, ActorStageType::DataSaving) {
+                return Err(StageLogicError::Unsupported(st));
+            }
+            // Pass-through: we don't perform DB I/O here to keep persistence events centralized in StageActor.
+            // We just normalize into a StageItemResult so the template can emit per-item completion and then
+            // run the dedicated DataSaving block already present in StageActor.
+            let (attempted, item_id, item_type) = match &input.item {
+                crate::new_architecture::channels::types::StageItem::ProductDetails(pd) => {
+                    let count = pd.products.len();
+                    (count as u32, format!("persist_product_details_{}", count), StageItemType::Url { url_type: "data_saving:product_details".into() })
+                }
+                crate::new_architecture::channels::types::StageItem::ValidatedProducts(vp) => {
+                    let count = vp.products.len();
+                    (count as u32, format!("persist_validated_{}", count), StageItemType::Url { url_type: "data_saving:validated_products".into() })
+                }
+                other => {
+                    return Err(StageLogicError::Internal(format!(
+                        "DataSaving expected ProductDetails|ValidatedProducts, got {:?}",
+                        other
+                    )));
+                }
+            };
+            let result = crate::new_architecture::actors::types::StageItemResult {
+                item_id,
+                item_type,
+                success: true,
+                error: None,
+                duration_ms: 0,
+                retry_count: 0,
+                collected_data: Some(format!("{{\"attempted\":{}}}", attempted)),
+            };
+            Ok(StageOutput { result })
+        }
+    }
 }
 
 use std::sync::Arc;
@@ -220,7 +259,7 @@ impl StageLogicFactory for DefaultStageLogicFactory {
             crate::new_architecture::actors::types::StageType::ListPageCrawling => Some(Arc::new(strategies::ListPageLogic)),
             crate::new_architecture::actors::types::StageType::ProductDetailCrawling => Some(Arc::new(strategies::ProductDetailLogic)),
             crate::new_architecture::actors::types::StageType::DataValidation => Some(Arc::new(strategies::DataValidationLogic)),
-            crate::new_architecture::actors::types::StageType::DataSaving => None,
+            crate::new_architecture::actors::types::StageType::DataSaving => Some(Arc::new(strategies::DataSavingLogic)),
         }
     }
 }

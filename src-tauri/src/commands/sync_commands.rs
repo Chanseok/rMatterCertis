@@ -1,8 +1,9 @@
 use crate::application::AppState;
 use crate::domain::pagination::CanonicalPageIdCalculator;
 use crate::infrastructure::{
-    config::{ConfigManager, csa_iot},
+    config::{csa_iot},
     html_parser::MatterDataExtractor,
+    simple_http_client::RequestOptions,
 };
 use crate::new_architecture::actors::types::{AppEvent, SyncAnomalyEntry};
 use chrono::Utc;
@@ -221,12 +222,8 @@ pub async fn start_batched_sync(
 ) -> Result<SyncSummary, String> {
     info!("start_batched_sync args: ranges=\"{}\" batch_size_override={:?} dry_run={:?}", ranges, batch_size_override, dry_run);
 
-    // Load config for default batch size
-    let cfg_manager = ConfigManager::new().map_err(|e| format!("Config manager init failed: {e}"))?;
-    let app_config = cfg_manager
-        .load_config()
-        .await
-        .map_err(|e| format!("Config load failed: {e}"))?;
+    // Load config for default batch size via shared app state
+    let app_config = app_state.config.read().await.clone();
     let default_batch = app_config.user.batch.batch_size.max(1);
     let batch_size = batch_size_override.unwrap_or(default_batch).max(1);
 
@@ -322,14 +319,10 @@ pub async fn start_repair_sync(
 ) -> Result<SyncSummary, String> {
     let buf = buffer.unwrap_or(2);
 
-    // Load config and site meta to map page_id -> physical page
-    let cfg_manager =
-        ConfigManager::new().map_err(|e| format!("Config manager init failed: {e}"))?;
-    let app_config = cfg_manager
-        .load_config()
-        .await
-        .map_err(|e| format!("Config load failed: {e}"))?;
-    let http = app_config.create_http_client().map_err(|e| e.to_string())?;
+    // Load config and site meta to map page_id -> physical page (via shared state)
+    let app_config = app_state.config.read().await.clone();
+    let http = app_state.get_http_client().await?;
+    let sync_ua = app_config.user.crawling.workers.user_agent_sync.clone();
     let extractor = MatterDataExtractor::new().map_err(|e| e.to_string())?;
     let pool = app_state
         .get_database_pool()
@@ -337,7 +330,17 @@ pub async fn start_repair_sync(
         .map_err(|e| format!("DB pool unavailable: {e}"))?;
 
     let newest_url = csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
-    let newest_html = match http.fetch_response(&newest_url).await {
+    let newest_html = match http
+        .fetch_response_with_options(
+            &newest_url,
+            &RequestOptions {
+                user_agent_override: sync_ua.clone(),
+                referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
+                skip_robots_check: false,
+            },
+        )
+        .await
+    {
         Ok(resp) => resp.text().await.map_err(|e| e.to_string())?,
         Err(e) => return Err(e.to_string()),
     };
@@ -353,18 +356,6 @@ pub async fn start_repair_sync(
     .fetch_all(&pool)
     .await
     .map_err(|e| e.to_string())?;
-
-    if rows.is_empty() {
-        // Nothing to repair, return a no-op summary
-        return Ok(SyncSummary {
-            pages_processed: 0,
-            inserted: 0,
-            updated: 0,
-            skipped: 0,
-            failed: 0,
-            duration_ms: 0,
-        });
-    }
 
     // Build windows around each physical page center
     let mut windows: Vec<(u32, u32)> = Vec::new();
@@ -419,13 +410,10 @@ pub async fn start_partial_sync(
     );
     let mut ranges = parse_ranges(&ranges)?;
 
-    let cfg_manager =
-        ConfigManager::new().map_err(|e| format!("Config manager init failed: {e}"))?;
-    let app_config = cfg_manager
-        .load_config()
-        .await
-        .map_err(|e| format!("Config load failed: {e}"))?;
-    let http = app_config.create_http_client().map_err(|e| e.to_string())?;
+    // Use shared AppConfig and HttpClient from AppState (DI)
+    let app_config = app_state.config.read().await.clone();
+    let http = app_state.get_http_client().await?;
+    let sync_ua = app_config.user.crawling.workers.user_agent_sync.clone();
     let extractor = MatterDataExtractor::new().map_err(|e| e.to_string())?;
     let pool = app_state
         .get_database_pool()
@@ -434,7 +422,17 @@ pub async fn start_partial_sync(
 
     // Discover site meta for calculator
     let newest_url = csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
-    let newest_html = match http.fetch_response(&newest_url).await {
+    let newest_html = match http
+        .fetch_response_with_options(
+            &newest_url,
+            &RequestOptions {
+                user_agent_override: sync_ua.clone(),
+                referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
+                skip_robots_check: false,
+            },
+        )
+        .await
+    {
         Ok(resp) => resp.text().await.map_err(|e| e.to_string())?,
         Err(e) => return Err(e.to_string()),
     };
@@ -448,7 +446,17 @@ pub async fn start_partial_sync(
     } else {
         let oldest_url =
             csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &oldest_page.to_string());
-        match http.fetch_response(&oldest_url).await {
+        match http
+            .fetch_response_with_options(
+                &oldest_url,
+                &RequestOptions {
+                    user_agent_override: sync_ua.clone(),
+                    referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
+                    skip_robots_check: false,
+                },
+            )
+            .await
+        {
             Ok(resp) => resp.text().await.map_err(|e| e.to_string())?,
             Err(e) => return Err(e.to_string()),
         }
@@ -486,8 +494,7 @@ pub async fn start_partial_sync(
         let pages_from_count = ((total_products as u32) / 12).max(1);
         info!(
             "Using conditional sync span limit from DB: products={} => pages={} (floor(/12))",
-            total_products,
-            pages_from_count
+            total_products, pages_from_count
         );
         pages_from_count
     };
@@ -658,6 +665,8 @@ pub async fn start_partial_sync(
         let calculator = calculator_global.clone();
         let newest_html_clone = newest_html.clone();
         let oldest_html_clone = oldest_html.clone();
+    // Clone per-iteration data to avoid moving across spawned tasks
+    let sync_ua_cloned = sync_ua.clone();
         let pages_processed_c = pages_processed.clone();
         let inserted_c = inserted.clone();
         let updated_c = updated.clone();
@@ -700,7 +709,17 @@ pub async fn start_partial_sync(
                     if physical_page == oldest_page { oldest_html_clone.clone() } else { newest_html_clone.clone() }
                 } else {
                     let url = csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &physical_page.to_string());
-                    match http.fetch_response(&url).await {
+                    match http
+                        .fetch_response_with_options(
+                            &url,
+                            &RequestOptions {
+                                user_agent_override: sync_ua_cloned.clone(),
+                                referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
+                                skip_robots_check: false,
+                            },
+                        )
+                        .await
+                    {
                         Ok(resp) => match resp.text().await {
                             Ok(t) => t,
                             Err(e) => {
@@ -965,7 +984,23 @@ pub async fn start_partial_sync(
                                     let max_detail_retries = app_config.user.crawling.product_detail_retry_count.max(1);
                                     let mut success = false;
                                     for attempt in 1..=max_detail_retries {
-                                        match http.fetch_response(url).await {
+                                        let referer_url = if physical_page == 1 {
+                                            csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string()
+                                        } else {
+                                            csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED
+                                                .replace("{}", &physical_page.to_string())
+                                        };
+                                        match http
+                                            .fetch_response_with_options(
+                                                url,
+                                                &RequestOptions {
+                                                    user_agent_override: sync_ua_cloned.clone(),
+                                                    referer: Some(referer_url),
+                                                    skip_robots_check: false,
+                                                },
+                                            )
+                                            .await
+                                        {
                                             Ok(resp) => match resp.text().await {
                                                 Ok(body) => {
                                                     let extracted = {
@@ -1401,7 +1436,23 @@ pub async fn start_partial_sync(
                             let max_detail_retries = app_config.user.crawling.product_detail_retry_count.max(1);
                             let mut success = false;
                             for attempt in 1..=max_detail_retries {
-                                match http.fetch_response(url).await {
+                                let referer_url = if physical_page == 1 {
+                                    csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string()
+                                } else {
+                                    csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED
+                                        .replace("{}", &physical_page.to_string())
+                                };
+                                match http
+                                    .fetch_response_with_options(
+                                        url,
+                                        &RequestOptions {
+                                            user_agent_override: sync_ua_cloned.clone(),
+                                            referer: Some(referer_url),
+                                            skip_robots_check: false,
+                                        },
+                                    )
+                                    .await
+                                {
                                     Ok(resp) => match resp.text().await {
                                         Ok(body) => {
                                             let extracted = {
@@ -1888,13 +1939,10 @@ pub async fn start_diagnostic_sync(
     pages_vec.dedup();
     pages_vec.reverse();
 
-    // Load infra
-    let cfg_manager = ConfigManager::new().map_err(|e| format!("Config manager init failed: {e}"))?;
-    let app_config = cfg_manager
-        .load_config()
-        .await
-        .map_err(|e| format!("Config load failed: {e}"))?;
-    let http = app_config.create_http_client().map_err(|e| e.to_string())?;
+    // Load infra via shared AppState (DI)
+    let app_config = app_state.config.read().await.clone();
+    let http = app_state.get_http_client().await?;
+    let sync_ua = app_config.user.crawling.workers.user_agent_sync.clone();
     let extractor = MatterDataExtractor::new().map_err(|e| e.to_string())?;
     let pool = app_state
         .get_database_pool()
@@ -1910,7 +1958,13 @@ pub async fn start_diagnostic_sync(
         (s.total_pages, s.items_on_last_page as usize, newest_html, oldest_html, oldest_page)
     } else {
         let newest_url = csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
-        let newest_html = match http.fetch_response(&newest_url).await {
+        let newest_html = match http
+            .fetch_response_with_options(
+                &newest_url,
+                &RequestOptions { user_agent_override: sync_ua.clone(), referer: Some(csa_iot::PRODUCTS_BASE.to_string()), skip_robots_check: false },
+            )
+            .await
+        {
             Ok(resp) => resp.text().await.map_err(|e| e.to_string())?,
             Err(e) => return Err(e.to_string()),
         };
@@ -1923,7 +1977,13 @@ pub async fn start_diagnostic_sync(
             newest_html.clone()
         } else {
             let oldest_url = csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &oldest_page.to_string());
-            match http.fetch_response(&oldest_url).await {
+            match http
+                .fetch_response_with_options(
+                    &oldest_url,
+                    &RequestOptions { user_agent_override: sync_ua.clone(), referer: Some(csa_iot::PRODUCTS_BASE.to_string()), skip_robots_check: false },
+                )
+                .await
+            {
                 Ok(resp) => resp.text().await.map_err(|e| e.to_string())?,
                 Err(e) => return Err(e.to_string()),
             }
@@ -1976,6 +2036,7 @@ pub async fn start_diagnostic_sync(
         let calculator = calculator_global.clone();
         let newest_html_clone = newest_html.clone();
         let oldest_html_clone = oldest_html.clone();
+    let sync_ua = sync_ua.clone();
         let pages_processed_c = pages_processed.clone();
         let inserted_c = inserted.clone();
         let updated_c = updated.clone();
@@ -1999,7 +2060,13 @@ pub async fn start_diagnostic_sync(
                     if physical_page == oldest_page { oldest_html_clone.clone() } else { newest_html_clone.clone() }
                 } else {
                     let url = csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &physical_page.to_string());
-                    match http.fetch_response(&url).await { Ok(resp) => resp.text().await.unwrap_or_default(), Err(_) => String::new() }
+                    match http
+                        .fetch_response_with_options(
+                            &url,
+                            &RequestOptions { user_agent_override: sync_ua.clone(), referer: Some(csa_iot::PRODUCTS_BASE.to_string()), skip_robots_check: false },
+                        )
+                        .await
+                    { Ok(resp) => resp.text().await.unwrap_or_default(), Err(_) => String::new() }
                 };
                 if !page_html.is_empty() {
                     if let Ok(v) = extractor.extract_product_urls_from_content(&page_html) { product_urls = v; }
@@ -2047,7 +2114,23 @@ pub async fn start_diagnostic_sync(
                     let mut success = false;
                     for attempt in 1..=max_detail_retries {
                         // Fetch detail page
-                        let fetched = http.fetch_response(&url).await;
+                        // Compute appropriate referer based on physical page
+                        let referer = if physical_page == 1 {
+                            csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string()
+                        } else {
+                            csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED
+                                .replace("{}", &physical_page.to_string())
+                        };
+                        let fetched = http
+                            .fetch_response_with_options(
+                                &url,
+                                &RequestOptions {
+                                    user_agent_override: sync_ua.clone(),
+                                    referer: Some(referer),
+                                    skip_robots_check: false,
+                                },
+                            )
+                            .await;
                         if let Ok(resp) = fetched {
                             if let Ok(body) = resp.text().await {
                                 // Extract in a limited scope to avoid carrying non-Send Html across await

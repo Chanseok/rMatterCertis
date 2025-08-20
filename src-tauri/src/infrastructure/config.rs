@@ -133,8 +133,16 @@ pub struct WorkerConfig {
     /// User agent string for HTTP requests
     pub user_agent: String,
 
+    /// Optional alternate User-Agent used specifically for Sync flows
+    #[serde(default)]
+    pub user_agent_sync: Option<String>,
+
     /// Whether to follow redirects in HTTP requests
     pub follow_redirects: bool,
+
+    /// Respect robots.txt when crawling (simple allow/disallow check)
+    #[serde(default)]
+    pub respect_robots_txt: bool,
 
     /// Batch size for database operations
     pub db_batch_size: usize,
@@ -446,7 +454,9 @@ impl Default for WorkerConfig {
             max_retries: defaults::MAX_RETRIES,
             max_requests_per_second: defaults::MAX_REQUESTS_PER_SECOND,
             user_agent: defaults::USER_AGENT.to_string(),
+            user_agent_sync: None,
             follow_redirects: defaults::FOLLOW_REDIRECTS,
+            respect_robots_txt: false,
             db_batch_size: defaults::DB_BATCH_SIZE,
             db_max_concurrency: defaults::DB_MAX_CONCURRENCY,
         }

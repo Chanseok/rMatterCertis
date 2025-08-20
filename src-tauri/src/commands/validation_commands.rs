@@ -1,7 +1,8 @@
 use crate::domain::pagination::CanonicalPageIdCalculator;
 use crate::infrastructure::{
-    config::{ConfigManager, csa_iot},
+    config::{csa_iot},
     html_parser::MatterDataExtractor,
+    simple_http_client::RequestOptions,
 }; // uses ConfigManager (no AppConfigManager)
 use crate::new_architecture::actors::types::AppEvent;
 use chrono::Utc;
@@ -301,15 +302,10 @@ pub async fn start_validation(
     };
     let session_id = format!("validation-{}", Utc::now().format("%Y%m%d%H%M%S"));
     let started = std::time::Instant::now();
-    // Build HttpClient from loaded worker configuration for consistent rate limiting
-    // Load configuration via ConfigManager (async path) for consistent worker settings
-    let cfg_manager =
-        ConfigManager::new().map_err(|e| format!("Config manager init failed: {e}"))?;
-    let app_config = cfg_manager
-        .load_config()
-        .await
-        .map_err(|e| format!("Config load failed: {e}"))?;
-    let http = app_config.create_http_client().map_err(|e| e.to_string())?;
+    // Use shared AppConfig and HttpClient from AppState (DI)
+    let app_config = app_state.config.read().await.clone();
+    let http = app_state.get_http_client().await?;
+    let sync_ua = app_config.user.crawling.workers.user_agent_sync.clone();
     info!("Validation HTTP client initialized with rate limit (worker config applied)");
     let extractor = MatterDataExtractor::new().map_err(|e| e.to_string())?;
     info!(
@@ -319,7 +315,13 @@ pub async fn start_validation(
 
     // 1. Fetch newest page (page=1)
     let newest_url = csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
-    let newest_html = match http.fetch_response(&newest_url).await {
+    let newest_html = match http
+        .fetch_response_with_options(
+            &newest_url,
+            &RequestOptions { user_agent_override: sync_ua.clone(), referer: Some(csa_iot::PRODUCTS_BASE.to_string()), skip_robots_check: false },
+        )
+        .await
+    {
         Ok(resp) => match resp.text().await {
             Ok(t) => t,
             Err(e) => return Err(format!("Read newest page text error: {e}")),
@@ -341,7 +343,13 @@ pub async fn start_validation(
     let oldest_html = if oldest_physical_page == 1 {
         newest_html.clone()
     } else {
-        match http.fetch_response(&oldest_url).await {
+        match http
+            .fetch_response_with_options(
+                &oldest_url,
+                &RequestOptions { user_agent_override: sync_ua.clone(), referer: Some(csa_iot::PRODUCTS_BASE.to_string()), skip_robots_check: false },
+            )
+            .await
+        {
             Ok(resp) => match resp.text().await {
                 Ok(t) => t,
                 Err(e) => return Err(format!("Read oldest page text error: {e}")),
@@ -521,7 +529,13 @@ pub async fn start_validation(
         } else {
             let url =
                 csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &physical_page.to_string());
-            match http.fetch_response(&url).await {
+            match http
+                .fetch_response_with_options(
+                    &url,
+                    &RequestOptions { user_agent_override: sync_ua.clone(), referer: Some(csa_iot::PRODUCTS_BASE.to_string()), skip_robots_check: false },
+                )
+                .await
+            {
                 Ok(resp) => match resp.text().await {
                     Ok(t) => t,
                     Err(e) => {
