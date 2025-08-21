@@ -1968,30 +1968,39 @@ impl StageActor {
 
         debug!("Processing item {} for stage {:?}", item_id, stage_type);
 
-        // 0) Optional StageLogic dispatch (Phase 3): use strategy if available for this stage
-        if let (Some(factory), Some(app_cfg), Some(http), Some(extractor), Some(repo)) = (
-            self.strategy_factory.as_ref(),
-            self.app_config.clone(),
-            self.http_client.clone(),
-            self.data_extractor.clone(),
-            self._product_repo.clone(),
-        ) {
-            if let Some(logic) = factory.logic_for(&stage_type) {
-                info!("[StageActor] Using strategy {} for {:?}", logic.name(), stage_type);
-                let deps = Deps { http, extractor, repo };
-                let input = StageInput { stage_type: stage_type.clone(), item: item.clone(), config: app_cfg, deps };
-                match logic.execute(input).await {
-                    Ok(StageOutput { result }) => {
-                        return Ok(result);
+        // 0) Strategy-first: if a factory is configured, require a strategy and do NOT fall back to legacy.
+        if self.strategy_factory.is_some() {
+            match (
+                self.strategy_factory.as_ref(),
+                self.app_config.clone(),
+                self.http_client.clone(),
+                self.data_extractor.clone(),
+                self._product_repo.clone(),
+            ) {
+                (Some(factory), Some(app_cfg), Some(http), Some(extractor), Some(repo)) => {
+                    if let Some(logic) = factory.logic_for(&stage_type) {
+                        info!("[StageActor] Using strategy {} for {:?}", logic.name(), stage_type);
+                        let deps = Deps { http, extractor, repo };
+                        let input = StageInput { stage_type: stage_type.clone(), item: item.clone(), config: app_cfg, deps };
+                        match logic.execute(input).await {
+                            Ok(StageOutput { result }) => {
+                                return Ok(result);
+                            }
+                            Err(e) => {
+                                return Err(StageError::GenericError { message: format!("Strategy error for {}: {}", item_id, e) });
+                            }
+                        }
+                    } else {
+                        return Err(StageError::GenericError { message: format!("No strategy registered for stage {:?}", stage_type) });
                     }
-                    Err(e) => {
-                        return Err(StageError::GenericError { message: format!("Strategy error for {}: {}", item_id, e) });
-                    }
+                }
+                _ => {
+                    return Err(StageError::GenericError { message: "Strategy factory configured but missing required dependencies".into() });
                 }
             }
         }
 
-        // 1) 기존 스테이지 타입별 처리 로직 - 수집된 데이터와 성공 여부를 함께 반환
+        // 1) Legacy path (temporary): only when no strategy factory is configured
         let (success, collected_data, retries_used) = match stage_type {
             StageType::StatusCheck => {
                 if let Some(checker) = status_checker {
