@@ -27,80 +27,80 @@ use crate::new_architecture::actors::types::StageType;
 use crate::new_architecture::actors::types::{
     ActorCommand, AppEvent, SimpleMetrics, StageItemResult, StageItemType, StageResult,
 };
+use crate::new_architecture::actors::types::StageError;
 use crate::new_architecture::channels::types::StageItem;
 use crate::new_architecture::context::AppContext;
-use thiserror::Error;
-// StageLogic (strategy) scaffold
-use crate::new_architecture::stages::traits::{StageLogicFactory, StageInput, Deps, StageOutput};
+use crate::new_architecture::stages::traits::{Deps, StageInput, StageLogicFactory, StageOutput};
+// no local error derive needed; StageError lives in actors::types
 
-// NOTE: 원래 파일 상단이 손상되어 재작성. 아래 기존 구현들과 연결되도록 동일한 타입/impl 유지.
+// -----------------------------------------------------------------------------
+// Static guards and core types
+// -----------------------------------------------------------------------------
 
-// 내부 상태 enum (간단 재구성 - 원래 손상된 정의 복원)
-#[derive(Clone, PartialEq, Debug)]
-enum StageState {
+// Guard to prevent duplicate DataSaving runs within the same session/batch
+static DATA_SAVING_RUN_GUARD: Lazy<StdMutex<HashSet<String>>> =
+    Lazy::new(|| StdMutex::new(HashSet::new()));
+
+/// 스테이지 상태 열거형
+#[derive(Debug, Clone, PartialEq)]
+pub enum StageState {
     Idle,
     Starting,
     Processing,
     Completed,
-    Timeout,
     Failed { error: String },
+    Timeout,
 }
 
-#[derive(Debug, Error, Clone)]
-pub enum StageError {
-    #[error("Stage already processing: {0}")]
-    AlreadyProcessing(String),
-    #[error("Stage not found: {0}")]
-    StageNotFound(String),
-    #[error("Invalid configuration: {0}")]
-    InvalidConfiguration(String),
-    #[error("Service initialization failed: {0}")]
-    ServiceInitialization(String),
-    #[error("Initialization failed: {0}")]
-    InitializationFailed(String),
-    #[error("Context communication error: {0}")]
-    ContextError(String),
-    #[error("Processing timeout: {timeout_secs}s")]
-    ProcessingTimeout { timeout_secs: u64 },
-    #[error("Unsupported stage type: {0:?}")]
-    UnsupportedStageType(StageType),
-    #[error("Item processing failed: {item_id} - {error}")]
-    ItemProcessingFailed { item_id: String, error: String },
-}
-
-// StageActor 구조체 (필요 필드만 복원; 나머지 로직과 매칭)
-// Removed automatic Debug derive due to non-Debug trait object fields; manual impl below
+/// StageActor: 개별 스테이지 작업의 실행 및 관리
+///
+/// 책임:
+/// - 특정 스테이지 타입의 작업 실행
+/// - 아이템별 처리 및 결과 수집
+/// - 스테이지 레벨 이벤트 발행
+/// - 타임아웃 및 재시도 로직 관리
 pub struct StageActor {
-    pub actor_id: String,
+    /// Actor 고유 식별자
+    actor_id: String,
+    /// 배치 ID (OneShot 호환성)
     pub batch_id: String,
-    pub stage_id: Option<String>,
-    pub stage_type: Option<StageType>,
+    /// 현재 처리 중인 스테이지 ID
+    stage_id: Option<String>,
+    /// 스테이지 타입
+    stage_type: Option<StageType>,
+    /// 스테이지 상태
     state: StageState,
+    /// 스테이지 시작 시간
     start_time: Option<Instant>,
+    /// 총 아이템 수
     total_items: u32,
+    /// 처리 완료된 아이템 수
     completed_items: u32,
+    /// 성공한 아이템 수
     success_count: u32,
+    /// 실패한 아이템 수
     failure_count: u32,
+    /// 스키핑된 아이템 수
     skipped_count: u32,
+    /// 처리 결과들
     item_results: Vec<StageItemResult>,
-    // 서비스 의존성
-    status_checker: Option<Arc<dyn StatusChecker>>,
-    product_list_collector: Option<Arc<dyn ProductListCollector>>,
-    product_detail_collector: Option<Arc<dyn ProductDetailCollector>>,
-    _product_repo: Option<Arc<IntegratedProductRepository>>,
-    http_client: Option<Arc<HttpClient>>,
-    data_extractor: Option<Arc<MatterDataExtractor>>,
-    app_config: Option<AppConfig>,
-    // 힌트
+
+    // 실제 크롤링 엔진 의존성
+    status_checker: Option<Arc<dyn StatusChecker>>,                // 사이트 상태 체크
+    product_list_collector: Option<Arc<dyn ProductListCollector>>, // 리스트 페이지 수집기
+    product_detail_collector: Option<Arc<dyn ProductDetailCollector>>, // 상세 페이지 수집기
+    _product_repo: Option<Arc<IntegratedProductRepository>>,       // 저장소 (옵션)
+    http_client: Option<Arc<HttpClient>>,                          // HTTP 클라이언트
+    data_extractor: Option<Arc<MatterDataExtractor>>,              // HTML 파서
+    app_config: Option<AppConfig>,                                 // 앱 설정
+
+    // 상위에서 주입되는 페이지네이션 힌트
     site_total_pages_hint: Option<u32>,
     products_on_last_page_hint: Option<u32>,
-    // Optional strategy factory for StageLogic-based execution (Phase 3)
+
+    // 전략 분기 (Phase 3)
     strategy_factory: Option<Arc<dyn StageLogicFactory + Send + Sync>>, 
 }
-
-// Prevent duplicate DataSaving executions per (session_id,batch_id)
-static DATA_SAVING_RUN_GUARD: Lazy<StdMutex<HashSet<String>>> =
-    Lazy::new(|| StdMutex::new(HashSet::new()));
 
 // Manual Debug implementation to avoid requiring Debug on all service trait object dependencies
 impl std::fmt::Debug for StageActor {
@@ -391,22 +391,22 @@ impl StageActor {
 
         // HTTP Client 생성 (ServiceBasedBatchCrawlingEngine과 동일한 방식)
         let http_client = app_config.create_http_client().map_err(|e| {
-            StageError::ServiceInitialization(format!("Failed to create HTTP client: {}", e))
+            StageError::GenericError { message: format!("Failed to create HTTP client: {}", e) }
         })?;
 
         // 데이터 추출기 생성
         let data_extractor = MatterDataExtractor::new().map_err(|e| {
-            StageError::ServiceInitialization(format!("Failed to create data extractor: {}", e))
+            StageError::GenericError { message: format!("Failed to create data extractor: {}", e) }
         })?;
 
         // 데이터베이스 연결 생성 (기본 경로 사용)
         let pool = crate::infrastructure::database_connection::get_or_init_global_pool()
             .await
             .map_err(|e| {
-                StageError::ServiceInitialization(format!(
+                StageError::GenericError { message: format!(
                     "Failed to obtain database pool: {}",
                     e
-                ))
+                ) }
             })?;
         let product_repo = Arc::new(IntegratedProductRepository::new(pool));
 
@@ -544,11 +544,14 @@ impl StageActor {
     ) -> Result<(), StageError> {
         // 상태 검증
         if !matches!(self.state, StageState::Idle) {
-            return Err(StageError::AlreadyProcessing(
-                self.stage_id
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string()),
-            ));
+            let sid = self
+                .stage_id
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            return Err(StageError::GenericError { message: format!(
+                "Stage already processing: {}",
+                sid
+            )});
         }
 
         let stage_id = Uuid::new_v4().to_string();
@@ -583,7 +586,7 @@ impl StageActor {
 
         context
             .emit_event(start_event)
-            .map_err(|e| StageError::ContextError(e.to_string()))?;
+            .map_err(|e| StageError::GenericError { message: e.to_string() })?;
 
         // 상태를 Processing으로 전환
         self.state = StageState::Processing;
@@ -611,30 +614,30 @@ impl StageActor {
                 };
                 context
                     .emit_event(completion_event)
-                    .map_err(|e| StageError::ContextError(e.to_string()))?;
+                    .map_err(|e| StageError::GenericError { message: e.to_string() })?;
                 info!(
                     "✅ Stage {:?} completed successfully: {}/{} items processed",
                     stage_type, self.success_count, self.total_items
                 );
                 Ok(())
             }
-            Err(StageError::ProcessingTimeout { .. }) => {
+            Err(StageError::TimeoutError { .. }) => {
                 self.state = StageState::Timeout;
-                let error = StageError::ProcessingTimeout { timeout_secs };
+                let error = StageError::TimeoutError { timeout_ms: timeout_secs * 1000 };
                 let timeout_event = AppEvent::StageFailed {
                     stage_type: stage_type.clone(),
                     session_id: context.session_id.clone(),
                     batch_id: Some(self.batch_id.clone()),
-                    error: error.to_string(),
+                    error: format!("{:?}", error),
                     timestamp: Utc::now(),
                 };
                 context
                     .emit_event(timeout_event)
-                    .map_err(|e| StageError::ContextError(e.to_string()))?;
+                    .map_err(|e| StageError::GenericError { message: e.to_string() })?;
                 Err(error)
             }
             Err(e) => {
-                let error_msg = e.to_string();
+                let error_msg = format!("{:?}", e);
                 self.state = StageState::Failed {
                     error: error_msg.clone(),
                 };
@@ -647,7 +650,7 @@ impl StageActor {
                 };
                 context
                     .emit_event(failure_event)
-                    .map_err(|er| StageError::ContextError(er.to_string()))?;
+                    .map_err(|er| StageError::GenericError { message: er.to_string() })?;
                 Err(e)
             }
         }
@@ -765,7 +768,7 @@ impl StageActor {
                 // Separate handle for persistence path to avoid moved value issues
                 let product_repo_for_persist = product_repo_clone.clone();
                 let _permit = sem.acquire().await.map_err(|e| {
-                    StageError::InitializationFailed(format!("Semaphore error: {}", e))
+                    StageError::GenericError { message: format!("Semaphore error: {}", e) }
                 })?;
                 if let Err(e) = ctx_clone.emit_event(AppEvent::StageItemStarted {
                     session_id: session_id_clone.clone(),
@@ -1045,7 +1048,7 @@ impl StageActor {
                                                 session_id: session_id_clone.clone(),
                                                 detail_id: prod_ref.clone(),
                                                 page: Some(origin_page),
-                                                error: e.to_string(),
+                                                error: format!("{:?}", e),
                                                 final_failure: true,
                                                 batch_id: batch_id_opt.clone(),
                                                 range_idx: None,
@@ -1070,7 +1073,7 @@ impl StageActor {
                                                     metrics: Some(SimpleMetrics::Product {
                                                         fields: None,
                                                         size_bytes: None,
-                                                        error: Some(e.to_string()),
+                                                        error: Some(format!("{:?}", e)),
                                                     }),
                                                     timestamp: Utc::now(),
                                                 })
@@ -1084,9 +1087,7 @@ impl StageActor {
                                     }
                                 }
                             } else {
-                                return Err(StageError::InitializationFailed(
-                                    "ProductDetailCollector not available".into(),
-                                ));
+                                return Err(StageError::GenericError { message: "ProductDetailCollector not available".into() });
                             }
                             // Wrap like existing logic (ProductDetails wrapper)
                             use crate::new_architecture::channels::types::{
@@ -1115,10 +1116,7 @@ impl StageActor {
                                     retry_count: 0,
                                     collected_data: Some(json_data),
                                 }),
-                                Err(e) => Err(StageError::ItemProcessingFailed {
-                                    item_id,
-                                    error: format!("JSON serialization failed: {}", e),
-                                }),
+                                Err(e) => Err(StageError::GenericError { message: format!("Item {} JSON serialization failed: {}", item_id, e) }),
                             }
                         }
                         _ => {
@@ -1787,7 +1785,7 @@ impl StageActor {
                                 url_type: "unknown".into(),
                             },
                             success: false,
-                            error: Some(err.to_string()),
+                            error: Some(format!("{:?}", err)),
                             duration_ms: item_start.elapsed().as_millis() as u64,
                             retry_count: 0,
                             collected_count: None,
@@ -1802,7 +1800,7 @@ impl StageActor {
                                 crate::new_architecture::actors::types::SimpleMetrics::Page {
                                     url_count: None,
                                     scheduled_details: None,
-                                    error: Some(err.to_string()),
+                                    error: Some(format!("{:?}", err)),
                                 };
                             if let Err(e2) = ctx_clone.emit_event(AppEvent::PageLifecycle {
                                 session_id: session_id_clone.clone(),
@@ -1822,7 +1820,7 @@ impl StageActor {
                             (&stage_type_clone, &lifecycle_item)
                         {
                             for pu in &urls.urls {
-                                let metrics = crate::new_architecture::actors::types::SimpleMetrics::Product { fields: None, size_bytes: None, error: Some(err.to_string()) };
+                                let metrics = crate::new_architecture::actors::types::SimpleMetrics::Product { fields: None, size_bytes: None, error: Some(format!("{:?}", err)) };
                                 if let Err(e2) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                     session_id: session_id_clone.clone(),
                                     batch_id: batch_id_opt.clone(),
@@ -1875,14 +1873,14 @@ impl StageActor {
                     results.push(result);
                 }
                 Ok(Err(e)) => {
-                    error!("Item processing failed: {}", e);
+                    error!("Item processing failed: {:?}", e);
                     results.push(StageItemResult {
                         item_id: "unknown".to_string(),
                         item_type: StageItemType::Url {
                             url_type: "unknown".to_string(),
                         },
                         success: false,
-                        error: Some(e.to_string()),
+                        error: Some(format!("{:?}", e)),
                         duration_ms: 0,
                         retry_count: 0,
                         collected_data: None,
@@ -1910,9 +1908,7 @@ impl StageActor {
             for h in handles {
                 h.abort();
             }
-            return Err(StageError::ProcessingTimeout {
-                timeout_secs: overall_timeout.as_secs(),
-            });
+            return Err(StageError::TimeoutError { timeout_ms: overall_timeout.as_millis() as u64 });
         }
 
         // 결과 집계
@@ -1975,6 +1971,7 @@ impl StageActor {
             self._product_repo.clone(),
         ) {
             if let Some(logic) = factory.logic_for(&stage_type) {
+                info!("[StageActor] Using strategy {} for {:?}", logic.name(), stage_type);
                 let deps = Deps { http, extractor, repo };
                 let input = StageInput { stage_type: stage_type.clone(), item: item.clone(), config: app_cfg, deps };
                 match logic.execute(input).await {
@@ -1982,7 +1979,7 @@ impl StageActor {
                         return Ok(result);
                     }
                     Err(e) => {
-                        return Err(StageError::ItemProcessingFailed { item_id: item_id.clone(), error: e.to_string() });
+                        return Err(StageError::GenericError { message: format!("Strategy error for {}: {}", item_id, e) });
                     }
                 }
             }
@@ -2872,7 +2869,7 @@ impl Actor for StageActor {
                                         timeout_secs,
                                         &context
                                     ).await {
-                                        error!("Failed to execute stage: {}", e);
+                                        error!("Failed to execute stage: {:?}", e);
                                     }
                                 }
 

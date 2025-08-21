@@ -44,6 +44,8 @@ pub enum StageLogicError {
 
 #[async_trait]
 pub trait StageLogic: Send + Sync {
+    /// Human-friendly strategy identifier for logging/metrics
+    fn name(&self) -> &'static str { "UnnamedStrategy" }
     async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError>;
 }
 

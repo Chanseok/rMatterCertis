@@ -14,6 +14,7 @@ mod strategies {
 
     #[async_trait::async_trait]
     impl StageLogic for ListPageLogic {
+    fn name(&self) -> &'static str { "ListPageLogic" }
         async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
             let start = std::time::Instant::now();
             // Only supports ListPageCrawling
@@ -88,6 +89,7 @@ mod strategies {
 
     #[async_trait::async_trait]
     impl StageLogic for StatusCheckLogic {
+    fn name(&self) -> &'static str { "StatusCheckLogic" }
         async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
             let st = input.stage_type.clone();
             if !matches!(st, ActorStageType::StatusCheck) {
@@ -121,6 +123,7 @@ mod strategies {
 
     #[async_trait::async_trait]
     impl StageLogic for ProductDetailLogic {
+    fn name(&self) -> &'static str { "ProductDetailLogic" }
         async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
             let st = input.stage_type.clone();
             if !matches!(st, ActorStageType::ProductDetailCrawling) {
@@ -176,6 +179,7 @@ mod strategies {
 
     #[async_trait::async_trait]
     impl StageLogic for DataValidationLogic {
+    fn name(&self) -> &'static str { "DataValidationLogic" }
         async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
             let st = input.stage_type.clone();
             if !matches!(st, ActorStageType::DataValidation) {
@@ -208,6 +212,7 @@ mod strategies {
 
     #[async_trait::async_trait]
     impl StageLogic for DataSavingLogic {
+    fn name(&self) -> &'static str { "DataSavingLogic" }
         async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
             let st = input.stage_type.clone();
             if !matches!(st, ActorStageType::DataSaving) {

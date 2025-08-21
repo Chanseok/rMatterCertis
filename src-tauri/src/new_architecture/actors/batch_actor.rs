@@ -1337,7 +1337,7 @@ impl BatchActor {
             )
             .await
             .map_err(|e| {
-                BatchError::StageExecutionFailed(format!("Stage execution failed: {}", e))
+                BatchError::StageExecutionFailed(format!("Stage execution failed: {:?}", e))
             })?;
 
         Ok(stage_result)
@@ -1392,7 +1392,7 @@ impl BatchActor {
             .execute_stage(stage_type, items, concurrency_limit, 30, context)
             .await
             .map_err(|e| {
-                BatchError::StageExecutionFailed(format!("Stage execution failed: {}", e))
+                BatchError::StageExecutionFailed(format!("Stage execution failed: {:?}", e))
             })?;
 
         Ok(stage_result)
@@ -1490,7 +1490,7 @@ impl BatchActor {
                     .await
                     .map_err(|e| BatchError::StageProcessingFailed {
                         stage: stage_type.as_str().to_string(),
-                        error: format!("Failed to initialize real services: {}", e),
+                        error: format!("Failed to initialize real services: {:?}", e),
                     })?;
 
                 stage_actor
