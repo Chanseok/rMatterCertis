@@ -4,41 +4,32 @@
 //! - 기존: 각 배치마다 사이트 상태 확인 (3번 × 500ms = 1.5초)
 //! - 개선: 세션당 1번만 사이트 상태 확인 (1번 × 500ms = 0.5초)
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use matter_certis_v2::infrastructure::config::AppConfig;
-use matter_certis_v2::infrastructure::crawling_service_impls::{
-    CollectorConfig, StatusCheckerImpl,
-};
-use matter_certis_v2::new_architecture::{
-    actor_system::{BatchActor, SessionActor},
-    services::crawling_integration::CrawlingIntegrationService,
-    system_config::SystemConfig,
-};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use matter_certis_v2_lib::infrastructure::config::AppConfig;
+use matter_certis_v2_lib::new_architecture::config::SystemConfig;
+use matter_certis_v2_lib::new_architecture::services::crawling_integration::CrawlingIntegrationService;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
-async fn create_mock_integration_service() -> Arc<CrawlingIntegrationService> {
+async fn create_integration_service() -> Arc<CrawlingIntegrationService> {
     let app_config = AppConfig::default();
-    let collector_config = CollectorConfig::default();
-
+    let sys_config = Arc::new(SystemConfig::default());
     Arc::new(
-        CrawlingIntegrationService::new(
-            Arc::new(StatusCheckerImpl::new(collector_config.clone())),
-            app_config,
-        )
-        .unwrap(),
+        CrawlingIntegrationService::new(sys_config, app_config)
+            .await
+            .expect("failed to init integration service"),
     )
 }
 
 /// 기존 방식: 각 배치마다 사이트 상태 확인
 async fn benchmark_without_shared_service() {
-    let integration_service = create_mock_integration_service().await;
-
-    // 3개 배치 시뮬레이션 (각각 사이트 상태 확인)
+    // Simulate 3 batches; create a new service each time (no sharing)
     for _batch in 0..3 {
+        let integration_service = create_integration_service().await;
         let _ = integration_service
-            .execute_list_collection_stage_with_site_check(
-                vec![1, 2, 3],
+            .execute_list_collection_stage(
+                Vec::new(),
+                1,
                 tokio_util::sync::CancellationToken::new(),
             )
             .await;
@@ -47,43 +38,29 @@ async fn benchmark_without_shared_service() {
 
 /// 개선된 방식: 공유 서비스 패턴으로 한 번만 사이트 상태 확인
 async fn benchmark_with_shared_service() {
-    let config = Arc::new(SystemConfig::default());
-    let session_actor = SessionActor::new(
-        "bench_session".to_string(),
-        config,
-        3, // 3개 배치
-    );
-
-    // 첫 번째 배치에서만 사이트 상태 확인, 나머지는 재사용
-    let _ = session_actor
-        .execute_real_crawling_stage(
-            vec![1, 2, 3],
-            vec![4, 5, 6],
-            vec![7, 8, 9],
-            10,
-            tokio_util::sync::CancellationToken::new(),
-        )
-        .await;
+    // Reuse a single service across batches
+    let integration_service = create_integration_service().await;
+    for _batch in 0..3 {
+        let _ = integration_service
+            .execute_list_collection_stage(
+                Vec::new(),
+                1,
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await;
+    }
 }
 
 fn performance_comparison(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
 
-    c.bench_function(
-        "사이트 상태 확인 - 기존 방식 (3번 확인)",
-        |b| {
-            b.to_async(&rt)
-                .iter(|| black_box(benchmark_without_shared_service()))
-        },
-    );
+    c.bench_function("사이트 상태 확인 - 기존 방식 (3번 확인)", |b| {
+        b.iter(|| rt.block_on(black_box(benchmark_without_shared_service())))
+    });
 
-    c.bench_function(
-        "사이트 상태 확인 - 공유 서비스 패턴 (1번 확인)",
-        |b| {
-            b.to_async(&rt)
-                .iter(|| black_box(benchmark_with_shared_service()))
-        },
-    );
+    c.bench_function("사이트 상태 확인 - 공유 서비스 패턴 (1번 확인)", |b| {
+        b.iter(|| rt.block_on(black_box(benchmark_with_shared_service())))
+    });
 }
 
 criterion_group!(benches, performance_comparison);

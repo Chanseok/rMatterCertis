@@ -487,7 +487,9 @@ impl CrawlingPlanner {
                     let end = start.saturating_sub(count - 1).max(1);
                     (end..=start).rev().collect::<Vec<u32>>()
                 };
-                if self.product_repo.is_none() {
+                let repo = if let Some(repo) = &self.product_repo {
+                    repo.clone()
+                } else {
                     warn!(
                         "🧪 ContinueFromDb requested but product_repo not attached -> fallback newest-first"
                     );
@@ -500,9 +502,8 @@ impl CrawlingPlanner {
                         db_total_products: None,
                         db_unique_products: None,
                         db_last_update: None,
-                    }); // reuse placeholder
-                }
-                let repo = self.product_repo.as_ref().unwrap().clone();
+                    });
+                };
 
                 // 2) DB 상태 조회
                 let (max_page_id, max_index_in_page) = match repo.get_max_page_id_and_index().await
@@ -525,25 +526,29 @@ impl CrawlingPlanner {
                 db_position_for_reuse = Some((max_page_id, max_index_in_page));
 
                 // 3) 캐시 재사용 판단
-                if let Some(cached) = LAST_DB_RANGE.lock().unwrap().as_ref() {
-                    if cached.total_pages == total_pages_on_site
-                        && cached.requested == count
-                        && cached.last_db_page_id == max_page_id
-                        && cached.last_db_index == max_index_in_page
-                        && now.duration_since(cached.ts).as_secs() < 60
-                    {
-                        info!("♻️ Reusing cached ContinueFromDb range: {:?}", cached.pages);
-                        return Ok(CrawlingPlan {
-                            session_id: uuid::Uuid::new_v4().to_string(),
-                            phases: vec![],
-                            total_estimated_duration_secs: 0,
-                            optimization_strategy: OptimizationStrategy::Balanced,
-                            created_at: chrono::Utc::now(),
-                            db_total_products: None,
-                            db_unique_products: None,
-                            db_last_update: None,
-                        });
+                if let Ok(cache_guard) = LAST_DB_RANGE.lock() {
+                    if let Some(cached) = cache_guard.as_ref() {
+                        if cached.total_pages == total_pages_on_site
+                            && cached.requested == count
+                            && cached.last_db_page_id == max_page_id
+                            && cached.last_db_index == max_index_in_page
+                            && now.duration_since(cached.ts).as_secs() < 60
+                        {
+                            info!("♻️ Reusing cached ContinueFromDb range: {:?}", cached.pages);
+                            return Ok(CrawlingPlan {
+                                session_id: uuid::Uuid::new_v4().to_string(),
+                                phases: vec![],
+                                total_estimated_duration_secs: 0,
+                                optimization_strategy: OptimizationStrategy::Balanced,
+                                created_at: chrono::Utc::now(),
+                                db_total_products: None,
+                                db_unique_products: None,
+                                db_last_update: None,
+                            });
+                        }
                     }
+                } else {
+                    warn!("⚠️ Failed to lock LAST_DB_RANGE cache; proceeding without reuse");
                 }
 
                 // 4) 정밀 범위 계산
@@ -614,14 +619,18 @@ impl CrawlingPlanner {
                         }
                     }
                 }
-                *LAST_DB_RANGE.lock().unwrap() = Some(DbCachedRange {
-                    pages: pages.clone(),
-                    total_pages: total_pages_on_site,
-                    requested: count,
-                    last_db_page_id: max_page_id,
-                    last_db_index: max_index_in_page,
-                    ts: now,
-                });
+                if let Ok(mut cache_guard) = LAST_DB_RANGE.lock() {
+                    *cache_guard = Some(DbCachedRange {
+                        pages: pages.clone(),
+                        total_pages: total_pages_on_site,
+                        requested: count,
+                        last_db_page_id: max_page_id,
+                        last_db_index: max_index_in_page,
+                        ts: now,
+                    });
+                } else {
+                    warn!("⚠️ Failed to update LAST_DB_RANGE cache");
+                }
                 info!(
                     "🔧 Computed ContinueFromDb range: db_last=({:?},{:?}) pages={:?}",
                     max_page_id, max_index_in_page, pages

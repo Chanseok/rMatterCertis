@@ -11,5 +11,5 @@ fn main() {
     // Note: macOS CoreAnimation console warnings are OS-level.
     // We avoid setting env vars here to comply with unsafe-code lint; see package.json scripts
     // (OS_ACTIVITY_MODE=disable CA_DEBUG_TRANSACTIONS=0) to suppress terminal noise when launching.
-    matter_certis_v2_lib::run()
+    matter_certis_v2_lib::run();
 }

@@ -13,7 +13,6 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::domain::pagination::PaginationCalculator;
 use crate::domain::services::SiteStatus;
 use crate::domain::services::{ProductDetailCollector, ProductListCollector, StatusChecker};
 use crate::infrastructure::config::AppConfig;
@@ -221,6 +220,7 @@ impl StageActor {
     ///
     /// # Returns
     /// * `Self` - 서비스가 주입된 StageActor 인스턴스
+    #[must_use]
     pub fn new_with_services(
         actor_id: String,
         batch_id: String,
@@ -1151,7 +1151,7 @@ impl StageActor {
                                 products_on_last_page_hint,
                                 strategy_factory: strategy_factory_iter.clone(),
                             };
-                            let res = temp_actor
+                            temp_actor
                                 .process_single_item(
                                     stage_type_clone.clone(),
                                     base_item.clone(),
@@ -1160,8 +1160,7 @@ impl StageActor {
                                     product_detail_collector_clone,
                                     product_repo_clone.clone(),
                                 )
-                                .await;
-                            res
+                                .await
                         }
                     }
                 } else {
@@ -1190,7 +1189,7 @@ impl StageActor {
                         products_on_last_page_hint,
                         strategy_factory: strategy_factory_iter.clone(),
                     };
-                    let res = temp_actor
+                    temp_actor
                         .process_single_item(
                             stage_type_clone.clone(),
                             base_item.clone(),
@@ -1199,8 +1198,7 @@ impl StageActor {
                             product_detail_collector_clone,
                             product_repo_clone.clone(),
                         )
-                        .await;
-                    res
+                        .await
                 };
                 match &result {
                     Ok(r) => {

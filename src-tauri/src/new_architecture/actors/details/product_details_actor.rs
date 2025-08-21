@@ -32,7 +32,7 @@ impl ProductDetailsActor {
     /// Skeleton 실행: 지정한 개수만큼 detail task 시뮬레이션
     pub async fn run(
         &self,
-        _context: Arc<AppContext>,
+    _context: Arc<AppContext>,
     _plan: Arc<ExecutionPlan>,
         event_tx: tokio::sync::broadcast::Sender<AppEvent>,
     ) -> anyhow::Result<()> {
@@ -62,7 +62,7 @@ impl ProductDetailsActor {
                     .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                     .unwrap_or(false);
                 if allow_sim {
-                    let sim_count = 3usize.min(plan.page_slots.len());
+                    let sim_count = 3usize; // plan.page_slots is unused in skeleton
                     let simulated: Vec<String> = (0..sim_count)
                         .map(|i| format!("detail_sim_{}", i))
                         .collect();

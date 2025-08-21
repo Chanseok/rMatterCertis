@@ -245,3 +245,11 @@ test-utils = []         # Testing utilities
 name = "shared_service_benchmark"
 harness = false
 
+# Lighter bench profile to avoid heavy LTO and abort semantics during benchmarking
+[profile.bench]
+inherits = "release"
+debug = 1
+codegen-units = 8
+panic = "unwind"
+lto = false
+

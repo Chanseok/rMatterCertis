@@ -256,6 +256,7 @@ impl BatchActor {
     ///
     /// # Returns
     /// * `Self` - 서비스가 주입된 BatchActor 인스턴스
+    #[must_use]
     pub fn new_with_services(
         actor_id: String,
         batch_id: String,
@@ -699,12 +700,16 @@ impl BatchActor {
             Vec::new()
         } else {
             // 기존 변환 결과 (각 ProductDetail 단위) → 하나의 ProductDetails StageItem 으로 합쳐 1회 실행
+            let detail_result = detail_result_opt.as_ref().ok_or_else(|| {
+                BatchError::StageProcessingFailed {
+                    stage: "ProductDetailCrawling".to_string(),
+                    error: "detail_result missing when not deferred".to_string(),
+                }
+            })?;
             let per_item = self.transform_stage_output(
                 StageType::ProductDetailCrawling,
                 product_detail_items,
-                detail_result_opt
-                    .as_ref()
-                    .expect("detail_result present when not deferred"),
+                detail_result,
             )?;
             if per_item.is_empty() {
                 Vec::new()
