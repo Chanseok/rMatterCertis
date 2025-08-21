@@ -742,6 +742,9 @@ impl StageActor {
         let product_repo = self._product_repo.clone();
         let http_client = self.http_client.clone();
         let data_extractor = self.data_extractor.clone();
+    // 추가로, 전략/설정도 클론하여 task 클로저에서 사용
+    let app_config_clone = self.app_config.clone();
+    let strategy_factory_clone = self.strategy_factory.clone();
         // 페이지네이션 힌트 복사
         let site_total_pages_hint = self.site_total_pages_hint;
         let products_on_last_page_hint = self.products_on_last_page_hint;
@@ -764,6 +767,9 @@ impl StageActor {
             let session_id_clone = _context.session_id.clone();
             let batch_id_opt = Some(self.batch_id.clone());
             let ctx_clone = _context.clone();
+            // Per-iteration clones for moved values into async block
+            let app_config_iter = app_config_clone.clone();
+            let strategy_factory_iter = strategy_factory_clone.clone();
             let task = tokio::spawn(async move {
                 // Separate handle for persistence path to avoid moved value issues
                 let product_repo_for_persist = product_repo_clone.clone();
@@ -1140,10 +1146,10 @@ impl StageActor {
                                 _product_repo: product_repo_clone.clone(),
                                 http_client: http_client_clone,
                                 data_extractor: data_extractor_clone,
-                                app_config: None,
+                                app_config: app_config_iter.clone(),
                                 site_total_pages_hint,
                                 products_on_last_page_hint,
-                                strategy_factory: None,
+                                strategy_factory: strategy_factory_iter.clone(),
                             };
                             let res = temp_actor
                                 .process_single_item(
@@ -1179,10 +1185,10 @@ impl StageActor {
                         _product_repo: product_repo_clone.clone(),
                         http_client: http_client_clone,
                         data_extractor: data_extractor_clone,
-                        app_config: None,
+                        app_config: app_config_iter.clone(),
                         site_total_pages_hint,
                         products_on_last_page_hint,
-                        strategy_factory: None,
+                        strategy_factory: strategy_factory_iter.clone(),
                     };
                     let res = temp_actor
                         .process_single_item(
