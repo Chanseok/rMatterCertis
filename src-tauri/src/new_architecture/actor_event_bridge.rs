@@ -382,6 +382,7 @@ impl ActorEventBridge {
             AppEvent::StageStarted { .. } => "actor-stage-started",
             AppEvent::StageCompleted { .. } => "actor-stage-completed",
             AppEvent::StageFailed { .. } => "actor-stage-failed",
+            AppEvent::StageRetrying { .. } => "actor-stage-retrying",
             AppEvent::Progress { .. } => "actor-progress",
             AppEvent::PerformanceMetrics { .. } => "actor-performance-metrics",
             AppEvent::BatchReport { .. } => "actor-batch-report",

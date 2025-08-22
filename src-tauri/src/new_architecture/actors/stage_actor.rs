@@ -21,28 +21,20 @@ use crate::infrastructure::crawling_service_impls::{
 };
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
 use crate::new_architecture::actors::traits::{Actor, ActorHealth, ActorStatus, ActorType};
-use crate::new_architecture::actors::types::ActorError;
-use crate::new_architecture::actors::types::StageType;
 use crate::new_architecture::actors::types::{
-    ActorCommand, AppEvent, SimpleMetrics, StageItemResult, StageItemType, StageResult,
+    ActorCommand, ActorError, AppEvent, SimpleMetrics, StageError, StageItemResult,
+    StageItemType, StageResult, StageType,
 };
-use crate::new_architecture::actors::types::StageError;
 use crate::new_architecture::channels::types::StageItem;
-use crate::new_architecture::context::AppContext;
+use crate::new_architecture::integrated_context::AppContext;
 use crate::new_architecture::stages::traits::{Deps, StageInput, StageLogicFactory, StageOutput};
-// no local error derive needed; StageError lives in actors::types
 
-// -----------------------------------------------------------------------------
-// Static guards and core types
-// -----------------------------------------------------------------------------
+// Duplicate-execution guard for DataSaving stage (session+batch scoped)
+static DATA_SAVING_RUN_GUARD: Lazy<StdMutex<HashSet<String>>> = Lazy::new(|| StdMutex::new(HashSet::new()));
 
-// Guard to prevent duplicate DataSaving runs within the same session/batch
-static DATA_SAVING_RUN_GUARD: Lazy<StdMutex<HashSet<String>>> =
-    Lazy::new(|| StdMutex::new(HashSet::new()));
-
-/// 스테이지 상태 열거형
+/// 스테이지 상태 열거형 (local to StageActor)
 #[derive(Debug, Clone, PartialEq)]
-pub enum StageState {
+enum StageState {
     Idle,
     Starting,
     Processing,
@@ -52,36 +44,22 @@ pub enum StageState {
 }
 
 /// StageActor: 개별 스테이지 작업의 실행 및 관리
-///
-/// 책임:
-/// - 특정 스테이지 타입의 작업 실행
-/// - 아이템별 처리 및 결과 수집
-/// - 스테이지 레벨 이벤트 발행
-/// - 타임아웃 및 재시도 로직 관리
+#[allow(clippy::struct_excessive_bools)]
 pub struct StageActor {
-    /// Actor 고유 식별자
+    // 기본 메타데이터
     actor_id: String,
-    /// 배치 ID (OneShot 호환성)
     pub batch_id: String,
-    /// 현재 처리 중인 스테이지 ID
     stage_id: Option<String>,
-    /// 스테이지 타입
     stage_type: Option<StageType>,
-    /// 스테이지 상태
     state: StageState,
-    /// 스테이지 시작 시간
     start_time: Option<Instant>,
-    /// 총 아이템 수
+
+    // 진행 카운터
     total_items: u32,
-    /// 처리 완료된 아이템 수
     completed_items: u32,
-    /// 성공한 아이템 수
     success_count: u32,
-    /// 실패한 아이템 수
     failure_count: u32,
-    /// 스키핑된 아이템 수
     skipped_count: u32,
-    /// 처리 결과들
     item_results: Vec<StageItemResult>,
 
     // 실제 크롤링 엔진 의존성
@@ -165,6 +143,59 @@ impl StageItemExt for StageItem {
 }
 
 impl StageActor {
+    /// 공통 재시도 래퍼 (Exponential Backoff + Jitter) with telemetry
+    async fn retry_with_backoff<T, Fut, Op>(
+        &self,
+        context: &AppContext,
+        stage_type: StageType,
+        start_attempt: u32,
+        max_attempts: u32,
+        base_delay_ms: u64,
+        max_delay_ms: u64,
+        op: Op,
+    ) -> (Result<T, String>, u32)
+    where
+        Op: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<T, String>>,
+    {
+        let mut attempt = start_attempt;
+        loop {
+            if context.is_cancelled() {
+                return (Err("Operation cancelled".to_string()), attempt);
+            }
+
+            match op().await {
+                Ok(val) => return (Ok(val), attempt),
+                Err(err) => {
+                    if attempt < max_attempts {
+                        let next = attempt + 1;
+                        let _ = context.emit_event(AppEvent::StageRetrying {
+                            stage_type: stage_type.clone(),
+                            session_id: context.session_id.clone(),
+                            batch_id: Some(self.batch_id.clone()),
+                            attempt: next,
+                            max_attempts,
+                            reason: Some(err.clone()),
+                            timestamp: Utc::now(),
+                        });
+
+                        // exponential backoff: base * 2^(next-1)
+                        let factor = 1u64.checked_shl(next.saturating_sub(1)).unwrap_or(u64::MAX);
+                        let exp = base_delay_ms.saturating_mul(factor);
+                        let capped = std::cmp::min(exp, max_delay_ms);
+                        let jitter = if capped >= 10 { fastrand::u64(0..=(capped / 5)) } else { 0 };
+                        let delay = capped.saturating_add(jitter);
+                        warn!("🔁 {:?} attempt {}/{} after {}ms (reason: {})", stage_type, next, max_attempts, delay, err);
+                        tokio::time::sleep(Duration::from_millis(delay)).await;
+                        attempt = next;
+                        continue;
+                    } else {
+                        return (Err(err), attempt);
+                    }
+                }
+            }
+        }
+    }
     /// 새로운 StageActor 인스턴스 생성
     ///
     /// # Arguments
@@ -601,6 +632,7 @@ impl StageActor {
                 Duration::from_secs(timeout_secs),
             )
             .await;
+    // TODO: Introduce a generic retry wrapper for stage-level retries and emit AppEvent::StageRetrying accordingly.
 
         match processing_result {
             Ok(stage_result) => {
@@ -733,8 +765,7 @@ impl StageActor {
 
         // 동시성 제어를 위한 세마포어
         let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency_limit as usize));
-        let mut tasks = Vec::new();
-
+    let mut tasks = Vec::new();
         // 서비스 의존성 복사
         let status_checker = self.status_checker.clone();
         let product_list_collector = self.product_list_collector.clone();
@@ -1155,6 +1186,7 @@ impl StageActor {
                                 .process_single_item(
                                     stage_type_clone.clone(),
                                     base_item.clone(),
+                                    &ctx_clone,
                                     status_checker_clone,
                                     product_list_collector_clone,
                                     product_detail_collector_clone,
@@ -1193,6 +1225,7 @@ impl StageActor {
                         .process_single_item(
                             stage_type_clone.clone(),
                             base_item.clone(),
+                            &ctx_clone,
                             status_checker_clone,
                             product_list_collector_clone,
                             product_detail_collector_clone,
@@ -1360,7 +1393,7 @@ impl StageActor {
                                     session_id_clone,
                                     batch_id_opt.clone().unwrap_or_else(|| "none".into())
                                 );
-                                if let Ok(mut guard) = DATA_SAVING_RUN_GUARD.lock() {
+                                if let Ok(mut guard) = crate::new_architecture::actors::stage_actor::DATA_SAVING_RUN_GUARD.lock() {
                                     if guard.contains(&guard_key) {
                                         info!(
                                             "[PersistGuard] duplicate DataSaving suppression key={}",
@@ -1944,6 +1977,7 @@ impl StageActor {
         &self,
         stage_type: StageType,
         item: StageItem,
+        context: &AppContext,
         status_checker: Option<Arc<dyn StatusChecker>>,
         product_list_collector: Option<Arc<dyn ProductListCollector>>,
         _product_detail_collector: Option<Arc<dyn ProductDetailCollector>>,
@@ -2016,10 +2050,8 @@ impl StageActor {
             }
             StageType::ListPageCrawling => {
                 if let Some(collector) = product_list_collector {
-                    // 재시도 설정 로드
-                    // 권장 기본 재시도 값 (설명된 스펙 기반): 리스트 페이지 4회
                     const RECOMMENDED_MAX_RETRIES_LIST: u32 = 4;
-                    let (cfg_retries, base_delay_ms) = if let Some(cfg) = &self.app_config {
+                    let (cfg_retries, base_delay_cfg) = if let Some(cfg) = &self.app_config {
                         (
                             cfg.user.crawling.workers.max_retries,
                             cfg.user.crawling.timing.retry_delay_ms,
@@ -2027,63 +2059,40 @@ impl StageActor {
                     } else {
                         (3u32, 1000u64)
                     };
-                    // 설정값과 권장값 중 큰 값 적용
                     let max_retries = std::cmp::max(cfg_retries, RECOMMENDED_MAX_RETRIES_LIST);
-                    // 지수 백오프 + 지터를 위한 파라미터
-                    let base_delay_ms = base_delay_ms.max(200); // 안전한 최소값
-                    let max_delay_ms: u64 = 30_000; // 30초 상한
+                    let base_delay_ms = base_delay_cfg.max(200);
+                    let max_delay_ms: u64 = 30_000;
 
-                    let mut attempt: u32 = 0;
-                    loop {
-                        match self
-                            .execute_real_list_page_processing(&item, Arc::clone(&collector))
-                            .await
-                        {
-                            Ok(urls) => {
-                                // ProductURL들을 JSON으로 직렬화하여 저장
-                                match serde_json::to_string(&urls) {
-                                    Ok(json_data) => break (Ok(()), Some(json_data), attempt),
-                                    Err(e) => {
-                                        break (
-                                            Err(format!("JSON serialization failed: {}", e)),
-                                            None,
-                                            attempt,
-                                        );
-                                    }
+                    let item_for_retry = item.clone();
+                    let collector_for_retry = Arc::clone(&collector);
+                    let (op_result, retries_used) = self
+                        .retry_with_backoff(
+                            context,
+                            StageType::ListPageCrawling,
+                            0,
+                            max_retries,
+                            base_delay_ms,
+                            max_delay_ms,
+                            || {
+                                let item_inner = item_for_retry.clone();
+                                let col_inner = Arc::clone(&collector_for_retry);
+                                async move {
+                                    self
+                                        .execute_real_list_page_processing(&item_inner, col_inner)
+                                        .await
                                 }
-                            }
-                            Err(e) => {
-                                if attempt < max_retries {
-                                    attempt += 1;
-                                    // 지수 백오프: base * 2^(attempt-1)
-                                    // Note: use checked_shl to avoid panics for large shifts
-                                    let factor = 1u64.checked_shl(attempt - 1).unwrap_or(u64::MAX);
-                                    let exp = base_delay_ms.saturating_mul(factor);
-                                    let capped = std::cmp::min(exp, max_delay_ms);
-                                    // 지터: 최대 20% 랜덤 가산
-                                    let jitter = if capped >= 10 {
-                                        let range = capped / 5; // 20%
-                                        fastrand::u64(0..=range)
-                                    } else {
-                                        0
-                                    };
-                                    let delay = capped.saturating_add(jitter);
-                                    warn!(
-                                        "🔁 ListPageCrawling attempt {}/{} after {}ms (reason: {})",
-                                        attempt, max_retries, delay, e
-                                    );
-                                    tokio::time::sleep(std::time::Duration::from_millis(delay))
-                                        .await;
-                                    continue;
-                                } else {
-                                    error!("❌ ListPageCrawling final failure: {}", e);
-                                    break (Err(e), None, attempt);
-                                }
-                            }
-                        }
+                            },
+                        )
+                        .await;
+
+                    match op_result {
+                        Ok(urls) => match serde_json::to_string(&urls) {
+                            Ok(json_data) => (Ok(()), Some(json_data), retries_used),
+                            Err(e) => (Err(format!("JSON serialization failed: {}", e)), None, retries_used),
+                        },
+                        Err(e) => (Err(e), None, retries_used),
                     }
                 } else {
-                    // ProductListCollector가 없으면 에러
                     (
                         Err("ProductListCollector not available".to_string()),
                         None,

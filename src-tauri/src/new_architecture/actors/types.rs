@@ -11,6 +11,9 @@ use ts_rs::TS;
 use crate::domain::integrated_product::ProductDetail;
 use crate::domain::product_url::ProductUrl;
 
+/// Actor-Event 계약 버전 (additive-only 정책)
+pub const ACTOR_CONTRACT_VERSION: &str = "v1"; // bump when UI requires new additive schema set
+
 /// Actor 간 통신을 위한 통합 명령 타입
 ///
 /// 시스템의 모든 Actor가 이해할 수 있는 공통 명령 인터페이스입니다.
@@ -221,6 +224,18 @@ pub enum AppEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         batch_id: Option<String>,
         error: String,
+        timestamp: DateTime<Utc>,
+    },
+
+    /// 스테이지 재시도 알림 (additive v1)
+    StageRetrying {
+        stage_type: StageType,
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
+        attempt: u32,
+        max_attempts: u32,
+        reason: Option<String>,
         timestamp: DateTime<Utc>,
     },
 
