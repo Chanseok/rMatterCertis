@@ -5,11 +5,11 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::info;
 // use existing lightweight RNG (fastrand) already in Cargo.toml
-use crate::new_architecture::runtime::session_registry::session_registry;
+use crate::crawl_engine::runtime::session_registry::session_registry;
 
-use crate::new_architecture::actors::types::ExecutionPlan;
-use crate::new_architecture::channels::types::AppEvent;
-use crate::new_architecture::context::AppContext;
+use crate::crawl_engine::actors::types::ExecutionPlan;
+use crate::crawl_engine::channels::types::AppEvent;
+use crate::crawl_engine::context::AppContext;
 
 #[derive(Debug, Clone)]
 pub struct ProductDetailsActorConfig {
@@ -208,9 +208,9 @@ impl ProductDetailsActor {
                                 if let Some(ref mut rem) = e.remaining_detail_ids { rem.retain(|r| r != &did); }
                                 if e.detail_tasks_failed as u32 >= e.detail_failure_threshold && !e.failed_emitted {
                                     e.failed_emitted = true;
-                                    e.status = crate::new_architecture::runtime::session_registry::SessionStatus::Failed;
+                                    e.status = crate::crawl_engine::runtime::session_registry::SessionStatus::Failed;
                                     e.completed_at = Some(Utc::now());
-                                    e.removal_deadline = Some(Utc::now() + chrono::Duration::seconds(crate::new_architecture::runtime::session_registry::removal_grace_secs()));
+                                    e.removal_deadline = Some(Utc::now() + chrono::Duration::seconds(crate::crawl_engine::runtime::session_registry::removal_grace_secs()));
                                 }
                             }
                             break;
@@ -326,9 +326,9 @@ impl ProductDetailsActor {
                                 if let Some(ref mut rem) = e.remaining_detail_ids { rem.retain(|r| r != &did); }
                                 if e.detail_tasks_failed as u32 >= e.detail_failure_threshold && !e.failed_emitted {
                                     e.failed_emitted = true;
-                                    e.status = crate::new_architecture::runtime::session_registry::SessionStatus::Failed;
+                                    e.status = crate::crawl_engine::runtime::session_registry::SessionStatus::Failed;
                                     e.completed_at = Some(Utc::now());
-                                    e.removal_deadline = Some(Utc::now() + chrono::Duration::seconds(crate::new_architecture::runtime::session_registry::removal_grace_secs()));
+                                    e.removal_deadline = Some(Utc::now() + chrono::Duration::seconds(crate::crawl_engine::runtime::session_registry::removal_grace_secs()));
                                 }
                             }
                             break;

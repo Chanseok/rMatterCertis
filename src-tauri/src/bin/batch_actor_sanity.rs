@@ -1,7 +1,7 @@
-//! BatchActor sanity runner to verify concurrency caps and StatusCheck de-dup when hints are present
+//! `BatchActor` sanity runner to verify concurrency caps and `StatusCheck` de-dup when hints are present
 //!
-//! This binary bootstraps real services, creates an AppContext, and executes a single
-//! BatchActor run with pages and SiteStatus hints provided. It sets MC_SKIP_DB_SAVE=1
+//! This binary bootstraps real services, creates an `AppContext`, and executes a single
+//! `BatchActor` run with pages and `SiteStatus` hints provided. It sets `MC_SKIP_DB_SAVE=1`
 //! to avoid database writes and uses a conservative page count if site status fails.
 
 use std::sync::Arc;
@@ -15,10 +15,10 @@ use matter_certis_v2_lib::infrastructure::database_paths;
 use matter_certis_v2_lib::infrastructure::{
     HttpClient, IntegratedProductRepository, MatterDataExtractor,
 };
-use matter_certis_v2_lib::new_architecture::actors::{Actor, BatchActor, types as actor_types};
-use matter_certis_v2_lib::new_architecture::context::AppContext;
-use matter_certis_v2_lib::new_architecture::integrated_context::IntegratedContextFactory;
-use matter_certis_v2_lib::new_architecture::system_config::SystemConfig;
+use matter_certis_v2_lib::crawl_engine::actors::{Actor, BatchActor, types as actor_types};
+use matter_certis_v2_lib::crawl_engine::context::AppContext;
+use matter_certis_v2_lib::crawl_engine::integrated_context::IntegratedContextFactory;
+use matter_certis_v2_lib::crawl_engine::system_config::SystemConfig;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

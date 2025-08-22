@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde::{Serialize, Deserialize};
 use thiserror::Error;
 
-use crate::new_architecture::{
+use crate::crawl_engine::{
     actor_system::{StageSuccessResult, StageError},
     channels::types::StageType,
 };
@@ -493,7 +493,7 @@ impl ResilienceAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::new_architecture::actor_system::StageError;
+    use crate::crawl_engine::actor_system::StageError;
 
     #[test]
     fn test_resilience_analyzer_creation() {

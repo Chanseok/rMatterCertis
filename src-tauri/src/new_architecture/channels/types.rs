@@ -108,7 +108,7 @@ pub struct ProductDetails {
 pub struct ValidatedProducts {
     pub products: Vec<crate::domain::product::ProductDetail>,
     pub validation_report:
-        Option<crate::crawl_engine::services::data_quality_analyzer::DataQualityReport>,
+        Option<crate::new_architecture::services::data_quality_analyzer::DataQualityReport>,
     pub storage_recommendation: StorageRecommendation,
 }
 

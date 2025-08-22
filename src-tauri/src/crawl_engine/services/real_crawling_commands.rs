@@ -4,14 +4,14 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crate::new_architecture::actor_system::StageResult;
+use crate::crawl_engine::actor_system::StageResult;
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::infrastructure::config::AppConfig;
-use crate::new_architecture::services::crawling_integration::CrawlingIntegrationService;
-use crate::new_architecture::system_config::SystemConfig;
+use crate::crawl_engine::services::crawling_integration::CrawlingIntegrationService;
+use crate::crawl_engine::system_config::SystemConfig;
 
 /// 실제 크롤링 서비스 초기화 테스트
 #[tauri::command]
@@ -180,7 +180,7 @@ async fn test_small_scale_crawling() -> Result<String> {
 }
 
 async fn test_oneshot_with_real_crawling() -> Result<String> {
-    use crate::new_architecture::actors::StageActor;
+    use crate::crawl_engine::actors::StageActor;
 
     let batch_id = "test-real-integration".to_string();
     let system_config = Arc::new(SystemConfig::default());

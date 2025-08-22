@@ -7,7 +7,7 @@
 use tokio::sync::{mpsc, oneshot, broadcast};
 use std::sync::Arc;
 use serde::Serialize;
-use crate::new_architecture::system_config::SystemConfig;
+use crate::crawl_engine::system_config::SystemConfig;
 
 /// 제어 채널: 명령 하향 전달 (MPSC)
 pub type ControlChannel<T> = mpsc::Sender<T>;
@@ -90,7 +90,7 @@ pub enum LegacyAppEvent {
     },
     StageCompleted {
         stage: StageType,
-        result: crate::new_architecture::actor_system::StageResult,
+        result: crate::crawl_engine::actor_system::StageResult,
     },
     SessionTimeout {
         session_id: String,

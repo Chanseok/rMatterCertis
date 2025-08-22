@@ -16,14 +16,14 @@ use tracing::{debug, error, info, warn};
 
 use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
 use super::types::{ActorCommand, ActorError, BatchConfig, StageResult, StageType};
-use crate::new_architecture::actors::StageActor;
-use crate::new_architecture::actors::types::AppEvent;
-use crate::new_architecture::channels::types::{ProductUrls, StageItem};
+use crate::crawl_engine::actors::StageActor;
+use crate::crawl_engine::actors::types::AppEvent;
+use crate::crawl_engine::channels::types::{ProductUrls, StageItem};
 // use crate::new_architecture::{
 //     actor_system as actor_sys,
 //     channels::types as ch_types,
 // };
-use crate::new_architecture::context::AppContext;
+use crate::crawl_engine::context::AppContext;
 // Bring real crawling bridge extensions into scope
 // real_crawling_integration provides inherent methods on BatchActor via extension impl; no direct import needed here.
 
@@ -61,7 +61,7 @@ pub struct BatchActor {
     /// 동시성 제어용 세마포어
     concurrency_limiter: Option<Arc<Semaphore>>,
     /// 설정 (OneShot 호환성)
-    pub config: Option<Arc<crate::new_architecture::config::SystemConfig>>,
+    pub config: Option<Arc<crate::crawl_engine::config::SystemConfig>>,
 
     // 🔥 Phase 1: 실제 서비스 의존성 추가
     /// HTTP 클라이언트
@@ -276,7 +276,7 @@ impl BatchActor {
             failure_count: 0,
             concurrency_limiter: None,
             // Provide a default SystemConfig so template/bridge execution paths have required settings
-            config: Some(Arc::new(crate::new_architecture::config::SystemConfig::default())),
+            config: Some(Arc::new(crate::crawl_engine::config::SystemConfig::default())),
             // 실제 서비스 의존성 주입
             http_client: Some(http_client),
             data_extractor: Some(data_extractor),
@@ -715,7 +715,7 @@ impl BatchActor {
                 Vec::new()
             } else {
                 // 모든 Product 또는 ProductDetails 아이템에서 상세 제품들을 추출해 하나로 병합
-                use crate::new_architecture::channels::types::{
+                use crate::crawl_engine::channels::types::{
                     ProductDetails, StageItem as SItem,
                 };
                 let mut all_products: Vec<crate::domain::product::ProductDetail> = Vec::new();
@@ -736,7 +736,7 @@ impl BatchActor {
                 if all_products.is_empty() {
                     Vec::new()
                 } else {
-                    let stats = crate::new_architecture::channels::types::ExtractionStats {
+                    let stats = crate::crawl_engine::channels::types::ExtractionStats {
                         attempted: all_products.len() as u32,
                         successful: all_products.len() as u32,
                         failed: 0,
@@ -1071,7 +1071,7 @@ impl BatchActor {
 #[cfg(test)]
 mod batch_actor_metrics_tests {
     use super::*;
-    use crate::new_architecture::actors::{StageItemResult, StageItemType, StageResult};
+    use crate::crawl_engine::actors::{StageItemResult, StageItemType, StageResult};
 
     fn mk_item(duration_ms: u64, retry_count: u32, success: bool) -> StageItemResult {
         StageItemResult {
@@ -1328,7 +1328,7 @@ impl BatchActor {
         );
         // Inject StageLogic factory (Phase 3 guarded dispatch)
         stage_actor = stage_actor.with_strategy_factory(Arc::new(
-            crate::new_architecture::stages::DefaultStageLogicFactory,
+            crate::crawl_engine::stages::DefaultStageLogicFactory,
         ));
 
         // StageActor로 Stage 실행 (실제 items 전달)
@@ -1386,7 +1386,7 @@ impl BatchActor {
             app_config.clone(),
         );
         stage_actor = stage_actor.with_strategy_factory(Arc::new(
-            crate::new_architecture::stages::DefaultStageLogicFactory,
+            crate::crawl_engine::stages::DefaultStageLogicFactory,
         ));
 
         if let (Some(tp), Some(plp)) = (total_pages_hint, products_on_last_page_hint) {
@@ -1416,8 +1416,8 @@ impl BatchActor {
         pages: Vec<u32>,
         context: &AppContext,
     ) -> Result<StageResult, BatchError> {
-        use crate::new_architecture::actors::StageActor;
-        use crate::new_architecture::channels::types::StageItem;
+    use crate::crawl_engine::actors::StageActor;
+    use crate::crawl_engine::channels::types::StageItem;
 
         info!(
             "Starting Stage pipeline processing for {} pages",
@@ -1527,7 +1527,7 @@ impl BatchActor {
 
             // Activate StageLogic in pipeline path as well
             let mut stage_actor = stage_actor.with_strategy_factory(Arc::new(
-                crate::new_architecture::stages::DefaultStageLogicFactory,
+                crate::crawl_engine::stages::DefaultStageLogicFactory,
             ));
             let stage_result = stage_actor
                 .execute_stage(
@@ -1788,7 +1788,7 @@ impl BatchActor {
                                     );
                                     // JSON에서 ProductDetails를 파싱
                                     match serde_json::from_str::<
-                                        crate::new_architecture::channels::types::ProductDetails,
+                                        crate::crawl_engine::channels::types::ProductDetails,
                                     >(collected_data_json)
                                     {
                                         Ok(product_details_wrapper) => {
@@ -1875,10 +1875,10 @@ impl BatchActor {
                                                     }
                                                 })
                                                 .collect();
-                                            let wrapper = crate::new_architecture::channels::types::ProductDetails {
+                                            let wrapper = crate::crawl_engine::channels::types::ProductDetails {
                                                 products: synth_products,
                                                 source_urls: urls_wrapper.urls.clone(),
-                                                extraction_stats: crate::new_architecture::channels::types::ExtractionStats {
+                                                extraction_stats: crate::crawl_engine::channels::types::ExtractionStats {
                                                     attempted: urls_wrapper.urls.len() as u32,
                                                     successful: synth_count as u32,
                                                     failed: 0,

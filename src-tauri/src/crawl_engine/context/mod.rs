@@ -1,5 +1,5 @@
 pub mod integrated;
 
-pub use crate::new_architecture::SystemConfig;
-pub use crate::new_architecture::integrated_context::{AppContext, EventEmitter};
+pub use crate::crawl_engine::SystemConfig;
+pub use crate::crawl_engine::integrated_context::{AppContext, EventEmitter};
 pub use integrated::*;

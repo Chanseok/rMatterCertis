@@ -10,25 +10,25 @@ pub fn generate_ts_bindings() -> Result<(), Box<dyn std::error::Error>> {
     // TODO: 필요한 타입들에 #[derive(TS)] 추가 후 활성화
 
     /*
-    crate::new_architecture::actors::types::ActorCommand::export_all_to("../src/types/")?;
-    crate::new_architecture::actors::types::AppEvent::export_all_to("../src/types/")?;
-    crate::new_architecture::actors::types::StageResult::export_all_to("../src/types/")?;
-    crate::new_architecture::actors::types::StageItemResult::export_all_to("../src/types/")?;
-    crate::new_architecture::actors::types::CrawlingConfig::export_all_to("../src/types/")?;
-    crate::new_architecture::actors::types::BatchConfig::export_all_to("../src/types/")?;
-    crate::new_architecture::actors::types::StageType::export_all_to("../src/types/")?;
-    crate::new_architecture::actors::types::StageItem::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::types::ActorCommand::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::types::AppEvent::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::types::StageResult::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::types::StageItemResult::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::types::CrawlingConfig::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::types::BatchConfig::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::types::StageType::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::types::StageItem::export_all_to("../src/types/")?;
 
     // Additional types exports
-    crate::new_architecture::actors::types::StageError::export_all_to("../src/types/")?;
-    crate::new_architecture::actors::types::StageSuccessResult::export_all_to("../src/types/")?;
-    crate::new_architecture::actors::types::CollectionMetrics::export_all_to("../src/types/")?;
-    crate::new_architecture::actors::types::ProcessingMetrics::export_all_to("../src/types/")?;
-    crate::new_architecture::actors::types::FailedItem::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::types::StageError::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::types::StageSuccessResult::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::types::CollectionMetrics::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::types::ProcessingMetrics::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::types::FailedItem::export_all_to("../src/types/")?;
 
     // Actor traits
-    crate::new_architecture::actors::traits::ActorHealth::export_all_to("../src/types/")?;
-    crate::new_architecture::actors::traits::ActorStatus::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::traits::ActorHealth::export_all_to("../src/types/")?;
+    crate::crawl_engine::actors::traits::ActorStatus::export_all_to("../src/types/")?;
     */
 
     println!("TypeScript bindings generated successfully!");

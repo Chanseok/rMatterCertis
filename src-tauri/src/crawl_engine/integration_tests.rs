@@ -8,11 +8,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-use crate::new_architecture::{
+use crate::crawl_engine::{
     SystemConfig, ChannelFactory, SessionActor, BatchActor, StageActor,
     ActorCommand, AppEvent, ActorError,
 };
-use crate::new_architecture::channels::types::{BatchConfig, StageType, StageItem};
+use crate::crawl_engine::channels::types::{BatchConfig, StageType, StageItem};
 
 /// 시스템 설정 테스트
 #[cfg(test)]

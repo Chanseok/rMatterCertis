@@ -5,7 +5,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crate::application::events::EventEmitter as ApplicationEventEmitter;
-use crate::new_architecture::{
+use crate::crawl_engine::{
     channels::types::{ActorCommand, AppEvent, ControlChannel, EventChannel},
     system_config::SystemConfig,
 };
@@ -184,9 +184,9 @@ pub enum ContextError {
     InvalidState { message: String },
 }
 
-impl From<ContextError> for crate::new_architecture::actors::types::ActorError {
+impl From<ContextError> for crate::crawl_engine::actors::types::ActorError {
     fn from(err: ContextError) -> Self {
-        use crate::new_architecture::actors::types::ActorError;
+    use crate::crawl_engine::actors::types::ActorError;
         match err {
             ContextError::ControlChannelSend { message } => ActorError::ChannelError(message),
             ContextError::EventBroadcastFailed => {
@@ -253,7 +253,7 @@ pub struct ContextChannels {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::new_architecture::system_config::SystemConfig;
+    use crate::crawl_engine::system_config::SystemConfig;
 
     #[tokio::test]
     async fn test_integrated_context_creation() {
@@ -301,7 +301,7 @@ mod tests {
 
         let event = AppEvent::SessionStarted {
             session_id: "test-session".to_string(),
-            config: crate::new_architecture::actors::types::CrawlingConfig {
+            config: crate::crawl_engine::actors::types::CrawlingConfig {
                 site_url: "https://test.com".to_string(),
                 start_page: 1,
                 end_page: 10,
@@ -310,7 +310,7 @@ mod tests {
                 request_delay_ms: 0,
                 timeout_secs: 30,
                 max_retries: 0,
-                strategy: crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst,
+                strategy: crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst,
             },
             timestamp: chrono::Utc::now(),
         };

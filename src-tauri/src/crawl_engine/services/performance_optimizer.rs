@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 use ts_rs::TS;
 
-use crate::new_architecture::config::SystemConfig;
+use crate::crawl_engine::config::SystemConfig;
 
 /// 크롤링 성능 메트릭
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

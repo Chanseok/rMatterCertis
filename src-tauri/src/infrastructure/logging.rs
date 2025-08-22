@@ -283,19 +283,19 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
         filter
     });
 
-    // Inject convenience alias: allow users to specify `new_architecture::actor_event_bridge=debug`
+    // Inject convenience alias: allow users to specify `crawl_engine::actor_event_bridge=debug`
     // without the crate prefix. If present, add fully-qualified directive for the library crate.
     if let Ok(rust_log_var) = std::env::var("RUST_LOG") {
         // Only add if user asked for the shorthand target AND hasn't already provided the prefixed one
-        if rust_log_var.contains("new_architecture::actor_event_bridge")
-            && !rust_log_var.contains("matter_certis_v2_lib::new_architecture::actor_event_bridge")
+        if rust_log_var.contains("crawl_engine::actor_event_bridge")
+            && !rust_log_var.contains("matter_certis_v2_lib::crawl_engine::actor_event_bridge")
         {
             if let Ok(directive) =
-                "matter_certis_v2_lib::new_architecture::actor_event_bridge=debug".parse()
+                "matter_certis_v2_lib::crawl_engine::actor_event_bridge=debug".parse()
             {
                 env_filter = env_filter.add_directive(directive);
                 info!(
-                    "Added alias log directive for matter_certis_v2_lib::new_architecture::actor_event_bridge=debug"
+                    "Added alias log directive for matter_certis_v2_lib::crawl_engine::actor_event_bridge=debug"
                 );
             }
         }

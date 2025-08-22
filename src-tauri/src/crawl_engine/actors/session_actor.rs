@@ -11,21 +11,21 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::new_architecture::actors::types::SessionSummary;
+use crate::crawl_engine::actors::types::SessionSummary;
 
 use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
 use super::types::{ActorCommand, ActorError, CrawlingConfig};
-use crate::new_architecture::channels::types::AppEvent;
-use crate::new_architecture::context::AppContext;
+use crate::crawl_engine::channels::types::AppEvent;
+use crate::crawl_engine::context::AppContext;
 use std::sync::Arc;
 
 use crate::domain::services::{DatabaseAnalyzer, StatusChecker};
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::crawling_service_impls::{DatabaseAnalyzerImpl, StatusCheckerImpl};
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
-use crate::new_architecture::actors::BatchActor;
-use crate::new_architecture::actors::types::BatchConfig;
-use crate::new_architecture::services::CrawlingPlanner;
+use crate::crawl_engine::actors::BatchActor;
+use crate::crawl_engine::actors::types::BatchConfig;
+use crate::crawl_engine::services::CrawlingPlanner;
 
 /// SessionActor: 크롤링 세션의 전체 생명주기 관리
 ///
@@ -66,7 +66,7 @@ pub struct SessionActor {
     aggregated_product_urls: Vec<crate::domain::product_url::ProductUrl>,
     /// 단일 실행 계획 (세션 동안 불변, 재계산 금지)
     crawling_plan:
-        Option<std::sync::Arc<crate::new_architecture::services::crawling_planner::CrawlingPlan>>,
+        Option<std::sync::Arc<crate::crawl_engine::services::crawling_planner::CrawlingPlan>>,
     /// 계획 버전 (향후 재계산 허용 시 증가) 현재 0 또는 1
     plan_version: u64,
 }
@@ -275,10 +275,10 @@ impl SessionActor {
 
         self.plan_version = 1;
         let list_pages: usize = plan.phases.iter()
-            .filter(|p| matches!(p.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling))
+            .filter(|p| matches!(p.phase_type, crate::crawl_engine::services::crawling_planner::PhaseType::ListPageCrawling))
             .map(|p| p.pages.len()).sum();
         let detail_pages: usize = plan.phases.iter()
-            .filter(|p| matches!(p.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ProductDetailCrawling))
+            .filter(|p| matches!(p.phase_type, crate::crawl_engine::services::crawling_planner::PhaseType::ProductDetailCrawling))
             .map(|p| p.pages.len()).sum();
         info!(
             "PLAN plan_version={} phases={} opt_strategy={:?} list_pages={} detail_pages={} created_at={}",
@@ -301,14 +301,14 @@ impl SessionActor {
             plan.phases.len()
         );
         // 플래너 완료 Progress 이벤트 발행 (플래너 단계 관측용)
-        let planning_event = AppEvent::Progress {
+    let planning_event = AppEvent::Progress {
             session_id: session_id.clone(),
             current_step: 0,
             total_steps: plan.phases.len() as u32,
             message: format!(
                 "Crawling plan ready: {} phases, list-batches={}",
                 plan.phases.len(),
-                plan.phases.iter().filter(|p| matches!(p.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling)).count()
+        plan.phases.iter().filter(|p| matches!(p.phase_type, crate::crawl_engine::services::crawling_planner::PhaseType::ListPageCrawling)).count()
             ),
             percentage: 0.0,
             timestamp: Utc::now(),
@@ -347,7 +347,7 @@ impl SessionActor {
         }
 
         // ListPageCrawling phases만 추출 → 각 phase 페이지들을 순차 처리
-        let planned_list_batches: Vec<_> = plan.phases.iter().filter(|p| matches!(p.phase_type, crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling)).collect();
+    let planned_list_batches: Vec<_> = plan.phases.iter().filter(|p| matches!(p.phase_type, crate::crawl_engine::services::crawling_planner::PhaseType::ListPageCrawling)).collect();
         if planned_list_batches.is_empty() {
             warn!(
                 "⚠️ No ListPageCrawling phases planned (requested start/end maybe collapsed). start_page={} end_page={}",
@@ -686,7 +686,7 @@ impl SessionActor {
         product_repo: &Arc<IntegratedProductRepository>,
         site_status: &crate::domain::services::SiteStatus,
     ) -> Result<(), SessionError> {
-        use crate::new_architecture::actors::traits::Actor;
+    use crate::crawl_engine::actors::traits::Actor;
         let app_config = AppConfig::for_development();
         let config_concurrency = app_config.user.crawling.workers.list_page_max_concurrent as u32;
         let shared_metrics = Arc::new(std::sync::Mutex::new((0u32, 0u32)));
@@ -926,10 +926,10 @@ impl SessionActor {
                     })
                     .or_insert((1, now, now));
             }
-            let aggregated: Vec<crate::new_architecture::actors::types::ErrorSummary> = map
+            let aggregated: Vec<crate::crawl_engine::actors::types::ErrorSummary> = map
                 .into_iter()
                 .map(|(k, (count, first, last))| {
-                    crate::new_architecture::actors::types::ErrorSummary {
+                    crate::crawl_engine::actors::types::ErrorSummary {
                         error_type: k,
                         count,
                         first_occurrence: first,
@@ -1057,7 +1057,7 @@ impl Actor for SessionActor {
                                                 self.session_id = Some(session_id.clone());
                                                 self.state = SessionState::Running;
                                                 self.start_time = Some(Instant::now());
-                                                let start_event = AppEvent::SessionStarted { session_id: session_id.clone(), config: CrawlingConfig { site_url: "preplanned".into(), start_page: 1, end_page: 1, concurrency_limit: plan.concurrency_limit, batch_size: plan.batch_size, request_delay_ms: 0, timeout_secs: 300, max_retries: 3, strategy: crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst }, timestamp: Utc::now() };
+                                                let start_event = AppEvent::SessionStarted { session_id: session_id.clone(), config: CrawlingConfig { site_url: "preplanned".into(), start_page: 1, end_page: 1, concurrency_limit: plan.concurrency_limit, batch_size: plan.batch_size, request_delay_ms: 0, timeout_secs: 300, max_retries: 3, strategy: crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst }, timestamp: Utc::now() };
                                                 if let Err(e) = context.emit_event(start_event) { error!("Failed to emit start event: {}", e); }
                                                 let site_status = plan.input_snapshot_to_site_status();
                                                 for (idx, range) in plan.crawling_ranges.iter().enumerate() {
@@ -1078,7 +1078,7 @@ impl Actor for SessionActor {
                                                 use std::collections::BTreeMap;
                                                 let mut map: BTreeMap<String, (u32, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = BTreeMap::new();
                                                 for e in &self.errors { let now = chrono::Utc::now(); map.entry(e.clone()).and_modify(|entry| { entry.0 += 1; entry.2 = now; }).or_insert((1, now, now)); }
-                                                let aggregated: Vec<crate::new_architecture::actors::types::ErrorSummary> = map.into_iter().map(|(k,(count, first, last))| crate::new_architecture::actors::types::ErrorSummary { error_type: k, count, first_occurrence: first, last_occurrence: last }).collect();
+                                                let aggregated: Vec<crate::crawl_engine::actors::types::ErrorSummary> = map.into_iter().map(|(k,(count, first, last))| crate::crawl_engine::actors::types::ErrorSummary { error_type: k, count, first_occurrence: first, last_occurrence: last }).collect();
                                                 let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / self.total_success_count as u64 } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, duplicates_skipped: self.duplicates_skipped, planned_list_batches: self.processed_batches, executed_list_batches: self.processed_batches, failed_pages_count: 0, failed_page_ids: Vec::new(), total_retry_events: 0, max_retries_single_page: 0, pages_retried: 0, retry_histogram: Vec::new(), products_inserted: 0, products_updated: 0, final_state: "completed".into(), timestamp: Utc::now() };
                                                 if let Err(e) = context.emit_event(AppEvent::SessionCompleted { session_id: session_id.clone(), summary: summary.clone(), timestamp: Utc::now() }) { error!("emit completion event failed: {}", e); }
                                                 if let Err(e) = context.emit_event(AppEvent::CrawlReportSession { session_id: session_id.clone(), batches_processed: self.processed_batches, total_pages: self.total_success_count, total_success: self.total_success_count, total_failed: 0, total_retries: 0, duration_ms, products_inserted: 0, products_updated: 0, timestamp: Utc::now() }) { error!("emit crawl report failed: {}", e); }

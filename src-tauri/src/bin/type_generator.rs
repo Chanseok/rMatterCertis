@@ -2,7 +2,7 @@
 //!
 //! Phase 4: ts-rs 기반 자동 타입 생성
 
-use matter_certis_v2_lib::new_architecture::ts_gen;
+use matter_certis_v2_lib::crawl_engine::ts_gen;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🎯 Starting TypeScript type generation...");

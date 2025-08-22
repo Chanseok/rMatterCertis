@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
-use crate::new_architecture::actor_system::{
+use crate::crawl_engine::actor_system::{
     SessionActor, BatchActor, StageActor, ActorCommand, AppEvent, SystemConfig,
     StageType, StageResult, StageSuccessResult, CollectionMetrics, ProcessingMetrics
 };
@@ -20,18 +20,18 @@ mod tests {
         let system_config = Arc::new(SystemConfig {
             batch_size: 10,
             max_concurrent_batches: 2,
-            retry_policy: crate::new_architecture::actor_system::RetryPolicy {
+            retry_policy: crate::crawl_engine::actor_system::RetryPolicy {
                 max_attempts: 3,
                 base_delay_ms: 100,
                 max_delay_ms: 5000,
                 exponential_factor: 2.0,
                 jitter_enabled: true,
             },
-            channel_config: crate::new_architecture::actor_system::ChannelConfig {
+            channel_config: crate::crawl_engine::actor_system::ChannelConfig {
                 control_buffer_size: 100,
                 event_buffer_size: 1000,
             },
-            timeout_config: crate::new_architecture::actor_system::TimeoutConfig {
+            timeout_config: crate::crawl_engine::actor_system::TimeoutConfig {
                 batch_timeout_ms: 30000,
                 stage_timeout_ms: 10000,
                 oneshot_timeout_ms: 5000,
@@ -132,9 +132,9 @@ mod tests {
 
     async fn create_test_config() -> Arc<AppConfig> {
         // 테스트용 최소 설정
-        let config_content = r"
-        [database]
-        path = ":memory:"
+    let config_content = r#"
+    [database]
+    path = ":memory:"
 
         [user.crawling]
         concurrent_requests = 2
@@ -147,8 +147,8 @@ mod tests {
         
         [user.retry]
         max_attempts = 3
-        base_delay_ms = 100
-        ";
+    base_delay_ms = 100
+    "#;
 
         // 임시 설정 파일 생성
         use std::io::Write;
@@ -171,18 +171,18 @@ mod tests {
         let system_config = Arc::new(SystemConfig {
             batch_size: 5,
             max_concurrent_batches: 1,
-            retry_policy: crate::new_architecture::actor_system::RetryPolicy {
+            retry_policy: crate::crawl_engine::actor_system::RetryPolicy {
                 max_attempts: 2,
                 base_delay_ms: 50,
                 max_delay_ms: 1000,
                 exponential_factor: 1.5,
                 jitter_enabled: false,
             },
-            channel_config: crate::new_architecture::actor_system::ChannelConfig {
+            channel_config: crate::crawl_engine::actor_system::ChannelConfig {
                 control_buffer_size: 50,
                 event_buffer_size: 500,
             },
-            timeout_config: crate::new_architecture::actor_system::TimeoutConfig {
+            timeout_config: crate::crawl_engine::actor_system::TimeoutConfig {
                 batch_timeout_ms: 5000,
                 stage_timeout_ms: 3000,
                 oneshot_timeout_ms: 2000,
@@ -244,18 +244,18 @@ mod tests {
         let system_config = Arc::new(SystemConfig {
             batch_size: 3,
             max_concurrent_batches: 1,
-            retry_policy: crate::new_architecture::actor_system::RetryPolicy {
+            retry_policy: crate::crawl_engine::actor_system::RetryPolicy {
                 max_attempts: 1,
                 base_delay_ms: 10,
                 max_delay_ms: 100,
                 exponential_factor: 1.0,
                 jitter_enabled: false,
             },
-            channel_config: crate::new_architecture::actor_system::ChannelConfig {
+            channel_config: crate::crawl_engine::actor_system::ChannelConfig {
                 control_buffer_size: 10,
                 event_buffer_size: 100,
             },
-            timeout_config: crate::new_architecture::actor_system::TimeoutConfig {
+            timeout_config: crate::crawl_engine::actor_system::TimeoutConfig {
                 batch_timeout_ms: 3000,
                 stage_timeout_ms: 2000,
                 oneshot_timeout_ms: 1000,

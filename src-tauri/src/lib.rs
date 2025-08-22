@@ -11,7 +11,7 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![allow(clippy::module_name_repetitions)] // 모듈명 중복은 도메인 명확성을 위해 허용
 #![allow(clippy::similar_names)] // 유사한 변수명은 의미적 연관성이 있는 경우 허용
-#![allow(clippy::unused_variables)] // 개발 중 임시 변수들 허용
+#![allow(unused_variables)] // 개발 중 임시 변수들 허용
 #![allow(clippy::uninlined_format_args)]
 #![allow(missing_docs)]
 #![allow(clippy::unnecessary_operation)]
@@ -40,8 +40,8 @@ pub mod types {
 
 // 🚀 새로운 아키텍처 모듈 (Phase 1 구현 완료) - Modern Rust 2024
 pub mod crawl_engine; // renamed from new_architecture
-// Validation (MI-2) module (under new_architecture::validation)
-// validation module available under new_architecture::validation
+// Note: legacy alias `new_architecture` has been removed after migration
+// Use `crate::crawl_engine` going forward.
 
 pub mod domain {
     //! Domain module - Core business logic and entities

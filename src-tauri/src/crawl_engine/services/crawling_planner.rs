@@ -358,7 +358,7 @@ impl CrawlingPlanner {
         // Track DB position if fetched during strategy-specific branch (to avoid duplicate query later)
         let mut db_position_for_reuse: Option<(Option<i32>, Option<i32>)> = None;
         let mut page_range: Vec<u32> = match config.strategy {
-            crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst => {
+            crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst => {
                 // Enhanced newest-first: prioritize pages containing products lacking details if repository available
                 if let Some(repo) = &self.product_repo {
                     let fetch_limit: i32 = ((count * 20).max(20)).min(2000) as i32;
@@ -468,7 +468,7 @@ impl CrawlingPlanner {
                     pages
                 }
             }
-            crate::new_architecture::actors::types::CrawlingStrategy::ContinueFromDb => {
+            crate::crawl_engine::actors::types::CrawlingStrategy::ContinueFromDb => {
                 // Reintroduce lightweight cache + fallback helper removed during cleanup
                 #[derive(Clone)]
                 struct DbCachedRange {

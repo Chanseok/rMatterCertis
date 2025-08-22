@@ -1,7 +1,7 @@
 //! Minimal progress feed adapter for UI (Phase 2 skeleton)
 //! Consumes AppEvent stream (broadcast receiver) and reduces to compact + dynamic models.
 
-use crate::new_architecture::actors::types::AppEvent;
+use crate::crawl_engine::actors::types::AppEvent;
 
 #[derive(Debug, Clone)]
 pub struct CompactProgress {

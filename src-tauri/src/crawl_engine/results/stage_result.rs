@@ -8,7 +8,7 @@
 use std::time::Duration;
 use thiserror::Error;
 use serde::{Deserialize, Serialize};
-use crate::new_architecture::{
+use crate::crawl_engine::{
     config::system_config::{RetryPolicy, RetryableErrorType},
     channels::types::{StageSuccessResult, CollectionMetrics, ProcessingMetrics, ProductInfo},
 };
@@ -277,7 +277,7 @@ impl StageResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::new_architecture::config::system_config::{RetryPolicy, RetryableErrorType};
+    use crate::crawl_engine::config::system_config::{RetryPolicy, RetryableErrorType};
 
     #[test]
     fn test_error_classification() {

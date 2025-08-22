@@ -22,9 +22,9 @@ use crate::infrastructure::crawling_service_impls::{
     CollectorConfig, ProductListCollectorImpl, StatusCheckerImpl,
 };
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
-use crate::new_architecture::actor_system::{StageError, StageResult};
-use crate::new_architecture::channels::types::{StageItem, StageType};
-use crate::new_architecture::config::SystemConfig;
+use crate::crawl_engine::actor_system::{StageError, StageResult};
+use crate::crawl_engine::channels::types::{StageItem, StageType};
+use crate::crawl_engine::config::SystemConfig;
 
 /// 실제 크롤링 서비스와 OneShot Actor 시스템을 연결하는 통합 서비스
 #[allow(dead_code)] // Phase2: allow unused fields temporarily – evaluate in Phase3

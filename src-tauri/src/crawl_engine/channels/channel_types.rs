@@ -299,7 +299,7 @@ mod tests {
 }
 
 // ⚠️ Phase 2 호환성: 기존 코드가 찾는 타입들 re-export
-pub use crate::new_architecture::actors::types::{
+pub use crate::crawl_engine::actors::types::{
     StageType, StageItem, StageResult, ActorCommand, AppEvent, 
     BatchConfig, CrawlingConfig, SessionSummary
 };

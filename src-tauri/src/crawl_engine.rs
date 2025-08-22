@@ -2,6 +2,8 @@
 //! Modern Rust 2024 준수된 Actor 시스템입니다.
 
 // 🎯 Phase 1: 핵심 인프라 (새로 구축된 Actor 기반)
+// Note: Some editors can get confused by gate-file layout + archive files; pin the path explicitly.
+#[path = "crawl_engine/actor_event_bridge.rs"]
 pub mod actor_event_bridge;
 pub mod actor_system; // 호환성을 위해 활성화
 pub mod actors;

@@ -5,7 +5,7 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crate::new_architecture::{
+use crate::crawl_engine::{
     SystemConfig,
     channels::types::{ActorCommand, AppEvent, ControlChannel, EventChannel},
     config::RetryPolicy,
@@ -193,7 +193,7 @@ impl ContextBuilder {
     }
 
     /// 설정 검증
-    pub fn validate_config(&self) -> Result<(), crate::new_architecture::config::ConfigError> {
+    pub fn validate_config(&self) -> Result<(), crate::crawl_engine::config::ConfigError> {
         self.config.validate()
     }
 }
@@ -242,7 +242,7 @@ pub enum CommandSendError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::new_architecture::{channels::types::ChannelFactory, system_config::SystemConfig};
+    use crate::crawl_engine::{channels::types::ChannelFactory, system_config::SystemConfig};
     // Removed unused watch import
 
     #[test]

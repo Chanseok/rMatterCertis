@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn, error, debug};
 use uuid::Uuid;
 
-use crate::new_architecture::{
+use crate::crawl_engine::{
     integrated_context::{IntegratedContext, ContextError},
     channels::types::{AppEvent, StageType},
     actor_system::{StageResult, StageSuccessResult, StageError},
@@ -468,7 +468,7 @@ impl TaskActorFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::new_architecture::{
+    use crate::crawl_engine::{
         integrated_context::IntegratedContextFactory,
         system_config::SystemConfig,
     };

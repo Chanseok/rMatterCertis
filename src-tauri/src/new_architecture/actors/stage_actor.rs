@@ -364,8 +364,8 @@ impl StageActor {
     /// # Returns
     /// * `Self` - 새로운 StageActor 인스턴스
     pub fn new_with_oneshot(
-    batch_id: String,
-    _config: Arc<crate::crawl_engine::config::SystemConfig>,
+        batch_id: String,
+        _config: Arc<crate::new_architecture::config::SystemConfig>,
         _total_pages: u32,
         _products_on_last_page: u32,
     ) -> Self {
@@ -868,7 +868,7 @@ impl StageActor {
                         }
 
                         let count = filtered_urls.len() as u32;
-                        let metrics = crate::crawl_engine::actors::types::SimpleMetrics::Page {
+                        let metrics = crate::new_architecture::actors::types::SimpleMetrics::Page {
                             url_count: Some(prefiltered_total),
                             scheduled_details: Some(count),
                             error: None,
@@ -1127,7 +1127,7 @@ impl StageActor {
                                 return Err(StageError::GenericError { message: "ProductDetailCollector not available".into() });
                             }
                             // Wrap like existing logic (ProductDetails wrapper)
-                            use crate::crawl_engine::channels::types::{
+                            use crate::new_architecture::channels::types::{
                                 ExtractionStats, ProductDetails,
                             };
                             let product_details_wrapper = ProductDetails {
@@ -1245,19 +1245,19 @@ impl StageActor {
                     if let Ok(validated) = parsed {
                                         let found = validated.len() as u32;
                                         // Derive anomalies/divergences from DataQualityReport
-                                        let report = crate::crawl_engine::services::data_quality_analyzer::DataQualityAnalyzer::new()
+                                        let report = crate::new_architecture::services::data_quality_analyzer::DataQualityAnalyzer::new()
                                             .analyze_product_quality(&validated)
                                             .ok();
                                         let (div_ct, anom_ct) = if let Some(rep) = report {
                                             let dup = rep
                                                 .issues
                                                 .iter()
-                                                .filter(|i| matches!(i.issue_type, crate::crawl_engine::services::data_quality_analyzer::IssueType::Duplicate))
+                                                .filter(|i| matches!(i.issue_type, crate::new_architecture::services::data_quality_analyzer::IssueType::Duplicate))
                                                 .count() as u32;
                                             let anom = rep
                                                 .issues
                                                 .iter()
-                                                .filter(|i| matches!(i.severity, crate::crawl_engine::services::data_quality_analyzer::IssueSeverity::Critical | crate::crawl_engine::services::data_quality_analyzer::IssueSeverity::Warning))
+                                                .filter(|i| matches!(i.severity, crate::new_architecture::services::data_quality_analyzer::IssueSeverity::Critical | crate::new_architecture::services::data_quality_analyzer::IssueSeverity::Warning))
                                                 .count() as u32;
                                             (dup, anom)
                                         } else {
@@ -1294,18 +1294,18 @@ impl StageActor {
                             // Emit a few anomaly details to console if present
                             if let Some(json) = &r.collected_data {
                                 if let Ok(validated) = serde_json::from_str::<Vec<crate::domain::product::ProductDetail>>(json) {
-                                    if let Ok(rep) = crate::crawl_engine::services::data_quality_analyzer::DataQualityAnalyzer::new().analyze_product_quality(&validated) {
+                                    if let Ok(rep) = crate::new_architecture::services::data_quality_analyzer::DataQualityAnalyzer::new().analyze_product_quality(&validated) {
                                         for issue in rep.issues.iter().take(3) {
                                             let code = match issue.issue_type {
-                                                crate::crawl_engine::services::data_quality_analyzer::IssueType::Duplicate => "duplicate_index",
-                                                crate::crawl_engine::services::data_quality_analyzer::IssueType::MissingRequired => "missing_required",
-                                                crate::crawl_engine::services::data_quality_analyzer::IssueType::InvalidFormat => "invalid_format",
-                                                crate::crawl_engine::services::data_quality_analyzer::IssueType::EmptyValue => "empty_value",
+                                                crate::new_architecture::services::data_quality_analyzer::IssueType::Duplicate => "duplicate_index",
+                                                crate::new_architecture::services::data_quality_analyzer::IssueType::MissingRequired => "missing_required",
+                                                crate::new_architecture::services::data_quality_analyzer::IssueType::InvalidFormat => "invalid_format",
+                                                crate::new_architecture::services::data_quality_analyzer::IssueType::EmptyValue => "empty_value",
                                             };
                                             let detail = format!(
                                                 "{} {} in '{}'",
-                                                match issue.severity { crate::crawl_engine::services::data_quality_analyzer::IssueSeverity::Critical => "CRIT", crate::crawl_engine::services::data_quality_analyzer::IssueSeverity::Warning => "WARN", crate::crawl_engine::services::data_quality_analyzer::IssueSeverity::Info => "INFO" },
-                                                match issue.issue_type { crate::crawl_engine::services::data_quality_analyzer::IssueType::MissingRequired => "Missing", crate::crawl_engine::services::data_quality_analyzer::IssueType::InvalidFormat => "Format", crate::crawl_engine::services::data_quality_analyzer::IssueType::EmptyValue => "Empty", crate::crawl_engine::services::data_quality_analyzer::IssueType::Duplicate => "Dup" },
+                                                match issue.severity { crate::new_architecture::services::data_quality_analyzer::IssueSeverity::Critical => "CRIT", crate::new_architecture::services::data_quality_analyzer::IssueSeverity::Warning => "WARN", crate::new_architecture::services::data_quality_analyzer::IssueSeverity::Info => "INFO" },
+                                                match issue.issue_type { crate::new_architecture::services::data_quality_analyzer::IssueType::MissingRequired => "Missing", crate::new_architecture::services::data_quality_analyzer::IssueType::InvalidFormat => "Format", crate::new_architecture::services::data_quality_analyzer::IssueType::EmptyValue => "Empty", crate::new_architecture::services::data_quality_analyzer::IssueType::Duplicate => "Dup" },
                                                 issue.field_name
                                             );
                                             let _ = ctx_clone.emit_event(AppEvent::ValidationAnomaly {
@@ -1318,7 +1318,7 @@ impl StageActor {
                                         // Emit some divergence events (duplicates) for live counting
                                         let mut dup_emitted = 0u32;
                                         for issue in rep.issues.iter() {
-                                            if let crate::crawl_engine::services::data_quality_analyzer::IssueType::Duplicate = issue.issue_type {
+                                            if let crate::new_architecture::services::data_quality_analyzer::IssueType::Duplicate = issue.issue_type {
                                                 let detail = format!("Duplicate in '{}' (url={})", issue.field_name, issue.product_url);
                                                 let _ = ctx_clone.emit_event(AppEvent::ValidationDivergenceFound {
                                                     session_id: session_id_clone.clone(),
@@ -1393,7 +1393,7 @@ impl StageActor {
                                     session_id_clone,
                                     batch_id_opt.clone().unwrap_or_else(|| "none".into())
                                 );
-                                if let Ok(mut guard) = crate::crawl_engine::actors::stage_actor::DATA_SAVING_RUN_GUARD.lock() {
+                                if let Ok(mut guard) = crate::new_architecture::actors::stage_actor::DATA_SAVING_RUN_GUARD.lock() {
                                     if guard.contains(&guard_key) {
                                         info!(
                                             "[PersistGuard] duplicate DataSaving suppression key={}",
@@ -1761,7 +1761,7 @@ impl StageActor {
                             (&stage_type_clone, &lifecycle_item)
                         {
                             let metrics =
-                                crate::crawl_engine::actors::types::SimpleMetrics::Page {
+                                crate::new_architecture::actors::types::SimpleMetrics::Page {
                                     url_count: Some(
                                         r.collected_data
                                             .as_ref()
@@ -1834,7 +1834,7 @@ impl StageActor {
                             (&stage_type_clone, &lifecycle_item)
                         {
                             let metrics =
-                                crate::crawl_engine::actors::types::SimpleMetrics::Page {
+                                crate::new_architecture::actors::types::SimpleMetrics::Page {
                                     url_count: None,
                                     scheduled_details: None,
                                     error: Some(format!("{:?}", err)),
@@ -1857,7 +1857,7 @@ impl StageActor {
                             (&stage_type_clone, &lifecycle_item)
                         {
                             for pu in &urls.urls {
-                                let metrics = crate::crawl_engine::actors::types::SimpleMetrics::Product { fields: None, size_bytes: None, error: Some(format!("{:?}", err)) };
+                                let metrics = crate::new_architecture::actors::types::SimpleMetrics::Product { fields: None, size_bytes: None, error: Some(format!("{:?}", err)) };
                                 if let Err(e2) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                     session_id: session_id_clone.clone(),
                                     batch_id: batch_id_opt.clone(),
@@ -2133,7 +2133,7 @@ impl StageActor {
                                     );
 
                                     // ProductDetails 래퍼 생성
-                                    use crate::crawl_engine::channels::types::{
+                                    use crate::new_architecture::channels::types::{
                                         ExtractionStats, ProductDetails,
                                     };
                                     let product_details_wrapper = ProductDetails {
@@ -2239,7 +2239,7 @@ impl StageActor {
                 );
 
                 // DataQualityAnalyzer로 품질 검증
-                use crate::crawl_engine::services::data_quality_analyzer::DataQualityAnalyzer;
+                use crate::new_architecture::services::data_quality_analyzer::DataQualityAnalyzer;
                 let quality_analyzer = DataQualityAnalyzer::new();
 
                 match quality_analyzer
@@ -2434,7 +2434,7 @@ impl StageActor {
 
     /// 실제 제품 상세 처리
     async fn execute_real_product_detail_processing(
-        product_urls: &crate::crawl_engine::channels::types::ProductUrls,
+        product_urls: &crate::new_architecture::channels::types::ProductUrls,
         product_detail_collector: Arc<dyn ProductDetailCollector>,
     ) -> Result<Vec<crate::domain::product::ProductDetail>, String> {
         debug!(
@@ -2484,7 +2484,7 @@ impl StageActor {
                 );
 
                 // DataQualityAnalyzer 사용하여 실제 검증 수행
-                use crate::crawl_engine::services::data_quality_analyzer::DataQualityAnalyzer;
+                use crate::new_architecture::services::data_quality_analyzer::DataQualityAnalyzer;
                 let analyzer = DataQualityAnalyzer::new();
 
                 match analyzer
