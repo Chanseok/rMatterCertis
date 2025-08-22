@@ -8,6 +8,7 @@ pub mod actor_event_bridge;
 pub mod actor_system; // 호환성을 위해 활성화
 #[path = "crawl_engine/actors.rs"]
 pub mod actors;
+#[path = "crawl_engine/channels.rs"]
 pub mod channels;
 pub mod context;
 pub mod integrated_context; // AppContext와 EventEmitter 제공

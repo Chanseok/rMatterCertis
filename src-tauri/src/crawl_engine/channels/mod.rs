@@ -1,3 +1,7 @@
+#![cfg(any())]
+// ARCHIVED: Replaced by `crawl_engine::channels` gate file (channels.rs) in Rust 2024 layout.
+// The previous contents are preserved for reference but excluded from the build.
+
 // Channels module - Phase 2 legacy compatibility bridge
 // 삼중 채널 시스템 (Control/Data/Event)
 
