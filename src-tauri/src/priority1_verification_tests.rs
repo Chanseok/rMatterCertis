@@ -9,7 +9,7 @@ mod priority1_tests {
     // Removed unused Duration/Instant/CancellationToken imports after refactor
 
     use crate::infrastructure::config::AppConfig;
-    use crate::new_architecture::{
+    use crate::crawl_engine::{
         services::crawling_integration::CrawlingIntegrationService, system_config::SystemConfig,
     };
 

@@ -5,7 +5,7 @@
 //! 낮은 복잡성의 구현으로도 모든 경우를 다 커버할 수 있도록 함
 
 use crate::domain::events::CrawlingEvent;
-use crate::new_architecture::actors::types::{AppEvent, SimpleMetrics};
+use crate::crawl_engine::actors::types::{AppEvent, SimpleMetrics};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},

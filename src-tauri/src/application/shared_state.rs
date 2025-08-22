@@ -304,7 +304,7 @@ pub struct SharedStateCache {
         RwLock<
             Vec<(
                 String,
-                crate::new_architecture::actors::types::ExecutionPlan,
+                crate::crawl_engine::actors::types::ExecutionPlan,
             )>,
         >,
     >,
@@ -351,8 +351,8 @@ impl SharedStateCache {
 
     /// ExecutionPlan 캐시에 저장 (LRU 방식, 중복 제거)
     pub async fn cache_execution_plan(
-        &self,
-        plan: crate::new_architecture::actors::types::ExecutionPlan,
+    &self,
+    plan: crate::crawl_engine::actors::types::ExecutionPlan,
     ) {
         let mut guard = self.execution_plan_cache.write().await;
         if let Some(pos) = guard.iter().position(|(h, _)| *h == plan.plan_hash) {
@@ -368,7 +368,7 @@ impl SharedStateCache {
     pub async fn get_cached_execution_plan(
         &self,
         hash: &str,
-    ) -> Option<crate::new_architecture::actors::types::ExecutionPlan> {
+    ) -> Option<crate::crawl_engine::actors::types::ExecutionPlan> {
         let guard = self.execution_plan_cache.read().await;
         guard
             .iter()

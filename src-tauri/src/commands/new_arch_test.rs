@@ -1,7 +1,7 @@
 //! 새로운 아키텍처 테스트 명령어들
 //! 앱 UI를 통해 새로운 Actor 시스템을 시험할 수 있는 명령어들
 
-use crate::new_architecture::{
+use crate::crawl_engine::{
     system_config::SystemConfig,
     channels::types::ChannelFactory,
     actor_system::{SessionActor, BatchActor, StageActor},

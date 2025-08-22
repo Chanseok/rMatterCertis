@@ -8,7 +8,7 @@ use tokio::sync::{RwLock, broadcast};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::new_architecture::services::performance_optimizer::CrawlingPerformanceOptimizer;
+use crate::crawl_engine::services::performance_optimizer::CrawlingPerformanceOptimizer;
 use crate::types::dashboard_types::*;
 
 /// 실시간 대시보드 서비스
@@ -383,8 +383,8 @@ impl RealtimeDashboardService {
         let random_factor = (timestamp_seed % 1000.0) / 1000.0; // 0.0-1.0 범위
 
         // 옵티마이저에서 메트릭 가져오기, 없으면 기본값 생성
-        let metrics = optimizer.get_current_metrics().await.unwrap_or_else(|| {
-            crate::new_architecture::services::performance_optimizer::CrawlingPerformanceMetrics {
+            let metrics = optimizer.get_current_metrics().await.unwrap_or_else(|| {
+            crate::crawl_engine::services::performance_optimizer::CrawlingPerformanceMetrics {
                 session_id: "default".to_string(),
                 throughput_rps: 10.0 + (random_factor * 5.0), // 10-15 RPS
                 avg_response_time_ms: 500.0 + (random_factor * 200.0), // 500-700ms
@@ -393,7 +393,7 @@ impl RealtimeDashboardService {
                 recommended_concurrency: (5.0 + random_factor * 3.0) as u32, // 5-8 권장 동시성
                 memory_usage_kb: (256.0 + (random_factor * 128.0)) as u64 * 1024, // 256-384 MB를 KB로 변환
                 network_error_rate: 0.01 + (random_factor * 0.04), // 1-5% 에러율
-                optimization_status: crate::new_architecture::services::performance_optimizer::OptimizationStatus::Optimal,
+                optimization_status: crate::crawl_engine::services::performance_optimizer::OptimizationStatus::Optimal,
             }
         });
 
@@ -506,10 +506,10 @@ impl RealtimeDashboardService {
     /// Actor 시스템 이벤트 처리 - 실제 크롤링 활동만 차트에 반영
     pub async fn handle_actor_event(
         &self,
-        event: crate::new_architecture::actors::types::AppEvent,
+        event: crate::crawl_engine::actors::types::AppEvent,
     ) -> Result<(), String> {
         match event {
-            crate::new_architecture::actors::types::AppEvent::SessionStarted {
+            crate::crawl_engine::actors::types::AppEvent::SessionStarted {
                 session_id,
                 config,
                 timestamp,
@@ -531,7 +531,7 @@ impl RealtimeDashboardService {
                     .await
             }
 
-            crate::new_architecture::actors::types::AppEvent::Progress {
+            crate::crawl_engine::actors::types::AppEvent::Progress {
                 session_id,
                 current_step,
                 total_steps,
@@ -578,7 +578,7 @@ impl RealtimeDashboardService {
                 .await
             }
 
-            crate::new_architecture::actors::types::AppEvent::SessionCompleted {
+            crate::crawl_engine::actors::types::AppEvent::SessionCompleted {
                 session_id,
                 summary,
                 timestamp,
@@ -610,7 +610,7 @@ impl RealtimeDashboardService {
                 .await
             }
 
-            crate::new_architecture::actors::types::AppEvent::SessionFailed {
+            crate::crawl_engine::actors::types::AppEvent::SessionFailed {
                 session_id,
                 error,
                 timestamp,

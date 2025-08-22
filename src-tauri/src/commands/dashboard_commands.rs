@@ -7,8 +7,8 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
-use crate::new_architecture::config::SystemConfig;
-use crate::new_architecture::services::performance_optimizer::CrawlingPerformanceOptimizer;
+use crate::crawl_engine::config::SystemConfig;
+use crate::crawl_engine::services::performance_optimizer::CrawlingPerformanceOptimizer;
 use crate::services::dashboard_service::RealtimeDashboardService;
 use crate::types::dashboard_types::*;
 

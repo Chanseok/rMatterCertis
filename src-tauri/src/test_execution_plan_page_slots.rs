@@ -1,4 +1,4 @@
-use crate::new_architecture::actors::types::{
+use crate::crawl_engine::actors::types::{
     ExecutionPlan, ExecutionPlanKpi, PageRange, PageSlot, PlanInputSnapshot,
 };
 use chrono::Utc;
@@ -87,7 +87,7 @@ mod tests {
                 strategy: "TestStrategy".into(),
                 created_at: Utc::now(),
             }),
-            contract_version: crate::new_architecture::actors::contract::ACTOR_CONTRACT_VERSION,
+            contract_version: crate::crawl_engine::actors::contract::ACTOR_CONTRACT_VERSION,
             page_slots,
         }
     }

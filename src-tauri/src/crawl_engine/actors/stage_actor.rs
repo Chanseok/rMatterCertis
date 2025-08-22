@@ -20,14 +20,14 @@ use crate::infrastructure::crawling_service_impls::{
     CollectorConfig, ProductDetailCollectorImpl, ProductListCollectorImpl, StatusCheckerImpl,
 };
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
-use crate::new_architecture::actors::traits::{Actor, ActorHealth, ActorStatus, ActorType};
-use crate::new_architecture::actors::types::{
+use crate::crawl_engine::actors::traits::{Actor, ActorHealth, ActorStatus, ActorType};
+use crate::crawl_engine::actors::types::{
     ActorCommand, ActorError, AppEvent, SimpleMetrics, StageError, StageItemResult,
     StageItemType, StageResult, StageType,
 };
-use crate::new_architecture::channels::types::StageItem;
-use crate::new_architecture::integrated_context::AppContext;
-use crate::new_architecture::stages::traits::{Deps, StageInput, StageLogicFactory, StageOutput};
+use crate::crawl_engine::channels::types::StageItem;
+use crate::crawl_engine::integrated_context::AppContext;
+use crate::crawl_engine::stages::traits::{Deps, StageInput, StageLogicFactory, StageOutput};
 
 // Duplicate-execution guard for DataSaving stage (session+batch scoped)
 static DATA_SAVING_RUN_GUARD: Lazy<StdMutex<HashSet<String>>> = Lazy::new(|| StdMutex::new(HashSet::new()));

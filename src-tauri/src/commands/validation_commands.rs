@@ -4,7 +4,7 @@ use crate::infrastructure::{
     html_parser::MatterDataExtractor,
     simple_http_client::RequestOptions,
 }; // uses ConfigManager (no AppConfigManager)
-use crate::new_architecture::actors::types::AppEvent;
+use crate::crawl_engine::actors::types::AppEvent;
 use chrono::Utc;
 use serde_json::{Map, Value};
 use sqlx::Row;

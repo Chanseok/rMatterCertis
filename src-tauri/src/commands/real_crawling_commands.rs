@@ -10,10 +10,10 @@ use tracing::{error, info};
 use ts_rs::TS;
 
 use crate::application::AppState;
-use crate::new_architecture::actor_system::StageResult;
-use crate::new_architecture::channels::types::{StageItem, StageType};
-use crate::new_architecture::config::SystemConfig;
-use crate::new_architecture::services::crawling_integration::{
+use crate::crawl_engine::actor_system::StageResult;
+use crate::crawl_engine::channels::types::{StageItem, StageType};
+use crate::crawl_engine::config::SystemConfig;
+use crate::crawl_engine::services::crawling_integration::{
     CrawlingIntegrationService, RealCrawlingStageExecutor,
 };
 

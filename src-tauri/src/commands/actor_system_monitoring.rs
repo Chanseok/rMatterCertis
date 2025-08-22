@@ -15,9 +15,9 @@ pub async fn start_crawling_session(
 
     // 초기 세션 시작 이벤트 발송
     let initial_event =
-        crate::new_architecture::events::task_lifecycle::ConcurrencyEvent::SessionEvent {
+        crate::crawl_engine::events::task_lifecycle::ConcurrencyEvent::SessionEvent {
             session_id: session_id.clone(),
-            event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Started,
+            event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Started,
             timestamp: chrono::Utc::now(),
             metadata: std::collections::HashMap::new(),
         };
@@ -39,9 +39,9 @@ pub async fn start_crawling_session(
                 info!("✅ Crawling completed successfully");
 
                 // 세션 완료 이벤트
-                let completion_event = crate::new_architecture::events::task_lifecycle::ConcurrencyEvent::SessionEvent {
+                let completion_event = crate::crawl_engine::events::task_lifecycle::ConcurrencyEvent::SessionEvent {
                     session_id: session_id_clone.clone(),
-                    event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Completed,
+                    event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Completed,
                     timestamp: chrono::Utc::now(),
                     metadata: std::collections::HashMap::new(),
                 };
@@ -56,9 +56,9 @@ pub async fn start_crawling_session(
                 error!("❌ Crawling failed: {}", e);
 
                 // 세션 실패 이벤트
-                let failure_event = crate::new_architecture::events::task_lifecycle::ConcurrencyEvent::SessionEvent {
+                let failure_event = crate::crawl_engine::events::task_lifecycle::ConcurrencyEvent::SessionEvent {
                     session_id: session_id_clone.clone(),
-                    event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Failed,
+                    event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Failed,
                     timestamp: chrono::Utc::now(),
                     metadata: [
                         ("error".to_string(), e.to_string())

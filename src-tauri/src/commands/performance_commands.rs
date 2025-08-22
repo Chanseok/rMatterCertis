@@ -6,8 +6,8 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::RwLock;
 use tracing::info;
 
-use crate::new_architecture::config::SystemConfig;
-use crate::new_architecture::services::performance_optimizer::{
+use crate::crawl_engine::config::SystemConfig;
+use crate::crawl_engine::services::performance_optimizer::{
     CrawlingPerformanceMetrics, CrawlingPerformanceOptimizer, OptimizationRecommendation,
 };
 

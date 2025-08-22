@@ -5,9 +5,9 @@ use async_trait::async_trait;
 
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
-use crate::new_architecture::channels::types::StageItem;
-use crate::new_architecture::actors::types::StageType;
-use crate::new_architecture::actors::types::StageItemResult;
+use crate::crawl_engine::channels::types::StageItem;
+use crate::crawl_engine::actors::types::StageType;
+use crate::crawl_engine::actors::types::StageItemResult;
 
 /// Dependencies passed into strategies (DI-friendly, Arc'ed at the boundary)
 #[derive(Clone)]

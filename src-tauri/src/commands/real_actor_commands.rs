@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 // 내부 모듈 임포트
 use crate::infrastructure::{HttpClient, MatterDataExtractor};
-use crate::new_architecture::actors::ActorError;
+use crate::crawl_engine::actors::ActorError;
 // use crate::infrastructure::service_based_crawling_engine::ServiceBasedBatchCrawlingEngine; // Deprecated
 use crate::application::AppState;
 use crate::domain::product::ProductDetail;
@@ -126,10 +126,10 @@ pub async fn start_legacy_service_based_crawling(
     );
 
     let crawling_planner =
-        crate::new_architecture::services::crawling_planner::CrawlingPlanner::new(
+        crate::crawl_engine::services::crawling_planner::CrawlingPlanner::new(
             status_checker.clone(),
             db_analyzer.clone(),
-            Arc::new(crate::new_architecture::context::SystemConfig::default()),
+            Arc::new(crate::crawl_engine::context::SystemConfig::default()),
         );
 
     // 🔍 다음 크롤링 범위 계산 (실제 사이트 정보 사용)
@@ -173,7 +173,7 @@ pub async fn start_legacy_service_based_crawling(
     info!("📊 Final page range: {} to {}", start_page, end_page);
 
     // �🏗️ 계산된 범위로 배치 생성
-    let batch_configs = vec![crate::new_architecture::actors::types::BatchConfig {
+    let batch_configs = vec![crate::crawl_engine::actors::types::BatchConfig {
         batch_size: (start_page - end_page + 1).min(5), // 최대 5페이지씩
         concurrency_limit: max_concurrency,
         batch_delay_ms: 100,
@@ -235,7 +235,7 @@ pub async fn start_legacy_service_based_crawling(
 /// - 각 배치 내부에서만 HTTP 요청을 concurrent하게 처리
 async fn execute_session_with_parallel_batches(
     session_id: String,
-    batches: Vec<crate::new_architecture::actors::types::BatchConfig>,
+    batches: Vec<crate::crawl_engine::actors::types::BatchConfig>,
     max_concurrency: u32,
     timeout_ms: u64,
     _http_client: Arc<HttpClient>,
@@ -312,7 +312,7 @@ async fn execute_session_with_parallel_batches(
 #[allow(unused_variables)]
 async fn execute_batch_actor_complete_pipeline_simulation(
     batch_id: String,
-    batch_config: crate::new_architecture::actors::types::BatchConfig,
+    batch_config: crate::crawl_engine::actors::types::BatchConfig,
     concurrency: u32,
     _timeout_ms: u64,
 ) -> Result<(), ActorError> {
@@ -360,7 +360,7 @@ async fn execute_batch_actor_complete_pipeline_simulation(
 /// Stage 2: 실제 List Page Collection 구현
 async fn execute_real_stage_2_list_collection(
     batch_id: &str,
-    batch_config: &crate::new_architecture::actors::types::BatchConfig,
+    batch_config: &crate::crawl_engine::actors::types::BatchConfig,
     concurrency: u32,
 ) -> Result<Vec<String>, ActorError> {
     info!("🔍 BatchActor {} executing REAL Stage 2", batch_id);

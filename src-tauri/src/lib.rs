@@ -39,7 +39,7 @@ pub mod types {
 }
 
 // 🚀 새로운 아키텍처 모듈 (Phase 1 구현 완료) - Modern Rust 2024
-pub mod new_architecture;
+pub mod crawl_engine; // renamed from new_architecture
 // Validation (MI-2) module (under new_architecture::validation)
 // validation module available under new_architecture::validation
 

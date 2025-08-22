@@ -5,7 +5,7 @@ use crate::infrastructure::{
     html_parser::MatterDataExtractor,
     simple_http_client::RequestOptions,
 };
-use crate::new_architecture::actors::types::{AppEvent, SyncAnomalyEntry};
+use crate::crawl_engine::actors::types::{AppEvent, SyncAnomalyEntry};
 use chrono::Utc;
 use sqlx::Row;
 use tauri::{AppHandle, Emitter, State};

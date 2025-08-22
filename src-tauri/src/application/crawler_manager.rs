@@ -23,7 +23,7 @@ use crate::infrastructure::{
     MatterDataExtractor,
     IntegratedProductRepository,
 };
-use crate::new_architecture::{
+use crate::crawl_engine::{
     actor_system::{SessionActor, ActorError},
     system_config::SystemConfig,
     channels::types::{ActorCommand, AppEvent, BatchConfig},
@@ -636,20 +636,20 @@ impl BatchProcessor for ActorBatchProcessor {
         info!("✅ [ACTOR] Session context created: {}", session_id);
         
         // 2. Actor 시스템 설정에 따른 배치 설정 변환
-        let batch_config = BatchConfig {
+    let batch_config = BatchConfig {
             target_url: "https://csa-iot.org/csa-iot_products/".to_string(),
             max_pages: Some(config.end_page),
         };
         
         // 3. CrawlingPlanner 생성 (지능형 배치 분할을 위해)
-        let config_for_planner = crate::new_architecture::config::SystemConfig::default();
+        let config_for_planner = crate::crawl_engine::config::SystemConfig::default();
         let crawling_planner = Arc::new(
-            crate::new_architecture::services::crawling_planner::CrawlingPlanner::new(
+            crate::crawl_engine::services::crawling_planner::CrawlingPlanner::new(
                 Arc::new(config_for_planner)
             )
         );
         
-        info!("🧠 [ACTOR] CrawlingPlanner created for intelligent batch planning");
+    info!("🧠 [ACTOR] CrawlingPlanner created for intelligent batch planning");
         
         // 4. SessionActor 생성 및 CrawlingPlanner 주입
         let session_actor = SessionActor::new(

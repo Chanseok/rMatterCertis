@@ -1,8 +1,8 @@
 // Default strategy implementations for each Stage
 
 use std::sync::Arc;
-use crate::new_architecture::stages::traits::{StageLogic, StageLogicError, StageInput, StageOutput};
-use crate::new_architecture::actors::types::{StageItemType, StageType as ActorStageType};
+use crate::crawl_engine::stages::traits::{StageLogic, StageLogicError, StageInput, StageOutput};
+use crate::crawl_engine::actors::types::{StageItemType, StageType as ActorStageType};
 // Bring trait methods into scope for collector impls
 use crate::domain::services::crawling_services::{ProductListCollector, ProductDetailCollector};
 use crate::domain::services::StatusChecker;
@@ -23,7 +23,7 @@ impl StageLogic for ListPageLogic {
             return Err(StageLogicError::Unsupported(st));
         }
         let page_number = match &input.item {
-            crate::new_architecture::channels::types::StageItem::Page(p) => *p,
+            crate::crawl_engine::channels::types::StageItem::Page(p) => *p,
             other => return Err(StageLogicError::Internal(format!("ListPageLogic received unexpected item: {:?}", other))),
         };
 
@@ -65,7 +65,7 @@ impl StageLogic for ListPageLogic {
         }
         let json = serde_json::to_string(&urls).map_err(|e| StageLogicError::Internal(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
-        let result = crate::new_architecture::actors::types::StageItemResult {
+    let result = crate::crawl_engine::actors::types::StageItemResult {
             item_id: format!("page_{}", page_number),
             item_type: StageItemType::Page { page_number },
             success: true,
@@ -99,8 +99,8 @@ impl StageLogic for StatusCheckLogic {
             .await
             .map_err(|e| StageLogicError::Internal(format!("Status check failed: {}", e)))?;
         let json = serde_json::to_string(&status).map_err(|e| StageLogicError::Internal(e.to_string()))?;
-        let result = crate::new_architecture::actors::types::StageItemResult {
-            item_id: match &input.item { crate::new_architecture::channels::types::StageItem::Page(n) => format!("page_{}", n), crate::new_architecture::channels::types::StageItem::Url(u) => u.clone(), _ => "unknown".into() },
+    let result = crate::crawl_engine::actors::types::StageItemResult {
+            item_id: match &input.item { crate::crawl_engine::channels::types::StageItem::Page(n) => format!("page_{}", n), crate::crawl_engine::channels::types::StageItem::Url(u) => u.clone(), _ => "unknown".into() },
             item_type: StageItemType::Url { url_type: "site_check".into() },
             success: true,
             error: None,
@@ -120,9 +120,9 @@ impl StageLogic for ProductDetailLogic {
         if !matches!(st, ActorStageType::ProductDetailCrawling) {
             return Err(StageLogicError::Unsupported(st));
         }
-        use crate::new_architecture::channels::types::{ProductDetails, ExtractionStats};
+    use crate::crawl_engine::channels::types::{ProductDetails, ExtractionStats};
         let urls = match &input.item {
-            crate::new_architecture::channels::types::StageItem::ProductUrls(u) => u.clone(),
+            crate::crawl_engine::channels::types::StageItem::ProductUrls(u) => u.clone(),
             other => return Err(StageLogicError::Internal(format!("ProductDetailLogic expected ProductUrls, got {:?}", other))),
         };
         let collector = crate::infrastructure::crawling_service_impls::ProductDetailCollectorImpl::new(
@@ -153,7 +153,7 @@ impl StageLogic for ProductDetailLogic {
             },
         };
         let json = serde_json::to_string(&wrapper).map_err(|e| StageLogicError::Internal(e.to_string()))?;
-        let result = crate::new_architecture::actors::types::StageItemResult {
+    let result = crate::crawl_engine::actors::types::StageItemResult {
             item_id: format!("product_urls_{}", wrapper.source_urls.len()),
             item_type: StageItemType::ProductUrls { urls: wrapper.source_urls.iter().map(|u| u.url.clone()).collect() },
             success: true,
@@ -174,9 +174,9 @@ impl StageLogic for DataValidationLogic {
         if !matches!(st, ActorStageType::DataValidation) {
             return Err(StageLogicError::Unsupported(st));
         }
-        use crate::new_architecture::services::data_quality_analyzer::DataQualityAnalyzer;
+    use crate::crawl_engine::services::data_quality_analyzer::DataQualityAnalyzer;
         let details_vec: Vec<crate::domain::product::ProductDetail> = match &input.item {
-            crate::new_architecture::channels::types::StageItem::ProductDetails(pd) => pd.products.clone(),
+            crate::crawl_engine::channels::types::StageItem::ProductDetails(pd) => pd.products.clone(),
             other => return Err(StageLogicError::Internal(format!("DataValidation expected ProductDetails, got {:?}", other))),
         };
         let analyzer = DataQualityAnalyzer::new();
@@ -184,7 +184,7 @@ impl StageLogic for DataValidationLogic {
             .validate_before_storage(&details_vec)
             .map_err(|e| StageLogicError::Internal(format!("Validation failed: {}", e)))?;
         let json = serde_json::to_string(&validated).map_err(|e| StageLogicError::Internal(e.to_string()))?;
-        let result = crate::new_architecture::actors::types::StageItemResult {
+    let result = crate::crawl_engine::actors::types::StageItemResult {
             item_id: format!("validated_products_{}", validated.len()),
             item_type: StageItemType::Url { url_type: "validated_products".into() },
             success: true,
@@ -206,17 +206,17 @@ impl StageLogic for DataSavingLogic {
             return Err(StageLogicError::Unsupported(st));
         }
         let (attempted, item_id, item_type) = match &input.item {
-            crate::new_architecture::channels::types::StageItem::ProductDetails(pd) => {
+            crate::crawl_engine::channels::types::StageItem::ProductDetails(pd) => {
                 let count = pd.products.len();
                 (count as u32, format!("persist_product_details_{}", count), StageItemType::Url { url_type: "data_saving:product_details".into() })
             }
-            crate::new_architecture::channels::types::StageItem::ValidatedProducts(vp) => {
+            crate::crawl_engine::channels::types::StageItem::ValidatedProducts(vp) => {
                 let count = vp.products.len();
                 (count as u32, format!("persist_validated_{}", count), StageItemType::Url { url_type: "data_saving:validated_products".into() })
             }
             other => return Err(StageLogicError::Internal(format!("DataSaving expected ProductDetails|ValidatedProducts, got {:?}", other))),
         };
-        let result = crate::new_architecture::actors::types::StageItemResult {
+    let result = crate::crawl_engine::actors::types::StageItemResult {
             item_id,
             item_type,
             success: true,

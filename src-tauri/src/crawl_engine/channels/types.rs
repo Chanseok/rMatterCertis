@@ -5,7 +5,7 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crate::new_architecture::SystemConfig;
+use crate::crawl_engine::SystemConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
@@ -143,10 +143,10 @@ pub struct BatchConfig {
 }
 
 // AppEvent는 actors/types.rs에서 import해서 사용
-pub use crate::new_architecture::actors::types::AppEvent;
+pub use crate::crawl_engine::actors::types::AppEvent;
 
 // 타입들을 frontend_api에서 import
-pub use crate::new_architecture::actors::types::{
+pub use crate::crawl_engine::actors::types::{
     CollectionMetrics, ProcessingMetrics, StageSuccessResult,
 };
 pub use crate::types::frontend_api::ProductInfo;
@@ -191,7 +191,7 @@ impl ChannelFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::new_architecture::system_config::SystemConfig;
+    use crate::crawl_engine::system_config::SystemConfig;
 
     #[test]
     fn test_channel_factory_creation() {

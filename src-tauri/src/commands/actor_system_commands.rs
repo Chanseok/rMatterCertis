@@ -11,22 +11,22 @@ use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::html_parser::MatterDataExtractor;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::infrastructure::simple_http_client::HttpClient;
-use crate::new_architecture::actor_event_bridge::start_actor_event_bridge;
-use crate::new_architecture::actors::SessionActor;
-use crate::new_architecture::actors::contract::ACTOR_CONTRACT_VERSION;
-use crate::new_architecture::actors::details::product_details_actor::{
+use crate::crawl_engine::actor_event_bridge::start_actor_event_bridge;
+use crate::crawl_engine::actors::SessionActor;
+use crate::crawl_engine::actors::contract::ACTOR_CONTRACT_VERSION;
+use crate::crawl_engine::actors::details::product_details_actor::{
     ProductDetailsActor, ProductDetailsActorConfig,
 };
-use crate::new_architecture::actors::types::{
+use crate::crawl_engine::actors::types::{
     BatchConfig, CrawlPhase, CrawlingConfig, ExecutionPlan, PageRange, SessionSummary,
 };
-use crate::new_architecture::channels::types::ActorCommand; // 올바른 ActorCommand 사용
-use crate::new_architecture::channels::types::AppEvent;
-use crate::new_architecture::context::{AppContext, SystemConfig};
+use crate::crawl_engine::channels::types::ActorCommand; // 올바른 ActorCommand 사용
+use crate::crawl_engine::channels::types::AppEvent;
+use crate::crawl_engine::context::{AppContext, SystemConfig};
 use tauri::State; // For accessing managed state
 // 실제 CrawlingPlanner에서 사용
 use crate::infrastructure::config::ConfigManager; // 설정 관리자 추가
-use crate::new_architecture::runtime::session_registry::{
+use crate::crawl_engine::runtime::session_registry::{
     SessionEntry, SessionStatus, failure_threshold, removal_grace_secs, session_registry,
     update_global_failure_policy_from_config,
 };
@@ -46,7 +46,7 @@ static PHASE_SHUTDOWN_TX: OnceCell<watch::Sender<bool>> = OnceCell::new();
 
 // ========== Hash Integrity Helper ==========
 fn compute_plan_hash(
-    snapshot: &crate::new_architecture::actors::types::PlanInputSnapshot,
+    snapshot: &crate::crawl_engine::actors::types::PlanInputSnapshot,
     ranges: &[PageRange],
     strategy: &str,
 ) -> String {
@@ -820,7 +820,7 @@ pub async fn resume_from_token(
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     // 2. 간단한 ExecutionPlan 재구성 (Phase3에서 CrawlingPlanner 부분 재사용으로 대체 예정)
-    use crate::new_architecture::actors::types::{ExecutionPlan, PageRange, PageSlot};
+    use crate::crawl_engine::actors::types::{ExecutionPlan, PageRange, PageSlot};
     let new_session_id = format!("resume_{}", uuid::Uuid::new_v4().to_string());
     // 단순화: remaining_pages 를 연속 구간으로 그룹핑 (현재는 페이지 정렬 후 하나의 range 로 묶음)
     let mut pages_sorted = remaining_pages.clone();
@@ -986,7 +986,7 @@ pub async fn resume_from_token(
         created_at: Utc::now(),
         analysis_summary: "resume_from_token_minimal".into(),
         original_strategy: "ResumeMinimal".into(),
-        input_snapshot: crate::new_architecture::actors::types::PlanInputSnapshot {
+    input_snapshot: crate::crawl_engine::actors::types::PlanInputSnapshot {
             total_pages: last - first + 1,
             products_on_last_page: 12,
             db_max_page_id: None,
@@ -1230,11 +1230,11 @@ async fn calculate_intelligent_crawling_range(
     );
 
     // SystemConfig로 변환 (CrawlingPlanner용)
-    let system_config = Arc::new(crate::new_architecture::context::SystemConfig::default());
+    let system_config = Arc::new(crate::crawl_engine::context::SystemConfig::default());
 
     // 🚀 실제 CrawlingPlanner 사용!
     let crawling_planner =
-        crate::new_architecture::services::crawling_planner::CrawlingPlanner::new(
+        crate::crawl_engine::services::crawling_planner::CrawlingPlanner::new(
             status_checker.clone(),
             db_analyzer.clone(),
             system_config.clone(),
@@ -1397,8 +1397,8 @@ async fn execute_real_batch_actor(
     app_config: &AppConfig,
     site_status: &SiteStatus,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use crate::new_architecture::actors::traits::Actor;
-    use crate::new_architecture::actors::{ActorCommand, BatchActor};
+    use crate::crawl_engine::actors::traits::Actor;
+    use crate::crawl_engine::actors::{ActorCommand, BatchActor};
     use tokio::sync::mpsc;
 
     info!(
@@ -1600,7 +1600,7 @@ async fn create_execution_plan(
 
     // 4. CrawlingPlanner 생성 및 분석
     let crawling_planner =
-        crate::new_architecture::services::crawling_planner::CrawlingPlanner::new(
+        crate::crawl_engine::services::crawling_planner::CrawlingPlanner::new(
             status_checker,
             database_analyzer,
             Arc::new(SystemConfig::default()),
@@ -1660,9 +1660,9 @@ async fn create_execution_plan(
     };
 
     // 기본 전략은 NewestFirst. DB에 데이터가 있으면 ContinueFromDb 시도
-    let mut chosen_strategy = crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst;
+    let mut chosen_strategy = crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst;
     if existing_product_count > 0 {
-        chosen_strategy = crate::new_architecture::actors::types::CrawlingStrategy::ContinueFromDb;
+        chosen_strategy = crate::crawl_engine::actors::types::CrawlingStrategy::ContinueFromDb;
         info!(
             "🧭 Choosing ContinueFromDb strategy (existing products={})",
             existing_product_count
@@ -1803,7 +1803,7 @@ async fn create_execution_plan(
         .filter(|p| {
             matches!(
                 p.phase_type,
-                crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling
+                crate::crawl_engine::services::crawling_planner::PhaseType::ListPageCrawling
             )
         })
         .count();
@@ -1813,7 +1813,7 @@ async fn create_execution_plan(
         .filter(|p| {
             matches!(
                 p.phase_type,
-                crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling
+                crate::crawl_engine::services::crawling_planner::PhaseType::ListPageCrawling
             )
         })
         .map(|p| p.pages.len() as u32)
@@ -1827,7 +1827,7 @@ async fn create_execution_plan(
         .filter(|p| {
             matches!(
                 p.phase_type,
-                crate::new_architecture::services::crawling_planner::PhaseType::ListPageCrawling
+                crate::crawl_engine::services::crawling_planner::PhaseType::ListPageCrawling
             )
         })
         .filter(|p| !p.pages.is_empty())
@@ -1924,7 +1924,7 @@ async fn create_execution_plan(
     );
 
     // 입력 스냅샷 구성 (사이트/DB 상태 + 핵심 제한값)
-    let snapshot = crate::new_architecture::actors::types::PlanInputSnapshot {
+    let snapshot = crate::crawl_engine::actors::types::PlanInputSnapshot {
         total_pages: site_status.total_pages,
         products_on_last_page: site_status.products_on_last_page,
         db_max_page_id,
@@ -1975,7 +1975,7 @@ async fn create_execution_plan(
     // Precompute page_slots using canonical PaginationCalculator to avoid drift.
     use crate::domain::pagination::PaginationCalculator;
     let calc = PaginationCalculator::default();
-    let mut page_slots: Vec<crate::new_architecture::actors::types::PageSlot> = Vec::new();
+    let mut page_slots: Vec<crate::crawl_engine::actors::types::PageSlot> = Vec::new();
     for range in &crawling_ranges {
         let pages_iter: Box<dyn Iterator<Item = u32>> = if range.reverse_order {
             Box::new(range.end_page..=range.start_page)
@@ -1991,7 +1991,7 @@ async fn create_execution_plan(
             for idx in 0..assumed_capacity {
                 // idx = from top (newest) within physical page
                 let pos = calc.calculate(physical_page, idx, site_status.total_pages);
-                page_slots.push(crate::new_architecture::actors::types::PageSlot {
+                page_slots.push(crate::crawl_engine::actors::types::PageSlot {
                     physical_page,
                     page_id: pos.page_id as i64,
                     index_in_page: pos.index_in_page as i16,
@@ -2049,7 +2049,7 @@ async fn create_execution_plan(
         input_snapshot: snapshot,
         plan_hash,
         skip_duplicate_urls: true,
-        kpi_meta: Some(crate::new_architecture::actors::types::ExecutionPlanKpi {
+    kpi_meta: Some(crate::crawl_engine::actors::types::ExecutionPlanKpi {
             total_ranges: ranges_len,
             total_pages,
             batches: ranges_len,
@@ -2090,7 +2090,7 @@ fn adjust_execution_plan_with_page_overrides(
     plan: &mut ExecutionPlan,
     req: &ActorCrawlingRequest,
 ) -> Result<(), String> {
-    use crate::new_architecture::actors::types::PageSlot;
+    use crate::crawl_engine::actors::types::PageSlot;
     // Normalize sentinel values (0 => None) to avoid generating meaningless overrides
     let mut norm_start = req.start_page;
     let mut norm_end = req.end_page;
@@ -2312,7 +2312,7 @@ async fn execute_session_actor_with_execution_plan(
                         total_products_processed: 0,
                         success_rate: 0.0,
                         avg_page_processing_time: 0,
-                        error_summary: vec![crate::new_architecture::actors::types::ErrorSummary {
+                        error_summary: vec![crate::crawl_engine::actors::types::ErrorSummary {
                             error_type: "Aborted".into(),
                             count: 1,
                             first_occurrence: now,
@@ -2423,20 +2423,20 @@ async fn execute_session_actor_with_execution_plan(
             .map(|r| r.start_page)
             .unwrap_or(1);
         if first_start < site_status.total_pages {
-            crate::new_architecture::actors::types::CrawlingStrategy::ContinueFromDb
+            crate::crawl_engine::actors::types::CrawlingStrategy::ContinueFromDb
         } else {
-            crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst
+            crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst
         }
     } else {
         let first_range = execution_plan.crawling_ranges.first();
         if let Some(r) = first_range {
             if r.start_page < site_status.total_pages {
-                crate::new_architecture::actors::types::CrawlingStrategy::ContinueFromDb
+                crate::crawl_engine::actors::types::CrawlingStrategy::ContinueFromDb
             } else {
-                crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst
+                crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst
             }
         } else {
-            crate::new_architecture::actors::types::CrawlingStrategy::NewestFirst
+            crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst
         }
     };
 
@@ -2934,7 +2934,7 @@ async fn execute_session_actor_with_execution_plan(
                         if failed_pages_vec.is_empty() {
                             vec![]
                         } else {
-                            vec![crate::new_architecture::actors::types::ErrorSummary {
+                            vec![crate::crawl_engine::actors::types::ErrorSummary {
                                 error_type: "PageFailed".into(),
                                 count: failed_pages_vec.len() as u32,
                                 first_occurrence: session_started_at,
@@ -2946,7 +2946,7 @@ async fn execute_session_actor_with_execution_plan(
                             .error_type_stats
                             .iter()
                             .map(|(k, (c, f, l))| {
-                                crate::new_architecture::actors::types::ErrorSummary {
+                                crate::crawl_engine::actors::types::ErrorSummary {
                                     error_type: k.clone(),
                                     count: *c,
                                     first_occurrence: *f,
@@ -3091,7 +3091,7 @@ pub async fn check_page_index_consistency() -> Result<String, String> {
         html_parser::MatterDataExtractor,
         integrated_product_repository::IntegratedProductRepository, simple_http_client::HttpClient,
     };
-    use crate::new_architecture::services::data_consistency_checker::DataConsistencyChecker;
+    use crate::crawl_engine::services::data_consistency_checker::DataConsistencyChecker;
     use std::sync::Arc;
     let http = HttpClient::create_from_global_config().map_err(|e| e.to_string())?;
     let extractor = MatterDataExtractor::new().map_err(|e| e.to_string())?;
@@ -3115,7 +3115,7 @@ pub async fn check_page_index_consistency() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::new_architecture::runtime::session_registry::{
+    use crate::crawl_engine::runtime::session_registry::{
         SessionEntry, SessionStatus, session_registry,
     };
     use chrono::Utc;

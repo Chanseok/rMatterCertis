@@ -36,7 +36,7 @@ use crate::infrastructure::{
 };
 
 // 새로운 이벤트 시스템 import
-use crate::new_architecture::events::task_lifecycle::{
+use crate::crawl_engine::events::task_lifecycle::{
     ConcurrencyEvent, ErrorCategory, ResourceAllocation, ResourceUsage, RetryStrategy,
     TaskExecutionContext, TaskLifecycleEvent,
 };
@@ -2302,7 +2302,7 @@ impl ServiceBasedBatchCrawlingEngine {
                 DetailedCrawlingEvent::SessionStarted { session_id, .. } => {
                     Some(ConcurrencyEvent::SessionEvent {
                         session_id: session_id.clone(),
-                        event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Started,
+                        event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Started,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
@@ -2314,7 +2314,7 @@ impl ServiceBasedBatchCrawlingEngine {
                 DetailedCrawlingEvent::SessionCompleted { session_id, duration, total_products, success_rate } => {
                     Some(ConcurrencyEvent::SessionEvent {
                         session_id: session_id.clone(),
-                        event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Completed,
+                        event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Completed,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
@@ -2330,7 +2330,7 @@ impl ServiceBasedBatchCrawlingEngine {
                     Some(ConcurrencyEvent::BatchEvent {
                         session_id: self.session_id.clone(),
                         batch_id: format!("batch_{}", batch_id),
-                        event_type: crate::new_architecture::events::task_lifecycle::BatchEventType::Created,
+                        event_type: crate::crawl_engine::events::task_lifecycle::BatchEventType::Created,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
@@ -2346,7 +2346,7 @@ impl ServiceBasedBatchCrawlingEngine {
                     Some(ConcurrencyEvent::BatchEvent {
                         session_id: self.session_id.clone(),
                         batch_id: format!("batch_{}", batch_id),
-                        event_type: crate::new_architecture::events::task_lifecycle::BatchEventType::Started,
+                        event_type: crate::crawl_engine::events::task_lifecycle::BatchEventType::Started,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
@@ -2360,7 +2360,7 @@ impl ServiceBasedBatchCrawlingEngine {
                     Some(ConcurrencyEvent::BatchEvent {
                         session_id: self.session_id.clone(),
                         batch_id: format!("batch_{}", batch),
-                        event_type: crate::new_architecture::events::task_lifecycle::BatchEventType::Completed,
+                        event_type: crate::crawl_engine::events::task_lifecycle::BatchEventType::Completed,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
@@ -2374,7 +2374,7 @@ impl ServiceBasedBatchCrawlingEngine {
                 DetailedCrawlingEvent::StageStarted { stage, message } => {
                     Some(ConcurrencyEvent::SessionEvent {
                         session_id: self.session_id.clone(),
-                        event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Started,
+                        event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Started,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
@@ -2387,7 +2387,7 @@ impl ServiceBasedBatchCrawlingEngine {
                 DetailedCrawlingEvent::StageCompleted { stage, items_processed } => {
                     Some(ConcurrencyEvent::SessionEvent {
                         session_id: self.session_id.clone(),
-                        event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Completed,
+                        event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Completed,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
@@ -2402,7 +2402,7 @@ impl ServiceBasedBatchCrawlingEngine {
                     Some(ConcurrencyEvent::BatchEvent {
                         session_id: self.session_id.clone(),
                         batch_id: format!("batch_{}", batch_id),
-                        event_type: crate::new_architecture::events::task_lifecycle::BatchEventType::Started,
+                        event_type: crate::crawl_engine::events::task_lifecycle::BatchEventType::Started,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
@@ -2416,7 +2416,7 @@ impl ServiceBasedBatchCrawlingEngine {
                     Some(ConcurrencyEvent::BatchEvent {
                         session_id: self.session_id.clone(),
                         batch_id: "page_batch".to_string(),
-                        event_type: crate::new_architecture::events::task_lifecycle::BatchEventType::Completed,
+                        event_type: crate::crawl_engine::events::task_lifecycle::BatchEventType::Completed,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
@@ -2431,7 +2431,7 @@ impl ServiceBasedBatchCrawlingEngine {
                     Some(ConcurrencyEvent::BatchEvent {
                         session_id: self.session_id.clone(),
                         batch_id: format!("batch_{}", batch_id),
-                        event_type: crate::new_architecture::events::task_lifecycle::BatchEventType::Started,
+                        event_type: crate::crawl_engine::events::task_lifecycle::BatchEventType::Started,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
@@ -2447,9 +2447,9 @@ impl ServiceBasedBatchCrawlingEngine {
                         session_id: self.session_id.clone(),
                         batch_id: "product_batch".to_string(),
                         event_type: if *success {
-                            crate::new_architecture::events::task_lifecycle::BatchEventType::Completed
+                            crate::crawl_engine::events::task_lifecycle::BatchEventType::Completed
                         } else {
-                            crate::new_architecture::events::task_lifecycle::BatchEventType::Failed
+                            crate::crawl_engine::events::task_lifecycle::BatchEventType::Failed
                         },
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
@@ -2465,7 +2465,7 @@ impl ServiceBasedBatchCrawlingEngine {
                 DetailedCrawlingEvent::ErrorOccurred { stage, error, recoverable } => {
                     Some(ConcurrencyEvent::SessionEvent {
                         session_id: self.session_id.clone(),
-                        event_type: crate::new_architecture::events::task_lifecycle::SessionEventType::Failed,
+                        event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Failed,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
