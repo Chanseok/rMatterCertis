@@ -1,16 +1,20 @@
+#![cfg(any())]
+//! ARCHIVED: legacy repositories adapters (see `_archive/infrastructure/repositories_adapter.rs`)
+// Not part of the active build.
+
 //! Repository adapters for integrated schema compatibility
 //! 
 //! Provides adapters to make the integrated schema work with existing interfaces
 
-use async_trait::async_trait;
-use sqlx::SqlitePool;
-use anyhow::{Result, anyhow};
-use std::sync::Arc;
-use std::collections::HashSet;
+// use async_trait::async_trait;
+// use sqlx::SqlitePool;
+// use anyhow::{Result, anyhow};
+// use std::sync::Arc;
+// use std::collections::HashSet;
 
-use crate::domain::entities::{Vendor, Product, MatterProduct, DatabaseSummary};
-use crate::domain::repositories::{VendorRepository, ProductRepository};
-use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
+// use crate::domain::entities::{Vendor, Product, MatterProduct, DatabaseSummary};
+// use crate::domain::repositories::{VendorRepository, ProductRepository};
+// use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 
 // ============================================================================
 // Vendor Repository Adapter (Placeholder implementation)

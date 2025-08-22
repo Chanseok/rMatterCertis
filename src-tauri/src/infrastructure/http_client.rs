@@ -1,18 +1,31 @@
+#![cfg(any())]
+//! ARCHIVED: legacy infrastructure/http_client.rs
+//!
+// This module is no longer part of the active build. The project uses
+// `infrastructure::simple_http_client::HttpClient` and re-exports it from
+// `infrastructure.rs` as `crate::infrastructure::HttpClient`.
+//!
+// Historical source (for reference) has been copied to:
+// `src-tauri/src/_archive/infrastructure/http_client.rs`
+//!
+// If you think you need this, prefer migrating callers to the unified client.
+// To avoid accidental re-introduction, this file is excluded via cfg(any()).
+//!
 //! HTTP client for web crawling with rate limiting and error handling
 //! 
 //! Provides a robust HTTP client specifically designed for web scraping
 //! with respect for server resources and proper error handling.
 
-use std::time::Duration;
-use reqwest::{Client, Response, header::{HeaderMap, HeaderValue, USER_AGENT, ACCEPT, ACCEPT_LANGUAGE}};
-use anyhow::{Result, Context};
-use governor::{Quota, RateLimiter, state::{direct::NotKeyed, InMemoryState}, clock::DefaultClock};
-use std::num::NonZeroU32;
-use tokio_util::sync::CancellationToken;
-use crate::infrastructure::features::feature_http_client_unified;
+// use std::time::Duration;
+// use reqwest::{Client, Response, header::{HeaderMap, HeaderValue, USER_AGENT, ACCEPT, ACCEPT_LANGUAGE}};
+// use anyhow::{Result, Context};
+// use governor::{Quota, RateLimiter, state::{direct::NotKeyed, InMemoryState}, clock::DefaultClock};
+// use std::num::NonZeroU32;
+// use tokio_util::sync::CancellationToken;
+// use crate::infrastructure::features::feature_http_client_unified;
 
-// Avoid name clash with this module's HttpClient by aliasing the unified client types
-use super::simple_http_client as unified;
+// // Avoid name clash with this module's HttpClient by aliasing the unified client types
+// use super::simple_http_client as unified;
 
 /// HTTP client configuration for crawling
 #[derive(Debug, Clone, serde::Serialize)]
