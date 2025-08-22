@@ -1,0 +1,9 @@
+// archived: moved from src-tauri/src/crawl_engine/actors/stage_actor.rs.corrupted to reduce rust-analyzer confusion
+// Original content retained below for reference.
+
+//! StageActor: 개별 스테이지 작업 처리 Actor
+//! 
+//! Phase 3: Actor 구현 - 스테이지 레벨 작업 실행 및 관리
+//! Modern Rust 2024 준수: 함수형 원칙, 명시적 의존성, 상태 최소화
+
+// The original file was heavily corrupted; kept as-is for archival.

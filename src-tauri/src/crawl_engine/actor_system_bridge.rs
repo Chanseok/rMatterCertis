@@ -1,3 +1,6 @@
+#![cfg(any())]
+// ARCHIVED: Legacy compatibility bridge. Not part of the active module tree.
+
 // 🔄 Phase 2 호환성: actor_system 브릿지 
 // 기존 코드가 찾는 SessionActor, StageActor, ActorError 등을 임시 제공
 

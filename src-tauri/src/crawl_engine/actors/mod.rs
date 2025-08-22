@@ -1,3 +1,8 @@
+#![cfg(any())]
+
+// ARCHIVED: Replaced by `crawl_engine::actors::actors` gate file in Rust 2024 layout.
+// The contents are preserved for reference but excluded from the build.
+
 pub mod batch_actor;
 pub mod contract;
 pub mod details; // product details phase actors

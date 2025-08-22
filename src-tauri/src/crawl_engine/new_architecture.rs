@@ -1,3 +1,6 @@
+#![cfg(any())]
+// ARCHIVED: Legacy aggregator. The active entry is `src-tauri/src/crawl_engine.rs` (gate file).
+
 //! 새로운 Actor 아키텍처 
 //! Modern Rust 2024 계된 Actor 시스템입니다.
 //! mod.rs 대신 같은 이름의 파일을 사용하여 모듈을 정의합니다.

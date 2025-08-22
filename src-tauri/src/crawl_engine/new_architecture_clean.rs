@@ -1,3 +1,6 @@
+#![cfg(any())]
+// ARCHIVED: Experimental/clean variant. Not part of the active module tree
+
 //! 새로운 Actor 아키텍처 모듈
 //! 
 //! Modern Rust 2024 원칙을 따라 설계된 Actor 시스템입니다.

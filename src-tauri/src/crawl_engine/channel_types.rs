@@ -3,6 +3,9 @@
 
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![cfg(any())]
+// ARCHIVED: superseded by `crawl_engine::channels::types`. Do not use. Left for reference only.
+// If diagnostics point here, update imports to `crate::crawl_engine::channels::types`.
 
 use tokio::sync::{mpsc, oneshot, broadcast};
 use std::sync::Arc;

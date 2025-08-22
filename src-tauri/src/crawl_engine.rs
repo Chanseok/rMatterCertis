@@ -6,6 +6,7 @@
 #[path = "crawl_engine/actor_event_bridge.rs"]
 pub mod actor_event_bridge;
 pub mod actor_system; // 호환성을 위해 활성화
+#[path = "crawl_engine/actors.rs"]
 pub mod actors;
 pub mod channels;
 pub mod context;

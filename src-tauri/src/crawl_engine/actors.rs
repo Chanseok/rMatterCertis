@@ -1,15 +1,19 @@
-#![cfg(any())]
-// ARCHIVED: superseded by `src-tauri/src/crawl_engine/actors.rs` gate file.
-
 // Rust 2024 gate file for `crawl_engine::actors`
-// This replaces the need for a directory-level mod.rs.
+// Replaces the need for a directory-level mod.rs and pins paths explicitly.
 
+#[path = "actors/batch_actor.rs"]
 pub mod batch_actor;
+#[path = "actors/contract.rs"]
 pub mod contract;
+#[path = "actors/details/mod.rs"]
 pub mod details; // product details phase actors
+#[path = "actors/session_actor.rs"]
 pub mod session_actor;
+#[path = "actors/stage_actor.rs"]
 pub mod stage_actor;
+#[path = "actors/traits.rs"]
 pub mod traits;
+#[path = "actors/types.rs"]
 pub mod types;
 
 // Re-exports matching prior public surface

@@ -1,6 +1,6 @@
 //! Tests for status JSON downshift metadata exposure
 use chrono::Utc;
-use matter_certis_v2_lib::new_architecture::runtime::session_registry::{
+use matter_certis_v2_lib::crawl_engine::runtime::session_registry::{
     SessionEntry, SessionStatus, session_registry,
 };
 
