@@ -6,7 +6,7 @@ const EVENT_NAMES = [
   'actor-session-started','actor-session-completed','actor-session-failed','actor-session-report',
   'actor-batch-started','actor-batch-completed','actor-batch-failed','actor-batch-report',
   'actor-page-task-started','actor-page-task-completed','actor-page-task-failed',
-  'actor-detail-task-started','actor-detail-task-completed','actor-detail-task-failed','actor-detail-concurrency-downshifted',
+  'actor-product-lifecycle','actor-product-lifecycle-group','actor-detail-concurrency-downshifted',
   'actor-progress','actor-phase-started','actor-phase-completed','actor-phase-aborted',
   'crawling-progress'
 ];

@@ -1642,25 +1642,10 @@ impl BatchActor {
                     Arc::new(crate::crawl_engine::stages::DefaultStageLogicFactory),
                 )
             } else {
-                warn!(
-                    "⚠️  Creating StageActor without services - falling back to basic initialization"
-                );
-                let mut stage_actor = StageActor::new(format!(
-                    "stage_{}_{}",
-                    stage_type.as_str().to_lowercase(),
-                    self.actor_id
+                // No DI deps available on self → cannot safely construct services here
+                return Err(BatchError::ServiceNotAvailable(
+                    "Missing DI services (http_client/data_extractor/product_repo/app_config)".into(),
                 ));
-
-                // 기존 방식으로 서비스 초기화 시도
-                stage_actor
-                    .initialize_real_services(context)
-                    .await
-                    .map_err(|e| BatchError::StageProcessingFailed {
-                        stage: stage_type.as_str().to_string(),
-                        error: format!("Failed to initialize real services: {:?}", e),
-                    })?;
-
-                stage_actor
             };
 
             // Stage 실행 (실제 current_items 전달)

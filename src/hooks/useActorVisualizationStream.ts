@@ -140,8 +140,8 @@ export function useActorVisualizationStream(limit: number = 500) {
     'actor-batch-started','actor-batch-completed','actor-batch-failed',
     'actor-stage-started','actor-stage-completed','actor-stage-failed',
     'actor-page-task-started','actor-page-task-completed','actor-page-task-failed',
-    'actor-detail-task-started','actor-detail-task-completed','actor-detail-task-failed',
-    'actor-progress','actor-performance-metrics','actor-detail-concurrency-downshifted',
+  'actor-product-lifecycle','actor-product-lifecycle-group',
+  'actor-progress','actor-performance-metrics','actor-detail-concurrency-downshifted',
     // newly added report / shutdown events
     'actor-batch-report','actor-session-report','actor-shutdown-requested','actor-shutdown-completed'
   ];

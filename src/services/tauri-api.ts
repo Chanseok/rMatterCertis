@@ -667,9 +667,7 @@ export class TauriApiService {
       'actor-page-task-started',
       'actor-page-task-completed',
       'actor-page-task-failed',
-      'actor-detail-task-started',
-      'actor-detail-task-completed',
-      'actor-detail-task-failed',
+  // detail-task-* removed in favor of product lifecycle events
       'actor-detail-concurrency-downshifted',
       'actor-stage-item-started',
       'actor-stage-item-completed',
