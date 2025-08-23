@@ -23,6 +23,7 @@ use crate::infrastructure::{HttpClient, MatterDataExtractor};
 use crate::application::AppState;
 use crate::domain::product::ProductDetail;
 use crate::domain::services::StatusChecker;
+use crate::domain::services::crawling_services::{SiteDataChangeStatus, CrawlingRangeRecommendation};
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository; // StatusChecker trait 임포트
 
@@ -131,11 +132,43 @@ pub async fn start_legacy_service_based_crawling(
         Arc::new(crate::crawl_engine::context::SystemConfig::default()),
     );
 
-    // 🔍 다음 크롤링 범위 계산 (실제 사이트 정보 사용)
+    // 🔍 다음 크롤링 범위 계산 (캐시 재사용)
+    let shared_cache = app.state::<crate::application::shared_state::SharedStateCache>();
+    let cached_site_status = shared_cache.get_valid_site_analysis_async(Some(5)).await.map(|cached| {
+        crate::domain::services::SiteStatus {
+            is_accessible: true,
+            response_time_ms: 0,
+            total_pages: cached.total_pages,
+            estimated_products: cached.estimated_products,
+            products_on_last_page: cached.products_on_last_page,
+            last_check_time: cached.analyzed_at,
+            health_score: cached.health_score,
+            data_change_status: SiteDataChangeStatus::Stable { count: cached.estimated_products },
+            decrease_recommendation: None,
+            crawling_range_recommendation: CrawlingRangeRecommendation::Full,
+        }
+    });
+    let cached_site_status_clone = cached_site_status.clone();
     let (site_status, db_analysis) = crawling_planner
-        .analyze_system_state()
+        .analyze_system_state_with_cache(cached_site_status)
         .await
         .map_err(|e| format!("Failed to analyze system state: {}", e))?;
+    // 캐시에 저장 (site_status는 캐시가 없을 때만 저장)
+    if cached_site_status_clone.is_none() {
+        shared_cache.set_site_analysis(crate::application::shared_state::SiteAnalysisResult::new(
+            site_status.total_pages,
+            site_status.products_on_last_page,
+            site_status.estimated_products,
+            crate::infrastructure::config::utils::matter_products_page_url_simple(1),
+            site_status.health_score,
+        )).await;
+    }
+    shared_cache.set_db_analysis(crate::application::shared_state::DbAnalysisResult::new(
+        db_analysis.total_products,
+        None,
+        None,
+        db_analysis.data_quality_score,
+    )).await;
 
     let (range_recommendation, processing_strategy) = crawling_planner
         .determine_crawling_strategy(&site_status, &db_analysis)

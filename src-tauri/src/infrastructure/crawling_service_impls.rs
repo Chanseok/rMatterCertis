@@ -15,7 +15,6 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::crawl_engine::services::crawling_planner::CrawlingPlanner;
 use crate::domain::product::{Product, ProductDetail};
 use crate::domain::product_url::ProductUrl;
 use crate::domain::services::crawling_services::{
@@ -201,76 +200,9 @@ impl StatusChecker for StatusCheckerImpl {
         let (data_change_status, decrease_recommendation) =
             self.analyze_data_changes(estimated_products).await;
 
-        // Step 5: 크롤링 범위 권장사항 계산 - 새로운 아키텍처 사용
-        info!("🔍 Calculating crawling range recommendation from site status and DB analysis...");
-        info!(
-            "🏗️ [NEW ARCHITECTURE] Using SystemConfig-based intelligent strategy instead of hardcoded values"
-        );
-
-        let system_config = Arc::new(crate::crawl_engine::context::SystemConfig::default());
-        info!(
-            "✅ [NEW ARCHITECTURE] SystemConfig initialized: batch_sizes.small_db_multiplier={}",
-            system_config.performance.batch_sizes.small_db_multiplier
-        );
-        info!(
-            "✅ [NEW ARCHITECTURE] SystemConfig initialized: concurrency.high_load_multiplier={}",
-            system_config.performance.concurrency.high_load_multiplier
-        );
-
-        // CrawlingPlanner 초기화 및 테스트 (캐시된 사이트 상태 사용)
-        let status_checker_arc = Arc::new(StatusCheckerImpl {
-            http_client: self.http_client.clone(),
-            data_extractor: self.data_extractor.clone(),
-            config: self.config.clone(),
-            page_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            product_repo: self.product_repo.clone(),
-        });
-        // 🔧 올바른 DatabaseAnalyzer 사용: StatusCheckerImpl 대신 DatabaseAnalyzerImpl 사용
-        let db_analyzer_arc: Arc<dyn DatabaseAnalyzer> =
-            if let Some(ref product_repo) = self.product_repo {
-                Arc::new(DatabaseAnalyzerImpl::new(product_repo.clone()))
-            } else {
-                status_checker_arc.clone() // fallback
-            };
-        let status_checker_for_planner: Arc<dyn StatusChecker> = status_checker_arc.clone();
-
-        let crawling_planner =
-            CrawlingPlanner::new(status_checker_for_planner, db_analyzer_arc, system_config);
-
-        // 캐시된 사이트 상태를 CrawlingPlanner에 전달 (중복 호출 방지)
-        let cached_site_status = SiteStatus {
-            is_accessible: true,
-            response_time_ms,
-            total_pages,
-            estimated_products,
-            products_on_last_page,
-            last_check_time: chrono::Utc::now(),
-            health_score,
-            data_change_status: data_change_status.clone(),
-            decrease_recommendation: decrease_recommendation.clone(),
-            crawling_range_recommendation: CrawlingRangeRecommendation::Full, // 임시값
-        };
-
-        // 실제 CrawlingPlanner를 사용해서 분석 시도 (캐시된 데이터 사용)
-        match crawling_planner
-            .analyze_system_state_with_cache(Some(cached_site_status))
-            .await
-        {
-            Ok((site_status_new, db_analysis_new)) => {
-                info!(
-                    "🎉 [NEW ARCHITECTURE] CrawlingPlanner analysis successful! Site pages: {}, DB products: {}",
-                    site_status_new.total_pages, db_analysis_new.total_products
-                );
-            }
-            Err(e) => {
-                info!(
-                    "⚠️ [NEW ARCHITECTURE] CrawlingPlanner analysis failed, using fallback: {}",
-                    e
-                );
-            }
-        }
-
-        let crawling_range_recommendation = self
+    // Step 5: 크롤링 범위 권장사항 계산 (StatusCheckerImpl 내부에서는 CrawlingPlanner를 생성하지 않음)
+    // 중복 분석을 방지하기 위해 플래너 생성과 시스템 분석은 상위 오케스트레이션 레이어에서 수행합니다.
+    let crawling_range_recommendation = self
             .calculate_crawling_range_recommendation_internal(
                 total_pages,
                 products_on_last_page,

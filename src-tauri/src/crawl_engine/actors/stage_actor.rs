@@ -1743,6 +1743,7 @@ impl StageActor {
                     (Some(tp), Some(plp)) => (tp, plp),
                     _ => {
                         if let Some(checker) = &self.status_checker {
+                            // StageActor는 AppHandle에 접근하지 않으므로 여기서는 직접 체크만 수행
                             match checker.check_site_status().await {
                                 Ok(s) => (s.total_pages, s.products_on_last_page),
                                 Err(e) => {

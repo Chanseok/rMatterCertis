@@ -6,7 +6,6 @@ use tracing::{error, info, warn};
 
 use crate::application::shared_state::SharedStateCache;
 use crate::application::state::AppState;
-use crate::domain::services::crawling_services::StatusChecker;
 use crate::infrastructure::IntegratedProductRepository;
 use crate::types::frontend_api::*; // trait import for check_site_status
 
@@ -115,19 +114,35 @@ pub async fn check_advanced_site_status(
             product_repo,
         );
 
-    // 2. 사이트 상태 조회
-    let site_status = status_checker
-        .check_site_status()
+    // 2. 사이트 상태 조회 (SharedStateCache single-flight 사용)
+    let site_analysis_cached = shared_state
+        .get_or_refresh_site_analysis_singleflight(
+            Some(5),
+            std::sync::Arc::new(status_checker),
+        )
         .await
-        .map_err(|e| format!("Site status check failed: {}", e))?;
+        .map_err(|e| format!("Site status refresh failed: {}", e))?;
+    let site_status = crate::domain::services::SiteStatus {
+        is_accessible: true,
+        response_time_ms: 0,
+        total_pages: site_analysis_cached.total_pages,
+        estimated_products: site_analysis_cached.estimated_products,
+        products_on_last_page: site_analysis_cached.products_on_last_page,
+        last_check_time: site_analysis_cached.analyzed_at,
+        health_score: site_analysis_cached.health_score,
+        data_change_status: crate::domain::services::crawling_services::SiteDataChangeStatus::Stable { count: site_analysis_cached.estimated_products },
+        decrease_recommendation: None,
+        crawling_range_recommendation: crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
+    };
 
     // 3. 결과 캐시에 저장
+    // 이미 single-flight에서 캐시에 저장됨. 필요 시 그대로 사용
     let analysis = SiteAnalysisResult::new(
         site_status.total_pages,
         site_status.products_on_last_page,
         site_status.estimated_products,
         site::BASE_URL.to_string(),
-        1.0,
+        site_status.health_score,
     );
     shared_state.set_site_analysis(analysis.clone()).await;
 
@@ -154,7 +169,7 @@ pub async fn check_advanced_site_status(
         total_pages: site_status.total_pages,
         products_on_last_page: site_status.products_on_last_page,
         estimated_total_products: site_status.estimated_products,
-        health_score: 1.0,
+    health_score: site_status.health_score,
     };
     Ok(ApiResponse::success(site_status_info))
 }

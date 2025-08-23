@@ -1154,11 +1154,47 @@ async fn calculate_intelligent_crawling_range(
     )
     .with_repository(product_repo.clone());
 
-    // 시스템 상태 분석 (진짜 도메인 로직)
+    // 시스템 상태 분석 (캐시 재사용 시도)
+    let shared_cache: Option<tauri::State<crate::application::shared_state::SharedStateCache>> = app_handle.try_state::<crate::application::shared_state::SharedStateCache>();
+    let cached_site_status = if let Some(cache_state) = shared_cache.as_ref() {
+        cache_state.get_valid_site_analysis_async(Some(5)).await.map(|cached| {
+            crate::domain::services::SiteStatus {
+                is_accessible: true,
+                response_time_ms: 0,
+                total_pages: cached.total_pages,
+                estimated_products: cached.estimated_products,
+                products_on_last_page: cached.products_on_last_page,
+                last_check_time: cached.analyzed_at,
+                health_score: cached.health_score,
+                data_change_status: crate::domain::services::crawling_services::SiteDataChangeStatus::Stable { count: cached.estimated_products },
+                decrease_recommendation: None,
+                crawling_range_recommendation: crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
+            }
+        })
+    } else { None };
+    let cached_site_status_clone = cached_site_status.clone();
     let (site_status, db_analysis) = crawling_planner
-        .analyze_system_state()
+        .analyze_system_state_with_cache(cached_site_status)
         .await
         .map_err(|e| format!("Failed to analyze system state: {}", e))?;
+    if let Some(cache_state) = shared_cache.as_ref() {
+        use crate::application::shared_state::{DbAnalysisResult, SiteAnalysisResult};
+        if cached_site_status_clone.is_none() {
+            cache_state.set_site_analysis(SiteAnalysisResult::new(
+                site_status.total_pages,
+                site_status.products_on_last_page,
+                site_status.estimated_products,
+                crate::infrastructure::config::utils::matter_products_page_url_simple(1),
+                site_status.health_score,
+            )).await;
+        }
+        cache_state.set_db_analysis(DbAnalysisResult::new(
+            db_analysis.total_products,
+            None,
+            None,
+            db_analysis.data_quality_score,
+        )).await;
+    }
 
     info!(
         "🌐 [ACTOR] Real site analysis: {} pages, {} products on last page",

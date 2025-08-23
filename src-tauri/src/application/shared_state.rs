@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::application::validated_crawling_config::ValidatedCrawlingConfig;
 use crate::infrastructure::config::AppConfig;
@@ -302,6 +303,8 @@ pub struct SharedStateCache {
     /// ExecutionPlan 메모리 LRU 캐시 (plan_hash 기반, 최대 5개)
     pub execution_plan_cache:
         Arc<RwLock<Vec<(String, crate::crawl_engine::actors::types::ExecutionPlan)>>>,
+    /// 사이트 상태 새로고침 단일-flight 보장용 락
+    site_status_refresh_lock: Arc<AsyncMutex<()>>,
 }
 
 impl Default for SharedStateCache {
@@ -323,6 +326,7 @@ impl SharedStateCache {
             runtime_state: Arc::new(RwLock::new(RuntimeState::default())),
             created_at: Instant::now(),
             execution_plan_cache: Arc::new(RwLock::new(Vec::with_capacity(5))),
+            site_status_refresh_lock: Arc::new(AsyncMutex::new(())),
         }
     }
 
@@ -340,6 +344,7 @@ impl SharedStateCache {
             runtime_state: Arc::new(RwLock::new(RuntimeState::default())),
             created_at: Instant::now(),
             execution_plan_cache: Arc::new(RwLock::new(Vec::with_capacity(5))),
+            site_status_refresh_lock: Arc::new(AsyncMutex::new(())),
         }
     }
 
@@ -615,6 +620,35 @@ impl SharedStateCache {
                 }
             }
         }
+    }
+
+    /// 단일-flight 보장으로 SiteStatus를 새로고침하거나 유효 캐시를 반환
+    pub async fn get_or_refresh_site_analysis_singleflight(
+        &self,
+        ttl_minutes: Option<u64>,
+        status_checker: Arc<dyn crate::domain::services::StatusChecker + Send + Sync>,
+    ) -> Result<SiteAnalysisResult, String> {
+        if let Some(current) = self.get_valid_site_analysis_async(ttl_minutes).await {
+            return Ok(current);
+        }
+        let _guard = self.site_status_refresh_lock.lock().await;
+        // 더블 체크(락 안쪽)
+        if let Some(current) = self.get_valid_site_analysis_async(ttl_minutes).await {
+            return Ok(current);
+        }
+        let site_status = status_checker
+            .check_site_status()
+            .await
+            .map_err(|e| format!("Site status fetch failed: {}", e))?;
+        let site_analysis = SiteAnalysisResult::new(
+            site_status.total_pages,
+            site_status.products_on_last_page,
+            site_status.estimated_products,
+            crate::infrastructure::config::utils::matter_products_page_url_simple(1),
+            site_status.health_score,
+        );
+        self.set_site_analysis(site_analysis.clone()).await;
+        Ok(site_analysis)
     }
 }
 

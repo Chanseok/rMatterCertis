@@ -17,7 +17,6 @@ pub struct CrawlingResponse {
 }
 use crate::application::shared_state::{DbAnalysisResult, SharedStateCache, SiteAnalysisResult};
 use crate::domain::constants::{crawling::ttl, site};
-use crate::domain::services::crawling_services::StatusChecker;
 
 /// 시스템 종합 분석 커맨드 (StatusTab용)
 ///
@@ -38,7 +37,7 @@ pub async fn analyze_system_status(
     // Phase 1 & 2: Perform Site and Database Analysis in Parallel
     info!("📊 Phase 1 & 2: Performing site and database analysis in parallel...");
     let (site_analysis, db_analysis) =
-        tokio::try_join!(perform_site_analysis(), perform_database_analysis())
+        tokio::try_join!(perform_site_analysis(Some(&*shared_state)), perform_database_analysis())
             .map_err(|e| format!("System analysis failed: {}", e))?;
 
     // Phase 3: Update SharedStateCache
@@ -105,7 +104,7 @@ pub async fn analyze_system_status(
 }
 
 /// 사이트 분석 수행
-async fn perform_site_analysis() -> Result<SiteAnalysisResult, String> {
+async fn perform_site_analysis(shared_cache: Option<&SharedStateCache>) -> Result<SiteAnalysisResult, String> {
     info!("🌐 Analyzing site status...");
 
     // Create necessary components for site analysis
@@ -129,19 +128,39 @@ async fn perform_site_analysis() -> Result<SiteAnalysisResult, String> {
         crate::infrastructure::IntegratedProductRepository::new(db_pool),
     );
 
-    let status_checker =
-        crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
-            http_client,
-            data_extractor,
-            config,
-            product_repo,
+    let status_checker: std::sync::Arc<dyn crate::domain::services::crawling_services::StatusChecker> =
+        std::sync::Arc::new(
+            crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
+                http_client,
+                data_extractor,
+                config,
+                product_repo,
+            ),
         );
 
-    // Perform site status check
-    let site_status = status_checker
-        .check_site_status()
-        .await
-        .map_err(|e| format!("Failed to check site status: {}", e))?;
+    // Perform site status check (single-flight via SharedStateCache if available)
+    let site_analysis_cached = if let Some(cache) = shared_cache {
+        Some(cache.get_or_refresh_site_analysis_singleflight(Some(5), status_checker.clone()).await.map_err(|e| format!("Failed to refresh site status: {}", e))?)
+    } else { None };
+    let site_status = if let Some(cached) = site_analysis_cached {
+        crate::domain::services::SiteStatus {
+            is_accessible: true,
+            response_time_ms: 0,
+            total_pages: cached.total_pages,
+            estimated_products: cached.estimated_products,
+            products_on_last_page: cached.products_on_last_page,
+            last_check_time: cached.analyzed_at,
+            health_score: cached.health_score,
+            data_change_status: crate::domain::services::crawling_services::SiteDataChangeStatus::Stable { count: cached.estimated_products },
+            decrease_recommendation: None,
+            crawling_range_recommendation: crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
+        }
+    } else {
+        status_checker
+            .check_site_status()
+            .await
+            .map_err(|e| format!("Failed to check site status: {}", e))?
+    };
 
     info!(
         "📊 Site analysis completed: {} pages, {} products on last page, {} estimated total",
