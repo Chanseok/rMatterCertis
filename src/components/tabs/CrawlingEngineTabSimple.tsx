@@ -649,7 +649,7 @@ export default function CrawlingEngineTabSimple() {
 
         // Fallback: If backend emits only generic stage events for Validation, reflect them here
         if (name === 'actor-stage-started') {
-          const t = String(payload?.stage_type || payload?.stage_name || '').toLowerCase();
+          const t = String(payload?.stage_type || '').toLowerCase();
           if (t.includes('validation')) {
             const total = Number(payload?.items_count ?? 0) || 0;
             setValidationStats(prev => ({
@@ -661,7 +661,7 @@ export default function CrawlingEngineTabSimple() {
           }
         }
         if (name === 'actor-stage-completed') {
-          const t = String(payload?.stage_type || payload?.stage_name || '').toLowerCase();
+          const t = String(payload?.stage_type || '').toLowerCase();
           if (t.includes('validation')) {
             const processed = Number(payload?.result?.processed_items ?? 0) || 0;
             setValidationStats(prev => ({

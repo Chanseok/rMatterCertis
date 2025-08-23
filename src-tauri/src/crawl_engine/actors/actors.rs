@@ -6,7 +6,7 @@
 
 pub mod batch_actor;
 pub mod contract;
-pub mod details; // product details phase actors
+// pub mod details; // removed
 pub mod session_actor;
 pub mod stage_actor;
 pub mod traits;

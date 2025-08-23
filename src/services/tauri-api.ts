@@ -1140,7 +1140,8 @@ export class TauriApiService {
               window.dispatchEvent(new CustomEvent('actor-stage-completed', {
                 detail: {
                   batch_id: `batch-${i + 1}`,
-                  stage_name: stage,
+                  // stage_name is legacy; keep emitting modern field only
+                  stage_type: stage,
                   stage_index: stageIndex,
                   success: Math.random() > 0.1, // 90% success rate
                   items_processed: Math.min(batchSize, totalPages - i * batchSize),

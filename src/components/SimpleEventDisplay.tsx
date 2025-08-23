@@ -61,8 +61,7 @@ export const SimpleEventDisplay: Component = () => {
 
   let cleanupFunctions: (() => void)[] = [];
 
-  // Map actor stage names to our display labels
-  // Accept either stage_name (legacy) or stage_type (current) values.
+  // Map actor stage types to our display labels (stage_type only)
   const mapStageName = (stageNameOrType?: string): string | undefined => {
     if (!stageNameOrType) return undefined;
     const s = stageNameOrType.toLowerCase();
@@ -117,12 +116,11 @@ export const SimpleEventDisplay: Component = () => {
 
       // Stage lifecycle
       if (name === 'actor-stage-started') {
-        // Stage type comes as `stage_type` (e.g., "ListPageCrawling"), keep legacy fallback `stage_name`.
-        const label = mapStageName(p?.stage_type || p?.stage_name);
+        const label = mapStageName(p?.stage_type);
         if (label) setStageStatus(label, 'running');
       }
       if (name === 'actor-stage-completed') {
-        const label = mapStageName(p?.stage_type || p?.stage_name);
+        const label = mapStageName(p?.stage_type);
         if (label) {
           setStageStatus(label, 'completed');
           // items_processed is nested under `result.processed_items` in new actor events
@@ -136,12 +134,7 @@ export const SimpleEventDisplay: Component = () => {
         }
       }
       if (name === 'actor-stage-failed') {
-        // Prefer modern stage_type; keep a temporary fallback to legacy stage_name with a warning
-        const label = mapStageName(p?.stage_type || p?.stage_name);
-        if (!p?.stage_type && p?.stage_name) {
-          // eslint-disable-next-line no-console
-          console.warn('[SimpleEventDisplay] actor-stage-failed received legacy stage_name; please migrate to stage_type');
-        }
+        const label = mapStageName(p?.stage_type);
         if (label) setStageStatus(label, 'error');
       }
 

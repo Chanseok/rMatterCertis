@@ -1,1 +1,1 @@
-pub mod product_details_actor;
+// Legacy details actor removed

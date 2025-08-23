@@ -966,22 +966,7 @@ impl StageActor {
                                 for purl in &filtered_urls {
                                     let prod_ref = purl.url.clone();
                                     let origin_page = purl.page_id as u32;
-                                    // Emit fine-grained detail task start for UI/KPI fidelity
-                                    if let Err(e) = ctx_clone.emit_event(AppEvent::DetailTaskStarted {
-                                        session_id: session_id_clone.clone(),
-                                        detail_id: prod_ref.clone(),
-                                        page: Some(origin_page),
-                                        batch_id: batch_id_opt.clone(),
-                                        range_idx: None,
-                                        batch_index: None,
-                                        scope: Some("batch".into()),
-                                        timestamp: Utc::now(),
-                                    }) {
-                                        error!(
-                                            "DetailTaskStarted emit failed ref={} err={}",
-                                            prod_ref, e
-                                        );
-                                    }
+                                    // legacy DetailTaskStarted emission removed (use ProductLifecycle "detail_started")
                                     // started
                                     if let Err(e) =
                                         ctx_clone.emit_event(AppEvent::ProductLifecycle {
@@ -1023,23 +1008,7 @@ impl StageActor {
                                                     prod_ref, e
                                                 );
                                             }
-                                            // Emit fine-grained detail task completed
-                                            if let Err(e) = ctx_clone.emit_event(AppEvent::DetailTaskCompleted {
-                                                session_id: session_id_clone.clone(),
-                                                detail_id: prod_ref.clone(),
-                                                page: Some(origin_page),
-                                                duration_ms: latency,
-                                                batch_id: batch_id_opt.clone(),
-                                                range_idx: None,
-                                                batch_index: None,
-                                                scope: Some("batch".into()),
-                                                timestamp: Utc::now(),
-                                            }) {
-                                                error!(
-                                                    "DetailTaskCompleted emit failed ref={} err={}",
-                                                    prod_ref, e
-                                                );
-                                            }
+                                            // legacy DetailTaskCompleted emission removed (use ProductLifecycle "detail_completed")
                                             if let Err(e) =
                                                 ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                                     session_id: session_id_clone.clone(),
@@ -1080,24 +1049,7 @@ impl StageActor {
                                                     prod_ref, emit_err
                                                 );
                                             }
-                                            // Emit fine-grained detail task failed (final_failure=true)
-                                            if let Err(emit_err) = ctx_clone.emit_event(AppEvent::DetailTaskFailed {
-                                                session_id: session_id_clone.clone(),
-                                                detail_id: prod_ref.clone(),
-                                                page: Some(origin_page),
-                                                error: format!("{:?}", e),
-                                                final_failure: true,
-                                                batch_id: batch_id_opt.clone(),
-                                                range_idx: None,
-                                                batch_index: None,
-                                                scope: Some("batch".into()),
-                                                timestamp: Utc::now(),
-                                            }) {
-                                                error!(
-                                                    "DetailTaskFailed emit failed ref={} err={}",
-                                                    prod_ref, emit_err
-                                                );
-                                            }
+                                            // legacy DetailTaskFailed emission removed (use ProductLifecycle "detail_failed")
                                             if let Err(emit_err) =
                                                 ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                                     session_id: session_id_clone.clone(),

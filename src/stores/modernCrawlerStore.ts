@@ -233,8 +233,11 @@ class ModernCrawlerStore {
     if (!stages || stages.length === 0) return 'Idle';
     
     // 현재 진행 중인 스테이지 찾기
-    const activeStage = stages.find(stage => stage.status === 'Running');
-    return activeStage?.stage_name ?? stages[stages.length - 1]?.stage_name ?? 'Unknown';
+  const activeStage = stages.find(stage => stage.status === 'Running');
+  // Prefer modern field if present, keep legacy fallback for compatibility
+  const current = (activeStage as any)?.stage_type ?? activeStage?.stage_name;
+  const last = (stages[stages.length - 1] as any)?.stage_type ?? stages[stages.length - 1]?.stage_name;
+  return current ?? last ?? 'Unknown';
   }
   
   /**

@@ -160,47 +160,7 @@ impl ActorEventBridge {
                         phase, group_size, started, succeeded, failed, duplicates, page_number, batch_id, duration_ms, session_id
                     );
                 }
-                AppEvent::DetailTaskStarted {
-                    session_id,
-                    detail_id,
-                    page,
-                    batch_id,
-                    range_idx,
-                    batch_index,
-                    ..
-                } => {
-                    tracing::info!(target: "actor-event",
-                        "[DetailTask] started id={} page={:?} batch={:?} range_idx={:?} idx={:?} session={}",
-                        detail_id, page, batch_id, range_idx, batch_index, session_id
-                    );
-                }
-                AppEvent::DetailTaskCompleted {
-                    session_id,
-                    detail_id,
-                    page,
-                    duration_ms,
-                    batch_id,
-                    ..
-                } => {
-                    tracing::info!(target: "actor-event",
-                        "[DetailTask] completed id={} page={:?} batch={:?} dur_ms={} session={}",
-                        detail_id, page, batch_id, duration_ms, session_id
-                    );
-                }
-                AppEvent::DetailTaskFailed {
-                    session_id,
-                    detail_id,
-                    page,
-                    error,
-                    final_failure,
-                    batch_id,
-                    ..
-                } => {
-                    tracing::info!(target: "actor-event",
-                        "[DetailTask] failed id={} page={:?} batch={:?} final={} err={} session={}",
-                        detail_id, page, batch_id, final_failure, error, session_id
-                    );
-                }
+                // DetailTask* events deprecated and no longer emitted
                 AppEvent::DatabaseStats {
                     session_id,
                     batch_id,
@@ -395,10 +355,8 @@ impl ActorEventBridge {
             AppEvent::PageTaskStarted { .. } => "actor-page-task-started",
             AppEvent::PageTaskCompleted { .. } => "actor-page-task-completed",
             AppEvent::PageTaskFailed { .. } => "actor-page-task-failed",
-            AppEvent::DetailTaskStarted { .. } => "actor-detail-task-started",
-            AppEvent::DetailTaskCompleted { .. } => "actor-detail-task-completed",
-            AppEvent::DetailTaskFailed { .. } => "actor-detail-task-failed",
-            AppEvent::DetailConcurrencyDownshifted { .. } => "actor-detail-concurrency-downshifted",
+            // DetailTask* removed: Stage 2 now uses ProductLifecycle/ProductLifecycleGroup
+            // Detail concurrency downshift removed
             AppEvent::StageItemStarted { .. } => "actor-stage-item-started",
             AppEvent::StageItemCompleted { .. } => "actor-stage-item-completed",
             AppEvent::PageLifecycle { .. } => "actor-page-lifecycle",

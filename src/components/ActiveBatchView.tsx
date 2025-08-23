@@ -271,7 +271,7 @@ const RecentCompletions: Component<RecentCompletionsProps> = (props) => {
                   {completion.task_id}
                 </span>
                 <span class="text-xs text-slate-400">
-                  ({completion.stage_name})
+                  ({(completion as any).stage_type ?? (completion as any).stage_name})
                 </span>
               </div>
               <span class="text-xs text-slate-500">

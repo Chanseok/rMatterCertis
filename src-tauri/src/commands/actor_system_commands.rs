@@ -14,9 +14,6 @@ use crate::infrastructure::simple_http_client::HttpClient;
 use crate::crawl_engine::actor_event_bridge::start_actor_event_bridge;
 use crate::crawl_engine::actors::SessionActor;
 use crate::crawl_engine::actors::contract::ACTOR_CONTRACT_VERSION;
-use crate::crawl_engine::actors::details::product_details_actor::{
-    ProductDetailsActor, ProductDetailsActorConfig,
-};
 use crate::crawl_engine::actors::types::{
     BatchConfig, CrawlPhase, CrawlingConfig, ExecutionPlan, PageRange, SessionSummary,
 };
@@ -248,90 +245,7 @@ async fn bootstrap_and_spawn_session(
                 )
                 .await
                 .map(|_| true),
-                CrawlPhase::ProductDetails => {
-                    // Before starting details, if registry has no remaining_detail_ids attempt DB query for real product URLs without details.
-                    {
-                        let need_injection = {
-                            let reg = registry_for_loop.read().await;
-                            reg.get(&exec_clone_for_loop.session_id)
-                                .map(|e| e.remaining_detail_ids.is_none())
-                                .unwrap_or(false)
-                        };
-                        if need_injection {
-                            // DB connection & repository (use global pool)
-                            {
-                                if let Ok(pool) = crate::infrastructure::database_connection::get_or_init_global_pool().await {
-                                    let repo = IntegratedProductRepository::new(pool);
-                                    // Collect page_ids from plan slots
-                                    let pages: Vec<u32> = exec_clone_for_loop
-                                        .page_slots
-                                        .iter()
-                                        .map(|s| s.page_id as u32)
-                                        .collect();
-                                    // Limit: number of unique pages * 12 (rough max products per page)
-                                    let unique_pages: std::collections::HashSet<u32> =
-                                        pages.iter().cloned().collect();
-                                    let limit = (unique_pages.len() as i32 * 12).max(1);
-                                    if let Ok(urls) = repo
-                                        .get_product_urls_without_details_in_pages(
-                                            &unique_pages.iter().cloned().collect::<Vec<_>>(),
-                                            limit,
-                                        )
-                                        .await
-                                    {
-                                        if !urls.is_empty() {
-                                            let mut w = registry_for_loop.write().await;
-                                            if let Some(entry) =
-                                                w.get_mut(&exec_clone_for_loop.session_id)
-                                            {
-                                                entry.remaining_detail_ids = Some(urls.clone());
-                                                entry.detail_tasks_total = urls.len() as u64;
-                                            }
-                                            info!(
-                                                "Injected {} real detail IDs for session {}",
-                                                urls.len(),
-                                                exec_clone_for_loop.session_id
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    let pd_actor = ProductDetailsActor::new(
-                        exec_clone_for_loop.session_id.clone(),
-                        ProductDetailsActorConfig {
-                            max_concurrency: exec_clone_for_loop.concurrency_limit,
-                            per_item_timeout_ms: 10_000,
-                            max_retries: 2,
-                        },
-                    );
-                    // ExecutionPlan & context placeholders (reuse site_status/app_cfg if needed later)
-                    // For now we pass an Arc clone of plan (contextless run)
-                    let plan_arc = Arc::new(exec_clone_for_loop.clone());
-                    // Minimal AppContext stub is not available here; skip until integrated context available
-                    // Use a lightweight fake context via existing SystemConfig if necessary later
-                    let res = pd_actor
-                        .run(
-                            Arc::new(AppContext::new(
-                                exec_clone_for_loop.session_id.clone(),
-                                mpsc::channel(1).0, // dummy control sender
-                                actor_event_tx.clone(),
-                                watch::channel(false).1,
-                                Arc::new(SystemConfig::default()),
-                            )),
-                            plan_arc,
-                            actor_event_tx.clone(),
-                        )
-                        .await;
-                    match res {
-                        Ok(()) => Ok(true),
-                        Err(e) => {
-                            error!("ProductDetailsActor failed: {}", e);
-                            Err::<bool, Box<dyn std::error::Error + Send + Sync>>(e.into())
-                        }
-                    }
-                }
+                CrawlPhase::ProductDetails => Ok(true),
                 CrawlPhase::DataValidation => Ok(true),
                 CrawlPhase::Finalize => Ok(true),
             };

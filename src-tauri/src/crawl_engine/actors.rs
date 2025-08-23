@@ -5,8 +5,9 @@
 pub mod batch_actor;
 #[path = "actors/contract.rs"]
 pub mod contract;
-#[path = "actors/details/mod.rs"]
-pub mod details; // product details phase actors
+// Details phase actor removed (DetailTask* retired); keep path reserved if reintroduced later.
+// #[path = "actors/details/mod.rs"]
+// pub mod details;
 #[path = "actors/session_actor.rs"]
 pub mod session_actor;
 #[path = "actors/stage_actor.rs"]

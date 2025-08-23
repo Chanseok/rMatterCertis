@@ -212,7 +212,6 @@ export const CrawlingProcessDashboard: Component = () => {
     const node = createNode(`stage-${stageName}-${batchId}`, 'running');
     node.x = position.x;
     node.y = position.y;
-    node.z = position.z;
     node.mesh.position.set(position.x, position.y, position.z);
     return node;
   };
@@ -301,15 +300,15 @@ export const CrawlingProcessDashboard: Component = () => {
   // 테스트용 AtomicTaskEvent 시뮬레이션
   const simulateAtomicTaskEvent = () => {
     const taskId = `test-task-${Math.floor(Math.random() * 1000)}`;
-    const stages = ['ListPageCollection', 'ProductDetailCollection', 'DatabaseSave'];
-    const stageName = stages[Math.floor(Math.random() * stages.length)];
+  const stages = ['ListPageCollection', 'ProductDetailCollection', 'DatabaseSave'];
+  const stageType = stages[Math.floor(Math.random() * stages.length)];
     const statuses = ['Pending', 'Active', 'Success', 'Error'];
     const status = statuses[Math.floor(Math.random() * statuses.length)];
     
     const mockEvent = {
       task_id: taskId,
       batch_id: 1,
-      stage_name: stageName,
+  stage_type: stageType,
       status: status,
       progress: Math.random(),
       message: `Simulated ${status} event for ${taskId}`,
@@ -317,7 +316,7 @@ export const CrawlingProcessDashboard: Component = () => {
     };
     
     console.log('Simulating atomic task event:', mockEvent);
-    addLogEntry('ATOMIC', `Test Task ${mockEvent.task_id} [${mockEvent.stage_name}]: ${mockEvent.status} (${(mockEvent.progress * 100).toFixed(1)}%)`);
+  addLogEntry('ATOMIC', `Test Task ${mockEvent.task_id} [${(mockEvent as any).stage_type ?? (mockEvent as any).stage_name}]: ${mockEvent.status} (${(mockEvent.progress * 100).toFixed(1)}%)`);
     
     // 작업 상태에 따른 페이지 관리
     if (mockEvent.status === 'Active') {
@@ -381,7 +380,7 @@ export const CrawlingProcessDashboard: Component = () => {
         
         onAtomicTaskUpdate: (event) => {
           console.log('Atomic task event received:', event);
-          addLogEntry('ATOMIC', `Task ${event.task_id} [${event.stage_name}]: ${event.status} (${(event.progress * 100).toFixed(1)}%)`);
+          addLogEntry('ATOMIC', `Task ${event.task_id} [${(event as any).stage_type ?? (event as any).stage_name}]: ${event.status} (${(event.progress * 100).toFixed(1)}%)`);
           
           // 작업 상태에 따른 페이지 관리
           if (event.status === 'Active') {
@@ -444,7 +443,7 @@ export const CrawlingProcessDashboard: Component = () => {
         
         onStageCompleted: (data) => {
           console.log('🎭 Actor Stage Completed:', data);
-          addLogEntry('ACTOR', `Stage ${data.stage_name} in ${data.batch_id}: ${data.success ? 'SUCCESS' : 'FAILED'} (${data.processing_time_ms}ms)`);
+          addLogEntry('ACTOR', `Stage ${(data as any).stage_type ?? (data as any).stage_name} in ${data.batch_id}: ${data.success ? 'SUCCESS' : 'FAILED'} (${data.processing_time_ms}ms)`);
           
           // 성공률 업데이트
           setActorSystemStats(prev => ({
