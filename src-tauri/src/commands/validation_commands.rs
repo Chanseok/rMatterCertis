@@ -142,15 +142,25 @@ pub struct GapRange {
 }
 
 /// Emit an AppEvent directly to the frontend (lightweight bridge clone)
-fn emit_actor_event(app: &AppHandle, event: AppEvent) {
+pub(crate) fn emit_actor_event(app: &AppHandle, event: AppEvent) {
     // Map variant -> event name (keep in sync with actor_event_bridge.rs)
     let event_name = match &event {
+        // Validation event stream
         AppEvent::ValidationStarted { .. } => "actor-validation-started",
         AppEvent::ValidationPageScanned { .. } => "actor-validation-page-scanned",
         AppEvent::ValidationDivergenceFound { .. } => "actor-validation-divergence",
         AppEvent::ValidationAnomaly { .. } => "actor-validation-anomaly",
         AppEvent::ValidationCompleted { .. } => "actor-validation-completed",
-        _ => return, // Ignore non-validation variants here
+        // Sync event stream
+        AppEvent::SyncStarted { .. } => "actor-sync-started",
+        AppEvent::SyncPageStarted { .. } => "actor-sync-page-started",
+        AppEvent::SyncUpsertProgress { .. } => "actor-sync-upsert-progress",
+        AppEvent::SyncPageCompleted { .. } => "actor-sync-page-completed",
+        AppEvent::SyncWarning { .. } => "actor-sync-warning",
+        AppEvent::SyncCompleted { .. } => "actor-sync-completed",
+        // Product lifecycle forwarding
+        AppEvent::ProductLifecycle { .. } => "actor-product-lifecycle",
+        _ => return,
     };
     // Serialize & flatten
     if let Ok(raw) = serde_json::to_value(&event) {

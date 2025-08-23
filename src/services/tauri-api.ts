@@ -165,8 +165,8 @@ export class TauriApiService {
    */
   async startPartialSync(ranges: string, dryRun?: boolean): Promise<any> {
     return await invoke<any>('start_partial_sync', {
-      ranges,
-      dryRun: dryRun ?? null,
+  ranges,
+  dry_run: dryRun ?? null,
     } as any);
   }
 
@@ -176,9 +176,9 @@ export class TauriApiService {
    */
   async startBatchedSync(ranges: string, batchSizeOverride?: number, dryRun?: boolean): Promise<any> {
     return await invoke<any>('start_batched_sync', {
-      ranges,
-      batchSizeOverride: batchSizeOverride ?? null,
-      dryRun: dryRun ?? null,
+  ranges,
+  batch_size_override: batchSizeOverride ?? null,
+  dry_run: dryRun ?? null,
     } as any);
   }
 
@@ -187,8 +187,18 @@ export class TauriApiService {
    */
   async startRepairSync(buffer?: number, dryRun?: boolean): Promise<any> {
     return await invoke<any>('start_repair_sync', {
-      buffer: buffer ?? null,
-      dryRun: dryRun ?? null,
+  buffer: buffer ?? null,
+  dry_run: dryRun ?? null,
+    } as any);
+  }
+
+  /**
+   * Run database diagnostics and optionally delete mismatches/outliers.
+   */
+  async diagnoseAndRepairData(deleteMismatches?: boolean, syncOrphans?: boolean): Promise<any> {
+    return await invoke<any>('diagnose_and_repair_data', {
+  delete_mismatches: deleteMismatches ?? null,
+  sync_orphans: syncOrphans ?? null,
     } as any);
   }
 
@@ -197,8 +207,18 @@ export class TauriApiService {
    */
   async startSyncPages(pages: number[], dryRun?: boolean): Promise<any> {
     return await invoke<any>('start_sync_pages', {
-      pages,
-      dryRun: dryRun ?? null,
+  pages,
+  dry_run: dryRun ?? null,
+    } as any);
+  }
+
+  /**
+   * Retry fetching details for products where products.certificate_id IS NULL.
+   */
+  async retryFailedDetails(limit?: number, dryRun?: boolean): Promise<any> {
+    return await invoke<any>('retry_failed_details', {
+  limit: limit ?? null,
+  dry_run: dryRun ?? null,
     } as any);
   }
 
@@ -853,6 +873,18 @@ export class TauriApiService {
       return await invoke<any>('cleanup_duplicate_urls');
     } catch (error) {
       throw new Error(`Failed to cleanup duplicate URLs: ${error}`);
+    }
+  }
+
+  /**
+   * Synchronize product_details coordinates and ids from products by URL.
+   * Returns a concise report with counts.
+   */
+  async syncProductDetailsCoordinates(): Promise<{ total_products: number; total_details: number; updated_product_ids: number; inserted_details: number; updated_coordinates: number; updated_ids: number; }> {
+    try {
+      return await invoke<any>('sync_product_details_coordinates');
+    } catch (error) {
+      throw new Error(`Failed to sync product_details coordinates: ${error}`);
     }
   }
 

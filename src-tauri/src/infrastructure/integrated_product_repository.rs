@@ -103,6 +103,20 @@ impl IntegratedProductRepository {
         // Normalize URL to ensure consistent storage and matching
         let normalized_url = Self::normalize_url(&product.url);
 
+        // Basic validation to prevent blocking rows
+        // - page_id/index_in_page must be positive if provided
+        // - allow NULL for manufacturer/model/certificate_id temporarily, but prefer non-empty strings
+        if let Some(pid) = product.page_id {
+            if pid <= 0 {
+                anyhow::bail!("Invalid page_id: {}", pid);
+            }
+        }
+        if let Some(idx) = product.index_in_page {
+            if idx <= 0 {
+                anyhow::bail!("Invalid index_in_page: {}", idx);
+            }
+        }
+
         // Check if product already exists
         let existing = self.get_product_by_url(&normalized_url).await?;
 
@@ -179,8 +193,8 @@ impl IntegratedProductRepository {
             .bind(&product.manufacturer)
             .bind(&product.model)
             .bind(&product.certificate_id)
-            .bind(product.page_id)
-            .bind(product.index_in_page)
+            .bind(product.page_id.map(|v| v as i64))
+            .bind(product.index_in_page.map(|v| v as i64))
             .bind(now)
             .bind(now)
             .execute(&*self.pool)

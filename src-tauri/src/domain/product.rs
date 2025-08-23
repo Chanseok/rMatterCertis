@@ -128,3 +128,62 @@ impl ProductDetail {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn product_generate_id_zero_padded() {
+        let now = Utc::now();
+        let mut p = Product {
+            id: None,
+            url: "https://example.test/item".to_string(),
+            manufacturer: None,
+            model: None,
+            certificate_id: None,
+            page_id: Some(7),
+            index_in_page: Some(3),
+            created_at: now,
+            updated_at: now,
+        };
+        p.generate_id();
+        assert_eq!(p.id.as_deref(), Some("p0007i03"));
+    }
+
+    #[test]
+    fn product_detail_generate_id_zero_padded() {
+        let now = Utc::now();
+        let mut d = ProductDetail {
+            url: "https://example.test/item".to_string(),
+            page_id: Some(85),
+            index_in_page: Some(12),
+            id: None,
+            manufacturer: None,
+            model: None,
+            device_type: None,
+            certificate_id: None,
+            certification_date: None,
+            software_version: None,
+            hardware_version: None,
+            vid: None,
+            pid: None,
+            family_sku: None,
+            family_variant_sku: None,
+            firmware_version: None,
+            family_id: None,
+            tis_trp_tested: None,
+            specification_version: None,
+            transport_interface: None,
+            primary_device_type_id: None,
+            application_categories: None,
+            description: None,
+            compliance_document_url: None,
+            program_type: None,
+            created_at: now,
+            updated_at: now,
+        };
+        d.generate_id();
+        assert_eq!(d.id.as_deref(), Some("p0085i12"));
+    }
+}

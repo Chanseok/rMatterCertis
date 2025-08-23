@@ -110,8 +110,8 @@ impl DbSaver {
             .bind(product.manufacturer.as_deref().unwrap_or(""))
             .bind(product.model.as_deref().unwrap_or(""))
             .bind(product.certification_number.as_deref().unwrap_or(""))
-            .bind(product.page_id.unwrap_or(0)) // Use actual page_id or fallback to 0
-            .bind(product.index_in_page.unwrap_or(0)) // Use actual index_in_page or fallback to 0
+            .bind(product.page_id.map(|v| v as i64)) // NULL if missing
+            .bind(product.index_in_page.map(|v| v as i64)) // NULL if missing
             .bind(product.extracted_at)
             .bind(product.extracted_at)
             .execute(&mut **tx)
@@ -354,11 +354,10 @@ impl Drop for DbSaver {
                                     .bind(product.manufacturer.as_deref().unwrap_or(""))
                                     .bind(product.model.as_deref().unwrap_or(""))
                                     .bind(product.certification_number.as_deref().unwrap_or(""))
-                                    .bind(0i32) // page_id - placeholder
-                                    .bind(0i32) // index_in_page - placeholder
-                                    .bind(product.extracted_at)
-                                    .bind(product.extracted_at)
-                                    .bind(product.extracted_at)
+                                    .bind(Option::<i64>::None) // page_id: NULL when unknown
+                                    .bind(Option::<i64>::None) // index_in_page: NULL when unknown
+                                    .bind(product.extracted_at) // created_at
+                                    .bind(product.extracted_at) // updated_at
                                     .execute(tx.as_mut())
                                     .await;
 

@@ -9,6 +9,8 @@ pub mod validation_commands;           // Validation command
 pub mod sync_commands;                 // Partial sync command
 pub mod db_diagnostics;                // DB pagination diagnostics
 pub mod db_cleanup;                    // DB duplicate cleanup
+pub mod db_repair;                     // DB repair/sync between products and product_details
+pub mod debug_commands;                // UI debug logging helpers
 // pub mod dashboard_commands;          // Archived while UI is disabled
 
 // 모든 명령어를 한곳에서 export
@@ -41,3 +43,5 @@ pub use validation_commands::start_validation;
 pub use sync_commands::start_partial_sync;
 pub use db_diagnostics::scan_db_pagination_mismatches;
 pub use db_cleanup::cleanup_duplicate_urls;
+pub use db_repair::sync_product_details_coordinates;
+pub use debug_commands::ui_debug_log;

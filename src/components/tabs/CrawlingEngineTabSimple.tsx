@@ -1,5 +1,6 @@
 import { createSignal, Show, onMount, onCleanup, For } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 // Types are relaxed locally to avoid tight coupling during integration
 import { tauriApi } from '../../services/tauri-api';
 import EventConsole from '../dev/EventConsole';
@@ -15,6 +16,10 @@ export default function CrawlingEngineTabSimple() {
   const [isValidating, setIsValidating] = createSignal(false);
   const [isSyncing, setIsSyncing] = createSignal(false);
   const [syncRanges, setSyncRanges] = createSignal<string>('');
+  // Lightweight Sync runtime view
+  const [syncLive, setSyncLive] = createSignal<{ active: boolean; planned?: number | null; pagesProcessed: number; inserted: number; updated: number; skipped: number; failed: number; lastPage?: number | null; lastWarn?: string | null; durationMs?: number }>(
+    { active: false, planned: null, pagesProcessed: 0, inserted: 0, updated: 0, skipped: 0, failed: 0 }
+  );
   const [validationPages, setValidationPages] = createSignal<number | ''>('');
   // Auto re-plan from backend after a session completes
   const [nextPlan, setNextPlan] = createSignal<any | null>(null);
@@ -128,26 +133,46 @@ export default function CrawlingEngineTabSimple() {
   const runDiagnostics = async () => {
     try {
       setDiagLoading(true);
-      const res = await tauriApi.scanDbPaginationMismatches();
+  addLog('🧪 DB 진단 호출 시작');
+  const res = await tauriApi.scanDbPaginationMismatches();
+  addLog('✅ DB 진단 응답 수신');
       setDiagResult(res);
     } catch (e) {
-      addLog(`❌ Diagnostics 실패: ${e}`);
+  console.error('[Diagnostics] invoke failed', e);
+  addLog(`❌ Diagnostics 실패: ${(e as any)?.message || e}`);
     } finally {
       setDiagLoading(false);
     }
   };
-  // Build ranges from current diagnostics (missing pages -> contiguous ranges)
+  // Build ranges from current diagnostics using physical pages and expand ±1 neighbors
   const deriveRangesFromDiagnostics = (): string | null => {
     const diag = diagResult();
     if (!diag) return null;
+    const totalPages: number | undefined = Number.isFinite(diag.total_pages_site) ? Number(diag.total_pages_site) : undefined;
+    // Select problematic groups more broadly: status!=ok OR any dup/miss/out-of-range hints
     const pages: number[] = (diag.group_summaries || [])
-      .filter((g: any) => g.status && g.status !== 'ok' && (g.missing_indices?.length || 0) > 0)
+      .filter((g: any) => {
+        const notOk = !!g.status && g.status !== 'ok';
+        const hasDup = (g.duplicate_indices?.length || 0) > 0;
+        const hasMiss = (g.missing_indices?.length || 0) > 0;
+        const oob = (g.out_of_range_count || 0) > 0;
+        return notOk || hasDup || hasMiss || oob;
+      })
       .map((g: any) => g.current_page_number)
       .filter((p: any) => typeof p === 'number' && p > 0);
     if (pages.length === 0) return null;
-    // compress contiguous desc pages to ranges expr
-    const uniq = Array.from(new Set(pages)).sort((a,b)=>b-a);
-    let parts: string[] = [];
+    // Unique and neighbor expansion (±1) within site bounds
+    const set = new Set<number>();
+    for (const p of pages) set.add(p);
+    if (totalPages && totalPages > 1) {
+      for (const p of Array.from(set)) {
+        if (p - 1 >= 1) set.add(p - 1);
+        if (p + 1 <= totalPages) set.add(p + 1);
+      }
+    }
+    const uniq = Array.from(set).sort((a,b)=>b-a);
+    // Compress contiguous desc pages to ranges expr
+    const parts: string[] = [];
     let start = uniq[0];
     let prev = uniq[0];
     for (const p of uniq.slice(1)) {
@@ -195,6 +220,14 @@ export default function CrawlingEngineTabSimple() {
   const [effectsOn, setEffectsOn] = createSignal(true);
   // Sync input pulse highlight
   const [syncPulse, setSyncPulse] = createSignal(false);
+  // Track sync-start events to detect backend start and enable fallbacks
+  let syncStartSeq = 0;
+  onMount(async () => {
+    try {
+      const un1 = await listen('actor-sync-started', () => { syncStartSeq++; });
+      onCleanup(() => { try { (un1 as any)(); } catch {} });
+    } catch {}
+  });
 
   // Start button circular wave FX (restored)
   const [waveBursts, setWaveBursts] = createSignal<Array<{ id:number; x:number; y:number; kind:'up'|'down'|'ring' }>>([]);
@@ -429,6 +462,53 @@ export default function CrawlingEngineTabSimple() {
     // Listen to unified Actor session lifecycle to toggle buttons/status
     tauriApi
       .subscribeToActorBridgeEvents((name, payload) => {
+        // === Sync events → compact Sync panel ===
+        if (name === 'actor-sync-started') {
+          try {
+            const ranges: Array<[number, number]> = Array.isArray(payload?.ranges) ? payload.ranges : [];
+            const planned = ranges.reduce((acc, [start, end]) => acc + Math.max(0, (start - end + 1)), 0);
+            setSyncLive({ active: true, planned: planned || null, pagesProcessed: 0, inserted: 0, updated: 0, skipped: 0, failed: 0, lastPage: null, lastWarn: null, durationMs: undefined });
+            setStatusMessage('🔄 Sync 실행 중');
+          } catch {
+            setSyncLive({ active: true, planned: null, pagesProcessed: 0, inserted: 0, updated: 0, skipped: 0, failed: 0, lastPage: null, lastWarn: null, durationMs: undefined });
+          }
+        }
+        if (name === 'actor-sync-page-started') {
+          const p = Number(payload?.physical_page ?? NaN);
+          setSyncLive(prev => ({ ...prev, lastPage: Number.isFinite(p) ? p : prev.lastPage ?? null }));
+        }
+        if (name === 'actor-sync-page-completed') {
+          const ins = Number(payload?.inserted ?? 0) || 0;
+          const upd = Number(payload?.updated ?? 0) || 0;
+          const skp = Number(payload?.skipped ?? 0) || 0;
+          const fld = Number(payload?.failed ?? 0) || 0;
+          setSyncLive(prev => ({
+            ...prev,
+            pagesProcessed: (prev.pagesProcessed || 0) + 1,
+            inserted: (prev.inserted || 0) + ins,
+            updated: (prev.updated || 0) + upd,
+            skipped: (prev.skipped || 0) + skp,
+            failed: (prev.failed || 0) + fld,
+          }));
+        }
+        if (name === 'actor-sync-warning') {
+          const code = String(payload?.code || '');
+          const detail = String(payload?.detail || '');
+          setSyncLive(prev => ({ ...prev, lastWarn: `${code}: ${detail}`.slice(0, 160) }));
+        }
+        if (name === 'actor-sync-completed') {
+          setSyncLive(prev => ({
+            ...prev,
+            active: false,
+            pagesProcessed: Number(payload?.pages_processed ?? prev.pagesProcessed) || prev.pagesProcessed,
+            inserted: Number(payload?.inserted ?? prev.inserted) || prev.inserted,
+            updated: Number(payload?.updated ?? prev.updated) || prev.updated,
+            skipped: Number(payload?.skipped ?? prev.skipped) || prev.skipped,
+            failed: Number(payload?.failed ?? prev.failed) || prev.failed,
+            durationMs: Number(payload?.duration_ms ?? prev.durationMs) || prev.durationMs,
+          }));
+          setStatusMessage('Sync 완료');
+        }
         if (name === 'actor-session-started') {
           setIsRunning(true);
           setStatusMessage('크롤링 실행 중 (세션 시작)');
@@ -742,6 +822,39 @@ export default function CrawlingEngineTabSimple() {
           설정 파일 기반 자동 크롤링 시스템 - 별도 설정 전송 없이 즉시 시작
         </p>
 
+        {/* Sync Runtime (compact) */}
+        <Show when={syncLive().active || syncLive().pagesProcessed > 0}>
+          <div class="mb-4 p-3 rounded-lg border border-teal-200 bg-teal-50">
+            <div class="flex items-center justify-between mb-1">
+              <div class="text-sm font-semibold text-teal-900">Stage S: DB Sync</div>
+              <div class="text-[11px] text-teal-700">{syncLive().planned ? `계획 ${syncLive().planned}p` : '계획 미정'}</div>
+            </div>
+            <div class="mt-1 w-full bg-teal-100 rounded h-2">
+              {(() => {
+                const processed = syncLive().pagesProcessed || 0;
+                const total = syncLive().planned || processed || 1;
+                const pct = Math.min(100, (processed / Math.max(1, total)) * 100);
+                return <div class="h-2 bg-teal-500 rounded transition-all" style={{ width: `${pct}%` }} />;
+              })()}
+            </div>
+            <div class="mt-2 flex gap-3 text-xs text-teal-900">
+              <span>pages: <b>{syncLive().pagesProcessed}</b></span>
+              <span>ins: <b class="text-emerald-700">{syncLive().inserted}</b></span>
+              <span>upd: <b class="text-indigo-700">{syncLive().updated}</b></span>
+              <span>skip: <b class="text-gray-700">{syncLive().skipped}</b></span>
+              <span>fail: <b class="text-rose-700">{syncLive().failed}</b></span>
+              <Show when={typeof syncLive().durationMs !== 'undefined'}>
+                <span>ms: <b>{syncLive().durationMs}</b></span>
+              </Show>
+            </div>
+            <Show when={syncLive().lastWarn}>
+              <div class="mt-1 text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded px-2 py-1">
+                최근 경고: <span class="line-clamp-2">{syncLive().lastWarn}</span>
+              </div>
+            </Show>
+          </div>
+        </Show>
+
         {/* 상태 표시 */}
         <div class="mb-6">
           <div class={`px-4 py-3 rounded-lg border ${isRunning() 
@@ -932,6 +1045,25 @@ export default function CrawlingEngineTabSimple() {
               <button class={`px-3 py-1 text-sm rounded ${cleanupLoading() ? 'bg-gray-200 text-gray-500' : 'bg-rose-600 text-white hover:bg-rose-700'}`} disabled={cleanupLoading()} onClick={runUrlCleanup}>
                 {cleanupLoading() ? '정리 중…' : 'URL 중복 제거'}
               </button>
+              <button
+                class={`px-3 py-1 text-sm rounded ${isSyncing() ? 'bg-gray-200 text-gray-500' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                disabled={isSyncing()}
+                onClick={async () => {
+                  try {
+                    setIsSyncing(true);
+                    addLog('🔁 products→details 좌표/ID 정합화 실행...');
+                    const rep = await tauriApi.syncProductDetailsCoordinates();
+                    addLog(`✅ 정합화 완료: products.id=${rep.updated_product_ids}, inserted=${rep.inserted_details}, updated_coords=${rep.updated_coordinates}, details.id=${rep.updated_ids} (p=${rep.total_products}, d=${rep.total_details})`);
+                  } catch (e:any) {
+                    addLog(`❌ 정합화 실패: ${e.message || e}`);
+                  } finally {
+                    setIsSyncing(false);
+                  }
+                }}
+                title="products.url 기준으로 product_details에 page_id/index_in_page/id를 정합화합니다 (크롤링 없음)"
+              >
+                products→details 동기화
+              </button>
               <button class={`px-3 py-1 text-sm rounded ${isSyncing() ? 'bg-gray-200 text-gray-500' : 'bg-teal-600 text-white hover:bg-teal-700'}`} disabled={isSyncing()} onClick={syncMissingPagesFromDiagnostics}>
                 {isSyncing() ? '동기화 중…' : '누락 페이지만 동기화'}
               </button>
@@ -945,9 +1077,15 @@ export default function CrawlingEngineTabSimple() {
               <div class="flex gap-4">
                 <span>총 제품: <b>{diagResult()?.total_products ?? 0}</b></span>
                 <span>DB 최대 page_id: <b>{diagResult()?.max_page_id_db ?? '-'}</b></span>
-                <span>사이트 총 페이지: <b>{diagResult()?.total_pages ?? '-'}</b></span>
+                <span>사이트 총 페이지: <b>{diagResult()?.total_pages_site ?? '-'}</b></span>
                 <span>마지막 페이지 아이템: <b>{diagResult()?.items_on_last_page ?? '-'}</b></span>
               </div>
+              <Show when={diagResult()?.prepass}>
+                <div class="flex gap-4 text-teal-800 bg-teal-50 border border-teal-200 rounded p-2">
+                  <span>사전 정렬(details): <b>{diagResult()?.prepass?.details_aligned ?? 0}</b></span>
+                  <span>products.id 백필: <b>{diagResult()?.prepass?.products_id_backfilled ?? 0}</b></span>
+                </div>
+              </Show>
               <div>
                 <b>이상 그룹</b>
                 <ul class="list-disc ml-5">
@@ -1329,8 +1467,47 @@ export default function CrawlingEngineTabSimple() {
                 setIsSyncing(true);
                 addLog(`🔄 Partial 모드(이 범위) Sync 실행: ${ranges}`);
                 try {
+                  try { await invoke('ui_debug_log', { message: `[SimpleTab] sync_button_click ranges=${ranges}` }); } catch {}
+                  const startSeqAt = syncStartSeq;
                   const res = await tauriApi.startPartialSync(ranges);
                   addLog(`✅ Partial Sync 완료: ${JSON.stringify(res)}`);
+                  // If no start event arrives quickly, fall back to explicit pages
+                  setTimeout(async () => {
+                    if (syncStartSeq !== startSeqAt) return; // started
+                    if (!isSyncing()) return;
+                    try {
+                      // Simple parser for ranges expression
+                      const norm = ranges
+                        .replace(/\s+/g, '')
+                        .replace(/[–—−﹣－]/g, '-')
+                        .replace(/[〜～]/g, '~');
+                      const tokens = norm.split(',').map(t => t.trim()).filter(Boolean);
+                      const pages: number[] = [];
+                      for (const tk of tokens) {
+                        if (tk.includes('-') || tk.includes('~')) {
+                          const sep = tk.includes('~') ? '~' : '-';
+                          const [a,b] = tk.split(sep);
+                          let s = parseInt(a, 10), e = parseInt(b, 10);
+                          if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
+                          if (e > s) { const tmp = s; s = e; e = tmp; }
+                          for (let p = s; p >= e; p--) pages.push(p);
+                        } else {
+                          const v = parseInt(tk, 10);
+                          if (Number.isFinite(v)) pages.push(v);
+                        }
+                      }
+                      const seen = new Set<number>();
+                      const uniquePages = pages.filter(p => seen.has(p) ? false : (seen.add(p), true));
+                      if (uniquePages.length > 0) {
+                        addLog(`⛑️ 시작 이벤트 지연: 대체 실행 start_sync_pages=[${uniquePages.join(',')}]`);
+                        try { await invoke('ui_debug_log', { message: `[SimpleTab] fallback_start_sync_pages pages=[${uniquePages.join(',')}]` }); } catch {}
+                        await tauriApi.startSyncPages(uniquePages);
+                        addLog('⛑️ 대체 경로 요청 완료');
+                      }
+                    } catch (err) {
+                      addLog(`❌ 대체 실행 실패: ${err}`);
+                    }
+                  }, 900);
                 } catch (e) {
                   addLog(`❌ Partial Sync 실패: ${e}`);
                 } finally { setIsSyncing(false); }

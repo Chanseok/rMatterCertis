@@ -72,6 +72,9 @@ export const CrawlingEngineTab: Component = () => {
   const [crawlingRange, setCrawlingRange] = createSignal<CrawlingRangeResponse | null>(null);
   const [showSiteStatus, setShowSiteStatus] = createSignal(true);
   const [batchSize, setBatchSize] = createSignal(3); // 기본값 3, 실제 설정에서 로드됨
+  // Optional overrides / inputs
+  const [batchSizeOverride, setBatchSizeOverride] = createSignal<number | null>(null);
+  const [repairBuffer, setRepairBuffer] = createSignal<number>(2);
   // Validation state
   const [isValidating, setIsValidating] = createSignal(false);
   const [validationStats, setValidationStats] = createSignal<{pages_scanned:number;products_checked:number;divergences:number;anomalies:number;duration_ms:number;session_id?:string}|null>(null);
@@ -89,6 +92,12 @@ export const CrawlingEngineTab: Component = () => {
   const [isSyncing, setIsSyncing] = createSignal(false);
   const [syncEvents, setSyncEvents] = createSignal<any[]>([]);
   const [syncStats, setSyncStats] = createSignal<{pages_processed:number;inserted:number;updated:number;skipped:number;failed:number;duration_ms?:number;session_id?:string}|null>(null);
+  // Planned pages for progress (sum of ranges from actor-sync-started)
+  const [plannedPages, setPlannedPages] = createSignal<number | null>(null);
+  // Track whether a sync start event was seen recently (for fallback)
+  let lastSyncStartSeq = 0;
+  const [diagnosisResult, setDiagnosisResult] = createSignal<any | null>(null);
+  const [autoReDiagnose, setAutoReDiagnose] = createSignal(false);
   // UI notices (e.g., range corrections)
   const [rangeNotice, setRangeNotice] = createSignal<string | null>(null);
   // Config: optional cap for validation/sync span
@@ -97,6 +106,15 @@ export const CrawlingEngineTab: Component = () => {
   const { events: actorEvents } = useActorVisualizationStream(600);
   // Multi-range validation control
   const [isMultiRangeRun, setIsMultiRangeRun] = createSignal(false);
+  // Persistence gate
+  let settingsRestored = false;
+
+  // === Sync stage cards (Stage 1, 3, 5) ===
+  const [stage1State, setStage1State] = createSignal<{currentPage?: number; pagesStarted: number; mismatchWarnings: number; lastWarning?: string}>({ pagesStarted: 0, mismatchWarnings: 0 });
+  const [stage3State, setStage3State] = createSignal<{detailWarnings: number; lastDetailWarning?: string}>({ detailWarnings: 0 });
+  const [stage3Success, setStage3Success] = createSignal<{persisted:number; skipped:number}>({ persisted: 0, skipped: 0 });
+  const [stage3LastStatus, setStage3LastStatus] = createSignal<string | undefined>(undefined);
+  const [stage5StateExtra, setStage5StateExtra] = createSignal<{globalIdBackfillAffected?: number; lastDbWarning?: string; lastPerPage?: {page:number; placeholders:number; core:number; pid:number; prodId:number}}>( {} as any );
 
   // Log helper
   const addLog = (message: string) => {
@@ -172,6 +190,29 @@ export const CrawlingEngineTab: Component = () => {
   // Initialize and load data
   onMount(async () => {
     addLog('🎯 Advanced Crawling Engine 탭 로드됨');
+    // Restore persisted UI settings
+    try {
+      const rbRaw = localStorage.getItem('mc_repair_buffer');
+      if (rbRaw !== null) {
+        const v = parseInt(rbRaw, 10);
+        if (!Number.isNaN(v) && v >= 0) setRepairBuffer(v);
+      }
+      const boRaw = localStorage.getItem('mc_batch_override');
+      if (boRaw !== null) {
+        if (boRaw === '') {
+          setBatchSizeOverride(null);
+        } else {
+          const v = parseInt(boRaw, 10);
+          setBatchSizeOverride(Number.isNaN(v) ? null : Math.max(1, v));
+        }
+      }
+      const arRaw = localStorage.getItem('mc_auto_rediag');
+      if (arRaw !== null) setAutoReDiagnose(arRaw === 'true');
+    } catch (e) {
+      console.warn('Setting restore failed (non-fatal):', e);
+    } finally {
+      settingsRestored = true;
+    }
     
     await checkSiteStatus(); // 이 함수 내에서 이미 calculateCrawlingRange() 호출됨
     await loadRecentProducts();
@@ -250,11 +291,29 @@ export const CrawlingEngineTab: Component = () => {
       setSyncStats({ pages_processed: 0, inserted: 0, updated: 0, skipped: 0, failed: 0, session_id: p.session_id });
       setSyncEvents(evts => [...evts.slice(-199), p]);
       addLog(`🔄 Sync 시작: session=${p.session_id} ranges=${JSON.stringify(p.ranges)}`);
+      lastSyncStartSeq++;
+      // Derive total planned pages from ranges
+      try {
+        const ranges: Array<[number, number]> = Array.isArray(p.ranges) ? p.ranges : [];
+        const total = ranges.reduce((acc, [start, end]) => acc + Math.max(0, (start - end + 1)), 0);
+        setPlannedPages(total > 0 ? total : null);
+      } catch { setPlannedPages(null); }
+      // Reset stage counters
+      setStage1State({ pagesStarted: 0, mismatchWarnings: 0 });
+      setStage3State({ detailWarnings: 0 });
+      setStage3Success({ persisted: 0, skipped: 0 });
+      setStage3LastStatus(undefined);
+      setStage5StateExtra({});
     });
     const sPage = await listen('actor-sync-page-started', (e) => {
       const p = e.payload as any;
       setSyncEvents(evts => [...evts.slice(-199), p]);
       addLog(`🔄 Sync 페이지 시작: physical=${p.physical_page}`);
+      setStage1State(prev => ({
+        ...prev,
+        currentPage: p.physical_page,
+        pagesStarted: (prev.pagesStarted || 0) + 1,
+      }));
     });
     const sProg = await listen('actor-sync-upsert-progress', (e) => {
       const p = e.payload as any;
@@ -277,6 +336,57 @@ export const CrawlingEngineTab: Component = () => {
       const p = e.payload as any;
       setSyncEvents(evts => [...evts.slice(-199), p]);
       addLog(`⚠️ Sync 경고: ${p.code} ${p.detail}`);
+  try {
+        const code: string = p.code || '';
+        // Stage 1: 페이지 접근/리스트 단계 관련 경고 매핑
+        if (code === 'count_mismatch' || code === 'page_incomplete_after_retries' || code === 'tx_begin_failed') {
+          setStage1State(prev => ({
+            ...prev,
+            mismatchWarnings: (prev.mismatchWarnings || 0) + 1,
+            lastWarning: `${code}: ${p.detail || ''}`.slice(0, 160),
+          }));
+        }
+        // Stage 3: 상세 수집 관련 경고 매핑
+        if (code.startsWith('details_')) {
+          setStage3State(prev => ({
+            ...prev,
+            detailWarnings: (prev.detailWarnings || 0) + 1,
+            lastDetailWarning: `${code}: ${p.detail || ''}`.slice(0, 160),
+          }));
+        }
+        // Stage 5: DB-only/글로벌 스윕 등 저장단계 관련 경고 매핑
+        if (code === 'global_products_id_backfill_sweep') {
+          const m = /affected_rows=(\d+)/.exec(String(p.detail || ''));
+          const affected = m ? parseInt(m[1] || '0', 10) : undefined;
+          setStage5StateExtra(prev => ({ ...prev, globalIdBackfillAffected: affected }));
+        }
+        if (code === 'db_only_backfill_metrics') {
+          try {
+            const obj = JSON.parse(String(p.detail || '{}')) as any;
+            const page = Number(obj.page || 0);
+            const pid = Number(obj.pid || 0);
+            const placeholders = Number(obj.placeholders || 0);
+            const core = Number(obj.product_core_backfilled || obj.core || 0);
+            const prodId = Number(obj.products_id_backfilled || obj.prodId || 0);
+            setStage5StateExtra(prev => ({ ...prev, lastPerPage: { page, pid, placeholders, core, prodId } }));
+          } catch {}
+        }
+        if (code.endsWith('_failed') || code.startsWith('db_only_')) {
+          setStage5StateExtra(prev => ({ ...prev, lastDbWarning: `${code}: ${p.detail || ''}`.slice(0, 160) }));
+        }
+      } catch {}
+    });
+    // Product lifecycle events for details success/skip counters
+    const sPlc = await listen('actor-product-lifecycle', (e) => {
+      const p = e.payload as any;
+      const status = String(p.status || '');
+      if (status === 'details_persisted') {
+        setStage3Success(prev => ({ ...prev, persisted: (prev.persisted || 0) + 1 }));
+        setStage3LastStatus(`${status}: ${p.product_ref || ''}`.slice(0, 160));
+      } else if (status === 'details_skipped_exists') {
+        setStage3Success(prev => ({ ...prev, skipped: (prev.skipped || 0) + 1 }));
+        setStage3LastStatus(`${status}: ${p.product_ref || ''}`.slice(0, 160));
+      }
     });
     const sDone = await listen('actor-sync-completed', (e) => {
       const p = e.payload as any;
@@ -292,6 +402,16 @@ export const CrawlingEngineTab: Component = () => {
       });
       setSyncEvents(evts => [...evts.slice(-199), p]);
       addLog(`🔄 Sync 완료: pages=${p.pages_processed} ins=${p.inserted} upd=${p.updated} skip=${p.skipped} fail=${p.failed}`);
+      // Optional auto re-diagnosis
+      if (autoReDiagnose()) {
+        addLog('🧪 Sync 완료 후 재진단 실행...');
+        tauriApi.diagnoseAndRepairData(false)
+          .then((res) => {
+            setDiagnosisResult(res);
+            addLog(`🧪 재진단 결과: ${JSON.stringify(res)}`);
+          })
+          .catch((e) => addLog(`❌ 재진단 실패: ${e}`));
+      }
     });
     
     // 컴포넌트 언마운트 시 리스너 해제
@@ -300,8 +420,28 @@ export const CrawlingEngineTab: Component = () => {
       unlistenCompleted();
       unlistenFailed();
       vStarted(); vPage(); vDiv(); vAnom(); vDone();
-      sStarted(); sPage(); sProg(); sPageDone(); sWarn(); sDone();
+  sStarted(); sPage(); sProg(); sPageDone(); sWarn(); sPlc(); sDone();
     });
+  });
+
+  // Persist settings when changed (after initial restore)
+  createEffect(() => {
+    if (!settingsRestored) return;
+    const v = repairBuffer();
+    try { localStorage.setItem('mc_repair_buffer', String(Math.max(0, v))); } catch {}
+  });
+  createEffect(() => {
+    if (!settingsRestored) return;
+    const v = batchSizeOverride();
+    try {
+      if (v == null || Number.isNaN(v)) localStorage.setItem('mc_batch_override', '');
+      else localStorage.setItem('mc_batch_override', String(Math.max(1, v)));
+    } catch {}
+  });
+  createEffect(() => {
+    if (!settingsRestored) return;
+    const v = autoReDiagnose();
+    try { localStorage.setItem('mc_auto_rediag', String(!!v)); } catch {}
   });
 
   // Detect user edits
@@ -720,17 +860,37 @@ export const CrawlingEngineTab: Component = () => {
       }
   };
 
-  // Trigger Sync using the last validation range
+  // Trigger Sync using the last validation range (with robust fallbacks)
   const runSyncForLastValidationRange = async (dryRun = false) => {
-    // Prefer the current input field, then fallback to last validation expression, then last resolved single range
+    // Prefer current input, then last validation expr/range; if absent, fall back to recommended crawlingRange or a small tail window
     let rangesExpr = (valRangeExpr() && valRangeExpr().trim()) ? valRangeExpr().trim() : (lastValidationExpr() || '');
     if (!rangesExpr) {
       const rng = lastValidationRange();
-      if (!rng) {
-        addLog('⚠️ Sync 불가: 최근 Validation 범위 정보가 없습니다. 먼저 Validation을 실행하세요.');
+      if (rng) {
+        rangesExpr = `${rng.start}-${rng.end}`;
+        addLog(`ℹ️ Validation 범위 재사용: ${rangesExpr}`);
+      } else if (crawlingRange()?.range && Array.isArray(crawlingRange()!.range)) {
+        const [s, e] = crawlingRange()!.range as [number, number];
+        if (typeof s === 'number' && typeof e === 'number') {
+          rangesExpr = `${s}-${e}`;
+          addLog(`ℹ️ 권장 크롤링 범위 사용: ${rangesExpr}`);
+        }
+      }
+    }
+    // Final fallback: tail window from siteStatus
+    if (!rangesExpr) {
+      const site = siteStatus();
+      if (site && typeof site.total_pages === 'number' && site.total_pages > 0) {
+        const total = site.total_pages;
+        const limit = Math.max(1, validationPageLimit() || 3);
+        const start = total;
+        const end = Math.max(1, start - limit + 1);
+        rangesExpr = `${start}-${end}`;
+        addLog(`ℹ️ 기본 꼬리 범위 사용: ${rangesExpr}`);
+      } else {
+        addLog('⚠️ Sync 불가: 범위를 결정할 수 없습니다. (사이트 상태/Validation 없음)');
         return;
       }
-      rangesExpr = `${rng.start}-${rng.end}`;
     }
     // Clamp to site bounds and inform user if corrected
     const clamp = clampRangesToSite(rangesExpr);
@@ -764,11 +924,53 @@ export const CrawlingEngineTab: Component = () => {
       }
     }
     try {
-      addLog(`🔄 Sync 요청: ranges=${rangesExpr} dryRun=${dryRun}`);
+  addLog(`🔄 Sync 요청: ranges=${rangesExpr} dryRun=${dryRun}`);
+  try { await invoke('ui_debug_log', { message: `[AdvancedTab] sync_button_click ranges=${rangesExpr} dryRun=${dryRun}` }); } catch {}
       // Optimistic UI: show syncing state immediately; backend events will update stats
       setIsSyncing(true);
       setSyncStats({ pages_processed: 0, inserted: 0, updated: 0, skipped: 0, failed: 0, session_id: undefined });
-      await invoke('start_partial_sync', { ranges: rangesExpr, dry_run: dryRun });
+      // Pre-compute a local planned pages estimate so the tiny progress bar can start moving even if start event is delayed
+      try {
+        const localRanges = parseMultiRangeExpr(rangesExpr);
+        const totalLocal = localRanges.reduce((acc, r) => acc + Math.max(1, r.start - r.end + 1), 0);
+        if (totalLocal > 0) setPlannedPages(totalLocal);
+      } catch {}
+      // Fire-and-forget: backend emits actor-sync-* events; don't block UI waiting for result
+  invoke<any>('start_partial_sync', { ranges: rangesExpr, dry_run: dryRun })
+        .then((summary) => {
+          addLog(`✅ Sync 완료 (invoke 반환): ${summary ? JSON.stringify(summary) : 'OK'}`);
+        })
+        .catch((err) => {
+          addLog(`❌ Sync invoke 오류: ${err}`);
+          setIsSyncing(false);
+        });
+  addLog('📨 Sync 요청을 백엔드로 전달함 (이벤트 대기)');
+  try { await invoke('ui_debug_log', { message: `[AdvancedTab] start_partial_sync invoked ranges=${rangesExpr}` }); } catch {}
+      // Fallback: if no start event arrives shortly, trigger explicit page sync
+  const startSeqAtRequest = lastSyncStartSeq;
+  setTimeout(async () => {
+        // If a start event has arrived, do nothing
+        if (lastSyncStartSeq !== startSeqAtRequest) return;
+        if (!isSyncing()) return;
+        try {
+          const parsed = parseMultiRangeExpr(rangesExpr);
+          const pages: number[] = [];
+          for (const r of parsed) {
+            for (let p = r.start; p >= r.end; p--) pages.push(p);
+          }
+          // Deduplicate while keeping order
+          const seen = new Set<number>();
+          const uniquePages = pages.filter((p) => (seen.has(p) ? false : (seen.add(p), true)));
+      if (uniquePages.length > 0) {
+            addLog(`⛑️ Sync 시작 이벤트가 지연되어 대체 경로 실행: start_sync_pages pages=[${uniquePages.join(', ')}]`);
+    try { await invoke('ui_debug_log', { message: `[AdvancedTab] fallback_start_sync_pages pages=[${uniquePages.join(',')}]` }); } catch {}
+            await tauriApi.startSyncPages(uniquePages, dryRun);
+            addLog('⛑️ 대체 경로 요청 완료 (이벤트 대기)');
+          }
+        } catch (err) {
+          addLog(`❌ 대체 start_sync_pages 실패: ${err}`);
+        }
+    }, 800);
     } catch (e:any) {
       addLog(`❌ Sync 시작 실패: ${e}`);
       console.error('start_partial_sync error', e);
@@ -822,6 +1024,75 @@ export const CrawlingEngineTab: Component = () => {
 
   <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <div class="space-y-6">
+            {/* Sync Stage Cards */}
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {/* Stage 1: 페이지 접근/목록 */}
+              <div class="rounded-lg border p-4 bg-indigo-50 border-indigo-200">
+                <div class="text-xs font-semibold text-indigo-800 mb-1">Stage 1 · 목록 페이지 접근</div>
+                <div class="text-[11px] text-indigo-900">현재 페이지: <b>{stage1State()?.currentPage ?? '-'}</b></div>
+                <div class="text-[11px] text-indigo-900">시작된 페이지 수: <b>{stage1State()?.pagesStarted || 0}</b></div>
+                {/* Tiny progress bar approximation based on page starts vs total (if known) */}
+                <Show when={syncStats()?.pages_processed !== undefined}>
+                  <div class="mt-1 w-full bg-indigo-100 rounded h-1.5">
+                    {(() => {
+                      const processed = syncStats()?.pages_processed || 0;
+                      const total = plannedPages() ?? (crawlingRange()?.range ? (crawlingRange()!.range![0] - crawlingRange()!.range![1] + 1) : processed || 1);
+                      const pct = Math.min(100, (100 * processed) / Math.max(1, total));
+                      return <div class="h-1.5 bg-indigo-500 rounded transition-all" style={`width: ${pct}%`}></div>;
+                    })()}
+                  </div>
+                </Show>
+                <Show when={(stage1State()?.mismatchWarnings || 0) > 0}>
+                  <div class="mt-1 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                    경고: {stage1State()?.mismatchWarnings}건<br/>
+                    <span class="line-clamp-2">{stage1State()?.lastWarning}</span>
+                  </div>
+                </Show>
+                <p class="mt-2 text-[11px] text-indigo-700">사이트 목록에서 제품 URL을 수집하고 예상 개수와 일치하는지 점검합니다.</p>
+              </div>
+              {/* Stage 3: 상세 정보 수집 */}
+              <div class="rounded-lg border p-4 bg-emerald-50 border-emerald-200">
+                <div class="text-xs font-semibold text-emerald-800 mb-1">Stage 3 · 상세 정보 추출</div>
+                <div class="text-[11px] text-emerald-900">상세 경고 수: <b>{stage3State()?.detailWarnings || 0}</b></div>
+                <div class="text-[11px] text-emerald-900 mt-0.5">상세 저장: 
+                  <b class="text-emerald-700"> {stage3Success().persisted}</b>
+                  <span class="mx-1">/</span>
+                  <b class="text-gray-700">{stage3Success().skipped}</b>
+                </div>
+                <Show when={stage3LastStatus()}>
+                  <div class="mt-1 text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+                    최근: <span class="line-clamp-2">{stage3LastStatus()}</span>
+                  </div>
+                </Show>
+                <Show when={(stage3State()?.detailWarnings || 0) > 0}>
+                  <div class="mt-1 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                    최근: <span class="line-clamp-2">{stage3State()?.lastDetailWarning}</span>
+                  </div>
+                </Show>
+                <p class="mt-2 text-[11px] text-emerald-700">제품 상세 페이지에서 주요 필드를 추출하고 누락값은 재시도로 보정합니다.</p>
+              </div>
+              {/* Stage 5: DB 저장/백필 */}
+              <div class="rounded-lg border p-4 bg-purple-50 border-purple-200">
+                <div class="text-xs font-semibold text-purple-800 mb-1">Stage 5 · DB 저장 및 백필</div>
+                <div class="text-[11px] text-purple-900">글로벌 제품 ID 백필: <b>{stage5StateExtra()?.globalIdBackfillAffected ?? 0}</b></div>
+                <Show when={stage5StateExtra()?.lastPerPage}>
+                  <div class="mt-1 text-[11px] text-purple-900 bg-purple-100 border border-purple-200 rounded px-2 py-1">
+                    <div>최근 페이지 p{stage5StateExtra()!.lastPerPage!.page} (pid {stage5StateExtra()!.lastPerPage!.pid})</div>
+                    <div class="flex gap-2">
+                      <span>placeholder: <b>{stage5StateExtra()!.lastPerPage!.placeholders}</b></span>
+                      <span>core: <b>{stage5StateExtra()!.lastPerPage!.core}</b></span>
+                      <span>id: <b>{stage5StateExtra()!.lastPerPage!.prodId}</b></span>
+                    </div>
+                  </div>
+                </Show>
+                <Show when={stage5StateExtra()?.lastDbWarning}>
+                  <div class="mt-1 text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded px-2 py-1">
+                    최근 경고: <span class="line-clamp-2">{stage5StateExtra()?.lastDbWarning}</span>
+                  </div>
+                </Show>
+                <p class="mt-2 text-[11px] text-purple-700">페이지 단위 자리표시자/코어 백필과 세션 종료 후 글로벌 제품 ID 스윕 결과를 요약합니다.</p>
+              </div>
+            </div>
             {/* Site Status */}
             <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <div class="flex items-center justify-between mb-4">
@@ -995,7 +1266,7 @@ export const CrawlingEngineTab: Component = () => {
                 </div>
               </div>
 
-              <div class="flex items-center gap-2 mb-2">
+              <div class="flex items-center gap-2 mb-2 flex-wrap">
                 <button
                   onClick={() => runSyncForLastValidationRange(false)}
                   class={`px-3 py-1.5 text-sm rounded-md transition-colors ${isSyncing() ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}
@@ -1012,6 +1283,132 @@ export const CrawlingEngineTab: Component = () => {
                 >
                   Dry-run
                 </button>
+                <div class="flex items-center gap-1 text-xs text-gray-600">
+                  <label class="ml-2">Repair buffer</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={repairBuffer()}
+                    onInput={e => {
+                      const v = parseInt(e.currentTarget.value, 10);
+                      setRepairBuffer(Number.isNaN(v) ? 0 : Math.max(0, v));
+                    }}
+                    class="w-16 px-2 py-1 rounded border"
+                  />
+                </div>
+                <button
+                  onClick={async () => {
+                    setIsSyncing(true);
+                    const buf = Math.max(0, repairBuffer());
+                    addLog(`🩺 Repair Sync 시작(버퍼=${buf})...`);
+                    try {
+                      const res = await tauriApi.startRepairSync(buf, false);
+                      addLog(`✅ Repair Sync 완료: ${JSON.stringify(res)}`);
+                    } catch (e) { addLog(`❌ Repair Sync 실패: ${e}`); }
+                    finally { setIsSyncing(false); }
+                  }}
+                  class={`px-3 py-1.5 text-sm rounded-md transition-colors ${isSyncing() ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-rose-100 text-rose-700 hover:bg-rose-200'}`}
+                  disabled={isSyncing()}
+                  title="DB 이상치(cnt!=12) 주변 윈도우를 자동 계산해 부분 동기화 실행"
+                >
+                  🩺 Repair Sync
+                </button>
+                <button
+                  onClick={async () => {
+                    addLog('🧹 DB 진단 실행...');
+                    try {
+                      const res = await tauriApi.diagnoseAndRepairData(false, false);
+                      setDiagnosisResult(res);
+                      addLog(`🧪 진단 결과: ${JSON.stringify(res)}`);
+                    } catch (e) { addLog(`❌ 진단 실패: ${e}`); }
+                  }}
+                  class="px-3 py-1.5 text-sm rounded-md bg-amber-100 text-amber-700 hover:bg-amber-200"
+                  title="products/product_details 미스매치 및 이상치 수집(삭제 없음)"
+                >
+                  🧪 DB 진단
+                </button>
+                <button
+                  onClick={async () => {
+                    addLog('🔁 products→details 좌표/ID 동기화 실행...');
+                    try {
+                      const rep = await tauriApi.syncProductDetailsCoordinates();
+                      addLog(`✅ 동기화 완료: products.id=${rep.updated_product_ids}, inserted=${rep.inserted_details}, updated_coords=${rep.updated_coordinates}, details.id=${rep.updated_ids} (p=${rep.total_products}, d=${rep.total_details})`);
+                    } catch (e) {
+                      addLog(`❌ 동기화 실패: ${e}`);
+                    }
+                  }}
+                  class="px-3 py-1.5 text-sm rounded-md bg-blue-100 text-blue-700 hover:bg-blue-200"
+                  title="products.url 기준으로 product_details에 page_id/index_in_page/id를 정합화합니다 (크롤링 없음)"
+                >
+                  🔁 products→details 동기화
+                </button>
+                <button
+                  onClick={async () => {
+                    addLog('🧪 Orphan 상세 동기화 실행...');
+                    try {
+                      const res = await tauriApi.diagnoseAndRepairData(false, true);
+                      setDiagnosisResult(res);
+                      addLog(`✅ Orphan 상세 동기화 완료: ${JSON.stringify(res)}`);
+                    } catch (e) { addLog(`❌ Orphan 동기화 실패: ${e}`); }
+                  }}
+                  class="px-3 py-1.5 text-sm rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                  title="products만 있고 details 없는 URL들에 대해 상세를 조회해 product_details를 채웁니다"
+                >
+                  🔁 Orphan 상세 동기화
+                </button>
+                {/* Move auto re-diagnose toggle to end so it doesn't push buttons off-screen */}
+                <label class="flex items-center gap-1 text-xs text-gray-700 ml-auto select-none">
+                  <input type="checkbox" checked={autoReDiagnose()} onInput={e=>setAutoReDiagnose((e.currentTarget as HTMLInputElement).checked)} />
+                  자동 재진단
+                </label>
+                <button
+                  onClick={async () => {
+                    if (!confirm('정말로 이상치/미스매치 레코드를 삭제할까요? 되돌릴 수 없습니다.')) return;
+                    addLog('🧹 DB 진단+삭제 실행...');
+                    try {
+                        const res = await tauriApi.diagnoseAndRepairData(true, false);
+                        addLog(`✅ 삭제 완료: ${JSON.stringify(res)}`);
+                    } catch (e) { addLog(`❌ 삭제 실패: ${e}`); }
+                  }}
+                  class="px-3 py-1.5 text-sm rounded-md bg-red-100 text-red-700 hover:bg-red-200"
+                  title="미스매치/이상치 레코드 삭제 수행(주의)"
+                >
+                  🧹 DB 진단+삭제
+                </button>
+                <div class="flex items-center gap-1 text-xs text-gray-600">
+                  <label>NULL cert 재시도 수</label>
+                  <input id="retryLimit" type="number" min="1" placeholder="200" class="w-20 px-2 py-1 rounded border" />
+                  <button
+                    class="px-2 py-1 rounded bg-blue-100 text-blue-700 hover:bg-blue-200"
+                    onClick={async () => {
+                      const el = document.getElementById('retryLimit') as HTMLInputElement | null;
+                      const v = el ? parseInt(el.value || '0', 10) : 0;
+                      const limit = Number.isNaN(v) || v <= 0 ? undefined : v;
+                      addLog(`🔁 certificate_id NULL 상세 재시도 실행(limit=${limit ?? 200})...`);
+                      try {
+                        const res = await tauriApi.retryFailedDetails(limit, false);
+                        addLog(`✅ 재시도 결과: ${JSON.stringify(res)}`);
+                      } catch (e) { addLog(`❌ 재시도 실패: ${e}`); }
+                    }}
+                  >
+                    🔁 NULL cert 재시도
+                  </button>
+                </div>
+                <div class="flex items-center gap-1 text-xs text-gray-600">
+                  <label class="ml-2">Batch override</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={batchSizeOverride() ?? ''}
+                    placeholder={`${batchSize()}`}
+                    onInput={e => {
+                      const v = parseInt(e.currentTarget.value, 10);
+                      setBatchSizeOverride(Number.isNaN(v) ? null : Math.max(1, v));
+                    }}
+                    class="w-20 px-2 py-1 rounded border"
+                    title="비워두면 설정의 batch_size를 사용합니다"
+                  />
+                </div>
                 <button
                   onClick={async () => {
                     // Use same range derivation as partial button
@@ -1024,7 +1421,8 @@ export const CrawlingEngineTab: Component = () => {
                     setIsSyncing(true);
                     addLog(`📦 Batched Sync 시작: ${rangesExpr}`);
                     try {
-                      const res = await tauriApi.startBatchedSync(rangesExpr);
+                      const override = batchSizeOverride() ?? undefined;
+                      const res = await tauriApi.startBatchedSync(rangesExpr, override);
                       addLog(`✅ Batched Sync 완료: ${JSON.stringify(res)}`);
                     } catch (e) {
                       addLog(`❌ Batched Sync 실패: ${e}`);
@@ -1110,6 +1508,56 @@ export const CrawlingEngineTab: Component = () => {
                     </div>
                   </div>
                 </Show>
+              </Show>
+              <Show when={diagnosisResult()}>
+                <div class="mt-3 text-xs">
+                  <h3 class="font-semibold text-gray-800 mb-1">🧪 DB 진단 결과</h3>
+                  {/* Compact summary cards */}
+                  <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+                    {(() => {
+                      const d: any = diagnosisResult();
+                      const diag = d?.data?.diagnostics ?? d?.diagnostics;
+                      if (!diag) return null;
+                      const cards = [
+                        { label: 'Orphans', value: diag.orphans_products_without_details, color: 'bg-rose-50 text-rose-700 border-rose-200' },
+                        { label: 'Nullish core', value: diag.products_with_nullish_core_fields, color: 'bg-amber-50 text-amber-700 border-amber-200' },
+                        { label: 'Out-of-range page_id', value: diag.out_of_range_page_id, color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+                        { label: 'Invalid indices/page_id', value: diag.invalid_indices_or_page_id, color: 'bg-gray-50 text-gray-700 border-gray-200' },
+                      ];
+                      return cards.map((c) => (
+                        <div class={`border rounded px-2 py-1 ${c.color}`}>
+                          <div class="text-[10px]">{c.label}</div>
+                          <div class="text-sm font-semibold">{c.value ?? 0}</div>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                  {/* Actions summary + quick re-run */}
+                  <div class="flex items-center gap-2 mb-2">
+                    {(() => {
+                      const d: any = diagnosisResult();
+                      const act = d?.data?.actions ?? d?.actions;
+                      if (!act) return null;
+                      return (
+                        <div class="text-[11px] text-gray-600">삭제옵션: {String(act.delete_mismatches ?? false)} / 삭제행: <b class="text-gray-800">{act.deleted_rows ?? 0}</b></div>
+                      );
+                    })()}
+                    <button
+                      class="ml-auto px-2 py-1 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                      onClick={async () => {
+                        addLog('🧪 재진단 실행...');
+                        try {
+                          const res = await tauriApi.diagnoseAndRepairData(false);
+                          setDiagnosisResult(res);
+                          addLog(`🧪 재진단 결과: ${JSON.stringify(res)}`);
+                        } catch (e) { addLog(`❌ 재진단 실패: ${e}`); }
+                      }}
+                    >재진단</button>
+                  </div>
+                  <div class="bg-gray-50 border border-gray-200 rounded p-2 max-h-56 overflow-auto font-mono whitespace-pre-wrap break-words">
+                    {JSON.stringify(diagnosisResult(), null, 2)}
+                  </div>
+                </div>
               </Show>
               <Show when={validationEvents().length > 0}>
                 <div class="mt-4 max-h-40 overflow-auto bg-gray-50 border border-gray-200 rounded p-2 text-xs font-mono space-y-0.5">

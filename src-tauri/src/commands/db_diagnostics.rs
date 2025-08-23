@@ -1,12 +1,12 @@
 use crate::application::AppState;
-use crate::infrastructure::{
-    config::{ConfigManager, csa_iot},
-    html_parser::MatterDataExtractor,
-};
+use crate::application::shared_state::SharedStateCache;
+// (no additional infrastructure imports needed)
 use serde::Serialize;
 use sqlx::Row;
 use std::collections::{BTreeMap, HashMap};
 use tauri::{AppHandle, State};
+use tauri::Manager; // for try_state
+use tracing::{debug, info};
 
 #[derive(Debug, Serialize)]
 pub struct DuplicatePosition {
@@ -40,6 +40,16 @@ pub struct DbPaginationMismatchReport {
     pub items_on_last_page: Option<u32>,
     pub group_summaries: Vec<GroupSummary>,
     pub duplicate_positions: Vec<DuplicatePosition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepass: Option<PrepassSummary>,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct PrepassSummary {
+    pub details_aligned: u64,
+    pub products_id_backfilled: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details_align_skipped_due_to_slot_taken: Option<u64>,
 }
 
 /// Scan local DB for pagination invariants without mutating anything.
@@ -52,49 +62,123 @@ pub async fn scan_db_pagination_mismatches(
     _app: AppHandle,
     app_state: State<'_, AppState>,
 ) -> Result<DbPaginationMismatchReport, String> {
+    info!(target: "db_diagnostics", "scan_db_pagination_mismatches: start");
     let pool = app_state
         .get_database_pool()
         .await
         .map_err(|e| format!("DB pool unavailable: {e}"))?;
 
-    // Optional site meta for context (not strictly needed for checks)
-    let (total_pages_site, items_on_last_page) = {
-        let cfg_manager =
-            ConfigManager::new().map_err(|e| format!("Config manager init failed: {e}"))?;
-        let app_config = cfg_manager
-            .load_config()
-            .await
-            .map_err(|e| format!("Config load failed: {e}"))?;
-        let http = app_config.create_http_client().map_err(|e| e.to_string())?;
-        let extractor = MatterDataExtractor::new().map_err(|e| e.to_string())?;
-        // Fetch first page to estimate total_pages; tolerate failures silently
-        let newest_url = csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
-        let mut total_pages: Option<u32> = None;
-        let mut last_count: Option<u32> = None;
-        if let Ok(resp) = http.fetch_response(&newest_url).await {
-            if let Ok(html) = resp.text().await {
-                total_pages = extractor.extract_total_pages(&html).ok();
-                if total_pages == Some(1) {
-                    last_count = extractor
-                        .extract_product_urls_from_content(&html)
-                        .ok()
-                        .map(|v| v.len() as u32);
-                } else if let Some(tp) = total_pages {
-                    let oldest_url =
-                        csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &tp.to_string());
-                    if let Ok(resp2) = http.fetch_response(&oldest_url).await {
-                        if let Ok(html2) = resp2.text().await {
-                            last_count = extractor
-                                .extract_product_urls_from_content(&html2)
-                                .ok()
-                                .map(|v| v.len() as u32);
-                        }
-                    }
-                }
-            }
+        // === Pre-pass: align product_details positions/ids by products.url, then backfill products.id from details ===
+        let mut prepass = PrepassSummary::default();
+    {
+                let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+                // 1) Align product_details.page_id/index_in_page and recompute product_details.id from products
+                //    Only when products has non-null page_id/index_in_page.
+                                // Count how many rows would collide with existing target slot
+                                let res0 = sqlx::query_scalar::<_, i64>(
+                                                r#"
+                                                SELECT COUNT(*) FROM product_details pd
+                                                WHERE EXISTS (SELECT 1 FROM products WHERE products.url = pd.url)
+                                                    AND (SELECT page_id FROM products WHERE products.url = pd.url) IS NOT NULL
+                                                    AND (SELECT index_in_page FROM products WHERE products.url = pd.url) IS NOT NULL
+                                                    AND EXISTS (
+                                                            SELECT 1 FROM product_details AS pd2
+                                                            WHERE pd2.page_id = (SELECT page_id FROM products WHERE products.url = pd.url)
+                                                                AND pd2.index_in_page = (SELECT index_in_page FROM products WHERE products.url = pd.url)
+                                                    )
+                                                    AND (
+                                                            COALESCE(pd.page_id, -1) != COALESCE((SELECT page_id FROM products WHERE products.url = pd.url), -1)
+                                                            OR COALESCE(pd.index_in_page, -1) != COALESCE((SELECT index_in_page FROM products WHERE products.url = pd.url), -1)
+                                                            OR pd.id != printf('p%04di%02d',
+                                                                            (SELECT page_id FROM products WHERE products.url = pd.url),
+                                                                            (SELECT index_in_page FROM products WHERE products.url = pd.url))
+                                                    )
+                                                "#,
+                                )
+                                .fetch_one(&mut *tx)
+                                .await
+                                .unwrap_or(0);
+
+                                let res1 = sqlx::query(
+                        r#"
+                        UPDATE product_details
+                        SET
+                            page_id = (SELECT page_id FROM products WHERE products.url = product_details.url),
+                            index_in_page = (SELECT index_in_page FROM products WHERE products.url = product_details.url),
+                            id = printf('p%04di%02d',
+                                        (SELECT page_id FROM products WHERE products.url = product_details.url),
+                                        (SELECT index_in_page FROM products WHERE products.url = product_details.url))
+                        WHERE
+                            EXISTS (SELECT 1 FROM products WHERE products.url = product_details.url)
+                            AND (SELECT page_id FROM products WHERE products.url = product_details.url) IS NOT NULL
+                            AND (SELECT index_in_page FROM products WHERE products.url = product_details.url) IS NOT NULL
+                            -- Choose a single canonical row per URL to avoid multiple rows racing for the same target slot
+                            AND product_details.rowid = (
+                                SELECT MIN(rowid) FROM product_details AS pdsame WHERE pdsame.url = product_details.url
+                            )
+                            -- Do not update if the target slot is already occupied by any row (avoid UNIQUE violation)
+                            AND NOT EXISTS (
+                                SELECT 1 FROM product_details AS pd2
+                                WHERE pd2.page_id = (SELECT page_id FROM products WHERE products.url = product_details.url)
+                                  AND pd2.index_in_page = (SELECT index_in_page FROM products WHERE products.url = product_details.url)
+                            )
+                            AND (
+                                COALESCE(product_details.page_id, -1) != COALESCE((SELECT page_id FROM products WHERE products.url = product_details.url), -1)
+                                OR COALESCE(product_details.index_in_page, -1) != COALESCE((SELECT index_in_page FROM products WHERE products.url = product_details.url), -1)
+                                OR product_details.id != printf('p%04di%02d',
+                                        (SELECT page_id FROM products WHERE products.url = product_details.url),
+                                        (SELECT index_in_page FROM products WHERE products.url = product_details.url))
+                            )
+                        "#,
+                )
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("Prepass alignment failed: {e}"))?;
+                prepass.details_aligned = res1.rows_affected();
+                prepass.details_align_skipped_due_to_slot_taken = Some(res0 as u64);
+                debug!(target: "db_diagnostics", details_aligned = prepass.details_aligned, "prepass: details aligned");
+
+                // 2) Backfill products.id from product_details.id when NULL/empty
+                let res2 = sqlx::query(
+                        r#"
+                        UPDATE products
+                        SET id = (SELECT id FROM product_details WHERE product_details.url = products.url)
+                        WHERE (id IS NULL OR id = '')
+                            AND EXISTS (
+                                SELECT 1 FROM product_details 
+                                WHERE product_details.url = products.url 
+                                    AND product_details.id IS NOT NULL 
+                                    AND product_details.id <> ''
+                            )
+                        "#,
+                )
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("Prepass products.id backfill failed: {e}"))?;
+                prepass.products_id_backfilled = res2.rows_affected();
+                debug!(target: "db_diagnostics", products_id_backfilled = prepass.products_id_backfilled, "prepass: products.id backfilled");
+
+                tx.commit().await.map_err(|e| e.to_string())?;
         }
-        (total_pages, last_count)
-    };
+
+    // Skip network calls in diagnostics to avoid stalling; derive site meta from cache/config only.
+    // 1) Prefer SharedStateCache.site_analysis (if present and fresh)
+    // 2) Fallback to AppConfig.app_managed.last_known_max_page (no items_on_last_page available)
+    let mut total_pages_site: Option<u32> = None;
+    let mut items_on_last_page: Option<u32> = None;
+
+    if let Some(cache_state) = _app.try_state::<SharedStateCache>() {
+        if let Some(site) = cache_state.get_valid_site_analysis_async(Some(10)).await {
+            total_pages_site = Some(site.total_pages);
+            items_on_last_page = Some(site.products_on_last_page);
+        }
+    }
+    if total_pages_site.is_none() {
+        // Fallback to persisted config values without any network calls
+        let cfg = { app_state.config.read().await.clone() };
+        total_pages_site = cfg.app_managed.last_known_max_page;
+        // items_on_last_page not available from config; leave as None
+    }
 
     // Load all relevant rows
     let mut total_products: u64 = 0;
@@ -141,10 +225,15 @@ pub async fn scan_db_pagination_mismatches(
             items_on_last_page,
             group_summaries: vec![],
             duplicate_positions: vec![],
+            prepass: Some(prepass),
         });
     }
 
     let max_page_id_db = *by_pid.keys().max().unwrap();
+    // If no site meta available from cache/config, fall back to DB-derived total pages
+    if total_pages_site.is_none() {
+        total_pages_site = Some((max_page_id_db as u32).saturating_add(1));
+    }
     let mut group_summaries: Vec<GroupSummary> = Vec::new();
     let mut duplicate_positions: Vec<DuplicatePosition> = Vec::new();
 
@@ -153,7 +242,11 @@ pub async fn scan_db_pagination_mismatches(
         let terminal = *pid == max_page_id_db;
         let expected_count = if terminal { count } else { 12 };
         let expected_full = !terminal;
-        let current_page_number = total_pages_site.map(|tp| tp.saturating_sub(*pid as u32));
+        let current_page_number = if *pid >= 0 {
+            total_pages_site.map(|tp| tp.saturating_sub(*pid as u32))
+        } else {
+            None
+        };
 
         // Build map index -> urls
         let mut index_map: BTreeMap<i32, Vec<&str>> = BTreeMap::new();
@@ -232,12 +325,16 @@ pub async fn scan_db_pagination_mismatches(
         });
     }
 
-    Ok(DbPaginationMismatchReport {
+    let report = DbPaginationMismatchReport {
         total_products,
         max_page_id_db: Some(max_page_id_db),
         total_pages_site,
         items_on_last_page,
         group_summaries,
         duplicate_positions,
-    })
+        prepass: Some(prepass),
+    };
+
+    info!(target: "db_diagnostics", total_products = report.total_products, groups = report.group_summaries.len(), dup_positions = report.duplicate_positions.len(), "scan_db_pagination_mismatches: done");
+    Ok(report)
 }

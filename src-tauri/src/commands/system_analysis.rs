@@ -4,6 +4,7 @@
 //! 사이트 종합 분석 기능을 제공합니다.
 
 use serde_json;
+use sqlx::Row;
 use tauri::{AppHandle, State};
 use tracing::info;
 
@@ -101,6 +102,292 @@ pub async fn analyze_system_status(
         message: "System analysis completed successfully".to_string(),
         data: Some(analysis_data),
     })
+}
+
+/// 진단: products / product_details 간 미스매치 및 이상치 탐지/정리
+#[tauri::command]
+pub async fn diagnose_and_repair_data(
+    shared_state: State<'_, SharedStateCache>,
+    delete_mismatches: Option<bool>,
+    sync_orphans: Option<bool>,
+) -> Result<CrawlingResponse, String> {
+    let pool = crate::infrastructure::database_connection::get_or_init_global_pool()
+        .await
+        .map_err(|e| format!("DB init failed: {}", e))?;
+
+    // 1) 최신 site_total_pages 추정(캐시 우선)
+    let site_total_pages = shared_state
+        .get_valid_site_analysis_async(Some(5))
+        .await
+        .map(|s| s.total_pages)
+        .unwrap_or(0);
+
+    // 2) 이상치/미스매치 수집
+    let orphans_products = sqlx::query_scalar::<_, i64>(
+        r#"SELECT COUNT(*) FROM products p LEFT JOIN product_details d ON p.url=d.url WHERE d.url IS NULL"#,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap_or(0);
+
+    // 샘플 orphan URL 목록 (최대 200개)
+    let orphan_sample_limit: i64 = 200;
+    let orphan_urls: Vec<String> = sqlx::query_scalar::<_, String>(
+        r#"SELECT p.url FROM products p LEFT JOIN product_details d ON p.url=d.url
+           WHERE d.url IS NULL ORDER BY p.page_id ASC, p.index_in_page ASC LIMIT ?"#,
+    )
+    .bind(orphan_sample_limit)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    let nullish_core = sqlx::query_scalar::<_, i64>(
+        r#"SELECT COUNT(*) FROM products WHERE (manufacturer IS NULL OR model IS NULL OR certificate_id IS NULL)"#,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap_or(0);
+
+    let out_of_range_pages = if site_total_pages > 0 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM products WHERE page_id IS NOT NULL AND page_id > ?",
+        )
+        .bind(site_total_pages as i64)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0)
+    } else {
+        0
+    };
+
+    let bad_indices = sqlx::query_scalar::<_, i64>(
+        r#"SELECT COUNT(*) FROM products WHERE (index_in_page IS NOT NULL AND index_in_page <= 0) OR (page_id IS NOT NULL AND page_id <= 0)"#,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap_or(0);
+
+    // 3) 심각한 page_id 연속성 붕괴(break) 탐지: page_id 오름차순에서 인접 차이가 2 이상인 최초 위치
+    #[derive(Debug, Default, Clone)]
+    struct BreakInfo { first_break_at: Option<i64>, break_next: Option<i64>, gap: i64 }
+    let mut break_info: BreakInfo = BreakInfo::default();
+    if let Ok(rows) = sqlx::query("SELECT DISTINCT page_id FROM products WHERE page_id IS NOT NULL ORDER BY page_id")
+        .fetch_all(&pool)
+        .await
+    {
+        let mut prev: Option<i64> = None;
+        for r in rows {
+            let pid: i64 = r.get::<i64, _>("page_id");
+            if let Some(p) = prev {
+                let gap = pid - p;
+                if gap >= 2 {
+                    break_info.first_break_at = Some(p);
+                    break_info.break_next = Some(pid);
+                    break_info.gap = gap;
+                    break;
+                }
+            }
+            prev = Some(pid);
+        }
+    }
+
+    // 4) 삭제 옵션 수행
+    let mut deleted_rows = 0i64;
+    if delete_mismatches.unwrap_or(false) {
+        // 안전한 순서: out-of-range → bad-indices → nullish-core (목록-only 무의미 레코드) → orphans (상세 미존재)
+        if site_total_pages > 0 {
+            if let Ok(res) = sqlx::query("DELETE FROM products WHERE page_id IS NOT NULL AND page_id > ?")
+                .bind(site_total_pages as i64)
+                .execute(&pool)
+                .await
+            {
+                deleted_rows += res.rows_affected() as i64;
+            }
+        }
+        if let Ok(res) = sqlx::query(
+            r#"DELETE FROM products WHERE (index_in_page IS NOT NULL AND index_in_page <= 0) OR (page_id IS NOT NULL AND page_id <= 0)"#,
+        )
+        .execute(&pool)
+        .await
+        {
+            deleted_rows += res.rows_affected() as i64;
+        }
+        if let Ok(res) = sqlx::query(
+            r#"DELETE FROM products WHERE manufacturer IS NULL AND model IS NULL AND certificate_id IS NULL"#,
+        )
+        .execute(&pool)
+        .await
+        {
+            deleted_rows += res.rows_affected() as i64;
+        }
+        // 심각한 break 이후 레코드 일괄 삭제: 기준 = break_next 이상 모든 page_id
+        if let Some(threshold) = break_info.break_next {
+            if let Ok(res) = sqlx::query("DELETE FROM products WHERE page_id IS NOT NULL AND page_id >= ?")
+                .bind(threshold)
+                .execute(&pool)
+                .await
+            {
+                deleted_rows += res.rows_affected() as i64;
+            }
+        }
+        // 남은 orphans는 상세 동기화가 금방 따라올 수 있어 선택 삭제 대신 보고만 유지할 수도 있음
+    }
+
+    // 5) 요청 시: orphans 상세 동기화(상세 페이지를 조회하여 product_details 채움 + products 코어 필드 보정)
+    let mut synced_orphans: i64 = 0;
+    if sync_orphans.unwrap_or(false) && !orphan_urls.is_empty() {
+        // Infra 생성
+        let config_manager = crate::infrastructure::config::ConfigManager::new()
+            .map_err(|e| format!("Failed to initialize config manager: {}", e))?;
+        let config = config_manager
+            .load_config()
+            .await
+            .map_err(|e| format!("Failed to load configuration: {}", e))?;
+        let http_client = crate::infrastructure::HttpClient::create_from_global_config()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+        let extractor = crate::infrastructure::MatterDataExtractor::new()
+            .map_err(|e| format!("Failed to create extractor: {}", e))?;
+        let sync_ua = config.user.crawling.workers.user_agent_sync.clone();
+
+        for url in orphan_urls.iter() {
+            // referer는 기본 Matter 필터 목록을 사용(충분히 허용적)
+            let referer = crate::infrastructure::config::csa_iot::PRODUCTS_BASE.to_string();
+            if let Ok(resp) = http_client
+                .fetch_response_with_options(
+                    url,
+                    &crate::infrastructure::simple_http_client::RequestOptions {
+                        user_agent_override: sync_ua.clone(),
+                        referer: Some(referer),
+                        skip_robots_check: false,
+                    },
+                )
+                .await
+            {
+                if let Ok(body) = resp.text().await {
+                    let extracted = {
+                        let doc = scraper::Html::parse_document(&body);
+                        extractor.extract_product_detail(&doc, url.clone())
+                    };
+                    if let Ok(detail) = extracted {
+                        // Clone fields needed later to avoid move issues
+                        let man_clone = detail.manufacturer.clone();
+                        let model_clone = detail.model.clone();
+                        let cert_clone = detail.certificate_id.clone();
+                        // page_id/index_in_page는 알 수 있으면 보정, 없으면 NULL 유지
+                        let _ = sqlx::query(
+                            r#"INSERT INTO product_details (
+                                url, page_id, index_in_page, id, manufacturer, model, device_type,
+                                certificate_id, certification_date, software_version, hardware_version, firmware_version,
+                                specification_version, vid, pid, family_sku, family_variant_sku, family_id,
+                                tis_trp_tested, transport_interface, primary_device_type_id, application_categories,
+                                description, compliance_document_url, program_type
+                            ) VALUES (
+                                ?, ?, ?, ?, ?, ?, ?,
+                                ?, ?, ?, ?, ?,
+                                ?, ?, ?, ?, ?, ?,
+                                ?, ?, ?, ?,
+                                ?, ?, ?
+                            ) ON CONFLICT(url) DO UPDATE SET
+                                page_id=COALESCE(excluded.page_id, product_details.page_id),
+                                index_in_page=COALESCE(excluded.index_in_page, product_details.index_in_page),
+                                id=COALESCE(excluded.id, product_details.id),
+                                manufacturer=COALESCE(excluded.manufacturer, product_details.manufacturer),
+                                model=COALESCE(excluded.model, product_details.model),
+                                device_type=COALESCE(excluded.device_type, product_details.device_type),
+                                certificate_id=COALESCE(excluded.certificate_id, product_details.certificate_id),
+                                certification_date=COALESCE(excluded.certification_date, product_details.certification_date),
+                                software_version=COALESCE(excluded.software_version, product_details.software_version),
+                                hardware_version=COALESCE(excluded.hardware_version, product_details.hardware_version),
+                                firmware_version=COALESCE(excluded.firmware_version, product_details.firmware_version),
+                                specification_version=COALESCE(excluded.specification_version, product_details.specification_version),
+                                vid=COALESCE(excluded.vid, product_details.vid),
+                                pid=COALESCE(excluded.pid, product_details.pid),
+                                family_sku=COALESCE(excluded.family_sku, product_details.family_sku),
+                                family_variant_sku=COALESCE(excluded.family_variant_sku, product_details.family_variant_sku),
+                                family_id=COALESCE(excluded.family_id, product_details.family_id),
+                                tis_trp_tested=COALESCE(excluded.tis_trp_tested, product_details.tis_trp_tested),
+                                transport_interface=COALESCE(excluded.transport_interface, product_details.transport_interface),
+                                primary_device_type_id=COALESCE(excluded.primary_device_type_id, product_details.primary_device_type_id),
+                                application_categories=COALESCE(excluded.application_categories, product_details.application_categories),
+                                description=COALESCE(excluded.description, product_details.description),
+                                compliance_document_url=COALESCE(excluded.compliance_document_url, product_details.compliance_document_url),
+                                program_type=COALESCE(excluded.program_type, product_details.program_type),
+                                updated_at=CURRENT_TIMESTAMP
+                        "#,
+                        )
+                        .bind(&detail.url)
+                        .bind(detail.page_id)
+                        .bind(detail.index_in_page)
+                        .bind(detail.id)
+                        .bind(detail.manufacturer)
+                        .bind(detail.model)
+                        .bind(detail.device_type)
+                        .bind(detail.certificate_id)
+                        .bind(detail.certification_date)
+                        .bind(detail.software_version)
+                        .bind(detail.hardware_version)
+                        .bind(detail.firmware_version)
+                        .bind(detail.specification_version)
+                        .bind(detail.vid)
+                        .bind(detail.pid)
+                        .bind(detail.family_sku)
+                        .bind(detail.family_variant_sku)
+                        .bind(detail.family_id)
+                        .bind(detail.tis_trp_tested)
+                        .bind(detail.transport_interface)
+                        .bind(detail.primary_device_type_id)
+                        .bind(detail.application_categories)
+                        .bind(detail.description)
+                        .bind(detail.compliance_document_url)
+                        .bind(detail.program_type)
+                        .execute(&pool)
+                        .await;
+
+                        // products의 코어 필드 보정
+                        let _ = sqlx::query(
+                            r#"UPDATE products SET
+                                manufacturer = COALESCE(?, manufacturer),
+                                model = COALESCE(?, model),
+                                certificate_id = COALESCE(?, certificate_id),
+                                updated_at = CURRENT_TIMESTAMP
+                              WHERE url = ?"#,
+                        )
+                        .bind(&man_clone)
+                        .bind(&model_clone)
+                        .bind(&cert_clone)
+                        .bind(&detail.url)
+                        .execute(&pool)
+                        .await;
+                        synced_orphans += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let payload = serde_json::json!({
+        "site_total_pages": site_total_pages,
+        "diagnostics": {
+            "orphans_products_without_details": orphans_products,
+            "orphans_sample_urls": orphan_urls,
+            "products_with_nullish_core_fields": nullish_core,
+            "out_of_range_page_id": out_of_range_pages,
+            "invalid_indices_or_page_id": bad_indices,
+            "severe_break": {
+                "first_break_at": break_info.first_break_at,
+                "break_next": break_info.break_next,
+                "gap": break_info.gap,
+            }
+        },
+        "actions": {
+            "delete_mismatches": delete_mismatches.unwrap_or(false),
+            "deleted_rows": deleted_rows,
+            "sync_orphans": sync_orphans.unwrap_or(false),
+            "synced_orphans": synced_orphans,
+        }
+    });
+
+    Ok(CrawlingResponse { success: true, message: "Diagnosis completed".into(), data: Some(payload) })
 }
 
 /// 사이트 분석 수행

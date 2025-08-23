@@ -136,6 +136,8 @@ pub mod commands {
     pub mod data_queries; // Backend-Only CRUD commands (Modern Rust 2024)
     pub mod db_cleanup;
     pub mod db_diagnostics; // 🧪 DB pagination mismatch scan
+    pub mod db_repair; // 🔧 DB repair/sync between products and product_details
+    pub mod debug_commands; // 🔎 UI debug logging helpers
     pub mod performance_commands; // 🔧 Phase C: 성능 최적화 도구
     pub mod real_actor_commands; // 🎭 진짜 Actor 시스템 명령어
     pub mod real_crawling_commands; // 🚀 Phase C: 실제 크롤링 기능
@@ -155,6 +157,8 @@ pub mod commands {
     pub use data_queries::*; // Backend-Only CRUD 명령어 export
     pub use db_cleanup::*;
     pub use db_diagnostics::*; // DB diagnostics 명령어 export
+    pub use db_repair::*; // DB repair/sync 명령어 export
+    pub use debug_commands::*; // UI debug logger export
     pub use performance_commands::*; // Phase C 성능 최적화 명령어 export
     pub use real_crawling_commands::*; // Phase C 실제 크롤링 명령어 export
     pub use sync_commands::*; // Partial Sync 명령어 export // DB cleanup 명령어 export
@@ -401,6 +405,7 @@ pub fn run() {
             commands::advanced_engine_api::get_database_stats,
             // System Analysis commands (proposal6.md Phase 3)
             commands::system_analysis::analyze_system_status,
+            commands::system_analysis::diagnose_and_repair_data,
             commands::system_analysis::get_analysis_cache_status,
             commands::system_analysis::clear_analysis_cache,
             // Smart crawling commands
@@ -476,8 +481,11 @@ pub fn run() {
             commands::sync_commands::start_batched_sync,
             commands::sync_commands::start_repair_sync,
             commands::sync_commands::start_sync_pages,
+            commands::sync_commands::retry_failed_details,
             commands::sync_commands::start_diagnostic_sync,
             commands::db_diagnostics::scan_db_pagination_mismatches,
+            commands::debug_commands::ui_debug_log,
+            commands::db_repair::sync_product_details_coordinates,
             commands::db_cleanup::cleanup_duplicate_urls // Most commands are temporarily disabled for compilation
         ]);
 
