@@ -157,9 +157,8 @@ pub struct CrawlerService {
 impl CrawlerService {
     /// Create a new crawler service
     pub fn new(config: ParsingConfig) -> Result<Self> {
-        let parsing_service = Arc::new(
-            ParsingService::new(config).context("Failed to create parsing service")?,
-        );
+        let parsing_service =
+            Arc::new(ParsingService::new(config).context("Failed to create parsing service")?);
         Ok(Self { parsing_service })
     }
 
@@ -177,7 +176,9 @@ impl CrawlerService {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to fetch product list: {}", e))?;
         let html_str = html_doc.root_element().html();
-        let products = self.parsing_service.parse_product_list(&html_str, page_id)?;
+        let products = self
+            .parsing_service
+            .parse_product_list(&html_str, page_id)?;
 
         // Validate all products
         for product in &products {
@@ -219,7 +220,9 @@ impl CrawlerService {
             let res = async {
                 let client = crate::infrastructure::HttpClient::create_from_global_config()
                     .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
-                let html_doc = client.fetch_html(&url).await
+                let html_doc = client
+                    .fetch_html(&url)
+                    .await
                     .map_err(|e| anyhow::anyhow!("Failed to fetch product list: {}", e))?;
                 let html_str = html_doc.root_element().html();
                 self.parsing_service
@@ -241,7 +244,9 @@ impl CrawlerService {
             let res = async {
                 let client = crate::infrastructure::HttpClient::create_from_global_config()
                     .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
-                let html_doc = client.fetch_html(&url).await
+                let html_doc = client
+                    .fetch_html(&url)
+                    .await
                     .map_err(|e| anyhow::anyhow!("Failed to fetch product detail: {}", e))?;
                 let html_str = html_doc.root_element().html();
                 self.parsing_service
@@ -257,7 +262,9 @@ impl CrawlerService {
     pub async fn has_next_page(&self, url: &str) -> Result<bool> {
         let client = crate::infrastructure::HttpClient::create_from_global_config()
             .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
-        let html_doc = client.fetch_html(url).await
+        let html_doc = client
+            .fetch_html(url)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to fetch page: {}", e))?;
         let html_str = html_doc.root_element().html();
         Ok(self.parsing_service.has_next_page(&html_str))
@@ -265,7 +272,7 @@ impl CrawlerService {
 
     /// Get crawler configuration
     pub fn get_config(&self) -> &ParsingConfig {
-    self.parsing_service.get_config()
+        self.parsing_service.get_config()
     }
 }
 

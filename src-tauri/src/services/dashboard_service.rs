@@ -383,7 +383,7 @@ impl RealtimeDashboardService {
         let random_factor = (timestamp_seed % 1000.0) / 1000.0; // 0.0-1.0 범위
 
         // 옵티마이저에서 메트릭 가져오기, 없으면 기본값 생성
-            let metrics = optimizer.get_current_metrics().await.unwrap_or_else(|| {
+        let metrics = optimizer.get_current_metrics().await.unwrap_or_else(|| {
             crate::crawl_engine::services::performance_optimizer::CrawlingPerformanceMetrics {
                 session_id: "default".to_string(),
                 throughput_rps: 10.0 + (random_factor * 5.0), // 10-15 RPS

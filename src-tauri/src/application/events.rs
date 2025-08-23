@@ -5,13 +5,8 @@
 
 use crate::domain::atomic_events::AtomicTaskEvent; // 추가
 use crate::domain::events::{
-    CrawlingEvent,
-    CrawlingProgress,
-    CrawlingTaskStatus,
-    DatabaseStats,
-    ConcurrencyEvent,
-    ValidationEvent,
-    DatabaseSaveEvent,
+    ConcurrencyEvent, CrawlingEvent, CrawlingProgress, CrawlingTaskStatus, DatabaseSaveEvent,
+    DatabaseStats, ValidationEvent,
 };
 use futures::future::join_all;
 use std::sync::Arc;

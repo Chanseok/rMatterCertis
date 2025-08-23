@@ -11,6 +11,9 @@ use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+use crate::crawl_engine::actor_system::{StageError, StageResult};
+use crate::crawl_engine::channels::types::{StageItem, StageType};
+use crate::crawl_engine::config::SystemConfig;
 use crate::domain::product::ProductDetail;
 use crate::domain::product_url::ProductUrl;
 use crate::domain::services::crawling_services::{
@@ -22,9 +25,6 @@ use crate::infrastructure::crawling_service_impls::{
     CollectorConfig, ProductListCollectorImpl, StatusCheckerImpl,
 };
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
-use crate::crawl_engine::actor_system::{StageError, StageResult};
-use crate::crawl_engine::channels::types::{StageItem, StageType};
-use crate::crawl_engine::config::SystemConfig;
 
 /// 실제 크롤링 서비스와 OneShot Actor 시스템을 연결하는 통합 서비스
 #[allow(dead_code)] // Phase2: allow unused fields temporarily – evaluate in Phase3
@@ -388,8 +388,7 @@ impl CrawlingIntegrationService {
         cancellation_token: CancellationToken,
     ) -> anyhow::Result<Vec<ProductDetail>> {
         // 내부 배치 수집 로직 재사용
-        self
-            .collect_detail_batch_with_retry(&urls, cancellation_token)
+        self.collect_detail_batch_with_retry(&urls, cancellation_token)
             .await
             .map_err(|e| anyhow::anyhow!("{}", e))
     }
@@ -400,8 +399,7 @@ impl CrawlingIntegrationService {
         urls: Vec<ProductUrl>,
         cancellation_token: CancellationToken,
     ) -> anyhow::Result<(Vec<ProductDetail>, u32, u64)> {
-        self
-            .collect_detail_batch_with_retry_with_meta(&urls, cancellation_token, 2)
+        self.collect_detail_batch_with_retry_with_meta(&urls, cancellation_token, 2)
             .await
             .map_err(|e| anyhow::anyhow!("{}", e))
     }
@@ -655,7 +653,11 @@ impl CrawlingIntegrationService {
     ) -> Result<(Vec<ProductDetail>, u32, u64)> {
         let started = std::time::Instant::now();
         let mut last_error: Option<anyhow::Error> = None;
-    info!(urls_count = urls.len(), max_retries = max_retries, "[Integration] collect_detail_batch_with_retry_with_meta starting");
+        info!(
+            urls_count = urls.len(),
+            max_retries = max_retries,
+            "[Integration] collect_detail_batch_with_retry_with_meta starting"
+        );
         for attempt in 0..=max_retries {
             match self
                 .detail_collector
@@ -663,7 +665,11 @@ impl CrawlingIntegrationService {
                 .await
             {
                 Ok(details) => {
-            debug!(attempt = attempt, details_count = details.len(), "[Integration] detail collection succeeded");
+                    debug!(
+                        attempt = attempt,
+                        details_count = details.len(),
+                        "[Integration] detail collection succeeded"
+                    );
                     let duration_ms = started.elapsed().as_millis() as u64;
                     return Ok((details, attempt, duration_ms));
                 }
@@ -671,7 +677,11 @@ impl CrawlingIntegrationService {
                     last_error = Some(e);
                     if attempt < max_retries {
                         let delay = Duration::from_millis(1000 * (2_u64.pow(attempt)));
-                        debug!(attempt = attempt, delay_ms = delay.as_millis(), "Retrying detail collection (meta)");
+                        debug!(
+                            attempt = attempt,
+                            delay_ms = delay.as_millis(),
+                            "Retrying detail collection (meta)"
+                        );
                         tokio::time::sleep(delay).await;
                         continue;
                     }

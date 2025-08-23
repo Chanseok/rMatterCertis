@@ -70,22 +70,22 @@ mod tests {
         #[allow(clippy::unwrap_used)]
         super::test_env::TEST_ENV.lock().unwrap().clear();
 
-    assert!(!feature_http_client_unified());
-    assert!(feature_stage_executor_template());
-    assert!(feature_events_generalized_only());
+        assert!(!feature_http_client_unified());
+        assert!(feature_stage_executor_template());
+        assert!(feature_events_generalized_only());
     }
 
     #[test]
     fn explicit_values_parse() {
         // Set values in test env map
         let mut map = super::test_env::TEST_ENV.lock().unwrap();
-    map.insert("MC_FEATURE_HTTP_CLIENT_UNIFIED".into(), "1".into());
-    map.insert("MC_FEATURE_STAGE_EXECUTOR_TEMPLATE".into(), "false".into()); // ignored now
-    map.insert("MC_FEATURE_EVENTS_GENERALIZED_ONLY".into(), "0".into());
+        map.insert("MC_FEATURE_HTTP_CLIENT_UNIFIED".into(), "1".into());
+        map.insert("MC_FEATURE_STAGE_EXECUTOR_TEMPLATE".into(), "false".into()); // ignored now
+        map.insert("MC_FEATURE_EVENTS_GENERALIZED_ONLY".into(), "0".into());
         drop(map);
 
-    assert!(feature_http_client_unified());
-    assert!(feature_stage_executor_template());
-    assert!(!feature_events_generalized_only());
+        assert!(feature_http_client_unified());
+        assert!(feature_stage_executor_template());
+        assert!(!feature_events_generalized_only());
     }
 }

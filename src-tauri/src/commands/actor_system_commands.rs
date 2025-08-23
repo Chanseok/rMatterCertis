@@ -3,14 +3,6 @@
 //! Commands to test and use the Actor system from the UI
 
 use crate::application::{AppState, shared_state::SharedStateCache};
-use crate::domain::services::SiteStatus;
-use crate::domain::services::crawling_services::{
-    CrawlingRangeRecommendation, SiteDataChangeStatus, SiteStatus as DomainSiteStatus,
-};
-use crate::infrastructure::config::AppConfig;
-use crate::infrastructure::html_parser::MatterDataExtractor;
-use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
-use crate::infrastructure::simple_http_client::HttpClient;
 use crate::crawl_engine::actor_event_bridge::start_actor_event_bridge;
 use crate::crawl_engine::actors::SessionActor;
 use crate::crawl_engine::actors::contract::ACTOR_CONTRACT_VERSION;
@@ -20,13 +12,21 @@ use crate::crawl_engine::actors::types::{
 use crate::crawl_engine::channels::types::ActorCommand; // 올바른 ActorCommand 사용
 use crate::crawl_engine::channels::types::AppEvent;
 use crate::crawl_engine::context::{AppContext, SystemConfig};
+use crate::domain::services::SiteStatus;
+use crate::domain::services::crawling_services::{
+    CrawlingRangeRecommendation, SiteDataChangeStatus, SiteStatus as DomainSiteStatus,
+};
+use crate::infrastructure::config::AppConfig;
+use crate::infrastructure::html_parser::MatterDataExtractor;
+use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
+use crate::infrastructure::simple_http_client::HttpClient;
 use tauri::State; // For accessing managed state
 // 실제 CrawlingPlanner에서 사용
-use crate::infrastructure::config::ConfigManager; // 설정 관리자 추가
 use crate::crawl_engine::runtime::session_registry::{
     SessionEntry, SessionStatus, failure_threshold, removal_grace_secs, session_registry,
     update_global_failure_policy_from_config,
 };
+use crate::infrastructure::config::ConfigManager; // 설정 관리자 추가
 use blake3;
 use chrono::Utc;
 use once_cell::sync::OnceCell; // retained for PHASE_SHUTDOWN_TX only (session registry extracted)
@@ -900,7 +900,7 @@ pub async fn resume_from_token(
         created_at: Utc::now(),
         analysis_summary: "resume_from_token_minimal".into(),
         original_strategy: "ResumeMinimal".into(),
-    input_snapshot: crate::crawl_engine::actors::types::PlanInputSnapshot {
+        input_snapshot: crate::crawl_engine::actors::types::PlanInputSnapshot {
             total_pages: last - first + 1,
             products_on_last_page: 12,
             db_max_page_id: None,
@@ -1147,13 +1147,12 @@ async fn calculate_intelligent_crawling_range(
     let system_config = Arc::new(crate::crawl_engine::context::SystemConfig::default());
 
     // 🚀 실제 CrawlingPlanner 사용!
-    let crawling_planner =
-        crate::crawl_engine::services::crawling_planner::CrawlingPlanner::new(
-            status_checker.clone(),
-            db_analyzer.clone(),
-            system_config.clone(),
-        )
-        .with_repository(product_repo.clone());
+    let crawling_planner = crate::crawl_engine::services::crawling_planner::CrawlingPlanner::new(
+        status_checker.clone(),
+        db_analyzer.clone(),
+        system_config.clone(),
+    )
+    .with_repository(product_repo.clone());
 
     // 시스템 상태 분석 (진짜 도메인 로직)
     let (site_status, db_analysis) = crawling_planner
@@ -1513,13 +1512,12 @@ async fn create_execution_plan(
     );
 
     // 4. CrawlingPlanner 생성 및 분석
-    let crawling_planner =
-        crate::crawl_engine::services::crawling_planner::CrawlingPlanner::new(
-            status_checker,
-            database_analyzer,
-            Arc::new(SystemConfig::default()),
-        )
-        .with_repository(product_repo.clone());
+    let crawling_planner = crate::crawl_engine::services::crawling_planner::CrawlingPlanner::new(
+        status_checker,
+        database_analyzer,
+        Arc::new(SystemConfig::default()),
+    )
+    .with_repository(product_repo.clone());
 
     info!("🎯 Analyzing system state with CrawlingPlanner (attempting cache reuse)...");
 
@@ -1963,7 +1961,7 @@ async fn create_execution_plan(
         input_snapshot: snapshot,
         plan_hash,
         skip_duplicate_urls: true,
-    kpi_meta: Some(crate::crawl_engine::actors::types::ExecutionPlanKpi {
+        kpi_meta: Some(crate::crawl_engine::actors::types::ExecutionPlanKpi {
             total_ranges: ranges_len,
             total_pages,
             batches: ranges_len,
@@ -2999,13 +2997,13 @@ async fn execute_session_actor_with_execution_plan(
 // =====================================================
 #[tauri::command]
 pub async fn check_page_index_consistency() -> Result<String, String> {
+    use crate::crawl_engine::services::data_consistency_checker::DataConsistencyChecker;
     use crate::infrastructure::config::AppConfig;
     use crate::infrastructure::crawling_service_impls::StatusCheckerImpl;
     use crate::infrastructure::{
         html_parser::MatterDataExtractor,
         integrated_product_repository::IntegratedProductRepository, simple_http_client::HttpClient,
     };
-    use crate::crawl_engine::services::data_consistency_checker::DataConsistencyChecker;
     use std::sync::Arc;
     let http = HttpClient::create_from_global_config().map_err(|e| e.to_string())?;
     let extractor = MatterDataExtractor::new().map_err(|e| e.to_string())?;

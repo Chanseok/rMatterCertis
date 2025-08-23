@@ -1,10 +1,8 @@
+use crate::crawl_engine::actors::types::AppEvent;
 use crate::domain::pagination::CanonicalPageIdCalculator;
 use crate::infrastructure::{
-    config::{csa_iot},
-    html_parser::MatterDataExtractor,
-    simple_http_client::RequestOptions,
+    config::csa_iot, html_parser::MatterDataExtractor, simple_http_client::RequestOptions,
 }; // uses ConfigManager (no AppConfigManager)
-use crate::crawl_engine::actors::types::AppEvent;
 use chrono::Utc;
 use serde_json::{Map, Value};
 use sqlx::Row;
@@ -318,7 +316,11 @@ pub async fn start_validation(
     let newest_html = match http
         .fetch_response_with_options(
             &newest_url,
-            &RequestOptions { user_agent_override: sync_ua.clone(), referer: Some(csa_iot::PRODUCTS_BASE.to_string()), skip_robots_check: false },
+            &RequestOptions {
+                user_agent_override: sync_ua.clone(),
+                referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
+                skip_robots_check: false,
+            },
         )
         .await
     {
@@ -346,7 +348,11 @@ pub async fn start_validation(
         match http
             .fetch_response_with_options(
                 &oldest_url,
-                &RequestOptions { user_agent_override: sync_ua.clone(), referer: Some(csa_iot::PRODUCTS_BASE.to_string()), skip_robots_check: false },
+                &RequestOptions {
+                    user_agent_override: sync_ua.clone(),
+                    referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
+                    skip_robots_check: false,
+                },
             )
             .await
         {
@@ -532,7 +538,11 @@ pub async fn start_validation(
             match http
                 .fetch_response_with_options(
                     &url,
-                    &RequestOptions { user_agent_override: sync_ua.clone(), referer: Some(csa_iot::PRODUCTS_BASE.to_string()), skip_robots_check: false },
+                    &RequestOptions {
+                        user_agent_override: sync_ua.clone(),
+                        referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
+                        skip_robots_check: false,
+                    },
                 )
                 .await
             {

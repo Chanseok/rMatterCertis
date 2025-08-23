@@ -300,14 +300,8 @@ pub struct SharedStateCache {
     /// 캐시 생성 시간
     created_at: Instant,
     /// ExecutionPlan 메모리 LRU 캐시 (plan_hash 기반, 최대 5개)
-    pub execution_plan_cache: Arc<
-        RwLock<
-            Vec<(
-                String,
-                crate::crawl_engine::actors::types::ExecutionPlan,
-            )>,
-        >,
-    >,
+    pub execution_plan_cache:
+        Arc<RwLock<Vec<(String, crate::crawl_engine::actors::types::ExecutionPlan)>>>,
 }
 
 impl Default for SharedStateCache {
@@ -351,8 +345,8 @@ impl SharedStateCache {
 
     /// ExecutionPlan 캐시에 저장 (LRU 방식, 중복 제거)
     pub async fn cache_execution_plan(
-    &self,
-    plan: crate::crawl_engine::actors::types::ExecutionPlan,
+        &self,
+        plan: crate::crawl_engine::actors::types::ExecutionPlan,
     ) {
         let mut guard = self.execution_plan_cache.write().await;
         if let Some(pos) = guard.iter().position(|(h, _)| *h == plan.plan_hash) {

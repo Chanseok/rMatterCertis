@@ -2302,65 +2302,82 @@ impl ServiceBasedBatchCrawlingEngine {
                 DetailedCrawlingEvent::SessionStarted { session_id, .. } => {
                     Some(ConcurrencyEvent::SessionEvent {
                         session_id: session_id.clone(),
-                        event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Started,
+                        event_type:
+                            crate::crawl_engine::events::task_lifecycle::SessionEventType::Started,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("stage".to_string(), "session_initialization".to_string()),
                         ]),
                     })
-                },
+                }
 
-                DetailedCrawlingEvent::SessionCompleted { session_id, duration, total_products, success_rate } => {
-                    Some(ConcurrencyEvent::SessionEvent {
-                        session_id: session_id.clone(),
-                        event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Completed,
-                        timestamp: Utc::now(),
-                        metadata: HashMap::from([
-                            ("timestamp".to_string(), Utc::now().to_rfc3339()),
-                            ("duration_seconds".to_string(), duration.as_secs().to_string()),
-                            ("total_products".to_string(), total_products.to_string()),
-                            ("success_rate".to_string(), success_rate.to_string()),
-                        ]),
-                    })
-                },
+                DetailedCrawlingEvent::SessionCompleted {
+                    session_id,
+                    duration,
+                    total_products,
+                    success_rate,
+                } => Some(ConcurrencyEvent::SessionEvent {
+                    session_id: session_id.clone(),
+                    event_type:
+                        crate::crawl_engine::events::task_lifecycle::SessionEventType::Completed,
+                    timestamp: Utc::now(),
+                    metadata: HashMap::from([
+                        ("timestamp".to_string(), Utc::now().to_rfc3339()),
+                        (
+                            "duration_seconds".to_string(),
+                            duration.as_secs().to_string(),
+                        ),
+                        ("total_products".to_string(), total_products.to_string()),
+                        ("success_rate".to_string(), success_rate.to_string()),
+                    ]),
+                }),
 
                 // 배치 이벤트들
-                DetailedCrawlingEvent::BatchCreated { batch_id, total_batches, start_page, end_page, description } => {
-                    Some(ConcurrencyEvent::BatchEvent {
-                        session_id: self.session_id.clone(),
-                        batch_id: format!("batch_{}", batch_id),
-                        event_type: crate::crawl_engine::events::task_lifecycle::BatchEventType::Created,
-                        timestamp: Utc::now(),
-                        metadata: HashMap::from([
-                            ("timestamp".to_string(), Utc::now().to_rfc3339()),
-                            ("total_batches".to_string(), total_batches.to_string()),
-                            ("start_page".to_string(), start_page.to_string()),
-                            ("end_page".to_string(), end_page.to_string()),
-                            ("description".to_string(), description.clone()),
-                        ]),
-                    })
-                },
+                DetailedCrawlingEvent::BatchCreated {
+                    batch_id,
+                    total_batches,
+                    start_page,
+                    end_page,
+                    description,
+                } => Some(ConcurrencyEvent::BatchEvent {
+                    session_id: self.session_id.clone(),
+                    batch_id: format!("batch_{}", batch_id),
+                    event_type:
+                        crate::crawl_engine::events::task_lifecycle::BatchEventType::Created,
+                    timestamp: Utc::now(),
+                    metadata: HashMap::from([
+                        ("timestamp".to_string(), Utc::now().to_rfc3339()),
+                        ("total_batches".to_string(), total_batches.to_string()),
+                        ("start_page".to_string(), start_page.to_string()),
+                        ("end_page".to_string(), end_page.to_string()),
+                        ("description".to_string(), description.clone()),
+                    ]),
+                }),
 
-                DetailedCrawlingEvent::BatchStarted { batch_id, total_batches, pages_in_batch } => {
-                    Some(ConcurrencyEvent::BatchEvent {
-                        session_id: self.session_id.clone(),
-                        batch_id: format!("batch_{}", batch_id),
-                        event_type: crate::crawl_engine::events::task_lifecycle::BatchEventType::Started,
-                        timestamp: Utc::now(),
-                        metadata: HashMap::from([
-                            ("timestamp".to_string(), Utc::now().to_rfc3339()),
-                            ("total_batches".to_string(), total_batches.to_string()),
-                            ("pages_in_batch".to_string(), pages_in_batch.to_string()),
-                        ]),
-                    })
-                },
+                DetailedCrawlingEvent::BatchStarted {
+                    batch_id,
+                    total_batches,
+                    pages_in_batch,
+                } => Some(ConcurrencyEvent::BatchEvent {
+                    session_id: self.session_id.clone(),
+                    batch_id: format!("batch_{}", batch_id),
+                    event_type:
+                        crate::crawl_engine::events::task_lifecycle::BatchEventType::Started,
+                    timestamp: Utc::now(),
+                    metadata: HashMap::from([
+                        ("timestamp".to_string(), Utc::now().to_rfc3339()),
+                        ("total_batches".to_string(), total_batches.to_string()),
+                        ("pages_in_batch".to_string(), pages_in_batch.to_string()),
+                    ]),
+                }),
 
                 DetailedCrawlingEvent::BatchCompleted { batch, total } => {
                     Some(ConcurrencyEvent::BatchEvent {
                         session_id: self.session_id.clone(),
                         batch_id: format!("batch_{}", batch),
-                        event_type: crate::crawl_engine::events::task_lifecycle::BatchEventType::Completed,
+                        event_type:
+                            crate::crawl_engine::events::task_lifecycle::BatchEventType::Completed,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
@@ -2368,13 +2385,14 @@ impl ServiceBasedBatchCrawlingEngine {
                             ("total_batches".to_string(), total.to_string()),
                         ]),
                     })
-                },
+                }
 
                 // Stage 레벨 이벤트들 - 새로 추가
                 DetailedCrawlingEvent::StageStarted { stage, message } => {
                     Some(ConcurrencyEvent::SessionEvent {
                         session_id: self.session_id.clone(),
-                        event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Started,
+                        event_type:
+                            crate::crawl_engine::events::task_lifecycle::SessionEventType::Started,
                         timestamp: Utc::now(),
                         metadata: HashMap::from([
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
@@ -2383,65 +2401,76 @@ impl ServiceBasedBatchCrawlingEngine {
                             ("event_category".to_string(), "stage_started".to_string()),
                         ]),
                     })
-                },
-                DetailedCrawlingEvent::StageCompleted { stage, items_processed } => {
-                    Some(ConcurrencyEvent::SessionEvent {
-                        session_id: self.session_id.clone(),
-                        event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Completed,
-                        timestamp: Utc::now(),
-                        metadata: HashMap::from([
-                            ("timestamp".to_string(), Utc::now().to_rfc3339()),
-                            ("stage".to_string(), stage.clone()),
-                            ("items_processed".to_string(), items_processed.to_string()),
-                            ("event_category".to_string(), "stage_completed".to_string()),
-                        ]),
-                    })
-                },
+                }
+                DetailedCrawlingEvent::StageCompleted {
+                    stage,
+                    items_processed,
+                } => Some(ConcurrencyEvent::SessionEvent {
+                    session_id: self.session_id.clone(),
+                    event_type:
+                        crate::crawl_engine::events::task_lifecycle::SessionEventType::Completed,
+                    timestamp: Utc::now(),
+                    metadata: HashMap::from([
+                        ("timestamp".to_string(), Utc::now().to_rfc3339()),
+                        ("stage".to_string(), stage.clone()),
+                        ("items_processed".to_string(), items_processed.to_string()),
+                        ("event_category".to_string(), "stage_completed".to_string()),
+                    ]),
+                }),
                 // Page 레벨 이벤트들 - 추가
-                DetailedCrawlingEvent::PageStarted { page, batch_id, url } => {
-                    Some(ConcurrencyEvent::BatchEvent {
-                        session_id: self.session_id.clone(),
-                        batch_id: format!("batch_{}", batch_id),
-                        event_type: crate::crawl_engine::events::task_lifecycle::BatchEventType::Started,
-                        timestamp: Utc::now(),
-                        metadata: HashMap::from([
-                            ("timestamp".to_string(), Utc::now().to_rfc3339()),
-                            ("page_number".to_string(), page.to_string()),
-                            ("page_url".to_string(), url.clone()),
-                            ("event_category".to_string(), "page_started".to_string()),
-                        ]),
-                    })
-                },
-                DetailedCrawlingEvent::PageCompleted { page, products_found } => {
-                    Some(ConcurrencyEvent::BatchEvent {
-                        session_id: self.session_id.clone(),
-                        batch_id: "page_batch".to_string(),
-                        event_type: crate::crawl_engine::events::task_lifecycle::BatchEventType::Completed,
-                        timestamp: Utc::now(),
-                        metadata: HashMap::from([
-                            ("timestamp".to_string(), Utc::now().to_rfc3339()),
-                            ("page_number".to_string(), page.to_string()),
-                            ("products_found".to_string(), products_found.to_string()),
-                            ("event_category".to_string(), "page_completed".to_string()),
-                        ]),
-                    })
-                },
+                DetailedCrawlingEvent::PageStarted {
+                    page,
+                    batch_id,
+                    url,
+                } => Some(ConcurrencyEvent::BatchEvent {
+                    session_id: self.session_id.clone(),
+                    batch_id: format!("batch_{}", batch_id),
+                    event_type:
+                        crate::crawl_engine::events::task_lifecycle::BatchEventType::Started,
+                    timestamp: Utc::now(),
+                    metadata: HashMap::from([
+                        ("timestamp".to_string(), Utc::now().to_rfc3339()),
+                        ("page_number".to_string(), page.to_string()),
+                        ("page_url".to_string(), url.clone()),
+                        ("event_category".to_string(), "page_started".to_string()),
+                    ]),
+                }),
+                DetailedCrawlingEvent::PageCompleted {
+                    page,
+                    products_found,
+                } => Some(ConcurrencyEvent::BatchEvent {
+                    session_id: self.session_id.clone(),
+                    batch_id: "page_batch".to_string(),
+                    event_type:
+                        crate::crawl_engine::events::task_lifecycle::BatchEventType::Completed,
+                    timestamp: Utc::now(),
+                    metadata: HashMap::from([
+                        ("timestamp".to_string(), Utc::now().to_rfc3339()),
+                        ("page_number".to_string(), page.to_string()),
+                        ("products_found".to_string(), products_found.to_string()),
+                        ("event_category".to_string(), "page_completed".to_string()),
+                    ]),
+                }),
                 // Product 레벨 이벤트들 - 추가
-                DetailedCrawlingEvent::ProductStarted { url, batch_id, product_index, total_products } => {
-                    Some(ConcurrencyEvent::BatchEvent {
-                        session_id: self.session_id.clone(),
-                        batch_id: format!("batch_{}", batch_id),
-                        event_type: crate::crawl_engine::events::task_lifecycle::BatchEventType::Started,
-                        timestamp: Utc::now(),
-                        metadata: HashMap::from([
-                            ("timestamp".to_string(), Utc::now().to_rfc3339()),
-                            ("product_url".to_string(), url.clone()),
-                            ("product_index".to_string(), product_index.to_string()),
-                            ("total_products".to_string(), total_products.to_string()),
-                            ("event_category".to_string(), "product_started".to_string()),
-                        ]),
-                    })
-                },
+                DetailedCrawlingEvent::ProductStarted {
+                    url,
+                    batch_id,
+                    product_index,
+                    total_products,
+                } => Some(ConcurrencyEvent::BatchEvent {
+                    session_id: self.session_id.clone(),
+                    batch_id: format!("batch_{}", batch_id),
+                    event_type:
+                        crate::crawl_engine::events::task_lifecycle::BatchEventType::Started,
+                    timestamp: Utc::now(),
+                    metadata: HashMap::from([
+                        ("timestamp".to_string(), Utc::now().to_rfc3339()),
+                        ("product_url".to_string(), url.clone()),
+                        ("product_index".to_string(), product_index.to_string()),
+                        ("total_products".to_string(), total_products.to_string()),
+                        ("event_category".to_string(), "product_started".to_string()),
+                    ]),
+                }),
                 DetailedCrawlingEvent::ProductProcessed { url, success } => {
                     Some(ConcurrencyEvent::BatchEvent {
                         session_id: self.session_id.clone(),
@@ -2456,29 +2485,37 @@ impl ServiceBasedBatchCrawlingEngine {
                             ("timestamp".to_string(), Utc::now().to_rfc3339()),
                             ("product_url".to_string(), url.clone()),
                             ("success".to_string(), success.to_string()),
-                            ("event_category".to_string(), "product_processed".to_string()),
+                            (
+                                "event_category".to_string(),
+                                "product_processed".to_string(),
+                            ),
                         ]),
                     })
-                },
+                }
 
                 // Error 이벤트들 - 추가
-                DetailedCrawlingEvent::ErrorOccurred { stage, error, recoverable } => {
-                    Some(ConcurrencyEvent::SessionEvent {
-                        session_id: self.session_id.clone(),
-                        event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Failed,
-                        timestamp: Utc::now(),
-                        metadata: HashMap::from([
-                            ("timestamp".to_string(), Utc::now().to_rfc3339()),
-                            ("stage".to_string(), stage.clone()),
-                            ("error_message".to_string(), error.clone()),
-                            ("recoverable".to_string(), recoverable.to_string()),
-                            ("event_category".to_string(), "error_occurred".to_string()),
-                        ]),
-                    })
-                },
+                DetailedCrawlingEvent::ErrorOccurred {
+                    stage,
+                    error,
+                    recoverable,
+                } => Some(ConcurrencyEvent::SessionEvent {
+                    session_id: self.session_id.clone(),
+                    event_type:
+                        crate::crawl_engine::events::task_lifecycle::SessionEventType::Failed,
+                    timestamp: Utc::now(),
+                    metadata: HashMap::from([
+                        ("timestamp".to_string(), Utc::now().to_rfc3339()),
+                        ("stage".to_string(), stage.clone()),
+                        ("error_message".to_string(), error.clone()),
+                        ("recoverable".to_string(), recoverable.to_string()),
+                        ("event_category".to_string(), "error_occurred".to_string()),
+                    ]),
+                }),
                 // Task 레벨 이벤트들
                 _ => {
-                    if let Some((context, task_event)) = event.to_task_lifecycle_event(&self.session_id) {
+                    if let Some((context, task_event)) =
+                        event.to_task_lifecycle_event(&self.session_id)
+                    {
                         Some(ConcurrencyEvent::TaskLifecycle {
                             context,
                             event: task_event,

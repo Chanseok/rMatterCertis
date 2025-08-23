@@ -92,7 +92,7 @@ mod tests {
         );
 
         // Logical properties: index_in_page within 0..=11 and page_id within bounds
-        for (p, i) in &[(1,0),(1,11),(2,0),(100,0),(100,7)] {
+        for (p, i) in &[(1, 0), (1, 11), (2, 0), (100, 0), (100, 7)] {
             let r = calculator.calculate(*p, *i);
             assert!(r.index_in_page >= 0 && r.index_in_page <= 11);
             assert!(r.page_id >= 0 && (r.page_id as u32) <= total_pages);

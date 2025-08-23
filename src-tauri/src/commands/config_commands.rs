@@ -1241,10 +1241,12 @@ mod tests {
         let frontend_config = convert_to_frontend_config(&app_config);
 
         assert_eq!(frontend_config.site.base_url, "https://csa-iot.org");
-        assert!(frontend_config
-            .site
-            .products_page_matter_only
-            .contains("p_type%5B0%5D=14"));
+        assert!(
+            frontend_config
+                .site
+                .products_page_matter_only
+                .contains("p_type%5B0%5D=14")
+        );
         assert_eq!(
             frontend_config.crawling.page_range_limit,
             app_config.user.crawling.page_range_limit

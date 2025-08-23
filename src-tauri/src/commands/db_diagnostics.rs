@@ -59,15 +59,13 @@ pub async fn scan_db_pagination_mismatches(
 
     // Optional site meta for context (not strictly needed for checks)
     let (total_pages_site, items_on_last_page) = {
-        let cfg_manager = ConfigManager::new()
-            .map_err(|e| format!("Config manager init failed: {e}"))?;
+        let cfg_manager =
+            ConfigManager::new().map_err(|e| format!("Config manager init failed: {e}"))?;
         let app_config = cfg_manager
             .load_config()
             .await
             .map_err(|e| format!("Config load failed: {e}"))?;
-        let http = app_config
-            .create_http_client()
-            .map_err(|e| e.to_string())?;
+        let http = app_config.create_http_client().map_err(|e| e.to_string())?;
         let extractor = MatterDataExtractor::new().map_err(|e| e.to_string())?;
         // Fetch first page to estimate total_pages; tolerate failures silently
         let newest_url = csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
@@ -82,8 +80,8 @@ pub async fn scan_db_pagination_mismatches(
                         .ok()
                         .map(|v| v.len() as u32);
                 } else if let Some(tp) = total_pages {
-                    let oldest_url = csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED
-                        .replace("{}", &tp.to_string());
+                    let oldest_url =
+                        csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &tp.to_string());
                     if let Ok(resp2) = http.fetch_response(&oldest_url).await {
                         if let Ok(html2) = resp2.text().await {
                             last_count = extractor
@@ -108,12 +106,11 @@ pub async fn scan_db_pagination_mismatches(
     }
 
     // Fetch url, page_id, index_in_page; ignore rows with NULL url
-    let rows = sqlx::query(
-        "SELECT url, page_id, index_in_page FROM products WHERE url IS NOT NULL",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    let rows =
+        sqlx::query("SELECT url, page_id, index_in_page FROM products WHERE url IS NOT NULL")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
 
     // Organize by page_id
     let mut by_pid: BTreeMap<i32, Vec<(String, Option<i32>)>> = BTreeMap::new();
@@ -173,12 +170,12 @@ pub async fn scan_db_pagination_mismatches(
 
         // Detect duplicates and missing
         let mut dup_indices: Vec<i32> = Vec::new();
-    for (ix, urls) in index_map.iter() {
+        for (ix, urls) in index_map.iter() {
             if urls.len() > 1 {
                 dup_indices.push(*ix);
                 duplicate_positions.push(DuplicatePosition {
                     page_id: *pid,
-            current_page_number,
+                    current_page_number,
                     index_in_page: *ix,
                     urls: urls.iter().map(|s| s.to_string()).collect(),
                 });
@@ -186,9 +183,7 @@ pub async fn scan_db_pagination_mismatches(
         }
         // Missing indices
         let missing_indices: Vec<i32> = if expected_full {
-            (0..12)
-                .filter(|ix| !index_map.contains_key(ix))
-                .collect()
+            (0..12).filter(|ix| !index_map.contains_key(ix)).collect()
         } else {
             // terminal group expected contiguous from 0..(distinct_indices-1)
             (0..(distinct_indices as i32))

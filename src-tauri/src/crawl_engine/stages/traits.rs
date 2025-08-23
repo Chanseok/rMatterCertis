@@ -1,13 +1,13 @@
 //! StageLogic trait and data contracts (Phase 3 scaffold)
 
-use std::sync::Arc;
 use async_trait::async_trait;
+use std::sync::Arc;
 
+use crate::crawl_engine::actors::types::StageItemResult;
+use crate::crawl_engine::actors::types::StageType;
+use crate::crawl_engine::channels::types::StageItem;
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
-use crate::crawl_engine::channels::types::StageItem;
-use crate::crawl_engine::actors::types::StageType;
-use crate::crawl_engine::actors::types::StageItemResult;
 
 /// Dependencies passed into strategies (DI-friendly, Arc'ed at the boundary)
 #[derive(Clone)]
@@ -45,7 +45,9 @@ pub enum StageLogicError {
 #[async_trait]
 pub trait StageLogic: Send + Sync {
     /// Human-friendly strategy identifier for logging/metrics
-    fn name(&self) -> &'static str { "UnnamedStrategy" }
+    fn name(&self) -> &'static str {
+        "UnnamedStrategy"
+    }
     async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError>;
 }
 

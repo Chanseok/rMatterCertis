@@ -67,7 +67,6 @@ impl AppState {
 
     /// Initialize the shared database connection pool (Modern Rust 2024 - Backend-Only CRUD)
     pub async fn initialize_database_pool(&self) -> Result<(), String> {
-
         let pool = crate::infrastructure::database_connection::get_or_init_global_pool()
             .await
             .map_err(|e| format!("Failed to obtain database pool: {}", e))?;
@@ -96,7 +95,9 @@ impl AppState {
         let guard = self.http_client.read().await;
         match guard.as_ref() {
             Some(c) => Ok(c.clone()),
-            None => Err("HTTP client not initialized. Call initialize_http_client() first.".to_string()),
+            None => {
+                Err("HTTP client not initialized. Call initialize_http_client() first.".to_string())
+            }
         }
     }
 

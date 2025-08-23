@@ -1,23 +1,21 @@
 use crate::application::AppState;
+use crate::crawl_engine::actors::types::{AppEvent, SyncAnomalyEntry};
 use crate::domain::pagination::CanonicalPageIdCalculator;
 use crate::infrastructure::{
-    config::{csa_iot},
-    html_parser::MatterDataExtractor,
-    simple_http_client::RequestOptions,
+    config::csa_iot, html_parser::MatterDataExtractor, simple_http_client::RequestOptions,
 };
-use crate::crawl_engine::actors::types::{AppEvent, SyncAnomalyEntry};
 use chrono::Utc;
 use sqlx::Row;
 use tauri::{AppHandle, Emitter, State};
 use tracing::trace;
 use tracing::{debug, error, info};
 
+use scraper::Html;
 use serde_json::{Map, Value};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use tokio::sync::Semaphore;
-use scraper::Html;
-use std::collections::{HashMap, HashSet};
 
 static SYNC_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -150,7 +148,9 @@ fn merge_ranges(mut ranges: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
 /// - Each batch contains only contiguous pages (diff of 1)
 /// - Each batch size does not exceed `batch_size`
 fn split_into_contiguous_batches(mut pages: Vec<u32>, batch_size: u32) -> Vec<Vec<u32>> {
-    if pages.is_empty() { return Vec::new(); }
+    if pages.is_empty() {
+        return Vec::new();
+    }
     // Ensure sorted desc and unique
     pages.sort_unstable_by(|a, b| b.cmp(a));
     pages.dedup();
@@ -159,7 +159,10 @@ fn split_into_contiguous_batches(mut pages: Vec<u32>, batch_size: u32) -> Vec<Ve
     let mut current: Vec<u32> = Vec::new();
     let mut last: Option<u32> = None;
     for p in pages.into_iter() {
-        let contiguous = match last { Some(prev) => prev == p + 1, None => true };
+        let contiguous = match last {
+            Some(prev) => prev == p + 1,
+            None => true,
+        };
         if current.is_empty() {
             current.push(p);
             last = Some(p);
@@ -187,7 +190,9 @@ fn split_into_contiguous_batches(mut pages: Vec<u32>, batch_size: u32) -> Vec<Ve
 
 /// Compress a batch of pages (sorted desc) into range expression like "498-492,489"
 fn compress_pages_to_ranges_expr(mut pages: Vec<u32>) -> String {
-    if pages.is_empty() { return String::new(); }
+    if pages.is_empty() {
+        return String::new();
+    }
     pages.sort_unstable_by(|a, b| b.cmp(a));
     let mut parts: Vec<String> = Vec::new();
     let mut start = pages[0];
@@ -199,13 +204,20 @@ fn compress_pages_to_ranges_expr(mut pages: Vec<u32>) -> String {
             continue;
         }
         // break range
-        if start == prev { parts.push(format!("{}", start)); }
-        else { parts.push(format!("{}-{}", start, prev)); }
-        start = p; prev = p;
+        if start == prev {
+            parts.push(format!("{}", start));
+        } else {
+            parts.push(format!("{}-{}", start, prev));
+        }
+        start = p;
+        prev = p;
     }
     // flush
-    if start == prev { parts.push(format!("{}", start)); }
-    else { parts.push(format!("{}-{}", start, prev)); }
+    if start == prev {
+        parts.push(format!("{}", start));
+    } else {
+        parts.push(format!("{}-{}", start, prev));
+    }
     parts.join(",")
 }
 
@@ -216,11 +228,14 @@ fn compress_pages_to_ranges_expr(mut pages: Vec<u32>) -> String {
 pub async fn start_batched_sync(
     app: AppHandle,
     app_state: State<'_, AppState>,
-    ranges: String,              // e.g., "498-492,489,487-485"
+    ranges: String, // e.g., "498-492,489,487-485"
     batch_size_override: Option<u32>,
     dry_run: Option<bool>,
 ) -> Result<SyncSummary, String> {
-    info!("start_batched_sync args: ranges=\"{}\" batch_size_override={:?} dry_run={:?}", ranges, batch_size_override, dry_run);
+    info!(
+        "start_batched_sync args: ranges=\"{}\" batch_size_override={:?} dry_run={:?}",
+        ranges, batch_size_override, dry_run
+    );
 
     // Load config for default batch size via shared app state
     let app_config = app_state.config.read().await.clone();
@@ -234,9 +249,13 @@ pub async fn start_batched_sync(
         let mut p = s;
         while p >= e {
             pages.push(p);
-            if p == 0 { break; }
+            if p == 0 {
+                break;
+            }
             p -= 1;
-            if p < e { break; }
+            if p < e {
+                break;
+            }
         }
     }
     if pages.is_empty() {
@@ -245,7 +264,11 @@ pub async fn start_batched_sync(
 
     // 2) Split into contiguous batches with size limit
     let batches = split_into_contiguous_batches(pages, batch_size);
-    info!("Planned {} batches for batched sync (batch_size={})", batches.len(), batch_size);
+    info!(
+        "Planned {} batches for batched sync (batch_size={})",
+        batches.len(),
+        batch_size
+    );
 
     // 3) Sequentially process each batch using start_partial_sync
     let mut total_pages: u32 = 0;
@@ -258,7 +281,7 @@ pub async fn start_batched_sync(
     for (i, batch) in batches.into_iter().enumerate() {
         let expr = compress_pages_to_ranges_expr(batch);
         info!("[BatchedSync] Running batch {} with expr: {}", i + 1, expr);
-    
+
         match start_partial_sync(app.clone(), app_state.clone(), expr, dry_run).await {
             Ok(sum) => {
                 total_pages = total_pages.saturating_add(sum.pages_processed);
@@ -387,7 +410,13 @@ pub async fn start_repair_sync(
     // Format as ranges string like "498-492,489,487-485"
     let ranges_expr = merged
         .iter()
-        .map(|(s, e)| if s == e { s.to_string() } else { format!("{}-{}", s, e) })
+        .map(|(s, e)| {
+            if s == e {
+                s.to_string()
+            } else {
+                format!("{}-{}", s, e)
+            }
+        })
         .collect::<Vec<_>>()
         .join(",");
 
@@ -481,9 +510,7 @@ pub async fn start_partial_sync(
         ranges = vec![(total_pages, end_newest)];
         info!(
             "Using default sync range (no explicit ranges): {} -> {} (span={})",
-            total_pages,
-            end_newest,
-            default_limit
+            total_pages, end_newest, default_limit
         );
         default_limit
     } else {
@@ -538,17 +565,21 @@ pub async fn start_partial_sync(
     } else {
         ranges
             .iter()
-            .map(|(s, e)| if s == e { s.to_string() } else { format!("{}-{}", s, e) })
+            .map(|(s, e)| {
+                if s == e {
+                    s.to_string()
+                } else {
+                    format!("{}-{}", s, e)
+                }
+            })
             .collect::<Vec<_>>()
             .join(",")
     };
-    if let Err(e) = sqlx::query(
-        "UPDATE sync_sessions SET coverage_text = ? WHERE session_id = ?",
-    )
-    .bind(&coverage_text)
-    .bind(&session_id)
-    .execute(&pool)
-    .await
+    if let Err(e) = sqlx::query("UPDATE sync_sessions SET coverage_text = ? WHERE session_id = ?")
+        .bind(&coverage_text)
+        .bind(&session_id)
+        .execute(&pool)
+        .await
     {
         error!("Failed to update sync session coverage: {}", e);
     }
@@ -638,8 +669,16 @@ pub async fn start_partial_sync(
         ordered
     };
 
-    let max_concurrent = app_config.user.crawling.workers.list_page_max_concurrent.max(1);
-    info!("Launching page workers with concurrency={} (config)", max_concurrent);
+    let max_concurrent = app_config
+        .user
+        .crawling
+        .workers
+        .list_page_max_concurrent
+        .max(1);
+    info!(
+        "Launching page workers with concurrency={} (config)",
+        max_concurrent
+    );
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
     let pages_processed = Arc::new(AtomicU32::new(0));
@@ -665,8 +704,8 @@ pub async fn start_partial_sync(
         let calculator = calculator_global.clone();
         let newest_html_clone = newest_html.clone();
         let oldest_html_clone = oldest_html.clone();
-    // Clone per-iteration data to avoid moving across spawned tasks
-    let sync_ua_cloned = sync_ua.clone();
+        // Clone per-iteration data to avoid moving across spawned tasks
+        let sync_ua_cloned = sync_ua.clone();
         let pages_processed_c = pages_processed.clone();
         let inserted_c = inserted.clone();
         let updated_c = updated.clone();
@@ -694,7 +733,11 @@ pub async fn start_partial_sync(
             );
 
             // Fetch + parse with retries if count mismatch or transient errors
-            let expected_count = if physical_page == oldest_page { items_on_last_page as u32 } else { 12u32 };
+            let expected_count = if physical_page == oldest_page {
+                items_on_last_page as u32
+            } else {
+                12u32
+            };
             // Align sync retry attempts with ListCrawling settings
             let max_retries = app_config.user.crawling.product_list_retry_count.max(1); // total attempts = 1 + max_retries
             // Observability: log per-page retry config
@@ -704,11 +747,17 @@ pub async fn start_partial_sync(
             let mut last_err_msg: Option<String> = None;
             loop {
                 // Choose source: first attempt can reuse cached for edges; retries always fetch fresh
-                let use_cache = attempt == 0 && (physical_page == oldest_page || physical_page == 1);
+                let use_cache =
+                    attempt == 0 && (physical_page == oldest_page || physical_page == 1);
                 let page_html = if use_cache {
-                    if physical_page == oldest_page { oldest_html_clone.clone() } else { newest_html_clone.clone() }
+                    if physical_page == oldest_page {
+                        oldest_html_clone.clone()
+                    } else {
+                        newest_html_clone.clone()
+                    }
                 } else {
-                    let url = csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &physical_page.to_string());
+                    let url = csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED
+                        .replace("{}", &physical_page.to_string());
                     match http
                         .fetch_response_with_options(
                             &url,
@@ -767,7 +816,10 @@ pub async fn start_partial_sync(
                             AppEvent::SyncWarning {
                                 session_id: session_id.clone(),
                                 code: "page_incomplete_after_retries".into(),
-                                detail: format!("page {}: {} after {} retries", physical_page, msg, attempt),
+                                detail: format!(
+                                    "page {}: {} after {} retries",
+                                    physical_page, msg, attempt
+                                ),
                                 timestamp: Utc::now(),
                             },
                         );
@@ -784,7 +836,10 @@ pub async fn start_partial_sync(
 
                 // Backoff with jitter
                 let backoff_ms = 200u64 * (1u64 << attempt);
-                tokio::time::sleep(std::time::Duration::from_millis(backoff_ms + (physical_page as u64 % 50))).await;
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    backoff_ms + (physical_page as u64 % 50),
+                ))
+                .await;
                 attempt += 1;
             }
 
@@ -981,7 +1036,8 @@ pub async fn start_partial_sync(
                                 //      기존에는 product_details가 불완전한 경우에만 수집했으나, 요구사항에 따라 항상 시도합니다.
                                 {
                                     // Fetch + parse with retry per configured detail count
-                                    let max_detail_retries = app_config.user.crawling.product_detail_retry_count.max(1);
+                                    let max_detail_retries =
+                                        app_config.user.crawling.product_detail_retry_count.max(1);
                                     let mut success = false;
                                     for attempt in 1..=max_detail_retries {
                                         let referer_url = if physical_page == 1 {
@@ -1005,16 +1061,28 @@ pub async fn start_partial_sync(
                                                 Ok(body) => {
                                                     let extracted = {
                                                         let doc = Html::parse_document(&body);
-                                                        extractor.extract_product_detail(&doc, url.clone())
+                                                        extractor.extract_product_detail(
+                                                            &doc,
+                                                            url.clone(),
+                                                        )
                                                     };
                                                     match extracted {
                                                         Ok(mut detail) => {
                                                             detail.page_id = Some(calc.page_id);
-                                                            detail.index_in_page = Some(calc.index_in_page);
+                                                            detail.index_in_page =
+                                                                Some(calc.index_in_page);
                                                             if detail.id.is_none() {
-                                                                detail.id = Some(format!("p{:04}i{:02}", calc.page_id, calc.index_in_page));
+                                                                detail.id = Some(format!(
+                                                                    "p{:04}i{:02}",
+                                                                    calc.page_id,
+                                                                    calc.index_in_page
+                                                                ));
                                                             }
-                                                            let program_type = Some(detail.program_type.unwrap_or_else(|| "Matter".to_string()));
+                                                            let program_type = Some(
+                                                                detail.program_type.unwrap_or_else(
+                                                                    || "Matter".to_string(),
+                                                                ),
+                                                            );
                                                             if let Err(e) = sqlx::query(
                                                                 r#"INSERT INTO product_details (
                                                                     url, page_id, index_in_page, id, manufacturer, model, device_type,
@@ -1136,8 +1204,12 @@ pub async fn start_partial_sync(
                                                                 &app,
                                                                 AppEvent::SyncWarning {
                                                                     session_id: session_id.clone(),
-                                                                    code: "details_extract_failed".into(),
-                                                                    detail: format!("{}: {}", url, e),
+                                                                    code: "details_extract_failed"
+                                                                        .into(),
+                                                                    detail: format!(
+                                                                        "{}: {}",
+                                                                        url, e
+                                                                    ),
                                                                     timestamp: Utc::now(),
                                                                 },
                                                             );
@@ -1194,7 +1266,10 @@ pub async fn start_partial_sync(
                                                     physical_page, calc.page_id, calc.index_in_page, url, backoff_ms, attempt, max_detail_retries
                                                 )
                                             );
-                                            tokio::time::sleep(std::time::Duration::from_millis(backoff_ms + (physical_page as u64 % 23))).await;
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                backoff_ms + (physical_page as u64 % 23),
+                                            ))
+                                            .await;
                                         }
                                     }
                                     if !success {
@@ -1433,7 +1508,8 @@ pub async fn start_partial_sync(
                             Err(_) => false,
                         };
                         if details_missing {
-                            let max_detail_retries = app_config.user.crawling.product_detail_retry_count.max(1);
+                            let max_detail_retries =
+                                app_config.user.crawling.product_detail_retry_count.max(1);
                             let mut success = false;
                             for attempt in 1..=max_detail_retries {
                                 let referer_url = if physical_page == 1 {
@@ -1464,9 +1540,15 @@ pub async fn start_partial_sync(
                                                     detail.page_id = Some(calc.page_id);
                                                     detail.index_in_page = Some(calc.index_in_page);
                                                     if detail.id.is_none() {
-                                                        detail.id = Some(format!("p{:04}i{:02}", calc.page_id, calc.index_in_page));
+                                                        detail.id = Some(format!(
+                                                            "p{:04}i{:02}",
+                                                            calc.page_id, calc.index_in_page
+                                                        ));
                                                     }
-                                                    let program_type = Some(detail.program_type.unwrap_or_else(|| "Matter".to_string()));
+                                                    let program_type =
+                                                        Some(detail.program_type.unwrap_or_else(
+                                                            || "Matter".to_string(),
+                                                        ));
                                                     if let Err(e) = sqlx::query(
                                                         r#"INSERT INTO product_details (
                                                             url, page_id, index_in_page, id, manufacturer, model, device_type,
@@ -1647,7 +1729,10 @@ pub async fn start_partial_sync(
                                             physical_page, calc.page_id, calc.index_in_page, url, backoff_ms, attempt, max_detail_retries
                                         )
                                     );
-                                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms + (physical_page as u64 % 23))).await;
+                                    tokio::time::sleep(std::time::Duration::from_millis(
+                                        backoff_ms + (physical_page as u64 % 23),
+                                    ))
+                                    .await;
                                 }
                             }
                             if !success {
@@ -1741,18 +1826,16 @@ pub async fn start_partial_sync(
     if !dry_run.unwrap_or(false) && pages_processed > 0 {
         // Merge and normalize ranges again for safety
         let mut sweep_ranges: Vec<(u32, u32)> = Vec::new();
-        if let Ok(parsed) = parse_ranges(
-            &match sqlx::query_scalar::<_, String>(
-                "SELECT coverage_text FROM sync_sessions WHERE session_id = ?",
-            )
-            .bind(&session_id)
-            .fetch_one(&pool)
-            .await
-            {
-                Ok(s) => s,
-                Err(_) => String::new(),
-            },
-        ) {
+        if let Ok(parsed) = parse_ranges(&match sqlx::query_scalar::<_, String>(
+            "SELECT coverage_text FROM sync_sessions WHERE session_id = ?",
+        )
+        .bind(&session_id)
+        .fetch_one(&pool)
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => String::new(),
+        }) {
             sweep_ranges = parsed;
         }
 
@@ -1862,10 +1945,18 @@ pub async fn start_partial_sync(
             skipped,
             failed,
             duration_ms,
-            deleted: if deleted_total > 0 { Some(deleted_total) } else { None },
+            deleted: if deleted_total > 0 {
+                Some(deleted_total)
+            } else {
+                None
+            },
             total_pages: Some(total_pages),
             items_on_last_page: Some(items_on_last_page as u32),
-            anomalies: if anomalies.is_empty() { None } else { Some(anomalies) },
+            anomalies: if anomalies.is_empty() {
+                None
+            } else {
+                Some(anomalies)
+            },
             timestamp: Utc::now(),
         },
     );
@@ -1950,50 +2041,72 @@ pub async fn start_diagnostic_sync(
         .map_err(|e| format!("DB pool unavailable: {e}"))?;
 
     // Discover or use snapshot for site meta
-    let (total_pages, items_on_last_page, newest_html, oldest_html, oldest_page) = if let Some(s) = snapshot {
-        // Use provided snapshot only; avoid extra network calls for edges in precise-repair mode
-        let newest_html = String::new();
-        let oldest_html = String::new();
-        let oldest_page = s.total_pages;
-        (s.total_pages, s.items_on_last_page as usize, newest_html, oldest_html, oldest_page)
-    } else {
-        let newest_url = csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
-        let newest_html = match http
-            .fetch_response_with_options(
-                &newest_url,
-                &RequestOptions { user_agent_override: sync_ua.clone(), referer: Some(csa_iot::PRODUCTS_BASE.to_string()), skip_robots_check: false },
+    let (total_pages, items_on_last_page, newest_html, oldest_html, oldest_page) =
+        if let Some(s) = snapshot {
+            // Use provided snapshot only; avoid extra network calls for edges in precise-repair mode
+            let newest_html = String::new();
+            let oldest_html = String::new();
+            let oldest_page = s.total_pages;
+            (
+                s.total_pages,
+                s.items_on_last_page as usize,
+                newest_html,
+                oldest_html,
+                oldest_page,
             )
-            .await
-        {
-            Ok(resp) => resp.text().await.map_err(|e| e.to_string())?,
-            Err(e) => return Err(e.to_string()),
-        };
-        let total_pages = extractor
-            .extract_total_pages(&newest_html)
-            .unwrap_or(1)
-            .max(1);
-        let oldest_page = total_pages;
-        let oldest_html = if oldest_page == 1 {
-            newest_html.clone()
         } else {
-            let oldest_url = csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &oldest_page.to_string());
-            match http
+            let newest_url = csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
+            let newest_html = match http
                 .fetch_response_with_options(
-                    &oldest_url,
-                    &RequestOptions { user_agent_override: sync_ua.clone(), referer: Some(csa_iot::PRODUCTS_BASE.to_string()), skip_robots_check: false },
+                    &newest_url,
+                    &RequestOptions {
+                        user_agent_override: sync_ua.clone(),
+                        referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
+                        skip_robots_check: false,
+                    },
                 )
                 .await
             {
                 Ok(resp) => resp.text().await.map_err(|e| e.to_string())?,
                 Err(e) => return Err(e.to_string()),
-            }
+            };
+            let total_pages = extractor
+                .extract_total_pages(&newest_html)
+                .unwrap_or(1)
+                .max(1);
+            let oldest_page = total_pages;
+            let oldest_html = if oldest_page == 1 {
+                newest_html.clone()
+            } else {
+                let oldest_url =
+                    csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &oldest_page.to_string());
+                match http
+                    .fetch_response_with_options(
+                        &oldest_url,
+                        &RequestOptions {
+                            user_agent_override: sync_ua.clone(),
+                            referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
+                            skip_robots_check: false,
+                        },
+                    )
+                    .await
+                {
+                    Ok(resp) => resp.text().await.map_err(|e| e.to_string())?,
+                    Err(e) => return Err(e.to_string()),
+                }
+            };
+            let items_on_last_page = extractor
+                .extract_product_urls_from_content(&oldest_html)
+                .map_err(|e| e.to_string())?
+                .len();
+            (
+                total_pages,
+                items_on_last_page,
+                newest_html,
+                oldest_html,
+                oldest_page,
+            )
         };
-        let items_on_last_page = extractor
-            .extract_product_urls_from_content(&oldest_html)
-            .map_err(|e| e.to_string())?
-            .len();
-        (total_pages, items_on_last_page, newest_html, oldest_html, oldest_page)
-    };
     let calculator = CanonicalPageIdCalculator::new(total_pages, items_on_last_page);
 
     // Emit start event
@@ -2008,7 +2121,12 @@ pub async fn start_diagnostic_sync(
         },
     );
 
-    let max_concurrent = app_config.user.crawling.workers.list_page_max_concurrent.max(1);
+    let max_concurrent = app_config
+        .user
+        .crawling
+        .workers
+        .list_page_max_concurrent
+        .max(1);
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
     let pages_processed = Arc::new(AtomicU32::new(0));
     let inserted = Arc::new(AtomicU32::new(0));
@@ -2026,7 +2144,9 @@ pub async fn start_diagnostic_sync(
     let mut handles = Vec::with_capacity(pages_vec.len());
     for physical_page in pages_vec {
         let selected = index_map.get(&physical_page).cloned().unwrap_or_default();
-        if selected.is_empty() { continue; }
+        if selected.is_empty() {
+            continue;
+        }
         let permit = semaphore.clone().acquire_owned();
         let app = app_handle.clone();
         let session_id = session_id.clone();
@@ -2036,7 +2156,7 @@ pub async fn start_diagnostic_sync(
         let calculator = calculator_global.clone();
         let newest_html_clone = newest_html.clone();
         let oldest_html_clone = oldest_html.clone();
-    let sync_ua = sync_ua.clone();
+        let sync_ua = sync_ua.clone();
         let pages_processed_c = pages_processed.clone();
         let inserted_c = inserted.clone();
         let updated_c = updated.clone();
@@ -2044,9 +2164,22 @@ pub async fn start_diagnostic_sync(
         let failed_c = failed.clone();
 
         let handle = tokio::spawn(async move {
-            let _permit = match permit.await { Ok(p) => p, Err(e) => { error!("Failed to acquire semaphore: {}", e); return; } };
+            let _permit = match permit.await {
+                Ok(p) => p,
+                Err(e) => {
+                    error!("Failed to acquire semaphore: {}", e);
+                    return;
+                }
+            };
 
-            emit_actor_event(&app, AppEvent::SyncPageStarted { session_id: session_id.clone(), physical_page, timestamp: Utc::now() });
+            emit_actor_event(
+                &app,
+                AppEvent::SyncPageStarted {
+                    session_id: session_id.clone(),
+                    physical_page,
+                    timestamp: Utc::now(),
+                },
+            );
 
             // Fetch page HTML (same retry logic as partial sync but simplified)
             // expected item count for observability (not used for gating here)
@@ -2055,51 +2188,165 @@ pub async fn start_diagnostic_sync(
             let mut attempt = 0u32;
             let mut product_urls: Vec<String> = Vec::new();
             loop {
-                let use_cache = attempt == 0 && (physical_page == oldest_page || physical_page == 1);
+                let use_cache =
+                    attempt == 0 && (physical_page == oldest_page || physical_page == 1);
                 let page_html = if use_cache {
-                    if physical_page == oldest_page { oldest_html_clone.clone() } else { newest_html_clone.clone() }
+                    if physical_page == oldest_page {
+                        oldest_html_clone.clone()
+                    } else {
+                        newest_html_clone.clone()
+                    }
                 } else {
-                    let url = csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED.replace("{}", &physical_page.to_string());
+                    let url = csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED
+                        .replace("{}", &physical_page.to_string());
                     match http
                         .fetch_response_with_options(
                             &url,
-                            &RequestOptions { user_agent_override: sync_ua.clone(), referer: Some(csa_iot::PRODUCTS_BASE.to_string()), skip_robots_check: false },
+                            &RequestOptions {
+                                user_agent_override: sync_ua.clone(),
+                                referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
+                                skip_robots_check: false,
+                            },
                         )
                         .await
-                    { Ok(resp) => resp.text().await.unwrap_or_default(), Err(_) => String::new() }
+                    {
+                        Ok(resp) => resp.text().await.unwrap_or_default(),
+                        Err(_) => String::new(),
+                    }
                 };
                 if !page_html.is_empty() {
-                    if let Ok(v) = extractor.extract_product_urls_from_content(&page_html) { product_urls = v; }
+                    if let Ok(v) = extractor.extract_product_urls_from_content(&page_html) {
+                        product_urls = v;
+                    }
                 }
-                if !product_urls.is_empty() || attempt >= max_retries { break; }
+                if !product_urls.is_empty() || attempt >= max_retries {
+                    break;
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(200 * (1u64 << attempt))).await;
                 attempt += 1;
             }
 
             // Begin transaction
-            let mut tx = match pool.begin().await { Ok(t) => t, Err(e) => { failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "tx_begin_failed".into(), detail: format!("page {}: {}", physical_page, e), timestamp: Utc::now() }); return; } };
+            let mut tx = match pool.begin().await {
+                Ok(t) => t,
+                Err(e) => {
+                    failed_c.fetch_add(1, Ordering::SeqCst);
+                    emit_actor_event(
+                        &app,
+                        AppEvent::SyncWarning {
+                            session_id: session_id.clone(),
+                            code: "tx_begin_failed".into(),
+                            detail: format!("page {}: {}", physical_page, e),
+                            timestamp: Utc::now(),
+                        },
+                    );
+                    return;
+                }
+            };
 
-            let mut page_inserted = 0u32; let mut page_updated = 0u32; let mut page_skipped = 0u32; let mut page_failed = 0u32;
+            let mut page_inserted = 0u32;
+            let mut page_updated = 0u32;
+            let mut page_skipped = 0u32;
+            let mut page_failed = 0u32;
             for i in 0..product_urls.len() {
-                if !selected.contains(&i) { continue; }
-                let url = match product_urls.get(i) { Some(u) => u.clone(), None => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); continue; } };
+                if !selected.contains(&i) {
+                    continue;
+                }
+                let url = match product_urls.get(i) {
+                    Some(u) => u.clone(),
+                    None => {
+                        page_failed += 1;
+                        failed_c.fetch_add(1, Ordering::SeqCst);
+                        continue;
+                    }
+                };
                 let calc = calculator.calculate(physical_page, i);
-                if dry { page_skipped += 1; emit_actor_event(&app, AppEvent::SyncUpsertProgress { session_id: session_id.clone(), physical_page, inserted: page_inserted, updated: page_updated, skipped: page_skipped, failed: page_failed, timestamp: Utc::now() }); continue; }
+                if dry {
+                    page_skipped += 1;
+                    emit_actor_event(
+                        &app,
+                        AppEvent::SyncUpsertProgress {
+                            session_id: session_id.clone(),
+                            physical_page,
+                            inserted: page_inserted,
+                            updated: page_updated,
+                            skipped: page_skipped,
+                            failed: page_failed,
+                            timestamp: Utc::now(),
+                        },
+                    );
+                    continue;
+                }
 
                 // Upsert product row (same as partial)
-                let row = sqlx::query("SELECT page_id, index_in_page FROM products WHERE url = ? LIMIT 1").bind(&url).fetch_optional(&mut *tx).await;
-                let row = match row { Ok(r) => r, Err(e) => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "select_failed".into(), detail: format!("{}: {}", url, e), timestamp: Utc::now() }); continue; } };
+                let row = sqlx::query(
+                    "SELECT page_id, index_in_page FROM products WHERE url = ? LIMIT 1",
+                )
+                .bind(&url)
+                .fetch_optional(&mut *tx)
+                .await;
+                let row = match row {
+                    Ok(r) => r,
+                    Err(e) => {
+                        page_failed += 1;
+                        failed_c.fetch_add(1, Ordering::SeqCst);
+                        emit_actor_event(
+                            &app,
+                            AppEvent::SyncWarning {
+                                session_id: session_id.clone(),
+                                code: "select_failed".into(),
+                                detail: format!("{}: {}", url, e),
+                                timestamp: Utc::now(),
+                            },
+                        );
+                        continue;
+                    }
+                };
                 match row {
                     None => {
-                        let res = sqlx::query("INSERT INTO products (url, page_id, index_in_page) VALUES (?, ?, ?)").bind(&url).bind(calc.page_id).bind(calc.index_in_page).execute(&mut *tx).await;
-                        match res { Ok(_) => { page_inserted += 1; inserted_c.fetch_add(1, Ordering::SeqCst); }, Err(e) => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "insert_failed".into(), detail: format!("{}: {}", url, e), timestamp: Utc::now() }); } }
+                        let res = sqlx::query(
+                            "INSERT INTO products (url, page_id, index_in_page) VALUES (?, ?, ?)",
+                        )
+                        .bind(&url)
+                        .bind(calc.page_id)
+                        .bind(calc.index_in_page)
+                        .execute(&mut *tx)
+                        .await;
+                        match res {
+                            Ok(_) => {
+                                page_inserted += 1;
+                                inserted_c.fetch_add(1, Ordering::SeqCst);
+                            }
+                            Err(e) => {
+                                page_failed += 1;
+                                failed_c.fetch_add(1, Ordering::SeqCst);
+                                emit_actor_event(
+                                    &app,
+                                    AppEvent::SyncWarning {
+                                        session_id: session_id.clone(),
+                                        code: "insert_failed".into(),
+                                        detail: format!("{}: {}", url, e),
+                                        timestamp: Utc::now(),
+                                    },
+                                );
+                            }
+                        }
                     }
                     Some(r) => {
-                        let db_pid: Option<i64> = r.get("page_id"); let db_idx: Option<i64> = r.get("index_in_page");
-                        let needs_update = match (db_pid, db_idx) { (Some(p), Some(ix)) => p as i32 != calc.page_id || ix as i32 != calc.index_in_page, _ => true };
+                        let db_pid: Option<i64> = r.get("page_id");
+                        let db_idx: Option<i64> = r.get("index_in_page");
+                        let needs_update = match (db_pid, db_idx) {
+                            (Some(p), Some(ix)) => {
+                                p as i32 != calc.page_id || ix as i32 != calc.index_in_page
+                            }
+                            _ => true,
+                        };
                         if needs_update {
                             match sqlx::query("UPDATE products SET page_id = ?, index_in_page = ?, updated_at = CURRENT_TIMESTAMP WHERE url = ?").bind(calc.page_id).bind(calc.index_in_page).bind(&url).execute(&mut *tx).await { Ok(_) => { page_updated += 1; updated_c.fetch_add(1, Ordering::SeqCst); }, Err(e) => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "update_failed".into(), detail: format!("{}: {}", url, e), timestamp: Utc::now() }); } }
-                        } else { page_skipped += 1; skipped_c.fetch_add(1, Ordering::SeqCst); }
+                        } else {
+                            page_skipped += 1;
+                            skipped_c.fetch_add(1, Ordering::SeqCst);
+                        }
                     }
                 }
 
@@ -2110,7 +2357,8 @@ pub async fn start_diagnostic_sync(
                     details_is_complete = man.is_some() && model.is_some() && dtype.is_some() && cert.is_some();
                 }
                 if !details_is_complete {
-                    let max_detail_retries = app_config.user.crawling.product_detail_retry_count.max(1);
+                    let max_detail_retries =
+                        app_config.user.crawling.product_detail_retry_count.max(1);
                     let mut success = false;
                     for attempt in 1..=max_detail_retries {
                         // Fetch detail page
@@ -2143,7 +2391,10 @@ pub async fn start_diagnostic_sync(
                                         detail.page_id = Some(calc.page_id);
                                         detail.index_in_page = Some(calc.index_in_page);
                                         if detail.id.is_none() {
-                                            detail.id = Some(format!("p{:04}i{:02}", calc.page_id, calc.index_in_page));
+                                            detail.id = Some(format!(
+                                                "p{:04}i{:02}",
+                                                calc.page_id, calc.index_in_page
+                                            ));
                                         }
                                         let program_type = Some(
                                             detail
@@ -2231,7 +2482,7 @@ pub async fn start_diagnostic_sync(
                             }
                         }
                         if !success && attempt < max_detail_retries {
-                                    let shift = attempt - 1;
+                            let shift = attempt - 1;
                             let base = 1u64.checked_shl(shift).unwrap_or(u64::MAX / 200);
                             let delay: u64 = 200u64.saturating_mul(base);
                             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;

@@ -39,12 +39,14 @@ pub async fn start_crawling_session(
                 info!("✅ Crawling completed successfully");
 
                 // 세션 완료 이벤트
-                let completion_event = crate::crawl_engine::events::task_lifecycle::ConcurrencyEvent::SessionEvent {
-                    session_id: session_id_clone.clone(),
-                    event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Completed,
-                    timestamp: chrono::Utc::now(),
-                    metadata: std::collections::HashMap::new(),
-                };
+                let completion_event =
+                    crate::crawl_engine::events::task_lifecycle::ConcurrencyEvent::SessionEvent {
+                        session_id: session_id_clone.clone(),
+                        event_type:
+                            crate::crawl_engine::events::task_lifecycle::SessionEventType::Completed,
+                        timestamp: chrono::Utc::now(),
+                        metadata: std::collections::HashMap::new(),
+                    };
 
                 if let Err(e) = app_handle_clone.emit("concurrency-event", &completion_event) {
                     error!("❌ Failed to emit session completion event: {}", e);
@@ -56,14 +58,17 @@ pub async fn start_crawling_session(
                 error!("❌ Crawling failed: {}", e);
 
                 // 세션 실패 이벤트
-                let failure_event = crate::crawl_engine::events::task_lifecycle::ConcurrencyEvent::SessionEvent {
-                    session_id: session_id_clone.clone(),
-                    event_type: crate::crawl_engine::events::task_lifecycle::SessionEventType::Failed,
-                    timestamp: chrono::Utc::now(),
-                    metadata: [
-                        ("error".to_string(), e.to_string())
-                    ].iter().cloned().collect(),
-                };
+                let failure_event =
+                    crate::crawl_engine::events::task_lifecycle::ConcurrencyEvent::SessionEvent {
+                        session_id: session_id_clone.clone(),
+                        event_type:
+                            crate::crawl_engine::events::task_lifecycle::SessionEventType::Failed,
+                        timestamp: chrono::Utc::now(),
+                        metadata: [("error".to_string(), e.to_string())]
+                            .iter()
+                            .cloned()
+                            .collect(),
+                    };
 
                 if let Err(e) = app_handle_clone.emit("concurrency-event", &failure_event) {
                     error!("❌ Failed to emit session failure event: {}", e);

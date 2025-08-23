@@ -186,7 +186,7 @@ pub enum ContextError {
 
 impl From<ContextError> for crate::crawl_engine::actors::types::ActorError {
     fn from(err: ContextError) -> Self {
-    use crate::crawl_engine::actors::types::ActorError;
+        use crate::crawl_engine::actors::types::ActorError;
         match err {
             ContextError::ControlChannelSend { message } => ActorError::ChannelError(message),
             ContextError::EventBroadcastFailed => {

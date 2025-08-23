@@ -5,7 +5,10 @@
 
 use crate::infrastructure::config::WorkerConfig;
 use anyhow::{Result, anyhow};
-use reqwest::{Client, ClientBuilder, Response, Url, header::{HeaderMap, HeaderValue, USER_AGENT, REFERER, ACCEPT, ACCEPT_LANGUAGE}};
+use reqwest::{
+    Client, ClientBuilder, Response, Url,
+    header::{ACCEPT, ACCEPT_LANGUAGE, HeaderMap, HeaderValue, REFERER, USER_AGENT},
+};
 use scraper::Html;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -226,12 +229,11 @@ impl HttpClient {
         // Match the diagnostic script behavior
         default_headers.insert(
             ACCEPT,
-            HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+            HeaderValue::from_static(
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ),
         );
-        default_headers.insert(
-            ACCEPT_LANGUAGE,
-            HeaderValue::from_static("en-US,en;q=0.9"),
-        );
+        default_headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
 
         let client = ClientBuilder::new()
             .timeout(Duration::from_secs(config.timeout_seconds))
@@ -275,7 +277,11 @@ impl HttpClient {
     }
 
     /// Public variant to perform a GET with custom options (UA override, referer, skip robots)
-    pub async fn fetch_response_with_options(&self, url: &str, opts: &RequestOptions) -> Result<Response> {
+    pub async fn fetch_response_with_options(
+        &self,
+        url: &str,
+        opts: &RequestOptions,
+    ) -> Result<Response> {
         let rate_limiter = GlobalRateLimiter::get_instance();
         if let Some(label) = &self.context_label {
             debug!(
@@ -292,13 +298,17 @@ impl HttpClient {
             .apply_rate_limit(self.config.max_requests_per_second)
             .await;
 
-        if self.config.respect_robots_txt && !opts.skip_robots_check && !self.robots_allowed(url).await? {
+        if self.config.respect_robots_txt
+            && !opts.skip_robots_check
+            && !self.robots_allowed(url).await?
+        {
             warn!("robots.txt disallows: {}", url);
             return Err(anyhow!("Blocked by robots.txt: {}", url));
         }
 
         info!("🌐 HTTP GET (HttpClient,opts): {}", url);
-        let response = self.build_request(url, opts)?
+        let response = self
+            .build_request(url, opts)?
             .send()
             .await
             .map_err(|e| anyhow!("HTTP request failed: {}", e))?;
@@ -316,8 +326,13 @@ impl HttpClient {
             return Ok(true);
         }
         // Parse base origin
-        let url = Url::parse(target_url).map_err(|e| anyhow!("Invalid URL {}: {}", target_url, e))?;
-        let robots_url = format!("{}://{}/robots.txt", url.scheme(), url.host_str().unwrap_or(""));
+        let url =
+            Url::parse(target_url).map_err(|e| anyhow!("Invalid URL {}: {}", target_url, e))?;
+        let robots_url = format!(
+            "{}://{}/robots.txt",
+            url.scheme(),
+            url.host_str().unwrap_or("")
+        );
         // Best-effort fetch; if fails, allow by default
         let resp = match self.client.get(&robots_url).send().await {
             Ok(r) => r,
@@ -327,12 +342,16 @@ impl HttpClient {
             return Ok(true);
         }
         let text = resp.text().await.unwrap_or_default();
-        if text.is_empty() { return Ok(true); }
+        if text.is_empty() {
+            return Ok(true);
+        }
         // Super-simple check: if a line says Disallow: / then deny everything; otherwise allow
         // Optionally, we could parse path-specific disallows that match the URL path.
         for line in text.lines() {
             let l = line.trim();
-            if l.starts_with('#') { continue; }
+            if l.starts_with('#') {
+                continue;
+            }
             if l.to_ascii_lowercase().starts_with("user-agent:") {
                 // Not differentiating per-agent in this lightweight pass
                 continue;
@@ -430,7 +449,8 @@ impl HttpClient {
         }
 
         info!("🌐 HTTP GET (HttpClient): {}", url);
-        let response = self.build_request(url, &RequestOptions::default())?
+        let response = self
+            .build_request(url, &RequestOptions::default())?
             .send()
             .await
             .map_err(|e| anyhow!("HTTP request failed: {}", e))?;
@@ -532,7 +552,11 @@ impl HttpClient {
                 "🌐 HTTP GET (attempt {}/{}) : {}",
                 attempt, self.config.max_retries, url
             );
-            match self.build_request(url, &RequestOptions::default())?.send().await {
+            match self
+                .build_request(url, &RequestOptions::default())?
+                .send()
+                .await
+            {
                 Ok(resp) => {
                     let status = resp.status();
                     if status.is_success() {
@@ -607,7 +631,7 @@ impl HttpClient {
 
     /// Single attempt to fetch HTML content
     async fn fetch_html_once(&self, url: &str) -> Result<Html> {
-    let response = self.fetch_response(url).await?;
+        let response = self.fetch_response(url).await?;
 
         let html_content = response
             .text()
@@ -702,7 +726,10 @@ impl HttpClient {
             }
 
             // Do the request
-            match self.fetch_response_with_cancel(url, cancellation_token).await {
+            match self
+                .fetch_response_with_cancel(url, cancellation_token)
+                .await
+            {
                 Ok(response) => {
                     // Read body with cancellation
                     let text = tokio::select! {
@@ -737,7 +764,7 @@ impl HttpClient {
 
     /// Single attempt to fetch HTML content as string (Send-compatible)
     async fn fetch_html_string_once(&self, url: &str) -> Result<String> {
-    let response = self.fetch_response(url).await?;
+        let response = self.fetch_response(url).await?;
 
         let html_content = response
             .text()
@@ -760,11 +787,14 @@ impl HttpClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
     use std::net::SocketAddr;
-    use tokio::net::TcpListener;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::time::Instant;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use tokio::net::TcpListener;
 
     async fn start_test_server() -> (SocketAddr, Arc<AtomicUsize>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -787,8 +817,12 @@ mod tests {
                 let path = if let Some(start) = first_line.find(' ') {
                     if let Some(end) = first_line[start + 1..].find(' ') {
                         &first_line[start + 1..start + 1 + end]
-                    } else { "/" }
-                } else { "/" };
+                    } else {
+                        "/"
+                    }
+                } else {
+                    "/"
+                };
 
                 match path {
                     "/retry2ok" => {
@@ -810,20 +844,16 @@ mod tests {
                     "/slow" => {
                         // Write headers then delay body to let cancellation kick in
                         let body = b"delayed";
-                        let resp = format!(
-                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
-                            body.len()
-                        );
+                        let resp =
+                            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
                         let _ = socket.write_all(resp.as_bytes()).await;
                         tokio::time::sleep(Duration::from_millis(500)).await;
                         let _ = socket.write_all(body).await;
                     }
                     _ => {
                         let body = b"ok";
-                        let resp = format!(
-                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
-                            body.len()
-                        );
+                        let resp =
+                            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
                         let _ = socket.write_all(resp.as_bytes()).await;
                         let _ = socket.write_all(body).await;
                     }
@@ -865,33 +895,61 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retry_policy_429_then_ok() {
         let (addr, _cnt) = start_test_server().await;
-    let cfg = HttpClientConfig { max_requests_per_second: 100, timeout_seconds: 5, max_retries: 3, user_agent: "test".into(), follow_redirects: false, respect_robots_txt: false };
+        let cfg = HttpClientConfig {
+            max_requests_per_second: 100,
+            timeout_seconds: 5,
+            max_retries: 3,
+            user_agent: "test".into(),
+            follow_redirects: false,
+            respect_robots_txt: false,
+        };
         let client = HttpClient::with_config(cfg).unwrap();
         let url = format!("http://{}/retry2ok", addr);
-        let resp = client.fetch_response_with_policy(&url).await.expect("should eventually succeed");
+        let resp = client
+            .fetch_response_with_policy(&url)
+            .await
+            .expect("should eventually succeed");
         assert!(resp.status().is_success());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_cancellation_before_start() {
-    let cfg = HttpClientConfig { max_requests_per_second: 100, timeout_seconds: 5, max_retries: 1, user_agent: "test".into(), follow_redirects: false, respect_robots_txt: false };
+        let cfg = HttpClientConfig {
+            max_requests_per_second: 100,
+            timeout_seconds: 5,
+            max_retries: 1,
+            user_agent: "test".into(),
+            follow_redirects: false,
+            respect_robots_txt: false,
+        };
         let client = HttpClient::with_config(cfg).unwrap();
         let token = CancellationToken::new();
         token.cancel();
-        let res = client.fetch_html_string_with_cancel("http://127.0.0.1:9/nowhere", &token).await;
+        let res = client
+            .fetch_html_string_with_cancel("http://127.0.0.1:9/nowhere", &token)
+            .await;
         assert!(res.is_err());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_cancellation_during_body() {
         let (addr, _cnt) = start_test_server().await;
-    let cfg = HttpClientConfig { max_requests_per_second: 100, timeout_seconds: 5, max_retries: 1, user_agent: "test".into(), follow_redirects: false, respect_robots_txt: false };
+        let cfg = HttpClientConfig {
+            max_requests_per_second: 100,
+            timeout_seconds: 5,
+            max_retries: 1,
+            user_agent: "test".into(),
+            follow_redirects: false,
+            respect_robots_txt: false,
+        };
         let client = HttpClient::with_config(cfg).unwrap();
         let token = CancellationToken::new();
         let url = format!("http://{}/slow", addr);
-        let h = tokio::spawn({ let client = client.clone(); let token = token.clone(); async move {
-            client.fetch_html_string_with_cancel(&url, &token).await
-        }});
+        let h = tokio::spawn({
+            let client = client.clone();
+            let token = token.clone();
+            async move { client.fetch_html_string_with_cancel(&url, &token).await }
+        });
         tokio::time::sleep(Duration::from_millis(100)).await;
         token.cancel();
         let res = h.await.unwrap();
@@ -935,8 +993,8 @@ mod tests {
         println!("- {} requests were successful.", successful_requests);
 
         let expected_duration_min = (num_requests as f32 / rps as f32) * 0.8; // Allow some bursting
-    // CI/network variability can be high; allow a generous upper bound
-    let expected_duration_max = (num_requests as f32 / rps as f32) * 2.5; // Allow for higher latency
+        // CI/network variability can be high; allow a generous upper bound
+        let expected_duration_max = (num_requests as f32 / rps as f32) * 2.5; // Allow for higher latency
 
         assert!(successful_requests > 0);
         if duration.as_secs_f32() <= expected_duration_min {

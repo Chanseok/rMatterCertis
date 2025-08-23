@@ -6,7 +6,6 @@ use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::infrastructure::config::AppConfig;
 use crate::crawl_engine::actor_system::{StageError, StageResult};
 use crate::crawl_engine::actors::StageActor;
 use crate::crawl_engine::channels::types::{StageItem, StageType};
@@ -14,6 +13,7 @@ use crate::crawl_engine::services::crawling_integration::{
     CrawlingIntegrationService, RealCrawlingStageExecutor,
 };
 use crate::crawl_engine::system_config::SystemConfig;
+use crate::infrastructure::config::AppConfig;
 
 /// 실제 크롤링 통합 서비스
 #[allow(dead_code)] // Phase2: retained for near-term expansion; prune in Phase3 if still unused
@@ -181,19 +181,20 @@ impl crate::crawl_engine::actors::BatchActor {
             }
         };
 
-        let integration_service = match CrawlingIntegrationService::new(config_arc.clone(), app_config).await {
-            Ok(service) => Arc::new(service),
-            Err(e) => {
-                error!(error = %e, "Failed to create crawling integration service");
-                return crate::crawl_engine::actors::types::StageResult {
-                    processed_items: 0,
-                    successful_items: 0,
-                    failed_items: 1,
-                    duration_ms: 0,
-                    details: Vec::new(),
-                };
-            }
-        };
+        let integration_service =
+            match CrawlingIntegrationService::new(config_arc.clone(), app_config).await {
+                Ok(service) => Arc::new(service),
+                Err(e) => {
+                    error!(error = %e, "Failed to create crawling integration service");
+                    return crate::crawl_engine::actors::types::StageResult {
+                        processed_items: 0,
+                        successful_items: 0,
+                        failed_items: 1,
+                        duration_ms: 0,
+                        details: Vec::new(),
+                    };
+                }
+            };
 
         let started = std::time::Instant::now();
         let mut details: Vec<crate::crawl_engine::actors::types::StageItemResult> = Vec::new();
@@ -396,19 +397,20 @@ impl crate::crawl_engine::actors::BatchActor {
             }
         };
 
-        let integration_service = match CrawlingIntegrationService::new(config_arc.clone(), app_config).await {
-            Ok(service) => Arc::new(service),
-            Err(e) => {
-                error!(error = %e, "Failed to create crawling integration service");
-                return crate::crawl_engine::actors::types::StageResult {
-                    processed_items: 0,
-                    successful_items: 0,
-                    failed_items: product_urls_items.len() as u32,
-                    duration_ms: 0,
-                    details: Vec::new(),
-                };
-            }
-        };
+        let integration_service =
+            match CrawlingIntegrationService::new(config_arc.clone(), app_config).await {
+                Ok(service) => Arc::new(service),
+                Err(e) => {
+                    error!(error = %e, "Failed to create crawling integration service");
+                    return crate::crawl_engine::actors::types::StageResult {
+                        processed_items: 0,
+                        successful_items: 0,
+                        failed_items: product_urls_items.len() as u32,
+                        duration_ms: 0,
+                        details: Vec::new(),
+                    };
+                }
+            };
 
         let cancellation_token = tokio_util::sync::CancellationToken::new();
         let started = std::time::Instant::now();
@@ -435,7 +437,11 @@ impl crate::crawl_engine::actors::BatchActor {
                         );
                     }
                     let success = !collected_details.is_empty();
-                    if success { successful += 1; } else { failed += 1; }
+                    if success {
+                        successful += 1;
+                    } else {
+                        failed += 1;
+                    }
                     let collected_data = if success {
                         // Wrap into channels::types::ProductDetails for downstream transforms
                         let attempted = urls.len() as u32;
@@ -444,24 +450,33 @@ impl crate::crawl_engine::actors::BatchActor {
                         let wrapper = crate::crawl_engine::channels::types::ProductDetails {
                             products: collected_details,
                             source_urls: urls,
-                            extraction_stats: crate::crawl_engine::channels::types::ExtractionStats {
-                                attempted,
-                                successful: successful_count,
-                                failed: failed_count,
-                                empty_responses: 0,
-                            },
+                            extraction_stats:
+                                crate::crawl_engine::channels::types::ExtractionStats {
+                                    attempted,
+                                    successful: successful_count,
+                                    failed: failed_count,
+                                    empty_responses: 0,
+                                },
                         };
                         match serde_json::to_string(&wrapper) {
                             Ok(json) => Some(json),
                             Err(_) => None,
                         }
-                    } else { None };
+                    } else {
+                        None
+                    };
 
                     details.push(crate::crawl_engine::actors::types::StageItemResult {
                         item_id: format!("product_urls:{}", idx),
-                        item_type: crate::crawl_engine::actors::types::StageItemType::ProductUrls { urls: urls_strs.clone() },
+                        item_type: crate::crawl_engine::actors::types::StageItemType::ProductUrls {
+                            urls: urls_strs.clone(),
+                        },
                         success,
-                        error: if success { None } else { Some("no details".to_string()) },
+                        error: if success {
+                            None
+                        } else {
+                            Some("no details".to_string())
+                        },
                         duration_ms: duration_ms.max(item_started.elapsed().as_millis() as u64),
                         retry_count,
                         collected_data,
@@ -472,7 +487,9 @@ impl crate::crawl_engine::actors::BatchActor {
                     failed += 1;
                     details.push(crate::crawl_engine::actors::types::StageItemResult {
                         item_id: format!("product_urls:{}", idx),
-                        item_type: crate::crawl_engine::actors::types::StageItemType::ProductUrls { urls: urls_strs.clone() },
+                        item_type: crate::crawl_engine::actors::types::StageItemType::ProductUrls {
+                            urls: urls_strs.clone(),
+                        },
                         success: false,
                         error: Some(format!("{}", e)),
                         duration_ms: item_started.elapsed().as_millis() as u64,
@@ -511,19 +528,20 @@ impl crate::crawl_engine::actors::BatchActor {
             }
         };
 
-        let integration_service = match CrawlingIntegrationService::new(config_arc.clone(), app_config).await {
-            Ok(service) => Arc::new(service),
-            Err(e) => {
-                error!(error = %e, "Failed to create crawling integration service");
-                return crate::crawl_engine::actors::types::StageResult {
-                    processed_items: 0,
-                    successful_items: 0,
-                    failed_items: pages.len() as u32,
-                    duration_ms: 0,
-                    details: Vec::new(),
-                };
-            }
-        };
+        let integration_service =
+            match CrawlingIntegrationService::new(config_arc.clone(), app_config).await {
+                Ok(service) => Arc::new(service),
+                Err(e) => {
+                    error!(error = %e, "Failed to create crawling integration service");
+                    return crate::crawl_engine::actors::types::StageResult {
+                        processed_items: 0,
+                        successful_items: 0,
+                        failed_items: pages.len() as u32,
+                        duration_ms: 0,
+                        details: Vec::new(),
+                    };
+                }
+            };
 
         let cancellation_token = tokio_util::sync::CancellationToken::new();
         let started = std::time::Instant::now();
@@ -552,18 +570,30 @@ impl crate::crawl_engine::actors::BatchActor {
         let mut details: Vec<crate::crawl_engine::actors::types::StageItemResult> = Vec::new();
         for (page, urls, retry_count, duration_ms) in page_results.into_iter() {
             let success = !urls.is_empty();
-            if success { successful += 1; } else { failed += 1; }
+            if success {
+                successful += 1;
+            } else {
+                failed += 1;
+            }
             let collected_data = if success {
                 match serde_json::to_string(&urls) {
                     Ok(json) => Some(json),
                     Err(_) => None,
                 }
-            } else { None };
+            } else {
+                None
+            };
             details.push(crate::crawl_engine::actors::types::StageItemResult {
                 item_id: format!("page:{}", page),
-                item_type: crate::crawl_engine::actors::types::StageItemType::Page { page_number: page },
+                item_type: crate::crawl_engine::actors::types::StageItemType::Page {
+                    page_number: page,
+                },
                 success,
-                error: if success { None } else { Some("no urls".to_string()) },
+                error: if success {
+                    None
+                } else {
+                    Some("no urls".to_string())
+                },
                 duration_ms,
                 retry_count,
                 collected_data,
@@ -588,8 +618,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_crawling_integration_service_creation() {
-    // Ensure database paths are initialized for tests using globals
-    let _ = crate::infrastructure::initialize_database_paths().await;
+        // Ensure database paths are initialized for tests using globals
+        let _ = crate::infrastructure::initialize_database_paths().await;
         println!("🧪 크롤링 통합 서비스 생성 테스트 시작");
 
         // 기본 설정 생성
@@ -613,8 +643,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_stage_actor_with_real_crawling() {
-    // Ensure database paths are initialized for tests using globals
-    let _ = crate::infrastructure::initialize_database_paths().await;
+        // Ensure database paths are initialized for tests using globals
+        let _ = crate::infrastructure::initialize_database_paths().await;
         println!("🧪 실제 크롤링을 사용하는 StageActor 테스트 시작");
 
         let batch_id = "test-batch-real".to_string();

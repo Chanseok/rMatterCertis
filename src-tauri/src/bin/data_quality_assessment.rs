@@ -1,8 +1,8 @@
 use chrono::Utc;
-use matter_certis_v2_lib::domain::product::ProductDetail;
 use matter_certis_v2_lib::crawl_engine::services::data_quality_analyzer::{
     DataQualityAnalyzer, StorageRecommendation,
 };
+use matter_certis_v2_lib::domain::product::ProductDetail;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

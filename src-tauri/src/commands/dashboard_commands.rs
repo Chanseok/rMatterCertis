@@ -6,9 +6,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
-use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::crawl_engine::config::SystemConfig;
 use crate::crawl_engine::services::performance_optimizer::CrawlingPerformanceOptimizer;
+use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::services::dashboard_service::RealtimeDashboardService;
 use crate::types::dashboard_types::*;
 
@@ -59,17 +59,18 @@ pub async fn init_dashboard_service(app: AppHandle) -> Result<String, String> {
     let performance_optimizer = Arc::new(CrawlingPerformanceOptimizer::new(system_config));
 
     // 제품 리포지토리 생성 (전역 풀 재사용)
-    let _product_repository = match crate::infrastructure::database_connection::get_or_init_global_pool().await {
-        Ok(pool) => {
-            let repo = Arc::new(IntegratedProductRepository::new(pool));
-            info!("✅ Reused global DB pool for dashboard");
-            Some(repo)
-        }
-        Err(e) => {
-            error!("❌ Failed to obtain global DB pool for dashboard: {}", e);
-            None
-        }
-    };
+    let _product_repository =
+        match crate::infrastructure::database_connection::get_or_init_global_pool().await {
+            Ok(pool) => {
+                let repo = Arc::new(IntegratedProductRepository::new(pool));
+                info!("✅ Reused global DB pool for dashboard");
+                Some(repo)
+            }
+            Err(e) => {
+                error!("❌ Failed to obtain global DB pool for dashboard: {}", e);
+                None
+            }
+        };
 
     // 대시보드 서비스 생성
     let dashboard_service =
@@ -158,7 +159,10 @@ pub async fn start_dashboard_crawling_session(
         service
             .start_crawling_session(session_id.clone(), total_pages)
             .await?;
-        Ok(format!("[deprecated] dashboard tracking started: {}", session_id))
+        Ok(format!(
+            "[deprecated] dashboard tracking started: {}",
+            session_id
+        ))
     } else {
         Err("Dashboard service not initialized".to_string())
     }

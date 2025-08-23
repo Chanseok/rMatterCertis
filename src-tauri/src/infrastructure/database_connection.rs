@@ -6,9 +6,9 @@
 #![allow(unused_must_use)]
 
 use anyhow::Result;
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
-use std::sync::OnceLock;
+use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use std::path::Path;
+use std::sync::OnceLock;
 use tracing::{debug, info, warn};
 
 #[derive(Clone)]
@@ -325,22 +325,22 @@ mod tests {
                 .await?;
 
         // Legacy table is optional in modern schema; existence depends on migration input
-    let _matter_products_table = sqlx::query(
+        let _matter_products_table = sqlx::query(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='matter_products'",
         )
         .fetch_optional(db.pool())
         .await?;
 
-    let _sessions_table = sqlx::query(
+        let _sessions_table = sqlx::query(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='crawling_sessions'",
         )
         .fetch_optional(db.pool())
         .await?;
 
-    assert!(vendors_table.is_some());
-    assert!(products_table.is_some());
-    // matter_products is a legacy compatibility table; don't require it for the migration to pass
-    // sessions_table can be created by later features; only assert core tables exist for this test
+        assert!(vendors_table.is_some());
+        assert!(products_table.is_some());
+        // matter_products is a legacy compatibility table; don't require it for the migration to pass
+        // sessions_table can be created by later features; only assert core tables exist for this test
 
         println!("✅ Matter certification database migration test passed!");
         Ok(())

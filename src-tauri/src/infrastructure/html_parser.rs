@@ -143,10 +143,8 @@ impl MatterDataExtractor {
         let primary_article_selector = Selector::parse("div.post-feed article")
             .map_err(|e| anyhow!("Invalid article selector: {}", e))?;
         // Fallback container seen on some pages/themes
-        let fallback_article_selector = Selector::parse(
-            ".wp-block-crown-blocks-product-index article.product",
-        )
-        .ok();
+        let fallback_article_selector =
+            Selector::parse(".wp-block-crown-blocks-product-index article.product").ok();
         let link_selector =
             Selector::parse("a").map_err(|e| anyhow!("Invalid link selector: {}", e))?;
 
@@ -196,7 +194,9 @@ impl MatterDataExtractor {
                         for link in article.select(&link_selector) {
                             if let Some(href) = link.value().attr("href") {
                                 let url = self.resolve_url(href, base_url);
-                                if url.contains("/csa_product/") && !url.contains("/csa-iot_products/") {
+                                if url.contains("/csa_product/")
+                                    && !url.contains("/csa-iot_products/")
+                                {
                                     chosen = Some(url);
                                     break;
                                 }
@@ -375,15 +375,17 @@ impl MatterDataExtractor {
     pub fn extract_products_from_list(&self, html: &Html, page_id: i32) -> Result<Vec<Product>> {
         debug!("Extracting products from listing page {}", page_id);
 
-        let article_selector = Selector::parse("div.post-feed article, .wp-block-crown-blocks-product-index article.product")
-            .map_err(|e| anyhow!("Invalid article selector: {}", e))?;
+        let article_selector = Selector::parse(
+            "div.post-feed article, .wp-block-crown-blocks-product-index article.product",
+        )
+        .map_err(|e| anyhow!("Invalid article selector: {}", e))?;
 
         let mut products = Vec::new();
-    let articles: Vec<_> = html.select(&article_selector).collect();
+        let articles: Vec<_> = html.select(&article_selector).collect();
         debug!("Found {} article elements", articles.len());
 
-    // Process articles in reverse order to match expected index order (guide approach)
-    for (index, article) in articles.iter().rev().enumerate() {
+        // Process articles in reverse order to match expected index order (guide approach)
+        for (index, article) in articles.iter().rev().enumerate() {
             if let Ok(product) =
                 self.extract_single_product_from_list(*article, page_id, index as i32)
             {
@@ -857,7 +859,7 @@ mod tests {
     use scraper::Html;
 
     // Minimal test data - only what's needed for comprehensive testing
-        const SAMPLE_LISTING_HTML: &str = r#"
+    const SAMPLE_LISTING_HTML: &str = r#"
 <div class="post-feed item-count-3" data-item-count="3">
     <div class="inner">
         <article class="post-103277 product type-product">

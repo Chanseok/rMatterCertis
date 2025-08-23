@@ -64,10 +64,7 @@ async fn count_remaining_dupes(pool: &sqlx::SqlitePool, table: &str) -> Result<u
     Ok(remain as u64)
 }
 
-async fn delete_slot_dupes_in_table(
-    pool: &sqlx::SqlitePool,
-    table: &str,
-) -> Result<u64, String> {
+async fn delete_slot_dupes_in_table(pool: &sqlx::SqlitePool, table: &str) -> Result<u64, String> {
     // Delete rows that collide on (page_id, index_in_page), keep the lowest rowid per slot
     let sql = format!(
         r#"
@@ -131,16 +128,14 @@ pub async fn cleanup_duplicate_urls(
 
     // Pass 2: Slot-based dedup (page_id, index_in_page)
     let slot_products_removed = delete_slot_dupes_in_table(&pool, "products").await?;
-    let slot_product_details_removed =
-        delete_slot_dupes_in_table(&pool, "product_details").await?;
+    let slot_product_details_removed = delete_slot_dupes_in_table(&pool, "product_details").await?;
 
     // Remaining duplicate counts (post-commit)
     let remaining_duplicates_products = count_remaining_dupes(&pool, "products").await?;
     let remaining_duplicates_product_details =
         count_remaining_dupes(&pool, "product_details").await?;
 
-    let remaining_slot_duplicates_products =
-        count_remaining_slot_dupes(&pool, "products").await?;
+    let remaining_slot_duplicates_products = count_remaining_slot_dupes(&pool, "products").await?;
     let remaining_slot_duplicates_product_details =
         count_remaining_slot_dupes(&pool, "product_details").await?;
 

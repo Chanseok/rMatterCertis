@@ -15,6 +15,7 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+use crate::crawl_engine::services::crawling_planner::CrawlingPlanner;
 use crate::domain::product::{Product, ProductDetail};
 use crate::domain::product_url::ProductUrl;
 use crate::domain::services::crawling_services::{
@@ -28,7 +29,6 @@ use crate::domain::services::{
 use crate::infrastructure::config::utils as config_utils;
 use crate::infrastructure::config::{AppConfig, CrawlingConfig};
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
-use crate::crawl_engine::services::crawling_planner::CrawlingPlanner;
 // Canonical pagination calculator (legacy utils::PageIdCalculator via domain alias)
 use crate::domain::pagination::CanonicalPageIdCalculator;
 
@@ -207,7 +207,7 @@ impl StatusChecker for StatusCheckerImpl {
             "🏗️ [NEW ARCHITECTURE] Using SystemConfig-based intelligent strategy instead of hardcoded values"
         );
 
-    let system_config = Arc::new(crate::crawl_engine::context::SystemConfig::default());
+        let system_config = Arc::new(crate::crawl_engine::context::SystemConfig::default());
         info!(
             "✅ [NEW ARCHITECTURE] SystemConfig initialized: batch_sizes.small_db_multiplier={}",
             system_config.performance.batch_sizes.small_db_multiplier

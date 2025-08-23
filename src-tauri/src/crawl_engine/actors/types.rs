@@ -120,7 +120,7 @@ pub enum AppEvent {
     /// 세션 종료 후, 다음 크롤링 범위를 위한 신규 계획(플래너 결과)을 전달
     NextPlanReady {
         session_id: String,
-    plan: crate::crawl_engine::services::crawling_planner::CrawlingPlan,
+        plan: crate::crawl_engine::services::crawling_planner::CrawlingPlan,
         timestamp: DateTime<Utc>,
     },
 
@@ -1325,7 +1325,7 @@ mod tests {
     fn test_batch_config_default() {
         let config = BatchConfig::default();
         assert_eq!(config.batch_size, 20);
-    assert_eq!(config.concurrency_limit, 3);
+        assert_eq!(config.concurrency_limit, 3);
         assert!(config.retry_on_failure);
     }
 

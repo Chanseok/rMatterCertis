@@ -322,8 +322,8 @@ mod tests {
         let list_limit = context.get_concurrency_limit("list_collection");
         assert_eq!(list_limit, 5);
 
-    let detail_limit = context.get_concurrency_limit("detail_collection");
-    assert_eq!(detail_limit, 10);
+        let detail_limit = context.get_concurrency_limit("detail_collection");
+        assert_eq!(detail_limit, 10);
 
         // 정의되지 않은 스테이지의 기본값
         let unknown_limit = context.get_concurrency_limit("unknown_stage");

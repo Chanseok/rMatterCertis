@@ -582,13 +582,19 @@ pub enum ConcurrencyEvent {
 }
 
 impl ConcurrencyEvent {
-    pub fn event_name(&self) -> &'static str { "concurrency-event" }
+    pub fn event_name(&self) -> &'static str {
+        "concurrency-event"
+    }
 }
 
 /// Validation 단계 상세 이벤트
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ValidationEvent {
-    ValidationStarted { batch_id: String, total_items: u32, timestamp: DateTime<Utc> },
+    ValidationStarted {
+        batch_id: String,
+        total_items: u32,
+        timestamp: DateTime<Utc>,
+    },
     ValidationIssueFound {
         batch_id: String,
         item_id: String,
@@ -596,7 +602,12 @@ pub enum ValidationEvent {
         details: String,
         timestamp: DateTime<Utc>,
     },
-    ValidationCompleted { batch_id: String, passed: u32, failed: u32, timestamp: DateTime<Utc> },
+    ValidationCompleted {
+        batch_id: String,
+        passed: u32,
+        failed: u32,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -608,13 +619,19 @@ pub enum ValidationIssueType {
 }
 
 impl ValidationEvent {
-    pub fn event_name(&self) -> &'static str { "validation-event" }
+    pub fn event_name(&self) -> &'static str {
+        "validation-event"
+    }
 }
 
 /// 데이터베이스 저장 단계 상세 이벤트
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DatabaseSaveEvent {
-    SaveBatchStarted { batch_id: String, total_items: u32, timestamp: DateTime<Utc> },
+    SaveBatchStarted {
+        batch_id: String,
+        total_items: u32,
+        timestamp: DateTime<Utc>,
+    },
     SaveItemResult {
         batch_id: String,
         item_id: String,
@@ -635,7 +652,11 @@ pub enum DatabaseSaveEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SaveResult { Saved, Skipped, Failed }
+pub enum SaveResult {
+    Saved,
+    Skipped,
+    Failed,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FailedSaveItem {
@@ -646,5 +667,7 @@ pub struct FailedSaveItem {
 }
 
 impl DatabaseSaveEvent {
-    pub fn event_name(&self) -> &'static str { "db-save-event" }
+    pub fn event_name(&self) -> &'static str {
+        "db-save-event"
+    }
 }

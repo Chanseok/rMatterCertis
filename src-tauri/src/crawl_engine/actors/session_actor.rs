@@ -19,13 +19,13 @@ use crate::crawl_engine::channels::types::AppEvent;
 use crate::crawl_engine::context::AppContext;
 use std::sync::Arc;
 
+use crate::crawl_engine::actors::BatchActor;
+use crate::crawl_engine::actors::types::BatchConfig;
+use crate::crawl_engine::services::CrawlingPlanner;
 use crate::domain::services::{DatabaseAnalyzer, StatusChecker};
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::crawling_service_impls::{DatabaseAnalyzerImpl, StatusCheckerImpl};
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
-use crate::crawl_engine::actors::BatchActor;
-use crate::crawl_engine::actors::types::BatchConfig;
-use crate::crawl_engine::services::CrawlingPlanner;
 
 /// SessionActor: 크롤링 세션의 전체 생명주기 관리
 ///
@@ -203,10 +203,7 @@ impl SessionActor {
         let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
             .await
             .map_err(|e| {
-                SessionError::InitializationFailed(format!(
-                    "Failed to obtain database pool: {}",
-                    e
-                ))
+                SessionError::InitializationFailed(format!("Failed to obtain database pool: {}", e))
             })?;
         let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
 
@@ -274,9 +271,17 @@ impl SessionActor {
             })?;
 
         self.plan_version = 1;
-        let list_pages: usize = plan.phases.iter()
-            .filter(|p| matches!(p.phase_type, crate::crawl_engine::services::crawling_planner::PhaseType::ListPageCrawling))
-            .map(|p| p.pages.len()).sum();
+        let list_pages: usize = plan
+            .phases
+            .iter()
+            .filter(|p| {
+                matches!(
+                    p.phase_type,
+                    crate::crawl_engine::services::crawling_planner::PhaseType::ListPageCrawling
+                )
+            })
+            .map(|p| p.pages.len())
+            .sum();
         let detail_pages: usize = plan.phases.iter()
             .filter(|p| matches!(p.phase_type, crate::crawl_engine::services::crawling_planner::PhaseType::ProductDetailCrawling))
             .map(|p| p.pages.len()).sum();
@@ -301,7 +306,7 @@ impl SessionActor {
             plan.phases.len()
         );
         // 플래너 완료 Progress 이벤트 발행 (플래너 단계 관측용)
-    let planning_event = AppEvent::Progress {
+        let planning_event = AppEvent::Progress {
             session_id: session_id.clone(),
             current_step: 0,
             total_steps: plan.phases.len() as u32,
@@ -347,7 +352,16 @@ impl SessionActor {
         }
 
         // ListPageCrawling phases만 추출 → 각 phase 페이지들을 순차 처리
-    let planned_list_batches: Vec<_> = plan.phases.iter().filter(|p| matches!(p.phase_type, crate::crawl_engine::services::crawling_planner::PhaseType::ListPageCrawling)).collect();
+        let planned_list_batches: Vec<_> = plan
+            .phases
+            .iter()
+            .filter(|p| {
+                matches!(
+                    p.phase_type,
+                    crate::crawl_engine::services::crawling_planner::PhaseType::ListPageCrawling
+                )
+            })
+            .collect();
         if planned_list_batches.is_empty() {
             warn!(
                 "⚠️ No ListPageCrawling phases planned (requested start/end maybe collapsed). start_page={} end_page={}",
@@ -500,7 +514,11 @@ impl SessionActor {
                 .unwrap_or(0),
             total_pages_processed: self.total_success_count,
             total_products_processed: self.products_inserted + self.products_updated,
-            success_rate: if self.total_success_count > 0 { 1.0 } else { 0.0 },
+            success_rate: if self.total_success_count > 0 {
+                1.0
+            } else {
+                0.0
+            },
             avg_page_processing_time: if self.total_success_count > 0 {
                 self.start_time
                     .map(|t| t.elapsed().as_millis() as u64 / self.total_success_count as u64)
@@ -532,7 +550,7 @@ impl SessionActor {
             timestamp: Utc::now(),
         };
 
-    context
+        context
             .emit_event(completion_event)
             .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
@@ -564,7 +582,7 @@ impl SessionActor {
             None => "null".to_string(),
         };
         let s = &aggregated_summary;
-    info!(target: "kpi.session",
+        info!(target: "kpi.session",
             "{{\"event\":\"session_final_summary\",\"session_id\":\"{}\",\"final_state\":\"{}\",\"duration_ms\":{},\"processed_batches\":{},\"total_pages_processed\":{},\"total_success_count\":{},\"failed_pages_count\":{},\"total_retry_events\":{},\"products_inserted\":{},\"products_updated\":{},\"duplicates_skipped\":{},\"plan_hash\":{},\"ts\":\"{}\"}}",
             s.session_id,
             s.final_state,
@@ -619,19 +637,17 @@ impl SessionActor {
         let db_pool2 = crate::infrastructure::database_connection::get_or_init_global_pool()
             .await
             .map_err(|e| {
-                SessionError::InitializationFailed(format!(
-                    "Failed to obtain database pool: {}",
-                    e
-                ))
+                SessionError::InitializationFailed(format!("Failed to obtain database pool: {}", e))
             })?;
         let product_repo2 = Arc::new(IntegratedProductRepository::new(db_pool2));
 
-        let status_checker2: Arc<dyn StatusChecker> = Arc::new(StatusCheckerImpl::with_product_repo(
-            (*http_client2).clone(),
-            (*data_extractor2).clone(),
-            AppConfig::for_development(),
-            Arc::clone(&product_repo2),
-        ));
+        let status_checker2: Arc<dyn StatusChecker> =
+            Arc::new(StatusCheckerImpl::with_product_repo(
+                (*http_client2).clone(),
+                (*data_extractor2).clone(),
+                AppConfig::for_development(),
+                Arc::clone(&product_repo2),
+            ));
         let db_analyzer2: Arc<dyn DatabaseAnalyzer> =
             Arc::new(DatabaseAnalyzerImpl::new(Arc::clone(&product_repo2)));
         let planner2 = CrawlingPlanner::new(
@@ -656,10 +672,12 @@ impl SessionActor {
         let (next_plan, _used_site_status) = planner2
             .create_crawling_plan_with_cache(&next_config, None)
             .await
-            .map_err(|e| SessionError::InitializationFailed(format!(
-                "Failed to create next crawling plan: {}",
-                e
-            )))?;
+            .map_err(|e| {
+                SessionError::InitializationFailed(format!(
+                    "Failed to create next crawling plan: {}",
+                    e
+                ))
+            })?;
 
         let next_event = AppEvent::NextPlanReady {
             session_id: session_id.clone(),
@@ -686,7 +704,7 @@ impl SessionActor {
         product_repo: &Arc<IntegratedProductRepository>,
         site_status: &crate::domain::services::SiteStatus,
     ) -> Result<(), SessionError> {
-    use crate::crawl_engine::actors::traits::Actor;
+        use crate::crawl_engine::actors::traits::Actor;
         let app_config = AppConfig::for_development();
         let config_concurrency = app_config.user.crawling.workers.list_page_max_concurrent as u32;
         let shared_metrics = Arc::new(std::sync::Mutex::new((0u32, 0u32)));
@@ -928,14 +946,14 @@ impl SessionActor {
             }
             let aggregated: Vec<crate::crawl_engine::actors::types::ErrorSummary> = map
                 .into_iter()
-                .map(|(k, (count, first, last))| {
-                    crate::crawl_engine::actors::types::ErrorSummary {
+                .map(
+                    |(k, (count, first, last))| crate::crawl_engine::actors::types::ErrorSummary {
                         error_type: k,
                         count,
                         first_occurrence: first,
                         last_occurrence: last,
-                    }
-                })
+                    },
+                )
                 .collect();
 
             SessionSummary {

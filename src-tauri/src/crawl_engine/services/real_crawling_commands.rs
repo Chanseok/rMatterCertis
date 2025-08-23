@@ -9,9 +9,9 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-use crate::infrastructure::config::AppConfig;
 use crate::crawl_engine::services::crawling_integration::CrawlingIntegrationService;
 use crate::crawl_engine::system_config::SystemConfig;
+use crate::infrastructure::config::AppConfig;
 
 /// 실제 크롤링 서비스 초기화 테스트
 #[tauri::command]
@@ -209,8 +209,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_real_crawling_commands() {
-    // Ensure database paths are initialized for tests using globals
-    let _ = crate::infrastructure::initialize_database_paths().await;
+        // Ensure database paths are initialized for tests using globals
+        let _ = crate::infrastructure::initialize_database_paths().await;
         println!("🧪 실제 크롤링 명령 테스트 시작");
 
         // 크롤링 서비스 초기화 테스트

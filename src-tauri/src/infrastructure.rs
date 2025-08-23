@@ -11,6 +11,7 @@ pub mod crawling_service_impls; // Service implementations
 pub mod data_processing_service_impls; // Data processing service implementations
 pub mod database_connection;
 pub mod database_paths; // 중앙집중식 데이터베이스 경로 관리 (Modern Rust 2024)
+pub mod features;
 pub mod html_parser; // HTML parser with integrated tests
 pub mod integrated_product_repository;
 pub mod logging; // Logging infrastructure
@@ -19,8 +20,7 @@ pub mod parsing_error; // Enhanced error types
 pub mod retry_manager; // 재시도 관리자 - INTEGRATED_PHASE2_PLAN Week 1 Day 3-4
 pub mod service_based_crawling_engine; // Deprecated legacy engine (kept for compatibility; not used in prod commands)
 pub mod simple_http_client;
-pub mod system_broadcaster; // 실시간 시스템 상태 브로드캐스터
-pub mod features; // Feature flags for phased rollout
+pub mod system_broadcaster; // 실시간 시스템 상태 브로드캐스터 // Feature flags for phased rollout
 
 // Temporarily disabled - working on schema compatibility
 // pub mod product_repository;

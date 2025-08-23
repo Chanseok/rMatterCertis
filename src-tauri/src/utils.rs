@@ -161,14 +161,14 @@ mod tests {
         // 정방향 계산 후 역방향 계산으로 검증
         let result = calculator.calculate(482, 0);
         let reverse = calculator.reverse_calculate(result.page_id, result.index_in_page);
-    // 마지막(가장 오래된) 페이지에서 0번째(해당 페이지에서 가장 최신) 제품은
-    // canonical 역산 시 index 3으로 매핑된다 (마지막 페이지에 4개이므로 3..0).
-    assert_eq!(reverse, Some((482, 3)));
+        // 마지막(가장 오래된) 페이지에서 0번째(해당 페이지에서 가장 최신) 제품은
+        // canonical 역산 시 index 3으로 매핑된다 (마지막 페이지에 4개이므로 3..0).
+        assert_eq!(reverse, Some((482, 3)));
 
-    // 모호성 사례: page_id=0, index_in_page=11 은 물리 481페이지(5번째)에서 온 값이지만,
-    // reverse는 마지막 물리 페이지(482)로 매핑하며 index 11을 반환한다.
-    let result = calculator.calculate(481, 4);
-    let reverse = calculator.reverse_calculate(result.page_id, result.index_in_page);
-    assert_eq!(reverse, Some((482, 11)));
+        // 모호성 사례: page_id=0, index_in_page=11 은 물리 481페이지(5번째)에서 온 값이지만,
+        // reverse는 마지막 물리 페이지(482)로 매핑하며 index 11을 반환한다.
+        let result = calculator.calculate(481, 4);
+        let reverse = calculator.reverse_calculate(result.page_id, result.index_in_page);
+        assert_eq!(reverse, Some((482, 11)));
     }
 }

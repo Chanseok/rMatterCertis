@@ -4,8 +4,9 @@
 //! 설계 의도: 각 Actor, Task 레벨에서 독립적으로 이벤트 발행을 가능하게 하여
 //! 낮은 복잡성의 구현으로도 모든 경우를 다 커버할 수 있도록 함
 
-use crate::domain::events::CrawlingEvent;
 use crate::crawl_engine::actors::types::{AppEvent, SimpleMetrics};
+use crate::domain::events::CrawlingEvent;
+use crate::infrastructure::features::feature_events_generalized_only;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -13,7 +14,6 @@ use std::sync::{
 use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
-use crate::infrastructure::features::feature_events_generalized_only;
 
 /// Actor 이벤트를 프론트엔드로 전달하는 브릿지
 pub struct ActorEventBridge {
@@ -185,10 +185,14 @@ impl ActorEventBridge {
                 } => {
                     // Extract a couple key metrics if available
                     let (urls, scheduled, err) = match metrics {
-                        Some(SimpleMetrics::Page { url_count, scheduled_details, error }) => (
+                        Some(SimpleMetrics::Page {
+                            url_count,
+                            scheduled_details,
+                            error,
+                        }) => (
                             url_count.unwrap_or(0),
                             scheduled_details.unwrap_or(0),
-                            error.as_deref().unwrap_or("")
+                            error.as_deref().unwrap_or(""),
                         ),
                         _ => (0, 0, ""),
                     };
@@ -197,13 +201,25 @@ impl ActorEventBridge {
                         status, page_number, urls, scheduled, err, batch_id, session_id
                     );
                 }
-                AppEvent::StageStarted { stage_type, session_id, batch_id, items_count, .. } => {
+                AppEvent::StageStarted {
+                    stage_type,
+                    session_id,
+                    batch_id,
+                    items_count,
+                    ..
+                } => {
                     tracing::info!(target: "actor-event",
                         "[Stage] started stage={} items={} batch={:?} session={}",
                         stage_type.as_str(), items_count, batch_id, session_id
                     );
                 }
-                AppEvent::StageCompleted { stage_type, session_id, batch_id, result, .. } => {
+                AppEvent::StageCompleted {
+                    stage_type,
+                    session_id,
+                    batch_id,
+                    result,
+                    ..
+                } => {
                     tracing::info!(target: "actor-event",
                         "[Stage] completed stage={} processed={} ok={} fail={} dur_ms={} batch={:?} session={}",
                         stage_type.as_str(), result.processed_items, result.successful_items, result.failed_items, result.duration_ms, batch_id, session_id

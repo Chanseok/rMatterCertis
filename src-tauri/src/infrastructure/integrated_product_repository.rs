@@ -100,11 +100,11 @@ impl IntegratedProductRepository {
     /// Returns: (was_updated: bool, was_created: bool)
     pub async fn create_or_update_product(&self, product: &Product) -> Result<(bool, bool)> {
         let now = chrono::Utc::now();
-    // Normalize URL to ensure consistent storage and matching
-    let normalized_url = Self::normalize_url(&product.url);
+        // Normalize URL to ensure consistent storage and matching
+        let normalized_url = Self::normalize_url(&product.url);
 
         // Check if product already exists
-    let existing = self.get_product_by_url(&normalized_url).await?;
+        let existing = self.get_product_by_url(&normalized_url).await?;
 
         if let Some(existing_product) = existing {
             // 🔍 지능적 비교: 실제 변경사항이 있는지 확인
@@ -201,12 +201,12 @@ impl IntegratedProductRepository {
         let now = chrono::Utc::now();
 
         // 기존 ProductDetail 확인
-    // Apply normalization to reduce accidental duplicates
-    let normalized_url = Self::normalize_url(&detail.url);
-    let mut detail = detail.clone();
-    detail.url = normalized_url;
+        // Apply normalization to reduce accidental duplicates
+        let normalized_url = Self::normalize_url(&detail.url);
+        let mut detail = detail.clone();
+        detail.url = normalized_url;
 
-    let existing = self.get_product_detail_by_url(&detail.url).await?;
+        let existing = self.get_product_detail_by_url(&detail.url).await?;
 
         if let Some(existing_detail) = existing {
             // 🔍 지능적 비교: 빈 필드 채우기 + 실제 변경사항 확인
@@ -493,7 +493,7 @@ impl IntegratedProductRepository {
                 }
             });
 
-                        sqlx::query(
+            sqlx::query(
                                 r"
                                 INSERT INTO product_details 
                                 (url, page_id, index_in_page, id, manufacturer, model, device_type,
@@ -633,8 +633,8 @@ impl IntegratedProductRepository {
 
     /// Get product by URL
     pub async fn get_product_by_url(&self, url: &str) -> Result<Option<Product>> {
-    let normalized_url = Self::normalize_url(url);
-    let row = sqlx::query(
+        let normalized_url = Self::normalize_url(url);
+        let row = sqlx::query(
             r"
             SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at
             FROM products WHERE url = ?
@@ -677,8 +677,8 @@ impl IntegratedProductRepository {
 
     /// Get product detail by URL
     pub async fn get_product_detail_by_url(&self, url: &str) -> Result<Option<ProductDetail>> {
-    let normalized_url = Self::normalize_url(url);
-    let row = sqlx::query(
+        let normalized_url = Self::normalize_url(url);
+        let row = sqlx::query(
             r"
             SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
                    certificate_id, certification_date, software_version, hardware_version,
@@ -689,7 +689,7 @@ impl IntegratedProductRepository {
             FROM product_details WHERE url = ?
             ",
         )
-    .bind(&normalized_url)
+        .bind(&normalized_url)
         .fetch_optional(&*self.pool)
         .await?;
 

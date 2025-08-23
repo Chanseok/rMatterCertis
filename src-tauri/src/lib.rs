@@ -134,6 +134,8 @@ pub mod commands {
     pub mod crawling_test_commands; // 🧪 Phase C: 크롤링 테스트 도구
     pub mod dashboard_commands; // 🎨 Phase C: 실시간 대시보드
     pub mod data_queries; // Backend-Only CRUD commands (Modern Rust 2024)
+    pub mod db_cleanup;
+    pub mod db_diagnostics; // 🧪 DB pagination mismatch scan
     pub mod performance_commands; // 🔧 Phase C: 성능 최적화 도구
     pub mod real_actor_commands; // 🎭 진짜 Actor 시스템 명령어
     pub mod real_crawling_commands; // 🚀 Phase C: 실제 크롤링 기능
@@ -142,9 +144,7 @@ pub mod commands {
     pub mod sync_commands;
     pub mod system_analysis; // 시스템 분석 명령어
     pub mod unified_crawling; // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
-    pub mod validation_commands; // ✅ Validation pass commands (page/index integrity) // 🔄 Partial Sync (recrawl + DB upsert)
-    pub mod db_diagnostics; // 🧪 DB pagination mismatch scan
-    pub mod db_cleanup; // 🧹 DB URL duplicate cleanup
+    pub mod validation_commands; // ✅ Validation pass commands (page/index integrity) // 🔄 Partial Sync (recrawl + DB upsert) // 🧹 DB URL duplicate cleanup
 
     // Re-export commonly used commands
     // simple_crawling removed
@@ -153,11 +153,11 @@ pub mod commands {
     pub use crawling_test_commands::*; // Phase C 테스트 명령어 export
     pub use dashboard_commands::*; // Phase C 대시보드 명령어 export
     pub use data_queries::*; // Backend-Only CRUD 명령어 export
+    pub use db_cleanup::*;
+    pub use db_diagnostics::*; // DB diagnostics 명령어 export
     pub use performance_commands::*; // Phase C 성능 최적화 명령어 export
     pub use real_crawling_commands::*; // Phase C 실제 크롤링 명령어 export
-    pub use sync_commands::*; // Partial Sync 명령어 export
-    pub use db_diagnostics::*; // DB diagnostics 명령어 export
-    pub use db_cleanup::*; // DB cleanup 명령어 export
+    pub use sync_commands::*; // Partial Sync 명령어 export // DB cleanup 명령어 export
 } // Modern Rust 2024 - 명시적 모듈 선언
 // Deprecated legacy crawling engine module (disabled). See _archive for reference.
 // pub mod crawling;
@@ -478,8 +478,7 @@ pub fn run() {
             commands::sync_commands::start_sync_pages,
             commands::sync_commands::start_diagnostic_sync,
             commands::db_diagnostics::scan_db_pagination_mismatches,
-            commands::db_cleanup::cleanup_duplicate_urls
-                                                        // Most commands are temporarily disabled for compilation
+            commands::db_cleanup::cleanup_duplicate_urls // Most commands are temporarily disabled for compilation
         ]);
 
     info!("✅ Tauri application built successfully, starting...");

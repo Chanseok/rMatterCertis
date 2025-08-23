@@ -17,8 +17,8 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 // 내부 모듈 임포트
-use crate::infrastructure::{HttpClient, MatterDataExtractor};
 use crate::crawl_engine::actors::ActorError;
+use crate::infrastructure::{HttpClient, MatterDataExtractor};
 // use crate::infrastructure::service_based_crawling_engine::ServiceBasedBatchCrawlingEngine; // Deprecated
 use crate::application::AppState;
 use crate::domain::product::ProductDetail;
@@ -125,12 +125,11 @@ pub async fn start_legacy_service_based_crawling(
         ),
     );
 
-    let crawling_planner =
-        crate::crawl_engine::services::crawling_planner::CrawlingPlanner::new(
-            status_checker.clone(),
-            db_analyzer.clone(),
-            Arc::new(crate::crawl_engine::context::SystemConfig::default()),
-        );
+    let crawling_planner = crate::crawl_engine::services::crawling_planner::CrawlingPlanner::new(
+        status_checker.clone(),
+        db_analyzer.clone(),
+        Arc::new(crate::crawl_engine::context::SystemConfig::default()),
+    );
 
     // 🔍 다음 크롤링 범위 계산 (실제 사이트 정보 사용)
     let (site_status, db_analysis) = crawling_planner

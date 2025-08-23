@@ -21,7 +21,10 @@ async fn main() -> anyhow::Result<()> {
     // Discover site meta (total_pages and items_on_last_page) similar to app flow
     let newest_url = lib::infrastructure::config::csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
     let newest_html = client.get(&newest_url).send().await?.text().await?;
-    let total_pages = extractor.extract_total_pages(&newest_html).unwrap_or(1).max(1);
+    let total_pages = extractor
+        .extract_total_pages(&newest_html)
+        .unwrap_or(1)
+        .max(1);
     let oldest_page = total_pages;
     let oldest_url = lib::infrastructure::config::csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED
         .replace("{}", &oldest_page.to_string());
@@ -30,10 +33,8 @@ async fn main() -> anyhow::Result<()> {
         .extract_product_urls_from_content(&oldest_html)
         .unwrap_or_default()
         .len();
-    let calc = lib::domain::pagination::CanonicalPageIdCalculator::new(
-        total_pages,
-        items_on_last_page,
-    );
+    let calc =
+        lib::domain::pagination::CanonicalPageIdCalculator::new(total_pages, items_on_last_page);
     println!(
         "[meta] total_pages={} items_on_last_page={}",
         total_pages, items_on_last_page
@@ -50,7 +51,11 @@ async fn main() -> anyhow::Result<()> {
                     let urls = extractor
                         .extract_product_urls_from_content(&html_str)
                         .unwrap_or_default();
-                    println!("\n[app extractor] Page {} => {} product URLs", page, urls.len());
+                    println!(
+                        "\n[app extractor] Page {} => {} product URLs",
+                        page,
+                        urls.len()
+                    );
                     for (i, u) in urls.iter().enumerate() {
                         let pos = calc.calculate(page, i);
                         println!(
@@ -61,7 +66,11 @@ async fn main() -> anyhow::Result<()> {
                             pos.index_in_page
                         );
                     }
-                    println!("Fetched+parsed in {} ms: {}", started.elapsed().as_millis(), url);
+                    println!(
+                        "Fetched+parsed in {} ms: {}",
+                        started.elapsed().as_millis(),
+                        url
+                    );
                 }
                 Err(e) => {
                     eprintln!("\n[app extractor] Page {} read failed: {}", page, e);
