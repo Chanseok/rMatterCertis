@@ -392,6 +392,7 @@ impl ActorEventBridge {
             AppEvent::SyncUpsertProgress { .. } => "actor-sync-upsert-progress",
             AppEvent::SyncPageCompleted { .. } => "actor-sync-page-completed",
             AppEvent::SyncWarning { .. } => "actor-sync-warning",
+            AppEvent::SyncRetrying { .. } => "actor-sync-retrying",
             AppEvent::SyncCompleted { .. } => "actor-sync-completed",
         };
 

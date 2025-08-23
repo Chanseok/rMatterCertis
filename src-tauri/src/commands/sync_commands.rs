@@ -137,6 +137,8 @@ pub async fn start_repair_sync(
                 user_agent_override: sync_ua.clone(),
                 referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
                 skip_robots_check: false,
+                attempt: None,
+                max_attempts: None,
             },
         )
         .await
@@ -338,6 +340,8 @@ pub async fn start_partial_sync(
                 user_agent_override: sync_ua.clone(),
                 referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
                 skip_robots_check: false,
+                attempt: None,
+                max_attempts: None,
             },
         )
         .await
@@ -362,6 +366,8 @@ pub async fn start_partial_sync(
                     user_agent_override: sync_ua.clone(),
                     referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
                     skip_robots_check: false,
+                    attempt: None,
+                    max_attempts: None,
                 },
             )
             .await
@@ -634,6 +640,7 @@ pub async fn start_partial_sync(
                 } else {
                     let url = csa_iot::PRODUCTS_PAGE_MATTER_PAGINATED
                         .replace("{}", &physical_page.to_string());
+                    // Convey attempt/max to HttpClient for improved logging
                     match http
                         .fetch_response_with_options(
                             &url,
@@ -641,6 +648,8 @@ pub async fn start_partial_sync(
                                 user_agent_override: sync_ua_cloned.clone(),
                                 referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
                                 skip_robots_check: false,
+                                attempt: Some(std::cmp::max(1, attempt + 1)),
+                                max_attempts: Some(std::cmp::max(1, max_retries + 1)),
                             },
                         )
                         .await
@@ -703,11 +712,37 @@ pub async fn start_partial_sync(
                     break;
                 }
 
-                // Observability: log retry attempt with last reason if any
+                // Observability: log + emit retry attempt with last reason if any
                 if let Some(msg) = &last_err_msg {
                     info!(target: "kpi.sync", "{{\"event\":\"retry_attempt\",\"session_id\":\"{}\",\"page\":{},\"attempt\":{},\"max_retries\":{},\"reason\":\"{}\"}}", session_id, physical_page, attempt + 1, max_retries, msg);
+                    emit_actor_event(
+                        &app,
+                        AppEvent::SyncRetrying {
+                            session_id: session_id.clone(),
+                            scope: "list_page".into(),
+                            physical_page: Some(physical_page),
+                            url: None,
+                            attempt: attempt + 1,
+                            max_attempts: max_retries,
+                            reason: Some(msg.clone()),
+                            timestamp: Utc::now(),
+                        },
+                    );
                 } else {
                     info!(target: "kpi.sync", "{{\"event\":\"retry_attempt\",\"session_id\":\"{}\",\"page\":{},\"attempt\":{},\"max_retries\":{}}}", session_id, physical_page, attempt + 1, max_retries);
+                    emit_actor_event(
+                        &app,
+                        AppEvent::SyncRetrying {
+                            session_id: session_id.clone(),
+                            scope: "list_page".into(),
+                            physical_page: Some(physical_page),
+                            url: None,
+                            attempt: attempt + 1,
+                            max_attempts: max_retries,
+                            reason: None,
+                            timestamp: Utc::now(),
+                        },
+                    );
                 }
 
                 // Backoff with jitter
@@ -1134,6 +1169,8 @@ pub async fn start_partial_sync(
                                             user_agent_override: sync_ua_cloned.clone(),
                                             referer: Some(referer_url),
                                             skip_robots_check: false,
+                                            attempt: Some(attempt),
+                                            max_attempts: Some(max_detail_retries),
                                         },
                                     )
                                     .await
@@ -1349,6 +1386,20 @@ pub async fn start_partial_sync(
                                     }
                                 }
                                 if attempt < max_detail_retries && !success {
+                                    // Emit detail retrying
+                                    emit_actor_event(
+                                        &app,
+                                        AppEvent::SyncRetrying {
+                                            session_id: session_id.clone(),
+                                            scope: "product_detail".into(),
+                                            physical_page: Some(physical_page),
+                                            url: Some(url.clone()),
+                                            attempt,
+                                            max_attempts: max_detail_retries,
+                                            reason: None,
+                                            timestamp: Utc::now(),
+                                        },
+                                    );
                                     let shift = attempt - 1;
                                     let backoff_ms = 200u64 * (1u64 << shift);
                                     info!(target: "kpi.sync", "{}",
@@ -1616,6 +1667,8 @@ pub async fn start_partial_sync(
                                     user_agent_override: sync_ua_cloned.clone(),
                                     referer: Some(referer_url),
                                     skip_robots_check: false,
+                                    attempt: Some(attempt),
+                                    max_attempts: Some(max_detail_retries),
                                 },
                             )
                             .await
@@ -1756,6 +1809,19 @@ pub async fn start_partial_sync(
                             Err(_) => { /* fetch failed; will retry */ }
                         }
                         if attempt < max_detail_retries && !success {
+                            emit_actor_event(
+                                &app,
+                                AppEvent::SyncRetrying {
+                                    session_id: session_id.clone(),
+                                    scope: "product_detail".into(),
+                                    physical_page: Some(physical_page),
+                                    url: Some(url.clone()),
+                                    attempt,
+                                    max_attempts: max_detail_retries,
+                                    reason: None,
+                                    timestamp: Utc::now(),
+                                },
+                            );
                             let shift = attempt - 1;
                             let backoff_ms = 200u64 * (1u64 << shift);
                             tokio::time::sleep(std::time::Duration::from_millis(
@@ -2100,6 +2166,8 @@ pub async fn start_diagnostic_sync(
                         user_agent_override: sync_ua.clone(),
                         referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
                         skip_robots_check: false,
+                        attempt: None,
+                        max_attempts: None,
                     },
                 )
                 .await
@@ -2124,6 +2192,8 @@ pub async fn start_diagnostic_sync(
                             user_agent_override: sync_ua.clone(),
                             referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
                             skip_robots_check: false,
+                            attempt: None,
+                            max_attempts: None,
                         },
                     )
                     .await
@@ -2243,6 +2313,8 @@ pub async fn start_diagnostic_sync(
                                 user_agent_override: sync_ua.clone(),
                                 referer: Some(csa_iot::PRODUCTS_BASE.to_string()),
                                 skip_robots_check: false,
+                                attempt: Some(attempt + 1),
+                                max_attempts: Some(max_retries + 1),
                             },
                         )
                         .await
@@ -2413,6 +2485,8 @@ pub async fn start_diagnostic_sync(
                                     user_agent_override: sync_ua.clone(),
                                     referer: Some(referer),
                                     skip_robots_check: false,
+                                    attempt: Some(attempt),
+                                    max_attempts: Some(max_detail_retries),
                                 },
                             )
                             .await;
@@ -2651,6 +2725,8 @@ pub async fn retry_failed_details(
                         user_agent_override: sync_ua_c.clone(),
                         referer: Some(referer),
                         skip_robots_check: false,
+                        attempt: None,
+                        max_attempts: None,
                     },
                 )
                 .await

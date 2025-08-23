@@ -110,8 +110,8 @@ export const CrawlingEngineTab: Component = () => {
   let settingsRestored = false;
 
   // === Sync stage cards (Stage 1, 3, 5) ===
-  const [stage1State, setStage1State] = createSignal<{currentPage?: number; pagesStarted: number; mismatchWarnings: number; lastWarning?: string}>({ pagesStarted: 0, mismatchWarnings: 0 });
-  const [stage3State, setStage3State] = createSignal<{detailWarnings: number; lastDetailWarning?: string}>({ detailWarnings: 0 });
+  const [stage1State, setStage1State] = createSignal<{currentPage?: number; pagesStarted: number; mismatchWarnings: number; lastWarning?: string; retries?: number; lastRetry?: string}>({ pagesStarted: 0, mismatchWarnings: 0, retries: 0 });
+  const [stage3State, setStage3State] = createSignal<{detailWarnings: number; lastDetailWarning?: string; retries?: number; lastRetry?: string}>({ detailWarnings: 0, retries: 0 });
   const [stage3Success, setStage3Success] = createSignal<{persisted:number; skipped:number}>({ persisted: 0, skipped: 0 });
   const [stage3LastStatus, setStage3LastStatus] = createSignal<string | undefined>(undefined);
   const [stage5StateExtra, setStage5StateExtra] = createSignal<{globalIdBackfillAffected?: number; lastDbWarning?: string; lastPerPage?: {page:number; placeholders:number; core:number; pid:number; prodId:number}}>( {} as any );
@@ -299,8 +299,8 @@ export const CrawlingEngineTab: Component = () => {
         setPlannedPages(total > 0 ? total : null);
       } catch { setPlannedPages(null); }
       // Reset stage counters
-      setStage1State({ pagesStarted: 0, mismatchWarnings: 0 });
-      setStage3State({ detailWarnings: 0 });
+  setStage1State({ pagesStarted: 0, mismatchWarnings: 0, retries: 0 });
+  setStage3State({ detailWarnings: 0, retries: 0 });
       setStage3Success({ persisted: 0, skipped: 0 });
       setStage3LastStatus(undefined);
       setStage5StateExtra({});
@@ -318,6 +318,30 @@ export const CrawlingEngineTab: Component = () => {
     const sProg = await listen('actor-sync-upsert-progress', (e) => {
       const p = e.payload as any;
       setSyncEvents(evts => [...evts.slice(-199), p]);
+    });
+    const sRetry = await listen('actor-sync-retrying', (e) => {
+      const p = e.payload as any;
+      const scope = String(p.scope || '');
+      const attempt = Number(p.attempt || 0);
+      const max = Number(p.max_attempts || 0);
+      const page = p.physical_page != null ? Number(p.physical_page) : undefined;
+      const url = p.url ? String(p.url) : undefined;
+      const reason = p.reason ? String(p.reason).slice(0, 140) : undefined;
+      // Log with explicit attempt count for user visibility
+      addLog(`🔄 재시도: scope=${scope} attempt=${attempt}/${max} ` + (page ? `page=${page} ` : '') + (url ? `url=${url} ` : '') + (reason ? `reason=${reason}` : ''));
+      if (scope === 'list_page') {
+        setStage1State(prev => ({
+          ...prev,
+          retries: (prev.retries || 0) + 1,
+          lastRetry: reason || `attempt ${attempt}/${max} (page ${page ?? '-'})`
+        }));
+      } else if (scope === 'product_detail') {
+        setStage3State(prev => ({
+          ...prev,
+          retries: (prev.retries || 0) + 1,
+          lastRetry: reason || `attempt ${attempt}/${max} (${url?.split('/').slice(-2,-1)})`
+        }));
+      }
     });
     const sPageDone = await listen('actor-sync-page-completed', (e) => {
       const p = e.payload as any;
@@ -420,7 +444,7 @@ export const CrawlingEngineTab: Component = () => {
       unlistenCompleted();
       unlistenFailed();
       vStarted(); vPage(); vDiv(); vAnom(); vDone();
-  sStarted(); sPage(); sProg(); sPageDone(); sWarn(); sPlc(); sDone();
+  sStarted(); sPage(); sProg(); sRetry(); sPageDone(); sWarn(); sPlc(); sDone();
     });
   });
 
@@ -1031,6 +1055,7 @@ export const CrawlingEngineTab: Component = () => {
                 <div class="text-xs font-semibold text-indigo-800 mb-1">Stage 1 · 목록 페이지 접근</div>
                 <div class="text-[11px] text-indigo-900">현재 페이지: <b>{stage1State()?.currentPage ?? '-'}</b></div>
                 <div class="text-[11px] text-indigo-900">시작된 페이지 수: <b>{stage1State()?.pagesStarted || 0}</b></div>
+                <div class="text-[11px] text-indigo-900">재시도: <b class="text-amber-700">{stage1State()?.retries || 0}</b></div>
                 {/* Tiny progress bar approximation based on page starts vs total (if known) */}
                 <Show when={syncStats()?.pages_processed !== undefined}>
                   <div class="mt-1 w-full bg-indigo-100 rounded h-1.5">
@@ -1048,6 +1073,11 @@ export const CrawlingEngineTab: Component = () => {
                     <span class="line-clamp-2">{stage1State()?.lastWarning}</span>
                   </div>
                 </Show>
+                <Show when={(stage1State()?.retries || 0) > 0 && stage1State()?.lastRetry}>
+                  <div class="mt-1 text-[11px] text-indigo-800 bg-indigo-100 border border-indigo-200 rounded px-2 py-1">
+                    최근 재시도: <span class="line-clamp-2">{stage1State()?.lastRetry}</span>
+                  </div>
+                </Show>
                 <p class="mt-2 text-[11px] text-indigo-700">사이트 목록에서 제품 URL을 수집하고 예상 개수와 일치하는지 점검합니다.</p>
               </div>
               {/* Stage 3: 상세 정보 수집 */}
@@ -1059,6 +1089,7 @@ export const CrawlingEngineTab: Component = () => {
                   <span class="mx-1">/</span>
                   <b class="text-gray-700">{stage3Success().skipped}</b>
                 </div>
+                <div class="text-[11px] text-emerald-900">재시도: <b class="text-amber-700">{stage3State()?.retries || 0}</b></div>
                 <Show when={stage3LastStatus()}>
                   <div class="mt-1 text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
                     최근: <span class="line-clamp-2">{stage3LastStatus()}</span>
@@ -1067,6 +1098,11 @@ export const CrawlingEngineTab: Component = () => {
                 <Show when={(stage3State()?.detailWarnings || 0) > 0}>
                   <div class="mt-1 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
                     최근: <span class="line-clamp-2">{stage3State()?.lastDetailWarning}</span>
+                  </div>
+                </Show>
+                <Show when={(stage3State()?.retries || 0) > 0 && stage3State()?.lastRetry}>
+                  <div class="mt-1 text-[11px] text-emerald-800 bg-emerald-100 border border-emerald-200 rounded px-2 py-1">
+                    최근 재시도: <span class="line-clamp-2">{stage3State()?.lastRetry}</span>
                   </div>
                 </Show>
                 <p class="mt-2 text-[11px] text-emerald-700">제품 상세 페이지에서 주요 필드를 추출하고 누락값은 재시도로 보정합니다.</p>

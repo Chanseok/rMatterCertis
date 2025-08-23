@@ -23,6 +23,10 @@ pub struct RequestOptions {
     pub user_agent_override: Option<String>,
     pub referer: Option<String>,
     pub skip_robots_check: bool,
+    /// Optional: current attempt number (1-based) when caller implements retries
+    pub attempt: Option<u32>,
+    /// Optional: total max attempts when caller implements retries
+    pub max_attempts: Option<u32>,
 }
 
 /// Configuration for HTTP client behavior
@@ -306,7 +310,18 @@ impl HttpClient {
             return Err(anyhow!("Blocked by robots.txt: {}", url));
         }
 
-        info!("🌐 HTTP GET (HttpClient,opts): {}", url);
+        // Include attempt info when provided by caller for better observability
+        match (opts.attempt, opts.max_attempts) {
+            (Some(a), Some(m)) if a > 1 => {
+                info!("🌐 HTTP GET (HttpClient,opts, {}/{} retrying): {}", a, m, url);
+            }
+            (Some(a), Some(m)) if a == 1 => {
+                info!("🌐 HTTP GET (HttpClient,opts, {}/{}): {}", a, m, url);
+            }
+            _ => {
+                info!("🌐 HTTP GET (HttpClient,opts): {}", url);
+            }
+        }
         let response = self
             .build_request(url, opts)?
             .send()
@@ -548,10 +563,17 @@ impl HttpClient {
                 return Err(anyhow!("Blocked by robots.txt: {}", url));
             }
 
-            info!(
-                "🌐 HTTP GET (attempt {}/{}) : {}",
-                attempt, self.config.max_retries, url
-            );
+            if attempt > 1 {
+                info!(
+                    "🌐 HTTP GET (attempt {}/{} retrying): {}",
+                    attempt, self.config.max_retries, url
+                );
+            } else {
+                info!(
+                    "🌐 HTTP GET (attempt {}/{}): {}",
+                    attempt, self.config.max_retries, url
+                );
+            }
             match self
                 .build_request(url, &RequestOptions::default())?
                 .send()

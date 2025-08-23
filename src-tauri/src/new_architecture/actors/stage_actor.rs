@@ -2839,6 +2839,8 @@ impl StageActor {
                     user_agent_override: None, // could be overridden at call site if needed
                     referer: Some(crate::infrastructure::config::csa_iot::PRODUCTS_BASE.to_string()),
                     skip_robots_check: false,
+                    attempt: None,
+                    max_attempts: None,
                 },
             )
             .await

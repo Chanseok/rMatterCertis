@@ -259,6 +259,8 @@ pub async fn diagnose_and_repair_data(
                         user_agent_override: sync_ua.clone(),
                         referer: Some(referer),
                         skip_robots_check: false,
+                        attempt: None,
+                        max_attempts: None,
                     },
                 )
                 .await

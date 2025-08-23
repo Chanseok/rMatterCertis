@@ -519,6 +519,21 @@ pub enum AppEvent {
         detail: String,
         timestamp: DateTime<Utc>,
     },
+    /// Per-attempt retry notification for This Range Sync (additive v1)
+    SyncRetrying {
+        session_id: String,
+        /// Scope of retry: "list_page" | "product_detail"
+        scope: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        physical_page: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        attempt: u32,
+        max_attempts: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
     SyncCompleted {
         session_id: String,
         pages_processed: u32,

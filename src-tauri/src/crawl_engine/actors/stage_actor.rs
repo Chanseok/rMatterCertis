@@ -2257,6 +2257,8 @@ impl StageActor {
                         crate::infrastructure::config::csa_iot::PRODUCTS_BASE.to_string(),
                     ),
                     skip_robots_check: false,
+                    attempt: None,
+                    max_attempts: None,
                 },
             )
             .await
