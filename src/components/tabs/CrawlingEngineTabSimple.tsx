@@ -95,11 +95,12 @@ export default function CrawlingEngineTabSimple() {
   const pageCompleted = new Set<number>();
   const pageFailedFinal = new Set<number>();
   const pageAttempts = new Map<number, number>();
-  // Stage 2 unique tracking to avoid double counting due to retries or re-queues
-  const detailSeen = new Set<string>(); // detail_ids seen at least once
-  const detailCompleted = new Set<string>(); // detail_ids completed once
-  const detailFailedFinal = new Set<string>(); // detail_ids that finally failed
-  const detailAttempts = new Map<string, number>(); // detail_id -> attempts
+  // Stage 2 grouped accounting (no per-detail IDs; rely on product lifecycle group snapshots)
+  // We still keep simple counters for retries/failures inferred from per-product lifecycle events.
+  const detailSeen = new Set<string>(); // deprecated: kept for compatibility; not used in new flow
+  const detailCompleted = new Set<string>(); // deprecated
+  const detailFailedFinal = new Set<string>(); // deprecated
+  const detailAttempts = new Map<string, number>(); // deprecated
   const [downshiftInfo, setDownshiftInfo] = createSignal<null | { newLimit?: number; reason?: string }>(null);
   // UI pulses for counters
   const [stage1Pulse, triggerStage1Pulse] = usePulse(300);
@@ -578,65 +579,31 @@ export default function CrawlingEngineTabSimple() {
           if (effectsOn()) triggerStage1Pulse();
         }
         // Stage 2 (product detail) itemized - deduplicate by detail_id and track retries
-  if (name === 'actor-detail-task-started') {
-          const isBatchScope = (payload?.batch_id != null) || (payload?.scope === 'batch');
-          if (!isBatchScope) return; // ignore session-scoped/simulated events
-          const id = String(payload?.detail_id ?? '');
-          if (!id) return;
-          const prevAttempts = detailAttempts.get(id) ?? 0;
-          detailAttempts.set(id, prevAttempts + 1);
-          if (!detailSeen.has(id)) {
-            detailSeen.add(id);
+  // Stage 2 via product lifecycle events
+        if (name === 'actor-product-lifecycle-group' && (payload?.phase === 'fetch')) {
+          const group = Number(payload?.group_size ?? payload?.started ?? 0) || 0;
+          const succeeded = Number(payload?.succeeded ?? 0) || group; // default: success when not provided
+          const failed = Number(payload?.failed ?? 0) || 0;
+          setDetailStats(prev => {
+            const started = (prev.started || 0) + group;
+            const completed = (prev.completed || 0) + succeeded;
+            const failedCt = (prev.failed || 0) + failed;
+            const inflight = Math.max(0, started - (completed + failedCt));
+            return { ...prev, started, completed, failed: failedCt, inflight };
+          });
+          if (effectsOn()) triggerStage2Pulse();
+        }
+        if (name === 'actor-product-lifecycle') {
+          const status = String(payload?.status || '').toLowerCase();
+          if (status === 'failed') {
             setDetailStats(prev => {
-              const started = detailSeen.size; // unique
-              const inflight = Math.max(0, started - (prev.completed + prev.failed));
-              return { ...prev, started, inflight };
+              const started = prev.started || 0; // cannot infer per-product start
+              const failed = (prev.failed || 0) + 1;
+              const inflight = Math.max(0, started - (prev.completed + failed));
+              return { ...prev, failed, inflight };
             });
+            if (effectsOn()) triggerStage2Pulse();
           }
-          if (effectsOn()) triggerStage2Pulse();
-        }
-  if (name === 'actor-detail-task-completed') {
-          const isBatchScope = (payload?.batch_id != null) || (payload?.scope === 'batch');
-          if (!isBatchScope) return; // ignore session-scoped/simulated events
-          const id = String(payload?.detail_id ?? '');
-          if (!id) return;
-          if (!detailCompleted.has(id)) {
-            detailCompleted.add(id);
-            // ensure it is counted as started at least once
-            if (!detailSeen.has(id)) detailSeen.add(id);
-          }
-          setDetailStats(prev => {
-            const started = detailSeen.size;
-            const completed = detailCompleted.size;
-            const inflight = Math.max(0, started - (completed + prev.failed));
-            return { ...prev, started, completed, inflight };
-          });
-          if (effectsOn()) triggerStage2Pulse();
-        }
-  if (name === 'actor-detail-task-failed') {
-          const isBatchScope = (payload?.batch_id != null) || (payload?.scope === 'batch');
-          if (!isBatchScope) return; // ignore session-scoped/simulated events
-          const id = String(payload?.detail_id ?? '');
-          if (!id) return;
-          const final = Boolean(payload?.final_failure);
-          // count attempts
-          const prevAttempts = detailAttempts.get(id) ?? 0;
-          detailAttempts.set(id, prevAttempts + 1);
-          if (final && !detailFailedFinal.has(id)) {
-            detailFailedFinal.add(id);
-          } else {
-      // non-final failure -> retry will happen
-      setDetailStats(prev => ({ ...prev, retried: prev.retried + 1 }));
-          }
-          // ensure started is tracked
-          if (!detailSeen.has(id)) detailSeen.add(id);
-          setDetailStats(prev => {
-            const started = detailSeen.size;
-            const failed = detailFailedFinal.size;
-            const inflight = Math.max(0, started - (prev.completed + failed));
-            return { ...prev, started, failed, inflight };
-          });
-          if (effectsOn()) triggerStage2Pulse();
         }
         if (name === 'actor-detail-concurrency-downshifted') {
           setDownshiftInfo({ newLimit: payload?.new_limit, reason: payload?.reason });

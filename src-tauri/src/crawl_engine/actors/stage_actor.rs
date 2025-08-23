@@ -27,7 +27,20 @@ use crate::crawl_engine::actors::types::{
 };
 use crate::crawl_engine::channels::types::StageItem;
 use crate::crawl_engine::integrated_context::AppContext;
-use crate::crawl_engine::stages::traits::{Deps, StageInput, StageLogicFactory, StageOutput};
+use crate::crawl_engine::stages::traits::StageLogicFactory;
+use crate::crawl_engine::stages::DefaultStageLogicFactory;
+
+/// Dependency bundle for StageActor (to move construction out of the actor)
+#[derive(Clone)]
+pub struct StageDeps {
+    pub http_client: Arc<HttpClient>,
+    pub data_extractor: Arc<MatterDataExtractor>,
+    pub product_repo: Arc<IntegratedProductRepository>,
+    pub status_checker: Arc<dyn StatusChecker>,
+    pub product_list_collector: Arc<dyn ProductListCollector>,
+    pub product_detail_collector: Arc<dyn ProductDetailCollector>,
+    pub app_config: AppConfig,
+}
 
 // Duplicate-execution guard for DataSaving stage (session+batch scoped)
 static DATA_SAVING_RUN_GUARD: Lazy<StdMutex<HashSet<String>>> = Lazy::new(|| StdMutex::new(HashSet::new()));
@@ -76,7 +89,7 @@ pub struct StageActor {
     products_on_last_page_hint: Option<u32>,
 
     // 전략 분기 (Phase 3)
-    strategy_factory: Option<Arc<dyn StageLogicFactory + Send + Sync>>, 
+    strategy_factory: Arc<dyn StageLogicFactory + Send + Sync>, 
 }
 
 // Manual Debug implementation to avoid requiring Debug on all service trait object dependencies
@@ -227,13 +240,48 @@ impl StageActor {
             app_config: None,
             site_total_pages_hint: None,
             products_on_last_page_hint: None,
-            strategy_factory: None,
+            strategy_factory: Arc::new(DefaultStageLogicFactory),
+        }
+    }
+
+    /// New constructor that takes explicit dependencies and a strategy factory.
+    /// This supports proper DI and makes StageActor focused on orchestration only.
+    #[must_use]
+    pub fn new_with_deps(
+        actor_id: String,
+        batch_id: String,
+        deps: StageDeps,
+        strategy_factory: Arc<dyn StageLogicFactory + Send + Sync>,
+    ) -> Self {
+        Self {
+            actor_id,
+            batch_id,
+            stage_id: None,
+            stage_type: None,
+            state: StageState::Idle,
+            start_time: None,
+            total_items: 0,
+            completed_items: 0,
+            success_count: 0,
+            failure_count: 0,
+            skipped_count: 0,
+            item_results: Vec::new(),
+            status_checker: Some(deps.status_checker),
+            product_list_collector: Some(deps.product_list_collector),
+            product_detail_collector: Some(deps.product_detail_collector),
+            _product_repo: Some(deps.product_repo),
+            http_client: Some(deps.http_client),
+            data_extractor: Some(deps.data_extractor),
+            app_config: Some(deps.app_config),
+            site_total_pages_hint: None,
+            products_on_last_page_hint: None,
+            strategy_factory,
         }
     }
 
     /// Inject a StageLogic factory (strategy dispatch). Safe no-op if not provided.
     pub fn with_strategy_factory(mut self, factory: Arc<dyn StageLogicFactory + Send + Sync>) -> Self {
-        self.strategy_factory = Some(factory);
+    self.strategy_factory = factory;
         self
     }
 
@@ -252,6 +300,7 @@ impl StageActor {
     /// # Returns
     /// * `Self` - 서비스가 주입된 StageActor 인스턴스
     #[must_use]
+    #[deprecated(note = "Use StageActor::new_with_deps with StageDeps for proper DI")]
     pub fn new_with_services(
         actor_id: String,
         batch_id: String,
@@ -349,7 +398,7 @@ impl StageActor {
             app_config: Some(app_config),
             site_total_pages_hint: None,
             products_on_last_page_hint: None,
-            strategy_factory: None,
+            strategy_factory: Arc::new(DefaultStageLogicFactory),
         }
     }
 
@@ -392,7 +441,7 @@ impl StageActor {
             app_config: None,
             site_total_pages_hint: None,
             products_on_last_page_hint: None,
-            strategy_factory: None,
+            strategy_factory: Arc::new(DefaultStageLogicFactory),
         }
     }
 
@@ -408,6 +457,7 @@ impl StageActor {
 
     /// 실제 서비스 초기화 - guide/re-arch-plan-final2.md 설계 기반
     /// ServiceBasedBatchCrawlingEngine 패턴 참조하되 Actor 모델에 맞게 구현
+    #[deprecated(note = "Construct services outside and pass via StageDeps; keep for transitional compatibility")]
     pub async fn initialize_real_services(
         &mut self,
         _context: &AppContext,
@@ -700,7 +750,7 @@ impl StageActor {
         stage_type: StageType,
         items: Vec<StageItem>,
         concurrency_limit: u32,
-        _context: &AppContext,
+    _context: &AppContext,
         overall_timeout: Duration,
     ) -> Result<StageResult, StageError> {
         debug!(
@@ -709,73 +759,23 @@ impl StageActor {
             stage_type
         );
 
-        // 동시성 상한을 Collector에도 반영하도록 CollectorConfig를 재구성(필요 시)
-        if let (Some(http_client), Some(data_extractor), Some(app_config)) =
-            (&self.http_client, &self.data_extractor, &self.app_config)
-        {
-            // 리스트 수집기
-            if let Some(repo) = &self._product_repo {
-                let list_cfg = crate::infrastructure::crawling_service_impls::CollectorConfig {
-                    max_concurrent: concurrency_limit,
-                    concurrency: concurrency_limit,
-                    delay_between_requests: std::time::Duration::from_millis(
-                        app_config.user.request_delay_ms,
-                    ),
-                    delay_ms: app_config.user.request_delay_ms,
-                    batch_size: app_config.user.batch.batch_size,
-                    retry_attempts: app_config.user.crawling.workers.max_retries,
-                    retry_max: app_config.user.crawling.workers.max_retries,
-                };
-                let status_checker_for_list = Arc::new(crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
-                    (**http_client).clone(),
-                    (**data_extractor).clone(),
-                    app_config.clone(),
-                    Arc::clone(repo),
-                ));
-                self.product_list_collector = Some(Arc::new(
-                    crate::infrastructure::crawling_service_impls::ProductListCollectorImpl::new(
-                        Arc::clone(http_client),
-                        Arc::clone(data_extractor),
-                        list_cfg,
-                        status_checker_for_list,
-                    ),
-                ));
+        // 전략 필수 의존성 확인
+        let (app_config_clone, http_client, data_extractor, product_repo) = match (
+            self.app_config.clone(),
+            self.http_client.clone(),
+            self.data_extractor.clone(),
+            self._product_repo.clone(),
+        ) {
+            (Some(cfg), Some(http), Some(extractor), Some(repo)) => (cfg, http, extractor, repo),
+            _ => {
+                return Err(StageError::GenericError { message: "Missing required dependencies for strategy execution".into() });
             }
-
-            // 상세 수집기
-            let detail_cfg = crate::infrastructure::crawling_service_impls::CollectorConfig {
-                max_concurrent: concurrency_limit,
-                concurrency: concurrency_limit,
-                delay_between_requests: std::time::Duration::from_millis(
-                    app_config.user.request_delay_ms,
-                ),
-                delay_ms: app_config.user.request_delay_ms,
-                batch_size: app_config.user.batch.batch_size,
-                retry_attempts: app_config.user.crawling.workers.max_retries,
-                retry_max: app_config.user.crawling.workers.max_retries,
-            };
-            self.product_detail_collector = Some(Arc::new(
-                crate::infrastructure::crawling_service_impls::ProductDetailCollectorImpl::new(
-                    Arc::clone(http_client),
-                    Arc::clone(data_extractor),
-                    detail_cfg,
-                ),
-            ));
-        }
+        };
 
         // 동시성 제어를 위한 세마포어
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency_limit as usize));
-    let mut tasks = Vec::new();
-        // 서비스 의존성 복사
-        let status_checker = self.status_checker.clone();
-        let product_list_collector = self.product_list_collector.clone();
-        let product_detail_collector = self.product_detail_collector.clone();
-        let product_repo = self._product_repo.clone();
-        let http_client = self.http_client.clone();
-        let data_extractor = self.data_extractor.clone();
-    // 추가로, 전략/설정도 클론하여 task 클로저에서 사용
-    let app_config_clone = self.app_config.clone();
-    let strategy_factory_clone = self.strategy_factory.clone();
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency_limit as usize));
+        // 전략/설정 및 의존성 복사
+        let strategy_factory_clone = self.strategy_factory.clone();
         // 페이지네이션 힌트 복사
         let site_total_pages_hint = self.site_total_pages_hint;
         let products_on_last_page_hint = self.products_on_last_page_hint;
@@ -789,9 +789,6 @@ impl StageActor {
             let sem = semaphore.clone();
             let base_item = item.clone(); // used for lifecycle pre-emits
             let stage_type_clone = stage_type.clone();
-            let status_checker_clone = status_checker.clone();
-            let product_list_collector_clone = product_list_collector.clone();
-            let product_detail_collector_clone = product_detail_collector.clone();
             let product_repo_clone = product_repo.clone();
             let http_client_clone = http_client.clone();
             let data_extractor_clone = data_extractor.clone();
@@ -819,6 +816,8 @@ impl StageActor {
                 }
 
                 // Lifecycle coarse events AFTER StageItemStarted to preserve ordering
+                // Define a local alias used by subsequent lifecycle handling blocks
+                let lifecycle_item = base_item.clone();
                 match (&stage_type_clone, &base_item) {
                     (StageType::ListPageCrawling, StageItem::Page(pn)) => {
                         if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle {
@@ -829,409 +828,59 @@ impl StageActor {
                             metrics: None,
                             timestamp: Utc::now(),
                         }) {
-                            error!(
-                                "PageLifecycle fetch_started emit failed page={} err={}",
-                                pn, e
-                            );
+                            error!("PageLifecycle fetch_started emit failed page={} err={}", pn, e);
                         } else {
                             debug!("Emitted PageLifecycle fetch_started page={}", pn);
                         }
-                        // record timing after HTML retrieval inside process_single_item via HttpRequestTiming event (hook will send completion)
-                        // store start in local variable passed to temp_actor via metadata if needed (simplified omitted for now)
                     }
-                    (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) => {
-                        // Pre-filter URLs by DB state: only crawl details for URLs missing in product_details
-                        let mut filtered_urls: Vec<crate::domain::product_url::ProductUrl> = Vec::new();
-                        let prefiltered_total = urls.urls.len() as u32;
-                        let mut filtered_duplicates = 0u32;
-                        if let Some(repo) = &product_repo_clone {
-                            for u in &urls.urls {
-                                match repo.get_product_detail_by_url(&u.url).await {
-                                    Ok(existing) => {
-                                        if existing.is_some() {
-                                            // Skip already detailed URL
-                                            filtered_duplicates += 1;
-                                        } else {
-                                            filtered_urls.push(u.clone());
-                                        }
-                                    }
-                                    Err(e) => {
-                                        // On DB error, be conservative and crawl
-                                        tracing::warn!("[DetailFilter] DB check failed for url={} err={}", u.url, e);
-                                        filtered_urls.push(u.clone());
-                                    }
-                                }
+                    (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls_wrapper)) => {
+                        // Estimate scheduled_details using DB state (best-effort) and emit mapping event once
+                        let repo = &product_repo_clone;
+                        let mut ct = 0u32;
+                        for u in &urls_wrapper.urls {
+                            match repo.get_product_detail_by_url(&u.url).await {
+                                Ok(existing) => { if existing.is_none() { ct += 1; } }
+                                Err(e) => { tracing::warn!("[DetailFilter] DB check failed for url={} err={}", u.url, e); ct += 1; }
                             }
-                        } else {
-                            // No repository available; fallback to original list
-                            filtered_urls = urls.urls.clone();
                         }
-
-                        let count = filtered_urls.len() as u32;
-                        let metrics = crate::crawl_engine::actors::types::SimpleMetrics::Page {
-                            url_count: Some(prefiltered_total),
-                            scheduled_details: Some(count),
-                            error: None,
-                        };
-                        let page_hint = filtered_urls.first().map(|u| u.page_id as u32).or_else(|| urls.urls.first().map(|u| u.page_id as u32)).unwrap_or(0u32);
-                        if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle {
-                            session_id: session_id_clone.clone(),
-                            batch_id: batch_id_opt.clone(),
-                            page_number: page_hint,
-                            status: "detail_scheduled".into(),
-                            metrics: Some(metrics),
-                            timestamp: Utc::now(),
-                        }) {
-                            error!(
-                                "PageLifecycle detail_scheduled emit failed page={} err={}",
-                                page_hint, e
-                            );
-                        } else {
-                            debug!(
-                                "Emitted PageLifecycle detail_scheduled page={} scheduled_details={} (prefiltered={}, duplicates_skipped={})",
-                                page_hint, count, prefiltered_total, filtered_duplicates
-                            );
-                        }
-                        // Aggregate start event (new ProductLifecycleGroup)
-                        debug!("[GroupedEmit] fetch_started_group total_urls={} (skipped={})", count, filtered_duplicates);
-                        if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycleGroup {
-                            session_id: session_id_clone.clone(),
-                            batch_id: batch_id_opt.clone(),
-                            page_number: Some(page_hint),
-                            group_size: count,
-                            started: count,
-                            succeeded: 0,
-                            failed: 0,
-                            duplicates: filtered_duplicates,
-                            duration_ms: 0,
-                            phase: "fetch".into(),
-                            timestamp: Utc::now(),
-                        }) {
-                            error!("ProductLifecycleGroup fetch_started emit failed err={}", e);
+                        let scheduled = ct;
+                        if let Some(first) = urls_wrapper.urls.first() {
+                            let page_hint = first.page_id as u32;
+                            let _ = ctx_clone.emit_event(AppEvent::PageLifecycle {
+                                session_id: session_id_clone.clone(),
+                                batch_id: batch_id_opt.clone(),
+                                page_number: page_hint,
+                                status: "detail_mapping_emitted".into(),
+                                metrics: Some(SimpleMetrics::Page { url_count: Some(urls_wrapper.urls.len() as u32), scheduled_details: Some(scheduled), error: None }),
+                                timestamp: Utc::now(),
+                            });
                         }
                     }
                     _ => {}
                 }
+
                 let item_start = Instant::now();
-                // --- Custom per-product detail crawling instrumentation path ---
-                let lifecycle_item = base_item.clone();
-                let result = if matches!(stage_type_clone, StageType::ProductDetailCrawling) {
-                    match &base_item {
-                        StageItem::ProductUrls(urls_wrapper) => {
-                            // Emit mapping summary once (PageLifecycle detail_mapping_emitted)
-                            // Determine the filtered list again for this item scope (kept small and explicit)
-                            let mut filtered_urls: Vec<crate::domain::product_url::ProductUrl> = Vec::new();
-                            if let Some(repo) = &product_repo_clone {
-                                for u in &urls_wrapper.urls {
-                                    match repo.get_product_detail_by_url(&u.url).await {
-                                        Ok(existing) => {
-                                            if existing.is_some() {
-                                                // skip duplicates
-                                            } else {
-                                                filtered_urls.push(u.clone());
-                                            }
-                                        }
-                                        Err(e) => { tracing::warn!("[DetailFilter] DB check failed for url={} err={}", u.url, e); filtered_urls.push(u.clone()); }
-                                    }
-                                }
-                            } else {
-                                filtered_urls = urls_wrapper.urls.clone();
-                            }
 
-                            if let Some(first_url) = filtered_urls.first() {
-                                let page_hint = first_url.page_id as u32;
-                                if let Err(e) = ctx_clone.emit_event(AppEvent::PageLifecycle {
-                                    session_id: session_id_clone.clone(),
-                                    batch_id: batch_id_opt.clone(),
-                                    page_number: page_hint,
-                                    status: "detail_mapping_emitted".into(),
-                                    metrics: Some(SimpleMetrics::Page {
-                                        url_count: Some(urls_wrapper.urls.len() as u32),
-                                        scheduled_details: Some(filtered_urls.len() as u32),
-                                        error: None,
-                                    }),
-                                    timestamp: Utc::now(),
-                                }) {
-                                    error!(
-                                        "PageLifecycle detail_mapping_emitted emit failed page={} err={}",
-                                        page_hint, e
-                                    );
-                                }
-                            }
-
-                            let mut collected: Vec<crate::domain::product::ProductDetail> =
-                                Vec::with_capacity(filtered_urls.len());
-                            let mut failures: u32 = 0;
-                            if let Some(collector) = &product_detail_collector_clone {
-                                for purl in &filtered_urls {
-                                    let prod_ref = purl.url.clone();
-                                    let origin_page = purl.page_id as u32;
-                                    // Emit fine-grained detail task start for UI/KPI fidelity
-                                    if let Err(e) = ctx_clone.emit_event(AppEvent::DetailTaskStarted {
-                                        session_id: session_id_clone.clone(),
-                                        detail_id: prod_ref.clone(),
-                                        page: Some(origin_page),
-                                        batch_id: batch_id_opt.clone(),
-                                        range_idx: None,
-                                        batch_index: None,
-                                        scope: Some("batch".into()),
-                                        timestamp: Utc::now(),
-                                    }) {
-                                        error!(
-                                            "DetailTaskStarted emit failed ref={} err={}",
-                                            prod_ref, e
-                                        );
-                                    }
-                                    // started
-                                    if let Err(e) =
-                                        ctx_clone.emit_event(AppEvent::ProductLifecycle {
-                                            session_id: session_id_clone.clone(),
-                                            batch_id: batch_id_opt.clone(),
-                                            page_number: Some(origin_page),
-                                            product_ref: prod_ref.clone(),
-                                            status: "detail_started".into(),
-                                            retry: None,
-                                            duration_ms: None,
-                                            metrics: None,
-                                            timestamp: Utc::now(),
-                                        })
-                                    {
-                                        error!(
-                                            "ProductLifecycle detail_started emit failed ref={} err={}",
-                                            prod_ref, e
-                                        );
-                                    }
-                                    let single_start = Instant::now();
-                                    match collector.collect_single_product(purl).await {
-                                        Ok(detail) => {
-                                            let latency = single_start.elapsed().as_millis() as u64;
-                                            // timing
-                                            if let Err(e) =
-                                                ctx_clone.emit_event(AppEvent::HttpRequestTiming {
-                                                    session_id: session_id_clone.clone(),
-                                                    batch_id: batch_id_opt.clone(),
-                                                    request_kind: "detail_page".into(),
-                                                    target: prod_ref.clone(),
-                                                    page_number: Some(origin_page),
-                                                    attempt: 1,
-                                                    latency_ms: latency,
-                                                    timestamp: Utc::now(),
-                                                })
-                                            {
-                                                error!(
-                                                    "HttpRequestTiming detail_page emit failed ref={} err={}",
-                                                    prod_ref, e
-                                                );
-                                            }
-                                            // Emit fine-grained detail task completed
-                                            if let Err(e) = ctx_clone.emit_event(AppEvent::DetailTaskCompleted {
-                                                session_id: session_id_clone.clone(),
-                                                detail_id: prod_ref.clone(),
-                                                page: Some(origin_page),
-                                                duration_ms: latency,
-                                                batch_id: batch_id_opt.clone(),
-                                                range_idx: None,
-                                                batch_index: None,
-                                                scope: Some("batch".into()),
-                                                timestamp: Utc::now(),
-                                            }) {
-                                                error!(
-                                                    "DetailTaskCompleted emit failed ref={} err={}",
-                                                    prod_ref, e
-                                                );
-                                            }
-                                            if let Err(e) =
-                                                ctx_clone.emit_event(AppEvent::ProductLifecycle {
-                                                    session_id: session_id_clone.clone(),
-                                                    batch_id: batch_id_opt.clone(),
-                                                    page_number: Some(origin_page),
-                                                    product_ref: prod_ref.clone(),
-                                                    status: "detail_completed".into(),
-                                                    retry: None,
-                                                    duration_ms: Some(latency),
-                                                    metrics: None,
-                                                    timestamp: Utc::now(),
-                                                })
-                                            {
-                                                error!(
-                                                    "ProductLifecycle detail_completed emit failed ref={} err={}",
-                                                    prod_ref, e
-                                                );
-                                            }
-                                            collected.push(detail);
-                                        }
-                                        Err(e) => {
-                                            let latency = single_start.elapsed().as_millis() as u64;
-                                            failures += 1;
-                                            if let Err(emit_err) =
-                                                ctx_clone.emit_event(AppEvent::HttpRequestTiming {
-                                                    session_id: session_id_clone.clone(),
-                                                    batch_id: batch_id_opt.clone(),
-                                                    request_kind: "detail_page".into(),
-                                                    target: prod_ref.clone(),
-                                                    page_number: Some(origin_page),
-                                                    attempt: 1,
-                                                    latency_ms: latency,
-                                                    timestamp: Utc::now(),
-                                                })
-                                            {
-                                                error!(
-                                                    "HttpRequestTiming detail_page (fail) emit failed ref={} err={}",
-                                                    prod_ref, emit_err
-                                                );
-                                            }
-                                            // Emit fine-grained detail task failed (final_failure=true)
-                                            if let Err(emit_err) = ctx_clone.emit_event(AppEvent::DetailTaskFailed {
-                                                session_id: session_id_clone.clone(),
-                                                detail_id: prod_ref.clone(),
-                                                page: Some(origin_page),
-                                                error: format!("{:?}", e),
-                                                final_failure: true,
-                                                batch_id: batch_id_opt.clone(),
-                                                range_idx: None,
-                                                batch_index: None,
-                                                scope: Some("batch".into()),
-                                                timestamp: Utc::now(),
-                                            }) {
-                                                error!(
-                                                    "DetailTaskFailed emit failed ref={} err={}",
-                                                    prod_ref, emit_err
-                                                );
-                                            }
-                                            if let Err(emit_err) =
-                                                ctx_clone.emit_event(AppEvent::ProductLifecycle {
-                                                    session_id: session_id_clone.clone(),
-                                                    batch_id: batch_id_opt.clone(),
-                                                    page_number: Some(origin_page),
-                                                    product_ref: prod_ref.clone(),
-                                                    status: "detail_failed".into(),
-                                                    retry: None,
-                                                    duration_ms: Some(latency),
-                                                    metrics: Some(SimpleMetrics::Product {
-                                                        fields: None,
-                                                        size_bytes: None,
-                                                        error: Some(format!("{:?}", e)),
-                                                    }),
-                                                    timestamp: Utc::now(),
-                                                })
-                                            {
-                                                error!(
-                                                    "ProductLifecycle detail_failed emit failed ref={} err={}",
-                                                    prod_ref, emit_err
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                return Err(StageError::GenericError { message: "ProductDetailCollector not available".into() });
-                            }
-                            // Wrap like existing logic (ProductDetails wrapper)
-                            use crate::crawl_engine::channels::types::{
-                                ExtractionStats, ProductDetails,
-                            };
-                            let product_details_wrapper = ProductDetails {
-                                products: collected.clone(),
-                                source_urls: filtered_urls.clone(),
-                                extraction_stats: ExtractionStats {
-                                    attempted: filtered_urls.len() as u32,
-                                    successful: collected.len() as u32,
-                                    failed: failures,
-                                    empty_responses: 0,
-                                },
-                            };
-                            let duration_ms = item_start.elapsed().as_millis() as u64;
-                            let item_id = base_item.id_string();
-                            let item_type = base_item.item_type_enum();
-                            match serde_json::to_string(&product_details_wrapper) {
-                                Ok(json_data) => Ok(StageItemResult {
-                                    item_id,
-                                    item_type,
-                                    success: true,
-                                    error: None,
-                                    duration_ms,
-                                    retry_count: 0,
-                                    collected_data: Some(json_data),
-                                }),
-                                Err(e) => Err(StageError::GenericError { message: format!("Item {} JSON serialization failed: {}", item_id, e) }),
-                            }
-                        }
-                        _ => {
-                            // Fallback to legacy process_single_item path for other items (should not happen here)
-                            let temp_actor = StageActor {
-                                actor_id: "temp".to_string(),
-                                batch_id: "temp".to_string(),
-                                stage_id: None,
-                                stage_type: None,
-                                state: StageState::Idle,
-                                start_time: None,
-                                total_items: 0,
-                                completed_items: 0,
-                                success_count: 0,
-                                failure_count: 0,
-                                skipped_count: 0,
-                                item_results: Vec::new(),
-                                status_checker: status_checker_clone.clone(),
-                                product_list_collector: product_list_collector_clone.clone(),
-                                product_detail_collector: product_detail_collector_clone.clone(),
-                                _product_repo: product_repo_clone.clone(),
-                                http_client: http_client_clone,
-                                data_extractor: data_extractor_clone,
-                                app_config: app_config_iter.clone(),
-                                site_total_pages_hint,
-                                products_on_last_page_hint,
-                                strategy_factory: strategy_factory_iter.clone(),
-                            };
-                            temp_actor
-                                .process_single_item(
-                                    stage_type_clone.clone(),
-                                    base_item.clone(),
-                                    &ctx_clone,
-                                    status_checker_clone,
-                                    product_list_collector_clone,
-                                    product_detail_collector_clone,
-                                    product_repo_clone.clone(),
-                                )
-                                .await
-                        }
+                // Strategy-only execution
+                let factory = strategy_factory_iter;
+                let result = if let Some(logic) = factory.logic_for(&stage_type_clone) {
+                    let deps = crate::crawl_engine::stages::traits::Deps {
+                        http: http_client_clone.clone(),
+                        extractor: data_extractor_clone.clone(),
+                        repo: product_repo_clone.clone(),
+                    };
+                    let input = crate::crawl_engine::stages::traits::StageInput {
+                        stage_type: stage_type_clone.clone(),
+                        item: base_item.clone(),
+                        config: app_config_iter.clone(),
+                        deps,
+                    };
+                    match logic.execute(input).await {
+                        Ok(crate::crawl_engine::stages::traits::StageOutput { result }) => Ok(result),
+                        Err(e) => Err(StageError::GenericError { message: format!("Strategy error: {}", e) }),
                     }
                 } else {
-                    // Legacy path (no per-product instrumentation needed)
-                    let temp_actor = StageActor {
-                        actor_id: "temp".to_string(),
-                        batch_id: "temp".to_string(),
-                        stage_id: None,
-                        stage_type: None,
-                        state: StageState::Idle,
-                        start_time: None,
-                        total_items: 0,
-                        completed_items: 0,
-                        success_count: 0,
-                        failure_count: 0,
-                        skipped_count: 0,
-                        item_results: Vec::new(),
-                        status_checker: status_checker_clone.clone(),
-                        product_list_collector: product_list_collector_clone.clone(),
-                        product_detail_collector: product_detail_collector_clone.clone(),
-                        _product_repo: product_repo_clone.clone(),
-                        http_client: http_client_clone,
-                        data_extractor: data_extractor_clone,
-                        app_config: app_config_iter.clone(),
-                        site_total_pages_hint,
-                        products_on_last_page_hint,
-                        strategy_factory: strategy_factory_iter.clone(),
-                    };
-                    temp_actor
-                        .process_single_item(
-                            stage_type_clone.clone(),
-                            base_item.clone(),
-                            &ctx_clone,
-                            status_checker_clone,
-                            product_list_collector_clone,
-                            product_detail_collector_clone,
-                            product_repo_clone.clone(),
-                        )
-                        .await
+                    Err(StageError::GenericError { message: format!("No strategy registered for stage {:?}", stage_type_clone) })
                 };
                 match &result {
                     Ok(r) => {
@@ -1503,7 +1152,8 @@ impl StageActor {
                                             collected_data: None,
                                         });
                                     }
-                                    if let Some(repo) = product_repo_for_persist.as_ref() {
+                                    {
+                                        let repo = product_repo_for_persist.clone();
                                         info!(
                                             "[PersistExec] starting storage call variant={}",
                                             match &lifecycle_item {
@@ -1598,7 +1248,8 @@ impl StageActor {
                                                 );
 
                                                 // Emit DatabaseStats event for Stage 4 UI visibility
-                                                if let Some(repo) = product_repo_for_persist.as_ref() {
+                                                {
+                                                    let repo = product_repo_for_persist.clone();
                                                     if let Ok((total_count, min_page, max_page, _)) = repo.get_product_detail_stats().await {
                                                         let note = if inserted > 0 || updated > 0 {
                                                             Some(format!("Batch persisted: {} inserted, {} updated", inserted, updated))
@@ -1619,10 +1270,10 @@ impl StageActor {
                                                             session_id: session_id_clone.clone(),
                                                             batch_id: batch_id_opt.clone(),
                                                             page_number: None,
-                                                            group_size: attempted,
-                                                            started: attempted,
+                                                            group_size: attempted_count,
+                                                            started: attempted_count,
                                                             succeeded: inserted + updated,
-                                                            failed: (attempted.saturating_sub(inserted + updated)),
+                                                            failed: (attempted_count.saturating_sub(inserted + updated)),
                                                             duplicates: duplicates_ct,
                                                             duration_ms: persist_start.elapsed().as_millis() as u64,
                                                             phase: "persist".into(),
@@ -1642,21 +1293,12 @@ impl StageActor {
                                                 }
                                                 if status == "persist_noop" {
                                                     // emit anomaly diagnostic + (future) logical drift probe
-                                                    if let Some(repo) =
-                                                        product_repo_for_persist.as_ref()
                                                     {
+                                                        let repo = product_repo_for_persist.clone();
                                                         if let Ok((cnt, minp, maxp, _)) =
                                                             repo.get_product_detail_stats().await
                                                         {
-                                                            let attempted = match &lifecycle_item {
-                                                                StageItem::ValidatedProducts(v) => {
-                                                                    v.products.len() as u32
-                                                                }
-                                                                StageItem::ProductDetails(d) => {
-                                                                    d.products.len() as u32
-                                                                }
-                                                                _ => attempted,
-                                                            };
+                                                            let attempted = attempted_count;
                                                             let _ = ctx_clone.emit_event(AppEvent::PersistenceAnomaly {
                                                                 session_id: session_id_clone.clone(),
                                                                 batch_id: batch_id_opt.clone(),
@@ -1726,10 +1368,6 @@ impl StageActor {
                                                 }
                                             }
                                         }
-                                    } else {
-                                        error!(
-                                            "Product repository not available during DataSaving persistence stage"
-                                        );
                                     }
                                 }
                             }
@@ -1757,9 +1395,7 @@ impl StageActor {
                             tracing::error!("StageItemCompleted emit failed: {}", e);
                         }
                         // Emit lifecycle completion for page or product aggregated result
-                        if let (StageType::ListPageCrawling, StageItem::Page(pn)) =
-                            (&stage_type_clone, &lifecycle_item)
-                        {
+                        if let (StageType::ListPageCrawling, StageItem::Page(pn)) = (&stage_type_clone, &lifecycle_item) {
                             let metrics =
                                 crate::crawl_engine::actors::types::SimpleMetrics::Page {
                                     url_count: Some(
@@ -1788,9 +1424,7 @@ impl StageActor {
                             }
                         }
                         // Product detail lifecycle completion (group success)
-                        if let (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) =
-                            (&stage_type_clone, &lifecycle_item)
-                        {
+                        if let (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) = (&stage_type_clone, &lifecycle_item) {
                             if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                 session_id: session_id_clone.clone(),
                                 batch_id: batch_id_opt.clone(),
@@ -1830,9 +1464,7 @@ impl StageActor {
                         }) {
                             tracing::error!("StageItemCompleted emit failed: {}", e);
                         }
-                        if let (StageType::ListPageCrawling, StageItem::Page(pn)) =
-                            (&stage_type_clone, &lifecycle_item)
-                        {
+                        if let (StageType::ListPageCrawling, StageItem::Page(pn)) = (&stage_type_clone, &lifecycle_item) {
                             let metrics =
                                 crate::crawl_engine::actors::types::SimpleMetrics::Page {
                                     url_count: None,
@@ -1853,9 +1485,7 @@ impl StageActor {
                             }
                         }
                         // Product detail lifecycle failure
-                        if let (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) =
-                            (&stage_type_clone, &lifecycle_item)
-                        {
+                        if let (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) = (&stage_type_clone, &lifecycle_item) {
                             for pu in &urls.urls {
                                 let metrics = crate::crawl_engine::actors::types::SimpleMetrics::Product { fields: None, size_bytes: None, error: Some(format!("{:?}", err)) };
                                 if let Err(e2) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
@@ -1880,19 +1510,18 @@ impl StageActor {
                 }
                 result
             });
-            tasks.push(task);
+            handles.push(task);
         }
 
         // 모든 태스크 완료 대기 (전체 타임아웃 관리 및 잔여 task abort)
         let mut results = Vec::new();
         let mut timeout_triggered = false;
-        for task in tasks.into_iter() {
+        while let Some(task) = handles.pop() {
             let now = Instant::now();
             if now >= deadline {
                 timeout_triggered = true;
-                for h in handles.drain(..) {
-                    h.abort();
-                }
+                // 남은 작업들 중단
+                for h in handles.drain(..) { h.abort(); }
                 break;
             }
             let remaining = deadline.saturating_duration_since(now);
@@ -1942,9 +1571,6 @@ impl StageActor {
 
         // 타임아웃 이후 남아있는 handle abort
         if timeout_triggered {
-            for h in handles {
-                h.abort();
-            }
             return Err(StageError::TimeoutError { timeout_ms: overall_timeout.as_millis() as u64 });
         }
 
@@ -1968,367 +1594,7 @@ impl StageActor {
         })
     }
 
-    /// 개별 아이템 처리 (실제 서비스 사용)
-    ///
-    /// # Arguments
-    /// * `stage_type` - 스테이지 타입
-    /// * `item` - 처리할 아이템
-    async fn process_single_item(
-        &self,
-        stage_type: StageType,
-        item: StageItem,
-        context: &AppContext,
-        status_checker: Option<Arc<dyn StatusChecker>>,
-        product_list_collector: Option<Arc<dyn ProductListCollector>>,
-        _product_detail_collector: Option<Arc<dyn ProductDetailCollector>>,
-        _product_repo: Option<Arc<IntegratedProductRepository>>,
-    ) -> Result<StageItemResult, StageError> {
-        let start_time = Instant::now();
-
-        let item_id = match &item {
-            StageItem::Page(page_num) => format!("page_{}", page_num),
-            StageItem::Url(url) => url.clone(),
-            StageItem::Product(product) => product.url.clone(),
-            StageItem::ProductList(list) => format!("page_{}", list.page_number),
-            StageItem::ProductUrls(urls) => format!("urls_{}", urls.urls.len()),
-            StageItem::ProductDetails(details) => format!("details_{}", details.products.len()),
-            StageItem::ValidatedProducts(products) => {
-                format!("validated_{}", products.products.len())
-            }
-            _ => "unknown".to_string(),
-        };
-
-        debug!("Processing item {} for stage {:?}", item_id, stage_type);
-
-        // 0) Strategy-first: if a factory is configured, require a strategy and do NOT fall back to legacy.
-        if self.strategy_factory.is_some() {
-            match (
-                self.strategy_factory.as_ref(),
-                self.app_config.clone(),
-                self.http_client.clone(),
-                self.data_extractor.clone(),
-                self._product_repo.clone(),
-            ) {
-                (Some(factory), Some(app_cfg), Some(http), Some(extractor), Some(repo)) => {
-                    if let Some(logic) = factory.logic_for(&stage_type) {
-                        info!("[StageActor] Using strategy {} for {:?}", logic.name(), stage_type);
-                        let deps = Deps { http, extractor, repo };
-                        let input = StageInput { stage_type: stage_type.clone(), item: item.clone(), config: app_cfg, deps };
-                        match logic.execute(input).await {
-                            Ok(StageOutput { result }) => {
-                                return Ok(result);
-                            }
-                            Err(e) => {
-                                return Err(StageError::GenericError { message: format!("Strategy error for {}: {}", item_id, e) });
-                            }
-                        }
-                    } else {
-                        return Err(StageError::GenericError { message: format!("No strategy registered for stage {:?}", stage_type) });
-                    }
-                }
-                _ => {
-                    return Err(StageError::GenericError { message: "Strategy factory configured but missing required dependencies".into() });
-                }
-            }
-        }
-
-        // 1) Legacy path (temporary): only when no strategy factory is configured
-        let (success, collected_data, retries_used) = match stage_type {
-            StageType::StatusCheck => {
-                if let Some(checker) = status_checker {
-                    match Self::execute_real_status_check(&item, checker).await {
-                        Ok(site_status) => match serde_json::to_string(&site_status) {
-                            Ok(json) => (Ok(()), Some(json), 0),
-                            Err(e) => (Err(format!("JSON serialization failed: {}", e)), None, 0),
-                        },
-                        Err(e) => (Err(e), None, 0),
-                    }
-                } else {
-                    // StatusChecker가 없으면 에러
-                    (Err("StatusChecker not available".to_string()), None, 0)
-                }
-            }
-            StageType::ListPageCrawling => {
-                if let Some(collector) = product_list_collector {
-                    const RECOMMENDED_MAX_RETRIES_LIST: u32 = 4;
-                    let (cfg_retries, base_delay_cfg) = if let Some(cfg) = &self.app_config {
-                        (
-                            cfg.user.crawling.workers.max_retries,
-                            cfg.user.crawling.timing.retry_delay_ms,
-                        )
-                    } else {
-                        (3u32, 1000u64)
-                    };
-                    let max_retries = std::cmp::max(cfg_retries, RECOMMENDED_MAX_RETRIES_LIST);
-                    let base_delay_ms = base_delay_cfg.max(200);
-                    let max_delay_ms: u64 = 30_000;
-
-                    let item_for_retry = item.clone();
-                    let collector_for_retry = Arc::clone(&collector);
-                    let (op_result, retries_used) = self
-                        .retry_with_backoff(
-                            context,
-                            StageType::ListPageCrawling,
-                            0,
-                            max_retries,
-                            base_delay_ms,
-                            max_delay_ms,
-                            || {
-                                let item_inner = item_for_retry.clone();
-                                let col_inner = Arc::clone(&collector_for_retry);
-                                async move {
-                                    self
-                                        .execute_real_list_page_processing(&item_inner, col_inner)
-                                        .await
-                                }
-                            },
-                        )
-                        .await;
-
-                    match op_result {
-                        Ok(urls) => match serde_json::to_string(&urls) {
-                            Ok(json_data) => (Ok(()), Some(json_data), retries_used),
-                            Err(e) => (Err(format!("JSON serialization failed: {}", e)), None, retries_used),
-                        },
-                        Err(e) => (Err(e), None, retries_used),
-                    }
-                } else {
-                    (
-                        Err("ProductListCollector not available".to_string()),
-                        None,
-                        0,
-                    )
-                }
-            }
-            StageType::ProductDetailCrawling => {
-                // Stage 2의 결과로 받은 ProductUrls에서 실제 제품 상세 정보 수집
-                info!(
-                    "🔍 ProductDetailCrawling: processing ProductUrls from item {}",
-                    item_id
-                );
-
-                match &item {
-                    StageItem::ProductUrls(product_urls) => {
-                        // Compact: log once at start of detail crawling for this item
-                        info!(
-                            "📋 Detail crawling for {} product URLs",
-                            product_urls.urls.len()
-                        );
-
-                        if let Some(collector) = &self.product_detail_collector {
-                            // 실제 ProductDetailCollector를 사용하여 상세 정보 수집
-                            match Self::execute_real_product_detail_processing(
-                                product_urls,
-                                Arc::clone(collector),
-                            )
-                            .await
-                            {
-                                Ok(product_details) => {
-                                    if product_details.is_empty() {
-                                        warn!("⚠️ ProductDetailCollector returned 0 details for {} urls", product_urls.urls.len());
-                                    }
-                                    info!(
-                                        "✅ Successfully collected {} product details",
-                                        product_details.len()
-                                    );
-
-                                    // ProductDetails 래퍼 생성
-                                    use crate::crawl_engine::channels::types::{
-                                        ExtractionStats, ProductDetails,
-                                    };
-                                    let product_details_wrapper = ProductDetails {
-                                        products: product_details.clone(),
-                                        source_urls: product_urls.urls.clone(),
-                                        extraction_stats: ExtractionStats {
-                                            attempted: product_urls.urls.len() as u32,
-                                            successful: product_details.len() as u32,
-                                            failed: (product_urls.urls.len()
-                                                - product_details.len())
-                                                as u32,
-                                            empty_responses: 0, // 현재는 0으로 설정
-                                        },
-                                    };
-
-                                    // ProductDetails 래퍼를 JSON으로 직렬화하여 저장
-                                    debug!(
-                                        "Serializing ProductDetails wrapper with {} products",
-                                        product_details_wrapper.products.len()
-                                    );
-                                    match serde_json::to_string(&product_details_wrapper) {
-                                        Ok(json_data) => {
-                                            debug!(
-                                                "ProductDetails JSON serialization successful: {} chars",
-                                                json_data.len()
-                                            );
-                                            (Ok(()), Some(json_data), 0)
-                                        }
-                                        Err(e) => {
-                                            error!(
-                                                "❌ ProductDetails JSON serialization failed: {}",
-                                                e
-                                            );
-                                            (
-                                                Err(format!("JSON serialization failed: {}", e)),
-                                                None,
-                                                0,
-                                            )
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("❌ Product detail crawling failed: {}", e);
-                                    (Err(e), None, 0)
-                                }
-                            }
-                        } else {
-                            error!("❌ ProductDetailCollector not available");
-                            (
-                                Err("ProductDetailCollector not available".to_string()),
-                                None,
-                                0,
-                            )
-                        }
-                    }
-                    other => {
-                        warn!(
-                            "⚠️ ProductDetailCrawling stage received unexpected item type: {:?}",
-                            other
-                        );
-                        (
-                            Err("Unexpected item type for ProductDetailCrawling".to_string()),
-                            None,
-                            0,
-                        )
-                    }
-                }
-            }
-            StageType::DataValidation => {
-                // Stage 3 (ProductDetailCrawling)에서 수집된 ProductDetail들을 검증
-                info!(
-                    "🔍 DataValidation: validating ProductDetails from item {}",
-                    item_id
-                );
-
-                let product_details: Vec<crate::domain::product::ProductDetail> = match &item {
-                    // Stage 3에서 ProductDetails 데이터를 받음
-                    StageItem::ProductDetails(product_details_wrapper) => {
-                        info!(
-                            "📋 Processing ProductDetails with {} products",
-                            product_details_wrapper.products.len()
-                        );
-                        product_details_wrapper.products.clone()
-                    }
-                    StageItem::ProductUrls(_product_urls) => {
-                        warn!(
-                            "⚠️ DataValidation received ProductUrls instead of ProductDetails - Stage 3 may have failed"
-                        );
-                        Vec::new()
-                    }
-                    other => {
-                        warn!(
-                            "⚠️ DataValidation stage received unexpected item type: {:?}",
-                            other
-                        );
-                        Vec::new()
-                    }
-                };
-
-                info!(
-                    "✅ Extracted {} ProductDetails for validation",
-                    product_details.len()
-                );
-
-                // DataQualityAnalyzer로 품질 검증
-                use crate::crawl_engine::services::data_quality_analyzer::DataQualityAnalyzer;
-                let quality_analyzer = DataQualityAnalyzer::new();
-
-                match quality_analyzer
-                    .validate_before_storage(&product_details)
-                {
-                    Ok(validated_products) => {
-                        // 검증된 제품들을 JSON으로 직렬화
-                        match serde_json::to_string(&validated_products) {
-                            Ok(json_data) => (Ok(()), Some(json_data), 0),
-                            Err(e) => (Err(format!("JSON serialization failed: {}", e)), None, 0),
-                        }
-                    }
-                    Err(e) => {
-                        error!("❌ Data validation failed: {}", e);
-                        (Err(e), None, 0)
-                    }
-                }
-            }
-            StageType::DataSaving => {
-                // DataSaving persistence 로직은 비동기 task 내부에서 처리 (ctx_clone 스코프 확보 위해 여기서는 패스스루)
-                // 여기서는 StageItem 처리 결과를 (Ok, None, 0) 로 넘기고 실제 저장은 아래 task match 분기에서 수행
-                (Ok(()), None, 0)
-            }
-        };
-
-        let duration = start_time.elapsed();
-
-        // StageItem을 StageItemType으로 변환하는 헬퍼 함수
-        let item_type = match &item {
-            StageItem::Page(page_num) => StageItemType::Page {
-                page_number: *page_num,
-            },
-            StageItem::Url(_url) => StageItemType::Url {
-                url_type: "site_check".to_string(),
-            },
-            StageItem::Product(_product) => StageItemType::Url {
-                url_type: "product".to_string(),
-            },
-            StageItem::ProductList(_) => StageItemType::ProductUrls { urls: vec![] },
-            StageItem::ProductUrls(urls) => StageItemType::ProductUrls {
-                urls: urls.urls.iter().map(|u| u.url.clone()).collect(),
-            },
-            _ => StageItemType::Url {
-                url_type: "unknown".to_string(),
-            },
-        };
-
-        match success {
-            Ok(()) => Ok(StageItemResult {
-                item_id: item_id,
-                item_type,
-                success: true,
-                error: None,
-                duration_ms: duration.as_millis() as u64,
-                retry_count: retries_used,
-                collected_data,
-            }),
-            Err(error) => {
-                let error_item_type = match &item {
-                    StageItem::Page(page_num) => StageItemType::Page {
-                        page_number: *page_num,
-                    },
-                    StageItem::Url(_url) => StageItemType::Url {
-                        url_type: "site_check".to_string(),
-                    },
-                    StageItem::Product(_product) => StageItemType::Url {
-                        url_type: "product".to_string(),
-                    },
-                    StageItem::ProductList(_) => StageItemType::ProductUrls { urls: vec![] },
-                    StageItem::ProductUrls(urls) => StageItemType::ProductUrls {
-                        urls: urls.urls.iter().map(|u| u.url.clone()).collect(),
-                    },
-                    _ => StageItemType::Url {
-                        url_type: "unknown".to_string(),
-                    },
-                };
-
-                Ok(StageItemResult {
-                    item_id: item_id.clone(),
-                    item_type: error_item_type,
-                    success: false,
-                    error: Some(error.clone()),
-                    duration_ms: duration.as_millis() as u64,
-                    retry_count: retries_used,
-                    collected_data: None,
-                })
-            }
-        }
-    }
+    // Legacy per-item path removed; strategy-only execution is enforced in process_stage_items.
 
     // === 실제 서비스 기반 처리 함수들 (Critical Issue #1) ===
 

@@ -106,11 +106,11 @@ export function useSessionEventStream(
     'actor-page-task-started',
     'actor-page-task-completed',
     'actor-page-task-failed',
-    // === Detail task granularity ===
-    'actor-detail-task-started',
-    'actor-detail-task-completed',
-    'actor-detail-task-failed',
-    'actor-detail-concurrency-downshifted',
+  // === Product lifecycle (Stage 2 grouping) ===
+  'actor-product-lifecycle',
+  'actor-product-lifecycle-group',
+  // Optional: keep if backend still emits downshift notifications
+  'actor-detail-concurrency-downshifted',
   ];
 
   const markLive = (ev: string, payload: any) => {
@@ -186,19 +186,27 @@ export function useSessionEventStream(
       applyProgress(payload);
       return;
     }
-    // Actor detail task events → merge into details progress in status
-    if (ev.startsWith('actor-detail-task-') || ev === 'actor-detail-concurrency-downshifted') {
+    // Stage 2 detail progress via product lifecycle events (group + per-product failures)
+    if (ev === 'actor-product-lifecycle' || ev === 'actor-product-lifecycle-group' || ev === 'actor-detail-concurrency-downshifted') {
       const payload: any = (evt as any).payload;
       const sid = sessionId();
       if (!sid || !payload || payload.session_id !== sid) return;
       mergeStatus(prev => {
         if (!prev) return prev;
         const details = { ...(prev.details || { total: 0, completed: 0, failed: 0 }) } as any;
-        // total stays as originally planned; if zero we cannot infer reliably here.
-  if (ev === 'actor-detail-task-completed') {
-          details.completed = (details.completed || 0) + 1;
-        } else if (ev === 'actor-detail-task-failed') {
-          details.failed = (details.failed || 0) + 1;
+        if (ev === 'actor-product-lifecycle-group' && payload?.phase === 'fetch') {
+          const group = Number(payload?.group_size ?? payload?.started ?? 0) || 0;
+          const succeeded = Number(payload?.succeeded ?? 0) || 0;
+          const failed = Number(payload?.failed ?? 0) || 0;
+          details.total = (typeof details.total === 'number' ? details.total : 0) + group;
+          details.completed = (typeof details.completed === 'number' ? details.completed : 0) + succeeded;
+          details.failed = (typeof details.failed === 'number' ? details.failed : 0) + failed;
+        }
+        if (ev === 'actor-product-lifecycle') {
+          const status = String(payload?.status || '').toLowerCase();
+          if (status === 'failed') {
+            details.failed = (typeof details.failed === 'number' ? details.failed : 0) + 1;
+          }
         }
         if (ev === 'actor-detail-concurrency-downshifted') {
           details.downshifted = true;

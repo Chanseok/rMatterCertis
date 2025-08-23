@@ -136,16 +136,29 @@ export const SimpleEventDisplay: Component = () => {
         }
       }
       if (name === 'actor-stage-failed') {
-        const label = mapStageName(p?.stage_name);
+        // Prefer modern stage_type; keep a temporary fallback to legacy stage_name with a warning
+        const label = mapStageName(p?.stage_type || p?.stage_name);
+        if (!p?.stage_type && p?.stage_name) {
+          // eslint-disable-next-line no-console
+          console.warn('[SimpleEventDisplay] actor-stage-failed received legacy stage_name; please migrate to stage_type');
+        }
         if (label) setStageStatus(label, 'error');
       }
 
-      // Per-item task progress heuristics
+      // Per-item/group progress heuristics
       if (name === 'actor-page-task-completed') {
         incStageCurrent('Stage 1: 제품 목록 수집');
       }
-      if (name === 'actor-detail-task-completed') {
-        incStageCurrent('Stage 2: 세부 정보 수집');
+      // Stage 2: prefer grouped lifecycle; fall back to per-product lifecycle if needed
+      if (name === 'actor-product-lifecycle-group' && (p?.phase === 'fetch')) {
+        const inc = Number(p?.group_size ?? p?.succeeded ?? 0) || 0;
+        for (let i = 0; i < inc; i++) incStageCurrent('Stage 2: 세부 정보 수집');
+      }
+      if (name === 'actor-product-lifecycle') {
+        const status = String(p?.status || '').toLowerCase();
+        if (status === 'fetch_completed' || status === 'fetch_completed_group') {
+          incStageCurrent('Stage 2: 세부 정보 수집');
+        }
       }
 
       // Validation → Stage 3
