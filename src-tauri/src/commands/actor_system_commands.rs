@@ -1411,6 +1411,20 @@ async fn execute_real_batch_actor(
     );
     info!("✅ BatchActor created successfully with real services");
 
+    // Apply dedupe behavior: in real batch actor path, use conservative default (do not skip duplicates)
+    // This path is invoked by unified executor with pre-planned ranges; ExecutionPlan context isn’t available here.
+    batch_actor.set_skip_duplicate_urls(false);
+    info!(
+        "[DedupCfg] Applied skip_duplicate_urls=false to BatchActor (batch_id={})",
+        batch_id
+    );
+
+    // 수동 실행에서는 중복 URL도 위치 정보(page_id, index_in_page, id)를 강제 업데이트
+    // StageDeps로 전달되도록 Session/Batch 경로에서 설정한다.
+    // BatchActor 내부 StageDeps 생성 지점들은 기본 Skip으로 두고, manual 경로에서만 정책을 변경하기 위해
+    // 환경 변수 힌트를 사용한다.
+    // Hint policy for duplicate handling in manual/pre-planned runs is handled by BatchActor via config/env elsewhere.
+
     // BatchActor 실행을 위한 채널 생성
     info!("🔧 Creating communication channels...");
     let (command_tx, command_rx) = mpsc::channel::<ActorCommand>(100);
@@ -2181,6 +2195,198 @@ fn adjust_execution_plan_with_page_overrides(
         kpi.batches = plan.crawling_ranges.len();
     }
     Ok(())
+}
+
+// Build an ExecutionPlan from explicit pages (newest -> oldest) with contiguous range compression.
+async fn build_execution_plan_from_explicit_pages(
+    app: &AppHandle,
+    mut pages: Vec<u32>,
+) -> Result<(ExecutionPlan, AppConfig, DomainSiteStatus), String> {
+    use crate::domain::pagination::PaginationCalculator;
+
+    // Load config
+    let config_manager = ConfigManager::new().map_err(|e| e.to_string())?;
+    let app_config = config_manager
+        .load_config()
+        .await
+        .map_err(|e| e.to_string())?;
+    update_global_failure_policy_from_config(&app_config);
+
+    // Site status: prefer cache, else reuse planner path
+    let shared_cache: Option<State<SharedStateCache>> = app.try_state::<SharedStateCache>();
+    let site_status: DomainSiteStatus = if let Some(cache_state) = shared_cache.as_ref() {
+        if let Some(cached) = cache_state.get_valid_site_analysis_async(Some(5)).await {
+            DomainSiteStatus {
+                is_accessible: true,
+                response_time_ms: 0,
+                total_pages: cached.total_pages,
+                estimated_products: cached.estimated_products,
+                products_on_last_page: cached.products_on_last_page,
+                last_check_time: cached.analyzed_at,
+                health_score: cached.health_score,
+                data_change_status: SiteDataChangeStatus::Stable { count: cached.estimated_products },
+                decrease_recommendation: None,
+                crawling_range_recommendation: CrawlingRangeRecommendation::Full,
+            }
+        } else {
+            let (_plan, _cfg, status) = create_execution_plan(app)
+                .await
+                .map_err(|e| format!("site status load failed: {}", e))?;
+            status
+        }
+    } else {
+        let (_plan, _cfg, status) = create_execution_plan(app)
+            .await
+            .map_err(|e| format!("site status load failed: {}", e))?;
+        status
+    };
+
+    // Normalize pages
+    pages.retain(|p| *p >= 1 && *p <= site_status.total_pages);
+    pages.sort_by(|a, b| b.cmp(a)); // newest -> oldest
+    pages.dedup();
+    if pages.is_empty() {
+        return Err("No valid pages after normalization".into());
+    }
+
+    // Compress to contiguous reverse ranges
+    let mut ranges: Vec<PageRange> = Vec::new();
+    let mut i = 0usize;
+    while i < pages.len() {
+        let start_newest = pages[i];
+        let mut j = i;
+        while j + 1 < pages.len() && pages[j] == pages[j + 1] + 1 {
+            j += 1;
+        }
+        let end_oldest = pages[j];
+        let count = start_newest.saturating_sub(end_oldest) + 1;
+        ranges.push(PageRange {
+            start_page: start_newest,
+            end_page: end_oldest,
+            estimated_products: count * 12,
+            reverse_order: true,
+        });
+        i = j + 1;
+    }
+
+    // Precompute page_slots
+    let calc = PaginationCalculator::default();
+    let mut page_slots: Vec<crate::crawl_engine::actors::types::PageSlot> = Vec::new();
+    for r in &ranges {
+        let iter: Box<dyn Iterator<Item = u32>> = if r.reverse_order {
+            Box::new(r.end_page..=r.start_page)
+        } else {
+            Box::new(r.start_page..=r.end_page)
+        };
+        for physical_page in iter {
+            let assumed_capacity = crate::domain::constants::site::PRODUCTS_PER_PAGE as u32;
+            for idx in 0..assumed_capacity {
+                let pos = calc.calculate(physical_page, idx, site_status.total_pages);
+                page_slots.push(crate::crawl_engine::actors::types::PageSlot {
+                    physical_page,
+                    page_id: pos.page_id as i64,
+                    index_in_page: pos.index_in_page as i16,
+                });
+            }
+        }
+    }
+    page_slots.sort_by(|a, b| match a.page_id.cmp(&b.page_id) {
+        core::cmp::Ordering::Equal => a.index_in_page.cmp(&b.index_in_page),
+        other => other,
+    });
+    page_slots.dedup_by(|a, b| a.page_id == b.page_id && a.index_in_page == b.index_in_page);
+
+    // Snapshot + hash
+    let snapshot = crate::crawl_engine::actors::types::PlanInputSnapshot {
+        total_pages: site_status.total_pages,
+        products_on_last_page: site_status.products_on_last_page,
+        db_max_page_id: None,
+        db_max_index_in_page: None,
+        db_total_products: 0,
+        page_range_limit: app_config.user.crawling.page_range_limit,
+        batch_size: app_config.user.batch.batch_size,
+        concurrency_limit: app_config.user.max_concurrent_requests,
+        created_at: Utc::now(),
+    };
+    let plan_hash = compute_plan_hash(&snapshot, &ranges, "ManualExplicitPages");
+
+    // Plan
+    let session_id = format!("actor_session_{}", Utc::now().timestamp());
+    let plan_id = format!("plan_{}", Utc::now().timestamp());
+    let total_pages_planned: u32 = ranges
+        .iter()
+        .map(|r| if r.reverse_order { r.start_page - r.end_page + 1 } else { r.end_page - r.start_page + 1 })
+        .sum();
+    let mut execution_plan = ExecutionPlan {
+        plan_id,
+        session_id,
+        crawling_ranges: ranges,
+        batch_size: app_config.user.batch.batch_size,
+        concurrency_limit: app_config.user.max_concurrent_requests,
+        estimated_duration_secs: 0,
+        created_at: Utc::now(),
+        analysis_summary: format!("Manual explicit pages: {} planned", total_pages_planned),
+        original_strategy: "ManualExplicitPages".into(),
+        input_snapshot: snapshot,
+        plan_hash,
+    // Manual runs should update existing records' fields (page_id/index_in_page),
+    // so do not skip duplicates in this mode.
+    skip_duplicate_urls: false,
+        kpi_meta: Some(crate::crawl_engine::actors::types::ExecutionPlanKpi {
+            total_ranges: 0,
+            total_pages: total_pages_planned,
+            batches: 0,
+            strategy: "ManualExplicitPages".into(),
+            created_at: Utc::now(),
+        }),
+        contract_version: ACTOR_CONTRACT_VERSION,
+        page_slots,
+    };
+    if let Some(ref mut kpi) = execution_plan.kpi_meta {
+        kpi.total_ranges = execution_plan.crawling_ranges.len();
+        kpi.batches = execution_plan.crawling_ranges.len();
+    }
+    Ok((execution_plan, app_config, site_status))
+}
+
+/// Start manual crawl via Actor pipeline from explicit pages (async, full parity; no validation phase).
+#[tauri::command(async)]
+pub async fn start_manual_crawl_pages_actor(
+    app: AppHandle,
+    pages: Vec<u32>,
+    _skip_validation: Option<bool>,
+) -> Result<ActorSystemResponse, String> {
+    if pages.is_empty() {
+        return Err("No pages provided".into());
+    }
+    let (execution_plan, app_config, site_status) =
+        build_execution_plan_from_explicit_pages(&app, pages).await?;
+
+    info!(target: "kpi.plan", "{{\"event\":\"manual_actor_started\",\"session_id\":\"{}\",\"plan_id\":\"{}\",\"ranges\":{},\"hash\":\"{}\"}}",
+        execution_plan.session_id,
+        execution_plan.plan_id,
+        execution_plan.crawling_ranges.len(),
+        execution_plan.plan_hash
+    );
+
+    let (sid, exec_clone) = bootstrap_and_spawn_session(
+        &app,
+        execution_plan.clone(),
+        app_config.clone(),
+        site_status,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await?;
+
+    Ok(ActorSystemResponse {
+        success: true,
+        message: "Manual actor crawl started".into(),
+        session_id: Some(sid),
+        data: Some(serde_json::to_value(&exec_clone).map_err(|e| e.to_string())?),
+    })
 }
 
 /// ExecutionPlan 기반 SessionActor 실행 (순수 실행 전용)

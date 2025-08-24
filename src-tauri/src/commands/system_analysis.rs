@@ -161,7 +161,7 @@ pub async fn diagnose_and_repair_data(
     };
 
     let bad_indices = sqlx::query_scalar::<_, i64>(
-        r#"SELECT COUNT(*) FROM products WHERE (index_in_page IS NOT NULL AND index_in_page <= 0) OR (page_id IS NOT NULL AND page_id <= 0)"#,
+        r#"SELECT COUNT(*) FROM products WHERE (index_in_page IS NOT NULL AND index_in_page < 0) OR (page_id IS NOT NULL AND page_id < 0)"#,
     )
     .fetch_one(&pool)
     .await
@@ -205,7 +205,7 @@ pub async fn diagnose_and_repair_data(
             }
         }
         if let Ok(res) = sqlx::query(
-            r#"DELETE FROM products WHERE (index_in_page IS NOT NULL AND index_in_page <= 0) OR (page_id IS NOT NULL AND page_id <= 0)"#,
+            r#"DELETE FROM products WHERE (index_in_page IS NOT NULL AND index_in_page < 0) OR (page_id IS NOT NULL AND page_id < 0)"#,
         )
         .execute(&pool)
         .await

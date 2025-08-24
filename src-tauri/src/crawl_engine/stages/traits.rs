@@ -15,6 +15,7 @@ pub struct Deps {
     pub http: Arc<HttpClient>,
     pub extractor: Arc<MatterDataExtractor>,
     pub repo: Arc<IntegratedProductRepository>,
+    pub duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy,
 }
 
 /// Input to a StageLogic strategy

@@ -160,6 +160,11 @@ pub enum BatchError {
 }
 
 impl BatchActor {
+    /// Configure whether to skip duplicate product URLs within this batch.
+    pub fn set_skip_duplicate_urls(&mut self, flag: bool) {
+        self.skip_duplicate_urls = flag;
+    }
+
     /// 내부 보조: Stage 2/3 per-item duration 합계 산출
     pub(crate) fn compute_stage_duration_sums(
         list_page_result: &StageResult,
@@ -562,6 +567,15 @@ impl BatchActor {
             self.state = BatchState::Failed {
                 error: "ListPageCrawling stage failed completely".to_string(),
             };
+            // Emit KPI-style structured summary for failure
+            info!(target: "kpi.batch",
+                "{{\"event\":\"batch_stage_summary\",\"batch_id\":\"{}\",\"stage\":\"list_page\",\"success\":{},\"failed\":{},\"pages\":{},\"ts\":\"{}\"}}",
+                batch_id,
+                list_page_result.successful_items,
+                list_page_result.failed_items,
+                pages.len(),
+                chrono::Utc::now()
+            );
             // 배치 실패 이벤트 발행
             let fail_event = AppEvent::BatchFailed {
                 batch_id: batch_id.clone(),
@@ -1379,6 +1393,12 @@ impl BatchActor {
                     detail_cfg,
                 ));
 
+            // 중복 정책: 환경 변수 힌트(MC_DUPLICATE_POLICY)로 제어 (manual 경로에서 설정)
+            let dup_policy = match std::env::var("MC_DUPLICATE_POLICY").ok().as_deref() {
+                Some("UpdateIdIndexOnly") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::UpdateIdIndexOnly,
+                Some("FullUpdate") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::FullUpdate,
+                _ => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
+            };
             crate::crawl_engine::actors::stage_actor::StageDeps {
                 http_client: Arc::clone(http_client),
                 data_extractor: Arc::clone(data_extractor),
@@ -1387,6 +1407,7 @@ impl BatchActor {
                 product_list_collector,
                 product_detail_collector,
                 app_config: app_config.clone(),
+                duplicate_policy: dup_policy,
             }
         };
 
@@ -1398,12 +1419,18 @@ impl BatchActor {
         );
 
         // StageActor로 Stage 실행 (실제 items 전달)
+        // Use configurable operation timeout instead of hard-coded 30s
+        let timeout_secs = app_config
+            .user
+            .crawling
+            .timing
+            .operation_timeout_seconds;
         let stage_result = stage_actor
             .execute_stage(
                 stage_type,
                 items,
                 concurrency_limit,
-                30, // timeout_secs - 30초 타임아웃
+                timeout_secs,
                 context,
             )
             .await
@@ -1501,6 +1528,11 @@ impl BatchActor {
                     Arc::clone(data_extractor),
                     detail_cfg,
                 ));
+            let dup_policy = match std::env::var("MC_DUPLICATE_POLICY").ok().as_deref() {
+                Some("UpdateIdIndexOnly") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::UpdateIdIndexOnly,
+                Some("FullUpdate") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::FullUpdate,
+                _ => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
+            };
             crate::crawl_engine::actors::stage_actor::StageDeps {
                 http_client: Arc::clone(http_client),
                 data_extractor: Arc::clone(data_extractor),
@@ -1509,6 +1541,7 @@ impl BatchActor {
                 product_list_collector,
                 product_detail_collector,
                 app_config: app_config.clone(),
+                duplicate_policy: dup_policy,
             }
         };
         let mut stage_actor = StageActor::new_with_deps(
@@ -1522,8 +1555,14 @@ impl BatchActor {
             stage_actor.set_site_pagination_hints(tp, plp);
         }
 
+        // Use configurable operation timeout instead of hard-coded 30s
+        let timeout_secs = app_config
+            .user
+            .crawling
+            .timing
+            .operation_timeout_seconds;
         let stage_result = stage_actor
-            .execute_stage(stage_type, items, concurrency_limit, 30, context)
+            .execute_stage(stage_type, items, concurrency_limit, timeout_secs, context)
             .await
             .map_err(|e| {
                 BatchError::StageExecutionFailed(format!("Stage execution failed: {:?}", e))
@@ -1661,6 +1700,11 @@ impl BatchActor {
                         Arc::clone(data_extractor),
                         detail_cfg,
                     ));
+                    let dup_policy = match std::env::var("MC_DUPLICATE_POLICY").ok().as_deref() {
+                        Some("UpdateIdIndexOnly") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::UpdateIdIndexOnly,
+                        Some("FullUpdate") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::FullUpdate,
+                        _ => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
+                    };
                     crate::crawl_engine::actors::stage_actor::StageDeps {
                         http_client: Arc::clone(http_client),
                         data_extractor: Arc::clone(data_extractor),
@@ -1669,6 +1713,7 @@ impl BatchActor {
                         product_list_collector,
                         product_detail_collector,
                         app_config: app_config.clone(),
+                        duplicate_policy: dup_policy,
                     }
                 };
                 StageActor::new_with_deps(

@@ -414,7 +414,7 @@ impl SessionActor {
                 .emit_event(progress_event)
                 .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
-            if let Err(e) = self
+        if let Err(e) = self
                 .run_batch_with_services(
                     &batch_id,
                     &pages,
@@ -422,7 +422,8 @@ impl SessionActor {
                     &http_client,
                     &data_extractor,
                     &product_repo,
-                    &site_status,
+            &site_status,
+            None,
                 )
                 .await
             {
@@ -703,6 +704,7 @@ impl SessionActor {
         data_extractor: &Arc<MatterDataExtractor>,
         product_repo: &Arc<IntegratedProductRepository>,
         site_status: &crate::domain::services::SiteStatus,
+        skip_duplicate_urls: Option<bool>,
     ) -> Result<(), SessionError> {
         use crate::crawl_engine::actors::traits::Actor;
         let app_config = AppConfig::for_development();
@@ -716,6 +718,11 @@ impl SessionActor {
             Arc::clone(product_repo),
             app_config.clone(),
         );
+        // Apply explicit setting when provided (e.g., preplanned ExecutionPlan)
+        if let Some(flag) = skip_duplicate_urls {
+            batch_actor.set_skip_duplicate_urls(flag);
+            info!("[DedupCfg] Applied skip_duplicate_urls={} to BatchActor (batch_id={})", flag, batch_id);
+        }
         batch_actor.shared_metrics = Some(shared_metrics.clone());
         let (tx, rx) = mpsc::channel::<super::types::ActorCommand>(100);
         let actor_context = context.clone();
@@ -730,7 +737,7 @@ impl SessionActor {
             start_page: pages.first().copied(),
             end_page: pages.last().copied(),
         };
-        let cmd = super::types::ActorCommand::ProcessBatch {
+    let cmd = super::types::ActorCommand::ProcessBatch {
             batch_id: batch_id.to_string(),
             pages: pages.to_vec(),
             config: batch_config,
@@ -1081,7 +1088,7 @@ impl Actor for SessionActor {
                                                 for (idx, range) in plan.crawling_ranges.iter().enumerate() {
                                                     let pages: Vec<u32> = if range.reverse_order { (range.start_page..=range.end_page).rev().collect() } else { (range.start_page..=range.end_page).collect() };
                                                     let batch_id = format!("{}-pre-{}", session_id, idx+1);
-                                                    if let Err(e) = self.run_batch_with_services(&batch_id, &pages, &context, &http_client, &data_extractor, &product_repo, &site_status).await {
+                                                    if let Err(e) = self.run_batch_with_services(&batch_id, &pages, &context, &http_client, &data_extractor, &product_repo, &site_status, Some(plan.skip_duplicate_urls)).await {
                                                         error!("Batch {} failed: {}", batch_id, e);
                                                         self.errors.push(format!("batch {}: {}", batch_id, e));
                                                         let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("Batch {} failed: {}", batch_id, e), final_failure: false, timestamp: Utc::now() };

@@ -27,6 +27,125 @@ pub struct IntegratedProductRepository {
 }
 
 impl IntegratedProductRepository {
+    /// Vacate an occupied (page_id, index_in_page) slot if it's taken by a different URL.
+    /// This helps avoid UNIQUE constraint violations when moving an item to a new position.
+    /// Returns the URL that was occupying the slot, if any, after setting its position to NULL.
+    async fn vacate_position_if_occupied(
+        &self,
+        page_id: i32,
+        index_in_page: i32,
+        keep_url: &str,
+    ) -> Result<Option<String>> {
+        let now = chrono::Utc::now();
+        let keep_norm = Self::normalize_url(keep_url);
+
+        // Find occupant different from the target URL
+        // First check product_details (source of truth), then fallback to products
+        let mut occupant_url: Option<String> = sqlx::query_scalar(
+            r#"SELECT url FROM product_details
+               WHERE page_id = ? AND index_in_page = ? AND url != ?
+               LIMIT 1"#,
+        )
+        .bind(page_id)
+        .bind(index_in_page)
+        .bind(&keep_norm)
+        .fetch_optional(&*self.pool)
+        .await?;
+        if occupant_url.is_none() {
+            occupant_url = sqlx::query_scalar(
+                r#"SELECT url FROM products
+                   WHERE page_id = ? AND index_in_page = ? AND url != ?
+                   LIMIT 1"#,
+            )
+            .bind(page_id)
+            .bind(index_in_page)
+            .bind(&keep_norm)
+            .fetch_optional(&*self.pool)
+            .await?;
+        }
+
+        if let Some(occ_url) = occupant_url.clone() {
+            // Set occupant's position to NULL to free the slot
+            let _ = sqlx::query(
+                r#"UPDATE product_details
+                   SET page_id = NULL, index_in_page = NULL, id = NULL, updated_at = ?
+                   WHERE url = ?"#,
+            )
+            .bind(now)
+            .bind(&occ_url)
+            .execute(&*self.pool)
+            .await?;
+
+            // Keep products table in sync
+            let _ = sqlx::query(
+                r#"UPDATE products
+                   SET page_id = NULL, index_in_page = NULL, id = NULL, updated_at = ?
+                   WHERE url = ?"#,
+            )
+            .bind(now)
+            .bind(&occ_url)
+            .execute(&*self.pool)
+            .await?;
+
+            debug!(
+                "[Vacate] Freed slot p{:04}i{:02} from url={} (kept url={})",
+                page_id, index_in_page, occ_url, keep_norm
+            );
+            Ok(Some(occ_url))
+        } else {
+            Ok(None)
+        }
+    }
+    /// 강제 위치 업데이트: URL이 존재하면 products, product_details에 대해
+    /// page_id, index_in_page, id 세 필드만 업데이트합니다. 존재하지 않으면 0 리턴.
+    pub async fn force_update_position_by_url(
+        &self,
+        url: &str,
+        page_id: i32,
+        index_in_page: i32,
+    ) -> Result<(u32, u32)> {
+        let normalized = Self::normalize_url(url);
+        let now = chrono::Utc::now();
+
+        // Pre-vacate target slot to avoid UNIQUE(page_id, index_in_page) violations
+        // if another record currently occupies the desired position.
+        let _ = self
+            .vacate_position_if_occupied(page_id, index_in_page, &normalized)
+            .await?;
+
+     // products 테이블 업데이트 (include id derived from position)
+     let forced_id = format!("p{:04}i{:02}", page_id, index_in_page);
+        let prod_res = sqlx::query(
+            r#"UPDATE products
+         SET page_id = ?, index_in_page = ?, id = ?, updated_at = ?
+               WHERE url = ?"#,
+        )
+        .bind(page_id)
+        .bind(index_in_page)
+     .bind(&forced_id)
+     .bind(now)
+        .bind(&normalized)
+        .execute(&*self.pool)
+        .await?;
+        let prod_rows = prod_res.rows_affected() as u32;
+
+        // product_details 테이블 업데이트 (id 포함)
+        let det_res = sqlx::query(
+            r#"UPDATE product_details
+               SET page_id = ?, index_in_page = ?, id = ?, updated_at = ?
+               WHERE url = ?"#,
+        )
+        .bind(page_id)
+        .bind(index_in_page)
+        .bind(&forced_id)
+        .bind(now)
+        .bind(&normalized)
+        .execute(&*self.pool)
+        .await?;
+        let det_rows = det_res.rows_affected() as u32;
+
+        Ok((prod_rows, det_rows))
+    }
     /// Normalize URL for consistent storage and comparison
     /// - Trims whitespace
     /// - Lowercases the hostname
@@ -104,16 +223,23 @@ impl IntegratedProductRepository {
         let normalized_url = Self::normalize_url(&product.url);
 
         // Basic validation to prevent blocking rows
-        // - page_id/index_in_page must be positive if provided
+        // - page_id/index_in_page must be non-negative if provided (0 is valid for oldest page / 0-based index)
         // - allow NULL for manufacturer/model/certificate_id temporarily, but prefer non-empty strings
         if let Some(pid) = product.page_id {
-            if pid <= 0 {
+            if pid < 0 {
                 anyhow::bail!("Invalid page_id: {}", pid);
             }
         }
         if let Some(idx) = product.index_in_page {
-            if idx <= 0 {
+            if idx < 0 {
                 anyhow::bail!("Invalid index_in_page: {}", idx);
+            }
+        }
+
+        // Optional: quick trace for incoming coords when verbose
+        if std::env::var("MC_PERSIST_VERBOSE").ok().as_deref().map(|v| v=="1" || v.eq_ignore_ascii_case("true")).unwrap_or(false) {
+            if let (Some(pid), Some(idx)) = (product.page_id, product.index_in_page) {
+                debug!("[PersistTrace] incoming coords url={} pid={} idx={}", normalized_url, pid, idx);
             }
         }
 
@@ -129,11 +255,16 @@ impl IntegratedProductRepository {
                 || existing_product.index_in_page != product.index_in_page;
 
             if needs_update {
+                // Derive id depending on page fields: set p####i## if both present, else NULL
+                let new_id: Option<String> = match (product.page_id, product.index_in_page) {
+                    (Some(pid), Some(idx)) => Some(format!("p{:04}i{:02}", pid, idx)),
+                    _ => None,
+                };
                 // 📝 실제 변경사항이 있을 때만 업데이트
                 sqlx::query(
                     r"
                     UPDATE products 
-                    SET manufacturer = ?, model = ?, certificate_id = ?, page_id = ?, index_in_page = ?, updated_at = ?
+                    SET manufacturer = ?, model = ?, certificate_id = ?, page_id = ?, index_in_page = ?, id = ?, updated_at = ?
                     WHERE url = ?
                     ",
                 )
@@ -142,11 +273,18 @@ impl IntegratedProductRepository {
                 .bind(&product.certificate_id)
                 .bind(product.page_id)
                 .bind(product.index_in_page)
+                .bind(new_id)
                 .bind(now)
                 .bind(&normalized_url)
                 .execute(&*self.pool)
                 .await?;
 
+                info!(
+                    "[Persist] products: url={} pid={:?} idx={:?} action=update",
+                    normalized_url,
+                    product.page_id,
+                    product.index_in_page
+                );
                 info!(
                     "📝 Product updated: {} (changes detected)",
                     product.model.as_deref().unwrap_or("Unknown")
@@ -200,6 +338,12 @@ impl IntegratedProductRepository {
             .execute(&*self.pool)
             .await?;
 
+            info!(
+                "[Persist] products: url={} pid={:?} idx={:?} action=insert",
+                normalized_url,
+                product.page_id,
+                product.index_in_page
+            );
             // info!("🆕 New product created: {}", product.model.as_deref().unwrap_or("Unknown"));
             Ok((false, true)) // updated=false, created=true
         }
@@ -222,13 +366,14 @@ impl IntegratedProductRepository {
 
         let existing = self.get_product_detail_by_url(&detail.url).await?;
 
-        if let Some(existing_detail) = existing {
+    if let Some(existing_detail) = existing {
             // 🔍 지능적 비교: 빈 필드 채우기 + 실제 변경사항 확인
             let mut updates = Vec::new();
             // Heterogeneous bind values (different Option<T> types) captured via enum to avoid type mismatch
             enum BindValue<'a> {
                 OptStr(&'a Option<String>),
                 OptI32(&'a Option<i32>),
+                OwnedStr(String),
             }
             let mut binds: Vec<BindValue> = Vec::new();
             let mut change_kinds: Vec<String> = Vec::new(); // human readable change descriptors
@@ -308,7 +453,58 @@ impl IntegratedProductRepository {
                 change_kinds.push("change:model".to_string());
             }
 
-            if !updates.is_empty() {
+            // ✅ Ensure pagination coordinates are persisted on update as well
+            if existing_detail.page_id != detail.page_id {
+                updates.push("page_id = ?");
+                binds.push(BindValue::OptI32(&detail.page_id));
+                change_kinds.push("change:page_id".to_string());
+            }
+            if existing_detail.index_in_page != detail.index_in_page {
+                updates.push("index_in_page = ?");
+                binds.push(BindValue::OptI32(&detail.index_in_page));
+                change_kinds.push("change:index_in_page".to_string());
+            }
+
+            // Derive the canonical id from target coordinates (or None if clearing)
+            let derived_id: Option<String> = match (detail.page_id, detail.index_in_page) {
+                (Some(pid), Some(idx)) => Some(format!("p{:04}i{:02}", pid, idx)),
+                _ => None,
+            };
+            // If only id is stale (coords unchanged) we still need to update id
+            let id_mismatch = existing_detail.id != derived_id;
+
+            if !updates.is_empty() || id_mismatch {
+                // Before applying updates that change the position, vacate target slot to avoid UNIQUE violation
+                if (change_kinds.iter().any(|k| k == "change:page_id")
+                    || change_kinds.iter().any(|k| k == "change:index_in_page"))
+                    && detail.page_id.is_some()
+                    && detail.index_in_page.is_some()
+                {
+                    if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
+                        let _ = self
+                            .vacate_position_if_occupied(pid, idx, &detail.url)
+                            .await?;
+                    }
+                }
+
+                // If page_id/index_in_page are being cleared to NULL, also clear id to NULL for consistency
+                let clearing_position = (change_kinds.iter().any(|k| k == "change:page_id") && detail.page_id.is_none())
+                    || (change_kinds.iter().any(|k| k == "change:index_in_page") && detail.index_in_page.is_none());
+                if clearing_position {
+                    updates.push("id = NULL");
+                    // No bind needed for NULL literal
+                }
+                // If only id is mismatched (no page coordinate changes captured), fix id explicitly
+                if !clearing_position && id_mismatch {
+                    if let Some(ref forced) = derived_id {
+                        updates.push("id = ?");
+                        binds.push(BindValue::OwnedStr(forced.clone()));
+                        change_kinds.push("fix:id".to_string());
+                    } else {
+                        updates.push("id = NULL");
+                        change_kinds.push("fix:id(NULL)".to_string());
+                    }
+                }
                 // Optional verbose diff logging before executing update
                 if verbose {
                     // helper closures for formatting
@@ -420,6 +616,16 @@ impl IntegratedProductRepository {
                         );
                     }
                 }
+                // If position present in the target detail and we haven't already added an id assignment, set id accordingly
+                if detail.page_id.is_some() && detail.index_in_page.is_some() {
+                    if !updates.iter().any(|u| *u == "id = NULL" || *u == "id = ?") {
+                        if let Some(ref forced) = derived_id {
+                            updates.push("id = ?");
+                            binds.push(BindValue::OwnedStr(forced.clone()));
+                        }
+                    }
+                }
+
                 let query = format!(
                     "UPDATE product_details SET {}, updated_at = ? WHERE url = ?",
                     updates.join(", ")
@@ -430,11 +636,38 @@ impl IntegratedProductRepository {
                     sql_query = match bind {
                         BindValue::OptStr(v) => sql_query.bind(v),
                         BindValue::OptI32(v) => sql_query.bind(v),
+                        BindValue::OwnedStr(s) => sql_query.bind(s),
                     };
                 }
                 sql_query = sql_query.bind(now).bind(&detail.url);
 
                 sql_query.execute(&*self.pool).await?;
+
+                // Keep products table in sync for pagination coordinates and id
+                if detail.page_id.is_some() || detail.index_in_page.is_some() || id_mismatch {
+                    // Update products when page fields changed OR id needed correction
+                    let changed_page = change_kinds.iter().any(|k| k == "change:page_id" || k == "change:index_in_page");
+                    if changed_page || id_mismatch {
+                        let _ = sqlx::query(
+                            r#"
+                            UPDATE products
+                            SET page_id = ?,
+                                index_in_page = ?,
+                                id = CASE WHEN ? IS NULL THEN NULL ELSE ? END,
+                                updated_at = ?
+                            WHERE url = ?
+                            "#,
+                        )
+                        .bind(detail.page_id)
+                        .bind(detail.index_in_page)
+                        .bind(derived_id.clone())
+                        .bind(derived_id.clone())
+                        .bind(now)
+                        .bind(&detail.url)
+                        .execute(&*self.pool)
+                        .await; // best-effort
+                    }
+                }
                 if verbose {
                     info!(
                         "📝 ProductDetail updated: {} ({} fields) kinds={:?}",
@@ -449,6 +682,12 @@ impl IntegratedProductRepository {
                         updates.len()
                     );
                 }
+                info!(
+                    "[Persist] product_details: url={} pid={:?} idx={:?} action=update",
+                    detail.url,
+                    detail.page_id,
+                    detail.index_in_page
+                );
                 Ok((true, false)) // updated=true, created=false
             } else {
                 if verbose {
@@ -467,7 +706,7 @@ impl IntegratedProductRepository {
                 }
                 Ok((false, false)) // updated=false, created=false
             }
-        } else {
+    } else {
             // 🆕 새로운 ProductDetail 삽입
             // ✅ Foreign Key 제약 해결: products 테이블에 먼저 기본 정보 삽입
             let basic_product = Product {
@@ -481,6 +720,13 @@ impl IntegratedProductRepository {
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             };
+
+            // If target position is provided, pre-vacate to avoid UNIQUE violation BEFORE inserting into products
+            if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
+                let _ = self
+                    .vacate_position_if_occupied(pid, idx, &detail.url)
+                    .await?;
+            }
 
             // 기본 제품 정보 삽입 (UPSERT 방식)
             self.create_or_update_product(&basic_product)
@@ -593,6 +839,12 @@ impl IntegratedProductRepository {
                     detail.model.as_deref().unwrap_or("Unknown")
                 );
             }
+            info!(
+                "[Persist] product_details: url={} pid={:?} idx={:?} action=insert",
+                detail.url,
+                detail.page_id,
+                detail.index_in_page
+            );
             Ok((false, true)) // updated=false, created=true
         }
     }

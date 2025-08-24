@@ -41,6 +41,62 @@ if (root) {
     } catch (e) {
       console.warn("⚠️ Failed to call window.show():", e);
     }
+
+    // Optional dev: auto-start a sync on launch if env flags are set
+    // Usage (zsh): VITE_AUTO_SYNC_RANGES="512-500" VITE_AUTO_SYNC_METHOD="basic|partial" VITE_AUTO_SYNC_DELAY=1500 npm run tauri:dev
+    // - METHOD=basic will expand ranges into pages[] and call startBasicSyncPages (persists via page_filter path)
+    // - METHOD=partial will call start_partial_sync with ranges string (includes full flow)
+    try {
+      const autoExpr = (import.meta as any)?.env?.VITE_AUTO_SYNC_RANGES as string | undefined;
+      const autoMethod = ((import.meta as any)?.env?.VITE_AUTO_SYNC_METHOD as string | undefined)?.toLowerCase() || 'basic';
+      const autoDelayMsRaw = (import.meta as any)?.env?.VITE_AUTO_SYNC_DELAY as string | undefined;
+      const autoDryRunRaw = (import.meta as any)?.env?.VITE_AUTO_SYNC_DRYRUN as string | undefined;
+      const autoDelayMs = Number.isFinite(Number(autoDelayMsRaw)) ? Number(autoDelayMsRaw) : 1200;
+      const autoDryRun = typeof autoDryRunRaw === 'string' ? ['1','true','yes','on'].includes(autoDryRunRaw.toLowerCase()) : false;
+      if (autoExpr && autoExpr.trim().length > 0) {
+        console.log(`[AutoSync] Scheduled: method=${autoMethod} ranges=\"${autoExpr}\" dryRun=${autoDryRun} delayMs=${autoDelayMs}`);
+        setTimeout(async () => {
+          try {
+            const mod = await import('./services/tauri-api');
+            const tauriApi = (mod as any).tauriApi ?? new (mod as any).TauriApiService();
+            const parseRanges = (expr: string): number[] => {
+              const pages: number[] = [];
+              for (const token of expr.split(',').map(t => t.trim()).filter(Boolean)) {
+                const m = token.match(/^(-?\d+)\s*-\s*(-?-?\d+)$/);
+                if (m) {
+                  const a = parseInt(m[1], 10);
+                  const b = parseInt(m[2], 10);
+                  if (Number.isFinite(a) && Number.isFinite(b)) {
+                    if (a >= b) { for (let p=a; p>=b; p--) pages.push(p); }
+                    else { for (let p=a; p<=b; p++) pages.push(p); }
+                  }
+                  continue;
+                }
+                const n = parseInt(token, 10);
+                if (Number.isFinite(n)) pages.push(n);
+              }
+              // dedupe preserving order
+              const seen = new Set<number>();
+              return pages.filter(p => (seen.has(p) ? false : (seen.add(p), true)));
+            };
+
+            if (autoMethod === 'partial') {
+              console.log(`[AutoSync] Invoking start_partial_sync: \"${autoExpr}\" dryRun=${autoDryRun}`);
+              await tauriApi.startPartialSync(autoExpr, autoDryRun);
+            } else {
+              const pages = parseRanges(autoExpr);
+              console.log(`[AutoSync] Invoking startBasicSyncPages: pages=[${pages.join(', ')}] dryRun=${autoDryRun}`);
+              if (pages.length > 0) await tauriApi.startBasicSyncPages(pages, autoDryRun);
+            }
+            console.log('[AutoSync] Invocation submitted');
+          } catch (e) {
+            console.error('[AutoSync] Failed to invoke auto sync:', e);
+          }
+        }, autoDelayMs);
+      }
+    } catch (e) {
+      console.warn('[AutoSync] skipped (env not available or error)', e);
+    }
   } catch (error) {
     console.error("❌ Error rendering AppWithTabs:", error);
     render(() => (

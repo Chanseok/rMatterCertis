@@ -40,6 +40,8 @@ pub struct StageDeps {
     pub product_list_collector: Arc<dyn ProductListCollector>,
     pub product_detail_collector: Arc<dyn ProductDetailCollector>,
     pub app_config: AppConfig,
+    /// 중복 URL 저장 정책 (수동 실행 등에서 제어)
+    pub duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy,
 }
 
 // Duplicate-execution guard for DataSaving stage (session+batch scoped)
@@ -91,6 +93,7 @@ pub struct StageActor {
 
     // 전략 분기 (Phase 3)
     strategy_factory: Arc<dyn StageLogicFactory + Send + Sync>,
+    duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy,
 }
 
 // Manual Debug implementation to avoid requiring Debug on all service trait object dependencies
@@ -250,6 +253,7 @@ impl StageActor {
             site_total_pages_hint: None,
             products_on_last_page_hint: None,
             strategy_factory: Arc::new(DefaultStageLogicFactory),
+            duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
         }
     }
 
@@ -282,9 +286,11 @@ impl StageActor {
             http_client: Some(deps.http_client),
             data_extractor: Some(deps.data_extractor),
             app_config: Some(deps.app_config),
+            // 정책은 이후 execute_real_database_storage 에서 사용하기 위해 필요 시 전파
             site_total_pages_hint: None,
             products_on_last_page_hint: None,
             strategy_factory,
+            duplicate_policy: deps.duplicate_policy,
         }
     }
 
@@ -411,6 +417,7 @@ impl StageActor {
             site_total_pages_hint: None,
             products_on_last_page_hint: None,
             strategy_factory: Arc::new(DefaultStageLogicFactory),
+            duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
         }
     }
 
@@ -454,6 +461,7 @@ impl StageActor {
             site_total_pages_hint: None,
             products_on_last_page_hint: None,
             strategy_factory: Arc::new(DefaultStageLogicFactory),
+            duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
         }
     }
 
@@ -604,7 +612,7 @@ impl StageActor {
     pub async fn execute_stage(
         &mut self,
         stage_type: StageType,
-        items: Vec<StageItem>,
+    items: Vec<StageItem>,
         concurrency_limit: u32,
         timeout_secs: u64,
         context: &AppContext,
@@ -635,7 +643,7 @@ impl StageActor {
     async fn handle_execute_stage(
         &mut self,
         stage_type: StageType,
-        items: Vec<StageItem>,
+    items: Vec<StageItem>,
         concurrency_limit: u32,
         timeout_secs: u64,
         context: &AppContext,
@@ -813,7 +821,8 @@ impl StageActor {
         // join 전에 추후 abort 대상 추적을 위해 task handle 저장
         let mut handles: Vec<tokio::task::JoinHandle<Result<StageItemResult, StageError>>> =
             Vec::new();
-        for item in items {
+    let batch_id_owned = self.batch_id.clone();
+    for item in items {
             let sem = semaphore.clone();
             let base_item = item.clone(); // used for lifecycle pre-emits
             let stage_type_clone = stage_type.clone();
@@ -821,11 +830,12 @@ impl StageActor {
             let http_client_clone = http_client.clone();
             let data_extractor_clone = data_extractor.clone();
             let session_id_clone = _context.session_id.clone();
-            let batch_id_opt = Some(self.batch_id.clone());
+            let batch_id_opt = Some(batch_id_owned.clone());
             let ctx_clone = _context.clone();
             // Per-iteration clones for moved values into async block
             let app_config_iter = app_config_clone.clone();
             let strategy_factory_iter = strategy_factory_clone.clone();
+            let duplicate_policy = self.duplicate_policy.clone();
             let task = tokio::spawn(async move {
                 // Separate handle for persistence path to avoid moved value issues
                 let product_repo_for_persist = product_repo_clone.clone();
@@ -914,6 +924,7 @@ impl StageActor {
                         http: http_client_clone.clone(),
                         extractor: data_extractor_clone.clone(),
                         repo: product_repo_clone.clone(),
+                        duplicate_policy: duplicate_policy.clone(),
                     };
                     let input = crate::crawl_engine::stages::traits::StageInput {
                         stage_type: stage_type_clone.clone(),
@@ -1906,6 +1917,16 @@ impl StageActor {
                     wrapper.extraction_stats.successful,
                     wrapper.extraction_stats.failed
                 );
+                // Debug a small sample of pagination coordinates to verify propagation
+                for (i, d) in wrapper.products.iter().take(3).enumerate() {
+                    debug!(
+                        "[PersistExecSample] idx={} url={} page_id={:?} index_in_page={:?}",
+                        i,
+                        d.url,
+                        d.page_id,
+                        d.index_in_page
+                    );
+                }
                 let products = &wrapper.products;
                 if products.is_empty() {
                     return Ok((0, 0, 0));
@@ -1931,8 +1952,8 @@ impl StageActor {
                 for (idx, detail) in products.iter().enumerate() {
                     let start = std::time::Instant::now();
                     debug!(
-                        "[PersistExec] upsert detail idx={} url={} page_id={:?}",
-                        idx, detail.url, detail.page_id
+                        "[PersistExec] upsert detail idx={} url={} page_id={:?} index_in_page={:?}",
+                        idx, detail.url, detail.page_id, detail.index_in_page
                     );
                     match product_repo.create_or_update_product_detail(detail).await {
                         Ok((was_updated, was_created)) => {
@@ -1943,6 +1964,22 @@ impl StageActor {
                                 updated += 1;
                             }
                             if !was_created && !was_updated {
+                                // 중복(no-op) → 정책 적용: UpdateIdIndexOnly면 위치 강제 업데이트 시도
+                                let policy_env = std::env::var("MC_DUPLICATE_POLICY").ok();
+                                if matches!(policy_env.as_deref(), Some("UpdateIdIndexOnly")) {
+                                    if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
+                                        if let Ok((prod_rows, det_rows)) = product_repo
+                                            .force_update_position_by_url(&detail.url, pid, idx)
+                                            .await
+                                        {
+                                            if det_rows > 0 || prod_rows > 0 {
+                                                updated += 1;
+                                                debug!("[PersistExecDetail] forced pos update idx={} url={} pid={} idx_in_page={} (prod_rows={}, det_rows={})", idx, detail.url, pid, idx, prod_rows, det_rows);
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
                                 duplicates_ct += 1;
                             }
                             debug!(
@@ -1964,6 +2001,15 @@ impl StageActor {
                     "[PersistExec] handling ValidatedProducts count={}",
                     wrapper.products.len()
                 );
+                for (i, d) in wrapper.products.iter().take(3).enumerate() {
+                    debug!(
+                        "[PersistExecSample] validated idx={} url={} page_id={:?} index_in_page={:?}",
+                        i,
+                        d.url,
+                        d.page_id,
+                        d.index_in_page
+                    );
+                }
                 let products = &wrapper.products;
                 if products.is_empty() {
                     return Ok((0, 0, 0));
@@ -1988,8 +2034,8 @@ impl StageActor {
                 for (idx, detail) in products.iter().enumerate() {
                     let start = std::time::Instant::now();
                     debug!(
-                        "[PersistExec] upsert validated detail idx={} url={} page_id={:?}",
-                        idx, detail.url, detail.page_id
+                        "[PersistExec] upsert validated detail idx={} url={} page_id={:?} index_in_page={:?}",
+                        idx, detail.url, detail.page_id, detail.index_in_page
                     );
                     match product_repo.create_or_update_product_detail(detail).await {
                         Ok((was_updated, was_created)) => {
@@ -2000,6 +2046,21 @@ impl StageActor {
                                 updated += 1;
                             }
                             if !was_created && !was_updated {
+                                let policy_env = std::env::var("MC_DUPLICATE_POLICY").ok();
+                                if matches!(policy_env.as_deref(), Some("UpdateIdIndexOnly")) {
+                                    if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
+                                        if let Ok((prod_rows, det_rows)) = product_repo
+                                            .force_update_position_by_url(&detail.url, pid, idx)
+                                            .await
+                                        {
+                                            if det_rows > 0 || prod_rows > 0 {
+                                                updated += 1;
+                                                debug!("[PersistExecDetail] forced pos update(validated) idx={} url={} pid={} idx_in_page={} (prod_rows={}, det_rows={})", idx, detail.url, pid, idx, prod_rows, det_rows);
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
                                 duplicates_ct += 1;
                             }
                             debug!(
@@ -2111,37 +2172,31 @@ impl Actor for StageActor {
 
         loop {
             tokio::select! {
+                biased;
+                // 취소 신호 확인 (우선 처리)
+                _ = context.cancellation_token.changed() => {
+                    if *context.cancellation_token.borrow() {
+                        warn!("🚫 StageActor {} received cancellation signal", self.actor_id);
+                        break;
+                    }
+                }
                 // 명령 처리
-                command = command_rx.recv() => {
-                    match command {
+                maybe_cmd = command_rx.recv() => {
+                    match maybe_cmd {
                         Some(cmd) => {
                             debug!("📨 StageActor {} received command: {:?}", self.actor_id, cmd);
-
                             match cmd {
-                                ActorCommand::ExecuteStage {
-                                    stage_type,
-                                    items: _, // TODO: 적절한 타입 변환 필요
-                                    concurrency_limit,
-                                    timeout_secs
-                                } => {
-                                    // 임시: 빈 벡터로 처리하여 컴파일 에러 해결
-                                    let empty_items = Vec::new();
-                                    if let Err(e) = self.handle_execute_stage(
-                                        stage_type,
-                                        empty_items,
-                                        concurrency_limit,
-                                        timeout_secs,
-                                        &context
-                                    ).await {
+                                ActorCommand::ExecuteStage { stage_type, items: _, concurrency_limit, timeout_secs } => {
+                                    // Temporary: this control path is not used in production; ignore payload type and run with empty items
+                                    let empty: Vec<StageItem> = Vec::new();
+                                    if let Err(e) = self.execute_stage(stage_type.clone(), empty, concurrency_limit, timeout_secs, &context).await {
                                         error!("Failed to execute stage: {:?}", e);
                                     }
                                 }
-
                                 ActorCommand::Shutdown => {
                                     info!("🛑 StageActor {} received shutdown command", self.actor_id);
                                     break;
                                 }
-
                                 _ => {
                                     debug!("StageActor {} ignoring non-stage command", self.actor_id);
                                 }
@@ -2151,14 +2206,6 @@ impl Actor for StageActor {
                             warn!("📪 StageActor {} command channel closed", self.actor_id);
                             break;
                         }
-                    }
-                }
-
-                // 취소 신호 확인
-                _ = context.cancellation_token.changed() => {
-                    if *context.cancellation_token.borrow() {
-                        warn!("🚫 StageActor {} received cancellation signal", self.actor_id);
-                        break;
                     }
                 }
             }

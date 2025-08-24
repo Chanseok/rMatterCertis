@@ -470,7 +470,8 @@ impl Default for TimingConfig {
             shutdown_timeout_seconds: defaults::SHUTDOWN_TIMEOUT_SECONDS,
             stats_interval_seconds: defaults::STATS_INTERVAL_SECONDS,
             retry_delay_ms: defaults::WORKER_RETRY_DELAY_MS,
-            operation_timeout_seconds: defaults::SHUTDOWN_TIMEOUT_SECONDS, // Use existing timeout
+            // Give stages more time by default; can be overridden via config
+            operation_timeout_seconds: 300,
         }
     }
 }
@@ -676,6 +677,17 @@ impl ConfigManager {
                     cfg.user.crawling.validation_page_limit = Some(50);
                     mutated = true;
                     info!("Backfilling missing validation_page_limit to default 50");
+                }
+                // If operation timeout was tied to old shutdown timeout (30s), bump to a safer default
+                // This prevents premature stage timeouts under slow networks.
+                if cfg.user.crawling.timing.operation_timeout_seconds
+                    <= defaults::SHUTDOWN_TIMEOUT_SECONDS
+                {
+                    cfg.user.crawling.timing.operation_timeout_seconds = 300;
+                    mutated = true;
+                    info!(
+                        "Backfilling operation_timeout_seconds to 300 (was <= shutdown timeout)"
+                    );
                 }
                 if mutated {
                     // Save updated config back to disk

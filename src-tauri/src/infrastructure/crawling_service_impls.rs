@@ -2135,56 +2135,185 @@ impl ProductListCollector for ProductListCollectorImpl {
     ) -> Result<Vec<ProductUrl>> {
         // ✅ Clean Code: 명시적 파라미터 사용 (상태 의존성 제거)
 
+        use tracing::{debug, info, warn};
+
+        const EXPECTED_PER_PAGE: usize = 12; // 도메인 규칙: 비마지막 페이지는 12개
+        let max_retries = self.config.retry_attempts.max(1); // 최소 1회는 시도
+    let base_delay_ms: u64 = (self.config.delay_ms as u64).max(300);
+    let max_delay_ms: u64 = 8_000;
+
         info!(
-            "📊 Using cached site analysis for single page {}: total_pages={}, products_on_last_page={}",
-            page, total_pages, products_on_last_page
+            "📊 Using cached site analysis for single page {}: total_pages={}, products_on_last_page={}, max_retries={}",
+            page, total_pages, products_on_last_page, max_retries
         );
 
         let page_calculator =
             CanonicalPageIdCalculator::new(total_pages, products_on_last_page as usize);
 
-        let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
-        // Use policy-based HttpClient to respect status-based retry and Retry-After
-        let response = self.http_client.fetch_response_with_policy(&url).await?;
-        let html_string: String = response.text().await?;
+        let is_last_page = page >= total_pages;
 
-        let doc = scraper::Html::parse_document(&html_string);
-        let url_strings = self
-            .data_extractor
-            .extract_product_urls(&doc, "https://csa-iot.org")?;
-
-        // 활성 페이지 번호 확인 후 보정
-        let active_page = self.status_checker.get_active_page_number(&doc);
-        if active_page != page {
-            tracing::warn!(
-                "⚠️ Requested page {} but active pagination indicates {}. Using {} for page_id calculation.",
-                page,
-                active_page,
-                active_page
-            );
-        }
-        let effective_page = active_page.max(1);
-
-        // ✅ PageIdCalculator를 사용한 ProductUrl 생성
-        let product_urls: Vec<ProductUrl> = url_strings
-            .into_iter()
-            .enumerate()
-            .map(|(index, url)| {
-                let calculation = page_calculator.calculate(effective_page, index);
-                ProductUrl {
-                    url,
-                    page_id: calculation.page_id,
-                    index_in_page: calculation.index_in_page,
+        let mut last_error: Option<anyhow::Error> = None;
+        for attempt in 0..=max_retries {
+            let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
+            // 정책 기반 HttpClient 사용 (상태 기반 재시도, Retry-After 준수)
+            let response = match self.http_client.fetch_response_with_policy(&url).await {
+                Ok(r) => r,
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < max_retries {
+                        // 지수 백오프 + 지터
+                        let shift = attempt.min(20);
+                        let factor = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
+                        let base = (base_delay_ms.saturating_mul(factor)).min(max_delay_ms);
+                        // Full jitter in [base/2, base]
+                        let jitter = fastrand::u64(..=(base / 2));
+                        let delay = (base / 2).saturating_add(jitter);
+                        warn!(
+                            attempt = attempt + 1,
+                            max = max_retries + 1,
+                            delay_ms = delay,
+                            "List page fetch failed (network). Retrying... page={}",
+                            page
+                        );
+                        // Adaptive RPS reduction on repeated failures
+                        if attempt >= 2 {
+                            let _ = crate::infrastructure::simple_http_client::HttpClient::set_global_max_rps(8).await;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        continue;
+                    } else {
+                        break;
+                    }
                 }
-            })
-            .collect();
+            };
 
-        debug!(
-            "🔗 Extracted {} URLs from page {}",
-            product_urls.len(),
+            let html_string: String = match response.text().await {
+                Ok(s) => s,
+                Err(e) => {
+                    last_error = Some(anyhow::anyhow!(e));
+                    if attempt < max_retries {
+                        let shift = attempt.min(20);
+                        let factor = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
+                        let base = (base_delay_ms.saturating_mul(factor)).min(max_delay_ms);
+                        let jitter = fastrand::u64(..=(base / 2));
+                        let delay = (base / 2).saturating_add(jitter);
+                        warn!(
+                            attempt = attempt + 1,
+                            max = max_retries + 1,
+                            delay_ms = delay,
+                            "List page body read failed. Retrying... page={}",
+                            page
+                        );
+                        if attempt >= 2 {
+                            let _ = crate::infrastructure::simple_http_client::HttpClient::set_global_max_rps(8).await;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+            };
+
+            // 비-Send 객체가 await를 넘지 않도록 스코프 한정
+            let mut retry_needed = false;
+            let mut out_urls: Option<Vec<ProductUrl>> = None;
+            {
+                let doc = scraper::Html::parse_document(&html_string);
+                let url_strings_res: Result<Vec<String>, _> = self
+                    .data_extractor
+                    .extract_product_urls(&doc, "https://csa-iot.org");
+
+                if let Err(e) = url_strings_res {
+                    last_error = Some(anyhow::anyhow!(e));
+                    if attempt < max_retries { retry_needed = true; }
+                } else if last_error.is_some() && retry_needed {
+                    // no further work in this scope
+                } else if last_error.is_none() {
+                    let url_strings = url_strings_res.unwrap();
+                    // 활성 페이지 번호 확인 후 보정
+                    let active_page = self.status_checker.get_active_page_number(&doc);
+                    if active_page != page {
+                        tracing::warn!(
+                            "⚠️ Requested page {} but active pagination indicates {}. Using {} for page_id calculation.",
+                            page,
+                            active_page,
+                            active_page
+                        );
+                    }
+                    let effective_page = active_page.max(1);
+
+                    // ✅ PageIdCalculator를 사용한 ProductUrl 생성
+                    let product_urls: Vec<ProductUrl> = url_strings
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, url)| {
+                            let calculation = page_calculator.calculate(effective_page, index);
+                            ProductUrl {
+                                url,
+                                page_id: calculation.page_id,
+                                index_in_page: calculation.index_in_page,
+                            }
+                        })
+                        .collect();
+
+                    let count = product_urls.len();
+                    debug!("🔗 Extracted {} URLs from page {} (attempt {}/{})", count, page, attempt + 1, max_retries + 1);
+
+                    // 성공 판정: 마지막 페이지는 수량 강제하지 않음. 그 외는 12개 충족 필요
+                    let success = if is_last_page { true } else { count >= EXPECTED_PER_PAGE };
+                    if success {
+                        out_urls = Some(product_urls);
+                    } else {
+                        // 미충족: 재시도 필요 표시
+                        if attempt < max_retries {
+                            retry_needed = true;
+                            last_error = Some(anyhow::anyhow!(
+                                "Insufficient products on page {}: expected >= {}, got {}",
+                                page, EXPECTED_PER_PAGE, count
+                            ));
+                        } else {
+                            last_error = Some(anyhow::anyhow!(
+                                "Insufficient products on page {}: expected >= {}, got {}",
+                                page, EXPECTED_PER_PAGE, count
+                            ));
+                        }
+                    }
+                }
+            }
+
+            // 스코프 밖: 비-Send 해제됨
+            if let Some(urls) = out_urls {
+                return Ok(urls);
+            }
+            if retry_needed {
+                let shift = attempt.min(20);
+                let factor = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
+                let base = (base_delay_ms.saturating_mul(factor)).min(max_delay_ms);
+                let jitter = fastrand::u64(..=(base / 2));
+                let delay = (base / 2).saturating_add(jitter);
+                warn!(
+                    attempt = attempt + 1,
+                    max = max_retries + 1,
+                    delay_ms = delay,
+                    "List page retry due to parse/insufficient items. page={}",
+                    page
+                );
+                if attempt >= 2 {
+                    let _ = crate::infrastructure::simple_http_client::HttpClient::set_global_max_rps(8).await;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                continue;
+            }
+            // 에러가 있으나 재시도 불가하면 종료
+            if last_error.is_some() { break; }
+        }
+
+        // 최종 실패
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!(
+            "List page collection failed for page {} (unknown error)",
             page
-        );
-        Ok(product_urls)
+        )))
     }
 
     async fn collect_page_range_with_cancellation(

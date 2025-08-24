@@ -109,6 +109,13 @@ impl GlobalRateLimiter {
         })
     }
 
+    /// Publicly adjust the global rate limit (RPS) at runtime.
+    /// Safe to call from anywhere; the refill task will be restarted if needed.
+    pub async fn set_global_rate_limit(rps: u32) {
+        let inst = Self::get_instance();
+        inst.update_rate_limit(rps).await;
+    }
+
     async fn update_rate_limit(&self, max_requests_per_second: u32) {
         let mut current_rate = self.current_rate.lock().await;
 
@@ -268,6 +275,17 @@ impl HttpClient {
     /// Update the context label after construction
     pub fn set_context_label(&mut self, label: &str) {
         self.context_label = Some(label.to_string());
+    }
+
+    /// Adjust the global RPS limit for all HttpClient instances at runtime.
+    /// This does not mutate this instance's stored config but affects the shared token bucket.
+    pub async fn set_global_max_rps(rps: u32) {
+        GlobalRateLimiter::set_global_rate_limit(rps).await;
+        info!(target: "kpi.network",
+            "{{\"event\":\"rate_limit_set\",\"rps\":{},\"source\":\"runtime\",\"ts\":\"{}\"}}",
+            rps,
+            chrono::Utc::now()
+        );
     }
     fn build_request(&self, url: &str, opts: &RequestOptions) -> Result<reqwest::RequestBuilder> {
         let mut rb = self.client.get(url);
@@ -677,12 +695,12 @@ impl HttpClient {
             // Apply global rate limiting
             let rate_limiter = GlobalRateLimiter::get_instance();
             if let Some(label) = &self.context_label {
-                info!(
+                debug!(
                     "⚖️ Applying rate limit {} RPS (source: {})",
                     self.config.max_requests_per_second, label
                 );
             } else {
-                info!(
+                debug!(
                     "⚖️ Applying rate limit {} RPS",
                     self.config.max_requests_per_second
                 );
@@ -729,12 +747,12 @@ impl HttpClient {
             // Apply global rate limiting (cancel-aware)
             let rate_limiter = GlobalRateLimiter::get_instance();
             if let Some(label) = &self.context_label {
-                info!(
+                debug!(
                     "⚖️ Applying rate limit {} RPS (source: {})",
                     self.config.max_requests_per_second, label
                 );
             } else {
-                info!(
+                debug!(
                     "⚖️ Applying rate limit {} RPS",
                     self.config.max_requests_per_second
                 );

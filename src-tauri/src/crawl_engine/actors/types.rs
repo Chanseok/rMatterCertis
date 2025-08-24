@@ -1237,6 +1237,24 @@ pub struct ExecutionPlan {
     pub page_slots: Vec<PageSlot>,
 }
 
+/// 중복 URL(로컬 DB에 이미 존재) 처리 정책
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[ts(export)]
+pub enum DuplicatePersistencePolicy {
+    /// 기존 동작: 변경 없으면 스킵 (noop)
+    Skip,
+    /// 수동 크롤링 등에서 사용: page_id, index_in_page, id 만 업데이트
+    UpdateIdIndexOnly,
+    /// 상세필드를 포함해 실제 변경이 있는 모든 칼럼 업데이트 시도
+    FullUpdate,
+}
+
+impl Default for DuplicatePersistencePolicy {
+    fn default() -> Self {
+        Self::Skip
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct PageSlot {

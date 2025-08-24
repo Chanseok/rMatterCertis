@@ -512,7 +512,8 @@ impl CrawlingIntegrationService {
                 crawling_range_recommendation: CrawlingRangeRecommendation::Partial(5),
             }
         };
-        let mut last_error = None;
+    let mut last_error = None;
+    let expected_per_page: usize = 12;
 
         for attempt in 0..=max_retries {
             match self
@@ -525,6 +526,25 @@ impl CrawlingIntegrationService {
                 .await
             {
                 Ok(urls) => {
+                    // 성공 판정 강화: 비마지막 페이지는 최소 12개를 기대
+                    let is_last = page >= site_status.total_pages;
+                    if !is_last && urls.len() < expected_per_page {
+                        last_error = Some(anyhow::anyhow!(
+                            "Insufficient products on page {}: expected >= {}, got {}",
+                            page, expected_per_page, urls.len()
+                        ));
+                        if attempt < max_retries {
+                            let delay = Duration::from_millis(1000 * (2_u64.pow(attempt)));
+                            debug!(
+                                page = page,
+                                attempt = attempt,
+                                delay_ms = delay.as_millis(),
+                                "Retrying page collection due to insufficient items"
+                            );
+                            tokio::time::sleep(delay).await;
+                            continue;
+                        }
+                    }
                     if attempt > 0 {
                         info!(
                             page = page,
@@ -585,7 +605,8 @@ impl CrawlingIntegrationService {
             }
         };
 
-        let mut last_error = None;
+    let mut last_error = None;
+    let expected_per_page: usize = 12;
         let started = std::time::Instant::now();
 
         for attempt in 0..=max_retries {
@@ -599,6 +620,25 @@ impl CrawlingIntegrationService {
                 .await
             {
                 Ok(urls) => {
+                    // 성공 판정 강화: 비마지막 페이지는 최소 12개를 기대
+                    let is_last = page >= site_status.total_pages;
+                    if !is_last && urls.len() < expected_per_page {
+                        last_error = Some(anyhow::anyhow!(
+                            "Insufficient products on page {}: expected >= {}, got {}",
+                            page, expected_per_page, urls.len()
+                        ));
+                        if attempt < max_retries {
+                            let delay = Duration::from_millis(1000 * (2_u64.pow(attempt)));
+                            debug!(
+                                page = page,
+                                attempt = attempt,
+                                delay_ms = delay.as_millis(),
+                                "Retrying page collection (meta) due to insufficient items"
+                            );
+                            tokio::time::sleep(delay).await;
+                            continue;
+                        }
+                    }
                     if attempt > 0 {
                         info!(
                             page = page,

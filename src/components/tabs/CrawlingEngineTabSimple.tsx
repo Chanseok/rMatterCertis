@@ -408,9 +408,9 @@ export default function CrawlingEngineTabSimple() {
       return;
     }
     setIsSyncing(true);
-    addLog(`🔁 진단 선택 페이지만 Sync: [${uniquePages.join(', ')}]`);
+    addLog(`🔁 진단 선택 페이지만 Sync (기본 엔진): [${uniquePages.join(', ')}]`);
     try {
-      const res = await tauriApi.startSyncPages(uniquePages);
+      const res = await tauriApi.startBasicSyncPages(uniquePages);
       addLog(`✅ 부분 Sync 완료: ${JSON.stringify(res)}`);
       // Re-run diagnostics to show before/after
       await runDiagnostics();
@@ -1074,6 +1074,24 @@ export default function CrawlingEngineTabSimple() {
           </div>
           <Show when={diagResult()} fallback={<p class="text-xs text-gray-500">로컬 DB의 page_id/index_in_page 정합성을 검사합니다. 실행을 눌러 결과를 확인하세요.</p>}>
             <div class="text-xs text-gray-700 space-y-2">
+              {(() => {
+                const expr = deriveRangesFromDiagnostics();
+                if (!expr) return null;
+                return (
+                  <div class="p-2 rounded border border-amber-200 bg-amber-50 text-amber-900 flex items-center justify-between">
+                    <div>
+                      <b>추천 Sync 범위</b>: <span class="font-mono">{expr}</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button
+                        class="px-2 py-0.5 text-[11px] rounded bg-amber-600 text-white hover:bg-amber-700"
+                        title="추천 범위를 Sync 입력에 적용"
+                        onClick={() => { setSyncRanges(expr); setSyncPulse(true); setTimeout(() => setSyncPulse(false), 400); addLog(`🧭 추천 범위 적용 → ${expr}`); }}
+                      >적용</button>
+                    </div>
+                  </div>
+                );
+              })()}
               <div class="flex gap-4">
                 <span>총 제품: <b>{diagResult()?.total_products ?? 0}</b></span>
                 <span>DB 최대 page_id: <b>{diagResult()?.max_page_id_db ?? '-'}</b></span>
@@ -1468,46 +1486,8 @@ export default function CrawlingEngineTabSimple() {
                 addLog(`🔄 Partial 모드(이 범위) Sync 실행: ${ranges}`);
                 try {
                   try { await invoke('ui_debug_log', { message: `[SimpleTab] sync_button_click ranges=${ranges}` }); } catch {}
-                  const startSeqAt = syncStartSeq;
                   const res = await tauriApi.startPartialSync(ranges);
                   addLog(`✅ Partial Sync 완료: ${JSON.stringify(res)}`);
-                  // If no start event arrives quickly, fall back to explicit pages
-                  setTimeout(async () => {
-                    if (syncStartSeq !== startSeqAt) return; // started
-                    if (!isSyncing()) return;
-                    try {
-                      // Simple parser for ranges expression
-                      const norm = ranges
-                        .replace(/\s+/g, '')
-                        .replace(/[–—−﹣－]/g, '-')
-                        .replace(/[〜～]/g, '~');
-                      const tokens = norm.split(',').map(t => t.trim()).filter(Boolean);
-                      const pages: number[] = [];
-                      for (const tk of tokens) {
-                        if (tk.includes('-') || tk.includes('~')) {
-                          const sep = tk.includes('~') ? '~' : '-';
-                          const [a,b] = tk.split(sep);
-                          let s = parseInt(a, 10), e = parseInt(b, 10);
-                          if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
-                          if (e > s) { const tmp = s; s = e; e = tmp; }
-                          for (let p = s; p >= e; p--) pages.push(p);
-                        } else {
-                          const v = parseInt(tk, 10);
-                          if (Number.isFinite(v)) pages.push(v);
-                        }
-                      }
-                      const seen = new Set<number>();
-                      const uniquePages = pages.filter(p => seen.has(p) ? false : (seen.add(p), true));
-                      if (uniquePages.length > 0) {
-                        addLog(`⛑️ 시작 이벤트 지연: 대체 실행 start_sync_pages=[${uniquePages.join(',')}]`);
-                        try { await invoke('ui_debug_log', { message: `[SimpleTab] fallback_start_sync_pages pages=[${uniquePages.join(',')}]` }); } catch {}
-                        await tauriApi.startSyncPages(uniquePages);
-                        addLog('⛑️ 대체 경로 요청 완료');
-                      }
-                    } catch (err) {
-                      addLog(`❌ 대체 실행 실패: ${err}`);
-                    }
-                  }, 900);
                 } catch (e) {
                   addLog(`❌ Partial Sync 실패: ${e}`);
                 } finally { setIsSyncing(false); }
@@ -1519,6 +1499,67 @@ export default function CrawlingEngineTabSimple() {
               title="Partial 모드로 이 범위만 실행"
             >
               이 범위 Sync 실행
+            </button>
+            <button
+              onClick={async () => {
+                if (isSyncing()) return;
+                let ranges = (syncRanges() || '').trim();
+                if (!ranges) {
+                  const auto = deriveRangesFromDiagnostics();
+                  if (auto) {
+                    setSyncRanges(auto);
+                    addLog(`🔁 Diagnostics 기반 범위 자동설정: ${auto}`);
+                    ranges = auto;
+                  } else {
+                    addLog('⚠️ 먼저 Sync 범위를 입력하거나, 진단을 실행해 주세요. 예: 498-492,489');
+                    return;
+                  }
+                }
+                // Parse ranges into explicit pages
+                const norm = ranges
+                  .replace(/\s+/g, '')
+                  .replace(/[–—−﹣－]/g, '-')
+                  .replace(/[〜～]/g, '~');
+                const tokens = norm.split(',').map(t => t.trim()).filter(Boolean);
+                const pages: number[] = [];
+                for (const tk of tokens) {
+                  if (tk.includes('-') || tk.includes('~')) {
+                    const sep = tk.includes('~') ? '~' : '-';
+                    const [a,b] = tk.split(sep);
+                    let s = parseInt(a, 10), e = parseInt(b, 10);
+                    if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
+                    if (e > s) { const tmp = s; s = e; e = tmp; }
+                    for (let p = s; p >= e; p--) pages.push(p);
+                  } else {
+                    const v = parseInt(tk, 10);
+                    if (Number.isFinite(v)) pages.push(v);
+                  }
+                }
+                const seen = new Set<number>();
+                const uniquePages = pages.filter(p => seen.has(p) ? false : (seen.add(p), true));
+                if (uniquePages.length === 0) {
+                  addLog('⚠️ 유효한 페이지가 없습니다. 예: 498-492,489');
+                  return;
+                }
+                setIsSyncing(true);
+                addLog(`🧑‍💻 수동 크롤링(Actor) 실행: [${uniquePages.join(', ')}]`);
+                try {
+                  const res = await tauriApi.startManualCrawlPagesActor(uniquePages, true);
+                  addLog(`✅ 수동 크롤링 세션 시작: ${JSON.stringify(res)}`);
+                  if (res?.session_id) {
+                    addLog(`🆔 세션 ID: ${res.session_id}`);
+                  }
+                } catch (e) {
+                  addLog(`❌ 수동 크롤링(Actor) 실패: ${e}`);
+                } finally { setIsSyncing(false); }
+              }}
+              disabled={isSyncing()}
+              class={`px-4 py-2 rounded-lg font-medium text-white ripple ${
+                isSyncing() ? 'bg-gray-400 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700'
+              }`}
+              title="기본 엔진으로 명시적 페이지 배열을 실행"
+            >
+              수동 크롤링
             </button>
             <button
               onClick={async () => {

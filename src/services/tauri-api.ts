@@ -213,6 +213,22 @@ export class TauriApiService {
   }
 
   /**
+   * Start a basic-engine sync for explicit physical pages using page_filter (avoids partial flow).
+   */
+  async startBasicSyncPages(pages: number[], dryRun?: boolean): Promise<any> {
+    return await invoke<any>('start_basic_sync_pages', {
+      pages,
+      dry_run: dryRun ?? null,
+    } as any);
+  }
+
+  async startManualCrawlPagesActor(pages: number[], skipValidation: boolean = true): Promise<any> {
+    return await invoke<any>('start_manual_crawl_pages_actor', {
+      pages,
+      skipValidation,
+    });
+  }
+  /**
    * Retry fetching details for products where products.certificate_id IS NULL.
    */
   async retryFailedDetails(limit?: number, dryRun?: boolean): Promise<any> {

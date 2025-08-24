@@ -27,6 +27,8 @@ pub struct BatchCrawlingConfig {
     pub batch_size: u32,
     pub retry_max: u32,
     pub timeout_ms: u64,
+    /// Optional explicit physical page list to process instead of contiguous range
+    pub page_filter: Option<Vec<u32>>, // newest→oldest order preferred; normalized internally
 }
 
 impl Default for BatchCrawlingConfig {
@@ -39,6 +41,7 @@ impl Default for BatchCrawlingConfig {
             batch_size: 10,
             retry_max: 3,
             timeout_ms: 30000,
+            page_filter: None,
         }
     }
 }
@@ -148,55 +151,63 @@ impl BatchCrawlingEngine {
             total_pages
         );
 
-        let effective_start = self.config.start_page;
-        let effective_end = total_pages.min(self.config.end_page);
-        let total_pages_to_process = effective_end - effective_start + 1;
-
-        self.emit_progress(
-            CrawlingStage::ProductList,
-            0,
-            total_pages_to_process,
-            0.0,
-            "제품 목록 페이지를 수집하는 중...",
-        )
-        .await?;
-
         let semaphore = Arc::new(Semaphore::new(self.config.concurrency as usize));
         let mut all_product_urls = Vec::new();
         let mut completed_pages = 0u32;
 
-        // 배치별로 페이지 처리
-        for batch_start in
-            (effective_start..=effective_end).step_by(self.config.batch_size as usize)
-        {
-            let batch_end = (batch_start + self.config.batch_size - 1).min(effective_end);
-            let batch_pages: Vec<u32> = (batch_start..=batch_end).collect();
+        // Determine pages to process: explicit filter or contiguous range
+        if let Some(list) = &self.config.page_filter {
+            let mut pages: Vec<u32> = list
+                .iter()
+                .copied()
+                .filter(|p| *p >= 1 && *p <= total_pages)
+                .collect();
+            pages.sort_unstable();
+            pages.dedup();
+            pages.reverse(); // newest → oldest
 
-            debug!("Processing batch: pages {} to {}", batch_start, batch_end);
+            let total_pages_to_process = pages.len() as u32;
+            self.emit_progress(
+                CrawlingStage::ProductList,
+                0,
+                total_pages_to_process,
+                0.0,
+                "제품 목록 페이지를 수집하는 중...",
+            )
+            .await?;
 
-            let batch_tasks: Vec<_> = batch_pages
-                .into_iter()
-                .map(|page_num| {
-                    let semaphore = Arc::clone(&semaphore);
-                    let http_client = Arc::clone(&self.http_client);
-                    let data_extractor = Arc::clone(&self.data_extractor);
-                    let delay_ms = self.config.delay_ms;
+            let mut idx = 0usize;
+            while idx < pages.len() {
+                let end = (idx + self.config.batch_size as usize).min(pages.len());
+                let batch_pages: Vec<u32> = pages[idx..end].to_vec();
+                let batch_start = *batch_pages.first().unwrap_or(&pages[idx]);
+                let batch_end = *batch_pages.last().unwrap_or(&batch_start);
 
-                    tokio::spawn(async move {
-                        let _permit = semaphore.acquire().await.unwrap();
+                debug!("Processing batch (filtered): pages {} to {}", batch_start, batch_end);
 
-                        if delay_ms > 0 {
-                            sleep(Duration::from_millis(delay_ms)).await;
-                        }
+                let batch_tasks: Vec<_> = batch_pages
+                    .into_iter()
+                    .map(|page_num| {
+                        let semaphore = Arc::clone(&semaphore);
+                        let http_client = Arc::clone(&self.http_client);
+                        let data_extractor = Arc::clone(&self.data_extractor);
+                        let delay_ms = self.config.delay_ms;
 
-                        let url =
-                            format!("{}?page={}", csa_iot::PRODUCTS_PAGE_MATTER_ONLY, page_num);
-                        debug!("Fetching page: {}", url);
+                        tokio::spawn(async move {
+                            let _permit = semaphore.acquire().await.unwrap();
 
-                        // 🔥 Mutex 제거 - 직접 HttpClient 사용으로 진정한 동시성
-                        match http_client.fetch_html_string(&url).await {
-                            Ok(html_str) => {
-                                match data_extractor.extract_product_urls_from_content(&html_str) {
+                            if delay_ms > 0 {
+                                sleep(Duration::from_millis(delay_ms)).await;
+                            }
+
+                            let url =
+                                format!("{}?page={}", csa_iot::PRODUCTS_PAGE_MATTER_ONLY, page_num);
+                            debug!("Fetching page: {}", url);
+
+                            match http_client.fetch_html_string(&url).await {
+                                Ok(html_str) => match data_extractor
+                                    .extract_product_urls_from_content(&html_str)
+                                {
                                     Ok(urls) => {
                                         debug!(
                                             "Extracted {} URLs from page {}",
@@ -212,40 +223,131 @@ impl BatchCrawlingEngine {
                                         );
                                         Ok(Vec::new())
                                     }
+                                },
+                                Err(e) => {
+                                    error!("Failed to fetch page {}: {}", page_num, e);
+                                    Err(e)
                                 }
                             }
-                            Err(e) => {
-                                error!("Failed to fetch page {}: {}", page_num, e);
-                                Err(e)
-                            }
-                        }
+                        })
                     })
-                })
-                .collect();
+                    .collect();
 
-            // 배치 실행 및 결과 수집
-            let batch_results = try_join_all(batch_tasks).await?;
-            for result in batch_results {
-                match result {
-                    Ok(urls) => all_product_urls.extend(urls),
-                    Err(e) => warn!("Batch task failed: {}", e),
+                let batch_results = try_join_all(batch_tasks).await?;
+                for result in batch_results {
+                    match result {
+                        Ok(urls) => all_product_urls.extend(urls),
+                        Err(e) => warn!("Batch task failed: {}", e),
+                    }
                 }
-            }
 
-            completed_pages += batch_end - batch_start + 1;
-            let progress = (completed_pages as f64 / total_pages_to_process as f64) * 100.0;
+                completed_pages += (end - idx) as u32;
+                let progress = (completed_pages as f64 / total_pages_to_process as f64) * 100.0;
+                self.emit_progress(
+                    CrawlingStage::ProductList,
+                    completed_pages,
+                    total_pages_to_process,
+                    progress,
+                    &format!("{}/{} 페이지 처리 완료", completed_pages, total_pages_to_process),
+                )
+                .await?;
+
+                idx = end;
+            }
+        } else {
+            let effective_start = self.config.start_page;
+            let effective_end = total_pages.min(self.config.end_page);
+            let total_pages_to_process = effective_end - effective_start + 1;
 
             self.emit_progress(
                 CrawlingStage::ProductList,
-                completed_pages,
+                0,
                 total_pages_to_process,
-                progress,
-                &format!(
-                    "{}/{} 페이지 처리 완료",
-                    completed_pages, total_pages_to_process
-                ),
+                0.0,
+                "제품 목록 페이지를 수집하는 중...",
             )
             .await?;
+
+            // 배치별로 페이지 처리
+            for batch_start in (effective_start..=effective_end).step_by(self.config.batch_size as usize) {
+                let batch_end = (batch_start + self.config.batch_size - 1).min(effective_end);
+                let batch_pages: Vec<u32> = (batch_start..=batch_end).collect();
+
+                debug!("Processing batch: pages {} to {}", batch_start, batch_end);
+
+                let batch_tasks: Vec<_> = batch_pages
+                    .into_iter()
+                    .map(|page_num| {
+                        let semaphore = Arc::clone(&semaphore);
+                        let http_client = Arc::clone(&self.http_client);
+                        let data_extractor = Arc::clone(&self.data_extractor);
+                        let delay_ms = self.config.delay_ms;
+
+                        tokio::spawn(async move {
+                            let _permit = semaphore.acquire().await.unwrap();
+
+                            if delay_ms > 0 {
+                                sleep(Duration::from_millis(delay_ms)).await;
+                            }
+
+                            let url =
+                                format!("{}?page={}", csa_iot::PRODUCTS_PAGE_MATTER_ONLY, page_num);
+                            debug!("Fetching page: {}", url);
+
+                            // 🔥 Mutex 제거 - 직접 HttpClient 사용으로 진정한 동시성
+                            match http_client.fetch_html_string(&url).await {
+                                Ok(html_str) => {
+                                    match data_extractor.extract_product_urls_from_content(&html_str) {
+                                        Ok(urls) => {
+                                            debug!(
+                                                "Extracted {} URLs from page {}",
+                                                urls.len(),
+                                                page_num
+                                            );
+                                            Ok(urls)
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                "Failed to extract URLs from page {}: {}",
+                                                page_num, e
+                                            );
+                                            Ok(Vec::new())
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Failed to fetch page {}: {}", page_num, e);
+                                    Err(e)
+                                }
+                            }
+                        })
+                    })
+                    .collect();
+
+                // 배치 실행 및 결과 수집
+                let batch_results = try_join_all(batch_tasks).await?;
+                for result in batch_results {
+                    match result {
+                        Ok(urls) => all_product_urls.extend(urls),
+                        Err(e) => warn!("Batch task failed: {}", e),
+                    }
+                }
+
+                completed_pages += batch_end - batch_start + 1;
+                let progress = (completed_pages as f64 / total_pages_to_process as f64) * 100.0;
+
+                self.emit_progress(
+                    CrawlingStage::ProductList,
+                    completed_pages,
+                    total_pages_to_process,
+                    progress,
+                    &format!(
+                        "{}/{} 페이지 처리 완료",
+                        completed_pages, total_pages_to_process
+                    ),
+                )
+                .await?;
+            }
         }
 
         info!(
