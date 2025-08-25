@@ -2139,7 +2139,7 @@ impl ProductListCollector for ProductListCollectorImpl {
 
         const EXPECTED_PER_PAGE: usize = 12; // 도메인 규칙: 비마지막 페이지는 12개
         let max_retries = self.config.retry_attempts.max(1); // 최소 1회는 시도
-    let base_delay_ms: u64 = (self.config.delay_ms as u64).max(300);
+    let base_delay_ms: u64 = self.config.delay_ms.max(300);
     let max_delay_ms: u64 = 8_000;
 
         info!(
@@ -2714,91 +2714,77 @@ impl ProductDetailCollectorImpl {
 #[async_trait]
 impl ProductDetailCollector for ProductDetailCollectorImpl {
     async fn collect_details(&self, product_urls: &[ProductUrl]) -> Result<Vec<ProductDetail>> {
-        debug!("Collecting details for {} products", product_urls.len());
+        debug!("Collecting details sequentially for {} products", product_urls.len());
 
-        let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent as usize));
-        let http_client = Arc::clone(&self.http_client);
-        let data_extractor = Arc::clone(&self.data_extractor);
-        let mut tasks = Vec::new();
+        let mut details = Vec::with_capacity(product_urls.len());
+        let max_retries = self.config.retry_attempts.max(1);
 
         for product_url in product_urls {
-            let http_client_clone = Arc::clone(&http_client);
-            let data_extractor_clone = Arc::clone(&data_extractor);
             let url = product_url.url.clone();
-            let page_id = product_url.page_id; // Capture page_id
-            let index_in_page = product_url.index_in_page; // Capture index_in_page
-            let permit = Arc::clone(&semaphore);
-            let max_retries = self.config.retry_attempts.max(1);
+            let page_id = product_url.page_id;
+            let index_in_page = product_url.index_in_page;
 
-            let task = tokio::spawn(async move {
-                let _permit = permit.acquire().await.unwrap();
-
-                // Retry-aware fetch + minimal parse retry
-                let mut attempts: u32 = 0;
-                let html_string: String;
-                loop {
-                    attempts += 1;
-                    match http_client_clone.fetch_response_with_policy(&url).await {
-                        Ok(response) => match response.text().await {
-                            Ok(s) => {
-                                html_string = s;
-                                break;
-                            }
-                            Err(e) => {
-                                if attempts < max_retries {
-                                    tokio::time::sleep(Duration::from_millis(
-                                        500 * attempts as u64,
-                                    ))
-                                    .await;
-                                    continue;
-                                } else {
-                                    return Err(anyhow::anyhow!(
-                                        "Failed to read response text: {}",
-                                        e
-                                    ));
-                                }
-                            }
-                        },
+            // Retry-aware fetch + minimal parse retry (sequential)
+            let mut attempts: u32 = 0;
+            let mut html_opt: Option<String> = None;
+            loop {
+                attempts += 1;
+                match self.http_client.fetch_response_with_policy(&url).await {
+                    Ok(response) => match response.text().await {
+                        Ok(s) => {
+                            html_opt = Some(s);
+                            break;
+                        }
                         Err(e) => {
                             if attempts < max_retries {
                                 tokio::time::sleep(Duration::from_millis(500 * attempts as u64))
                                     .await;
                                 continue;
                             } else {
-                                return Err(e);
+                                warn!(
+                                    "Failed to read response text for {} after {} attempts: {}",
+                                    url, attempts, e
+                                );
+                                break;
                             }
+                        }
+                    },
+                    Err(e) => {
+                        if attempts < max_retries {
+                            tokio::time::sleep(Duration::from_millis(500 * attempts as u64)).await;
+                            continue;
+                        } else {
+                            warn!(
+                                "HTTP request failed for {} after {} attempts: {}",
+                                url, attempts, e
+                            );
+                            break;
                         }
                     }
                 }
+            }
 
-                let doc = scraper::Html::parse_document(&html_string);
-                let mut detail = data_extractor_clone.extract_product_detail(&doc, url.clone())?;
+            let Some(html_string) = html_opt else { continue };
 
-                // 🔥 Set page_id and index_in_page from ProductUrl
-                detail.page_id = Some(page_id);
-                detail.index_in_page = Some(index_in_page);
-
-                // 🔥 Generate and set id field
-                detail.id = Some(format!("p{:04}i{:02}", page_id, index_in_page));
-
-                Ok::<ProductDetail, anyhow::Error>(detail)
-            });
-
-            tasks.push(task);
-        }
-
-        let results = futures::future::join_all(tasks).await;
-        let mut details = Vec::new();
-
-        for result in results {
-            match result {
-                Ok(Ok(detail)) => details.push(detail),
-                Ok(Err(e)) => warn!("Failed to collect product detail: {}", e),
-                Err(e) => warn!("Task failed: {}", e),
+            // Parse and build detail
+            let doc = scraper::Html::parse_document(&html_string);
+            match self
+                .data_extractor
+                .extract_product_detail(&doc, url.clone())
+            {
+                Ok(mut detail) => {
+                    detail.page_id = Some(page_id);
+                    detail.index_in_page = Some(index_in_page);
+                    detail.id = Some(format!("p{:04}i{:02}", page_id, index_in_page));
+                    details.push(detail);
+                }
+                Err(e) => {
+                    warn!("Failed to parse product detail for {}: {}", url, e);
+                }
             }
         }
 
-        debug!("Successfully collected {} product details", details.len());
+        debug!("Successfully collected {} product details (sequential)", details.len());
         Ok(details)
     }
 
@@ -2808,86 +2794,87 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
         cancellation_token: CancellationToken,
     ) -> Result<Vec<ProductDetail>> {
         info!(
-            "Collecting details for {} products with cancellation support",
+            "Collecting details sequentially for {} products with cancellation support",
             product_urls.len()
         );
 
-        let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent as usize));
-        let http_client = Arc::clone(&self.http_client);
-        let data_extractor = Arc::clone(&self.data_extractor);
-        let mut tasks = Vec::new();
+        let mut details = Vec::with_capacity(product_urls.len());
+        let max_retries = self.config.retry_attempts.max(1);
 
-        for product_url in product_urls {
-            let http_client_clone = Arc::clone(&http_client);
-            let data_extractor_clone = Arc::clone(&data_extractor);
+    'outer: for product_url in product_urls {
+            if cancellation_token.is_cancelled() {
+                warn!("Cancellation requested; stopping detail collection early");
+                break 'outer;
+            }
+
             let url = product_url.url.clone();
-            let page_id = product_url.page_id; // Capture page_id
-            let index_in_page = product_url.index_in_page; // Capture index_in_page
-            let permit = Arc::clone(&semaphore);
-            let _delay = self.config.delay_ms;
-            let token = cancellation_token.clone();
+            let page_id = product_url.page_id;
+            let index_in_page = product_url.index_in_page;
 
-            let task = tokio::spawn(async move {
-                if token.is_cancelled() {
-                    return Err(anyhow!("Task cancelled"));
+            // Retry-aware HTTP fetch with cancellation checks
+            let mut attempts: u32 = 0;
+            let mut html_opt: Option<String> = None;
+            loop {
+                if cancellation_token.is_cancelled() {
+                    warn!("Cancellation during retry loop for {}", url);
+                    break 'outer;
                 }
 
-                let _permit = permit.acquire().await.unwrap();
-
-                // Remove individual delay for true concurrency
-                // tokio::select! {
-                //     _ = tokio::time::sleep(Duration::from_millis(delay)) => {},
-                //     _ = token.cancelled() => return Err(anyhow!("Task cancelled during delay")),
-                // }
-
-                if token.is_cancelled() {
-                    return Err(anyhow!("Task cancelled"));
-                }
-
-                // 🔥 Use retry-aware HTTP method
-                let response = http_client_clone.fetch_response_with_policy(&url).await?;
-                let html_string: String = response.text().await?;
-
-                if token.is_cancelled() {
-                    return Err(anyhow!("Task cancelled"));
-                }
-
-                let doc = scraper::Html::parse_document(&html_string);
-                let mut detail = data_extractor_clone.extract_product_detail(&doc, url.clone())?;
-
-                // 🔥 Set page_id and index_in_page from ProductUrl
-                detail.page_id = Some(page_id);
-                detail.index_in_page = Some(index_in_page);
-
-                // 🔥 Generate and set id field
-                detail.id = Some(format!("p{:04}i{:02}", page_id, index_in_page));
-
-                Ok::<ProductDetail, anyhow::Error>(detail)
-            });
-
-            tasks.push(task);
-        }
-
-        let results = futures::future::join_all(tasks).await;
-        let mut details = Vec::new();
-
-        for result in results {
-            match result {
-                Ok(Ok(detail)) => details.push(detail),
-                Ok(Err(e)) => {
-                    if !cancellation_token.is_cancelled() {
-                        warn!("Failed to collect product detail: {}", e);
+                attempts += 1;
+                match self.http_client.fetch_response_with_policy(&url).await {
+                    Ok(response) => match response.text().await {
+                        Ok(s) => {
+                            html_opt = Some(s);
+                            break;
+                        }
+                        Err(e) => {
+                            if attempts < max_retries {
+                                tokio::time::sleep(Duration::from_millis(500 * attempts as u64))
+                                    .await;
+                                continue;
+                            } else {
+                                warn!("Failed to read response text for {} after {} attempts: {}", url, attempts, e);
+                                break;
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        if attempts < max_retries {
+                            tokio::time::sleep(Duration::from_millis(500 * attempts as u64)).await;
+                            continue;
+                        } else {
+                            warn!("HTTP request failed for {} after {} attempts: {}", url, attempts, e);
+                            break;
+                        }
                     }
+                }
+            }
+
+            let Some(html_string) = html_opt else { continue 'outer };
+
+            if cancellation_token.is_cancelled() {
+                warn!("Cancellation after fetch for {}", url);
+                break 'outer;
+            }
+
+            let doc = scraper::Html::parse_document(&html_string);
+            match self
+                .data_extractor
+                .extract_product_detail(&doc, url.clone())
+            {
+                Ok(mut detail) => {
+                    detail.page_id = Some(page_id);
+                    detail.index_in_page = Some(index_in_page);
+                    detail.id = Some(format!("p{:04}i{:02}", page_id, index_in_page));
+                    details.push(detail);
                 }
                 Err(e) => {
-                    if !cancellation_token.is_cancelled() {
-                        warn!("Task failed: {}", e);
-                    }
+                    warn!("Failed to parse product detail for {}: {}", url, e);
                 }
             }
         }
 
-        info!("Successfully collected {} product details", details.len());
+        info!("Successfully collected {} product details (sequential)", details.len());
         Ok(details)
     }
 
@@ -2933,7 +2920,7 @@ impl ProductDetailCollectorImpl {
         batch_id: String,
     ) -> Result<Vec<ProductDetail>> {
         info!(
-            "🚀 Collecting details for {} products with async events",
+            "🚀 Collecting details sequentially for {} products with async events",
             product_urls.len()
         );
 
@@ -2954,148 +2941,136 @@ impl ProductDetailCollectorImpl {
             }
         });
 
-        let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent as usize));
-        let http_client = Arc::clone(&self.http_client);
-        let data_extractor = Arc::clone(&self.data_extractor);
-        let mut tasks = Vec::new();
+        let mut details = Vec::with_capacity(product_urls.len());
+        let max_retries = self.config.retry_attempts.max(1);
 
-        for product_url in product_urls {
-            let http_client_clone = Arc::clone(&http_client);
-            let data_extractor_clone = Arc::clone(&data_extractor);
+    for product_url in product_urls {
+            if let Some(ref token) = cancellation_token {
+                if token.is_cancelled() {
+                    warn!("Cancellation requested; stopping async-events detail collection early");
+                    break;
+                }
+            }
+
             let url = product_url.url.clone();
             let page_id = product_url.page_id;
             let index_in_page = product_url.index_in_page;
-            let permit = Arc::clone(&semaphore);
-            let token = cancellation_token.clone();
-            let event_tx_clone = event_tx.clone();
 
-            let task = tokio::spawn(async move {
-                if let Some(ref token) = token {
-                    if token.is_cancelled() {
-                        return Err(anyhow!("Task cancelled"));
-                    }
-                }
+            let start_time = std::time::Instant::now();
+            let task_id = format!("product-{}", url);
 
-                let start_time = std::time::Instant::now();
-                let task_id = format!("product-{}", url);
-
-                // 🔥 태스크 시작 이벤트 (논블로킹)
-                let _ = event_tx_clone.send(ProductDetailEvent::TaskStarted {
-                    product_url: url.clone(),
-                    product_name: None, // Will be filled after parsing
-                    task_id: task_id.clone(),
-                });
-
-                let _permit = permit.acquire().await.unwrap();
-
-                if let Some(ref token) = token {
-                    if token.is_cancelled() {
-                        return Err(anyhow!("Task cancelled"));
-                    }
-                }
-
-                // HTTP 요청 시작 이벤트
-                let _ = event_tx_clone.send(ProductDetailEvent::HttpRequestStarted {
-                    product_url: url.clone(),
-                    task_id: task_id.clone(),
-                });
-
-                // 🔥 Use retry-aware HTTP method
-                let response = match http_client_clone.fetch_response_with_policy(&url).await {
-                    Ok(response) => response,
-                    Err(e) => {
-                        let _ = event_tx_clone.send(ProductDetailEvent::TaskFailed {
-                            product_url: url.clone(),
-                            task_id: task_id.clone(),
-                            error: format!("HTTP request failed: {}", e),
-                            processing_time: start_time.elapsed(),
-                        });
-                        return Err(e);
-                    }
-                };
-
-                let html = match response.text().await {
-                    Ok(html) => html,
-                    Err(e) => {
-                        let _ = event_tx_clone.send(ProductDetailEvent::TaskFailed {
-                            product_url: url.clone(),
-                            task_id: task_id.clone(),
-                            error: format!("Failed to read response: {}", e),
-                            processing_time: start_time.elapsed(),
-                        });
-                        return Err(anyhow::anyhow!("Failed to read response: {}", e));
-                    }
-                };
-
-                if let Some(ref token) = token {
-                    if token.is_cancelled() {
-                        return Err(anyhow!("Task cancelled"));
-                    }
-                }
-
-                // 파싱 시작 이벤트
-                let _ = event_tx_clone.send(ProductDetailEvent::ParsingStarted {
-                    product_url: url.clone(),
-                    task_id: task_id.clone(),
-                    html_size: html.len(),
-                });
-
-                let doc = scraper::Html::parse_document(&html);
-                let mut detail =
-                    match data_extractor_clone.extract_product_detail(&doc, url.clone()) {
-                        Ok(detail) => detail,
-                        Err(e) => {
-                            let _ = event_tx_clone.send(ProductDetailEvent::TaskFailed {
-                                product_url: url.clone(),
-                                task_id: task_id.clone(),
-                                error: format!("Parsing failed: {}", e),
-                                processing_time: start_time.elapsed(),
-                            });
-                            return Err(e);
-                        }
-                    };
-
-                // 🔥 Set page_id and index_in_page from ProductUrl
-                detail.page_id = Some(page_id);
-                detail.index_in_page = Some(index_in_page);
-                detail.id = Some(format!("p{:04}i{:02}", page_id, index_in_page));
-
-                // 🔥 태스크 완료 이벤트 (논블로킹)
-                let _ = event_tx_clone.send(ProductDetailEvent::TaskCompleted {
-                    product_url: url.clone(),
-                    product_name: detail.manufacturer.clone().or_else(|| detail.model.clone()),
-                    task_id: task_id.clone(),
-                    processing_time: start_time.elapsed(),
-                    extracted_fields: calculate_extracted_fields(&detail),
-                });
-
-                Ok::<ProductDetail, anyhow::Error>(detail)
+            // 태스크 시작 이벤트
+            let _ = event_tx.send(ProductDetailEvent::TaskStarted {
+                product_url: url.clone(),
+                product_name: None,
+                task_id: task_id.clone(),
             });
 
-            tasks.push(task);
-        }
+            // HTTP 요청 시작 이벤트
+            let _ = event_tx.send(ProductDetailEvent::HttpRequestStarted {
+                product_url: url.clone(),
+                task_id: task_id.clone(),
+            });
 
-        let results = futures::future::join_all(tasks).await;
-        let mut details = Vec::new();
-
-        for result in results {
-            match result {
-                Ok(Ok(detail)) => details.push(detail),
-                Ok(Err(e)) => {
-                    if cancellation_token
-                        .as_ref()
-                        .map_or(true, |t| !t.is_cancelled())
-                    {
-                        warn!("Failed to collect product detail: {}", e);
+            // Retry-aware HTTP fetch (sequential) with optional cancellation checks
+            let mut attempts: u32 = 0;
+            let mut html_opt: Option<String> = None;
+            loop {
+                if let Some(ref token) = cancellation_token {
+                    if token.is_cancelled() {
+                        warn!("Cancellation during retry loop for {}", url);
+                        drop(event_tx);
+                        let _ = event_handler.await;
+                        return Ok(details);
                     }
                 }
-                Err(e) => {
-                    if cancellation_token
-                        .as_ref()
-                        .map_or(true, |t| !t.is_cancelled())
-                    {
-                        warn!("Task failed: {}", e);
+
+                attempts += 1;
+                match self.http_client.fetch_response_with_policy(&url).await {
+                    Ok(response) => match response.text().await {
+                        Ok(s) => {
+                            html_opt = Some(s);
+                            break;
+                        }
+                        Err(e) => {
+                            if attempts < max_retries {
+                                tokio::time::sleep(Duration::from_millis(500 * attempts as u64))
+                                    .await;
+                                continue;
+                            } else {
+                                let _ = event_tx.send(ProductDetailEvent::TaskFailed {
+                                    product_url: url.clone(),
+                                    task_id: task_id.clone(),
+                                    error: format!("Failed to read response: {}", e),
+                                    processing_time: start_time.elapsed(),
+                                });
+                                break;
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        if attempts < max_retries {
+                            tokio::time::sleep(Duration::from_millis(500 * attempts as u64)).await;
+                            continue;
+                        } else {
+                            let _ = event_tx.send(ProductDetailEvent::TaskFailed {
+                                product_url: url.clone(),
+                                task_id: task_id.clone(),
+                                error: format!("HTTP request failed: {}", e),
+                                processing_time: start_time.elapsed(),
+                            });
+                            break;
+                        }
                     }
+                }
+            }
+
+            let Some(html) = html_opt else { continue };
+
+            if let Some(ref token) = cancellation_token {
+                if token.is_cancelled() {
+                    warn!("Cancellation after fetch for {}", url);
+                    break;
+                }
+            }
+
+            // 파싱 시작 이벤트
+            let _ = event_tx.send(ProductDetailEvent::ParsingStarted {
+                product_url: url.clone(),
+                task_id: task_id.clone(),
+                html_size: html.len(),
+            });
+
+            let doc = scraper::Html::parse_document(&html);
+            match self
+                .data_extractor
+                .extract_product_detail(&doc, url.clone())
+            {
+                Ok(mut detail) => {
+                    detail.page_id = Some(page_id);
+                    detail.index_in_page = Some(index_in_page);
+                    detail.id = Some(format!("p{:04}i{:02}", page_id, index_in_page));
+
+                    let _ = event_tx.send(ProductDetailEvent::TaskCompleted {
+                        product_url: url.clone(),
+                        product_name: detail
+                            .manufacturer
+                            .clone()
+                            .or_else(|| detail.model.clone()),
+                        task_id: task_id.clone(),
+                        processing_time: start_time.elapsed(),
+                        extracted_fields: calculate_extracted_fields(&detail),
+                    });
+
+                    details.push(detail);
+                }
+                Err(e) => {
+                    let _ = event_tx.send(ProductDetailEvent::TaskFailed {
+                        product_url: url.clone(),
+                        task_id: task_id.clone(),
+                        error: format!("Parsing failed: {}", e),
+                        processing_time: start_time.elapsed(),
+                    });
                 }
             }
         }
@@ -3105,7 +3080,7 @@ impl ProductDetailCollectorImpl {
         let _ = event_handler.await;
 
         info!(
-            "✅ Successfully collected {} product details with async events",
+            "✅ Successfully collected {} product details with async events (sequential)",
             details.len()
         );
         Ok(details)
