@@ -1150,99 +1150,133 @@ export default function CrawlingEngineTabSimple() {
   });
 
   return (
-    <div class="w-full max-w-6xl mx-auto">
-      <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-        <h1 class="text-2xl font-bold text-gray-900 mb-2">
-          🤖 스마트 크롤링 엔진
-        </h1>
-        <p class="text-gray-600 text-sm mb-4">
-          설정 파일 기반 자동 크롤링 시스템 - 별도 설정 전송 없이 즉시 시작
-        </p>
-
-        {/* Sync Runtime (compact) */}
+    <div class="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-blue-50 p-6">
+      <div class="w-full max-w-7xl mx-auto space-y-6">
+        {/* Sync Runtime Status - Premium Card Design */}
         <Show when={syncLive().active || syncLive().pagesProcessed > 0}>
-          <div class="mb-4 p-3 rounded-lg border border-teal-200 bg-teal-50">
-            <div class="flex items-center justify-between mb-1">
-              <div class="text-sm font-semibold text-teal-900">
-                Stage S: DB Sync
+          <div class="bg-gradient-to-r from-teal-500 to-cyan-500 rounded-2xl p-6 mb-8 text-white shadow-2xl">
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-3">
+                <div class="w-3 h-3 bg-white rounded-full animate-pulse"></div>
+                <h3 class="text-xl font-bold">실시간 동기화</h3>
               </div>
-              <div class="text-[11px] text-teal-700">
-                {syncLive().planned
-                  ? `계획 ${syncLive().planned}p`
-                  : "계획 미정"}
+              <div class="bg-white/20 backdrop-blur-sm rounded-full px-4 py-2">
+                <span class="text-sm font-medium">
+                  {syncLive().planned ? `${syncLive().planned}페이지 계획` : "계획 수립 중"}
+                </span>
               </div>
             </div>
-            <div class="mt-1 w-full bg-teal-100 rounded h-2">
+            
+            <div class="bg-white/10 rounded-xl p-1 mb-4">
               {(() => {
                 const processed = syncLive().pagesProcessed || 0;
                 const total = syncLive().planned || processed || 1;
-                const pct = Math.min(
-                  100,
-                  (processed / Math.max(1, total)) * 100
-                );
+                const pct = Math.min(100, (processed / Math.max(1, total)) * 100);
                 return (
-                  <div
-                    class="h-2 bg-teal-500 rounded transition-all"
-                    style={{ width: `${pct}%` }}
-                  />
+                  <div class="relative">
+                    <div class="h-3 bg-white/20 rounded-lg overflow-hidden">
+                      <div
+                        class="h-full bg-gradient-to-r from-white to-yellow-200 rounded-lg transition-all duration-500 ease-out"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                      <span class="text-xs font-semibold text-white drop-shadow-lg">
+                        {pct.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
                 );
               })()}
             </div>
-            <div class="mt-2 flex gap-3 text-xs text-teal-900">
-              <span>
-                pages: <b>{syncLive().pagesProcessed}</b>
-              </span>
-              <span>
-                ins: <b class="text-emerald-700">{syncLive().inserted}</b>
-              </span>
-              <span>
-                upd: <b class="text-indigo-700">{syncLive().updated}</b>
-              </span>
-              <span>
-                skip: <b class="text-gray-700">{syncLive().skipped}</b>
-              </span>
-              <span>
-                fail: <b class="text-rose-700">{syncLive().failed}</b>
-              </span>
-              <Show when={typeof syncLive().durationMs !== "undefined"}>
-                <span>
-                  ms: <b>{syncLive().durationMs}</b>
-                </span>
-              </Show>
+            
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div class="bg-white/10 backdrop-blur-sm rounded-xl p-3 text-center">
+                <div class="text-2xl font-bold text-white">{syncLive().pagesProcessed}</div>
+                <div class="text-xs text-white/80">처리 페이지</div>
+              </div>
+              <div class="bg-emerald-400/20 backdrop-blur-sm rounded-xl p-3 text-center">
+                <div class="text-2xl font-bold text-white">{syncLive().inserted}</div>
+                <div class="text-xs text-white/80">신규 추가</div>
+              </div>
+              <div class="bg-blue-400/20 backdrop-blur-sm rounded-xl p-3 text-center">
+                <div class="text-2xl font-bold text-white">{syncLive().updated}</div>
+                <div class="text-xs text-white/80">업데이트</div>
+              </div>
+              <div class="bg-yellow-400/20 backdrop-blur-sm rounded-xl p-3 text-center">
+                <div class="text-2xl font-bold text-white">{syncLive().skipped}</div>
+                <div class="text-xs text-white/80">건너뜀</div>
+              </div>
+              <div class="bg-red-400/20 backdrop-blur-sm rounded-xl p-3 text-center">
+                <div class="text-2xl font-bold text-white">{syncLive().failed}</div>
+                <div class="text-xs text-white/80">실패</div>
+              </div>
             </div>
+            
             <Show when={syncLive().lastWarn}>
-              <div class="mt-1 text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded px-2 py-1">
-                최근 경고:{" "}
-                <span class="line-clamp-2">{syncLive().lastWarn}</span>
+              <div class="mt-4 bg-red-500/20 backdrop-blur-sm border border-red-300/30 rounded-xl px-4 py-3">
+                <div class="flex items-start gap-2">
+                  <span class="text-red-200 text-sm">⚠️</span>
+                  <div class="text-sm text-red-100">
+                    <strong>최근 경고:</strong> {syncLive().lastWarn}
+                  </div>
+                </div>
               </div>
             </Show>
           </div>
         </Show>
 
-        {/* 상태 표시 */}
-        <div class="mb-6">
+        {/* Status Card with Modern Design */}
+        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8">
+          <div class="flex items-center justify-between mb-6">
+            <h2 class="text-3xl font-bold mb-3 flex items-center gap-2">
+              <span class="leading-none">🤖</span>
+              <span class="bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent">
+                스마트 크롤링 엔진
+              </span>
+            </h2>
+            <div class="flex items-center gap-2">
+              <div class={`w-3 h-3 rounded-full ${isRunning() ? 'bg-green-400 animate-pulse' : 'bg-gray-300'}`}></div>
+              <span class="text-sm font-medium text-gray-600">
+                {isRunning() ? '실행 중' : '대기'}
+              </span>
+            </div>
+          </div>
+          
           <div
-            class={`px-4 py-3 rounded-lg border ${
+            class={`p-6 rounded-xl border-2 transition-all duration-300 ${
               isRunning()
-                ? "bg-blue-50 border-blue-200 text-blue-700"
-                : "bg-green-50 border-green-200 text-green-700"
+                ? "bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 shadow-lg"
+                : "bg-gradient-to-r from-emerald-50 to-green-50 border-emerald-200 shadow-md"
             }`}
           >
-            <div class="flex items-center space-x-2">
-              <span>{isRunning() ? "🔄" : "✅"}</span>
-              <span class="font-medium">{statusMessage()}</span>
-              <Show when={isRunning() && batchInfo().current > 0}>
-                <span class="text-xs ml-2 px-2 py-0.5 rounded bg-blue-100 text-blue-700">
-                  배치 {batchInfo().current}
-                  {batchInfo().totalEstimated
-                    ? `/${batchInfo().totalEstimated}`
-                    : ""}
-                </span>
-              </Show>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-4">
+                <div class={`w-12 h-12 rounded-full flex items-center justify-center ${
+                  isRunning() ? 'bg-blue-500' : 'bg-emerald-500'
+                }`}>
+                  <span class="text-2xl text-white">
+                    {isRunning() ? "🔄" : "✅"}
+                  </span>
+                </div>
+                <div>
+                  <h3 class="text-xl font-bold text-gray-800">{statusMessage()}</h3>
+                  <Show when={isRunning() && batchInfo().current > 0}>
+                    <p class="text-sm text-gray-600 mt-1">
+                      배치 진행: {batchInfo().current}
+                      {batchInfo().totalEstimated ? `/${batchInfo().totalEstimated}` : ""}
+                    </p>
+                  </Show>
+                </div>
+              </div>
+              
               <Show when={isRunning() && batchInfo().batchId}>
-                <span class="text-[10px] ml-1 text-gray-500">
-                  ({batchInfo().batchId})
-                </span>
+                <div class="text-right">
+                  <div class="text-xs text-gray-500">세션 ID</div>
+                  <div class="text-sm font-mono text-gray-700 bg-white/50 px-2 py-1 rounded">
+                    {batchInfo().batchId}
+                  </div>
+                </div>
               </Show>
             </div>
           </div>
@@ -1340,38 +1374,44 @@ export default function CrawlingEngineTabSimple() {
           </Show>
         </div>
 
-        {/* 크롤링 범위 정보 */}
+  {/* 크롤링 범위 정보 - Premium Design */}
         <Show when={crawlingRange()}>
           <div
             ref={(el) => (rangePanelRef = el!)}
-            class={`bg-gray-50 rounded-lg p-4 mb-6 ${
-              rangeFxActive() ? "range-transition-ring" : ""
+            class={`bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8 transition-all duration-300 ${
+              rangeFxActive() ? "ring-4 ring-blue-200 ring-opacity-50" : ""
             }`}
           >
-            <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center justify-between mb-6">
               <button
-                class="flex items-center gap-2 text-lg font-semibold text-gray-900 hover:text-blue-600 transition-colors"
+                class="flex items-center gap-3 text-2xl font-bold text-gray-800 hover:text-blue-600 transition-all duration-200 group"
                 onClick={() => setRangeExpanded(!rangeExpanded())}
               >
-                <span class={`transform transition-transform duration-200 ${
-                  rangeExpanded() ? 'rotate-90' : 'rotate-0'
+                <div class={`w-8 h-8 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center transform transition-all duration-300 ${
+                  rangeExpanded() ? 'rotate-90 scale-110' : 'rotate-0'
                 }`}>
-                  ▶
+                  <span class="text-white text-sm">▶</span>
+                </div>
+                <span class="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                  계산된 크롤링 범위
                 </span>
-                📊 계산된 크롤링 범위
               </button>
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-3">
+                <span class={`px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 ${
+                  rangeExpanded() 
+                    ? 'bg-blue-100 text-blue-700' 
+                    : 'bg-gray-100 text-gray-600'
+                }`}>
+                  {rangeExpanded() ? '펼쳐짐' : '접혀짐'}
+                </span>
                 <button
-                  class="text-xs px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+                  class="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-purple-500 text-white text-sm font-medium hover:from-blue-600 hover:to-purple-600 disabled:opacity-50 transition-all duration-200 shadow-lg hover:shadow-xl"
                   onClick={() => {
                     const prev = crawlingRange();
                     const prevStart = (prev?.range?.[0] ?? 0) as number;
                     const prevEnd = (prev?.range?.[1] ?? 0) as number;
-                    const prevTotal = (prev?.progress?.total_products ??
-                      0) as number;
-                    const prevCover = `${
-                      prev?.progress?.progress_percentage?.toFixed?.(1) ?? "0.0"
-                    }%`;
+                    const prevTotal = (prev?.progress?.total_products ?? 0) as number;
+                    const prevCover = `${prev?.progress?.progress_percentage?.toFixed?.(1) ?? "0.0"}%`;
                     setRangePrevSnapshot({
                       start: prevStart,
                       end: prevEnd,
@@ -1381,209 +1421,210 @@ export default function CrawlingEngineTabSimple() {
                     if (effectsOn()) playRangeTransition();
                   }}
                   disabled={!effectsOn()}
-                  title={
-                    effectsOn()
-                      ? "계산된 범위 효과 미리보기"
-                      : "효과가 꺼져 있습니다"
-                  }
+                  title={effectsOn() ? "계산된 범위 효과 미리보기" : "효과가 꺼져 있습니다"}
                 >
-                  효과 미리보기
+                  ✨ 효과 미리보기
                 </button>
               </div>
             </div>
+            
             <Show when={rangeExpanded()}>
-              <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6 animate-in slide-in-from-top duration-300">
-              <div class="text-center">
-                <div class="text-2xl font-bold text-blue-600">
-                  <Show
-                    when={rangeFxActive()}
-                    fallback={
-                      <span class="drum-line">
-                        {renderDrumText(
-                          String(crawlingRange()?.range?.[0] || 0)
+              <div class="space-y-6 animate-in slide-in-from-top duration-500">
+                {/* Main Stats Grid with Glass Effect */}
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  <div class="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl p-4 border border-blue-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
+                    <div class="text-center">
+                      <div class="text-3xl font-bold text-blue-600 mb-2">
+                        <Show
+                          when={rangeFxActive()}
+                          fallback={
+                            <span class="drum-line">
+                              {renderDrumText(String(crawlingRange()?.range?.[0] || 0))}
+                            </span>
+                          }
+                        >
+                          <span class="shatter-line">
+                            {renderShatterText(
+                              String(
+                                rangePrevSnapshot()?.start ??
+                                  (crawlingRange()?.range?.[0] || 0)
+                              )
+                            )}
+                          </span>
+                        </Show>
+                      </div>
+                      <div class="text-sm font-medium text-blue-700">시작 페이지</div>
+                    </div>
+                  </div>
+                  
+                  <div class="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-2xl p-4 border border-emerald-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
+                    <div class="text-center">
+                      <div class="text-3xl font-bold text-emerald-600 mb-2">
+                        <Show
+                          when={rangeFxActive()}
+                          fallback={
+                            <span class="drum-line">
+                              {renderDrumText(String(crawlingRange()?.range?.[1] || 0))}
+                            </span>
+                          }
+                        >
+                          <span class="shatter-line">
+                            {renderShatterText(
+                              String(
+                                rangePrevSnapshot()?.end ??
+                                  (crawlingRange()?.range?.[1] || 0)
+                              )
+                            )}
+                          </span>
+                        </Show>
+                      </div>
+                      <div class="text-sm font-medium text-emerald-700">종료 페이지</div>
+                    </div>
+                  </div>
+                  
+                  <div class="bg-gradient-to-br from-purple-50 to-purple-100 rounded-2xl p-4 border border-purple-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
+                    <div class="text-center">
+                      <div class="text-3xl font-bold text-purple-600 mb-2">
+                        <Show
+                          when={rangeFxActive()}
+                          fallback={
+                            <span class="drum-line">
+                              {renderDrumText(String(crawlingRange()?.crawling_info?.pages_to_crawl || 0))}
+                            </span>
+                          }
+                        >
+                          <span class="shatter-line">
+                            {renderShatterText(String(crawlingRange()?.crawling_info?.pages_to_crawl || 0))}
+                          </span>
+                        </Show>
+                      </div>
+                      <div class="text-sm font-medium text-purple-700">페이지 수</div>
+                    </div>
+                  </div>
+                  
+                  <div class="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl p-4 border border-indigo-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
+                    <div class="text-center">
+                      <div class="text-3xl font-bold text-indigo-600 mb-2">
+                        {crawlingRange()?.local_db_info?.total_saved_products || 0}
+                      </div>
+                      <div class="text-sm font-medium text-indigo-700">💾 로컬DB 제품</div>
+                    </div>
+                  </div>
+                  
+                  <div class="bg-gradient-to-br from-orange-50 to-orange-100 rounded-2xl p-4 border border-orange-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
+                    <div class="text-center">
+                      <div class="text-3xl font-bold text-orange-600 mb-2">
+                        <Show
+                          when={rangeFxActive()}
+                          fallback={
+                            <span class="drum-line">
+                              {renderDrumText(
+                                `${crawlingRange()?.progress?.progress_percentage.toFixed(1) || 0}%`
+                              )}
+                            </span>
+                          }
+                        >
+                          <span class="shatter-line">
+                            {renderShatterText(
+                              String(
+                                rangePrevSnapshot()?.coverText ??
+                                  `${crawlingRange()?.progress?.progress_percentage.toFixed(1) || 0}%`
+                              )
+                            )}
+                          </span>
+                        </Show>
+                      </div>
+                      <div class="text-sm font-medium text-orange-700">커버리지</div>
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Confetti overlay */}
+                <Show when={confettiPieces().length > 0}>
+                  <div class="relative">
+                    <div
+                      class="pointer-events-none absolute inset-0 overflow-visible"
+                      aria-hidden="true"
+                    >
+                      <For each={confettiPieces()}>
+                        {(p) => (
+                          <span
+                            class="confetti-piece"
+                            style={
+                              {
+                                left: "50%",
+                                top: "0",
+                                background: p.color,
+                                "--cx": `${p.rx}px`,
+                                "--cy": `${p.ry}px`,
+                                "--crot": `${p.rot}deg`,
+                                "--cw": `${p.cw}px`,
+                                "--ch": `${p.ch}px`,
+                              } as any
+                            }
+                          />
                         )}
-                      </span>
-                    }
-                  >
-                    <span class="shatter-line">
-                      {renderShatterText(
-                        String(
-                          rangePrevSnapshot()?.start ??
-                            (crawlingRange()?.range?.[0] || 0)
-                        )
-                      )}
-                    </span>
-                  </Show>
-                </div>
-                <div class="text-sm text-gray-600">시작 페이지</div>
-              </div>
-              <div class="text-center">
-                <div class="text-2xl font-bold text-green-600">
-                  <Show
-                    when={rangeFxActive()}
-                    fallback={
-                      <span class="drum-line">
-                        {renderDrumText(
-                          String(crawlingRange()?.range?.[1] || 0)
-                        )}
-                      </span>
-                    }
-                  >
-                    <span class="shatter-line">
-                      {renderShatterText(
-                        String(
-                          rangePrevSnapshot()?.end ??
-                            (crawlingRange()?.range?.[1] || 0)
-                        )
-                      )}
-                    </span>
-                  </Show>
-                </div>
-                <div class="text-sm text-gray-600">종료 페이지</div>
-              </div>
-               <div class="text-center">
-                <div class="text-2xl font-bold text-gray-600">
-                  <Show
-                    when={rangeFxActive()}
-                    fallback={
-                      <span class="drum-line">
-                        {renderDrumText(
-                          String(crawlingRange()?.crawling_info?.pages_to_crawl || 0)
-                        )}
-                      </span>
-                    }
-                  >
-                    <span class="shatter-line">
-                      {renderShatterText(
-                        String(crawlingRange()?.crawling_info?.pages_to_crawl || 0)
-                      )}
-                    </span>
-                  </Show>
-                </div>
-                <div class="text-sm text-gray-600">페이지 수</div>
-              </div>
-              <div class="text-center">
-                <div class="text-2xl font-bold text-purple-600">
-                  {crawlingRange()?.local_db_info?.total_saved_products || 0}
-                </div>
-                <div class="text-sm text-gray-600">💾 로컬DB 제품 수</div>
-              </div>
-              <div class="text-center">
-                <div class="text-2xl font-bold text-orange-600">
-                  <Show
-                    when={rangeFxActive()}
-                    fallback={
-                      <span class="drum-line">
-                        {renderDrumText(
-                          `${
-                            crawlingRange()?.progress?.progress_percentage.toFixed(
-                              1
-                            ) || 0
-                          }%`
-                        )}
-                      </span>
-                    }
-                  >
-                    <span class="shatter-line">
-                      {renderShatterText(
-                        String(
-                          rangePrevSnapshot()?.coverText ??
-                            `${
-                              crawlingRange()?.progress?.progress_percentage.toFixed(
-                                1
-                              ) || 0
-                            }%`
-                        )
-                      )}
-                    </span>
-                  </Show>
-                </div>
-                <div class="text-sm text-gray-600">커버리지</div>
-              </div>
-            </div>
+                      </For>
+                    </div>
+                  </div>
+                </Show>
 
-            {/* Confetti overlay */}
-            <Show when={confettiPieces().length > 0}>
-              <div class="relative">
-                <div
-                  class="pointer-events-none absolute inset-0 overflow-visible"
-                  aria-hidden="true"
-                >
-                  <For each={confettiPieces()}>
-                    {(p) => (
-                      <span
-                        class="confetti-piece"
-                        style={
-                          {
-                            left: "50%",
-                            top: "0",
-                            background: p.color,
-                            "--cx": `${p.rx}px`,
-                            "--cy": `${p.ry}px`,
-                            "--crot": `${p.rot}deg`,
-                            "--cw": `${p.cw}px`,
-                            "--ch": `${p.ch}px`,
-                          } as any
-                        }
-                      />
-                    )}
-                  </For>
+                {/* Enhanced Site Info Section */}
+                <div class="bg-gradient-to-r from-gray-50 to-blue-50 rounded-2xl p-6 border border-gray-200/50">
+                  <h4 class="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+                    <span class="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center">
+                      🌐
+                    </span>
+                    사이트 정보
+                  </h4>
+                  <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div class="bg-white rounded-xl p-4 shadow-sm border border-blue-100 hover:shadow-md transition-all duration-200">
+                      <div class="text-2xl font-bold text-blue-600 mb-1">
+                        {crawlingRange()?.site_info?.total_pages || 0}
+                      </div>
+                      <div class="text-sm text-blue-700 font-medium">사이트 총 페이지</div>
+                    </div>
+                    <div class="bg-white rounded-xl p-4 shadow-sm border border-emerald-100 hover:shadow-md transition-all duration-200">
+                      <div class="text-2xl font-bold text-emerald-600 mb-1">
+                        {crawlingRange()?.site_info?.products_on_last_page || 0}
+                      </div>
+                      <div class="text-sm text-emerald-700 font-medium">마지막 페이지 제품</div>
+                    </div>
+                    <div class="bg-white rounded-xl p-4 shadow-sm border border-purple-100 hover:shadow-md transition-all duration-200">
+                      <div class="text-2xl font-bold text-purple-600 mb-1">
+                        {crawlingRange()?.site_info?.estimated_total_products || 0}
+                      </div>
+                      <div class="text-sm text-purple-700 font-medium">추정 총 제품</div>
+                    </div>
+                    <div class="bg-white rounded-xl p-4 shadow-sm border border-orange-100 hover:shadow-md transition-all duration-200">
+                      <div class="text-2xl font-bold text-orange-600 mb-1">
+                        {crawlingRange()?.crawling_info?.strategy || "unknown"}
+                      </div>
+                      <div class="text-sm text-orange-700 font-medium">🎯 크롤링 전략</div>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </Show>
-
-            {/* 사이트 정보 섹션 */}
-            <div class="border-t pt-4">
-              <h4 class="text-md font-medium text-gray-800 mb-3">
-                🌐 사이트 정보
-              </h4>
-              <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                <div class="text-center bg-white rounded p-3 border">
-                  <div class="text-xl font-bold text-blue-600">
-                    {crawlingRange()?.site_info?.total_pages || 0}
-                  </div>
-                  <div class="text-xs text-gray-600">사이트 총 페이지 수</div>
-                </div>
-                <div class="text-center bg-white rounded p-3 border">
-                  <div class="text-xl font-bold text-green-600">
-                    {crawlingRange()?.site_info?.products_on_last_page || 0}
-                  </div>
-                  <div class="text-xs text-gray-600">마지막 페이지 제품 수</div>
-                </div>
-                <div class="text-center bg-white rounded p-3 border">
-                  <div class="text-xl font-bold text-purple-600">
-                    {crawlingRange()?.site_info?.estimated_total_products || 0}
-                  </div>
-                  <div class="text-xs text-gray-600">추정 총 제품 수</div>
-                </div>
-                <div class="text-center bg-white rounded p-3 border">
-                  <div class="text-xl font-bold text-orange-600">
-                    {crawlingRange()?.crawling_info?.strategy || "unknown"}
-                  </div>
-                  <div class="text-xs text-gray-600">🎯 크롤링 전략</div>
-                </div>
-              </div>
-            </div>
             </Show>
           </div>
         </Show>
 
-        {/* 제어 버튼 */}
-        <div class="flex flex-wrap gap-4 mb-6 items-end">
+  {/* 제어 패널 */}
+  <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8 flex flex-wrap gap-4 items-end">
           {/* Legacy simple crawling button removed */}
 
           {/* Sync Controls */}
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-3">
             <button
               onClick={(e) => {
                 triggerStartWave(e as unknown as MouseEvent);
                 startUnifiedAdvanced();
               }}
               disabled={isRunning()}
-              class={`px-6 py-3 rounded-lg font-medium text-white ripple ${
+              class={`px-6 py-3 rounded-xl font-semibold text-white ripple shadow-md hover:shadow-lg transition ${
                 isRunning()
                   ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-purple-600 hover:bg-purple-700"
+                  : "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
               }`}
             >
               {isRunning()
@@ -1594,13 +1635,13 @@ export default function CrawlingEngineTabSimple() {
             <button
               onClick={calculateCrawlingRange}
               disabled={isRunning()}
-              class="px-6 py-3 rounded-lg font-medium text-blue-600 border border-blue-600 hover:bg-blue-50 disabled:opacity-50 ripple"
+              class="px-6 py-3 rounded-xl font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 disabled:opacity-50 ripple shadow"
             >
               📊 범위 다시 계산
             </button>
             <input
               type="text"
-              class={`w-64 px-3 py-2 border rounded-md text-sm ${
+              class={`w-72 px-3 py-2 rounded-md text-sm bg-white/70 border border-white/40 focus:outline-none focus:ring-2 focus:ring-indigo-300 ${
                 syncPulse() && effectsOn() ? "flash-db" : ""
               }`}
               placeholder="Sync 범위 (예: 498-492,489,487-485)"
@@ -1681,10 +1722,10 @@ export default function CrawlingEngineTabSimple() {
                 }
               }}
               disabled={isSyncing()}
-              class={`px-4 py-2 rounded-lg font-medium text-white ripple ${
+              class={`px-5 py-2.5 rounded-xl font-semibold text-white ripple shadow-md hover:shadow-lg transition ${
                 isSyncing()
                   ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-purple-600 hover:bg-purple-700"
+                  : "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
               }`}
               title="기본 엔진으로 명시적 페이지 배열을 실행"
             >
@@ -1693,7 +1734,7 @@ export default function CrawlingEngineTabSimple() {
           </div>
 
           {/* Effects toggle */}
-          <label class="flex items-center gap-2 text-sm text-gray-600 select-none">
+          <label class="flex items-center gap-2 text-sm text-gray-700 select-none">
             <input
               type="checkbox"
               checked={effectsOn()}
@@ -1703,18 +1744,18 @@ export default function CrawlingEngineTabSimple() {
           </label>
         </div>
 
-        {/* Stage X: DB Pagination Diagnostics */}
-        <div class="bg-white rounded-lg border p-4 mb-6">
+    {/* Stage X: DB Pagination Diagnostics */}
+    <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8">
           <div class="flex items-center justify-between mb-2">
-            <h3 class="text-md font-semibold text-gray-800">
+      <h3 class="text-lg font-bold text-gray-800">
               Stage X: DB Pagination Diagnostics
             </h3>
             <div class="flex gap-2">
               <button
-                class={`px-3 py-1 text-sm rounded ${
+        class={`px-3 py-1.5 text-sm rounded-lg shadow ${
                   diagLoading()
                     ? "bg-gray-200 text-gray-500"
-                    : "bg-indigo-600 text-white hover:bg-indigo-700"
+          : "bg-indigo-600 text-white hover:bg-indigo-700"
                 }`}
                 disabled={diagLoading()}
                 onClick={runDiagnostics}
@@ -1722,10 +1763,10 @@ export default function CrawlingEngineTabSimple() {
                 {diagLoading() ? "진단 중…" : "진단 실행"}
               </button>
               <button
-                class={`px-3 py-1 text-sm rounded ${
+        class={`px-3 py-1.5 text-sm rounded-lg shadow ${
                   cleanupLoading()
                     ? "bg-gray-200 text-gray-500"
-                    : "bg-rose-600 text-white hover:bg-rose-700"
+          : "bg-rose-600 text-white hover:bg-rose-700"
                 }`}
                 disabled={cleanupLoading()}
                 onClick={runUrlCleanup}
@@ -1733,7 +1774,7 @@ export default function CrawlingEngineTabSimple() {
                 {cleanupLoading() ? "정리 중…" : "URL 중복 제거"}
               </button>
               <button
-                class={`px-3 py-1 text-sm rounded ${
+        class={`px-3 py-1.5 text-sm rounded-lg shadow ${
                   isSyncing()
                     ? "bg-gray-200 text-gray-500"
                     : "bg-blue-600 text-white hover:bg-blue-700"
@@ -1882,12 +1923,12 @@ export default function CrawlingEngineTabSimple() {
 
         {/* Stage1/Stage2 Runtime Monitor */}
         <div
-          class={`grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 ${
+          class={`grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 ${
             stage1Pulse() ? "pulse-once" : ""
           }`}
         >
           <div
-            class={`bg-white rounded-lg border p-4 ${
+            class={`bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 ${
               stage1Pulse() ? "pulse-once" : ""
             }`}
           >
@@ -1958,7 +1999,7 @@ export default function CrawlingEngineTabSimple() {
           </div>
 
           <div
-            class={`bg-white rounded-lg border p-4 ${
+            class={`bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 ${
               stage2Pulse() ? "pulse-once" : ""
             }`}
           >
@@ -2035,9 +2076,9 @@ export default function CrawlingEngineTabSimple() {
         </div>
 
         {/* Stage3/Stage4/Stage5 Mini Panels */}
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
           {/* Stage 3: Validation */}
-          <div class="bg-white rounded-lg border p-4">
+          <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
             <div class="flex items-center justify-between mb-2">
               <h3 class="text-md font-semibold text-gray-800">
                 Stage 3: Validation
@@ -2114,7 +2155,7 @@ export default function CrawlingEngineTabSimple() {
           </div>
           {/* Stage 4: DB Snapshot */}
           <div
-            class={`bg-white rounded-lg border p-4 ${
+            class={`bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 ${
               dbFlash() && effectsOn() ? "flash-db" : ""
             }`}
           >
@@ -2176,7 +2217,7 @@ export default function CrawlingEngineTabSimple() {
 
           {/* Stage 5: Persist 요약 */}
           <div
-            class={`bg-white rounded-lg border p-4 ${
+            class={`bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 ${
               persistFlash() && effectsOn() ? "flash-save" : ""
             }`}
           >
@@ -2235,12 +2276,12 @@ export default function CrawlingEngineTabSimple() {
         </div>
 
         {/* 실시간 로그 */}
-        <div class="bg-black rounded-lg p-4">
-          <h3 class="text-sm font-semibold text-white mb-2">📝 실시간 로그</h3>
-          <div class="font-mono text-xs text-green-400 h-64 overflow-y-auto">
+        <div class="bg-gray-900/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/10 p-6">
+          <h3 class="text-sm font-semibold text-white/90 mb-3">📝 실시간 로그</h3>
+          <div class="font-mono text-xs text-emerald-300 h-64 overflow-y-auto">
             <Show
               when={logs().length > 0}
-              fallback={<div class="text-gray-500">로그 대기 중...</div>}
+              fallback={<div class="text-gray-400">로그 대기 중...</div>}
             >
               <For each={logs()}>{(log) => <div class="mb-1">{log}</div>}</For>
             </Show>
@@ -2249,9 +2290,9 @@ export default function CrawlingEngineTabSimple() {
 
         {/* Actor 이벤트 콘솔 (개발용) */}
         <Show when={showConsole()}>
-          <div class="mt-6 border rounded-lg">
+          <div class="mt-8 bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 overflow-hidden">
             <button
-              class="w-full px-4 py-2 border-b bg-gray-50 text-sm text-gray-700 hover:bg-gray-100 transition-colors flex items-center justify-between"
+              class="w-full px-5 py-3 border-b border-white/30 bg-gradient-to-r from-gray-50 to-gray-100 text-sm text-gray-700 hover:from-gray-100 hover:to-white transition-colors flex items-center justify-between"
               onClick={() => setConsoleExpanded(!consoleExpanded())}
             >
               <span class="flex items-center gap-2">
