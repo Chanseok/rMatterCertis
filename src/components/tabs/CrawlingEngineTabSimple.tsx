@@ -459,6 +459,25 @@ export default function CrawlingEngineTabSimple() {
 
     const unsubs: Array<() => void> = [];
 
+    // Listen settings-updated to recalc planned range
+    try {
+      listen('settings-updated', () => {
+        addLog('🛠️ 설정 변경 감지 → 범위 재계산');
+        // Optional transition snapshot for nicer UX
+        try {
+          const prev = crawlingRange();
+          const prevStart = (prev?.range?.[0] ?? 0) as number;
+          const prevEnd = (prev?.range?.[1] ?? 0) as number;
+          const prevTotal = (prev?.progress?.total_products ?? 0) as number;
+          const prevCover = `${(prev?.progress?.progress_percentage?.toFixed?.(1) ?? '0.0')}%`;
+          setRangePrevSnapshot({ start: prevStart, end: prevEnd, total: prevTotal, coverText: String(prevCover) });
+        } catch {}
+        calculateCrawlingRange();
+      }).then((un) => unsubs.push(un));
+    } catch (e) {
+      console.warn('[CrawlingEngineTabSimple] listen settings-updated failed', e);
+    }
+
     // Listen to unified Actor session lifecycle to toggle buttons/status
     tauriApi
       .subscribeToActorBridgeEvents((name, payload) => {

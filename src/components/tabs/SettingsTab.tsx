@@ -3,6 +3,7 @@
  * settingsStore를 기반으로 한 실제 백엔드 연동 설정 UI
  */
 import { Component, createSignal, onMount, For } from 'solid-js';
+import { emit } from '@tauri-apps/api/event';
 import { settingsState } from '../../stores/settingsStore';
 import { CONFIG_PRESETS } from '../../types/config';
 
@@ -21,6 +22,12 @@ export const SettingsTab: Component = () => {
       await settingsState.saveSettings();
       setSaveMessage('✅ 설정이 저장되었습니다');
       setShowMessage(true);
+      // 설정 저장 성공 시, 전역 이벤트로 알림을 보냄
+      try {
+        await emit('settings-updated', { at: Date.now() });
+      } catch (e) {
+        console.warn('[SettingsTab] settings-updated emit failed', e);
+      }
       setTimeout(() => setShowMessage(false), 3000);
     } catch (error) {
       setSaveMessage('❌ 설정 저장에 실패했습니다');
