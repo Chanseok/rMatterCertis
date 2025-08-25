@@ -10,14 +10,12 @@ import { SettingsTab } from './tabs/SettingsTab';
 import { StatusTab } from './tabs/StatusTab';
 import { LocalDBTab } from './tabs/LocalDBTab';
 import { AnalysisTab } from './tabs/AnalysisTab';
-import SimpleEventDisplay from './SimpleEventDisplay';
 // Archived tabs removed from runtime imports:
 // LiveProductionTab, LiveCrawlingTab, NewArchTestTab, ActorSystemTab,
 // DomainDashboardTab, RealtimeDashboardTab, HierarchicalEventMonitor
 import { tabState, restoreLastActiveTab } from '../stores/tabStore';
 let auditEnabled = false; // dev event audit flag
 import { windowState } from '../stores/windowStore';
-import { eventStore } from '../stores/eventStore';
 
 export const AppWithTabs: Component = () => {
   const currentTab = createMemo(() => tabState.activeTab);
@@ -27,9 +25,6 @@ export const AppWithTabs: Component = () => {
     console.log('🚀 AppWithTabs 초기화 시작...');
     
     try {
-  // 전역 이벤트 스토어 초기화 (비활성 탭이어도 이벤트 버퍼링)
-  await eventStore.initOnce();
-
       // 윈도우 상태 복원 (위치, 크기, 줌 레벨, 마지막 탭 등)
       await windowState.restoreState();
       
@@ -65,9 +60,6 @@ export const AppWithTabs: Component = () => {
       </Show>
       <Show when={currentTab() === 'analysis'}>
         <AnalysisTab />
-      </Show>
-      <Show when={currentTab() === 'events'}>
-        <SimpleEventDisplay />
       </Show>
     </AppLayout>
   );

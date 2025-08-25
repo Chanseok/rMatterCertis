@@ -14,6 +14,7 @@ export default function CrawlingEngineTabSimple() {
     createSignal<string>("크롤링 준비 완료");
   const [logs, setLogs] = createSignal<string[]>([]);
   const [showConsole, setShowConsole] = createSignal<boolean>(true);
+  const [consoleExpanded, setConsoleExpanded] = createSignal<boolean>(false); // Actor 이벤트 콘솔 확장/축소 상태 (기본: 축소)
   const [isValidating, setIsValidating] = createSignal(false);
   const [isSyncing, setIsSyncing] = createSignal(false);
   const [syncRanges, setSyncRanges] = createSignal<string>("");
@@ -45,6 +46,7 @@ export default function CrawlingEngineTabSimple() {
   // Dramatic transition for Calculated Crawling Range
   const [rangeFxKey, setRangeFxKey] = createSignal(0);
   const [rangeFxActive, setRangeFxActive] = createSignal(false);
+  const [rangeExpanded, setRangeExpanded] = createSignal(true); // 크롤링 범위 섹션 확장/축소 상태
   const [confettiPieces, setConfettiPieces] = createSignal<
     Array<{
       x: number;
@@ -1347,39 +1349,50 @@ export default function CrawlingEngineTabSimple() {
             }`}
           >
             <div class="flex items-center justify-between mb-3">
-              <h3 class="text-lg font-semibold text-gray-900">
-                📊 계산된 크롤링 범위
-              </h3>
               <button
-                class="text-xs px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
-                onClick={() => {
-                  const prev = crawlingRange();
-                  const prevStart = (prev?.range?.[0] ?? 0) as number;
-                  const prevEnd = (prev?.range?.[1] ?? 0) as number;
-                  const prevTotal = (prev?.progress?.total_products ??
-                    0) as number;
-                  const prevCover = `${
-                    prev?.progress?.progress_percentage?.toFixed?.(1) ?? "0.0"
-                  }%`;
-                  setRangePrevSnapshot({
-                    start: prevStart,
-                    end: prevEnd,
-                    total: prevTotal,
-                    coverText: String(prevCover),
-                  });
-                  if (effectsOn()) playRangeTransition();
-                }}
-                disabled={!effectsOn()}
-                title={
-                  effectsOn()
-                    ? "계산된 범위 효과 미리보기"
-                    : "효과가 꺼져 있습니다"
-                }
+                class="flex items-center gap-2 text-lg font-semibold text-gray-900 hover:text-blue-600 transition-colors"
+                onClick={() => setRangeExpanded(!rangeExpanded())}
               >
-                효과 미리보기
+                <span class={`transform transition-transform duration-200 ${
+                  rangeExpanded() ? 'rotate-90' : 'rotate-0'
+                }`}>
+                  ▶
+                </span>
+                📊 계산된 크롤링 범위
               </button>
+              <div class="flex items-center gap-2">
+                <button
+                  class="text-xs px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+                  onClick={() => {
+                    const prev = crawlingRange();
+                    const prevStart = (prev?.range?.[0] ?? 0) as number;
+                    const prevEnd = (prev?.range?.[1] ?? 0) as number;
+                    const prevTotal = (prev?.progress?.total_products ??
+                      0) as number;
+                    const prevCover = `${
+                      prev?.progress?.progress_percentage?.toFixed?.(1) ?? "0.0"
+                    }%`;
+                    setRangePrevSnapshot({
+                      start: prevStart,
+                      end: prevEnd,
+                      total: prevTotal,
+                      coverText: String(prevCover),
+                    });
+                    if (effectsOn()) playRangeTransition();
+                  }}
+                  disabled={!effectsOn()}
+                  title={
+                    effectsOn()
+                      ? "계산된 범위 효과 미리보기"
+                      : "효과가 꺼져 있습니다"
+                  }
+                >
+                  효과 미리보기
+                </button>
+              </div>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+            <Show when={rangeExpanded()}>
+              <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6 animate-in slide-in-from-top duration-300">
               <div class="text-center">
                 <div class="text-2xl font-bold text-blue-600">
                   <Show
@@ -1551,6 +1564,7 @@ export default function CrawlingEngineTabSimple() {
                 </div>
               </div>
             </div>
+            </Show>
           </div>
         </Show>
 
@@ -2236,10 +2250,27 @@ export default function CrawlingEngineTabSimple() {
         {/* Actor 이벤트 콘솔 (개발용) */}
         <Show when={showConsole()}>
           <div class="mt-6 border rounded-lg">
-            <div class="px-4 py-2 border-b bg-gray-50 text-sm text-gray-700">
-              Actor 이벤트 콘솔
-            </div>
-            <EventConsole />
+            <button
+              class="w-full px-4 py-2 border-b bg-gray-50 text-sm text-gray-700 hover:bg-gray-100 transition-colors flex items-center justify-between"
+              onClick={() => setConsoleExpanded(!consoleExpanded())}
+            >
+              <span class="flex items-center gap-2">
+                <span class={`transform transition-transform duration-200 ${
+                  consoleExpanded() ? 'rotate-90' : 'rotate-0'
+                }`}>
+                  ▶
+                </span>
+                Actor 이벤트 콘솔
+              </span>
+              <span class="text-xs text-gray-500">
+                {consoleExpanded() ? '숨기기' : '펼치기'}
+              </span>
+            </button>
+            <Show when={consoleExpanded()}>
+              <div class="animate-in slide-in-from-top duration-300">
+                <EventConsole />
+              </div>
+            </Show>
           </div>
         </Show>
       </div>
