@@ -34,14 +34,6 @@ impl StageLogic for ListPageLogic {
             }
         };
 
-        let status_checker = Arc::new(
-            crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
-                (*input.deps.http).clone(),
-                (*input.deps.extractor).clone(),
-                input.config.clone(),
-                Arc::clone(&input.deps.repo),
-            ),
-        );
         let cfg = crate::infrastructure::crawling_service_impls::CollectorConfig {
             max_concurrent: input.config.user.crawling.workers.list_page_max_concurrent as u32,
             concurrency: input.config.user.crawling.workers.list_page_max_concurrent as u32,
@@ -58,12 +50,25 @@ impl StageLogic for ListPageLogic {
                 Arc::clone(&input.deps.http),
                 Arc::clone(&input.deps.extractor),
                 cfg,
-                Arc::clone(&status_checker),
+                // Collector still needs a StatusChecker for edge cases (e.g., Retry-After);
+                // reuse a lightweight checker instance but do NOT call site-level status here.
+                Arc::new(
+                    crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
+                        (*input.deps.http).clone(),
+                        (*input.deps.extractor).clone(),
+                        input.config.clone(),
+                        Arc::clone(&input.deps.repo),
+                    ),
+                ),
             );
 
-        let (total_pages, products_on_last_page) = match status_checker.check_site_status().await {
-            Ok(status) => (status.total_pages, status.products_on_last_page),
-            Err(_) => (100u32, 10u32),
+        // Use injected pagination hints (from StageActor/BatchActor) to avoid per-item site status calls
+        let (total_pages, products_on_last_page) = match (input.total_pages_hint, input.products_on_last_page_hint) {
+            (Some(tp), Some(plp)) => (tp, plp),
+            // Fallbacks if hints are missing (should be rare): use conservative defaults
+            _ => (input.config.user.crawling.page_range_limit.max(1), 12u32.min(
+                crate::domain::constants::site::PRODUCTS_PER_PAGE as u32
+            )),
         };
 
         let urls = collector

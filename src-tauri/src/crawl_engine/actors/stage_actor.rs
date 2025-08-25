@@ -812,9 +812,11 @@ impl StageActor {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency_limit as usize));
         // 전략/설정 및 의존성 복사
         let strategy_factory_clone = self.strategy_factory.clone();
-        // 페이지네이션 힌트 복사
-        let site_total_pages_hint = self.site_total_pages_hint;
-        let products_on_last_page_hint = self.products_on_last_page_hint;
+    // 페이지네이션 힌트 복사 (Copy types; safe to move into tasks)
+    let site_total_pages_hint = self.site_total_pages_hint;
+    let products_on_last_page_hint = self.products_on_last_page_hint;
+    // Duplicate policy 사전 클론 (self를 태스크 내부에서 캡처하지 않기 위해)
+    let duplicate_policy_base = self.duplicate_policy.clone();
 
         // 각 아이템을 병렬로 처리 (StageItemStarted를 먼저 emit하여 이벤트 순서 보장)
         let deadline = Instant::now() + overall_timeout;
@@ -835,7 +837,10 @@ impl StageActor {
             // Per-iteration clones for moved values into async block
             let app_config_iter = app_config_clone.clone();
             let strategy_factory_iter = strategy_factory_clone.clone();
-            let duplicate_policy = self.duplicate_policy.clone();
+            let duplicate_policy = duplicate_policy_base.clone();
+            // Copy pagination hints into the task scope (avoid referencing self)
+            let tp_hint = site_total_pages_hint;
+            let plp_hint = products_on_last_page_hint;
             let task = tokio::spawn(async move {
                 // Separate handle for persistence path to avoid moved value issues
                 let product_repo_for_persist = product_repo_clone.clone();
@@ -931,6 +936,8 @@ impl StageActor {
                         item: base_item.clone(),
                         config: app_config_iter.clone(),
                         deps,
+                        total_pages_hint: tp_hint,
+                        products_on_last_page_hint: plp_hint,
                     };
                     match logic.execute(input).await {
                         Ok(crate::crawl_engine::stages::traits::StageOutput { result }) => {

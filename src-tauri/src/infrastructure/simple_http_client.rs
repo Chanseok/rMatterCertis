@@ -13,9 +13,9 @@ use scraper::Html;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::sync::{Mutex, Semaphore};
-use tokio::time::{interval, sleep};
+use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 /// Per-request options to override UA, referer, and toggle robots for a single call
 #[derive(Debug, Default, Clone)]
@@ -78,9 +78,10 @@ impl Default for HttpClientConfig {
 /// Uses token bucket algorithm for true concurrent rate limiting
 #[derive(Debug)]
 struct GlobalRateLimiter {
-    /// Semaphore representing available tokens (permits per second)
+    /// Semaphore representing available tokens (permits)
+    /// We refill up to a capped capacity each second by adding 1 token per tick.
     semaphore: Arc<Semaphore>,
-    /// Current rate limit setting
+    /// Current rate limit setting (RPS)
     current_rate: Arc<Mutex<u32>>,
     /// Token refill task handle
     refill_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
@@ -93,7 +94,8 @@ impl GlobalRateLimiter {
     fn get_instance() -> &'static GlobalRateLimiter {
         GLOBAL_RATE_LIMITER.get_or_init(|| {
             let initial_rate = 50; // Default 50 RPS
-            let semaphore = Arc::new(Semaphore::new(initial_rate as usize));
+            // Start with 0 available permits; refill task will add permits as rate is applied
+            let semaphore = Arc::new(Semaphore::new(0));
             let current_rate = Arc::new(Mutex::new(initial_rate));
 
             info!(
@@ -118,15 +120,24 @@ impl GlobalRateLimiter {
 
     async fn update_rate_limit(&self, max_requests_per_second: u32) {
         let mut current_rate = self.current_rate.lock().await;
-
-        if *current_rate != max_requests_per_second {
+        let changed = *current_rate != max_requests_per_second;
+        if changed {
             *current_rate = max_requests_per_second;
             info!(
                 "🔄 Updated global rate limit to {} RPS",
                 max_requests_per_second
             );
+        }
 
-            // Restart token refill task with new rate
+        // Ensure refill is running. If rate changed, restart. If unchanged but no task, start.
+        let need_start = {
+            let handle = self.refill_handle.lock().await;
+            match &*handle {
+                None => true,
+                Some(h) => h.is_finished(),
+            }
+        };
+        if changed || need_start {
             self.start_refill_task(max_requests_per_second).await;
         }
     }
@@ -144,20 +155,28 @@ impl GlobalRateLimiter {
         }
 
         let semaphore = self.semaphore.clone();
+        // Refill once every (1000 / rate) ms; cap bucket size to `rate` (1s worth of tokens)
         let refill_interval = Duration::from_millis(1000 / rate as u64);
+        let capacity: usize = rate as usize;
 
         info!(
-            "🎯 Starting token refill task: {} tokens per second (interval: {:?})",
-            rate, refill_interval
+            "🎯 Starting token refill task: {} tokens/sec (interval: {:?}, capacity: {})",
+            rate, refill_interval, capacity
         );
 
-        let new_handle = tokio::spawn(async move {
+    let new_handle = tokio::spawn(async move {
             let mut interval = interval(refill_interval);
             loop {
                 interval.tick().await;
-                // Add one permit (token) to the bucket
-                semaphore.add_permits(1);
-                debug!("Token refilled for global rate limiter");
+                // Add one token if below capacity
+                let available = semaphore.available_permits();
+                if available < capacity {
+                    semaphore.add_permits(1);
+            trace!("[rate-limit] token refilled (available={}/{})", available + 1, capacity);
+                } else {
+                    // At capacity; skip adding to avoid unbounded burst
+            trace!("[rate-limit] token refill skipped (at capacity {}/{})", available, capacity);
+                }
             }
         });
 
@@ -169,23 +188,17 @@ impl GlobalRateLimiter {
         self.update_rate_limit(max_requests_per_second).await;
 
         if max_requests_per_second == 0 {
-            debug!("🔓 No rate limiting applied (max_requests_per_second = 0)");
+            debug!("🔓 [rate-limit] off (max_requests_per_second = 0)");
             return; // No rate limiting
         }
 
-        debug!(
-            "🎫 Attempting to acquire token for HTTP request (rate limit: {} RPS)",
-            max_requests_per_second
-        );
+        debug!("🎫 [rate-limit] awaiting token ({} RPS)", max_requests_per_second);
 
         // Acquire a token (permit) from the bucket
         // This will wait if no tokens are available
-        let _permit = self.semaphore.acquire().await.unwrap();
+    let _permit = self.semaphore.acquire().await.unwrap();
 
-        debug!(
-            "🎫 Token acquired for HTTP request (global rate: {} RPS)",
-            max_requests_per_second
-        );
+        debug!("🎫 [rate-limit] token acquired ({} RPS)", max_requests_per_second);
 
         // Permit is automatically released when _permit goes out of scope
     }
@@ -413,48 +426,18 @@ impl HttpClient {
     pub async fn fetch_html(&self, url: &str) -> Result<Html> {
         info!("Fetching HTML from: {}", url);
 
-        let mut last_error = None;
+        // Delegate retry/backoff and robots handling to the unified policy
+        let response = self.fetch_response_with_policy(url).await?;
+        let html_content = response
+            .text()
+            .await
+            .map_err(|e| anyhow!("Failed to read response body: {}", e))?;
 
-        for attempt in 1..=self.config.max_retries {
-            // Apply global rate limiting
-            let rate_limiter = GlobalRateLimiter::get_instance();
-            if let Some(label) = &self.context_label {
-                debug!(
-                    "⚖️ [rate-limit] {} RPS (source: {})",
-                    self.config.max_requests_per_second, label
-                );
-            } else {
-                debug!(
-                    "⚖️ [rate-limit] {} RPS",
-                    self.config.max_requests_per_second
-                );
-            }
-            rate_limiter
-                .apply_rate_limit(self.config.max_requests_per_second)
-                .await;
-
-            match self.fetch_html_once(url).await {
-                Ok(html) => {
-                    debug!(
-                        "Successfully fetched HTML from {} on attempt {}",
-                        url, attempt
-                    );
-                    return Ok(html);
-                }
-                Err(e) => {
-                    warn!("Attempt {} failed for {}: {}", attempt, url, e);
-                    last_error = Some(e);
-
-                    if attempt < self.config.max_retries {
-                        // Exponential backoff
-                        let delay_seconds = 2_u64.pow(attempt - 1);
-                        sleep(Duration::from_secs(delay_seconds)).await;
-                    }
-                }
-            }
+        if html_content.is_empty() {
+            return Err(anyhow!("Empty response from {}", url));
         }
 
-        Err(last_error.unwrap_or_else(|| anyhow!("Unknown error while fetching {}", url)))
+        Ok(Html::parse_document(&html_content))
     }
 
     /// Fetch raw response from a URL
@@ -553,6 +536,139 @@ impl HttpClient {
         Ok(response)
     }
 
+    /// Fetch response with retry policy and cancellation support
+    /// Mirrors `fetch_response_with_policy` but allows cancellation during rate limiting,
+    /// request execution, and backoff sleeps. Honors Retry-After on 429/503.
+    pub async fn fetch_response_with_policy_cancel(
+        &self,
+        url: &str,
+        cancellation_token: &CancellationToken,
+    ) -> Result<Response> {
+        use reqwest::StatusCode;
+        let mut last_err: Option<anyhow::Error> = None;
+
+        for attempt in 1..=self.config.max_retries {
+            let rate_limiter = GlobalRateLimiter::get_instance();
+            if let Some(label) = &self.context_label {
+                debug!(
+                    "⚖️ [rate-limit] {} RPS (source: {})",
+                    self.config.max_requests_per_second, label
+                );
+            } else {
+                debug!(
+                    "⚖️ [rate-limit] {} RPS",
+                    self.config.max_requests_per_second
+                );
+            }
+
+            tokio::select! {
+                _ = rate_limiter.apply_rate_limit(self.config.max_requests_per_second) => {},
+                _ = cancellation_token.cancelled() => {
+                    return Err(anyhow!("Request cancelled during rate limiting"));
+                }
+            }
+
+            // robots.txt check if enabled
+            if self.config.respect_robots_txt && !self.robots_allowed(url).await? {
+                warn!("robots.txt disallows: {}", url);
+                return Err(anyhow!("Blocked by robots.txt: {}", url));
+            }
+
+            if attempt > 1 {
+                info!(
+                    "🌐 HTTP GET (attempt {}/{}, cancel-aware retrying): {}",
+                    attempt, self.config.max_retries, url
+                );
+            } else {
+                info!(
+                    "🌐 HTTP GET (attempt {}/{}, cancel-aware): {}",
+                    attempt, self.config.max_retries, url
+                );
+            }
+
+            // Perform request with cancellation
+            let send_res: Result<Response, anyhow::Error> = tokio::select! {
+                res = self.build_request(url, &RequestOptions::default())?.send() => {
+                    res.map_err(|e| anyhow!("HTTP request failed: {}", e))
+                },
+                _ = cancellation_token.cancelled() => {
+                    warn!("🛑 HTTP request cancelled: {}", url);
+                    return Err(anyhow!("HTTP request cancelled"));
+                }
+            };
+
+            match send_res {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() {
+                        return Ok(resp);
+                    }
+
+                    // Decide retry policy based on status
+                    let retryable = matches!(
+                        status,
+                        StatusCode::REQUEST_TIMEOUT
+                            | StatusCode::TOO_MANY_REQUESTS
+                            | StatusCode::BAD_GATEWAY
+                            | StatusCode::SERVICE_UNAVAILABLE
+                            | StatusCode::GATEWAY_TIMEOUT
+                            | StatusCode::INTERNAL_SERVER_ERROR
+                    );
+
+                    error!("❌ HTTP error {} on attempt {}: {}", status, attempt, url);
+
+                    if retryable && attempt < self.config.max_retries {
+                        // Respect Retry-After if present on 429/503
+                        let mut delay_secs = 2_u64.pow(attempt - 1);
+                        if let Some(retry_after) = resp.headers().get(reqwest::header::RETRY_AFTER) {
+                            if let Ok(s) = retry_after.to_str() {
+                                if let Ok(parsed) = s.parse::<u64>() {
+                                    delay_secs = parsed.max(delay_secs);
+                                }
+                            }
+                        }
+                        // Full jitter: [0, delay_secs]
+                        let jitter_ms: u64 = if delay_secs == 0 { 0 } else { fastrand::u64(..(delay_secs * 1000)) };
+                        info!(target: "kpi.network",
+                            "{{\"event\":\"retry_scheduled\",\"attempt\":{},\"max\":{},\"base_delay_s\":{},\"jitter_ms\":{},\"url\":\"{}\"}}",
+                            attempt, self.config.max_retries, delay_secs, jitter_ms, url
+                        );
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_millis(jitter_ms)) => {},
+                            _ = cancellation_token.cancelled() => {
+                                return Err(anyhow!("Request cancelled during backoff"));
+                            }
+                        }
+                        continue;
+                    } else {
+                        return Err(anyhow!("HTTP error {}: {}", status, url));
+                    }
+                }
+                Err(e) => {
+                    warn!("⚠️ Network error on attempt {}: {}", attempt, e);
+                    last_err = Some(anyhow!("HTTP request failed: {}", e));
+                    if attempt < self.config.max_retries {
+                        let delay_secs = 2_u64.pow(attempt - 1);
+                        let jitter_ms: u64 = if delay_secs == 0 { 0 } else { fastrand::u64(..(delay_secs * 1000)) };
+                        info!(target: "kpi.network",
+                            "{{\"event\":\"retry_scheduled\",\"attempt\":{},\"max\":{},\"base_delay_s\":{},\"jitter_ms\":{},\"url\":\"{}\"}}",
+                            attempt, self.config.max_retries, delay_secs, jitter_ms, url
+                        );
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_millis(jitter_ms)) => {},
+                            _ = cancellation_token.cancelled() => {
+                                return Err(anyhow!("Request cancelled during backoff"));
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| anyhow!("Unknown HTTP error for {}", url)))
+    }
+
     /// Fetch response with retry policy based on HTTP status codes and network errors
     pub async fn fetch_response_with_policy(&self, url: &str) -> Result<Response> {
         use reqwest::StatusCode;
@@ -627,7 +743,15 @@ impl HttpClient {
                                 }
                             }
                         }
-                        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                        // Full jitter: [0, delay_secs]
+                        let jitter_ms: u64 = if delay_secs == 0 { 0 } else {
+                            fastrand::u64(..(delay_secs * 1000))
+                        };
+                        info!(target: "kpi.network",
+                            "{{\"event\":\"retry_scheduled\",\"attempt\":{},\"max\":{},\"base_delay_s\":{},\"jitter_ms\":{},\"url\":\"{}\"}}",
+                            attempt, self.config.max_retries, delay_secs, jitter_ms, url
+                        );
+                        tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
                         continue;
                     } else {
                         return Err(anyhow!("HTTP error {}: {}", status, url));
@@ -638,7 +762,14 @@ impl HttpClient {
                     last_err = Some(anyhow!("HTTP request failed: {}", e));
                     if attempt < self.config.max_retries {
                         let delay_secs = 2_u64.pow(attempt - 1);
-                        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                        let jitter_ms: u64 = if delay_secs == 0 { 0 } else {
+                            fastrand::u64(..(delay_secs * 1000))
+                        };
+                        info!(target: "kpi.network",
+                            "{{\"event\":\"retry_scheduled\",\"attempt\":{},\"max\":{},\"base_delay_s\":{},\"jitter_ms\":{},\"url\":\"{}\"}}",
+                            attempt, self.config.max_retries, delay_secs, jitter_ms, url
+                        );
+                        tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
                         continue;
                     }
                 }
@@ -669,68 +800,23 @@ impl HttpClient {
         }
     }
 
-    /// Single attempt to fetch HTML content
-    async fn fetch_html_once(&self, url: &str) -> Result<Html> {
-        let response = self.fetch_response(url).await?;
-
-        let html_content = response
-            .text()
-            .await
-            .map_err(|e| anyhow!("Failed to read response body: {}", e))?;
-
-        if html_content.is_empty() {
-            return Err(anyhow!("Empty response from {}", url));
-        }
-
-        Ok(Html::parse_document(&html_content))
-    }
+    
 
     /// Fetch HTML content and return it as a string (Send-compatible)
     pub async fn fetch_html_string(&self, url: &str) -> Result<String> {
         info!("🔄 Starting HTML fetch: {}", url);
 
-        let mut last_error = None;
+        // Use unified policy for retries/backoff and robots handling
+        let response = self.fetch_response_with_policy(url).await?;
+        let text = response
+            .text()
+            .await
+            .map_err(|e| anyhow!("Failed to read response body: {}", e))?;
 
-        for attempt in 1..=self.config.max_retries {
-            // Apply global rate limiting
-            let rate_limiter = GlobalRateLimiter::get_instance();
-            if let Some(label) = &self.context_label {
-                debug!(
-                    "⚖️ Applying rate limit {} RPS (source: {})",
-                    self.config.max_requests_per_second, label
-                );
-            } else {
-                debug!(
-                    "⚖️ Applying rate limit {} RPS",
-                    self.config.max_requests_per_second
-                );
-            }
-            rate_limiter
-                .apply_rate_limit(self.config.max_requests_per_second)
-                .await;
-
-            match self.fetch_html_string_once(url).await {
-                Ok(html) => {
-                    debug!(
-                        "Successfully fetched HTML from {} on attempt {}",
-                        url, attempt
-                    );
-                    return Ok(html);
-                }
-                Err(e) => {
-                    warn!("Attempt {} failed for {}: {}", attempt, url, e);
-                    last_error = Some(e);
-
-                    if attempt < self.config.max_retries {
-                        // Exponential backoff
-                        let delay_seconds = 2_u64.pow(attempt - 1);
-                        sleep(Duration::from_secs(delay_seconds)).await;
-                    }
-                }
-            }
+        if text.is_empty() {
+            return Err(anyhow!("Empty response from {}", url));
         }
-
-        Err(last_error.unwrap_or_else(|| anyhow!("Unknown error while fetching {}", url)))
+        Ok(text)
     }
 
     /// Fetch HTML content as string with cancellation support
@@ -741,82 +827,29 @@ impl HttpClient {
     ) -> Result<String> {
         info!("🔄 Starting HTML fetch (cancel-aware): {}", url);
 
-        let mut last_error = None;
+        // Use unified cancel-aware policy for HTTP-level retries/backoff
+        let response = self
+            .fetch_response_with_policy_cancel(url, cancellation_token)
+            .await?;
 
-        for attempt in 1..=self.config.max_retries {
-            // Apply global rate limiting (cancel-aware)
-            let rate_limiter = GlobalRateLimiter::get_instance();
-            if let Some(label) = &self.context_label {
-                debug!(
-                    "⚖️ Applying rate limit {} RPS (source: {})",
-                    self.config.max_requests_per_second, label
-                );
-            } else {
-                debug!(
-                    "⚖️ Applying rate limit {} RPS",
-                    self.config.max_requests_per_second
-                );
+        // Read body with cancellation
+        let text = tokio::select! {
+            res = response.text() => {
+                res.map_err(|e| anyhow!("Failed to read response body: {}", e))?
+            },
+            _ = cancellation_token.cancelled() => {
+                warn!("🛑 Response reading cancelled for URL: {}", url);
+                return Err(anyhow!("Response reading cancelled"));
             }
+        };
 
-            tokio::select! {
-                _ = rate_limiter.apply_rate_limit(self.config.max_requests_per_second) => {},
-                _ = cancellation_token.cancelled() => {
-                    return Err(anyhow!("Request cancelled during rate limiting"));
-                }
-            }
-
-            // Do the request
-            match self
-                .fetch_response_with_cancel(url, cancellation_token)
-                .await
-            {
-                Ok(response) => {
-                    // Read body with cancellation
-                    let text = tokio::select! {
-                        res = response.text() => {
-                            res.map_err(|e| anyhow!("Failed to read response body: {}", e))?
-                        },
-                        _ = cancellation_token.cancelled() => {
-                            warn!("🛑 Response reading cancelled for URL: {}", url);
-                            return Err(anyhow!("Response reading cancelled"));
-                        }
-                    };
-
-                    if text.is_empty() {
-                        return Err(anyhow!("Empty response from {}", url));
-                    }
-                    return Ok(text);
-                }
-                Err(e) => {
-                    warn!("Attempt {} failed for {}: {}", attempt, url, e);
-                    last_error = Some(e);
-
-                    if attempt < self.config.max_retries {
-                        let delay_seconds = 2_u64.pow(attempt - 1);
-                        sleep(Duration::from_secs(delay_seconds)).await;
-                    }
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or_else(|| anyhow!("Unknown error while fetching {}", url)))
-    }
-
-    /// Single attempt to fetch HTML content as string (Send-compatible)
-    async fn fetch_html_string_once(&self, url: &str) -> Result<String> {
-        let response = self.fetch_response(url).await?;
-
-        let html_content = response
-            .text()
-            .await
-            .map_err(|e| anyhow!("Failed to read response body: {}", e))?;
-
-        if html_content.is_empty() {
+        if text.is_empty() {
             return Err(anyhow!("Empty response from {}", url));
         }
-
-        Ok(html_content)
+        Ok(text)
     }
+
+    
 
     /// Parse HTML from string (non-async, can be called after fetch)
     pub fn parse_html(&self, html_content: &str) -> Html {

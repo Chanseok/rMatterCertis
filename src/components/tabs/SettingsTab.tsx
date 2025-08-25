@@ -438,7 +438,7 @@ export const SettingsTab: Component = () => {
                 type="number" 
                 value={settingsState.getNestedValue('user.crawling.product_list_retry_count')} 
                 min={1} 
-                max={10} 
+                max={30} 
                 onInput={e => settingsState.updateNestedField('user.crawling.product_list_retry_count', +e.currentTarget.value)} 
               />
             </label>
@@ -447,7 +447,7 @@ export const SettingsTab: Component = () => {
                 type="number" 
                 value={settingsState.getNestedValue('user.crawling.product_detail_retry_count')} 
                 min={1} 
-                max={10} 
+                max={30} 
                 onInput={e => settingsState.updateNestedField('user.crawling.product_detail_retry_count', +e.currentTarget.value)} 
               />
             </label>

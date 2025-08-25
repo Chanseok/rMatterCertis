@@ -23,6 +23,8 @@ pub struct StageInput {
     pub item: StageItem,
     pub config: AppConfig,
     pub deps: Deps,
+    pub total_pages_hint: Option<u32>,
+    pub products_on_last_page_hint: Option<u32>,
 }
 
 /// Output from a StageLogic strategy
