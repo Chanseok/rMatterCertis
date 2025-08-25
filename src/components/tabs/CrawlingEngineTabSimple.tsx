@@ -1338,6 +1338,534 @@ export default function CrawlingEngineTabSimple() {
           </Show>
         </div>
 
+        {/* 크롤링 범위 정보 */}
+        <Show when={crawlingRange()}>
+          <div
+            ref={(el) => (rangePanelRef = el!)}
+            class={`bg-gray-50 rounded-lg p-4 mb-6 ${
+              rangeFxActive() ? "range-transition-ring" : ""
+            }`}
+          >
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-lg font-semibold text-gray-900">
+                📊 계산된 크롤링 범위
+              </h3>
+              <button
+                class="text-xs px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+                onClick={() => {
+                  const prev = crawlingRange();
+                  const prevStart = (prev?.range?.[0] ?? 0) as number;
+                  const prevEnd = (prev?.range?.[1] ?? 0) as number;
+                  const prevTotal = (prev?.progress?.total_products ??
+                    0) as number;
+                  const prevCover = `${
+                    prev?.progress?.progress_percentage?.toFixed?.(1) ?? "0.0"
+                  }%`;
+                  setRangePrevSnapshot({
+                    start: prevStart,
+                    end: prevEnd,
+                    total: prevTotal,
+                    coverText: String(prevCover),
+                  });
+                  if (effectsOn()) playRangeTransition();
+                }}
+                disabled={!effectsOn()}
+                title={
+                  effectsOn()
+                    ? "계산된 범위 효과 미리보기"
+                    : "효과가 꺼져 있습니다"
+                }
+              >
+                효과 미리보기
+              </button>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+              <div class="text-center">
+                <div class="text-2xl font-bold text-blue-600">
+                  <Show
+                    when={rangeFxActive()}
+                    fallback={
+                      <span class="drum-line">
+                        {renderDrumText(
+                          String(crawlingRange()?.range?.[0] || 0)
+                        )}
+                      </span>
+                    }
+                  >
+                    <span class="shatter-line">
+                      {renderShatterText(
+                        String(
+                          rangePrevSnapshot()?.start ??
+                            (crawlingRange()?.range?.[0] || 0)
+                        )
+                      )}
+                    </span>
+                  </Show>
+                </div>
+                <div class="text-sm text-gray-600">시작 페이지</div>
+              </div>
+              <div class="text-center">
+                <div class="text-2xl font-bold text-green-600">
+                  <Show
+                    when={rangeFxActive()}
+                    fallback={
+                      <span class="drum-line">
+                        {renderDrumText(
+                          String(crawlingRange()?.range?.[1] || 0)
+                        )}
+                      </span>
+                    }
+                  >
+                    <span class="shatter-line">
+                      {renderShatterText(
+                        String(
+                          rangePrevSnapshot()?.end ??
+                            (crawlingRange()?.range?.[1] || 0)
+                        )
+                      )}
+                    </span>
+                  </Show>
+                </div>
+                <div class="text-sm text-gray-600">종료 페이지</div>
+              </div>
+               <div class="text-center">
+                <div class="text-2xl font-bold text-gray-600">
+                  <Show
+                    when={rangeFxActive()}
+                    fallback={
+                      <span class="drum-line">
+                        {renderDrumText(
+                          String(crawlingRange()?.crawling_info?.pages_to_crawl || 0)
+                        )}
+                      </span>
+                    }
+                  >
+                    <span class="shatter-line">
+                      {renderShatterText(
+                        String(crawlingRange()?.crawling_info?.pages_to_crawl || 0)
+                      )}
+                    </span>
+                  </Show>
+                </div>
+                <div class="text-sm text-gray-600">페이지 수</div>
+              </div>
+              <div class="text-center">
+                <div class="text-2xl font-bold text-purple-600">
+                  {crawlingRange()?.local_db_info?.total_saved_products || 0}
+                </div>
+                <div class="text-sm text-gray-600">💾 로컬DB 제품 수</div>
+              </div>
+              <div class="text-center">
+                <div class="text-2xl font-bold text-orange-600">
+                  <Show
+                    when={rangeFxActive()}
+                    fallback={
+                      <span class="drum-line">
+                        {renderDrumText(
+                          `${
+                            crawlingRange()?.progress?.progress_percentage.toFixed(
+                              1
+                            ) || 0
+                          }%`
+                        )}
+                      </span>
+                    }
+                  >
+                    <span class="shatter-line">
+                      {renderShatterText(
+                        String(
+                          rangePrevSnapshot()?.coverText ??
+                            `${
+                              crawlingRange()?.progress?.progress_percentage.toFixed(
+                                1
+                              ) || 0
+                            }%`
+                        )
+                      )}
+                    </span>
+                  </Show>
+                </div>
+                <div class="text-sm text-gray-600">커버리지</div>
+              </div>
+            </div>
+
+            {/* Confetti overlay */}
+            <Show when={confettiPieces().length > 0}>
+              <div class="relative">
+                <div
+                  class="pointer-events-none absolute inset-0 overflow-visible"
+                  aria-hidden="true"
+                >
+                  <For each={confettiPieces()}>
+                    {(p) => (
+                      <span
+                        class="confetti-piece"
+                        style={
+                          {
+                            left: "50%",
+                            top: "0",
+                            background: p.color,
+                            "--cx": `${p.rx}px`,
+                            "--cy": `${p.ry}px`,
+                            "--crot": `${p.rot}deg`,
+                            "--cw": `${p.cw}px`,
+                            "--ch": `${p.ch}px`,
+                          } as any
+                        }
+                      />
+                    )}
+                  </For>
+                </div>
+              </div>
+            </Show>
+
+            {/* 사이트 정보 섹션 */}
+            <div class="border-t pt-4">
+              <h4 class="text-md font-medium text-gray-800 mb-3">
+                🌐 사이트 정보
+              </h4>
+              <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <div class="text-center bg-white rounded p-3 border">
+                  <div class="text-xl font-bold text-blue-600">
+                    {crawlingRange()?.site_info?.total_pages || 0}
+                  </div>
+                  <div class="text-xs text-gray-600">사이트 총 페이지 수</div>
+                </div>
+                <div class="text-center bg-white rounded p-3 border">
+                  <div class="text-xl font-bold text-green-600">
+                    {crawlingRange()?.site_info?.products_on_last_page || 0}
+                  </div>
+                  <div class="text-xs text-gray-600">마지막 페이지 제품 수</div>
+                </div>
+                <div class="text-center bg-white rounded p-3 border">
+                  <div class="text-xl font-bold text-purple-600">
+                    {crawlingRange()?.site_info?.estimated_total_products || 0}
+                  </div>
+                  <div class="text-xs text-gray-600">추정 총 제품 수</div>
+                </div>
+                <div class="text-center bg-white rounded p-3 border">
+                  <div class="text-xl font-bold text-orange-600">
+                    {crawlingRange()?.crawling_info?.strategy || "unknown"}
+                  </div>
+                  <div class="text-xs text-gray-600">🎯 크롤링 전략</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Show>
+
+        {/* 제어 버튼 */}
+        <div class="flex flex-wrap gap-4 mb-6 items-end">
+          {/* Legacy simple crawling button removed */}
+
+          {/* Sync Controls */}
+          <div class="flex items-center gap-2">
+            <button
+              onClick={(e) => {
+                triggerStartWave(e as unknown as MouseEvent);
+                startUnifiedAdvanced();
+              }}
+              disabled={isRunning()}
+              class={`px-6 py-3 rounded-lg font-medium text-white ripple ${
+                isRunning()
+                  ? "bg-gray-400 cursor-not-allowed"
+                  : "bg-purple-600 hover:bg-purple-700"
+              }`}
+            >
+              {isRunning()
+                ? "통합 파이프라인 실행 중..."
+                : "🎭 통합 파이프라인 (하이)"}
+            </button>
+
+            <button
+              onClick={calculateCrawlingRange}
+              disabled={isRunning()}
+              class="px-6 py-3 rounded-lg font-medium text-blue-600 border border-blue-600 hover:bg-blue-50 disabled:opacity-50 ripple"
+            >
+              📊 범위 다시 계산
+            </button>
+            <input
+              type="text"
+              class={`w-64 px-3 py-2 border rounded-md text-sm ${
+                syncPulse() && effectsOn() ? "flash-db" : ""
+              }`}
+              placeholder="Sync 범위 (예: 498-492,489,487-485)"
+              value={syncRanges()}
+              onInput={(e) => setSyncRanges(e.currentTarget.value)}
+            />
+
+            <button
+              onClick={async () => {
+                if (isSyncing()) return;
+                let ranges = (syncRanges() || "").trim();
+                if (!ranges) {
+                  const auto = deriveRangesFromDiagnostics();
+                  if (auto) {
+                    setSyncRanges(auto);
+                    addLog(`🔁 Diagnostics 기반 범위 자동설정: ${auto}`);
+                    ranges = auto;
+                  } else {
+                    addLog(
+                      "⚠️ 먼저 Sync 범위를 입력하거나, 진단을 실행해 주세요. 예: 498-492,489"
+                    );
+                    return;
+                  }
+                }
+                // Parse ranges into explicit pages
+                const norm = ranges
+                  .replace(/\s+/g, "")
+                  .replace(/[–—−﹣－]/g, "-")
+                  .replace(/[〜～]/g, "~");
+                const tokens = norm
+                  .split(",")
+                  .map((t) => t.trim())
+                  .filter(Boolean);
+                const pages: number[] = [];
+                for (const tk of tokens) {
+                  if (tk.includes("-") || tk.includes("~")) {
+                    const sep = tk.includes("~") ? "~" : "-";
+                    const [a, b] = tk.split(sep);
+                    let s = parseInt(a, 10),
+                      e = parseInt(b, 10);
+                    if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
+                    if (e > s) {
+                      const tmp = s;
+                      s = e;
+                      e = tmp;
+                    }
+                    for (let p = s; p >= e; p--) pages.push(p);
+                  } else {
+                    const v = parseInt(tk, 10);
+                    if (Number.isFinite(v)) pages.push(v);
+                  }
+                }
+                const seen = new Set<number>();
+                const uniquePages = pages.filter((p) =>
+                  seen.has(p) ? false : (seen.add(p), true)
+                );
+                if (uniquePages.length === 0) {
+                  addLog("⚠️ 유효한 페이지가 없습니다. 예: 498-492,489");
+                  return;
+                }
+                setIsSyncing(true);
+                addLog(
+                  `🧑‍💻 수동 크롤링(Actor) 실행: [${uniquePages.join(", ")}]`
+                );
+                try {
+                  const res = await tauriApi.startManualCrawlPagesActor(
+                    uniquePages,
+                    true
+                  );
+                  addLog(`✅ 수동 크롤링 세션 시작: ${JSON.stringify(res)}`);
+                  if (res?.session_id) {
+                    addLog(`🆔 세션 ID: ${res.session_id}`);
+                  }
+                } catch (e) {
+                  addLog(`❌ 수동 크롤링(Actor) 실패: ${e}`);
+                } finally {
+                  setIsSyncing(false);
+                }
+              }}
+              disabled={isSyncing()}
+              class={`px-4 py-2 rounded-lg font-medium text-white ripple ${
+                isSyncing()
+                  ? "bg-gray-400 cursor-not-allowed"
+                  : "bg-purple-600 hover:bg-purple-700"
+              }`}
+              title="기본 엔진으로 명시적 페이지 배열을 실행"
+            >
+              수동 크롤링
+            </button>
+          </div>
+
+          {/* Effects toggle */}
+          <label class="flex items-center gap-2 text-sm text-gray-600 select-none">
+            <input
+              type="checkbox"
+              checked={effectsOn()}
+              onInput={(e) => setEffectsOn(e.currentTarget.checked)}
+            />
+            애니메이션 효과
+          </label>
+        </div>
+
+        {/* Stage X: DB Pagination Diagnostics */}
+        <div class="bg-white rounded-lg border p-4 mb-6">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-md font-semibold text-gray-800">
+              Stage X: DB Pagination Diagnostics
+            </h3>
+            <div class="flex gap-2">
+              <button
+                class={`px-3 py-1 text-sm rounded ${
+                  diagLoading()
+                    ? "bg-gray-200 text-gray-500"
+                    : "bg-indigo-600 text-white hover:bg-indigo-700"
+                }`}
+                disabled={diagLoading()}
+                onClick={runDiagnostics}
+              >
+                {diagLoading() ? "진단 중…" : "진단 실행"}
+              </button>
+              <button
+                class={`px-3 py-1 text-sm rounded ${
+                  cleanupLoading()
+                    ? "bg-gray-200 text-gray-500"
+                    : "bg-rose-600 text-white hover:bg-rose-700"
+                }`}
+                disabled={cleanupLoading()}
+                onClick={runUrlCleanup}
+              >
+                {cleanupLoading() ? "정리 중…" : "URL 중복 제거"}
+              </button>
+              <button
+                class={`px-3 py-1 text-sm rounded ${
+                  isSyncing()
+                    ? "bg-gray-200 text-gray-500"
+                    : "bg-blue-600 text-white hover:bg-blue-700"
+                }`}
+                disabled={isSyncing()}
+                onClick={async () => {
+                  try {
+                    setIsSyncing(true);
+                    addLog("🔁 products→details 좌표/ID 정합화 실행...");
+                    const rep = await tauriApi.syncProductDetailsCoordinates();
+                    addLog(
+                      `✅ 정합화 완료: products.id=${rep.updated_product_ids}, inserted=${rep.inserted_details}, updated_coords=${rep.updated_coordinates}, details.id=${rep.updated_ids} (p=${rep.total_products}, d=${rep.total_details})`
+                    );
+                  } catch (e: any) {
+                    addLog(`❌ 정합화 실패: ${e.message || e}`);
+                  } finally {
+                    setIsSyncing(false);
+                  }
+                }}
+                title="products.url 기준으로 product_details에 page_id/index_in_page/id를 정합화합니다 (크롤링 없음)"
+              >
+                products→details 동기화
+              </button>
+            </div>
+          </div>
+          <Show
+            when={diagResult()}
+            fallback={
+              <p class="text-xs text-gray-500">
+                로컬 DB의 page_id/index_in_page 정합성을 검사합니다. 실행을 눌러
+                결과를 확인하세요.
+              </p>
+            }
+          >
+            <div class="text-xs text-gray-700 space-y-2">
+              {(() => {
+                const expr = deriveRangesFromDiagnostics();
+                if (!expr) return null;
+                return (
+                  <div class="p-2 rounded border border-amber-200 bg-amber-50 text-amber-900 flex items-center justify-between">
+                    <div>
+                      <b>추천 Sync 범위</b>:{" "}
+                      <span class="font-mono">{expr}</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button
+                        class="px-2 py-0.5 text-[11px] rounded bg-amber-600 text-white hover:bg-amber-700"
+                        title="추천 범위를 Sync 입력에 적용"
+                        onClick={() => {
+                          setSyncRanges(expr);
+                          setSyncPulse(true);
+                          setTimeout(() => setSyncPulse(false), 400);
+                          addLog(`🧭 추천 범위 적용 → ${expr}`);
+                        }}
+                      >
+                        적용
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+              <div class="flex gap-4">
+                <span>
+                  총 제품: <b>{diagResult()?.total_products ?? 0}</b>
+                </span>
+                <span>
+                  DB 최대 page_id: <b>{diagResult()?.max_page_id_db ?? "-"}</b>
+                </span>
+                <span>
+                  사이트 총 페이지:{" "}
+                  <b>{diagResult()?.total_pages_site ?? "-"}</b>
+                </span>
+                <span>
+                  마지막 페이지 아이템:{" "}
+                  <b>{diagResult()?.items_on_last_page ?? "-"}</b>
+                </span>
+              </div>
+              <Show when={diagResult()?.prepass}>
+                <div class="flex gap-4 text-teal-800 bg-teal-50 border border-teal-200 rounded p-2">
+                  <span>
+                    사전 정렬(details):{" "}
+                    <b>{diagResult()?.prepass?.details_aligned ?? 0}</b>
+                  </span>
+                  <span>
+                    products.id 백필:{" "}
+                    <b>{diagResult()?.prepass?.products_id_backfilled ?? 0}</b>
+                  </span>
+                </div>
+              </Show>
+              <div>
+                <b>이상 그룹</b>
+                <ul class="list-disc ml-5">
+                  <For
+                    each={(diagResult()?.group_summaries ?? []).filter(
+                      (g: any) => g.status !== "ok"
+                    )}
+                  >
+                    {(g: any) => (
+                      <li>
+                        page_id {g.page_id}
+                        {g.current_page_number != null
+                          ? ` (물리 ${g.current_page_number})`
+                          : ""}
+                        : status={g.status} count={g.count} distinct=
+                        {g.distinct_indices}
+                        {g.duplicate_indices?.length
+                          ? ` dup=${g.duplicate_indices.join(",")}`
+                          : ""}
+                        {g.missing_indices?.length
+                          ? ` miss=${g.missing_indices.join(",")}`
+                          : ""}
+                        {g.out_of_range_count
+                          ? ` oob=${g.out_of_range_count}`
+                          : ""}
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </div>
+              <Show when={(diagResult()?.duplicate_positions ?? []).length > 0}>
+                <div>
+                  <b>중복 위치 샘플</b>
+                  <ul class="list-disc ml-5">
+                    <For
+                      each={(diagResult()?.duplicate_positions ?? []).slice(
+                        0,
+                        20
+                      )}
+                    >
+                      {(d: any) => (
+                        <li>
+                          page_id {d.page_id}
+                          {d.current_page_number != null
+                            ? ` (물리 ${d.current_page_number})`
+                            : ""}
+                          , index {d.index_in_page}: {d.urls?.length ?? 0}개 URL
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </div>
+              </Show>
+            </div>
+          </Show>
+        </div>
+
         {/* Stage1/Stage2 Runtime Monitor */}
         <div
           class={`grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 ${
@@ -1490,205 +2018,6 @@ export default function CrawlingEngineTabSimple() {
               ></div>
             </div>
           </div>
-        </div>
-
-        {/* Stage X: DB Pagination Diagnostics */}
-        <div class="bg-white rounded-lg border p-4 mb-6">
-          <div class="flex items-center justify-between mb-2">
-            <h3 class="text-md font-semibold text-gray-800">
-              Stage X: DB Pagination Diagnostics
-            </h3>
-            <div class="flex gap-2">
-              <button
-                class={`px-3 py-1 text-sm rounded ${
-                  diagLoading()
-                    ? "bg-gray-200 text-gray-500"
-                    : "bg-indigo-600 text-white hover:bg-indigo-700"
-                }`}
-                disabled={diagLoading()}
-                onClick={runDiagnostics}
-              >
-                {diagLoading() ? "진단 중…" : "진단 실행"}
-              </button>
-              <button
-                class={`px-3 py-1 text-sm rounded ${
-                  cleanupLoading()
-                    ? "bg-gray-200 text-gray-500"
-                    : "bg-rose-600 text-white hover:bg-rose-700"
-                }`}
-                disabled={cleanupLoading()}
-                onClick={runUrlCleanup}
-              >
-                {cleanupLoading() ? "정리 중…" : "URL 중복 제거"}
-              </button>
-              <button
-                class={`px-3 py-1 text-sm rounded ${
-                  isSyncing()
-                    ? "bg-gray-200 text-gray-500"
-                    : "bg-blue-600 text-white hover:bg-blue-700"
-                }`}
-                disabled={isSyncing()}
-                onClick={async () => {
-                  try {
-                    setIsSyncing(true);
-                    addLog("🔁 products→details 좌표/ID 정합화 실행...");
-                    const rep = await tauriApi.syncProductDetailsCoordinates();
-                    addLog(
-                      `✅ 정합화 완료: products.id=${rep.updated_product_ids}, inserted=${rep.inserted_details}, updated_coords=${rep.updated_coordinates}, details.id=${rep.updated_ids} (p=${rep.total_products}, d=${rep.total_details})`
-                    );
-                  } catch (e: any) {
-                    addLog(`❌ 정합화 실패: ${e.message || e}`);
-                  } finally {
-                    setIsSyncing(false);
-                  }
-                }}
-                title="products.url 기준으로 product_details에 page_id/index_in_page/id를 정합화합니다 (크롤링 없음)"
-              >
-                products→details 동기화
-              </button>
-              <button
-                class={`px-3 py-1 text-sm rounded ${
-                  isSyncing()
-                    ? "bg-gray-200 text-gray-500"
-                    : "bg-teal-600 text-white hover:bg-teal-700"
-                }`}
-                disabled={isSyncing()}
-                onClick={syncMissingPagesFromDiagnostics}
-              >
-                {isSyncing() ? "동기화 중…" : "누락 페이지만 동기화"}
-              </button>
-              <button
-                class={`px-3 py-1 text-sm rounded ${
-                  isSyncing()
-                    ? "bg-gray-200 text-gray-500"
-                    : "bg-emerald-600 text-white hover:bg-emerald-700"
-                }`}
-                disabled={isSyncing()}
-                onClick={runPreciseDiagnosticRepair}
-              >
-                {isSyncing() ? "동기화 중…" : "정밀 복구 실행"}
-              </button>
-            </div>
-          </div>
-          <Show
-            when={diagResult()}
-            fallback={
-              <p class="text-xs text-gray-500">
-                로컬 DB의 page_id/index_in_page 정합성을 검사합니다. 실행을 눌러
-                결과를 확인하세요.
-              </p>
-            }
-          >
-            <div class="text-xs text-gray-700 space-y-2">
-              {(() => {
-                const expr = deriveRangesFromDiagnostics();
-                if (!expr) return null;
-                return (
-                  <div class="p-2 rounded border border-amber-200 bg-amber-50 text-amber-900 flex items-center justify-between">
-                    <div>
-                      <b>추천 Sync 범위</b>:{" "}
-                      <span class="font-mono">{expr}</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <button
-                        class="px-2 py-0.5 text-[11px] rounded bg-amber-600 text-white hover:bg-amber-700"
-                        title="추천 범위를 Sync 입력에 적용"
-                        onClick={() => {
-                          setSyncRanges(expr);
-                          setSyncPulse(true);
-                          setTimeout(() => setSyncPulse(false), 400);
-                          addLog(`🧭 추천 범위 적용 → ${expr}`);
-                        }}
-                      >
-                        적용
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
-              <div class="flex gap-4">
-                <span>
-                  총 제품: <b>{diagResult()?.total_products ?? 0}</b>
-                </span>
-                <span>
-                  DB 최대 page_id: <b>{diagResult()?.max_page_id_db ?? "-"}</b>
-                </span>
-                <span>
-                  사이트 총 페이지:{" "}
-                  <b>{diagResult()?.total_pages_site ?? "-"}</b>
-                </span>
-                <span>
-                  마지막 페이지 아이템:{" "}
-                  <b>{diagResult()?.items_on_last_page ?? "-"}</b>
-                </span>
-              </div>
-              <Show when={diagResult()?.prepass}>
-                <div class="flex gap-4 text-teal-800 bg-teal-50 border border-teal-200 rounded p-2">
-                  <span>
-                    사전 정렬(details):{" "}
-                    <b>{diagResult()?.prepass?.details_aligned ?? 0}</b>
-                  </span>
-                  <span>
-                    products.id 백필:{" "}
-                    <b>{diagResult()?.prepass?.products_id_backfilled ?? 0}</b>
-                  </span>
-                </div>
-              </Show>
-              <div>
-                <b>이상 그룹</b>
-                <ul class="list-disc ml-5">
-                  <For
-                    each={(diagResult()?.group_summaries ?? []).filter(
-                      (g: any) => g.status !== "ok"
-                    )}
-                  >
-                    {(g: any) => (
-                      <li>
-                        page_id {g.page_id}
-                        {g.current_page_number != null
-                          ? ` (물리 ${g.current_page_number})`
-                          : ""}
-                        : status={g.status} count={g.count} distinct=
-                        {g.distinct_indices}
-                        {g.duplicate_indices?.length
-                          ? ` dup=${g.duplicate_indices.join(",")}`
-                          : ""}
-                        {g.missing_indices?.length
-                          ? ` miss=${g.missing_indices.join(",")}`
-                          : ""}
-                        {g.out_of_range_count
-                          ? ` oob=${g.out_of_range_count}`
-                          : ""}
-                      </li>
-                    )}
-                  </For>
-                </ul>
-              </div>
-              <Show when={(diagResult()?.duplicate_positions ?? []).length > 0}>
-                <div>
-                  <b>중복 위치 샘플</b>
-                  <ul class="list-disc ml-5">
-                    <For
-                      each={(diagResult()?.duplicate_positions ?? []).slice(
-                        0,
-                        20
-                      )}
-                    >
-                      {(d: any) => (
-                        <li>
-                          page_id {d.page_id}
-                          {d.current_page_number != null
-                            ? ` (물리 ${d.current_page_number})`
-                            : ""}
-                          , index {d.index_in_page}: {d.urls?.length ?? 0}개 URL
-                        </li>
-                      )}
-                    </For>
-                  </ul>
-                </div>
-              </Show>
-            </div>
-          </Show>
         </div>
 
         {/* Stage3/Stage4/Stage5 Mini Panels */}
@@ -1889,576 +2218,6 @@ export default function CrawlingEngineTabSimple() {
               소요 시간: {persistStats().durationMs}ms
             </div>
           </div>
-        </div>
-
-        {/* 크롤링 범위 정보 */}
-        <Show when={crawlingRange()}>
-          <div
-            ref={(el) => (rangePanelRef = el!)}
-            class={`bg-gray-50 rounded-lg p-4 mb-6 ${
-              rangeFxActive() ? "range-transition-ring" : ""
-            }`}
-          >
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="text-lg font-semibold text-gray-900">
-                📊 계산된 크롤링 범위
-              </h3>
-              <button
-                class="text-xs px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
-                onClick={() => {
-                  const prev = crawlingRange();
-                  const prevStart = (prev?.range?.[0] ?? 0) as number;
-                  const prevEnd = (prev?.range?.[1] ?? 0) as number;
-                  const prevTotal = (prev?.progress?.total_products ??
-                    0) as number;
-                  const prevCover = `${
-                    prev?.progress?.progress_percentage?.toFixed?.(1) ?? "0.0"
-                  }%`;
-                  setRangePrevSnapshot({
-                    start: prevStart,
-                    end: prevEnd,
-                    total: prevTotal,
-                    coverText: String(prevCover),
-                  });
-                  if (effectsOn()) playRangeTransition();
-                }}
-                disabled={!effectsOn()}
-                title={
-                  effectsOn()
-                    ? "계산된 범위 효과 미리보기"
-                    : "효과가 꺼져 있습니다"
-                }
-              >
-                효과 미리보기
-              </button>
-            </div>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div class="text-center">
-                <div class="text-2xl font-bold text-blue-600">
-                  <Show
-                    when={rangeFxActive()}
-                    fallback={
-                      <span class="drum-line">
-                        {renderDrumText(
-                          String(crawlingRange()?.range?.[0] || 0)
-                        )}
-                      </span>
-                    }
-                  >
-                    <span class="shatter-line">
-                      {renderShatterText(
-                        String(
-                          rangePrevSnapshot()?.start ??
-                            (crawlingRange()?.range?.[0] || 0)
-                        )
-                      )}
-                    </span>
-                  </Show>
-                </div>
-                <div class="text-sm text-gray-600">시작 페이지</div>
-              </div>
-              <div class="text-center">
-                <div class="text-2xl font-bold text-green-600">
-                  <Show
-                    when={rangeFxActive()}
-                    fallback={
-                      <span class="drum-line">
-                        {renderDrumText(
-                          String(crawlingRange()?.range?.[1] || 0)
-                        )}
-                      </span>
-                    }
-                  >
-                    <span class="shatter-line">
-                      {renderShatterText(
-                        String(
-                          rangePrevSnapshot()?.end ??
-                            (crawlingRange()?.range?.[1] || 0)
-                        )
-                      )}
-                    </span>
-                  </Show>
-                </div>
-                <div class="text-sm text-gray-600">종료 페이지</div>
-              </div>
-              <div class="text-center">
-                <div class="text-2xl font-bold text-purple-600">
-                  {crawlingRange()?.progress?.total_products || 0}
-                </div>
-                <div class="text-sm text-gray-600">총 제품 수</div>
-              </div>
-              <div class="text-center">
-                <div class="text-2xl font-bold text-orange-600">
-                  <Show
-                    when={rangeFxActive()}
-                    fallback={
-                      <span class="drum-line">
-                        {renderDrumText(
-                          `${
-                            crawlingRange()?.progress?.progress_percentage.toFixed(
-                              1
-                            ) || 0
-                          }%`
-                        )}
-                      </span>
-                    }
-                  >
-                    <span class="shatter-line">
-                      {renderShatterText(
-                        String(
-                          rangePrevSnapshot()?.coverText ??
-                            `${
-                              crawlingRange()?.progress?.progress_percentage.toFixed(
-                                1
-                              ) || 0
-                            }%`
-                        )
-                      )}
-                    </span>
-                  </Show>
-                </div>
-                <div class="text-sm text-gray-600">커버리지</div>
-              </div>
-            </div>
-
-            {/* Confetti overlay */}
-            <Show when={confettiPieces().length > 0}>
-              <div class="relative">
-                <div
-                  class="pointer-events-none absolute inset-0 overflow-visible"
-                  aria-hidden="true"
-                >
-                  <For each={confettiPieces()}>
-                    {(p) => (
-                      <span
-                        class="confetti-piece"
-                        style={
-                          {
-                            left: "50%",
-                            top: "0",
-                            background: p.color,
-                            "--cx": `${p.rx}px`,
-                            "--cy": `${p.ry}px`,
-                            "--crot": `${p.rot}deg`,
-                            "--cw": `${p.cw}px`,
-                            "--ch": `${p.ch}px`,
-                          } as any
-                        }
-                      />
-                    )}
-                  </For>
-                </div>
-              </div>
-            </Show>
-
-            {/* 사이트 정보 섹션 */}
-            <div class="border-t pt-4">
-              <h4 class="text-md font-medium text-gray-800 mb-3">
-                🌐 사이트 정보
-              </h4>
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                <div class="text-center bg-white rounded p-3 border">
-                  <div class="text-xl font-bold text-blue-600">
-                    {crawlingRange()?.site_info?.total_pages || 0}
-                  </div>
-                  <div class="text-xs text-gray-600">사이트 총 페이지 수</div>
-                </div>
-                <div class="text-center bg-white rounded p-3 border">
-                  <div class="text-xl font-bold text-green-600">
-                    {crawlingRange()?.site_info?.products_on_last_page || 0}
-                  </div>
-                  <div class="text-xs text-gray-600">마지막 페이지 제품 수</div>
-                </div>
-                <div class="text-center bg-white rounded p-3 border">
-                  <div class="text-xl font-bold text-purple-600">
-                    {crawlingRange()?.site_info?.estimated_total_products || 0}
-                  </div>
-                  <div class="text-xs text-gray-600">추정 총 제품 수</div>
-                </div>
-              </div>
-            </div>
-
-            {/* 로컬 DB 정보 섹션 */}
-            <div class="border-t pt-4">
-              <h4 class="text-md font-medium text-gray-800 mb-3">
-                💾 로컬 DB 정보
-              </h4>
-              <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                <div class="text-center bg-white rounded p-3 border">
-                  <div class="text-xl font-bold text-indigo-600">
-                    {crawlingRange()?.local_db_info?.total_saved_products || 0}
-                  </div>
-                  <div class="text-xs text-gray-600">수집한 제품 수</div>
-                </div>
-                <div class="text-center bg-white rounded p-3 border">
-                  <div class="text-xl font-bold text-teal-600">
-                    {crawlingRange()?.local_db_info?.last_crawled_page || "N/A"}
-                  </div>
-                  <div class="text-xs text-gray-600">마지막 크롤링 페이지</div>
-                </div>
-                <div class="text-center bg-white rounded p-3 border">
-                  <div class="text-xl font-bold text-pink-600">
-                    {crawlingRange()?.local_db_info?.coverage_percentage?.toFixed(
-                      1
-                    ) || 0}
-                    %
-                  </div>
-                  <div class="text-xs text-gray-600">DB 커버리지</div>
-                </div>
-                <div class="text-center bg-white rounded p-3 border">
-                  <div class="text-xl font-bold text-cyan-600">
-                    {crawlingRange()?.crawling_info?.pages_to_crawl || 0}
-                  </div>
-                  <div class="text-xs text-gray-600">크롤링할 페이지 수</div>
-                </div>
-              </div>
-            </div>
-
-            {/* 크롤링 전략 정보 */}
-            <div class="border-t pt-4">
-              <h4 class="text-md font-medium text-gray-800 mb-3">
-                🎯 크롤링 전략
-              </h4>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="bg-white rounded p-3 border">
-                  <div class="text-sm text-gray-600">전략</div>
-                  <div class="text-lg font-semibold text-gray-800 capitalize">
-                    {crawlingRange()?.crawling_info?.strategy || "unknown"}
-                  </div>
-                </div>
-                <div class="bg-white rounded p-3 border">
-                  <div class="text-sm text-gray-600">예상 신규 제품</div>
-                  <div class="text-lg font-semibold text-gray-800">
-                    {crawlingRange()?.crawling_info?.estimated_new_products ||
-                      0}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </Show>
-
-        {/* 제어 버튼 */}
-        <div class="flex flex-wrap gap-4 mb-6 items-end">
-          {/* Legacy simple crawling button removed */}
-
-          <button
-            onClick={(e) => {
-              triggerStartWave(e as unknown as MouseEvent);
-              startUnifiedAdvanced();
-            }}
-            disabled={isRunning()}
-            class={`px-6 py-3 rounded-lg font-medium text-white ripple ${
-              isRunning()
-                ? "bg-gray-400 cursor-not-allowed"
-                : "bg-purple-600 hover:bg-purple-700"
-            }`}
-          >
-            {isRunning()
-              ? "통합 파이프라인 실행 중..."
-              : "🎭 통합 파이프라인 (하이)"}
-          </button>
-
-          <button
-            onClick={(e) => {
-              triggerStartWave(e as unknown as MouseEvent);
-              startLightUnified();
-            }}
-            disabled={isRunning()}
-            class={`px-6 py-3 rounded-lg font-medium text-white ripple ${
-              isRunning()
-                ? "bg-gray-400 cursor-not-allowed"
-                : "bg-orange-600 hover:bg-orange-700"
-            }`}
-          >
-            {isRunning()
-              ? "통합 파이프라인 실행 중..."
-              : "🎭 통합 파이프라인 (라이트)"}
-          </button>
-
-          <button
-            onClick={calculateCrawlingRange}
-            disabled={isRunning()}
-            class="px-6 py-3 rounded-lg font-medium text-blue-600 border border-blue-600 hover:bg-blue-50 disabled:opacity-50 ripple"
-          >
-            📊 범위 다시 계산
-          </button>
-
-          {/* Surface ripple preview button */}
-          <button
-            onClick={(e) => triggerStartWave(e as unknown as MouseEvent)}
-            disabled={isRunning()}
-            class={`px-3 py-2 rounded-lg font-medium border text-gray-700 hover:bg-gray-50 ${
-              isRunning() ? "opacity-50 cursor-not-allowed" : "border-gray-300"
-            }`}
-            title="원형 파동 효과 미리보기"
-          >
-            파도 미리보기
-          </button>
-
-          {/* Global start-wave overlay (circular) */}
-          <div class="start-wave-root" aria-hidden="true">
-            <For each={waveBursts()}>
-              {(w) => (
-                <>
-                  <div
-                    class={`start-wave-circle ${
-                      w.kind === "up"
-                        ? "wave-up"
-                        : w.kind === "down"
-                        ? "wave-down"
-                        : "wave-ring"
-                    }`}
-                    style={
-                      {
-                        "--x": `${w.x}px`,
-                        "--y": `${w.y}px`,
-                        "--scale": `${(() => {
-                          const dx = Math.max(w.x, window.innerWidth - w.x);
-                          const dy = Math.max(w.y, window.innerHeight - w.y);
-                          const radius = Math.hypot(dx, dy);
-                          const baseRadius = 12;
-                          return Math.max(35, radius / baseRadius);
-                        })()}`,
-                      } as any
-                    }
-                  />
-                  {w.kind === "up" && (
-                    <div
-                      class="start-wave-wash"
-                      style={{ "--x": `${w.x}px`, "--y": `${w.y}px` } as any}
-                    />
-                  )}
-                </>
-              )}
-            </For>
-          </div>
-          {/* Validation Controls */}
-          <div class="flex items-center gap-2">
-            <input
-              type="number"
-              min="1"
-              class="w-28 px-3 py-2 border rounded-md text-sm"
-              placeholder="검증 페이지 수"
-              value={validationPages() as any}
-              onInput={(e) => {
-                const v = (e.currentTarget.value || "").trim();
-                setValidationPages(v === "" ? "" : Number(v));
-              }}
-            />
-            <button
-              onClick={startValidationRun}
-              disabled={isValidating()}
-              class={`px-4 py-2 rounded-lg font-medium text-white ripple ${
-                isValidating()
-                  ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-emerald-600 hover:bg-emerald-700"
-              }`}
-            >
-              {isValidating() ? "검증 실행 중..." : "🧪 Validation 실행"}
-            </button>
-          </div>
-          {/* Sync Controls */}
-          <div class="flex items-center gap-2">
-            <input
-              type="text"
-              class={`w-64 px-3 py-2 border rounded-md text-sm ${
-                syncPulse() && effectsOn() ? "flash-db" : ""
-              }`}
-              placeholder="Sync 범위 (예: 498-492,489,487-485)"
-              value={syncRanges()}
-              onInput={(e) => setSyncRanges(e.currentTarget.value)}
-            />
-            <button
-              onClick={startSyncRun}
-              disabled={isSyncing()}
-              class={`px-4 py-2 rounded-lg font-medium text-white ripple ${
-                isSyncing()
-                  ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-teal-600 hover:bg-teal-700"
-              }`}
-            >
-              {isSyncing() ? "Sync 실행 중..." : "🔄 Sync 실행"}
-            </button>
-            <button
-              onClick={async () => {
-                if (isSyncing()) return;
-                let ranges = (syncRanges() || "").trim();
-                if (!ranges) {
-                  const auto = deriveRangesFromDiagnostics();
-                  if (auto) {
-                    setSyncRanges(auto);
-                    addLog(`🔁 Diagnostics 기반 범위 자동설정: ${auto}`);
-                    ranges = auto;
-                  } else {
-                    addLog(
-                      "⚠️ 먼저 Sync 범위를 입력하거나, 진단을 실행해 주세요. 예: 498-492,489"
-                    );
-                    return;
-                  }
-                }
-                setIsSyncing(true);
-                addLog(`🔄 Partial 모드(이 범위) Sync 실행: ${ranges}`);
-                try {
-                  try {
-                    await invoke("ui_debug_log", {
-                      message: `[SimpleTab] sync_button_click ranges=${ranges}`,
-                    });
-                  } catch {}
-                  const res = await tauriApi.startPartialSync(ranges);
-                  addLog(`✅ Partial Sync 완료: ${JSON.stringify(res)}`);
-                } catch (e) {
-                  addLog(`❌ Partial Sync 실패: ${e}`);
-                } finally {
-                  setIsSyncing(false);
-                }
-              }}
-              disabled={isSyncing()}
-              class={`px-4 py-2 rounded-lg font-medium text-white ripple ${
-                isSyncing()
-                  ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-blue-600 hover:bg-blue-700"
-              }`}
-              title="Partial 모드로 이 범위만 실행"
-            >
-              이 범위 Sync 실행
-            </button>
-            <button
-              onClick={async () => {
-                if (isSyncing()) return;
-                let ranges = (syncRanges() || "").trim();
-                if (!ranges) {
-                  const auto = deriveRangesFromDiagnostics();
-                  if (auto) {
-                    setSyncRanges(auto);
-                    addLog(`🔁 Diagnostics 기반 범위 자동설정: ${auto}`);
-                    ranges = auto;
-                  } else {
-                    addLog(
-                      "⚠️ 먼저 Sync 범위를 입력하거나, 진단을 실행해 주세요. 예: 498-492,489"
-                    );
-                    return;
-                  }
-                }
-                // Parse ranges into explicit pages
-                const norm = ranges
-                  .replace(/\s+/g, "")
-                  .replace(/[–—−﹣－]/g, "-")
-                  .replace(/[〜～]/g, "~");
-                const tokens = norm
-                  .split(",")
-                  .map((t) => t.trim())
-                  .filter(Boolean);
-                const pages: number[] = [];
-                for (const tk of tokens) {
-                  if (tk.includes("-") || tk.includes("~")) {
-                    const sep = tk.includes("~") ? "~" : "-";
-                    const [a, b] = tk.split(sep);
-                    let s = parseInt(a, 10),
-                      e = parseInt(b, 10);
-                    if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
-                    if (e > s) {
-                      const tmp = s;
-                      s = e;
-                      e = tmp;
-                    }
-                    for (let p = s; p >= e; p--) pages.push(p);
-                  } else {
-                    const v = parseInt(tk, 10);
-                    if (Number.isFinite(v)) pages.push(v);
-                  }
-                }
-                const seen = new Set<number>();
-                const uniquePages = pages.filter((p) =>
-                  seen.has(p) ? false : (seen.add(p), true)
-                );
-                if (uniquePages.length === 0) {
-                  addLog("⚠️ 유효한 페이지가 없습니다. 예: 498-492,489");
-                  return;
-                }
-                setIsSyncing(true);
-                addLog(
-                  `🧑‍💻 수동 크롤링(Actor) 실행: [${uniquePages.join(", ")}]`
-                );
-                try {
-                  const res = await tauriApi.startManualCrawlPagesActor(
-                    uniquePages,
-                    true
-                  );
-                  addLog(`✅ 수동 크롤링 세션 시작: ${JSON.stringify(res)}`);
-                  if (res?.session_id) {
-                    addLog(`🆔 세션 ID: ${res.session_id}`);
-                  }
-                } catch (e) {
-                  addLog(`❌ 수동 크롤링(Actor) 실패: ${e}`);
-                } finally {
-                  setIsSyncing(false);
-                }
-              }}
-              disabled={isSyncing()}
-              class={`px-4 py-2 rounded-lg font-medium text-white ripple ${
-                isSyncing()
-                  ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-purple-600 hover:bg-purple-700"
-              }`}
-              title="기본 엔진으로 명시적 페이지 배열을 실행"
-            >
-              수동 크롤링
-            </button>
-            <button
-              onClick={async () => {
-                if (isSyncing()) return;
-                let ranges = (syncRanges() || "").trim();
-                if (!ranges) {
-                  const auto = deriveRangesFromDiagnostics();
-                  if (auto) {
-                    setSyncRanges(auto);
-                    addLog(`🔁 Diagnostics 기반 범위 자동설정: ${auto}`);
-                    ranges = auto;
-                  } else {
-                    addLog(
-                      "⚠️ 먼저 Sync 범위를 입력하거나, 진단을 실행해 주세요. 예: 498-492,489"
-                    );
-                    return;
-                  }
-                }
-                setIsSyncing(true);
-                addLog(`📦 순차 실행(연속 페이지 배치): ${ranges}`);
-                try {
-                  const res = await tauriApi.startBatchedSync(ranges);
-                  addLog(`✅ 순차 실행 완료: ${JSON.stringify(res)}`);
-                } catch (e) {
-                  addLog(`❌ 순차 실행 실패: ${e}`);
-                } finally {
-                  setIsSyncing(false);
-                }
-              }}
-              disabled={isSyncing()}
-              class={`px-4 py-2 rounded-lg font-medium text-white ripple ${
-                isSyncing()
-                  ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-indigo-600 hover:bg-indigo-700"
-              }`}
-              title="연속 페이지를 배치로 묶어 순차 실행 (Partial과 동일 Flow)"
-            >
-              순차 실행
-            </button>
-          </div>
-          <button
-            onClick={() => setShowConsole(!showConsole())}
-            class="px-6 py-3 rounded-lg font-medium text-gray-700 border border-gray-300 hover:bg-gray-50"
-          >
-            {showConsole() ? "🧪 이벤트 콘솔 숨기기" : "🧪 이벤트 콘솔 보기"}
-          </button>
-          {/* Effects toggle */}
-          <label class="flex items-center gap-2 text-sm text-gray-600 select-none">
-            <input
-              type="checkbox"
-              checked={effectsOn()}
-              onInput={(e) => setEffectsOn(e.currentTarget.checked)}
-            />
-            애니메이션 효과
-          </label>
         </div>
 
         {/* 실시간 로그 */}
