@@ -1629,7 +1629,7 @@ export default function CrawlingEngineTabSimple() {
             >
               {isRunning()
                 ? "통합 파이프라인 실행 중..."
-                : "🎭 통합 파이프라인 (하이)"}
+                : "🎭 크롤링"}
             </button>
 
             <button
@@ -1639,6 +1639,9 @@ export default function CrawlingEngineTabSimple() {
             >
               📊 범위 다시 계산
             </button>
+
+            <div class="h-10 w-px bg-gray-300 dark:bg-gray-600"></div>
+
             <input
               type="text"
               class={`w-72 px-3 py-2 rounded-md text-sm bg-white/70 border border-white/40 focus:outline-none focus:ring-2 focus:ring-indigo-300 ${
