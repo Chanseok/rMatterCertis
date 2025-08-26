@@ -12,6 +12,8 @@ export interface LoggingConfig {
   auto_cleanup_logs: boolean;
   keep_only_latest: boolean;
   module_filters: Record<string, string>;
+  // Backend supports concise_startup flag
+  concise_startup?: boolean;
 }
 
 export interface BatchConfig {
@@ -41,6 +43,8 @@ export interface TimingConfig {
 export interface CrawlingConfigSection {
   // 크롤링 범위 및 전략 설정
   page_range_limit: number;
+  // 백엔드에 존재하는 추가 필드 (옵션)
+  validation_page_limit?: number | null;
   intelligent_mode: {
     enabled: boolean;
     max_range_limit: number;
@@ -67,6 +71,12 @@ export interface UserConfig {
   max_concurrent_requests: number;
   verbose_logging: boolean;
   logging: LoggingConfig;
+  // Backend-supported extras
+  max_requests_per_second?: number;
+  user_agent?: string;
+  user_agent_sync?: string | null;
+  follow_redirects?: boolean;
+  respect_robots_txt?: boolean;
   batch: BatchConfig;
   crawling: CrawlingConfigSection;
 }
@@ -78,6 +88,11 @@ export interface AdvancedConfig {
   retry_delay_ms: number;
   product_selectors: string[];
   request_timeout_seconds: number;
+  // Failure policy (backend)
+  failure_policy?: {
+    failure_threshold: number;
+    removal_grace_secs: number;
+  };
 }
 
 export interface AppManagedConfig {
