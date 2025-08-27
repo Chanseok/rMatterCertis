@@ -106,12 +106,20 @@ const [windowState, setWindowState] = createStore<WindowStore>({
         const parsed = JSON.parse(savedState) as InternalWindowState;
         setWindowState('state', { ...DEFAULT_STATE, ...parsed });
         console.log('🔧 Window state restored from localStorage:', parsed);
+    // 적용 및 표시 (첫 실행 깜빡임 방지: 숨김 상태에서 적용 후 표시)
+    await windowState.applyWindowSettings();
+    await invoke('show_window');
+    setWindowState('isInitialized', true);
+    return;
       }
     } catch (error) {
       console.error('❌ Failed to restore window state:', error);
     }
 
-    setWindowState('isInitialized', true);
+  // 저장된 상태가 전혀 없으면 기본값 적용 후 표시
+  await windowState.applyWindowSettings();
+  await invoke('show_window');
+  setWindowState('isInitialized', true);
   },
 
   // 윈도우 설정 적용

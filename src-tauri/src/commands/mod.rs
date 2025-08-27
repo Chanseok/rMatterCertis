@@ -11,6 +11,7 @@ pub mod db_diagnostics;                // DB pagination diagnostics
 pub mod db_cleanup;                    // DB duplicate cleanup
 pub mod db_repair;                     // DB repair/sync between products and product_details
 pub mod debug_commands;                // UI debug logging helpers
+pub mod product_details_analytics;     // Product details analytics for charts
 // pub mod dashboard_commands;          // Archived while UI is disabled
 
 // 모든 명령어를 한곳에서 export
@@ -45,3 +46,4 @@ pub use db_diagnostics::scan_db_pagination_mismatches;
 pub use db_cleanup::cleanup_duplicate_urls;
 pub use db_repair::sync_product_details_coordinates;
 pub use debug_commands::ui_debug_log;
+pub use product_details_analytics::get_product_details_analytics;

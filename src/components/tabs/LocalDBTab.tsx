@@ -2,7 +2,7 @@
  * LocalDBTab - 로컬 데이터베이스 관리 탭 컴포넌트 (실제 데이터 사용)
  */
 
-import { Component, createSignal, For, onMount } from 'solid-js';
+import { Component, createSignal, For, onMount, Show } from 'solid-js';
 import { tauriApi } from '../../services/tauri-api';
 
 export const LocalDBTab: Component = () => {
@@ -108,245 +108,155 @@ export const LocalDBTab: Component = () => {
   };
 
   return (
-    <div style="padding: 24px; background: white; color: black; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-      <h2 style="margin: 0 0 24px 0; font-size: 24px; font-weight: 600; color: #1f2937;">🗄️ 로컬DB</h2>
-      
-      {/* 데이터베이스 통계 */}
-      <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc;">
-        <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 500; color: #374151;">데이터베이스 통계</h3>
-        
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
-          <div style="padding: 16px; background: white; border-radius: 6px; border: 1px solid #e5e7eb; text-align: center;">
-            <div style="font-size: 24px; font-weight: 600; color: #3b82f6; margin-bottom: 4px;">{dbStats().totalRecords.toLocaleString()}</div>
-            <div style="font-size: 14px; color: #6b7280;">총 레코드 수</div>
-          </div>
-          
-          <div style="padding: 16px; background: white; border-radius: 6px; border: 1px solid #e5e7eb; text-align: center;">
-            <div style="font-size: 18px; font-weight: 600; color: #059669; margin-bottom: 4px;">{dbStats().databaseSize}</div>
-            <div style="font-size: 14px; color: #6b7280;">데이터베이스 크기</div>
-          </div>
-          
-          <div style="padding: 16px; background: white; border-radius: 6px; border: 1px solid #e5e7eb; text-align: center;">
-            <div style="font-size: 18px; font-weight: 600; color: #f59e0b; margin-bottom: 4px;">{dbStats().indexSize}</div>
-            <div style="font-size: 14px; color: #6b7280;">인덱스 크기</div>
-          </div>
-          
-          <div style="padding: 16px; background: white; border-radius: 6px; border: 1px solid #e5e7eb; text-align: center;">
-            <div style="font-size: 14px; font-weight: 600; color: #8b5cf6; margin-bottom: 4px;">{dbStats().lastUpdate}</div>
-            <div style="font-size: 14px; color: #6b7280;">마지막 업데이트</div>
+    <div class="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-blue-50 p-6">
+      <div class="w-full max-w-7xl mx-auto space-y-6">
+        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
+          <h2 class="text-2xl md:text-3xl font-bold text-gray-800">🗄️ 로컬DB</h2>
+        </div>
+
+        {/* DB Stats */}
+        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
+          <h3 class="text-lg font-semibold text-gray-800 mb-4">데이터베이스 통계</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl p-4 border border-blue-200/50 text-center">
+              <div class="text-2xl font-bold text-blue-600">{dbStats().totalRecords.toLocaleString()}</div>
+              <div class="text-sm text-blue-700">총 레코드 수</div>
+            </div>
+            <div class="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-2xl p-4 border border-emerald-200/50 text-center">
+              <div class="text-xl font-bold text-emerald-600">{dbStats().databaseSize}</div>
+              <div class="text-sm text-emerald-700">데이터베이스 크기</div>
+            </div>
+            <div class="bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl p-4 border border-amber-200/50 text-center">
+              <div class="text-xl font-bold text-amber-600">{dbStats().indexSize}</div>
+              <div class="text-sm text-amber-700">인덱스 크기</div>
+            </div>
+            <div class="bg-gradient-to-br from-violet-50 to-violet-100 rounded-2xl p-4 border border-violet-200/50 text-center">
+              <div class="text-sm font-semibold text-violet-700">{dbStats().lastUpdate}</div>
+              <div class="text-sm text-violet-700">마지막 업데이트</div>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* 검색 및 필터링 */}
-      <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f0f9ff;">
-        <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 500; color: #374151;">검색 및 필터링</h3>
-        
-        <div style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
-          <div style="flex: 1; min-width: 200px;">
-            <label style="display: block; margin-bottom: 4px; font-weight: 500; color: #374151;">검색어</label>
-            <input
-              type="text"
-              placeholder="제품명으로 검색..."
-              value={searchTerm()}
-              onInput={(e) => setSearchTerm(e.currentTarget.value)}
-              style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;"
-            />
+        {/* Search & Filter */}
+        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
+          <h3 class="text-lg font-semibold text-gray-800 mb-4">검색 및 필터링</h3>
+          <div class="flex flex-wrap gap-4 mb-3">
+            <div class="flex-1 min-w-[200px]">
+              <label class="block text-sm font-medium text-gray-700 mb-1">검색어</label>
+              <input type="text" placeholder="제품명으로 검색..." value={searchTerm()} onInput={(e) => setSearchTerm(e.currentTarget.value)} class="w-full px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+            </div>
+            <div class="min-w-[150px]">
+              <label class="block text-sm font-medium text-gray-700 mb-1">카테고리</label>
+              <select value={selectedCategory()} onChange={(e) => setSelectedCategory(e.currentTarget.value)} class="w-full px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                <For each={categories()}>{(category) => <option value={category}>{category}</option>}</For>
+              </select>
+            </div>
           </div>
-          
-          <div style="min-width: 150px;">
-            <label style="display: block; margin-bottom: 4px; font-weight: 500; color: #374151;">카테고리</label>
-            <select
-              value={selectedCategory()}
-              onChange={(e) => setSelectedCategory(e.currentTarget.value)}
-              style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; background: white; font-size: 14px;"
+          <div class="text-sm text-gray-500">검색 결과: {filteredData().length}개 항목</div>
+        </div>
+
+        {/* Data Table */}
+        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 overflow-hidden">
+          <div class="p-4 bg-gradient-to-r from-gray-50 to-gray-100 border-b border-white/30 flex items-center justify-between">
+            <h3 class="text-base md:text-lg font-semibold text-gray-800">실제 데이터 ({totalProducts()}개 제품)</h3>
+            <button class="px-3 py-1.5 text-sm rounded-lg text-white bg-indigo-600 hover:bg-indigo-700" onClick={() => loadProducts(currentPage())}>새로고침</button>
+          </div>
+
+          <Show when={!!error()}>
+            <div class="p-4 bg-rose-50 border-b border-rose-200 text-rose-700 text-sm">{error()}</div>
+          </Show>
+          <Show when={isLoading()}>
+            <div class="p-8 text-center text-gray-500">
+              <div class="mb-2">데이터를 로드하는 중...</div>
+              <div class="w-6 h-6 border-2 border-gray-200 border-t-indigo-500 rounded-full animate-spin mx-auto"></div>
+            </div>
+          </Show>
+
+          <Show when={!isLoading() && !error() && filteredData().length === 0}>
+            <div class="p-10 text-center text-gray-500">
+              <div class="text-5xl mb-3">📭</div>
+              <div class="text-lg font-medium mb-1">데이터가 없습니다</div>
+              <div class="text-sm">크롤링을 실행하여 데이터를 수집해보세요.</div>
+            </div>
+          </Show>
+
+          <Show when={!isLoading() && !error() && filteredData().length > 0}>
+            <div class="overflow-x-auto">
+              <table class="w-full border-collapse">
+                <thead>
+                  <tr class="bg-gray-50">
+                    <th class="px-3 py-2 text-left text-sm font-medium text-gray-700 border-b">ID</th>
+                    <th class="px-3 py-2 text-left text-sm font-medium text-gray-700 border-b">제품명</th>
+                    <th class="px-3 py-2 text-left text-sm font-medium text-gray-700 border-b">회사</th>
+                    <th class="px-3 py-2 text-left text-sm font-medium text-gray-700 border-b">인증일</th>
+                    <th class="px-3 py-2 text-left text-sm font-medium text-gray-700 border-b">상태</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={filteredData()}>
+                    {(item) => (
+                      <tr class="border-b">
+                        <td class="px-3 py-2 text-gray-500 font-mono text-sm">{item.id}</td>
+                        <td class="px-3 py-2 text-gray-900 font-medium">{item.title || 'Unknown Product'}</td>
+                        <td class="px-3 py-2 text-gray-600">
+                          <span class="bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs">{item.company || 'Unknown'}</span>
+                        </td>
+                        <td class="px-3 py-2 text-gray-600 font-mono text-xs">{item.certification_date || 'N/A'}</td>
+                        <td class="px-3 py-2">
+                          <span class={`px-2 py-0.5 rounded text-xs ${item.status === 'Valid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{item.status}</span>
+                        </td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
+            </div>
+          </Show>
+
+          <Show when={!isLoading() && !error() && totalPages() > 1}>
+            <div class="p-4 bg-gray-50 border-t border-white/30 flex items-center justify-between text-sm text-gray-600">
+              <div>페이지 {currentPage()} / {totalPages()} (총 {totalProducts()}개)</div>
+              <div class="flex gap-2">
+                <button class={`px-3 py-1.5 rounded border ${currentPage() <= 1 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white hover:bg-gray-50 text-gray-700'}`} disabled={currentPage() <= 1} onClick={() => loadProducts(Math.max(1, currentPage() - 1))}>이전</button>
+                <button class={`px-3 py-1.5 rounded border ${currentPage() >= totalPages() ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white hover:bg-gray-50 text-gray-700'}`} disabled={currentPage() >= totalPages()} onClick={() => loadProducts(Math.min(totalPages(), currentPage() + 1))}>다음</button>
+              </div>
+            </div>
+          </Show>
+        </div>
+
+        {/* DB Management */}
+        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
+          <h3 class="text-lg font-semibold text-gray-800 mb-4">데이터베이스 관리</h3>
+          <div class="flex flex-wrap gap-2">
+            <button class="px-4 py-2 rounded-lg text-white bg-indigo-600 hover:bg-indigo-700" onClick={exportData}>📤 데이터 내보내기</button>
+            <button class="px-4 py-2 rounded-lg text-white bg-emerald-600 hover:bg-emerald-700" onClick={optimizeDatabase}>⚡ 데이터베이스 최적화</button>
+            <button class="px-4 py-2 rounded-lg text-white bg-rose-600 hover:bg-rose-700" onClick={clearDatabase}>🗑️ 데이터베이스 초기화</button>
+          </div>
+        </div>
+
+        {/* Backup & Restore */}
+        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
+          <h3 class="text-lg font-semibold text-gray-800 mb-4">백업 및 복원</h3>
+          <div class="text-sm text-gray-600 mb-4">
+            <div class="mb-1">백업 상태: 백업 기록을 확인하세요</div>
+            <div>백업 기능은 데이터베이스 관리 도구를 통해 제공됩니다</div>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              class="px-4 py-2 rounded-lg text-white bg-violet-600 hover:bg-violet-700"
+              onClick={async () => {
+                try {
+                  const backupPath = await tauriApi.backupDatabase();
+                  alert(`백업이 생성되었습니다: ${backupPath}`);
+                } catch (err) {
+                  alert(`백업 생성 실패: ${err}`);
+                }
+              }}
             >
-              <For each={categories()}>
-                {(category) => <option value={category}>{category}</option>}
-              </For>
-            </select>
+              💾 백업 생성
+            </button>
+            <button class="px-4 py-2 rounded-lg text-white bg-amber-600 hover:bg-amber-700" onClick={() => alert('백업 복원 기능은 개발 중입니다.')}>📁 백업에서 복원</button>
           </div>
-        </div>
-        
-        <div style="font-size: 14px; color: #6b7280;">
-          검색 결과: {filteredData().length}개 항목
-        </div>
-      </div>
-
-      {/* 데이터 테이블 */}
-      <div style="margin-bottom: 32px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background: white;">
-        <div style="padding: 16px; background: #f9fafb; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center;">
-          <h3 style="margin: 0; font-size: 18px; font-weight: 500; color: #374151;">
-            실제 데이터 ({totalProducts()}개 제품)
-          </h3>
-          <button
-            onClick={() => loadProducts(currentPage())}
-            style="padding: 6px 12px; background: #3b82f6; color: white; border: none; border-radius: 4px; font-size: 12px; cursor: pointer;"
-          >
-            새로고침
-          </button>
-        </div>
-
-        {/* 에러 표시 */}
-        {error() && (
-          <div style="padding: 16px; background: #fef2f2; border-bottom: 1px solid #fecaca; color: #dc2626;">
-            {error()}
-          </div>
-        )}
-
-        {/* 로딩 상태 */}
-        {isLoading() && (
-          <div style="padding: 32px; text-align: center; color: #6b7280;">
-            <div style="margin-bottom: 8px;">데이터를 로드하는 중...</div>
-            <div style="width: 24px; height: 24px; border: 2px solid #e5e7eb; border-top: 2px solid #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto;"></div>
-          </div>
-        )}
-
-        {/* 데이터가 없는 경우 */}
-        {!isLoading() && !error() && filteredData().length === 0 && (
-          <div style="padding: 32px; text-align: center; color: #6b7280;">
-            <div style="font-size: 48px; margin-bottom: 16px;">📭</div>
-            <div style="font-size: 18px; font-weight: 500; margin-bottom: 8px;">데이터가 없습니다</div>
-            <div style="font-size: 14px;">크롤링을 실행하여 데이터를 수집해보세요.</div>
-          </div>
-        )}
-
-        {/* 실제 데이터 테이블 */}
-        {!isLoading() && !error() && filteredData().length > 0 && (
-          <div style="overflow-x: auto;">
-            <table style="width: 100%; border-collapse: collapse;">
-              <thead>
-                <tr style="background: #f9fafb;">
-                  <th style="padding: 12px; text-align: left; font-weight: 500; color: #374151; border-bottom: 1px solid #e5e7eb;">ID</th>
-                  <th style="padding: 12px; text-align: left; font-weight: 500; color: #374151; border-bottom: 1px solid #e5e7eb;">제품명</th>
-                  <th style="padding: 12px; text-align: left; font-weight: 500; color: #374151; border-bottom: 1px solid #e5e7eb;">회사</th>
-                  <th style="padding: 12px; text-align: left; font-weight: 500; color: #374151; border-bottom: 1px solid #e5e7eb;">인증일</th>
-                  <th style="padding: 12px; text-align: left; font-weight: 500; color: #374151; border-bottom: 1px solid #e5e7eb;">상태</th>
-                </tr>
-              </thead>
-              <tbody>
-                <For each={filteredData()}>
-                  {(item) => (
-                    <tr style="border-bottom: 1px solid #f3f4f6;">
-                      <td style="padding: 12px; color: #6b7280; font-family: monospace;">{item.id}</td>
-                      <td style="padding: 12px; color: #1f2937; font-weight: 500;">
-                        {item.title || 'Unknown Product'}
-                      </td>
-                      <td style="padding: 12px; color: #6b7280;">
-                        <span style="background: #dbeafe; color: #1e40af; padding: 4px 8px; border-radius: 4px; font-size: 12px;">
-                          {item.company || 'Unknown'}
-                        </span>
-                      </td>
-                      <td style="padding: 12px; color: #6b7280; font-family: monospace; font-size: 12px;">
-                        {item.certification_date || 'N/A'}
-                      </td>
-                      <td style="padding: 12px;">
-                        <span style={`background: ${item.status === 'Valid' ? '#dcfce7' : '#fef3c7'}; color: ${item.status === 'Valid' ? '#166534' : '#92400e'}; padding: 4px 8px; border-radius: 4px; font-size: 12px;`}>
-                          {item.status}
-                        </span>
-                      </td>
-                    </tr>
-                  )}
-                </For>
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* 페이지네이션 */}
-        {!isLoading() && !error() && totalPages() > 1 && (
-          <div style="padding: 16px; background: #f9fafb; border-top: 1px solid #e5e7eb; display: flex; justify-content: between; align-items: center;">
-            <div style="font-size: 14px; color: #6b7280;">
-              페이지 {currentPage()} / {totalPages()} (총 {totalProducts()}개)
-            </div>
-            <div style="display: flex; gap: 8px;">
-              <button
-                onClick={() => loadProducts(Math.max(1, currentPage() - 1))}
-                disabled={currentPage() <= 1}
-                style={`padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 4px; background: ${currentPage() <= 1 ? '#f9fafb' : 'white'}; color: ${currentPage() <= 1 ? '#9ca3af' : '#374151'}; cursor: ${currentPage() <= 1 ? 'not-allowed' : 'pointer'}; font-size: 12px;`}
-              >
-                이전
-              </button>
-              <button
-                onClick={() => loadProducts(Math.min(totalPages(), currentPage() + 1))}
-                disabled={currentPage() >= totalPages()}
-                style={`padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 4px; background: ${currentPage() >= totalPages() ? '#f9fafb' : 'white'}; color: ${currentPage() >= totalPages() ? '#9ca3af' : '#374151'}; cursor: ${currentPage() >= totalPages() ? 'not-allowed' : 'pointer'}; font-size: 12px;`}
-              >
-                다음
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* 데이터베이스 관리 */}
-      <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fef3c7;">
-        <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 500; color: #374151;">데이터베이스 관리</h3>
-        
-        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-          <button
-            onClick={exportData}
-            style="padding: 12px 24px; background: #3b82f6; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; transition: background-color 0.2s;"
-            onMouseOver={(e) => e.currentTarget.style.background = '#2563eb'}
-            onMouseOut={(e) => e.currentTarget.style.background = '#3b82f6'}
-          >
-            📤 데이터 내보내기
-          </button>
-          
-          <button
-            onClick={optimizeDatabase}
-            style="padding: 12px 24px; background: #059669; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; transition: background-color 0.2s;"
-            onMouseOver={(e) => e.currentTarget.style.background = '#047857'}
-            onMouseOut={(e) => e.currentTarget.style.background = '#059669'}
-          >
-            ⚡ 데이터베이스 최적화
-          </button>
-          
-          <button
-            onClick={clearDatabase}
-            style="padding: 12px 24px; background: #ef4444; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; transition: background-color 0.2s;"
-            onMouseOver={(e) => e.currentTarget.style.background = '#dc2626'}
-            onMouseOut={(e) => e.currentTarget.style.background = '#ef4444'}
-          >
-            🗑️ 데이터베이스 초기화
-          </button>
-        </div>
-      </div>
-
-      {/* 백업 및 복원 */}
-      <div style="margin-bottom: 32px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f0fdf4;">
-        <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 500; color: #374151;">백업 및 복원</h3>
-        
-        <div style="margin-bottom: 16px;">
-          <div style="font-size: 14px; color: #6b7280; margin-bottom: 8px;">백업 상태: 백업 기록을 확인하세요</div>
-          <div style="font-size: 14px; color: #6b7280;">백업 기능은 데이터베이스 관리 도구를 통해 제공됩니다</div>
-        </div>
-        
-        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-          <button
-            onClick={async () => {
-              try {
-                const backupPath = await tauriApi.backupDatabase();
-                alert(`백업이 생성되었습니다: ${backupPath}`);
-              } catch (err) {
-                alert(`백업 생성 실패: ${err}`);
-              }
-            }}
-            style="padding: 12px 24px; background: #8b5cf6; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; transition: background-color 0.2s;"
-            onMouseOver={(e) => e.currentTarget.style.background = '#7c3aed'}
-            onMouseOut={(e) => e.currentTarget.style.background = '#8b5cf6'}
-          >
-            💾 백업 생성
-          </button>
-          
-          <button
-            onClick={() => alert('백업 복원 기능은 개발 중입니다.')}
-            style="padding: 12px 24px; background: #f59e0b; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; transition: background-color 0.2s;"
-            onMouseOver={(e) => e.currentTarget.style.background = '#d97706'}
-            onMouseOut={(e) => e.currentTarget.style.background = '#f59e0b'}
-          >
-            📁 백업에서 복원
-          </button>
         </div>
       </div>
     </div>

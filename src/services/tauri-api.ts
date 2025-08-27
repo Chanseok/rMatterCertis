@@ -321,6 +321,30 @@ export class TauriApiService {
     }
   }
 
+  /**
+   * Get product_details analytics for chart-driven insights
+   */
+  async getProductDetailsAnalytics(filters?: {
+    startDate?: string;
+    endDate?: string;
+    manufacturers?: string[];
+    specVersions?: string[];
+    transportInterfaces?: string[];
+  }): Promise<any> {
+    try {
+      const args: any = {
+        start_date: filters?.startDate ?? null,
+        end_date: filters?.endDate ?? null,
+        manufacturers: filters?.manufacturers ?? null,
+        spec_versions: filters?.specVersions ?? null,
+        transport_interfaces: filters?.transportInterfaces ?? null,
+      };
+      return await invoke<any>('get_product_details_analytics', args);
+    } catch (error) {
+      throw new Error(`Failed to get product_details analytics: ${error}`);
+    }
+  }
+
   // =========================================================================
   // Database Management Commands
   // =========================================================================

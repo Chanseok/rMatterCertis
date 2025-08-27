@@ -183,7 +183,7 @@ pub async fn sync_product_details_coordinates(
         inserted_details,
         updated_coordinates,
         updated_ids,
-        duplicates_neutralized: Some(duplicates_neutralized as u64),
+        duplicates_neutralized: Some(duplicates_neutralized),
         details_align_skipped_due_to_slot_taken: Some(details_align_skipped_due_to_slot_taken as u64),
     })
 }

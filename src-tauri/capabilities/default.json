@@ -37,6 +37,7 @@
       "get_products",
       "get_local_db_stats",
       "get_analysis_data",
+  "get_product_details_analytics",
       "get_site_config",
       "get_default_crawling_config",
       "initialize_app_config",
