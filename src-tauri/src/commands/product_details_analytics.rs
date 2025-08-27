@@ -90,51 +90,7 @@ pub async fn get_product_details_analytics(
         q.fetch_one(&pool).await.unwrap_or(0)
     };
 
-    // Generic group-by helper: SELECT key, COUNT(*) FROM product_details GROUP BY key ORDER BY COUNT(*) DESC
-    async fn group_by(
-        pool: &sqlx::SqlitePool,
-        column: &str,
-        limit: Option<i64>,
-    ) -> Result<Vec<(Option<String>, i64)>, sqlx::Error> {
-        let mut sql = format!(
-            "SELECT {col} AS k, COUNT(*) AS c FROM product_details GROUP BY {col} ORDER BY c DESC",
-            col = column
-        );
-        if let Some(lim) = limit {
-            sql.push_str(&format!(" LIMIT {}", lim));
-        }
-        let rows = sqlx::query(&sql).fetch_all(pool).await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                let v: Option<String> = r.try_get::<Option<String>, _>("k").ok().flatten();
-                (v, r.get::<i64, _>("c"))
-            })
-            .collect())
-    }
-
-    // Numeric group-by for vids/pids
-    async fn group_by_i32(
-        pool: &sqlx::SqlitePool,
-        column: &str,
-        limit: Option<i64>,
-    ) -> Result<Vec<(Option<i64>, i64)>, sqlx::Error> {
-        let mut sql = format!(
-            "SELECT {col} AS k, COUNT(*) AS c FROM product_details GROUP BY {col} ORDER BY c DESC",
-            col = column
-        );
-        if let Some(lim) = limit {
-            sql.push_str(&format!(" LIMIT {}", lim));
-        }
-        let rows = sqlx::query(&sql).fetch_all(pool).await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                let v: Option<i64> = r.try_get::<Option<i64>, _>("k").ok().flatten();
-                (v, r.get::<i64, _>("c"))
-            })
-            .collect())
-    }
+    // (removed old group_by helpers; using filter-aware helpers below)
 
     // Time series by certification_date (stored as TEXT yyyy-mm-dd or similar). Use substr to date-only.
     let cert_by_date = {

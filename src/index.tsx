@@ -3,25 +3,12 @@ console.log("🚀 Index.tsx is loading...");
 
 import { render } from "solid-js/web";
 import "./index.css";
+import { tauriApi } from "./services/tauri-api";
 
 console.log("✅ solid-js/web and CSS imported successfully");
 
-// 각 탭 컴포넌트들을 개별적으로 테스트해보겠습니다
-try {
-  console.log("📝 Importing SettingsTab...");
-  import('./components/tabs/SettingsTab').then(() => {
-    console.log("✅ SettingsTab imported successfully");
-  }).catch(error => {
-    console.error("❌ SettingsTab import failed:", error);
-  });
-} catch (error) {
-  console.error("❌ SettingsTab import error:", error);
-}
-
 // AppWithTabs를 직접 테스트해보겠습니다
 import { AppWithTabs } from "./components/AppWithTabs";
-// Attempt to explicitly show the Tauri window once the frontend is ready
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 console.log("✅ AppWithTabs imported successfully");
 
@@ -33,14 +20,7 @@ if (root) {
   console.log("🎬 Starting render with AppWithTabs...");
   try {
     render(() => <AppWithTabs />, root);
-    console.log("✅ AppWithTabs render completed successfully");
-    // Explicitly show window (in case initial visible=false or delayed)
-    try {
-      const win = getCurrentWindow();
-      win.show().then(() => console.log("🪟 Tauri window show() invoked"));
-    } catch (e) {
-      console.warn("⚠️ Failed to call window.show():", e);
-    }
+  console.log("✅ AppWithTabs render completed successfully");
 
     // Optional dev: auto-start a sync on launch if env flags are set
     // Usage (zsh): VITE_AUTO_SYNC_RANGES="512-500" VITE_AUTO_SYNC_METHOD="basic|partial" VITE_AUTO_SYNC_DELAY=1500 npm run tauri:dev
@@ -57,8 +37,7 @@ if (root) {
         console.log(`[AutoSync] Scheduled: method=${autoMethod} ranges=\"${autoExpr}\" dryRun=${autoDryRun} delayMs=${autoDelayMs}`);
         setTimeout(async () => {
           try {
-            const mod = await import('./services/tauri-api');
-            const tauriApi = (mod as any).tauriApi ?? new (mod as any).TauriApiService();
+            // 정적으로 불러온 tauriApi 사용
             const parseRanges = (expr: string): number[] => {
               const pages: number[] = [];
               for (const token of expr.split(',').map(t => t.trim()).filter(Boolean)) {

@@ -5,9 +5,6 @@ use crate::infrastructure::{
     config::csa_iot,
     html_parser::MatterDataExtractor,
     simple_http_client::RequestOptions,
-    BatchCrawlingConfig,
-    BatchCrawlingEngine,
-    IntegratedProductRepository,
 };
 use chrono::Utc;
 use sqlx::Row;
