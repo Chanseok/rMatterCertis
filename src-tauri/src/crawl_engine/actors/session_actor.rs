@@ -414,7 +414,7 @@ impl SessionActor {
                 .emit_event(progress_event)
                 .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
-        if let Err(e) = self
+            if let Err(e) = self
                 .run_batch_with_services(
                     &batch_id,
                     &pages,
@@ -422,8 +422,8 @@ impl SessionActor {
                     &http_client,
                     &data_extractor,
                     &product_repo,
-            &site_status,
-            None,
+                    &site_status,
+                    None,
                 )
                 .await
             {
@@ -721,7 +721,10 @@ impl SessionActor {
         // Apply explicit setting when provided (e.g., preplanned ExecutionPlan)
         if let Some(flag) = skip_duplicate_urls {
             batch_actor.set_skip_duplicate_urls(flag);
-            info!("[DedupCfg] Applied skip_duplicate_urls={} to BatchActor (batch_id={})", flag, batch_id);
+            info!(
+                "[DedupCfg] Applied skip_duplicate_urls={} to BatchActor (batch_id={})",
+                flag, batch_id
+            );
         }
         batch_actor.shared_metrics = Some(shared_metrics.clone());
         let (tx, rx) = mpsc::channel::<super::types::ActorCommand>(100);
@@ -737,7 +740,7 @@ impl SessionActor {
             start_page: pages.first().copied(),
             end_page: pages.last().copied(),
         };
-    let cmd = super::types::ActorCommand::ProcessBatch {
+        let cmd = super::types::ActorCommand::ProcessBatch {
             batch_id: batch_id.to_string(),
             pages: pages.to_vec(),
             config: batch_config,

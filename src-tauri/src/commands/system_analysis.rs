@@ -37,9 +37,11 @@ pub async fn analyze_system_status(
 
     // Phase 1 & 2: Perform Site and Database Analysis in Parallel
     info!("📊 Phase 1 & 2: Performing site and database analysis in parallel...");
-    let (site_analysis, db_analysis) =
-        tokio::try_join!(perform_site_analysis(Some(&*shared_state)), perform_database_analysis())
-            .map_err(|e| format!("System analysis failed: {}", e))?;
+    let (site_analysis, db_analysis) = tokio::try_join!(
+        perform_site_analysis(Some(&*shared_state)),
+        perform_database_analysis()
+    )
+    .map_err(|e| format!("System analysis failed: {}", e))?;
 
     // Phase 3: Update SharedStateCache
     info!("💾 Phase 3: Updating SharedStateCache with analysis results");
@@ -169,11 +171,17 @@ pub async fn diagnose_and_repair_data(
 
     // 3) 심각한 page_id 연속성 붕괴(break) 탐지: page_id 오름차순에서 인접 차이가 2 이상인 최초 위치
     #[derive(Debug, Default, Clone)]
-    struct BreakInfo { first_break_at: Option<i64>, break_next: Option<i64>, gap: i64 }
+    struct BreakInfo {
+        first_break_at: Option<i64>,
+        break_next: Option<i64>,
+        gap: i64,
+    }
     let mut break_info: BreakInfo = BreakInfo::default();
-    if let Ok(rows) = sqlx::query("SELECT DISTINCT page_id FROM products WHERE page_id IS NOT NULL ORDER BY page_id")
-        .fetch_all(&pool)
-        .await
+    if let Ok(rows) = sqlx::query(
+        "SELECT DISTINCT page_id FROM products WHERE page_id IS NOT NULL ORDER BY page_id",
+    )
+    .fetch_all(&pool)
+    .await
     {
         let mut prev: Option<i64> = None;
         for r in rows {
@@ -196,10 +204,11 @@ pub async fn diagnose_and_repair_data(
     if delete_mismatches.unwrap_or(false) {
         // 안전한 순서: out-of-range → bad-indices → nullish-core (목록-only 무의미 레코드) → orphans (상세 미존재)
         if site_total_pages > 0 {
-            if let Ok(res) = sqlx::query("DELETE FROM products WHERE page_id IS NOT NULL AND page_id > ?")
-                .bind(site_total_pages as i64)
-                .execute(&pool)
-                .await
+            if let Ok(res) =
+                sqlx::query("DELETE FROM products WHERE page_id IS NOT NULL AND page_id > ?")
+                    .bind(site_total_pages as i64)
+                    .execute(&pool)
+                    .await
             {
                 deleted_rows += res.rows_affected() as i64;
             }
@@ -222,10 +231,11 @@ pub async fn diagnose_and_repair_data(
         }
         // 심각한 break 이후 레코드 일괄 삭제: 기준 = break_next 이상 모든 page_id
         if let Some(threshold) = break_info.break_next {
-            if let Ok(res) = sqlx::query("DELETE FROM products WHERE page_id IS NOT NULL AND page_id >= ?")
-                .bind(threshold)
-                .execute(&pool)
-                .await
+            if let Ok(res) =
+                sqlx::query("DELETE FROM products WHERE page_id IS NOT NULL AND page_id >= ?")
+                    .bind(threshold)
+                    .execute(&pool)
+                    .await
             {
                 deleted_rows += res.rows_affected() as i64;
             }
@@ -389,11 +399,17 @@ pub async fn diagnose_and_repair_data(
         }
     });
 
-    Ok(CrawlingResponse { success: true, message: "Diagnosis completed".into(), data: Some(payload) })
+    Ok(CrawlingResponse {
+        success: true,
+        message: "Diagnosis completed".into(),
+        data: Some(payload),
+    })
 }
 
 /// 사이트 분석 수행
-async fn perform_site_analysis(shared_cache: Option<&SharedStateCache>) -> Result<SiteAnalysisResult, String> {
+async fn perform_site_analysis(
+    shared_cache: Option<&SharedStateCache>,
+) -> Result<SiteAnalysisResult, String> {
     info!("🌐 Analyzing site status...");
 
     // Create necessary components for site analysis
@@ -417,20 +433,28 @@ async fn perform_site_analysis(shared_cache: Option<&SharedStateCache>) -> Resul
         crate::infrastructure::IntegratedProductRepository::new(db_pool),
     );
 
-    let status_checker: std::sync::Arc<dyn crate::domain::services::crawling_services::StatusChecker> =
-        std::sync::Arc::new(
-            crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
-                http_client,
-                data_extractor,
-                config,
-                product_repo,
-            ),
-        );
+    let status_checker: std::sync::Arc<
+        dyn crate::domain::services::crawling_services::StatusChecker,
+    > = std::sync::Arc::new(
+        crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
+            http_client,
+            data_extractor,
+            config,
+            product_repo,
+        ),
+    );
 
     // Perform site status check (single-flight via SharedStateCache if available)
     let site_analysis_cached = if let Some(cache) = shared_cache {
-        Some(cache.get_or_refresh_site_analysis_singleflight(Some(5), status_checker.clone()).await.map_err(|e| format!("Failed to refresh site status: {}", e))?)
-    } else { None };
+        Some(
+            cache
+                .get_or_refresh_site_analysis_singleflight(Some(5), status_checker.clone())
+                .await
+                .map_err(|e| format!("Failed to refresh site status: {}", e))?,
+        )
+    } else {
+        None
+    };
     let site_status = if let Some(cached) = site_analysis_cached {
         crate::domain::services::SiteStatus {
             is_accessible: true,
@@ -440,9 +464,13 @@ async fn perform_site_analysis(shared_cache: Option<&SharedStateCache>) -> Resul
             products_on_last_page: cached.products_on_last_page,
             last_check_time: cached.analyzed_at,
             health_score: cached.health_score,
-            data_change_status: crate::domain::services::crawling_services::SiteDataChangeStatus::Stable { count: cached.estimated_products },
+            data_change_status:
+                crate::domain::services::crawling_services::SiteDataChangeStatus::Stable {
+                    count: cached.estimated_products,
+                },
             decrease_recommendation: None,
-            crawling_range_recommendation: crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
+            crawling_range_recommendation:
+                crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
         }
     } else {
         status_checker

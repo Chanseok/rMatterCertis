@@ -685,9 +685,7 @@ impl ConfigManager {
                 {
                     cfg.user.crawling.timing.operation_timeout_seconds = 300;
                     mutated = true;
-                    info!(
-                        "Backfilling operation_timeout_seconds to 300 (was <= shutdown timeout)"
-                    );
+                    info!("Backfilling operation_timeout_seconds to 300 (was <= shutdown timeout)");
                 }
                 if mutated {
                     // Save updated config back to disk

@@ -116,10 +116,7 @@ pub async fn check_advanced_site_status(
 
     // 2. 사이트 상태 조회 (SharedStateCache single-flight 사용)
     let site_analysis_cached = shared_state
-        .get_or_refresh_site_analysis_singleflight(
-            Some(5),
-            std::sync::Arc::new(status_checker),
-        )
+        .get_or_refresh_site_analysis_singleflight(Some(5), std::sync::Arc::new(status_checker))
         .await
         .map_err(|e| format!("Site status refresh failed: {}", e))?;
     let site_status = crate::domain::services::SiteStatus {
@@ -130,9 +127,13 @@ pub async fn check_advanced_site_status(
         products_on_last_page: site_analysis_cached.products_on_last_page,
         last_check_time: site_analysis_cached.analyzed_at,
         health_score: site_analysis_cached.health_score,
-        data_change_status: crate::domain::services::crawling_services::SiteDataChangeStatus::Stable { count: site_analysis_cached.estimated_products },
+        data_change_status:
+            crate::domain::services::crawling_services::SiteDataChangeStatus::Stable {
+                count: site_analysis_cached.estimated_products,
+            },
         decrease_recommendation: None,
-        crawling_range_recommendation: crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
+        crawling_range_recommendation:
+            crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
     };
 
     // 3. 결과 캐시에 저장
@@ -169,7 +170,7 @@ pub async fn check_advanced_site_status(
         total_pages: site_status.total_pages,
         products_on_last_page: site_status.products_on_last_page,
         estimated_total_products: site_status.estimated_products,
-    health_score: site_status.health_score,
+        health_score: site_status.health_score,
     };
     Ok(ApiResponse::success(site_status_info))
 }

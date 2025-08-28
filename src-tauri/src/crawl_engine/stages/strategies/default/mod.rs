@@ -63,21 +63,23 @@ impl StageLogic for ListPageLogic {
             );
 
         // Use injected pagination hints (from StageActor/BatchActor) to avoid per-item site status calls
-        let (total_pages, products_on_last_page) = match (input.total_pages_hint, input.products_on_last_page_hint) {
-            (Some(tp), Some(plp)) => (tp, plp),
-            // Fallbacks if hints are missing (should be rare): use conservative defaults
-            _ => (input.config.user.crawling.page_range_limit.max(1), 12u32.min(
-                crate::domain::constants::site::PRODUCTS_PER_PAGE as u32
-            )),
-        };
+        let (total_pages, products_on_last_page) =
+            match (input.total_pages_hint, input.products_on_last_page_hint) {
+                (Some(tp), Some(plp)) => (tp, plp),
+                // Fallbacks if hints are missing (should be rare): use conservative defaults
+                _ => (
+                    input.config.user.crawling.page_range_limit.max(1),
+                    12u32.min(crate::domain::constants::site::PRODUCTS_PER_PAGE as u32),
+                ),
+            };
 
         let urls = collector
             .collect_single_page(page_number, total_pages, products_on_last_page)
             .await
             .map_err(|e| StageLogicError::Internal(format!("List page collect failed: {}", e)))?;
-    // 빈 결과 또는 비마지막 페이지에서 기대 수량(12) 미만은 내부 Collector에서 재시도 처리됨.
-    // 여기서는 최종적으로 0개인 경우만 실패로 처리.
-    if urls.is_empty() {
+        // 빈 결과 또는 비마지막 페이지에서 기대 수량(12) 미만은 내부 Collector에서 재시도 처리됨.
+        // 여기서는 최종적으로 0개인 경우만 실패로 처리.
+        if urls.is_empty() {
             return Err(StageLogicError::Internal(
                 "Empty result from list page".into(),
             ));
@@ -271,17 +273,21 @@ impl StageLogic for DataSavingLogic {
         if !matches!(st, ActorStageType::DataSaving) {
             return Err(StageLogicError::Unsupported(st));
         }
-    // Select products vector based on item type
+        // Select products vector based on item type
         let (products, item_id, item_type) = match &input.item {
             crate::crawl_engine::channels::types::StageItem::ProductDetails(pd) => (
                 &pd.products,
                 format!("persist_product_details_{}", pd.products.len()),
-                StageItemType::Url { url_type: "data_saving:product_details".into() },
+                StageItemType::Url {
+                    url_type: "data_saving:product_details".into(),
+                },
             ),
             crate::crawl_engine::channels::types::StageItem::ValidatedProducts(vp) => (
                 &vp.products,
                 format!("persist_validated_{}", vp.products.len()),
-                StageItemType::Url { url_type: "data_saving:validated_products".into() },
+                StageItemType::Url {
+                    url_type: "data_saving:validated_products".into(),
+                },
             ),
             other => {
                 return Err(StageLogicError::Internal(format!(
@@ -293,18 +299,19 @@ impl StageLogic for DataSavingLogic {
 
         // Persist each product detail; count inserts/updates using repository helpers
         let repo = input.deps.repo;
-        let policy = input
-            .deps
-            .duplicate_policy
-            .clone();
+        let policy = input.deps.duplicate_policy.clone();
         let mut inserted: u32 = 0;
         let mut updated: u32 = 0;
         for detail in products.iter() {
             // create_or_update_product_detail internally upserts both product and product_details
             match repo.create_or_update_product_detail(detail).await {
                 Ok((was_updated, was_created)) => {
-                    if was_created { inserted = inserted.saturating_add(1); }
-                    if was_updated { updated = updated.saturating_add(1); }
+                    if was_created {
+                        inserted = inserted.saturating_add(1);
+                    }
+                    if was_updated {
+                        updated = updated.saturating_add(1);
+                    }
                     if !was_created && !was_updated {
                         if policy == crate::crawl_engine::actors::types::DuplicatePersistencePolicy::UpdateIdIndexOnly {
                             if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {

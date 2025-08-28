@@ -164,7 +164,7 @@ impl GlobalRateLimiter {
             rate, refill_interval, capacity
         );
 
-    let new_handle = tokio::spawn(async move {
+        let new_handle = tokio::spawn(async move {
             let mut interval = interval(refill_interval);
             loop {
                 interval.tick().await;
@@ -172,10 +172,17 @@ impl GlobalRateLimiter {
                 let available = semaphore.available_permits();
                 if available < capacity {
                     semaphore.add_permits(1);
-            trace!("[rate-limit] token refilled (available={}/{})", available + 1, capacity);
+                    trace!(
+                        "[rate-limit] token refilled (available={}/{})",
+                        available + 1,
+                        capacity
+                    );
                 } else {
                     // At capacity; skip adding to avoid unbounded burst
-            trace!("[rate-limit] token refill skipped (at capacity {}/{})", available, capacity);
+                    trace!(
+                        "[rate-limit] token refill skipped (at capacity {}/{})",
+                        available, capacity
+                    );
                 }
             }
         });
@@ -192,13 +199,19 @@ impl GlobalRateLimiter {
             return; // No rate limiting
         }
 
-        debug!("🎫 [rate-limit] awaiting token ({} RPS)", max_requests_per_second);
+        debug!(
+            "🎫 [rate-limit] awaiting token ({} RPS)",
+            max_requests_per_second
+        );
 
         // Acquire a token (permit) from the bucket
         // This will wait if no tokens are available
-    let _permit = self.semaphore.acquire().await.unwrap();
+        let _permit = self.semaphore.acquire().await.unwrap();
 
-        debug!("🎫 [rate-limit] token acquired ({} RPS)", max_requests_per_second);
+        debug!(
+            "🎫 [rate-limit] token acquired ({} RPS)",
+            max_requests_per_second
+        );
 
         // Permit is automatically released when _permit goes out of scope
     }
@@ -344,7 +357,10 @@ impl HttpClient {
         // Include attempt info when provided by caller for better observability
         match (opts.attempt, opts.max_attempts) {
             (Some(a), Some(m)) if a > 1 => {
-                info!("🌐 HTTP GET (HttpClient,opts, {}/{} retrying): {}", a, m, url);
+                info!(
+                    "🌐 HTTP GET (HttpClient,opts, {}/{} retrying): {}",
+                    a, m, url
+                );
             }
             (Some(a), Some(m)) if a == 1 => {
                 info!("🌐 HTTP GET (HttpClient,opts, {}/{}): {}", a, m, url);
@@ -620,7 +636,8 @@ impl HttpClient {
                     if retryable && attempt < self.config.max_retries {
                         // Respect Retry-After if present on 429/503
                         let mut delay_secs = 2_u64.pow(attempt - 1);
-                        if let Some(retry_after) = resp.headers().get(reqwest::header::RETRY_AFTER) {
+                        if let Some(retry_after) = resp.headers().get(reqwest::header::RETRY_AFTER)
+                        {
                             if let Ok(s) = retry_after.to_str() {
                                 if let Ok(parsed) = s.parse::<u64>() {
                                     delay_secs = parsed.max(delay_secs);
@@ -628,7 +645,11 @@ impl HttpClient {
                             }
                         }
                         // Full jitter: [0, delay_secs]
-                        let jitter_ms: u64 = if delay_secs == 0 { 0 } else { fastrand::u64(..(delay_secs * 1000)) };
+                        let jitter_ms: u64 = if delay_secs == 0 {
+                            0
+                        } else {
+                            fastrand::u64(..(delay_secs * 1000))
+                        };
                         info!(target: "kpi.network",
                             "{{\"event\":\"retry_scheduled\",\"attempt\":{},\"max\":{},\"base_delay_s\":{},\"jitter_ms\":{},\"url\":\"{}\"}}",
                             attempt, self.config.max_retries, delay_secs, jitter_ms, url
@@ -649,7 +670,11 @@ impl HttpClient {
                     last_err = Some(anyhow!("HTTP request failed: {}", e));
                     if attempt < self.config.max_retries {
                         let delay_secs = 2_u64.pow(attempt - 1);
-                        let jitter_ms: u64 = if delay_secs == 0 { 0 } else { fastrand::u64(..(delay_secs * 1000)) };
+                        let jitter_ms: u64 = if delay_secs == 0 {
+                            0
+                        } else {
+                            fastrand::u64(..(delay_secs * 1000))
+                        };
                         info!(target: "kpi.network",
                             "{{\"event\":\"retry_scheduled\",\"attempt\":{},\"max\":{},\"base_delay_s\":{},\"jitter_ms\":{},\"url\":\"{}\"}}",
                             attempt, self.config.max_retries, delay_secs, jitter_ms, url
@@ -744,7 +769,9 @@ impl HttpClient {
                             }
                         }
                         // Full jitter: [0, delay_secs]
-                        let jitter_ms: u64 = if delay_secs == 0 { 0 } else {
+                        let jitter_ms: u64 = if delay_secs == 0 {
+                            0
+                        } else {
                             fastrand::u64(..(delay_secs * 1000))
                         };
                         info!(target: "kpi.network",
@@ -762,7 +789,9 @@ impl HttpClient {
                     last_err = Some(anyhow!("HTTP request failed: {}", e));
                     if attempt < self.config.max_retries {
                         let delay_secs = 2_u64.pow(attempt - 1);
-                        let jitter_ms: u64 = if delay_secs == 0 { 0 } else {
+                        let jitter_ms: u64 = if delay_secs == 0 {
+                            0
+                        } else {
                             fastrand::u64(..(delay_secs * 1000))
                         };
                         info!(target: "kpi.network",
@@ -799,8 +828,6 @@ impl HttpClient {
             Err(e) => Err(anyhow!("Health check failed: {}", e)),
         }
     }
-
-    
 
     /// Fetch HTML content and return it as a string (Send-compatible)
     pub async fn fetch_html_string(&self, url: &str) -> Result<String> {
@@ -848,8 +875,6 @@ impl HttpClient {
         }
         Ok(text)
     }
-
-    
 
     /// Parse HTML from string (non-async, can be called after fetch)
     pub fn parse_html(&self, html_content: &str) -> Html {

@@ -183,7 +183,10 @@ impl BatchCrawlingEngine {
                 let batch_start = *batch_pages.first().unwrap_or(&pages[idx]);
                 let batch_end = *batch_pages.last().unwrap_or(&batch_start);
 
-                debug!("Processing batch (filtered): pages {} to {}", batch_start, batch_end);
+                debug!(
+                    "Processing batch (filtered): pages {} to {}",
+                    batch_start, batch_end
+                );
 
                 let batch_tasks: Vec<_> = batch_pages
                     .into_iter()
@@ -248,7 +251,10 @@ impl BatchCrawlingEngine {
                     completed_pages,
                     total_pages_to_process,
                     progress,
-                    &format!("{}/{} 페이지 처리 완료", completed_pages, total_pages_to_process),
+                    &format!(
+                        "{}/{} 페이지 처리 완료",
+                        completed_pages, total_pages_to_process
+                    ),
                 )
                 .await?;
 
@@ -269,7 +275,9 @@ impl BatchCrawlingEngine {
             .await?;
 
             // 배치별로 페이지 처리
-            for batch_start in (effective_start..=effective_end).step_by(self.config.batch_size as usize) {
+            for batch_start in
+                (effective_start..=effective_end).step_by(self.config.batch_size as usize)
+            {
                 let batch_end = (batch_start + self.config.batch_size - 1).min(effective_end);
                 let batch_pages: Vec<u32> = (batch_start..=batch_end).collect();
 
@@ -297,7 +305,9 @@ impl BatchCrawlingEngine {
                             // 🔥 Mutex 제거 - 직접 HttpClient 사용으로 진정한 동시성
                             match http_client.fetch_html_string(&url).await {
                                 Ok(html_str) => {
-                                    match data_extractor.extract_product_urls_from_content(&html_str) {
+                                    match data_extractor
+                                        .extract_product_urls_from_content(&html_str)
+                                    {
                                         Ok(urls) => {
                                             debug!(
                                                 "Extracted {} URLs from page {}",

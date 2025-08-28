@@ -512,8 +512,8 @@ impl CrawlingIntegrationService {
                 crawling_range_recommendation: CrawlingRangeRecommendation::Partial(5),
             }
         };
-    let mut last_error = None;
-    let expected_per_page: usize = 12;
+        let mut last_error = None;
+        let expected_per_page: usize = 12;
 
         for attempt in 0..=max_retries {
             match self
@@ -531,7 +531,9 @@ impl CrawlingIntegrationService {
                     if !is_last && urls.len() < expected_per_page {
                         last_error = Some(anyhow::anyhow!(
                             "Insufficient products on page {}: expected >= {}, got {}",
-                            page, expected_per_page, urls.len()
+                            page,
+                            expected_per_page,
+                            urls.len()
                         ));
                         if attempt < max_retries {
                             let delay = Duration::from_millis(1000 * (2_u64.pow(attempt)));
@@ -605,8 +607,8 @@ impl CrawlingIntegrationService {
             }
         };
 
-    let mut last_error = None;
-    let expected_per_page: usize = 12;
+        let mut last_error = None;
+        let expected_per_page: usize = 12;
         let started = std::time::Instant::now();
 
         for attempt in 0..=max_retries {
@@ -625,7 +627,9 @@ impl CrawlingIntegrationService {
                     if !is_last && urls.len() < expected_per_page {
                         last_error = Some(anyhow::anyhow!(
                             "Insufficient products on page {}: expected >= {}, got {}",
-                            page, expected_per_page, urls.len()
+                            page,
+                            expected_per_page,
+                            urls.len()
                         ));
                         if attempt < max_retries {
                             let delay = Duration::from_millis(1000 * (2_u64.pow(attempt)));

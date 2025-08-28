@@ -113,8 +113,8 @@ impl IntegratedProductRepository {
             .vacate_position_if_occupied(page_id, index_in_page, &normalized)
             .await?;
 
-     // products 테이블 업데이트 (include id derived from position)
-     let forced_id = format!("p{:04}i{:02}", page_id, index_in_page);
+        // products 테이블 업데이트 (include id derived from position)
+        let forced_id = format!("p{:04}i{:02}", page_id, index_in_page);
         let prod_res = sqlx::query(
             r#"UPDATE products
          SET page_id = ?, index_in_page = ?, id = ?, updated_at = ?
@@ -122,8 +122,8 @@ impl IntegratedProductRepository {
         )
         .bind(page_id)
         .bind(index_in_page)
-     .bind(&forced_id)
-     .bind(now)
+        .bind(&forced_id)
+        .bind(now)
         .bind(&normalized)
         .execute(&*self.pool)
         .await?;
@@ -237,9 +237,17 @@ impl IntegratedProductRepository {
         }
 
         // Optional: quick trace for incoming coords when verbose
-        if std::env::var("MC_PERSIST_VERBOSE").ok().as_deref().map(|v| v=="1" || v.eq_ignore_ascii_case("true")).unwrap_or(false) {
+        if std::env::var("MC_PERSIST_VERBOSE")
+            .ok()
+            .as_deref()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
             if let (Some(pid), Some(idx)) = (product.page_id, product.index_in_page) {
-                debug!("[PersistTrace] incoming coords url={} pid={} idx={}", normalized_url, pid, idx);
+                debug!(
+                    "[PersistTrace] incoming coords url={} pid={} idx={}",
+                    normalized_url, pid, idx
+                );
             }
         }
 
@@ -281,9 +289,7 @@ impl IntegratedProductRepository {
 
                 info!(
                     "[Persist] products: url={} pid={:?} idx={:?} action=update",
-                    normalized_url,
-                    product.page_id,
-                    product.index_in_page
+                    normalized_url, product.page_id, product.index_in_page
                 );
                 info!(
                     "📝 Product updated: {} (changes detected)",
@@ -340,9 +346,7 @@ impl IntegratedProductRepository {
 
             info!(
                 "[Persist] products: url={} pid={:?} idx={:?} action=insert",
-                normalized_url,
-                product.page_id,
-                product.index_in_page
+                normalized_url, product.page_id, product.index_in_page
             );
             // info!("🆕 New product created: {}", product.model.as_deref().unwrap_or("Unknown"));
             Ok((false, true)) // updated=false, created=true
@@ -366,7 +370,7 @@ impl IntegratedProductRepository {
 
         let existing = self.get_product_detail_by_url(&detail.url).await?;
 
-    if let Some(existing_detail) = existing {
+        if let Some(existing_detail) = existing {
             // 🔍 지능적 비교: 빈 필드 채우기 + 실제 변경사항 확인
             let mut updates = Vec::new();
             // Heterogeneous bind values (different Option<T> types) captured via enum to avoid type mismatch
@@ -488,8 +492,10 @@ impl IntegratedProductRepository {
                 }
 
                 // If page_id/index_in_page are being cleared to NULL, also clear id to NULL for consistency
-                let clearing_position = (change_kinds.iter().any(|k| k == "change:page_id") && detail.page_id.is_none())
-                    || (change_kinds.iter().any(|k| k == "change:index_in_page") && detail.index_in_page.is_none());
+                let clearing_position = (change_kinds.iter().any(|k| k == "change:page_id")
+                    && detail.page_id.is_none())
+                    || (change_kinds.iter().any(|k| k == "change:index_in_page")
+                        && detail.index_in_page.is_none());
                 if clearing_position {
                     updates.push("id = NULL");
                     // No bind needed for NULL literal
@@ -646,7 +652,9 @@ impl IntegratedProductRepository {
                 // Keep products table in sync for pagination coordinates and id
                 if detail.page_id.is_some() || detail.index_in_page.is_some() || id_mismatch {
                     // Update products when page fields changed OR id needed correction
-                    let changed_page = change_kinds.iter().any(|k| k == "change:page_id" || k == "change:index_in_page");
+                    let changed_page = change_kinds
+                        .iter()
+                        .any(|k| k == "change:page_id" || k == "change:index_in_page");
                     if changed_page || id_mismatch {
                         let _ = sqlx::query(
                             r#"
@@ -684,9 +692,7 @@ impl IntegratedProductRepository {
                 }
                 info!(
                     "[Persist] product_details: url={} pid={:?} idx={:?} action=update",
-                    detail.url,
-                    detail.page_id,
-                    detail.index_in_page
+                    detail.url, detail.page_id, detail.index_in_page
                 );
                 Ok((true, false)) // updated=true, created=false
             } else {
@@ -706,7 +712,7 @@ impl IntegratedProductRepository {
                 }
                 Ok((false, false)) // updated=false, created=false
             }
-    } else {
+        } else {
             // 🆕 새로운 ProductDetail 삽입
             // ✅ Foreign Key 제약 해결: products 테이블에 먼저 기본 정보 삽입
             let basic_product = Product {
@@ -841,9 +847,7 @@ impl IntegratedProductRepository {
             }
             info!(
                 "[Persist] product_details: url={} pid={:?} idx={:?} action=insert",
-                detail.url,
-                detail.page_id,
-                detail.index_in_page
+                detail.url, detail.page_id, detail.index_in_page
             );
             Ok((false, true)) // updated=false, created=true
         }

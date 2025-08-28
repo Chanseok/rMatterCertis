@@ -131,8 +131,8 @@ pub mod commands {
     pub mod db_diagnostics; // 🧪 DB pagination mismatch scan
     pub mod db_repair; // 🔧 DB repair/sync between products and product_details
     pub mod debug_commands; // 🔎 UI debug logging helpers
-    pub mod product_details_analytics; // 📊 product_details analytics endpoints
     pub mod performance_commands; // 🔧 Phase C: 성능 최적화 도구
+    pub mod product_details_analytics; // 📊 product_details analytics endpoints
     pub mod real_actor_commands; // 🎭 진짜 Actor 시스템 명령어
     pub mod real_crawling_commands; // 🚀 Phase C: 실제 크롤링 기능
     pub mod simple_actor_test;
@@ -154,9 +154,9 @@ pub mod commands {
     pub use db_repair::*; // DB repair/sync 명령어 export
     pub use debug_commands::*; // UI debug logger export
     pub use performance_commands::*; // Phase C 성능 최적화 명령어 export
+    pub use product_details_analytics::*;
     pub use real_crawling_commands::*; // Phase C 실제 크롤링 명령어 export
-    pub use sync_commands::*; // Partial Sync 명령어 export // DB cleanup 명령어 export
-    pub use product_details_analytics::*; // Export analytics command
+    pub use sync_commands::*; // Partial Sync 명령어 export // DB cleanup 명령어 export // Export analytics command
 } // Modern Rust 2024 - 명시적 모듈 선언
 // Deprecated legacy crawling engine module (disabled). See _archive for reference.
 // pub mod crawling;

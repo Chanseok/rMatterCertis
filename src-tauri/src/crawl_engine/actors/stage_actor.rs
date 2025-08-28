@@ -612,7 +612,7 @@ impl StageActor {
     pub async fn execute_stage(
         &mut self,
         stage_type: StageType,
-    items: Vec<StageItem>,
+        items: Vec<StageItem>,
         concurrency_limit: u32,
         timeout_secs: u64,
         context: &AppContext,
@@ -643,7 +643,7 @@ impl StageActor {
     async fn handle_execute_stage(
         &mut self,
         stage_type: StageType,
-    items: Vec<StageItem>,
+        items: Vec<StageItem>,
         concurrency_limit: u32,
         timeout_secs: u64,
         context: &AppContext,
@@ -812,19 +812,19 @@ impl StageActor {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency_limit as usize));
         // 전략/설정 및 의존성 복사
         let strategy_factory_clone = self.strategy_factory.clone();
-    // 페이지네이션 힌트 복사 (Copy types; safe to move into tasks)
-    let site_total_pages_hint = self.site_total_pages_hint;
-    let products_on_last_page_hint = self.products_on_last_page_hint;
-    // Duplicate policy 사전 클론 (self를 태스크 내부에서 캡처하지 않기 위해)
-    let duplicate_policy_base = self.duplicate_policy.clone();
+        // 페이지네이션 힌트 복사 (Copy types; safe to move into tasks)
+        let site_total_pages_hint = self.site_total_pages_hint;
+        let products_on_last_page_hint = self.products_on_last_page_hint;
+        // Duplicate policy 사전 클론 (self를 태스크 내부에서 캡처하지 않기 위해)
+        let duplicate_policy_base = self.duplicate_policy.clone();
 
         // 각 아이템을 병렬로 처리 (StageItemStarted를 먼저 emit하여 이벤트 순서 보장)
         let deadline = Instant::now() + overall_timeout;
         // join 전에 추후 abort 대상 추적을 위해 task handle 저장
         let mut handles: Vec<tokio::task::JoinHandle<Result<StageItemResult, StageError>>> =
             Vec::new();
-    let batch_id_owned = self.batch_id.clone();
-    for item in items {
+        let batch_id_owned = self.batch_id.clone();
+        for item in items {
             let sem = semaphore.clone();
             let base_item = item.clone(); // used for lifecycle pre-emits
             let stage_type_clone = stage_type.clone();
@@ -1928,10 +1928,7 @@ impl StageActor {
                 for (i, d) in wrapper.products.iter().take(3).enumerate() {
                     debug!(
                         "[PersistExecSample] idx={} url={} page_id={:?} index_in_page={:?}",
-                        i,
-                        d.url,
-                        d.page_id,
-                        d.index_in_page
+                        i, d.url, d.page_id, d.index_in_page
                     );
                 }
                 let products = &wrapper.products;
@@ -1974,14 +1971,19 @@ impl StageActor {
                                 // 중복(no-op) → 정책 적용: UpdateIdIndexOnly면 위치 강제 업데이트 시도
                                 let policy_env = std::env::var("MC_DUPLICATE_POLICY").ok();
                                 if matches!(policy_env.as_deref(), Some("UpdateIdIndexOnly")) {
-                                    if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
+                                    if let (Some(pid), Some(idx)) =
+                                        (detail.page_id, detail.index_in_page)
+                                    {
                                         if let Ok((prod_rows, det_rows)) = product_repo
                                             .force_update_position_by_url(&detail.url, pid, idx)
                                             .await
                                         {
                                             if det_rows > 0 || prod_rows > 0 {
                                                 updated += 1;
-                                                debug!("[PersistExecDetail] forced pos update idx={} url={} pid={} idx_in_page={} (prod_rows={}, det_rows={})", idx, detail.url, pid, idx, prod_rows, det_rows);
+                                                debug!(
+                                                    "[PersistExecDetail] forced pos update idx={} url={} pid={} idx_in_page={} (prod_rows={}, det_rows={})",
+                                                    idx, detail.url, pid, idx, prod_rows, det_rows
+                                                );
                                                 continue;
                                             }
                                         }
@@ -2011,10 +2013,7 @@ impl StageActor {
                 for (i, d) in wrapper.products.iter().take(3).enumerate() {
                     debug!(
                         "[PersistExecSample] validated idx={} url={} page_id={:?} index_in_page={:?}",
-                        i,
-                        d.url,
-                        d.page_id,
-                        d.index_in_page
+                        i, d.url, d.page_id, d.index_in_page
                     );
                 }
                 let products = &wrapper.products;
@@ -2055,14 +2054,19 @@ impl StageActor {
                             if !was_created && !was_updated {
                                 let policy_env = std::env::var("MC_DUPLICATE_POLICY").ok();
                                 if matches!(policy_env.as_deref(), Some("UpdateIdIndexOnly")) {
-                                    if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
+                                    if let (Some(pid), Some(idx)) =
+                                        (detail.page_id, detail.index_in_page)
+                                    {
                                         if let Ok((prod_rows, det_rows)) = product_repo
                                             .force_update_position_by_url(&detail.url, pid, idx)
                                             .await
                                         {
                                             if det_rows > 0 || prod_rows > 0 {
                                                 updated += 1;
-                                                debug!("[PersistExecDetail] forced pos update(validated) idx={} url={} pid={} idx_in_page={} (prod_rows={}, det_rows={})", idx, detail.url, pid, idx, prod_rows, det_rows);
+                                                debug!(
+                                                    "[PersistExecDetail] forced pos update(validated) idx={} url={} pid={} idx_in_page={} (prod_rows={}, det_rows={})",
+                                                    idx, detail.url, pid, idx, prod_rows, det_rows
+                                                );
                                                 continue;
                                             }
                                         }

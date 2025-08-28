@@ -21,17 +21,20 @@ fn generate_unified_types_index(types_dir: &Path) -> std::io::Result<()> {
     let index_path = types_dir.join("index.ts");
     let mut exports = Vec::new();
 
-    // .ts 파일들을 읽어서 export 구문 생성
+    // .ts 파일들을 읽어서 export 구문 생성 (.d.ts 는 건너뜀)
     for entry in fs::read_dir(types_dir)? {
         let entry = entry?;
         let path = entry.path();
 
         if let Some(file_name) = path.file_name() {
             if let Some(file_name_str) = file_name.to_str() {
+                // Skip the auto-generated index itself and any declaration files (*.d.ts)
+                if file_name_str == "index.ts" || file_name_str.ends_with(".d.ts") {
+                    continue;
+                }
                 if std::path::Path::new(file_name_str)
                     .extension()
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("ts"))
-                    && file_name_str != "index.ts"
                 {
                     let type_name = file_name_str.trim_end_matches(".ts");
                     exports.push(format!(

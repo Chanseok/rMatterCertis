@@ -1420,19 +1420,9 @@ impl BatchActor {
 
         // StageActor로 Stage 실행 (실제 items 전달)
         // Use configurable operation timeout instead of hard-coded 30s
-        let timeout_secs = app_config
-            .user
-            .crawling
-            .timing
-            .operation_timeout_seconds;
+        let timeout_secs = app_config.user.crawling.timing.operation_timeout_seconds;
         let stage_result = stage_actor
-            .execute_stage(
-                stage_type,
-                items,
-                concurrency_limit,
-                timeout_secs,
-                context,
-            )
+            .execute_stage(stage_type, items, concurrency_limit, timeout_secs, context)
             .await
             .map_err(|e| {
                 BatchError::StageExecutionFailed(format!("Stage execution failed: {:?}", e))
@@ -1556,11 +1546,7 @@ impl BatchActor {
         }
 
         // Use configurable operation timeout instead of hard-coded 30s
-        let timeout_secs = app_config
-            .user
-            .crawling
-            .timing
-            .operation_timeout_seconds;
+        let timeout_secs = app_config.user.crawling.timing.operation_timeout_seconds;
         let stage_result = stage_actor
             .execute_stage(stage_type, items, concurrency_limit, timeout_secs, context)
             .await

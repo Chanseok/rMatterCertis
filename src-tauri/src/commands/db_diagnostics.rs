@@ -4,8 +4,8 @@ use crate::application::shared_state::SharedStateCache;
 use serde::Serialize;
 use sqlx::Row;
 use std::collections::{BTreeMap, HashMap};
-use tauri::{AppHandle, State};
 use tauri::Manager; // for try_state
+use tauri::{AppHandle, State};
 use tracing::{debug, info};
 
 #[derive(Debug, Serialize)]
@@ -68,14 +68,14 @@ pub async fn scan_db_pagination_mismatches(
         .await
         .map_err(|e| format!("DB pool unavailable: {e}"))?;
 
-        // === Pre-pass: align product_details positions/ids by products.url, then backfill products.id from details ===
-        let mut prepass = PrepassSummary::default();
+    // === Pre-pass: align product_details positions/ids by products.url, then backfill products.id from details ===
+    let mut prepass = PrepassSummary::default();
     {
-                let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-                // 1) Align product_details.page_id/index_in_page and recompute product_details.id from products
-                //    Only when products has non-null page_id/index_in_page.
-                                // Count how many rows would collide with existing target slot
-                                let res0 = sqlx::query_scalar::<_, i64>(
+        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+        // 1) Align product_details.page_id/index_in_page and recompute product_details.id from products
+        //    Only when products has non-null page_id/index_in_page.
+        // Count how many rows would collide with existing target slot
+        let res0 = sqlx::query_scalar::<_, i64>(
                                                 r#"
                                                 SELECT COUNT(*) FROM product_details pd
                                                 WHERE EXISTS (SELECT 1 FROM products WHERE products.url = pd.url)
@@ -99,7 +99,7 @@ pub async fn scan_db_pagination_mismatches(
                                 .await
                                 .unwrap_or(0);
 
-                                let res1 = sqlx::query(
+        let res1 = sqlx::query(
                         r#"
                         UPDATE product_details
                         SET
@@ -134,12 +134,12 @@ pub async fn scan_db_pagination_mismatches(
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| format!("Prepass alignment failed: {e}"))?;
-                prepass.details_aligned = res1.rows_affected();
-                prepass.details_align_skipped_due_to_slot_taken = Some(res0 as u64);
-                debug!(target: "db_diagnostics", details_aligned = prepass.details_aligned, "prepass: details aligned");
+        prepass.details_aligned = res1.rows_affected();
+        prepass.details_align_skipped_due_to_slot_taken = Some(res0 as u64);
+        debug!(target: "db_diagnostics", details_aligned = prepass.details_aligned, "prepass: details aligned");
 
-                // 2) Backfill products.id from product_details.id when NULL/empty
-                let res2 = sqlx::query(
+        // 2) Backfill products.id from product_details.id when NULL/empty
+        let res2 = sqlx::query(
                         r#"
                         UPDATE products
                         SET id = (SELECT id FROM product_details WHERE product_details.url = products.url)
@@ -155,11 +155,11 @@ pub async fn scan_db_pagination_mismatches(
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| format!("Prepass products.id backfill failed: {e}"))?;
-                prepass.products_id_backfilled = res2.rows_affected();
-                debug!(target: "db_diagnostics", products_id_backfilled = prepass.products_id_backfilled, "prepass: products.id backfilled");
+        prepass.products_id_backfilled = res2.rows_affected();
+        debug!(target: "db_diagnostics", products_id_backfilled = prepass.products_id_backfilled, "prepass: products.id backfilled");
 
-                tx.commit().await.map_err(|e| e.to_string())?;
-        }
+        tx.commit().await.map_err(|e| e.to_string())?;
+    }
 
     // Skip network calls in diagnostics to avoid stalling; derive site meta from cache/config only.
     // 1) Prefer SharedStateCache.site_analysis (if present and fresh)

@@ -24,8 +24,7 @@ pub struct ProductsToDetailsSyncReport {
 pub async fn sync_product_details_coordinates(
     _app: AppHandle,
     app_state: State<'_, AppState>,
-)
--> Result<ProductsToDetailsSyncReport, String> {
+) -> Result<ProductsToDetailsSyncReport, String> {
     let pool = app_state
         .get_database_pool()
         .await
@@ -44,8 +43,8 @@ pub async fn sync_product_details_coordinates(
         .await
         .unwrap_or(0);
 
-        // -1) Neutralize duplicate product_details rows per URL (keep canonical MIN(rowid))
-        let neutralize_dups_sql = r#"
+    // -1) Neutralize duplicate product_details rows per URL (keep canonical MIN(rowid))
+    let neutralize_dups_sql = r#"
                 UPDATE product_details
                 SET page_id = NULL, index_in_page = NULL, id = NULL
                 WHERE rowid NOT IN (SELECT MIN(rowid) FROM product_details GROUP BY url)
@@ -53,13 +52,13 @@ pub async fn sync_product_details_coordinates(
                         SELECT url FROM product_details GROUP BY url HAVING COUNT(*) > 1
                     );
         "#;
-        let duplicates_neutralized = sqlx::query(neutralize_dups_sql)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?
-                .rows_affected();
+    let duplicates_neutralized = sqlx::query(neutralize_dups_sql)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?
+        .rows_affected();
 
-        // 0) First, regenerate products.id from page_id/index_in_page (canonical form) when needed
+    // 0) First, regenerate products.id from page_id/index_in_page (canonical form) when needed
     let update_product_ids_sql = r#"
         UPDATE products
         SET id = 'p' || printf('%04d', page_id) || 'i' || printf('%02d', index_in_page)
@@ -184,6 +183,8 @@ pub async fn sync_product_details_coordinates(
         updated_coordinates,
         updated_ids,
         duplicates_neutralized: Some(duplicates_neutralized),
-        details_align_skipped_due_to_slot_taken: Some(details_align_skipped_due_to_slot_taken as u64),
+        details_align_skipped_due_to_slot_taken: Some(
+            details_align_skipped_due_to_slot_taken as u64,
+        ),
     })
 }

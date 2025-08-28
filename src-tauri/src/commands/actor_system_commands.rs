@@ -1155,10 +1155,13 @@ async fn calculate_intelligent_crawling_range(
     .with_repository(product_repo.clone());
 
     // 시스템 상태 분석 (캐시 재사용 시도)
-    let shared_cache: Option<tauri::State<crate::application::shared_state::SharedStateCache>> = app_handle.try_state::<crate::application::shared_state::SharedStateCache>();
+    let shared_cache: Option<tauri::State<crate::application::shared_state::SharedStateCache>> =
+        app_handle.try_state::<crate::application::shared_state::SharedStateCache>();
     let cached_site_status = if let Some(cache_state) = shared_cache.as_ref() {
-        cache_state.get_valid_site_analysis_async(Some(5)).await.map(|cached| {
-            crate::domain::services::SiteStatus {
+        cache_state
+            .get_valid_site_analysis_async(Some(5))
+            .await
+            .map(|cached| crate::domain::services::SiteStatus {
                 is_accessible: true,
                 response_time_ms: 0,
                 total_pages: cached.total_pages,
@@ -1166,12 +1169,17 @@ async fn calculate_intelligent_crawling_range(
                 products_on_last_page: cached.products_on_last_page,
                 last_check_time: cached.analyzed_at,
                 health_score: cached.health_score,
-                data_change_status: crate::domain::services::crawling_services::SiteDataChangeStatus::Stable { count: cached.estimated_products },
+                data_change_status:
+                    crate::domain::services::crawling_services::SiteDataChangeStatus::Stable {
+                        count: cached.estimated_products,
+                    },
                 decrease_recommendation: None,
-                crawling_range_recommendation: crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
-            }
-        })
-    } else { None };
+                crawling_range_recommendation:
+                    crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
+            })
+    } else {
+        None
+    };
     let cached_site_status_clone = cached_site_status.clone();
     let (site_status, db_analysis) = crawling_planner
         .analyze_system_state_with_cache(cached_site_status)
@@ -1180,20 +1188,24 @@ async fn calculate_intelligent_crawling_range(
     if let Some(cache_state) = shared_cache.as_ref() {
         use crate::application::shared_state::{DbAnalysisResult, SiteAnalysisResult};
         if cached_site_status_clone.is_none() {
-            cache_state.set_site_analysis(SiteAnalysisResult::new(
-                site_status.total_pages,
-                site_status.products_on_last_page,
-                site_status.estimated_products,
-                crate::infrastructure::config::utils::matter_products_page_url_simple(1),
-                site_status.health_score,
-            )).await;
+            cache_state
+                .set_site_analysis(SiteAnalysisResult::new(
+                    site_status.total_pages,
+                    site_status.products_on_last_page,
+                    site_status.estimated_products,
+                    crate::infrastructure::config::utils::matter_products_page_url_simple(1),
+                    site_status.health_score,
+                ))
+                .await;
         }
-        cache_state.set_db_analysis(DbAnalysisResult::new(
-            db_analysis.total_products,
-            None,
-            None,
-            db_analysis.data_quality_score,
-        )).await;
+        cache_state
+            .set_db_analysis(DbAnalysisResult::new(
+                db_analysis.total_products,
+                None,
+                None,
+                db_analysis.data_quality_score,
+            ))
+            .await;
     }
 
     info!(
@@ -2224,7 +2236,9 @@ async fn build_execution_plan_from_explicit_pages(
                 products_on_last_page: cached.products_on_last_page,
                 last_check_time: cached.analyzed_at,
                 health_score: cached.health_score,
-                data_change_status: SiteDataChangeStatus::Stable { count: cached.estimated_products },
+                data_change_status: SiteDataChangeStatus::Stable {
+                    count: cached.estimated_products,
+                },
                 decrease_recommendation: None,
                 crawling_range_recommendation: CrawlingRangeRecommendation::Full,
             }
@@ -2315,7 +2329,13 @@ async fn build_execution_plan_from_explicit_pages(
     let plan_id = format!("plan_{}", Utc::now().timestamp());
     let total_pages_planned: u32 = ranges
         .iter()
-        .map(|r| if r.reverse_order { r.start_page - r.end_page + 1 } else { r.end_page - r.start_page + 1 })
+        .map(|r| {
+            if r.reverse_order {
+                r.start_page - r.end_page + 1
+            } else {
+                r.end_page - r.start_page + 1
+            }
+        })
         .sum();
     let mut execution_plan = ExecutionPlan {
         plan_id,
@@ -2329,9 +2349,9 @@ async fn build_execution_plan_from_explicit_pages(
         original_strategy: "ManualExplicitPages".into(),
         input_snapshot: snapshot,
         plan_hash,
-    // Manual runs should update existing records' fields (page_id/index_in_page),
-    // so do not skip duplicates in this mode.
-    skip_duplicate_urls: false,
+        // Manual runs should update existing records' fields (page_id/index_in_page),
+        // so do not skip duplicates in this mode.
+        skip_duplicate_urls: false,
         kpi_meta: Some(crate::crawl_engine::actors::types::ExecutionPlanKpi {
             total_ranges: 0,
             total_pages: total_pages_planned,

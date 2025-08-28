@@ -157,7 +157,7 @@ pub(crate) fn emit_actor_event(app: &AppHandle, event: AppEvent) {
         AppEvent::SyncUpsertProgress { .. } => "actor-sync-upsert-progress",
         AppEvent::SyncPageCompleted { .. } => "actor-sync-page-completed",
         AppEvent::SyncWarning { .. } => "actor-sync-warning",
-    AppEvent::SyncRetrying { .. } => "actor-sync-retrying",
+        AppEvent::SyncRetrying { .. } => "actor-sync-retrying",
         AppEvent::SyncCompleted { .. } => "actor-sync-completed",
         // Product lifecycle forwarding
         AppEvent::ProductLifecycle { .. } => "actor-product-lifecycle",

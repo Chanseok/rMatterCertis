@@ -2,8 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::RwLock;
 
 use crate::application::validated_crawling_config::ValidatedCrawlingConfig;
 use crate::infrastructure::config::AppConfig;

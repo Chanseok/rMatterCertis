@@ -78,7 +78,13 @@ pub async fn get_product_details_analytics(
         q
     }
 
-    let (where_sql, where_params) = build_where_clause(&start_date, &end_date, &manufacturers, &spec_versions, &transport_interfaces);
+    let (where_sql, where_params) = build_where_clause(
+        &start_date,
+        &end_date,
+        &manufacturers,
+        &spec_versions,
+        &transport_interfaces,
+    );
 
     // Totals
     let total_details: i64 = {
@@ -103,16 +109,18 @@ pub async fn get_product_details_analytics(
             where_sql
         );
         let q = sqlx::query(&sql);
-    bind_all(q, &where_params)
+        bind_all(q, &where_params)
             .fetch_all(&pool)
             .await
             .unwrap_or_default()
     }
     .into_iter()
-    .map(|r| json!({
-        "date": r.try_get::<Option<String>, _>("d").ok().flatten(),
-        "count": r.get::<i64, _>("c")
-    }))
+    .map(|r| {
+        json!({
+            "date": r.try_get::<Option<String>, _>("d").ok().flatten(),
+            "count": r.get::<i64, _>("c")
+        })
+    })
     .collect::<Vec<_>>();
 
     // created_at / updated_at daily time series
@@ -123,16 +131,18 @@ pub async fn get_product_details_analytics(
             where_sql
         );
         let q = sqlx::query(&sql);
-    bind_all(q, &where_params)
+        bind_all(q, &where_params)
             .fetch_all(&pool)
             .await
             .unwrap_or_default()
     }
     .into_iter()
-    .map(|r| json!({
-        "date": r.try_get::<Option<String>, _>("d").ok().flatten(),
-        "count": r.get::<i64, _>("c")
-    }))
+    .map(|r| {
+        json!({
+            "date": r.try_get::<Option<String>, _>("d").ok().flatten(),
+            "count": r.get::<i64, _>("c")
+        })
+    })
     .collect::<Vec<_>>();
 
     let updated_daily = {
@@ -142,16 +152,18 @@ pub async fn get_product_details_analytics(
             where_sql
         );
         let q = sqlx::query(&sql);
-    bind_all(q, &where_params)
+        bind_all(q, &where_params)
             .fetch_all(&pool)
             .await
             .unwrap_or_default()
     }
     .into_iter()
-    .map(|r| json!({
-        "date": r.try_get::<Option<String>, _>("d").ok().flatten(),
-        "count": r.get::<i64, _>("c")
-    }))
+    .map(|r| {
+        json!({
+            "date": r.try_get::<Option<String>, _>("d").ok().flatten(),
+            "count": r.get::<i64, _>("c")
+        })
+    })
     .collect::<Vec<_>>();
 
     // Page distribution and index heatmap
@@ -162,16 +174,18 @@ pub async fn get_product_details_analytics(
             where_sql
         );
         let q = sqlx::query(&sql);
-    bind_all(q, &where_params)
+        bind_all(q, &where_params)
             .fetch_all(&pool)
             .await
             .unwrap_or_default()
     }
     .into_iter()
-    .map(|r| json!({
-        "page_id": r.try_get::<Option<i64>, _>("p").ok().flatten(),
-        "count": r.get::<i64, _>("c")
-    }))
+    .map(|r| {
+        json!({
+            "page_id": r.try_get::<Option<i64>, _>("p").ok().flatten(),
+            "count": r.get::<i64, _>("c")
+        })
+    })
     .collect::<Vec<_>>();
 
     let index_heatmap = {
@@ -188,60 +202,102 @@ pub async fn get_product_details_analytics(
             .unwrap_or_default()
     }
     .into_iter()
-    .map(|r| json!({
-        "page_id": r.try_get::<Option<i64>, _>("p").ok().flatten(),
-        "index_in_page": r.try_get::<Option<i64>, _>("i").ok().flatten(),
-        "count": r.get::<i64, _>("c")
-    }))
+    .map(|r| {
+        json!({
+            "page_id": r.try_get::<Option<i64>, _>("p").ok().flatten(),
+            "index_in_page": r.try_get::<Option<i64>, _>("i").ok().flatten(),
+            "count": r.get::<i64, _>("c")
+        })
+    })
     .collect::<Vec<_>>();
 
     // Completeness metrics (non-null counts)
     let manufacturer_filled = {
-        let sql = format!("SELECT COUNT(*) FROM product_details {} AND manufacturer IS NOT NULL AND manufacturer <> ''", where_sql);
+        let sql = format!(
+            "SELECT COUNT(*) FROM product_details {} AND manufacturer IS NOT NULL AND manufacturer <> ''",
+            where_sql
+        );
         let mut q = sqlx::query_scalar::<_, i64>(&sql);
-        for p in &where_params { q = q.bind(p); }
+        for p in &where_params {
+            q = q.bind(p);
+        }
         q.fetch_one(&pool).await.unwrap_or(0)
     };
     let model_filled = {
-        let sql = format!("SELECT COUNT(*) FROM product_details {} AND model IS NOT NULL AND model <> ''", where_sql);
+        let sql = format!(
+            "SELECT COUNT(*) FROM product_details {} AND model IS NOT NULL AND model <> ''",
+            where_sql
+        );
         let mut q = sqlx::query_scalar::<_, i64>(&sql);
-        for p in &where_params { q = q.bind(p); }
+        for p in &where_params {
+            q = q.bind(p);
+        }
         q.fetch_one(&pool).await.unwrap_or(0)
     };
     let certificate_id_filled = {
-        let sql = format!("SELECT COUNT(*) FROM product_details {} AND certificate_id IS NOT NULL AND certificate_id <> ''", where_sql);
+        let sql = format!(
+            "SELECT COUNT(*) FROM product_details {} AND certificate_id IS NOT NULL AND certificate_id <> ''",
+            where_sql
+        );
         let mut q = sqlx::query_scalar::<_, i64>(&sql);
-        for p in &where_params { q = q.bind(p); }
+        for p in &where_params {
+            q = q.bind(p);
+        }
         q.fetch_one(&pool).await.unwrap_or(0)
     };
     let device_type_filled = {
-        let sql = format!("SELECT COUNT(*) FROM product_details {} AND device_type IS NOT NULL AND device_type <> ''", where_sql);
+        let sql = format!(
+            "SELECT COUNT(*) FROM product_details {} AND device_type IS NOT NULL AND device_type <> ''",
+            where_sql
+        );
         let mut q = sqlx::query_scalar::<_, i64>(&sql);
-        for p in &where_params { q = q.bind(p); }
+        for p in &where_params {
+            q = q.bind(p);
+        }
         q.fetch_one(&pool).await.unwrap_or(0)
     };
     let certification_date_filled = {
-        let sql = format!("SELECT COUNT(*) FROM product_details {} AND certification_date IS NOT NULL AND certification_date <> ''", where_sql);
+        let sql = format!(
+            "SELECT COUNT(*) FROM product_details {} AND certification_date IS NOT NULL AND certification_date <> ''",
+            where_sql
+        );
         let mut q = sqlx::query_scalar::<_, i64>(&sql);
-        for p in &where_params { q = q.bind(p); }
+        for p in &where_params {
+            q = q.bind(p);
+        }
         q.fetch_one(&pool).await.unwrap_or(0)
     };
     let software_version_filled = {
-        let sql = format!("SELECT COUNT(*) FROM product_details {} AND software_version IS NOT NULL AND software_version <> ''", where_sql);
+        let sql = format!(
+            "SELECT COUNT(*) FROM product_details {} AND software_version IS NOT NULL AND software_version <> ''",
+            where_sql
+        );
         let mut q = sqlx::query_scalar::<_, i64>(&sql);
-        for p in &where_params { q = q.bind(p); }
+        for p in &where_params {
+            q = q.bind(p);
+        }
         q.fetch_one(&pool).await.unwrap_or(0)
     };
     let hardware_version_filled = {
-        let sql = format!("SELECT COUNT(*) FROM product_details {} AND hardware_version IS NOT NULL AND hardware_version <> ''", where_sql);
+        let sql = format!(
+            "SELECT COUNT(*) FROM product_details {} AND hardware_version IS NOT NULL AND hardware_version <> ''",
+            where_sql
+        );
         let mut q = sqlx::query_scalar::<_, i64>(&sql);
-        for p in &where_params { q = q.bind(p); }
+        for p in &where_params {
+            q = q.bind(p);
+        }
         q.fetch_one(&pool).await.unwrap_or(0)
     };
     let spec_version_filled = {
-        let sql = format!("SELECT COUNT(*) FROM product_details {} AND specification_version IS NOT NULL AND specification_version <> ''", where_sql);
+        let sql = format!(
+            "SELECT COUNT(*) FROM product_details {} AND specification_version IS NOT NULL AND specification_version <> ''",
+            where_sql
+        );
         let mut q = sqlx::query_scalar::<_, i64>(&sql);
-        for p in &where_params { q = q.bind(p); }
+        for p in &where_params {
+            q = q.bind(p);
+        }
         q.fetch_one(&pool).await.unwrap_or(0)
     };
 
@@ -263,7 +319,7 @@ pub async fn get_product_details_analytics(
             sql.push_str(&format!(" LIMIT {}", lim));
         }
         let q = sqlx::query(&sql);
-    let rows = bind_all(q, where_params).fetch_all(pool).await?;
+        let rows = bind_all(q, where_params).fetch_all(pool).await?;
         Ok(rows
             .into_iter()
             .map(|r| {
@@ -289,7 +345,7 @@ pub async fn get_product_details_analytics(
             sql.push_str(&format!(" LIMIT {}", lim));
         }
         let q = sqlx::query(&sql);
-    let rows = bind_all(q, where_params).fetch_all(pool).await?;
+        let rows = bind_all(q, where_params).fetch_all(pool).await?;
         Ok(rows
             .into_iter()
             .map(|r| {
@@ -299,12 +355,39 @@ pub async fn get_product_details_analytics(
             .collect())
     }
 
-    let manufacturers = group_by_with_filters(&pool, "manufacturer", &where_sql, &where_params, Some(100)).await.unwrap_or_default();
-    let device_types = group_by_with_filters(&pool, "device_type", &where_sql, &where_params, Some(100)).await.unwrap_or_default();
-    let spec_versions_dist = group_by_with_filters(&pool, "specification_version", &where_sql, &where_params, None).await.unwrap_or_default();
-    let transport_interfaces_dist = group_by_with_filters(&pool, "transport_interface", &where_sql, &where_params, None).await.unwrap_or_default();
-    let tis_trp_tested = group_by_with_filters(&pool, "tis_trp_tested", &where_sql, &where_params, None).await.unwrap_or_default();
-    let vids = group_by_i32_with_filters(&pool, "vid", &where_sql, &where_params, Some(50)).await.unwrap_or_default();
+    let manufacturers =
+        group_by_with_filters(&pool, "manufacturer", &where_sql, &where_params, Some(100))
+            .await
+            .unwrap_or_default();
+    let device_types =
+        group_by_with_filters(&pool, "device_type", &where_sql, &where_params, Some(100))
+            .await
+            .unwrap_or_default();
+    let spec_versions_dist = group_by_with_filters(
+        &pool,
+        "specification_version",
+        &where_sql,
+        &where_params,
+        None,
+    )
+    .await
+    .unwrap_or_default();
+    let transport_interfaces_dist = group_by_with_filters(
+        &pool,
+        "transport_interface",
+        &where_sql,
+        &where_params,
+        None,
+    )
+    .await
+    .unwrap_or_default();
+    let tis_trp_tested =
+        group_by_with_filters(&pool, "tis_trp_tested", &where_sql, &where_params, None)
+            .await
+            .unwrap_or_default();
+    let vids = group_by_i32_with_filters(&pool, "vid", &where_sql, &where_params, Some(50))
+        .await
+        .unwrap_or_default();
 
     let resp = json!({
         "total_details": total_details,
@@ -337,6 +420,9 @@ pub async fn get_product_details_analytics(
         }
     });
 
-    info!("✅ product_details analytics generated: total={} entries", total_details);
+    info!(
+        "✅ product_details analytics generated: total={} entries",
+        total_details
+    );
     Ok(resp)
 }

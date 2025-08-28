@@ -200,9 +200,9 @@ impl StatusChecker for StatusCheckerImpl {
         let (data_change_status, decrease_recommendation) =
             self.analyze_data_changes(estimated_products).await;
 
-    // Step 5: 크롤링 범위 권장사항 계산 (StatusCheckerImpl 내부에서는 CrawlingPlanner를 생성하지 않음)
-    // 중복 분석을 방지하기 위해 플래너 생성과 시스템 분석은 상위 오케스트레이션 레이어에서 수행합니다.
-    let crawling_range_recommendation = self
+        // Step 5: 크롤링 범위 권장사항 계산 (StatusCheckerImpl 내부에서는 CrawlingPlanner를 생성하지 않음)
+        // 중복 분석을 방지하기 위해 플래너 생성과 시스템 분석은 상위 오케스트레이션 레이어에서 수행합니다.
+        let crawling_range_recommendation = self
             .calculate_crawling_range_recommendation_internal(
                 total_pages,
                 products_on_last_page,
@@ -2143,8 +2143,8 @@ impl ProductListCollector for ProductListCollectorImpl {
 
         const EXPECTED_PER_PAGE: usize = 12; // 도메인 규칙: 비마지막 페이지는 12개
         let max_retries = self.config.retry_attempts.max(1); // 최소 1회는 시도
-    let base_delay_ms: u64 = self.config.delay_ms.max(300);
-    let max_delay_ms: u64 = 8_000;
+        let base_delay_ms: u64 = self.config.delay_ms.max(300);
+        let max_delay_ms: u64 = 8_000;
 
         info!(
             "📊 Using cached site analysis for single page {}: total_pages={}, products_on_last_page={}, max_retries={}",
@@ -2230,7 +2230,9 @@ impl ProductListCollector for ProductListCollectorImpl {
 
                 if let Err(e) = url_strings_res {
                     last_error = Some(anyhow::anyhow!(e));
-                    if attempt < max_retries { retry_needed = true; }
+                    if attempt < max_retries {
+                        retry_needed = true;
+                    }
                 } else if last_error.is_some() && retry_needed {
                     // no further work in this scope
                 } else if last_error.is_none() {
@@ -2262,10 +2264,20 @@ impl ProductListCollector for ProductListCollectorImpl {
                         .collect();
 
                     let count = product_urls.len();
-                    debug!("🔗 Extracted {} URLs from page {} (attempt {}/{})", count, page, attempt + 1, max_retries + 1);
+                    debug!(
+                        "🔗 Extracted {} URLs from page {} (attempt {}/{})",
+                        count,
+                        page,
+                        attempt + 1,
+                        max_retries + 1
+                    );
 
                     // 성공 판정: 마지막 페이지는 수량 강제하지 않음. 그 외는 12개 충족 필요
-                    let success = if is_last_page { true } else { count >= EXPECTED_PER_PAGE };
+                    let success = if is_last_page {
+                        true
+                    } else {
+                        count >= EXPECTED_PER_PAGE
+                    };
                     if success {
                         out_urls = Some(product_urls);
                     } else {
@@ -2274,12 +2286,16 @@ impl ProductListCollector for ProductListCollectorImpl {
                             retry_needed = true;
                             last_error = Some(anyhow::anyhow!(
                                 "Insufficient products on page {}: expected >= {}, got {}",
-                                page, EXPECTED_PER_PAGE, count
+                                page,
+                                EXPECTED_PER_PAGE,
+                                count
                             ));
                         } else {
                             last_error = Some(anyhow::anyhow!(
                                 "Insufficient products on page {}: expected >= {}, got {}",
-                                page, EXPECTED_PER_PAGE, count
+                                page,
+                                EXPECTED_PER_PAGE,
+                                count
                             ));
                         }
                     }
@@ -2304,20 +2320,28 @@ impl ProductListCollector for ProductListCollectorImpl {
                     page
                 );
                 if attempt >= 2 {
-                    let _ = crate::infrastructure::simple_http_client::HttpClient::set_global_max_rps(8).await;
+                    let _ =
+                        crate::infrastructure::simple_http_client::HttpClient::set_global_max_rps(
+                            8,
+                        )
+                        .await;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                 continue;
             }
             // 에러가 있으나 재시도 불가하면 종료
-            if last_error.is_some() { break; }
+            if last_error.is_some() {
+                break;
+            }
         }
 
         // 최종 실패
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!(
-            "List page collection failed for page {} (unknown error)",
-            page
-        )))
+        Err(last_error.unwrap_or_else(|| {
+            anyhow::anyhow!(
+                "List page collection failed for page {} (unknown error)",
+                page
+            )
+        }))
     }
 
     async fn collect_page_range_with_cancellation(
@@ -2718,7 +2742,10 @@ impl ProductDetailCollectorImpl {
 #[async_trait]
 impl ProductDetailCollector for ProductDetailCollectorImpl {
     async fn collect_details(&self, product_urls: &[ProductUrl]) -> Result<Vec<ProductDetail>> {
-        debug!("Collecting details sequentially for {} products", product_urls.len());
+        debug!(
+            "Collecting details sequentially for {} products",
+            product_urls.len()
+        );
 
         let mut details = Vec::with_capacity(product_urls.len());
         let max_retries = self.config.retry_attempts.max(1);
@@ -2768,7 +2795,9 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                 }
             }
 
-            let Some(html_string) = html_opt else { continue };
+            let Some(html_string) = html_opt else {
+                continue;
+            };
 
             // Parse and build detail
             let doc = scraper::Html::parse_document(&html_string);
@@ -2788,7 +2817,10 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
             }
         }
 
-        debug!("Successfully collected {} product details (sequential)", details.len());
+        debug!(
+            "Successfully collected {} product details (sequential)",
+            details.len()
+        );
         Ok(details)
     }
 
@@ -2805,7 +2837,7 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
         let mut details = Vec::with_capacity(product_urls.len());
         let max_retries = self.config.retry_attempts.max(1);
 
-    'outer: for product_url in product_urls {
+        'outer: for product_url in product_urls {
             if cancellation_token.is_cancelled() {
                 warn!("Cancellation requested; stopping detail collection early");
                 break 'outer;
@@ -2837,7 +2869,10 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                                     .await;
                                 continue;
                             } else {
-                                warn!("Failed to read response text for {} after {} attempts: {}", url, attempts, e);
+                                warn!(
+                                    "Failed to read response text for {} after {} attempts: {}",
+                                    url, attempts, e
+                                );
                                 break;
                             }
                         }
@@ -2847,14 +2882,19 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                             tokio::time::sleep(Duration::from_millis(500 * attempts as u64)).await;
                             continue;
                         } else {
-                            warn!("HTTP request failed for {} after {} attempts: {}", url, attempts, e);
+                            warn!(
+                                "HTTP request failed for {} after {} attempts: {}",
+                                url, attempts, e
+                            );
                             break;
                         }
                     }
                 }
             }
 
-            let Some(html_string) = html_opt else { continue 'outer };
+            let Some(html_string) = html_opt else {
+                continue 'outer;
+            };
 
             if cancellation_token.is_cancelled() {
                 warn!("Cancellation after fetch for {}", url);
@@ -2878,7 +2918,10 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
             }
         }
 
-        info!("Successfully collected {} product details (sequential)", details.len());
+        info!(
+            "Successfully collected {} product details (sequential)",
+            details.len()
+        );
         Ok(details)
     }
 
@@ -2948,7 +2991,7 @@ impl ProductDetailCollectorImpl {
         let mut details = Vec::with_capacity(product_urls.len());
         let max_retries = self.config.retry_attempts.max(1);
 
-    for product_url in product_urls {
+        for product_url in product_urls {
             if let Some(ref token) = cancellation_token {
                 if token.is_cancelled() {
                     warn!("Cancellation requested; stopping async-events detail collection early");
@@ -3057,10 +3100,7 @@ impl ProductDetailCollectorImpl {
 
                     let _ = event_tx.send(ProductDetailEvent::TaskCompleted {
                         product_url: url.clone(),
-                        product_name: detail
-                            .manufacturer
-                            .clone()
-                            .or_else(|| detail.model.clone()),
+                        product_name: detail.manufacturer.clone().or_else(|| detail.model.clone()),
                         task_id: task_id.clone(),
                         processing_time: start_time.elapsed(),
                         extracted_fields: calculate_extracted_fields(&detail),

@@ -1,9 +1,9 @@
 Generalized Actor Events (Backend → Frontend)
 
-- When MC_FEATURE_EVENTS_GENERALIZED_ONLY=true (default), backend emits a single unified channel:
+- When `MC_FEATURE_EVENTS_GENERALIZED_ONLY=true`, backend emits a single unified channel:
   - Event name: `actor-event`
   - Payload is enriched with `seq`, `backend_ts`, `event_name` (original), and flattened `variant` + fields of AppEvent.
-- When the flag is false, backend keeps legacy behavior:
+- When the flag is false (default), backend keeps legacy behavior for backward compatibility:
   - Emits per-variant event names (e.g., `actor-session-started`, `actor-progress`, ...), plus synthetic page lifecycle events where applicable.
 
 Frontend migration tips:
@@ -17,7 +17,7 @@ Frontend migration tips:
 
 Verification notes:
 - Type-check passed (tsc --noEmit) and the app build completed locally via `vite build` without errors.
-- Backend flag default keeps generalized-only ON, so the unified channel should be present during normal runs.
+- Backend flag default keeps generalized-only OFF, so stage-specific event names will be emitted by default. The unified channel remains available when explicitly enabled via environment.
 
 Next steps (safe cleanup):
 - Gradually prune redundant legacy listeners once confidence is high and all consumers handle the unified shape.
