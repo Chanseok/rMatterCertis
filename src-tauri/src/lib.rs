@@ -86,7 +86,6 @@ pub mod domain {
 
 pub mod application {
     //! Application layer - Use cases and application services
-    pub mod crawling_profile; // 크롤링 프로필 정의
     pub mod dto;
     pub mod events;
     pub mod integrated_use_cases;
@@ -97,7 +96,6 @@ pub mod application {
     // pub mod crawler_manager;  // 🚧 임시 비활성화 - 컴파일 문제로 인해
 
     // Re-export commonly used items
-    pub use crawling_profile::{CrawlingProfile, CrawlingRequest};
     pub use events::EventEmitter;
     pub use shared_state::SharedStateCache;
     pub use state::AppState;

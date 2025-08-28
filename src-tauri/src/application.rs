@@ -12,12 +12,10 @@ pub mod dto;
 pub mod events;
 pub mod state;
 pub mod shared_state;  // 새로 추가된 공유 상태 관리
-pub mod crawling_profile;  // 크롤링 프로필 정의
 pub mod parsing_service;
 
 // Re-export commonly used items for convenience
 pub use shared_state::{SharedState, SharedStateCache, create_shared_state};
-pub use crawling_profile::{CrawlingProfile, CrawlingRequest};
 pub use events::EventEmitter;
 pub use state::AppState;
 pub use dto::*;

@@ -1521,7 +1521,11 @@ impl CollectorConfig {
     pub fn from_validated(
         validated_config: &crate::application::validated_crawling_config::ValidatedCrawlingConfig,
     ) -> Self {
-        let delay_ms = validated_config.request_delay().as_millis() as u64;
+        // as_millis returns u128; convert safely to u64, saturating on overflow
+        let delay_ms = match u64::try_from(validated_config.request_delay().as_millis()) {
+            Ok(v) => v,
+            Err(_) => u64::MAX,
+        };
 
         Self {
             batch_size: validated_config.batch_size(),
