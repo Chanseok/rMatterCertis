@@ -50,8 +50,8 @@ pub mod domain {
     pub mod entities;
     pub mod events;
     pub mod product_url;
-    pub mod repositories;
-    pub mod value_objects; // 추가: URL과 메타데이터를 함께 전달하는 구조체
+    // pub mod repositories; // removed: legacy repository traits (no active implementations)
+    // pub mod value_objects; // removed: unused value objects (ValidatedUrl, ProductData, etc.)
     pub mod services {
         //! Domain services for business logic
         pub mod crawling_services;
@@ -81,7 +81,6 @@ pub mod domain {
     pub use entities::*;
     pub use events::*;
     pub use pagination::{CanonicalPageIdCalculator, PagePosition, PaginationCalculator};
-    pub use value_objects::*;
 }
 
 pub mod application {
