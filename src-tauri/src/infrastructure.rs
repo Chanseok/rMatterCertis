@@ -3,10 +3,9 @@
 //! This module provides database connections, session management, HTML parsing,
 //! web crawling, and external service integrations following the guide's architecture.
 
-pub mod advanced_crawling_engine; // Phase 2 advanced crawling engine with data pipeline
+// Legacy engines archived (_archive/infrastructure)
 pub mod config; // Configuration constants and helpers
-// pub mod crawling; // Web crawler implementation (deprecated)
-pub mod crawling_engine; // 4-stage batch crawling engine
+// (legacy crawling modules removed)
 pub mod crawling_service_impls; // Service implementations
 pub mod data_processing_service_impls; // Data processing service implementations
 pub mod database_connection;
@@ -18,18 +17,11 @@ pub mod logging; // Logging infrastructure
 pub mod parsing; // Modern parsing architecture following the guide
 pub mod parsing_error; // Enhanced error types
 pub mod retry_manager; // 재시도 관리자 - INTEGRATED_PHASE2_PLAN Week 1 Day 3-4
-pub mod service_based_crawling_engine; // Deprecated legacy engine (kept for compatibility; not used in prod commands)
+// (legacy service_based engine removed)
 pub mod simple_http_client;
 pub mod system_broadcaster; // 실시간 시스템 상태 브로드캐스터 // Feature flags for phased rollout
 
-// Temporarily disabled - working on schema compatibility
-// pub mod product_repository;
-// pub mod matter_product_repository;
-// pub mod crawling_result_repository;
-// pub mod repositories_adapter;
-// pub mod http;
-// pub mod http_client;
-// pub mod crawler;  // Temporarily disabled - will be enabled after repositories are stable
+// (legacy adapters and http-related modules removed)
 
 // Re-export commonly used items
 pub use config::csa_iot;
@@ -39,13 +31,11 @@ pub use html_parser::MatterDataExtractor; // HTML parser with integrated tests
 pub use integrated_product_repository::IntegratedProductRepository;
 pub use simple_http_client::HttpClient; // CSA-IoT configuration constants
 
-// Modern parsing and crawling exports following the guide
-pub use crawling_engine::{BatchCrawlingConfig, BatchCrawlingEngine};
+// Modern parsing exports following the guide
 pub use parsing::{
     ParsingConfig, ParsingError, ParsingResult, ProductDetailParser, ProductListParser,
 };
-// Legacy ServiceBasedBatchCrawlingEngine fully removed from active path
-pub use advanced_crawling_engine::AdvancedBatchCrawlingEngine;
+// (legacy engines re-exports removed)
 pub use crawling_service_impls::{CollectorConfig, ProductListCollectorImpl, StatusCheckerImpl};
 pub use data_processing_service_impls::{
     ConflictResolverImpl, DeduplicationServiceImpl, ValidationServiceImpl,
@@ -53,7 +43,4 @@ pub use data_processing_service_impls::{
 pub use logging::{get_log_directory, init_logging, init_logging_with_config};
 pub use retry_manager::{ErrorClassification, RetryItem, RetryManager, RetryStats};
 
-// Legacy compatibility through adapters
-// pub use repositories_adapter::{SqliteVendorRepository, SqliteProductRepository};
-// pub use http_client::{HttpClient, HttpClientConfig};
-// pub use crawler::{WebCrawler, CrawlingConfig, CrawledPage};  // Temporarily disabled
+// (legacy adapter exports removed)

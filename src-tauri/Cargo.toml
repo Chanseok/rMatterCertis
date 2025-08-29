@@ -143,6 +143,8 @@ criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.4"
 rstest = "0.18"
 
+ 
+
 # 🚀 Modern Rust Development Profile (2024)
 [profile.dev]
 opt-level = 0
@@ -234,6 +236,7 @@ event-driven = []        # Event-driven architecture
 telemetry = []          # Telemetry and observability
 minimal = []            # Minimal build for CI/CD
 test-utils = []         # Testing utilities
+live_crawl_test = []    # Enable real async main for src/bin/live_crawl_test.rs
 
 [[bench]]
 name = "shared_service_benchmark"
