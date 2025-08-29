@@ -18,10 +18,8 @@
 #![allow(unused_must_use)]
 #![allow(ambiguous_glob_reexports)]
 
-#[cfg(test)]
-mod test_execution_plan_page_slots;
-#[cfg(test)]
-mod test_http_client_config;
+// moved: test_execution_plan_page_slots -> tests/ (integration test)
+// moved: test_http_client_config -> tests/ (integration test)
 
 use crate::infrastructure::config::{AppConfig, ConfigManager};
 use crate::infrastructure::{DatabaseConnection, init_logging_with_config};
@@ -166,13 +164,8 @@ pub mod commands {
 // Utilities module
 pub mod utils;
 
-// Test utilities (only available during testing)
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils;
-
-// PageIdCalculator 테스트 모듈 추가
-#[cfg(test)]
-pub mod test_page_id_calculator;
+// moved: test_utils -> tests/ (integration test utilities)
+// moved: test_page_id_calculator -> tests/ (integration test)
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -502,6 +495,4 @@ pub fn run() {
     info!("👋 Matter Certis v2 application ended");
 }
 
-// Priority 1 검증 테스트 모듈
-#[cfg(test)]
-mod priority1_verification_tests;
+// moved: priority1_verification_tests -> tests/ (integration test)

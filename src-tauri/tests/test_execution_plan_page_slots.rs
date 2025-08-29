@@ -1,4 +1,4 @@
-use crate::crawl_engine::actors::types::{
+use matter_certis_v2_lib::crawl_engine::actors::types::{
     ExecutionPlan, ExecutionPlanKpi, PageRange, PageSlot, PlanInputSnapshot,
 };
 use chrono::Utc;
@@ -7,7 +7,7 @@ use chrono::Utc;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing::{Level, subscriber::set_global_default};
+    use tracing::{subscriber::set_global_default, Level};
     use tracing_subscriber::FmtSubscriber;
 
     // Helper to init tracing once for tests that inspect logs (idempotent best-effort)
@@ -15,9 +15,7 @@ mod tests {
         static ONCE: std::sync::Once = std::sync::Once::new();
         ONCE.call_once(|| {
             let _ = set_global_default(
-                FmtSubscriber::builder()
-                    .with_max_level(Level::INFO)
-                    .finish(),
+                FmtSubscriber::builder().with_max_level(Level::INFO).finish(),
             );
         });
     }
@@ -55,7 +53,7 @@ mod tests {
                 let capacity = if physical_page == total_site_pages {
                     products_on_last_page.max(1)
                 } else {
-                    crate::domain::constants::site::PRODUCTS_PER_PAGE as u32
+                    matter_certis_v2_lib::domain::constants::site::PRODUCTS_PER_PAGE as u32
                 };
                 for offset in 0..capacity {
                     let reverse_index = (capacity - 1 - offset) as i16;
@@ -87,7 +85,7 @@ mod tests {
                 strategy: "TestStrategy".into(),
                 created_at: Utc::now(),
             }),
-            contract_version: crate::crawl_engine::actors::contract::ACTOR_CONTRACT_VERSION,
+            contract_version: matter_certis_v2_lib::crawl_engine::actors::contract::ACTOR_CONTRACT_VERSION,
             page_slots,
         }
     }
@@ -98,16 +96,12 @@ mod tests {
         let range = PageRange {
             start_page: 5,
             end_page: 1,
-            estimated_products: 5 * crate::domain::constants::site::PRODUCTS_PER_PAGE as u32,
+            estimated_products: 5 * matter_certis_v2_lib::domain::constants::site::PRODUCTS_PER_PAGE as u32,
             reverse_order: true,
         };
         let plan = build_plan(10, 8, vec![range]);
         // Expect each physical page to map to page_id = total_pages - physical_page
-        let slot = plan
-            .page_slots
-            .iter()
-            .find(|s| s.physical_page == 10)
-            .is_none();
+        let slot = plan.page_slots.iter().find(|s| s.physical_page == 10).is_none();
         assert!(slot, "Page 10 should not appear since range is 5..=1");
         // Check a known page
         let p3: Vec<&PageSlot> = plan
@@ -131,7 +125,7 @@ mod tests {
         let range = PageRange {
             start_page: 10,
             end_page: 8,
-            estimated_products: 3 * crate::domain::constants::site::PRODUCTS_PER_PAGE as u32,
+            estimated_products: 3 * matter_certis_v2_lib::domain::constants::site::PRODUCTS_PER_PAGE as u32,
             reverse_order: true,
         };
         let plan = build_plan(10, 7, vec![range]);
@@ -156,7 +150,7 @@ mod tests {
         let range = PageRange {
             start_page: 10,
             end_page: 6,
-            estimated_products: 5 * crate::domain::constants::site::PRODUCTS_PER_PAGE as u32,
+            estimated_products: 5 * matter_certis_v2_lib::domain::constants::site::PRODUCTS_PER_PAGE as u32,
             reverse_order: true,
         };
         let plan = build_plan(15, 9, vec![range]);
@@ -183,20 +177,14 @@ mod tests {
         let range = PageRange {
             start_page: 3,
             end_page: 5,
-            estimated_products: 3 * crate::domain::constants::site::PRODUCTS_PER_PAGE as u32,
+            estimated_products: 3 * matter_certis_v2_lib::domain::constants::site::PRODUCTS_PER_PAGE as u32,
             reverse_order: false,
         };
         let mut plan = build_plan(10, 8, vec![range.clone()]);
         // Tamper: drop some slots to simulate missing processing results
         let original_len = plan.page_slots.len();
         plan.page_slots.truncate(original_len / 2);
-        // Integrity expectation: total logical slots for pages 3..=5 (3 pages) except last page capacity rule
-        // We simply assert our tampering actually reduced slots; real runtime logic logs warning (covered indirectly)
-        assert!(
-            plan.page_slots.len() < original_len,
-            "Tampering failed; test invalid"
-        );
-        // Derive unique physical pages still present – should be subset but non-empty
+        assert!(plan.page_slots.len() < original_len);
         let unique_pages: std::collections::HashSet<u32> =
             plan.page_slots.iter().map(|s| s.physical_page).collect();
         assert!(!unique_pages.is_empty());
