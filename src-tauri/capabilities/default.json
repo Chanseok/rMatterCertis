@@ -5,11 +5,17 @@
   "windows": ["main"],
   "webviews": ["main"],
   "urls": [
+    "local://*",
     "http://localhost:1420/*",
     "tauri://localhost/*"
   ],
   "permissions": [
-    "core:event:allow-listen",
+    { "identifier": "core:event:allow-listen", "scopes": [
+      "actor-*",
+      "app-*",
+      "stage-*",
+      "batch-*"
+    ] },
     "core:event:default"
   ]
 }
