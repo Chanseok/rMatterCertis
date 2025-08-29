@@ -1,6 +1,6 @@
 //! 크롤링 서비스 구현체
 //!
-//! domain/services/crawling_services.rs의 트레이트들에 대한 실제 구현체
+//! `domain/services/crawling_services.rs의` 트레이트들에 대한 실제 구현체
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -51,7 +51,7 @@ struct PageAnalysisCache {
 }
 
 impl StatusCheckerImpl {
-    pub fn new(
+    #[must_use] pub fn new(
         http_client: HttpClient,
         data_extractor: MatterDataExtractor,
         config: AppConfig,
@@ -78,13 +78,13 @@ impl StatusCheckerImpl {
 
 impl StatusCheckerImpl {
     /// Associate a product repository after initial creation (legacy helper)
-    pub fn with_product_repo(
+    #[must_use] pub fn with_product_repo(
         http_client: HttpClient,
         data_extractor: MatterDataExtractor,
         config: AppConfig,
         product_repo: Arc<IntegratedProductRepository>,
     ) -> Self {
-        let mut instance = StatusCheckerImpl::new(http_client, data_extractor, config);
+        let mut instance = Self::new(http_client, data_extractor, config);
         instance.product_repo = Some(product_repo);
         instance
     }
@@ -134,8 +134,8 @@ impl StatusChecker for StatusCheckerImpl {
         let access_test = {
             // Use configured HttpClient instead of hardcoded default
             let _client = self.create_configured_http_client()?;
-            let result = self.http_client.fetch_response(&url).await?.text().await;
-            result
+            
+            self.http_client.fetch_response(&url).await?.text().await
         };
 
         match access_test {
@@ -267,11 +267,7 @@ impl StatusChecker for StatusCheckerImpl {
         let effective_total = db_analysis
             .total_products
             .max(local_status.total_saved_products);
-        let estimated_new_products = if site_status.estimated_products > effective_total {
-            site_status.estimated_products - effective_total
-        } else {
-            0
-        };
+        let estimated_new_products = site_status.estimated_products.saturating_sub(effective_total);
 
         if estimated_new_products == 0 {
             info!("📊 No new products detected - recommending minimal verification crawl");
@@ -280,7 +276,7 @@ impl StatusChecker for StatusCheckerImpl {
 
         // Calculate pages needed for new products
         let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
-        let pages_needed = (estimated_new_products as f64 / products_per_page as f64).ceil() as u32;
+        let pages_needed = (f64::from(estimated_new_products) / f64::from(products_per_page)).ceil() as u32;
         let limited_pages = pages_needed.min(self.config.user.crawling.page_range_limit);
 
         info!(
@@ -297,7 +293,7 @@ impl StatusChecker for StatusCheckerImpl {
         let product_detail_time = pages * 20; // 페이지당 20개 제품 * 1초
         let total_seconds = page_collection_time + product_detail_time;
 
-        Duration::from_secs(total_seconds as u64)
+        Duration::from_secs(u64::from(total_seconds))
     }
 
     async fn verify_site_accessibility(&self) -> Result<bool> {
@@ -870,7 +866,7 @@ impl StatusCheckerImpl {
     fn get_canonical_url(&self, doc: &scraper::Html) -> Option<String> {
         if let Ok(selector) = scraper::Selector::parse("link[rel='canonical']") {
             if let Some(element) = doc.select(&selector).next() {
-                return element.value().attr("href").map(|s| s.to_string());
+                return element.value().attr("href").map(std::string::ToString::to_string);
             }
         }
         None
@@ -901,7 +897,7 @@ impl StatusCheckerImpl {
             app_managed.last_crawl_product_count = Some(accurate_total);
 
             // 페이지당 평균 제품 수 업데이트
-            app_managed.avg_products_per_page = Some(DEFAULT_PRODUCTS_PER_PAGE as f64);
+            app_managed.avg_products_per_page = Some(f64::from(DEFAULT_PRODUCTS_PER_PAGE));
 
         info!("📝 Updated config: last_page={}, items_on_last_page={}, accurate_total_products={}, timestamp={}", 
             last_page,
@@ -937,7 +933,7 @@ impl StatusCheckerImpl {
             }
             Some(prev_count) => {
                 let change_percentage = if prev_count > 0 {
-                    ((current_estimated_products as f64 - prev_count as f64) / prev_count as f64)
+                    ((f64::from(current_estimated_products) - f64::from(prev_count)) / f64::from(prev_count))
                         * 100.0
                 } else {
                     0.0
@@ -985,7 +981,7 @@ impl StatusCheckerImpl {
                     )
                 } else {
                     let decrease = prev_count - current_estimated_products;
-                    let decrease_percentage = (decrease as f64 / prev_count as f64) * 100.0;
+                    let decrease_percentage = (f64::from(decrease) / f64::from(prev_count)) * 100.0;
 
                     warn!(
                         "📉 Site data decreased: {} -> {} (-{}, -{:.1}%)",
@@ -1285,65 +1281,62 @@ impl StatusCheckerImpl {
 
     /// 로컬 DB 상태 조회
     async fn get_local_db_status(&self) -> Result<LocalDbStatus> {
-        match &self.product_repo {
-            Some(repo) => {
-                let products = repo.get_all_products().await?;
+        if let Some(repo) = &self.product_repo {
+            let products = repo.get_all_products().await?;
 
-                if products.is_empty() {
-                    return Ok(LocalDbStatus {
-                        is_empty: true,
-                        max_page_id: 0,
-                        max_index_in_page: 0,
-                        total_saved_products: 0,
-                    });
-                }
-
-                // 가장 높은 pageId와 해당 페이지에서의 최대 indexInPage 찾기
-                let mut max_page_id = 0i32;
-                let mut max_index_in_page = 0i32;
-
-                for product in &products {
-                    if let (Some(page_id), Some(index_in_page)) =
-                        (product.page_id, product.index_in_page)
-                    {
-                        if page_id > max_page_id {
-                            max_page_id = page_id;
-                            max_index_in_page = index_in_page;
-                        } else if page_id == max_page_id && index_in_page > max_index_in_page {
-                            max_index_in_page = index_in_page;
-                        }
-                    }
-                }
-
-                info!(
-                    "📊 Local DB status: max_page_id={}, max_index_in_page={}, total_products={}",
-                    max_page_id,
-                    max_index_in_page,
-                    products.len()
-                );
-
-                Ok(LocalDbStatus {
-                    is_empty: false,
-                    max_page_id: max_page_id.max(0) as u32,
-                    max_index_in_page: max_index_in_page.max(0) as u32,
-                    total_saved_products: products.len() as u32,
-                })
-            }
-            None => {
-                warn!("⚠️  Product repository not available - assuming empty DB");
-
-                // DB 분석과 로컬 상태가 불일치할 수 있음을 경고
-                warn!(
-                    "⚠️  DB inconsistency possible: repository unavailable but analysis may show different results"
-                );
-
-                Ok(LocalDbStatus {
+            if products.is_empty() {
+                return Ok(LocalDbStatus {
                     is_empty: true,
                     max_page_id: 0,
                     max_index_in_page: 0,
                     total_saved_products: 0,
-                })
+                });
             }
+
+            // 가장 높은 pageId와 해당 페이지에서의 최대 indexInPage 찾기
+            let mut max_page_id = 0i32;
+            let mut max_index_in_page = 0i32;
+
+            for product in &products {
+                if let (Some(page_id), Some(index_in_page)) =
+                    (product.page_id, product.index_in_page)
+                {
+                    if page_id > max_page_id {
+                        max_page_id = page_id;
+                        max_index_in_page = index_in_page;
+                    } else if page_id == max_page_id && index_in_page > max_index_in_page {
+                        max_index_in_page = index_in_page;
+                    }
+                }
+            }
+
+            info!(
+                "📊 Local DB status: max_page_id={}, max_index_in_page={}, total_products={}",
+                max_page_id,
+                max_index_in_page,
+                products.len()
+            );
+
+            Ok(LocalDbStatus {
+                is_empty: false,
+                max_page_id: max_page_id.max(0) as u32,
+                max_index_in_page: max_index_in_page.max(0) as u32,
+                total_saved_products: products.len() as u32,
+            })
+        } else {
+            warn!("⚠️  Product repository not available - assuming empty DB");
+
+            // DB 분석과 로컬 상태가 불일치할 수 있음을 경고
+            warn!(
+                "⚠️  DB inconsistency possible: repository unavailable but analysis may show different results"
+            );
+
+            Ok(LocalDbStatus {
+                is_empty: true,
+                max_page_id: 0,
+                max_index_in_page: 0,
+                total_saved_products: 0,
+            })
         }
     }
 
@@ -1358,7 +1351,7 @@ impl StatusCheckerImpl {
             None => DataChangeAnalysis::Initial,
             Some(prev_count) => {
                 let _change_percentage = if prev_count > 0 {
-                    ((current_estimated_products as f64 - prev_count as f64) / prev_count as f64)
+                    ((f64::from(current_estimated_products) - f64::from(prev_count)) / f64::from(prev_count))
                         * 100.0
                 } else {
                     0.0
@@ -1406,7 +1399,7 @@ impl StatusCheckerImpl {
             DataChangeAnalysis::Increased { new_products, .. } => {
                 // 새로운 제품이 많이 추가된 경우 부분 크롤링
                 let recommended_pages =
-                    (*new_products as f64 / products_per_page as f64).ceil() as u32;
+                    (f64::from(*new_products) / f64::from(products_per_page)).ceil() as u32;
                 let limited_pages =
                     recommended_pages.min(self.config.user.crawling.page_range_limit);
 
@@ -1497,7 +1490,7 @@ enum DataChangeAnalysis {
 
 /// 컬렉터 설정 (Modern Rust 2024 준수)
 ///
-/// ValidatedCrawlingConfig에서 검증된 값을 사용하여 하드코딩을 방지합니다.
+/// `ValidatedCrawlingConfig에서` 검증된 값을 사용하여 하드코딩을 방지합니다.
 #[derive(Debug, Clone)]
 pub struct CollectorConfig {
     pub batch_size: u32,
@@ -1510,13 +1503,13 @@ pub struct CollectorConfig {
 }
 
 impl CollectorConfig {
-    /// ValidatedCrawlingConfig에서 CollectorConfig 생성
+    /// `ValidatedCrawlingConfig에서` `CollectorConfig` 생성
     ///
     /// # Arguments
     /// * `validated_config` - 검증된 크롤링 설정
     ///
     /// # Returns
-    /// 설정값이 적용된 CollectorConfig
+    /// 설정값이 적용된 `CollectorConfig`
     #[must_use]
     pub fn from_validated(
         validated_config: &crate::application::validated_crawling_config::ValidatedCrawlingConfig,
@@ -1540,8 +1533,8 @@ impl CollectorConfig {
 }
 
 impl Default for CollectorConfig {
-    /// 기본값은 ValidatedCrawlingConfig::default()에서 가져옴
-    /// 하드코딩을 방지하기 위해 ValidatedCrawlingConfig를 사용
+    /// 기본값은 `ValidatedCrawlingConfig::default()에서` 가져옴
+    /// 하드코딩을 방지하기 위해 `ValidatedCrawlingConfig를` 사용
     fn default() -> Self {
         let validated_config =
             crate::application::validated_crawling_config::ValidatedCrawlingConfig::default();
@@ -1577,7 +1570,7 @@ pub struct ProductListCollectorImpl {
 }
 
 impl ProductListCollectorImpl {
-    pub fn new(
+    #[must_use] pub const fn new(
         http_client: Arc<HttpClient>, // 🔥 Mutex 제거
         data_extractor: Arc<MatterDataExtractor>,
         config: CollectorConfig,
@@ -1677,18 +1670,15 @@ impl ProductListCollectorImpl {
                 let _ = event_tx_clone.send(PageEvent::Started { page_number: page });
 
                 // 실행 허가를 받을 때까지 대기 (진정한 동시성 제어)
-                let _permit = match semaphore_clone.acquire().await {
-                    Ok(permit) => {
-                        debug!("🔓 Acquired permit for page {}", page);
-                        permit
-                    }
-                    Err(_) => {
-                        let _ = event_tx_clone.send(PageEvent::Failed {
-                            page_number: page,
-                            error: "Semaphore acquisition failed".to_string(),
-                        });
-                        return Err(anyhow!("Semaphore acquisition failed"));
-                    }
+                let _permit = if let Ok(permit) = semaphore_clone.acquire().await {
+                    debug!("🔓 Acquired permit for page {}", page);
+                    permit
+                } else {
+                    let _ = event_tx_clone.send(PageEvent::Failed {
+                        page_number: page,
+                        error: "Semaphore acquisition failed".to_string(),
+                    });
+                    return Err(anyhow!("Semaphore acquisition failed"));
                 };
 
                 // 취소 확인
@@ -1810,7 +1800,12 @@ impl ProductListCollectorImpl {
             .collect();
 
         // 🔎 Debug summary for verification of page_id/index_in_page mapping
-        if !product_urls.is_empty() {
+        if product_urls.is_empty() {
+            debug!(
+                "📐 Page {} produced no product URLs for mapping summary",
+                page
+            );
+        } else {
             let min_page_id = product_urls.iter().map(|p| p.page_id).min().unwrap_or(0);
             let max_page_id = product_urls.iter().map(|p| p.page_id).max().unwrap_or(0);
             let min_index = product_urls
@@ -1838,11 +1833,6 @@ impl ProductListCollectorImpl {
                 min_index,
                 max_index,
                 sample
-            );
-        } else {
-            debug!(
-                "📐 Page {} produced no product URLs for mapping summary",
-                page
             );
         }
 
@@ -1882,7 +1872,7 @@ impl ProductListCollectorImpl {
     }
 }
 
-/// 🔥 ProductDetail 태스크 이벤트 타입
+/// 🔥 `ProductDetail` 태스크 이벤트 타입
 #[derive(Debug, Clone)]
 enum ProductDetailEvent {
     TaskStarted {
@@ -2028,15 +2018,12 @@ impl ProductListCollector for ProductListCollectorImpl {
             // 3. 각 태스크는 세마포어 permit을 획득한 후 실행
             let task = tokio::spawn(async move {
                 // 실행 허가를 받을 때까지 대기 (진정한 동시성 제어)
-                let _permit = match semaphore_clone.acquire().await {
-                    Ok(permit) => {
-                        debug!("🔓 Acquired permit for page {}", page);
-                        permit
-                    }
-                    Err(_) => {
-                        error!("Failed to acquire semaphore permit for page {}", page);
-                        return Err(anyhow!("Semaphore acquisition failed"));
-                    }
+                let _permit = if let Ok(permit) = semaphore_clone.acquire().await {
+                    debug!("🔓 Acquired permit for page {}", page);
+                    permit
+                } else {
+                    error!("Failed to acquire semaphore permit for page {}", page);
+                    return Err(anyhow!("Semaphore acquisition failed"));
                 };
 
                 // ✅ PageIdCalculator를 사용한 크롤링 및 URL 생성
@@ -2181,13 +2168,12 @@ impl ProductListCollector for ProductListCollectorImpl {
                         );
                         // Adaptive RPS reduction on repeated failures
                         if attempt >= 2 {
-                            let _ = crate::infrastructure::simple_http_client::HttpClient::set_global_max_rps(8).await;
+                            let () = crate::infrastructure::simple_http_client::HttpClient::set_global_max_rps(8).await;
                         }
                         tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                         continue;
-                    } else {
-                        break;
                     }
+                    break;
                 }
             };
 
@@ -2209,13 +2195,12 @@ impl ProductListCollector for ProductListCollectorImpl {
                             page
                         );
                         if attempt >= 2 {
-                            let _ = crate::infrastructure::simple_http_client::HttpClient::set_global_max_rps(8).await;
+                            let () = crate::infrastructure::simple_http_client::HttpClient::set_global_max_rps(8).await;
                         }
                         tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                         continue;
-                    } else {
-                        break;
                     }
+                    break;
                 }
             };
 
@@ -2320,7 +2305,7 @@ impl ProductListCollector for ProductListCollectorImpl {
                     page
                 );
                 if attempt >= 2 {
-                    let _ =
+                    let () =
                         crate::infrastructure::simple_http_client::HttpClient::set_global_max_rps(
                             8,
                         )
@@ -2411,15 +2396,12 @@ impl ProductListCollector for ProductListCollectorImpl {
             // 3. 각 태스크는 세마포어 permit을 획득한 후 실행
             let task = tokio::spawn(async move {
                 // 실행 허가를 받을 때까지 대기
-                let _permit = match semaphore_clone.acquire().await {
-                    Ok(permit) => {
-                        debug!("🔓 Acquired permit for page {}", page);
-                        permit
-                    }
-                    Err(_) => {
-                        error!("Failed to acquire semaphore permit for page {}", page);
-                        return Err(anyhow!("Semaphore acquisition failed"));
-                    }
+                let _permit = if let Ok(permit) = semaphore_clone.acquire().await {
+                    debug!("🔓 Acquired permit for page {}", page);
+                    permit
+                } else {
+                    error!("Failed to acquire semaphore permit for page {}", page);
+                    return Err(anyhow!("Semaphore acquisition failed"));
                 };
 
                 // 작업 시작 전 취소 확인
@@ -2531,7 +2513,7 @@ pub struct DatabaseAnalyzerImpl {
 }
 
 impl DatabaseAnalyzerImpl {
-    pub fn new(product_repo: Arc<IntegratedProductRepository>) -> Self {
+    #[must_use] pub const fn new(product_repo: Arc<IntegratedProductRepository>) -> Self {
         Self { product_repo }
     }
 }
@@ -2643,7 +2625,7 @@ pub struct ProductDetailCollectorImpl {
 }
 
 impl ProductDetailCollectorImpl {
-    pub fn new(
+    #[must_use] pub const fn new(
         http_client: Arc<HttpClient>, // 🔥 Mutex 제거
         data_extractor: Arc<MatterDataExtractor>,
         config: CollectorConfig,
@@ -2655,7 +2637,7 @@ impl ProductDetailCollectorImpl {
         }
     }
 
-    /// 🔥 ProductDetail 이벤트 처리기 (비동기, 논블로킹)
+    /// 🔥 `ProductDetail` 이벤트 처리기 (비동기, 논블로킹)
     async fn handle_product_detail_event(
         event: ProductDetailEvent,
         session_id: &str,
@@ -2768,29 +2750,27 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                         }
                         Err(e) => {
                             if attempts < max_retries {
-                                tokio::time::sleep(Duration::from_millis(500 * attempts as u64))
+                                tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts)))
                                     .await;
                                 continue;
-                            } else {
-                                warn!(
-                                    "Failed to read response text for {} after {} attempts: {}",
-                                    url, attempts, e
-                                );
-                                break;
                             }
-                        }
-                    },
-                    Err(e) => {
-                        if attempts < max_retries {
-                            tokio::time::sleep(Duration::from_millis(500 * attempts as u64)).await;
-                            continue;
-                        } else {
                             warn!(
-                                "HTTP request failed for {} after {} attempts: {}",
+                                "Failed to read response text for {} after {} attempts: {}",
                                 url, attempts, e
                             );
                             break;
                         }
+                    },
+                    Err(e) => {
+                        if attempts < max_retries {
+                            tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts))).await;
+                            continue;
+                        }
+                        warn!(
+                            "HTTP request failed for {} after {} attempts: {}",
+                            url, attempts, e
+                        );
+                        break;
                     }
                 }
             }
@@ -2865,29 +2845,27 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                         }
                         Err(e) => {
                             if attempts < max_retries {
-                                tokio::time::sleep(Duration::from_millis(500 * attempts as u64))
+                                tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts)))
                                     .await;
                                 continue;
-                            } else {
-                                warn!(
-                                    "Failed to read response text for {} after {} attempts: {}",
-                                    url, attempts, e
-                                );
-                                break;
                             }
-                        }
-                    },
-                    Err(e) => {
-                        if attempts < max_retries {
-                            tokio::time::sleep(Duration::from_millis(500 * attempts as u64)).await;
-                            continue;
-                        } else {
                             warn!(
-                                "HTTP request failed for {} after {} attempts: {}",
+                                "Failed to read response text for {} after {} attempts: {}",
                                 url, attempts, e
                             );
                             break;
                         }
+                    },
+                    Err(e) => {
+                        if attempts < max_retries {
+                            tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts))).await;
+                            continue;
+                        }
+                        warn!(
+                            "HTTP request failed for {} after {} attempts: {}",
+                            url, attempts, e
+                        );
+                        break;
                     }
                 }
             }
@@ -3041,7 +3019,7 @@ impl ProductDetailCollectorImpl {
                         }
                         Err(e) => {
                             if attempts < max_retries {
-                                tokio::time::sleep(Duration::from_millis(500 * attempts as u64))
+                                tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts)))
                                     .await;
                                 continue;
                             } else {
@@ -3057,7 +3035,7 @@ impl ProductDetailCollectorImpl {
                     },
                     Err(e) => {
                         if attempts < max_retries {
-                            tokio::time::sleep(Duration::from_millis(500 * attempts as u64)).await;
+                            tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts))).await;
                             continue;
                         } else {
                             let _ = event_tx.send(ProductDetailEvent::TaskFailed {
@@ -3138,7 +3116,7 @@ pub struct CrawlingRangeCalculator {
 }
 
 impl CrawlingRangeCalculator {
-    pub fn new(product_repo: Arc<IntegratedProductRepository>, config: AppConfig) -> Self {
+    #[must_use] pub const fn new(product_repo: Arc<IntegratedProductRepository>, config: AppConfig) -> Self {
         Self {
             product_repo,
             config,
@@ -3275,8 +3253,8 @@ impl CrawlingRangeCalculator {
     }
 }
 
-/// ProductDetail을 Product로 변환하는 헬퍼 함수
-pub fn product_detail_to_product(detail: ProductDetail) -> Product {
+/// `ProductDetail을` Product로 변환하는 헬퍼 함수
+#[must_use] pub fn product_detail_to_product(detail: ProductDetail) -> Product {
     let mut product = Product {
         id: detail.id.clone(), // Use detail's id if available
         url: detail.url,
@@ -3297,8 +3275,8 @@ pub fn product_detail_to_product(detail: ProductDetail) -> Product {
     product
 }
 
-/// 🔥 ProductDetail에서 추출된 필드 개수를 계산하는 헬퍼 함수
-fn calculate_extracted_fields(detail: &crate::domain::product::ProductDetail) -> u32 {
+/// 🔥 `ProductDetail에서` 추출된 필드 개수를 계산하는 헬퍼 함수
+const fn calculate_extracted_fields(detail: &crate::domain::product::ProductDetail) -> u32 {
     let mut count = 0u32;
 
     if detail.manufacturer.is_some() {
@@ -3445,7 +3423,7 @@ impl ProductDetailCollector for ProductListCollectorImpl {
 }
 
 impl CrawlingRangeCalculator {
-    /// 간단한 진행 상황 분석 (smart_crawling 명령어용)
+    /// 간단한 진행 상황 분석 (`smart_crawling` 명령어용)
     pub async fn analyze_simple_progress(
         &self,
         total_pages_on_site: u32,
@@ -3477,7 +3455,7 @@ impl CrawlingRangeCalculator {
 
         // 진행률 계산
         let percentage = if total_estimated_products > 0 {
-            (saved_products as f64 / total_estimated_products as f64) * 100.0
+            (f64::from(saved_products) / f64::from(total_estimated_products)) * 100.0
         } else {
             0.0
         };

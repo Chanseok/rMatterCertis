@@ -7,10 +7,8 @@ use matter_certis_v2_lib::crawl_engine::runtime::session_registry::{
 #[tokio::test]
 async fn status_includes_downshift_metadata_when_set() {
     let nanos = Utc::now()
-        .timestamp_nanos_opt()
-        .map(|v| v as i128)
-        .unwrap_or_else(|| (Utc::now().timestamp_millis() as i128) * 1_000_000);
-    let sid = format!("test_{}", nanos);
+        .timestamp_nanos_opt().map_or_else(|| i128::from(Utc::now().timestamp_millis()) * 1_000_000, i128::from);
+    let sid = format!("test_{nanos}");
     {
         let registry = session_registry();
         let mut g = registry.write().await;

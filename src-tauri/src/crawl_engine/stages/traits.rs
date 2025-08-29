@@ -1,4 +1,4 @@
-//! StageLogic trait and data contracts (Phase 3 scaffold)
+//! `StageLogic` trait and data contracts (Phase 3 scaffold)
 
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -18,7 +18,7 @@ pub struct Deps {
     pub duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy,
 }
 
-/// Input to a StageLogic strategy
+/// Input to a `StageLogic` strategy
 pub struct StageInput {
     pub stage_type: StageType,
     pub item: StageItem,
@@ -29,12 +29,12 @@ pub struct StageInput {
     pub products_on_last_page_hint: Option<u32>,
 }
 
-/// Output from a StageLogic strategy
+/// Output from a `StageLogic` strategy
 pub struct StageOutput {
     pub result: StageItemResult,
 }
 
-/// Error returned by strategies; bridged to Actor's StageError
+/// Error returned by strategies; bridged to Actor's `StageError`
 #[derive(thiserror::Error, Debug)]
 pub enum StageLogicError {
     #[error("Unsupported stage type: {0:?}")]

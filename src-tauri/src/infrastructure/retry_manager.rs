@@ -1,4 +1,4 @@
-//! 재시도 관리자 - INTEGRATED_PHASE2_PLAN Week 1 Day 3-4 구현
+//! 재시도 관리자 - `INTEGRATED_PHASE2_PLAN` Week 1 Day 3-4 구현
 //!
 //! 이 모듈은 크롤링 작업의 재시도 메커니즘을 제공하며,
 //! 다양한 에러 타입에 따른 적응적 재시도 전략을 구현합니다.
@@ -107,7 +107,7 @@ pub enum NetworkErrorType {
 
 impl RetryManager {
     /// 새 재시도 관리자 생성
-    pub fn new(max_retries: u32) -> Self {
+    #[must_use] pub fn new(max_retries: u32) -> Self {
         let failure_classifier = Arc::new(StandardFailureClassifier::new());
 
         Self {
@@ -261,8 +261,7 @@ impl RetryManager {
         let history = self.retry_history.read().await;
         history
             .get(item_id)
-            .map(|attempts| attempts.len() as u32)
-            .unwrap_or(0)
+            .map_or(0, |attempts| attempts.len() as u32)
     }
 
     /// 재시도 통계 조회
@@ -309,8 +308,14 @@ pub struct StandardFailureClassifier {
     max_backoff: Duration,
 }
 
+impl Default for StandardFailureClassifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StandardFailureClassifier {
-    pub fn new() -> Self {
+    #[must_use] pub const fn new() -> Self {
         Self {
             base_backoff: Duration::from_secs(1),
             max_backoff: Duration::from_secs(300), // 5분 최대
@@ -345,7 +350,7 @@ impl FailureClassifier for StandardFailureClassifier {
             };
         }
 
-        if error_lower.contains("5")
+        if error_lower.contains('5')
             && (error_lower.contains("00")
                 || error_lower.contains("02")
                 || error_lower.contains("03"))
@@ -389,7 +394,7 @@ impl FailureClassifier for StandardFailureClassifier {
     async fn calculate_backoff(&self, attempt_count: u32) -> Duration {
         // 지수 백오프: base_backoff * 2^(attempt_count - 1) + jitter
         let exponential = self.base_backoff.as_secs() * 2_u64.pow(attempt_count.saturating_sub(1));
-        let jitter = (attempt_count as u64) % 3; // 간단한 지터 (rand 대신)
+        let jitter = u64::from(attempt_count) % 3; // 간단한 지터 (rand 대신)
         let total_secs = (exponential + jitter).min(self.max_backoff.as_secs());
 
         Duration::from_secs(total_secs)

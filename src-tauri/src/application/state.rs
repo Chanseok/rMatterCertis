@@ -50,7 +50,7 @@ pub struct AppState {
 
 impl AppState {
     /// Create a new application state
-    pub fn new(config: crate::infrastructure::config::AppConfig) -> Self {
+    #[must_use] pub fn new(config: crate::infrastructure::config::AppConfig) -> Self {
         Self {
             event_emitter: Arc::new(RwLock::new(None)),
             database_pool: Arc::new(RwLock::new(None)),
@@ -147,7 +147,7 @@ impl AppState {
         // Get start time for calculations
         let start_time = {
             let start_time_guard = self.session_start_time.read().await;
-            start_time_guard.unwrap_or_else(|| Utc::now())
+            start_time_guard.unwrap_or_else(Utc::now)
         };
 
         // Calculate derived fields

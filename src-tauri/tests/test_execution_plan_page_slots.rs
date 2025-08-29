@@ -49,7 +49,7 @@ mod tests {
                 if physical_page == 0 {
                     continue;
                 }
-                let page_id: i64 = (total_site_pages.saturating_sub(physical_page)) as i64;
+                let page_id: i64 = i64::from((total_site_pages.saturating_sub(physical_page)));
                 let capacity = if physical_page == total_site_pages {
                     products_on_last_page.max(1)
                 } else {
@@ -101,7 +101,7 @@ mod tests {
         };
         let plan = build_plan(10, 8, vec![range]);
         // Expect each physical page to map to page_id = total_pages - physical_page
-        let slot = plan.page_slots.iter().find(|s| s.physical_page == 10).is_none();
+        let slot = !plan.page_slots.iter().any(|s| s.physical_page == 10);
         assert!(slot, "Page 10 should not appear since range is 5..=1");
         // Check a known page
         let p3: Vec<&PageSlot> = plan
@@ -110,11 +110,11 @@ mod tests {
             .filter(|s| s.physical_page == 3)
             .collect();
         assert!(!p3.is_empty());
-        let expected_page_id = (10 - 3) as i64; // 7
+        let expected_page_id = i64::from(10 - 3); // 7
         assert_eq!(p3[0].page_id, expected_page_id);
         // Indexes in page should be descending from 11..0 (since not last page)
         let mut indices: Vec<i16> = p3.iter().map(|s| s.index_in_page).collect();
-        indices.sort();
+        indices.sort_unstable();
         assert_eq!(indices.first().copied(), Some(0));
         assert_eq!(indices.last().copied(), Some(11));
     }
@@ -166,7 +166,7 @@ mod tests {
         assert_eq!(physical_sequence, vec![6, 7, 8, 9, 10]);
         // page_id should correspond: total_pages - physical_page
         for (phys, pid) in pairs {
-            assert_eq!(pid, (15 - phys) as i64);
+            assert_eq!(pid, i64::from(15 - phys));
         }
     }
 
@@ -180,7 +180,7 @@ mod tests {
             estimated_products: 3 * matter_certis_v2_lib::domain::constants::site::PRODUCTS_PER_PAGE as u32,
             reverse_order: false,
         };
-        let mut plan = build_plan(10, 8, vec![range.clone()]);
+        let mut plan = build_plan(10, 8, vec![range]);
         // Tamper: drop some slots to simulate missing processing results
         let original_len = plan.page_slots.len();
         plan.page_slots.truncate(original_len / 2);

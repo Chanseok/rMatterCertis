@@ -43,32 +43,32 @@ pub enum AtomicTaskEvent {
 
 impl AtomicTaskEvent {
     /// Get the event name for Tauri emission
-    pub fn event_name() -> &'static str {
+    #[must_use] pub const fn event_name() -> &'static str {
         "atomic-task-update"
     }
 
     /// Get the task ID from any variant
-    pub fn task_id(&self) -> TaskId {
+    #[must_use] pub const fn task_id(&self) -> TaskId {
         match self {
-            AtomicTaskEvent::TaskStarted { task_id, .. } => *task_id,
-            AtomicTaskEvent::TaskCompleted { task_id, .. } => *task_id,
-            AtomicTaskEvent::TaskFailed { task_id, .. } => *task_id,
-            AtomicTaskEvent::TaskRetrying { task_id, .. } => *task_id,
+            Self::TaskStarted { task_id, .. } => *task_id,
+            Self::TaskCompleted { task_id, .. } => *task_id,
+            Self::TaskFailed { task_id, .. } => *task_id,
+            Self::TaskRetrying { task_id, .. } => *task_id,
         }
     }
 
     /// Get the task type from any variant
-    pub fn task_type(&self) -> &str {
+    #[must_use] pub fn task_type(&self) -> &str {
         match self {
-            AtomicTaskEvent::TaskStarted { task_type, .. } => task_type,
-            AtomicTaskEvent::TaskCompleted { task_type, .. } => task_type,
-            AtomicTaskEvent::TaskFailed { task_type, .. } => task_type,
-            AtomicTaskEvent::TaskRetrying { task_type, .. } => task_type,
+            Self::TaskStarted { task_type, .. } => task_type,
+            Self::TaskCompleted { task_type, .. } => task_type,
+            Self::TaskFailed { task_type, .. } => task_type,
+            Self::TaskRetrying { task_type, .. } => task_type,
         }
     }
 
-    /// Create a TaskStarted event
-    pub fn started(task_id: TaskId, task_type: String) -> Self {
+    /// Create a `TaskStarted` event
+    #[must_use] pub fn started(task_id: TaskId, task_type: String) -> Self {
         Self::TaskStarted {
             task_id,
             task_type,
@@ -76,8 +76,8 @@ impl AtomicTaskEvent {
         }
     }
 
-    /// Create a TaskCompleted event
-    pub fn completed(task_id: TaskId, task_type: String, duration_ms: u64) -> Self {
+    /// Create a `TaskCompleted` event
+    #[must_use] pub fn completed(task_id: TaskId, task_type: String, duration_ms: u64) -> Self {
         Self::TaskCompleted {
             task_id,
             task_type,
@@ -86,8 +86,8 @@ impl AtomicTaskEvent {
         }
     }
 
-    /// Create a TaskFailed event
-    pub fn failed(
+    /// Create a `TaskFailed` event
+    #[must_use] pub fn failed(
         task_id: TaskId,
         task_type: String,
         error_message: String,
@@ -102,8 +102,8 @@ impl AtomicTaskEvent {
         }
     }
 
-    /// Create a TaskRetrying event
-    pub fn retrying(task_id: TaskId, task_type: String, retry_count: u32, delay_ms: u64) -> Self {
+    /// Create a `TaskRetrying` event
+    #[must_use] pub fn retrying(task_id: TaskId, task_type: String, retry_count: u32, delay_ms: u64) -> Self {
         Self::TaskRetrying {
             task_id,
             task_type,
@@ -146,7 +146,7 @@ impl AtomicEventStats {
         // Update events per second (exponential moving average)
         if time_diff > 0.0 {
             let current_rate = 1.0 / time_diff;
-            self.events_per_second = 0.1 * current_rate + 0.9 * self.events_per_second;
+            self.events_per_second = 0.1f64.mul_add(current_rate, 0.9 * self.events_per_second);
         }
 
         // Update event type counts

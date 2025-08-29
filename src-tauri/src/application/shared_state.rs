@@ -72,7 +72,7 @@ impl SiteAnalysisResult {
     }
 
     /// 캐시 무효화
-    pub fn invalidate(&mut self) {
+    pub const fn invalidate(&mut self) {
         self.is_valid = false;
     }
 
@@ -221,7 +221,7 @@ impl CalculatedRange {
     }
 
     /// 캐시 무효화
-    pub fn invalidate(&mut self) {
+    pub const fn invalidate(&mut self) {
         self.is_valid = false;
     }
 }
@@ -239,6 +239,7 @@ pub struct CrawlingSessionInfo {
 
 /// 실시간 크롤링 상태 정보
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct RuntimeState {
     pub is_crawling_active: bool,
     pub session_target_items: Option<u32>,
@@ -249,19 +250,6 @@ pub struct RuntimeState {
     pub analyzed_at: Option<DateTime<Utc>>,
 }
 
-impl Default for RuntimeState {
-    fn default() -> Self {
-        Self {
-            is_crawling_active: false,
-            session_target_items: None,
-            session_collected_items: None,
-            session_eta_seconds: None,
-            items_per_minute: None,
-            current_stage: None,
-            analyzed_at: None,
-        }
-    }
-}
 
 impl CacheItem for CrawlingSessionInfo {
     fn is_expired(&self, ttl: Duration) -> bool {
@@ -300,7 +288,7 @@ pub struct SharedStateCache {
 
     /// 캐시 생성 시간
     created_at: Instant,
-    /// ExecutionPlan 메모리 LRU 캐시 (plan_hash 기반, 최대 5개)
+    /// `ExecutionPlan` 메모리 LRU 캐시 (`plan_hash` 기반, 최대 5개)
     pub execution_plan_cache:
         Arc<RwLock<Vec<(String, crate::crawl_engine::actors::types::ExecutionPlan)>>>,
     /// 사이트 상태 새로고침 단일-flight 보장용 락
@@ -314,7 +302,7 @@ impl Default for SharedStateCache {
 }
 
 impl SharedStateCache {
-    /// 새로운 SharedStateCache 인스턴스 생성
+    /// 새로운 `SharedStateCache` 인스턴스 생성
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -348,7 +336,7 @@ impl SharedStateCache {
         }
     }
 
-    /// ExecutionPlan 캐시에 저장 (LRU 방식, 중복 제거)
+    /// `ExecutionPlan` 캐시에 저장 (LRU 방식, 중복 제거)
     pub async fn cache_execution_plan(
         &self,
         plan: crate::crawl_engine::actors::types::ExecutionPlan,
@@ -363,7 +351,7 @@ impl SharedStateCache {
         }
     }
 
-    /// plan_hash 로 ExecutionPlan 조회
+    /// `plan_hash` 로 `ExecutionPlan` 조회
     pub async fn get_cached_execution_plan(
         &self,
         hash: &str,
@@ -513,7 +501,7 @@ impl SharedStateCache {
     }
 
     /// 유효한 계산된 범위 가져오기
-    pub fn get_valid_calculated_range(&self, _ttl_minutes: u64) -> Option<&CalculatedRange> {
+    #[must_use] pub const fn get_valid_calculated_range(&self, _ttl_minutes: u64) -> Option<&CalculatedRange> {
         // Note: 이 메서드는 동기식이므로 실제로는 사용하지 않음
         // async 버전을 사용하는 것을 권장
         None
@@ -554,13 +542,13 @@ impl SharedStateCache {
             has_calculated_range: range_guard.is_some(),
             has_valid_db_analysis: db_guard.is_some(),
             has_valid_calculated_range: range_guard.is_some(),
-            has_active_session: session_guard.as_ref().map_or(false, |s| s.is_active),
+            has_active_session: session_guard.as_ref().is_some_and(|s| s.is_active),
             cache_age_minutes: self.created_at.elapsed().as_secs() / 60,
             total_cached_items: [
-                site_guard.is_some() as u8,
-                db_guard.is_some() as u8,
-                range_guard.is_some() as u8,
-                session_guard.is_some() as u8,
+                u8::from(site_guard.is_some()),
+                u8::from(db_guard.is_some()),
+                u8::from(range_guard.is_some()),
+                u8::from(session_guard.is_some()),
             ]
             .iter()
             .sum(),
@@ -622,7 +610,7 @@ impl SharedStateCache {
         }
     }
 
-    /// 단일-flight 보장으로 SiteStatus를 새로고침하거나 유효 캐시를 반환
+    /// 단일-flight 보장으로 `SiteStatus를` 새로고침하거나 유효 캐시를 반환
     pub async fn get_or_refresh_site_analysis_singleflight(
         &self,
         ttl_minutes: Option<u64>,

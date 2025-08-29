@@ -45,18 +45,18 @@ fn read_flag(name: &str, default: bool) -> bool {
 }
 
 /// Use unified HTTP client implementation path
-pub fn feature_http_client_unified() -> bool {
+#[must_use] pub fn feature_http_client_unified() -> bool {
     read_flag("MC_FEATURE_HTTP_CLIENT_UNIFIED", false)
 }
 
 /// Use Stage executor template + strategy pattern path
-pub fn feature_stage_executor_template() -> bool {
+#[must_use] pub const fn feature_stage_executor_template() -> bool {
     // Permanently enabled. Legacy path removed.
     true
 }
 
 /// Emit only generalized events (and optionally deprecate stage-specific ones)
-pub fn feature_events_generalized_only() -> bool {
+#[must_use] pub fn feature_events_generalized_only() -> bool {
     // Default to false to maintain backward compatibility with FE listeners
     read_flag("MC_FEATURE_EVENTS_GENERALIZED_ONLY", false)
 }

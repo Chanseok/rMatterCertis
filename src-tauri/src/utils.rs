@@ -34,13 +34,13 @@ pub struct PageIdCalculator {
 }
 
 impl PageIdCalculator {
-    pub fn new(last_page_number: u32, products_in_last_page: usize) -> Self {
+    #[must_use] pub const fn new(last_page_number: u32, products_in_last_page: usize) -> Self {
         Self {
             last_page_number,
             products_in_last_page,
         }
     }
-    pub fn calculate(
+    #[must_use] pub const fn calculate(
         &self,
         actual_page_number: u32,
         product_index_in_actual_page: usize,
@@ -84,7 +84,7 @@ impl PageIdCalculator {
             index_in_page,
         }
     }
-    pub fn reverse_calculate(&self, page_id: i32, index_in_page: i32) -> Option<(u32, usize)> {
+    #[must_use] pub fn reverse_calculate(&self, page_id: i32, index_in_page: i32) -> Option<(u32, usize)> {
         let calc = crate::domain::pagination::PaginationCalculator::default();
         calc.reverse(page_id, index_in_page, self.last_page_number)
             .map(|(phys, idx)| (phys, idx as usize))

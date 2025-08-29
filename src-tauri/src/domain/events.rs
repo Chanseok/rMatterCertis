@@ -1,14 +1,14 @@
 //! Event types for real-time communication between backend and frontend
 //!
 //! This module defines all event types that will be emitted from the Rust backend
-//! to the SolidJS frontend for real-time updates during crawling operations.
+//! to the `SolidJS` frontend for real-time updates during crawling operations.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Represents the current stage of the crawling process
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CrawlingStage {
     /// System is idle, no crawling in progress
     Idle,
@@ -31,20 +31,20 @@ pub enum CrawlingStage {
 impl std::fmt::Display for CrawlingStage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CrawlingStage::Idle => write!(f, "대기"),
-            CrawlingStage::StatusCheck => write!(f, "사이트 상태 확인"),
-            CrawlingStage::DatabaseAnalysis => write!(f, "데이터베이스 분석"),
-            CrawlingStage::TotalPages => write!(f, "총 페이지 수 확인"),
-            CrawlingStage::ProductList => write!(f, "제품 목록 수집"),
-            CrawlingStage::ProductDetails => write!(f, "제품 상세정보 수집"),
-            CrawlingStage::DatabaseSave => write!(f, "데이터베이스 저장"),
-            CrawlingStage::Database => write!(f, "데이터베이스 저장"), // 레거시 호환성
+            Self::Idle => write!(f, "대기"),
+            Self::StatusCheck => write!(f, "사이트 상태 확인"),
+            Self::DatabaseAnalysis => write!(f, "데이터베이스 분석"),
+            Self::TotalPages => write!(f, "총 페이지 수 확인"),
+            Self::ProductList => write!(f, "제품 목록 수집"),
+            Self::ProductDetails => write!(f, "제품 상세정보 수집"),
+            Self::DatabaseSave => write!(f, "데이터베이스 저장"),
+            Self::Database => write!(f, "데이터베이스 저장"), // 레거시 호환성
         }
     }
 }
 
 /// Overall status of the crawling operation
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CrawlingStatus {
     /// No crawling operation is running
     Idle,
@@ -122,7 +122,7 @@ impl CrawlingProgress {
     pub fn calculate_derived_fields(&mut self, start_time: DateTime<Utc>) {
         // Calculate percentage
         if self.total > 0 {
-            self.percentage = (self.current as f64 / self.total as f64) * 100.0;
+            self.percentage = (f64::from(self.current) / f64::from(self.total)) * 100.0;
         } else {
             self.percentage = 0.0;
         }
@@ -133,9 +133,9 @@ impl CrawlingProgress {
 
         // Estimate remaining time based on current progress
         if self.current > 0 && self.elapsed_time > 0 {
-            let items_per_second = self.current as f64 / self.elapsed_time as f64;
+            let items_per_second = f64::from(self.current) / self.elapsed_time as f64;
             if items_per_second > 0.0 {
-                let remaining_items = self.total.saturating_sub(self.current) as f64;
+                let remaining_items = f64::from(self.total.saturating_sub(self.current));
                 self.remaining_time = Some((remaining_items / items_per_second) as u64);
             }
         }
@@ -145,7 +145,7 @@ impl CrawlingProgress {
     }
 
     /// Create a new progress instance with calculated fields
-    pub fn new_with_calculation(
+    #[must_use] pub fn new_with_calculation(
         current: u32,
         total: u32,
         stage: CrawlingStage,
@@ -200,7 +200,7 @@ pub struct CrawlingTaskStatus {
 }
 
 /// Status of an individual crawling task
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskStatus {
     /// Task is waiting to be processed
     Pending,
@@ -232,7 +232,7 @@ pub struct DatabaseStats {
 }
 
 /// Database health indicators
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DatabaseHealth {
     /// Database is operating normally
     Healthy,
@@ -336,7 +336,7 @@ pub enum CrawlingEvent {
         timestamp: DateTime<Utc>,
         metadata: Option<BatchMetadata>,
     },
-    /// 🔥 ProductList 페이지별 이벤트
+    /// 🔥 `ProductList` 페이지별 이벤트
     ProductListPageEvent {
         session_id: String,
         batch_id: String,
@@ -346,7 +346,7 @@ pub enum CrawlingEvent {
         timestamp: DateTime<Utc>,
         metadata: Option<PageMetadata>,
     },
-    /// 🔥 제품별 상세 정보 수집 이벤트 (기존 TaskUpdate 보완)
+    /// 🔥 제품별 상세 정보 수집 이벤트 (기존 `TaskUpdate` 보완)
     ProductDetailEvent {
         session_id: String,
         batch_id: String,
@@ -516,20 +516,20 @@ pub struct ProductMetadata {
 
 impl CrawlingEvent {
     /// Get the event type as a string for Tauri event emission
-    pub fn event_name(&self) -> &'static str {
+    #[must_use] pub const fn event_name(&self) -> &'static str {
         match self {
-            CrawlingEvent::ProgressUpdate(_) => "crawling-progress",
-            CrawlingEvent::TaskUpdate(_) => "crawling-task-update",
-            CrawlingEvent::StageChange { .. } => "crawling-stage-change",
-            CrawlingEvent::Error { .. } => "crawling-error",
-            CrawlingEvent::DatabaseUpdate(_) => "database-update",
-            CrawlingEvent::Completed(_) => "crawling-completed",
-            CrawlingEvent::SiteStatusCheck { .. } => "site-status-check",
-            CrawlingEvent::SessionEvent { .. } => "session-event",
-            CrawlingEvent::BatchEvent { .. } => "batch-event",
-            CrawlingEvent::ProductListPageEvent { .. } => "product-list-page-event",
-            CrawlingEvent::ProductDetailEvent { .. } => "product-detail-event",
-            CrawlingEvent::SessionLifecycle { .. } => "session-lifecycle",
+            Self::ProgressUpdate(_) => "crawling-progress",
+            Self::TaskUpdate(_) => "crawling-task-update",
+            Self::StageChange { .. } => "crawling-stage-change",
+            Self::Error { .. } => "crawling-error",
+            Self::DatabaseUpdate(_) => "database-update",
+            Self::Completed(_) => "crawling-completed",
+            Self::SiteStatusCheck { .. } => "site-status-check",
+            Self::SessionEvent { .. } => "session-event",
+            Self::BatchEvent { .. } => "batch-event",
+            Self::ProductListPageEvent { .. } => "product-list-page-event",
+            Self::ProductDetailEvent { .. } => "product-detail-event",
+            Self::SessionLifecycle { .. } => "session-lifecycle",
         }
     }
 }
@@ -539,7 +539,7 @@ impl CrawlingEvent {
 // ========================================================================
 
 /// 페이지 처리의 세분화된 상태
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PageProcessingState {
     /// 대기열에 있음
     Queued,
@@ -582,7 +582,7 @@ pub enum ConcurrencyEvent {
 }
 
 impl ConcurrencyEvent {
-    pub fn event_name(&self) -> &'static str {
+    #[must_use] pub const fn event_name(&self) -> &'static str {
         "concurrency-event"
     }
 }
@@ -619,7 +619,7 @@ pub enum ValidationIssueType {
 }
 
 impl ValidationEvent {
-    pub fn event_name(&self) -> &'static str {
+    #[must_use] pub const fn event_name(&self) -> &'static str {
         "validation-event"
     }
 }
@@ -667,7 +667,7 @@ pub struct FailedSaveItem {
 }
 
 impl DatabaseSaveEvent {
-    pub fn event_name(&self) -> &'static str {
+    #[must_use] pub const fn event_name(&self) -> &'static str {
         "db-save-event"
     }
 }

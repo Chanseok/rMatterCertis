@@ -43,8 +43,8 @@ pub struct MatterProduct {
 }
 
 impl MatterProduct {
-    /// Create a new MatterProduct with basic information
-    pub fn new(
+    /// Create a new `MatterProduct` with basic information
+    #[must_use] pub fn new(
         certificate_id: String,
         company_name: String,
         product_name: String,
@@ -79,14 +79,14 @@ impl MatterProduct {
     }
 
     /// Set page metadata (page number and position)
-    pub fn with_page_metadata(mut self, page_number: i32, position: i32) -> Self {
+    #[must_use] pub const fn with_page_metadata(mut self, page_number: i32, position: i32) -> Self {
         self.page_number = Some(page_number);
         self.position_in_page = Some(position);
         self
     }
 
     /// Set listing URL where this product was found
-    pub fn with_listing_url(mut self, listing_url: String) -> Self {
+    #[must_use] pub fn with_listing_url(mut self, listing_url: String) -> Self {
         self.listing_url = Some(listing_url);
         self
     }
@@ -193,7 +193,7 @@ pub enum CrawlingStage {
 }
 
 impl MatterCrawlingSession {
-    pub fn new(session_id: String, config: MatterCrawlerConfig) -> Self {
+    #[must_use] pub fn new(session_id: String, config: MatterCrawlerConfig) -> Self {
         Self {
             session_id,
             config,
@@ -212,16 +212,16 @@ impl MatterCrawlingSession {
         self.errors.push(error);
     }
 
-    pub fn update_progress(&mut self, current_page: u32, products_found: u32) {
+    pub const fn update_progress(&mut self, current_page: u32, products_found: u32) {
         self.current_page = current_page;
         self.products_found = products_found;
     }
 
-    pub fn move_to_details_stage(&mut self) {
+    pub const fn move_to_details_stage(&mut self) {
         self.stage = CrawlingStage::ProductDetails;
     }
 
-    pub fn complete(&mut self) {
+    pub const fn complete(&mut self) {
         self.stage = CrawlingStage::Completed;
     }
 

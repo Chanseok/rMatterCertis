@@ -101,11 +101,11 @@ pub async fn get_product_details_analytics(
     // Time series by certification_date (stored as TEXT yyyy-mm-dd or similar). Use substr to date-only.
     let cert_by_date = {
         let sql = format!(
-            r#"SELECT substr(certification_date,1,10) AS d, COUNT(*) AS c
+            r"SELECT substr(certification_date,1,10) AS d, COUNT(*) AS c
                FROM product_details
                {} AND certification_date IS NOT NULL AND length(certification_date) >= 10
                GROUP BY substr(certification_date,1,10)
-               ORDER BY d ASC"#,
+               ORDER BY d ASC",
             where_sql
         );
         let q = sqlx::query(&sql);
@@ -126,8 +126,8 @@ pub async fn get_product_details_analytics(
     // created_at / updated_at daily time series
     let created_daily = {
         let sql = format!(
-            r#"SELECT date(created_at) AS d, COUNT(*) AS c
-               FROM product_details {} GROUP BY date(created_at) ORDER BY d ASC"#,
+            r"SELECT date(created_at) AS d, COUNT(*) AS c
+               FROM product_details {} GROUP BY date(created_at) ORDER BY d ASC",
             where_sql
         );
         let q = sqlx::query(&sql);
@@ -147,8 +147,8 @@ pub async fn get_product_details_analytics(
 
     let updated_daily = {
         let sql = format!(
-            r#"SELECT date(updated_at) AS d, COUNT(*) AS c
-               FROM product_details {} GROUP BY date(updated_at) ORDER BY d ASC"#,
+            r"SELECT date(updated_at) AS d, COUNT(*) AS c
+               FROM product_details {} GROUP BY date(updated_at) ORDER BY d ASC",
             where_sql
         );
         let q = sqlx::query(&sql);
@@ -169,8 +169,8 @@ pub async fn get_product_details_analytics(
     // Page distribution and index heatmap
     let page_distribution = {
         let sql = format!(
-            r#"SELECT page_id AS p, COUNT(*) AS c FROM product_details
-               {} AND page_id IS NOT NULL GROUP BY page_id ORDER BY p ASC"#,
+            r"SELECT page_id AS p, COUNT(*) AS c FROM product_details
+               {} AND page_id IS NOT NULL GROUP BY page_id ORDER BY p ASC",
             where_sql
         );
         let q = sqlx::query(&sql);
@@ -190,9 +190,9 @@ pub async fn get_product_details_analytics(
 
     let index_heatmap = {
         let sql = format!(
-            r#"SELECT page_id AS p, index_in_page AS i, COUNT(*) AS c FROM product_details
+            r"SELECT page_id AS p, index_in_page AS i, COUNT(*) AS c FROM product_details
                {} AND page_id IS NOT NULL AND index_in_page IS NOT NULL
-               GROUP BY page_id, index_in_page ORDER BY p ASC, i ASC"#,
+               GROUP BY page_id, index_in_page ORDER BY p ASC, i ASC",
             where_sql
         );
         let q = sqlx::query(&sql);

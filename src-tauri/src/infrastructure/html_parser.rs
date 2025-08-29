@@ -47,7 +47,7 @@ pub struct ProductDetailSelectors {
     pub model: String,
     /// Selector for device type
     pub device_type: String,
-    /// Selector for certification ID (maps to ProductDetail.certificate_id)
+    /// Selector for certification ID (maps to `ProductDetail.certificate_id`)
     pub certificate_id: String,
     /// Selector for certification date
     pub certification_date: String,
@@ -289,7 +289,7 @@ impl MatterDataExtractor {
     pub fn extract_product_data(&self, html_content: &str) -> Result<serde_json::Value> {
         let html = Html::parse_document(html_content);
 
-        let product_detail = self.extract_product_detail(&html, "".to_string())?;
+        let product_detail = self.extract_product_detail(&html, String::new())?;
 
         let json_value = serde_json::to_value(product_detail)
             .map_err(|e| anyhow!("Failed to serialize product detail: {}", e))?;
@@ -486,9 +486,7 @@ impl MatterDataExtractor {
         let url = article
             .select(&link_selector)
             .next()
-            .and_then(|link| link.value().attr("href"))
-            .map(|href| self.resolve_url(href, &self.config.base_url))
-            .unwrap_or_else(|| format!("unknown-{}-{}", page_id, index_in_page));
+            .and_then(|link| link.value().attr("href")).map_or_else(|| format!("unknown-{}-{}", page_id, index_in_page), |href| self.resolve_url(href, &self.config.base_url));
 
         // Extract manufacturer - exactly as in guide
         let manufacturer_selector = Selector::parse("p.entry-company.notranslate").unwrap();
@@ -657,62 +655,62 @@ impl MatterDataExtractor {
         Ok(())
     }
 
-    /// Map table field to ProductDetail field (guide-based approach)
+    /// Map table field to `ProductDetail` field (guide-based approach)
     fn map_table_field(&self, key: &str, value: &str, detail: &mut ProductDetail) {
         match key {
             k if k.contains("certification id") => detail.certificate_id = Some(value.to_string()),
             k if k.contains("certification date") => {
-                detail.certification_date = Some(value.to_string())
+                detail.certification_date = Some(value.to_string());
             }
             k if k.contains("manufacturer") || k.contains("company") => {
-                detail.manufacturer = Some(value.to_string())
+                detail.manufacturer = Some(value.to_string());
             }
             k if k.contains("vid") => detail.vid = self.parse_numeric_id(value),
             k if k.contains("pid") => detail.pid = self.parse_numeric_id(value),
             k if k.contains("hardware version") => {
-                detail.hardware_version = Some(value.to_string())
+                detail.hardware_version = Some(value.to_string());
             }
             k if k.contains("software version") => {
-                detail.software_version = Some(value.to_string())
+                detail.software_version = Some(value.to_string());
             }
             k if k.contains("firmware version") => {
-                detail.firmware_version = Some(value.to_string())
+                detail.firmware_version = Some(value.to_string());
             }
             k if k.contains("family id") => detail.family_id = Some(value.to_string()),
             k if k.contains("family sku") => detail.family_sku = Some(value.to_string()),
             k if k.contains("family variant sku") => {
-                detail.family_variant_sku = Some(value.to_string())
+                detail.family_variant_sku = Some(value.to_string());
             }
             k if k.contains("tis") && k.contains("trp tested") => {
-                detail.tis_trp_tested = Some(value.to_string())
+                detail.tis_trp_tested = Some(value.to_string());
             }
             k if k.contains("specification version") => {
-                detail.specification_version = Some(value.to_string())
+                detail.specification_version = Some(value.to_string());
             }
             k if k.contains("transport interface") => {
-                detail.transport_interface = Some(value.to_string())
+                detail.transport_interface = Some(value.to_string());
             }
             k if k.contains("primary device type id") => {
-                detail.primary_device_type_id = Some(value.to_string())
+                detail.primary_device_type_id = Some(value.to_string());
             }
             k if k.contains("device type") || k.contains("product type") => {
-                detail.device_type = Some(value.to_string())
+                detail.device_type = Some(value.to_string());
             }
             _ => {} // Ignore unrecognized fields
         }
     }
 
-    /// Map detail field to ProductDetail field (guide-based approach)
+    /// Map detail field to `ProductDetail` field (guide-based approach)
     fn map_detail_field(&self, label: &str, value: &str, detail: &mut ProductDetail) {
         match label {
             l if l.contains("manufacturer") || l.contains("company") => {
-                detail.manufacturer = Some(value.to_string())
+                detail.manufacturer = Some(value.to_string());
             }
             l if l.contains("vendor") || l.contains("vid") => {
-                detail.vid = self.parse_numeric_id(value)
+                detail.vid = self.parse_numeric_id(value);
             }
             l if l.contains("product id") || l.contains("pid") => {
-                detail.pid = self.parse_numeric_id(value)
+                detail.pid = self.parse_numeric_id(value);
             }
             l if l.contains("certificate") || l.contains("cert id") => {
                 // Extract certificate ID with regex pattern matching
@@ -730,7 +728,7 @@ impl MatterDataExtractor {
             l if l.contains("family id") => detail.family_id = Some(value.to_string()),
             l if l.contains("family sku") => detail.family_sku = Some(value.to_string()),
             l if l.contains("family variant sku") => {
-                detail.family_variant_sku = Some(value.to_string())
+                detail.family_variant_sku = Some(value.to_string());
             }
             l if l.contains("firmware version")
                 || (l.contains("firmware") && !l.contains("hardware")) =>
@@ -746,13 +744,13 @@ impl MatterDataExtractor {
                 detail.software_version = Some(value.to_string());
             }
             l if l.contains("tis") && l.contains("trp") => {
-                detail.tis_trp_tested = Some(value.to_string())
+                detail.tis_trp_tested = Some(value.to_string());
             }
             l if l.contains("specification version") || l.contains("spec version") => {
                 detail.specification_version = Some(value.to_string());
             }
             l if l.contains("transport interface") => {
-                detail.transport_interface = Some(value.to_string())
+                detail.transport_interface = Some(value.to_string());
             }
             l if l.contains("primary device type") || l.contains("device type id") => {
                 detail.primary_device_type_id = Some(value.to_string());
@@ -789,7 +787,7 @@ impl MatterDataExtractor {
     fn resolve_url(&self, href: &str, base_url: &str) -> String {
         if href.starts_with("http") {
             href.to_string()
-        } else if href.starts_with("/") {
+        } else if href.starts_with('/') {
             format!("{}{}", base_url.trim_end_matches('/'), href)
         } else {
             format!("{}/{}", base_url.trim_end_matches('/'), href)
@@ -814,9 +812,9 @@ impl PaginationContext {
     /// Calculate pageId and indexInPage based on source site page and index
     /// Following the specification in prompts6
     ///
-    /// Note: current_page is 1-based, index_on_page is 1-based (first item on page = 1)
+    /// Note: `current_page` is 1-based, `index_on_page` is 1-based (first item on page = 1)
     /// Returns: (pageId, indexInPage) both 0-based where oldest product = (0, 0)
-    pub fn calculate_page_index(&self, current_page: u32, index_on_page: u32) -> (i32, i32) {
+    #[must_use] pub const fn calculate_page_index(&self, current_page: u32, index_on_page: u32) -> (i32, i32) {
         // Step 1: Calculate total products on site
         let total_products = (self.total_pages - 1) * self.items_per_page + self.items_on_last_page;
 
@@ -833,9 +831,9 @@ impl PaginationContext {
         (page_id as i32, index_in_page as i32)
     }
 
-    /// Canonical 계산 방식 (Phase2): domain::pagination::CanonicalPageIdCalculator 사용
-    /// current_page: 1-based, zero_based_index: 0-based
-    pub fn calculate_page_index_canonical(
+    /// Canonical 계산 방식 (Phase2): `domain::pagination::CanonicalPageIdCalculator` 사용
+    /// `current_page`: 1-based, `zero_based_index`: 0-based
+    #[must_use] pub const fn calculate_page_index_canonical(
         &self,
         current_page: u32,
         zero_based_index: u32,

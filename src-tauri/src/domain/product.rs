@@ -96,8 +96,8 @@ pub struct ProductSearchResult {
 }
 
 impl Product {
-    /// Generate unique ID from page_id and index_in_page
-    /// Format: "p" + 4-digit page_id + "i" + 2-digit index_in_page
+    /// Generate unique ID from `page_id` and `index_in_page`
+    /// Format: "p" + 4-digit `page_id` + "i" + 2-digit `index_in_page`
     /// Example: p0485i01 for page 485, index 1
     pub fn generate_id(&mut self) {
         if let (Some(page_id), Some(index_in_page)) = (self.page_id, self.index_in_page) {
@@ -106,15 +106,15 @@ impl Product {
     }
 
     /// Generate ID and return the generated value
-    pub fn with_generated_id(mut self) -> Self {
+    #[must_use] pub fn with_generated_id(mut self) -> Self {
         self.generate_id();
         self
     }
 }
 
 impl ProductDetail {
-    /// Generate unique ID from page_id and index_in_page
-    /// Format: "p" + 4-digit page_id + "i" + 2-digit index_in_page
+    /// Generate unique ID from `page_id` and `index_in_page`
+    /// Format: "p" + 4-digit `page_id` + "i" + 2-digit `index_in_page`
     /// Example: p0485i01 for page 485, index 1
     pub fn generate_id(&mut self) {
         if let (Some(page_id), Some(index_in_page)) = (self.page_id, self.index_in_page) {
@@ -123,7 +123,7 @@ impl ProductDetail {
     }
 
     /// Generate ID and return the generated value
-    pub fn with_generated_id(mut self) -> Self {
+    #[must_use] pub fn with_generated_id(mut self) -> Self {
         self.generate_id();
         self
     }

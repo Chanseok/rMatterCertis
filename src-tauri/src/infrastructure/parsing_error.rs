@@ -78,15 +78,15 @@ pub enum ParsingError {
 
 impl ParsingError {
     /// Create a required field missing error with context
-    pub fn required_field_missing(field: &str, context: Option<&str>) -> Self {
+    #[must_use] pub fn required_field_missing(field: &str, context: Option<&str>) -> Self {
         Self::RequiredFieldMissing {
             field: field.to_string(),
-            context: context.map(|s| s.to_string()),
+            context: context.map(std::string::ToString::to_string),
         }
     }
 
     /// Create an invalid selector error with alternatives
-    pub fn invalid_selector(selector: &str, reason: &str, alternatives: Vec<String>) -> Self {
+    #[must_use] pub fn invalid_selector(selector: &str, reason: &str, alternatives: Vec<String>) -> Self {
         Self::InvalidSelector {
             selector: selector.to_string(),
             reason: reason.to_string(),
@@ -95,7 +95,7 @@ impl ParsingError {
     }
 
     /// Create a no products found error with tried selectors
-    pub fn no_products_found(page_id: u32, tried_selectors: Vec<String>) -> Self {
+    #[must_use] pub const fn no_products_found(page_id: u32, tried_selectors: Vec<String>) -> Self {
         Self::NoProductsFound {
             page_id,
             tried_selectors,
@@ -103,7 +103,7 @@ impl ParsingError {
     }
 
     /// Create a Matter field extraction error with attempted selectors
-    pub fn matter_field_extraction_failed(
+    #[must_use] pub fn matter_field_extraction_failed(
         field: &str,
         reason: &str,
         attempted_selectors: Vec<String>,
@@ -116,7 +116,7 @@ impl ParsingError {
     }
 
     /// Check if this error is recoverable
-    pub fn is_recoverable(&self) -> bool {
+    #[must_use] pub const fn is_recoverable(&self) -> bool {
         match self {
             Self::RequiredFieldMissing { .. } => true,
             Self::InvalidSelector { .. } => true,
@@ -133,7 +133,7 @@ impl ParsingError {
     }
 
     /// Get retry delay in seconds for recoverable errors
-    pub fn retry_delay_seconds(&self) -> Option<u64> {
+    #[must_use] pub const fn retry_delay_seconds(&self) -> Option<u64> {
         match self {
             Self::RateLimitExceeded {
                 retry_after_seconds,

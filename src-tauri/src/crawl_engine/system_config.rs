@@ -137,15 +137,15 @@ pub struct ActorSettings {
 }
 
 impl RetryPolicy {
-    pub fn base_delay(&self) -> Duration {
+    #[must_use] pub const fn base_delay(&self) -> Duration {
         Duration::from_millis(self.base_delay_ms)
     }
 
-    pub fn max_delay(&self) -> Duration {
+    #[must_use] pub const fn max_delay(&self) -> Duration {
         Duration::from_millis(self.max_delay_ms)
     }
 
-    pub fn jitter_range(&self) -> Duration {
+    #[must_use] pub const fn jitter_range(&self) -> Duration {
         Duration::from_millis(self.jitter_range_ms)
     }
 }
@@ -164,7 +164,7 @@ impl SystemConfig {
 
     pub fn for_environment(env: &str) -> Result<Self, ConfigError> {
         let base_path = "config/default";
-        let env_path = &format!("config/{}", env);
+        let env_path = &format!("config/{env}");
 
         let settings = config::Config::builder()
             .add_source(config::File::with_name(base_path))
@@ -193,7 +193,7 @@ impl SystemConfig {
         Ok(())
     }
 
-    pub fn default() -> Self {
+    #[must_use] pub fn default() -> Self {
         use std::collections::HashMap;
 
         let mut stage_limits = HashMap::new();
@@ -201,7 +201,7 @@ impl SystemConfig {
         stage_limits.insert("detail_collection".to_string(), 10);
         stage_limits.insert("validation".to_string(), 3);
 
-        SystemConfig {
+        Self {
             system: SystemSettings {
                 max_concurrent_sessions: 10,
                 session_timeout_secs: 3600,

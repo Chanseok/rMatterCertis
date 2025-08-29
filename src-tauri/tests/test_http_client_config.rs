@@ -1,4 +1,4 @@
-//! Test HttpClient configuration integration (integration test)
+//! Test `HttpClient` configuration integration (integration test)
 
 use matter_certis_v2_lib::infrastructure::{config::AppConfig, simple_http_client::HttpClient};
 

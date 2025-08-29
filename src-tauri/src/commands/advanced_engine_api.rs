@@ -1,5 +1,5 @@
 //! Advanced Crawling Engine 관련 status / 조회 전용 명령어 모듈
-//! NOTE: start_advanced_crawling(실행 엔트리포인트)는 통합 Actor 진입점으로 완전히 이관되어 제거되었습니다.
+//! NOTE: `start_advanced_crawling(실행` 엔트리포인트)는 통합 Actor 진입점으로 완전히 이관되어 제거되었습니다.
 
 use tauri::{AppHandle, Emitter, State, command};
 use tracing::{error, info, warn};
@@ -7,7 +7,7 @@ use tracing::{error, info, warn};
 use crate::application::shared_state::SharedStateCache;
 use crate::application::state::AppState;
 use crate::infrastructure::IntegratedProductRepository;
-use crate::types::frontend_api::*; // trait import for check_site_status
+use crate::types::frontend_api::{ApiResponse, SiteStatusInfo, ProductPage, ProductInfo, DatabaseStats}; // trait import for check_site_status
 
 /// Advanced Crawling Engine 사이트 상태 확인 (실제 구현)
 #[command]
@@ -196,12 +196,9 @@ pub async fn get_recent_products(
     // AppState에서 중앙화된 데이터베이스 풀 사용
     let database_pool = {
         let pool_guard = app_state.database_pool.read().await;
-        match pool_guard.as_ref() {
-            Some(pool) => pool.clone(),
-            None => {
-                error!("Database pool is not initialized");
-                return Err("Database pool is not available".to_string());
-            }
+        if let Some(pool) = pool_guard.as_ref() { pool.clone() } else {
+            error!("Database pool is not initialized");
+            return Err("Database pool is not available".to_string());
         }
     };
     let product_repo = IntegratedProductRepository::new(database_pool);
@@ -244,7 +241,7 @@ pub async fn get_recent_products(
                 }
             };
 
-            let total_pages = (total_items + limit - 1) / limit; // 올림 계산
+            let total_pages = total_items.div_ceil(limit); // 올림 계산
 
             let product_page = ProductPage {
                 products: product_infos,
@@ -278,12 +275,9 @@ pub async fn get_database_stats(
     // AppState에서 중앙화된 데이터베이스 풀 사용
     let database_pool = {
         let pool_guard = app_state.database_pool.read().await;
-        match pool_guard.as_ref() {
-            Some(pool) => pool.clone(),
-            None => {
-                error!("Database pool is not initialized");
-                return Err("Database pool is not available".to_string());
-            }
+        if let Some(pool) = pool_guard.as_ref() { pool.clone() } else {
+            error!("Database pool is not initialized");
+            return Err("Database pool is not available".to_string());
         }
     };
     let product_repo = IntegratedProductRepository::new(database_pool);

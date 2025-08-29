@@ -28,14 +28,14 @@ pub async fn start_crawling_session(
 
     // 백그라운드에서 실제 크롤링 실행
     let session_id_clone = session_id.clone();
-    let app_handle_clone = app_handle.clone();
+    let app_handle_clone = app_handle;
     tokio::spawn(async move {
         // 잠시 대기 후 크롤링 시작
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
         // 실제 크롤링 실행 (State 없이 직접 호출)
         match execute_crawling_with_state(&app_handle_clone).await {
-            Ok(_) => {
+            Ok(()) => {
                 info!("✅ Crawling completed successfully");
 
                 // 세션 완료 이벤트
@@ -64,7 +64,7 @@ pub async fn start_crawling_session(
                         event_type:
                             crate::crawl_engine::events::task_lifecycle::SessionEventType::Failed,
                         timestamp: chrono::Utc::now(),
-                        metadata: [("error".to_string(), e.to_string())]
+                        metadata: [("error".to_string(), e)]
                             .iter()
                             .cloned()
                             .collect(),
@@ -82,7 +82,7 @@ pub async fn start_crawling_session(
     Ok(session_id)
 }
 
-/// AppHandle을 사용하여 실제 Actor 크롤링 실행
+/// `AppHandle을` 사용하여 실제 Actor 크롤링 실행
 async fn execute_crawling_with_state(app_handle: &tauri::AppHandle) -> Result<(), String> {
     info!("🔄 Starting real Actor-based crawling via monitoring");
 

@@ -102,7 +102,7 @@ pub struct DatabaseStatistics {
 
 impl IntegratedProduct {
     /// 새로운 통합 제품 인스턴스 생성
-    pub fn new(
+    #[must_use] pub fn new(
         external_id: String,
         name: String,
         category: String,
@@ -151,7 +151,7 @@ impl IntegratedProduct {
     }
 
     /// 제품의 할인율 계산
-    pub fn calculate_discount_rate(&self) -> Option<f64> {
+    #[must_use] pub fn calculate_discount_rate(&self) -> Option<f64> {
         match (self.price_current, self.price_original) {
             (Some(current), Some(original)) if original > 0.0 && current < original => {
                 Some((original - current) / original * 100.0)
@@ -161,14 +161,13 @@ impl IntegratedProduct {
     }
 
     /// 제품이 할인 중인지 확인
-    pub fn is_on_sale(&self) -> bool {
+    #[must_use] pub fn is_on_sale(&self) -> bool {
         self.calculate_discount_rate()
-            .map(|rate| rate > 0.0)
-            .unwrap_or(false)
+            .is_some_and(|rate| rate > 0.0)
     }
 
     /// 제품의 데이터 품질 점수 계산
-    pub fn calculate_data_quality_score(&self) -> f64 {
+    #[must_use] pub fn calculate_data_quality_score(&self) -> f64 {
         let mut score = 0.0;
         let mut max_score = 0.0;
 
@@ -239,7 +238,7 @@ impl IntegratedProduct {
     }
 
     /// 제품 정보 업데이트
-    pub fn update_from_crawl_data(&mut self, other: &IntegratedProduct) {
+    pub fn update_from_crawl_data(&mut self, other: &Self) {
         self.name = other.name.clone();
         self.category = other.category.clone();
         self.subcategory = other.subcategory.clone();

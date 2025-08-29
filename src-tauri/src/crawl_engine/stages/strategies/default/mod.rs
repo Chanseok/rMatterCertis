@@ -302,7 +302,7 @@ impl StageLogic for DataSavingLogic {
         let policy = input.deps.duplicate_policy.clone();
         let mut inserted: u32 = 0;
         let mut updated: u32 = 0;
-        for detail in products.iter() {
+        for detail in products {
             // create_or_update_product_detail internally upserts both product and product_details
             match repo.create_or_update_product_detail(detail).await {
                 Ok((was_updated, was_created)) => {
@@ -312,8 +312,8 @@ impl StageLogic for DataSavingLogic {
                     if was_updated {
                         updated = updated.saturating_add(1);
                     }
-                    if !was_created && !was_updated {
-                        if policy == crate::crawl_engine::actors::types::DuplicatePersistencePolicy::UpdateIdIndexOnly {
+                    if !was_created && !was_updated
+                        && policy == crate::crawl_engine::actors::types::DuplicatePersistencePolicy::UpdateIdIndexOnly {
                             if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
                                 // force-update positions for existing URL
                                 let _ = repo
@@ -321,7 +321,6 @@ impl StageLogic for DataSavingLogic {
                                     .await;
                             }
                         }
-                    }
                 }
                 Err(e) => {
                     return Err(StageLogicError::Internal(format!(

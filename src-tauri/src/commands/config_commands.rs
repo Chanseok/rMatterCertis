@@ -468,7 +468,7 @@ pub fn get_default_crawling_config() -> Result<CrawlingSettings, String> {
             retry_attempts: app_config.advanced.retry_attempts,
             retry_delay_ms: app_config.advanced.retry_delay_ms,
             request_timeout_seconds: app_config.advanced.request_timeout_seconds,
-            product_selectors: app_config.advanced.product_selectors.clone(),
+            product_selectors: app_config.advanced.product_selectors,
         },
     };
 
@@ -522,7 +522,7 @@ pub async fn save_app_settings(settings: serde_json::Value) -> Result<String, St
     Ok("saved".into())
 }
 
-/// Convert internal AppConfig to frontend-friendly FrontendConfig
+/// Convert internal `AppConfig` to frontend-friendly `FrontendConfig`
 fn convert_to_frontend_config(app_config: &AppConfig) -> FrontendConfig {
     FrontendConfig {
         site: SiteConfig {

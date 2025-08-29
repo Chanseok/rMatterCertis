@@ -1,4 +1,4 @@
-//! BatchActor: 배치 단위 크롤링 처리 Actor
+//! `BatchActor`: 배치 단위 크롤링 처리 Actor
 //!
 //! Phase 3: Actor 구현 - 배치 레벨 작업 관리 및 실행
 //! Modern Rust 2024 준수: 함수형 원칙, 명시적 의존성, 상태 최소화
@@ -34,17 +34,17 @@ use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataE
 
 // Architecture note: StageActor is the single canonical execution path.
 
-/// BatchActor: 배치 단위의 크롤링 작업 관리
+/// `BatchActor`: 배치 단위의 크롤링 작업 관리
 ///
 /// 책임:
 /// - 배치 내 페이지들의 병렬 처리 관리
-/// - StageActor들의 조정 및 스케줄링
+/// - `StageActor들의` 조정 및 스케줄링
 /// - 배치 레벨 이벤트 발행
 /// - 동시성 제어 및 리소스 관리
 pub struct BatchActor {
     /// Actor 고유 식별자
     actor_id: String,
-    /// 현재 처리 중인 배치 ID (OneShot 호환성)
+    /// 현재 처리 중인 배치 ID (`OneShot` 호환성)
     pub batch_id: Option<String>,
     /// 배치 상태
     state: BatchState,
@@ -60,7 +60,7 @@ pub struct BatchActor {
     failure_count: u32,
     /// 동시성 제어용 세마포어
     concurrency_limiter: Option<Arc<Semaphore>>,
-    /// 설정 (OneShot 호환성)
+    /// 설정 (`OneShot` 호환성)
     pub config: Option<Arc<crate::crawl_engine::config::SystemConfig>>,
 
     // 🔥 Phase 1: 실제 서비스 의존성 추가
@@ -79,7 +79,7 @@ pub struct BatchActor {
     recent_product_urls: VecDeque<String>,
     recent_product_set: HashSet<String>,
     recent_capacity: usize,
-    /// URL 중복 제거 사용 여부 (ExecutionPlan에서 전달)
+    /// URL 중복 제거 사용 여부 (`ExecutionPlan에서` 전달)
     skip_duplicate_urls: bool,
     /// 누적 중복 스킵 수 (배치 단위)
     duplicates_skipped: u32,
@@ -114,7 +114,7 @@ impl std::fmt::Debug for BatchActor {
 }
 
 /// 배치 상태 열거형
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BatchState {
     Idle,
     Starting,
@@ -161,7 +161,7 @@ pub enum BatchError {
 
 impl BatchActor {
     /// Configure whether to skip duplicate product URLs within this batch.
-    pub fn set_skip_duplicate_urls(&mut self, flag: bool) {
+    pub const fn set_skip_duplicate_urls(&mut self, flag: bool) {
         self.skip_duplicate_urls = flag;
     }
 
@@ -176,13 +176,12 @@ impl BatchActor {
             0
         } else {
             detail_result_opt
-                .map(|r| r.details.iter().map(|d| d.duration_ms).sum())
-                .unwrap_or(0)
+                .map_or(0, |r| r.details.iter().map(|d| d.duration_ms).sum())
         };
         (stage2_duration_sum, stage3_duration_sum)
     }
 
-    /// 내부 보조: 전체 retries_used 산출 (Stage 2 + Stage 3, 지연 수집 시 Stage 2만)
+    /// 내부 보조: 전체 `retries_used` 산출 (Stage 2 + Stage 3, 지연 수집 시 Stage 2만)
     pub(crate) fn compute_retries_used(
         list_page_result: &StageResult,
         detail_result_opt: Option<&StageResult>,
@@ -193,19 +192,18 @@ impl BatchActor {
             stage2_retries
         } else {
             let stage3_retries: u32 = detail_result_opt
-                .map(|r| r.details.iter().map(|d| d.retry_count).sum())
-                .unwrap_or(0);
+                .map_or(0, |r| r.details.iter().map(|d| d.retry_count).sum());
             stage2_retries.saturating_add(stage3_retries)
         }
     }
-    /// 새로운 BatchActor 인스턴스 생성 (기본)
+    /// 새로운 `BatchActor` 인스턴스 생성 (기본)
     ///
     /// # Arguments
     /// * `actor_id` - Actor 고유 식별자
     ///
     /// # Returns
-    /// * `Self` - 새로운 BatchActor 인스턴스
-    pub fn new(actor_id: String) -> Self {
+    /// * `Self` - 새로운 `BatchActor` 인스턴스
+    #[must_use] pub fn new(actor_id: String) -> Self {
         Self {
             actor_id,
             batch_id: None,
@@ -240,7 +238,7 @@ impl BatchActor {
         }
     }
 
-    /// 🔥 Phase 1: 실제 서비스들과 함께 BatchActor 생성
+    /// 🔥 Phase 1: 실제 서비스들과 함께 `BatchActor` 생성
     ///
     /// # Arguments
     /// * `actor_id` - Actor 고유 식별자
@@ -251,7 +249,7 @@ impl BatchActor {
     /// * `app_config` - 앱 설정
     ///
     /// # Returns
-    /// * `Self` - 서비스가 주입된 BatchActor 인스턴스
+    /// * `Self` - 서비스가 주입된 `BatchActor` 인스턴스
     #[must_use]
     pub fn new_with_services(
         actor_id: String,
@@ -628,7 +626,7 @@ impl BatchActor {
                     let fail_event = AppEvent::BatchFailed {
                         batch_id: batch_id.clone(),
                         session_id: context.session_id.clone(),
-                        error: format!("Stage 3 failed: {}", e),
+                        error: format!("Stage 3 failed: {e}"),
                         final_failure: true,
                         timestamp: Utc::now(),
                     };
@@ -636,7 +634,7 @@ impl BatchActor {
                         .emit_event(fail_event)
                         .map_err(|er| BatchError::ContextError(er.to_string()))?;
                     self.state = BatchState::Failed {
-                        error: format!("Stage 3 failed: {}", e),
+                        error: format!("Stage 3 failed: {e}"),
                     };
                     return Err(e);
                 }
@@ -726,7 +724,7 @@ impl BatchActor {
                 use crate::crawl_engine::channels::types::{ProductDetails, StageItem as SItem};
                 let mut all_products: Vec<crate::domain::product::ProductDetail> = Vec::new();
                 let mut all_source_urls: Vec<crate::domain::product_url::ProductUrl> = Vec::new();
-                for it in per_item.into_iter() {
+                for it in per_item {
                     match it {
                         SItem::ProductDetails(pd) => {
                             all_source_urls.extend(pd.source_urls.into_iter());
@@ -774,7 +772,7 @@ impl BatchActor {
                 let fail_event = AppEvent::BatchFailed {
                     batch_id: batch_id.clone(),
                     session_id: context.session_id.clone(),
-                    error: format!("Stage 4 failed: {}", e),
+                    error: format!("Stage 4 failed: {e}"),
                     final_failure: true,
                     timestamp: Utc::now(),
                 };
@@ -782,7 +780,7 @@ impl BatchActor {
                     .emit_event(fail_event)
                     .map_err(|er| BatchError::ContextError(er.to_string()))?;
                 self.state = BatchState::Failed {
-                    error: format!("Stage 4 failed: {}", e),
+                    error: format!("Stage 4 failed: {e}"),
                 };
                 return Err(e);
             }
@@ -822,7 +820,7 @@ impl BatchActor {
                 let fail_event = AppEvent::BatchFailed {
                     batch_id: batch_id.clone(),
                     session_id: context.session_id.clone(),
-                    error: format!("Stage 5 failed: {}", e),
+                    error: format!("Stage 5 failed: {e}"),
                     final_failure: true,
                     timestamp: Utc::now(),
                 };
@@ -830,7 +828,7 @@ impl BatchActor {
                     .emit_event(fail_event)
                     .map_err(|er| BatchError::ContextError(er.to_string()))?;
                 self.state = BatchState::Failed {
-                    error: format!("Stage 5 failed: {}", e),
+                    error: format!("Stage 5 failed: {e}"),
                 };
                 return Err(e);
             }
@@ -851,10 +849,10 @@ impl BatchActor {
             if let Some(data) = &item.collected_data {
                 if data.starts_with('{') {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
-                        if let Some(pi) = v.get("products_inserted").and_then(|x| x.as_u64()) {
+                        if let Some(pi) = v.get("products_inserted").and_then(serde_json::Value::as_u64) {
                             inserted_sum = inserted_sum.saturating_add(pi as u32);
                         }
-                        if let Some(pu) = v.get("products_updated").and_then(|x| x.as_u64()) {
+                        if let Some(pu) = v.get("products_updated").and_then(serde_json::Value::as_u64) {
                             updated_sum = updated_sum.saturating_add(pu as u32);
                         }
                     }
@@ -883,8 +881,7 @@ impl BatchActor {
         // 추가: 배치 요약 한 줄 로그로 핵심 지표 집계 출력
         let duration_ms = self
             .start_time
-            .map(|s| s.elapsed().as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |s| s.elapsed().as_millis() as u64);
 
         // 보조 지표: Stage 2/3 per-item duration 합계 집계 및 구조화 로그
         let (stage2_duration_sum, stage3_duration_sum) = Self::compute_stage_duration_sums(
@@ -923,8 +920,7 @@ impl BatchActor {
             failed_count: saving_result.failed_items,
             duration: self
                 .start_time
-                .map(|s| s.elapsed().as_millis() as u64)
-                .unwrap_or(0),
+                .map_or(0, |s| s.elapsed().as_millis() as u64),
             timestamp: Utc::now(),
         };
 
@@ -940,7 +936,7 @@ impl BatchActor {
             self.total_pages,
             self.success_count.max(list_page_result.successful_items),
             list_page_result.failed_items,
-            self.start_time.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0),
+            self.start_time.map_or(0, |s| s.elapsed().as_millis() as u64),
             self.products_inserted,
             self.products_updated,
             chrono::Utc::now()
@@ -952,8 +948,7 @@ impl BatchActor {
         // === 추가: 배치 리포트 이벤트 발행 ===
         let duration_ms = self
             .start_time
-            .map(|s| s.elapsed().as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |s| s.elapsed().as_millis() as u64);
         // Stage 2/3 결과는 상단 스코프의 변수들에서 가져옴. 사용 가능 시 집계, 없으면 보수적 기본값.
         let pages_total = self.total_pages;
         let pages_success = self.success_count.max(list_page_result.successful_items);
@@ -1036,8 +1031,7 @@ impl BatchActor {
         match &self.batch_id {
             Some(current_id) if current_id == batch_id => Ok(()),
             Some(current_id) => Err(BatchError::BatchNotFound(format!(
-                "Expected {}, got {}",
-                current_id, batch_id
+                "Expected {current_id}, got {batch_id}"
             ))),
             None => Err(BatchError::BatchNotFound("No active batch".to_string())),
         }
@@ -1085,66 +1079,6 @@ impl BatchActor {
     }
 }
 
-#[cfg(test)]
-mod batch_actor_metrics_tests {
-    use super::*;
-    use crate::crawl_engine::actors::{StageItemResult, StageItemType, StageResult};
-
-    fn mk_item(duration_ms: u64, retry_count: u32, success: bool) -> StageItemResult {
-        StageItemResult {
-            item_id: "t".into(),
-            item_type: StageItemType::SiteCheck,
-            success,
-            error: None,
-            duration_ms,
-            retry_count,
-            collected_data: None,
-        }
-    }
-
-    fn mk_result(items: &[(u64, u32, bool)]) -> StageResult {
-        StageResult {
-            processed_items: items.len() as u32,
-            successful_items: items.iter().filter(|(_, _, s)| *s).count() as u32,
-            failed_items: items.iter().filter(|(_, _, s)| !*s).count() as u32,
-            duration_ms: items.iter().map(|(d, _, _)| *d).sum(),
-            details: items.iter().map(|(d, r, s)| mk_item(*d, *r, *s)).collect(),
-        }
-    }
-
-    #[test]
-    fn test_compute_stage_duration_sums_no_defer() {
-        let list_res = mk_result(&[(10, 1, true), (20, 0, false)]);
-        let det_res = mk_result(&[(5, 2, true), (7, 0, true)]);
-        let (s2, s3) = BatchActor::compute_stage_duration_sums(&list_res, Some(&det_res), false);
-        assert_eq!(s2, 30);
-        assert_eq!(s3, 12);
-    }
-
-    #[test]
-    fn test_compute_stage_duration_sums_defer() {
-        let list_res = mk_result(&[(10, 1, true), (20, 0, false)]);
-        let (s2, s3) = BatchActor::compute_stage_duration_sums(&list_res, None, true);
-        assert_eq!(s2, 30);
-        assert_eq!(s3, 0);
-    }
-
-    #[test]
-    fn test_compute_retries_used_no_defer() {
-        let list_res = mk_result(&[(10, 1, true), (20, 0, false)]); // sum=1
-        let det_res = mk_result(&[(5, 2, true), (7, 3, true)]); // sum=5
-        let retries = BatchActor::compute_retries_used(&list_res, Some(&det_res), false);
-        assert_eq!(retries, 6);
-    }
-
-    #[test]
-    fn test_compute_retries_used_defer() {
-        let list_res = mk_result(&[(10, 1, true), (20, 2, false)]); // sum=3
-        let retries = BatchActor::compute_retries_used(&list_res, None, true);
-        assert_eq!(retries, 3);
-    }
-}
-
 #[async_trait::async_trait]
 impl Actor for BatchActor {
     type Command = ActorCommand;
@@ -1168,57 +1102,53 @@ impl Actor for BatchActor {
             tokio::select! {
                 // 명령 처리
                 command = command_rx.recv() => {
-                    match command {
-                        Some(cmd) => {
-                            debug!("📨 BatchActor {} received command: {:?}", self.actor_id, cmd);
+                    if let Some(cmd) = command {
+                        debug!("📨 BatchActor {} received command: {:?}", self.actor_id, cmd);
 
-                            match cmd {
-                                ActorCommand::ProcessBatch {
+                        match cmd {
+                            ActorCommand::ProcessBatch {
+                                batch_id,
+                                pages,
+                                config,
+                                batch_size,
+                                concurrency_limit,
+                                total_pages,
+                                products_on_last_page
+                            } => {
+                                if let Err(e) = self.process_list_page_batch(
                                     batch_id,
+                                    StageType::ListPageCrawling, // stage_type 추가
                                     pages,
                                     config,
                                     batch_size,
                                     concurrency_limit,
                                     total_pages,
-                                    products_on_last_page
-                                } => {
-                                    if let Err(e) = self.process_list_page_batch(
-                                        batch_id,
-                                        StageType::ListPageCrawling, // stage_type 추가
-                                        pages,
-                                        config,
-                                        batch_size,
-                                        concurrency_limit,
-                                        total_pages,
-                                        products_on_last_page,
-                                        &context
-                                    ).await {
-                                        error!("Failed to process batch: {}", e);
-                                        info!("[BatchActorRun] exiting early after failed batch");
-                                        info!("🏁 BatchActor {} execution loop ended (failure)", self.actor_id);
-                                        return Err(ActorError::CommandProcessingFailed(format!("batch failed: {}", e)));
-                                    } else {
-                                        // 단일 배치 모드: 추가 명령을 기다리지 않고 즉시 종료하여 상위 await가 풀리도록 한다.
-                                        info!("[BatchActorRun] single batch processed successfully — returning to caller");
-                                        info!("🏁 BatchActor {} execution loop ended (single batch success)", self.actor_id);
-                                        return Ok(());
-                                    }
+                                    products_on_last_page,
+                                    &context
+                                ).await {
+                                    error!("Failed to process batch: {}", e);
+                                    info!("[BatchActorRun] exiting early after failed batch");
+                                    info!("🏁 BatchActor {} execution loop ended (failure)", self.actor_id);
+                                    return Err(ActorError::CommandProcessingFailed(format!("batch failed: {e}")));
                                 }
+                                // 단일 배치 모드: 추가 명령을 기다리지 않고 즉시 종료하여 상위 await가 풀리도록 한다.
+                                info!("[BatchActorRun] single batch processed successfully — returning to caller");
+                                info!("🏁 BatchActor {} execution loop ended (single batch success)", self.actor_id);
+                                return Ok(());
+                            }
 
-                                ActorCommand::Shutdown => {
-                                    info!("🛑 BatchActor {} received shutdown command", self.actor_id);
-                                    break;
-                                }
+                            ActorCommand::Shutdown => {
+                                info!("🛑 BatchActor {} received shutdown command", self.actor_id);
+                                break;
+                            }
 
-                                _ => {
-                                    debug!("BatchActor {} ignoring non-batch command", self.actor_id);
-                                }
+                            _ => {
+                                debug!("BatchActor {} ignoring non-batch command", self.actor_id);
                             }
                         }
-                        None => {
-                            warn!("📪 BatchActor {} command channel closed", self.actor_id);
-                            break;
-                        }
+                    } else {
+                        warn!("📪 BatchActor {} command channel closed", self.actor_id);
+                        break;
                     }
                 }
 
@@ -1298,8 +1228,8 @@ impl Actor for BatchActor {
 }
 
 impl BatchActor {
-    /// 개별 Stage를 StageActor로 실행
-    /// TODO: StageItemCompleted 이벤트 수신 채널 도입하여 products_inserted/products_updated 실시간 반영
+    /// 개별 Stage를 `StageActor로` 실행
+    /// TODO: `StageItemCompleted` 이벤트 수신 채널 도입하여 `products_inserted/products_updated` 실시간 반영
     /// # Arguments
     /// * `stage_type` - 실행할 스테이지 타입
     /// * `items` - 처리할 아이템들
@@ -1425,13 +1355,13 @@ impl BatchActor {
             .execute_stage(stage_type, items, concurrency_limit, timeout_secs, context)
             .await
             .map_err(|e| {
-                BatchError::StageExecutionFailed(format!("Stage execution failed: {:?}", e))
+                BatchError::StageExecutionFailed(format!("Stage execution failed: {e:?}"))
             })?;
 
         Ok(stage_result)
     }
 
-    /// 힌트를 주입할 수 있는 Stage 실행 도우미 (ListPage 등)
+    /// 힌트를 주입할 수 있는 Stage 실행 도우미 (`ListPage` 등)
     async fn execute_stage_with_actor_with_hints(
         &self,
         stage_type: StageType,
@@ -1551,7 +1481,7 @@ impl BatchActor {
             .execute_stage(stage_type, items, concurrency_limit, timeout_secs, context)
             .await
             .map_err(|e| {
-                BatchError::StageExecutionFailed(format!("Stage execution failed: {:?}", e))
+                BatchError::StageExecutionFailed(format!("Stage execution failed: {e:?}"))
             })?;
 
         Ok(stage_result)
@@ -1589,7 +1519,7 @@ impl BatchActor {
         // 초기 입력: 페이지들을 StageItem으로 변환
         let mut current_items: Vec<StageItem> = pages
             .into_iter()
-            .map(|page| StageItem::Page(page))
+            .map(StageItem::Page)
             .collect();
 
         let mut final_result = StageResult {
@@ -1755,7 +1685,7 @@ impl BatchActor {
                 .await
                 .map_err(|e| BatchError::StageProcessingFailed {
                     stage: stage_type.as_str().to_string(),
-                    error: format!("Stage execution failed: {:?}", e),
+                    error: format!("Stage execution failed: {e:?}"),
                 })?;
 
             info!(
@@ -1823,15 +1753,22 @@ impl BatchActor {
                                     >(collected_data_json)
                                     {
                                         Ok(product_urls_vec) => {
-                                            if !product_urls_vec.is_empty() {
+                                            if product_urls_vec.is_empty() {
+                                                warn!(
+                                                    "⚠️  Page {} crawling succeeded but no ProductURLs were collected",
+                                                    page_number
+                                                );
+                                            } else {
                                                 let original_count = product_urls_vec.len();
                                                 total_urls_collected += original_count;
                                                 let filtered_vec = if enable_dedupe {
                                                     let mut filtered =
                                                         Vec::with_capacity(original_count);
-                                                    for pu in product_urls_vec.into_iter() {
+                                                    for pu in product_urls_vec {
                                                         let key = pu.url.clone();
-                                                        if !self.recent_product_set.contains(&key) {
+                                                        if self.recent_product_set.contains(&key) {
+                                                            total_duplicates_skipped += 1;
+                                                        } else {
                                                             // LRU eviction if needed
                                                             if self.recent_product_urls.len()
                                                                 >= self.recent_capacity
@@ -1848,8 +1785,6 @@ impl BatchActor {
                                                                 .insert(key.clone());
                                                             self.recent_product_urls.push_back(key);
                                                             filtered.push(pu);
-                                                        } else {
-                                                            total_duplicates_skipped += 1;
                                                         }
                                                     }
                                                     filtered
@@ -1885,11 +1820,6 @@ impl BatchActor {
                                                         original_count, page_number
                                                     );
                                                 }
-                                            } else {
-                                                warn!(
-                                                    "⚠️  Page {} crawling succeeded but no ProductURLs were collected",
-                                                    page_number
-                                                );
                                             }
                                         }
                                         Err(e) => {
@@ -1966,8 +1896,8 @@ impl BatchActor {
 
                 for (item_index, item) in input_items.iter().enumerate() {
                     let item_type_name = match item {
-                        StageItem::Page(page) => format!("Page({})", page),
-                        StageItem::Url(url) => format!("Url({})", url),
+                        StageItem::Page(page) => format!("Page({page})"),
+                        StageItem::Url(url) => format!("Url({url})"),
                         StageItem::Product(_) => "Product".to_string(),
                         StageItem::ValidationTarget(_) => "ValidationTarget".to_string(),
                         StageItem::ProductList(_) => "ProductList".to_string(),
@@ -2007,7 +1937,11 @@ impl BatchActor {
                                     >(collected_data_json)
                                     {
                                         Ok(product_details_wrapper) => {
-                                            if !product_details_wrapper.products.is_empty() {
+                                            if product_details_wrapper.products.is_empty() {
+                                                warn!(
+                                                    "⚠️  ProductDetailCrawling succeeded but no ProductDetails were collected"
+                                                );
+                                            } else {
                                                 let product_count =
                                                     product_details_wrapper.products.len();
                                                 total_products_collected += product_count;
@@ -2017,10 +1951,6 @@ impl BatchActor {
                                                 info!(
                                                     "✅ Extracted {} ProductDetails from ProductUrls",
                                                     product_count
-                                                );
-                                            } else {
-                                                warn!(
-                                                    "⚠️  ProductDetailCrawling succeeded but no ProductDetails were collected"
                                                 );
                                             }
                                         }
@@ -2063,7 +1993,7 @@ impl BatchActor {
                                                         manufacturer: Some(
                                                             "SynthManufacturer".into(),
                                                         ),
-                                                        model: Some(format!("Model{}", i)),
+                                                        model: Some(format!("Model{i}")),
                                                         device_type: None,
                                                         certificate_id: None,
                                                         certification_date: None,
@@ -2155,5 +2085,65 @@ impl BatchActor {
                 Ok(input_items)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod batch_actor_metrics_tests {
+    use super::*;
+    use crate::crawl_engine::actors::{StageItemResult, StageItemType, StageResult};
+
+    fn mk_item(duration_ms: u64, retry_count: u32, success: bool) -> StageItemResult {
+        StageItemResult {
+            item_id: "t".into(),
+            item_type: StageItemType::SiteCheck,
+            success,
+            error: None,
+            duration_ms,
+            retry_count,
+            collected_data: None,
+        }
+    }
+
+    fn mk_result(items: &[(u64, u32, bool)]) -> StageResult {
+        StageResult {
+            processed_items: items.len() as u32,
+            successful_items: items.iter().filter(|(_, _, s)| *s).count() as u32,
+            failed_items: items.iter().filter(|(_, _, s)| !*s).count() as u32,
+            duration_ms: items.iter().map(|(d, _, _)| *d).sum(),
+            details: items.iter().map(|(d, r, s)| mk_item(*d, *r, *s)).collect(),
+        }
+    }
+
+    #[test]
+    fn test_compute_stage_duration_sums_no_defer() {
+        let list_res = mk_result(&[(10, 1, true), (20, 0, false)]);
+        let det_res = mk_result(&[(5, 2, true), (7, 0, true)]);
+        let (s2, s3) = BatchActor::compute_stage_duration_sums(&list_res, Some(&det_res), false);
+        assert_eq!(s2, 30);
+        assert_eq!(s3, 12);
+    }
+
+    #[test]
+    fn test_compute_stage_duration_sums_defer() {
+        let list_res = mk_result(&[(10, 1, true), (20, 0, false)]);
+        let (s2, s3) = BatchActor::compute_stage_duration_sums(&list_res, None, true);
+        assert_eq!(s2, 30);
+        assert_eq!(s3, 0);
+    }
+
+    #[test]
+    fn test_compute_retries_used_no_defer() {
+        let list_res = mk_result(&[(10, 1, true), (20, 0, false)]); // sum=1
+        let det_res = mk_result(&[(5, 2, true), (7, 3, true)]); // sum=5
+        let retries = BatchActor::compute_retries_used(&list_res, Some(&det_res), false);
+        assert_eq!(retries, 6);
+    }
+
+    #[test]
+    fn test_compute_retries_used_defer() {
+        let list_res = mk_result(&[(10, 1, true), (20, 2, false)]); // sum=3
+        let retries = BatchActor::compute_retries_used(&list_res, None, true);
+        assert_eq!(retries, 3);
     }
 }

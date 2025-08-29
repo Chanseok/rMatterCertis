@@ -1,6 +1,6 @@
 //! 크롤링 서비스 레이어 트레이트 정의
 //!
-//! 이 모듈은 BatchCrawlingEngine의 각 단계를 담당하는 서비스들의
+//! 이 모듈은 `BatchCrawlingEngine의` 각 단계를 담당하는 서비스들의
 //! 인터페이스를 정의합니다.
 
 use anyhow::Result;
@@ -150,7 +150,7 @@ pub trait ProductDetailCollector: Send + Sync {
 }
 
 /// 크롤링 범위 권장 사항
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export)]
 pub enum CrawlingRangeRecommendation {
     /// 전체 크롤링 권장
@@ -163,12 +163,12 @@ pub enum CrawlingRangeRecommendation {
 
 impl CrawlingRangeRecommendation {
     /// 범위 권장사항을 (시작 페이지, 끝 페이지) 튜플로 변환
-    /// 전체 크롤링의 경우 total_pages가 필요하므로 파라미터로 받음
-    pub fn to_page_range(&self, total_pages: u32) -> Option<(u32, u32)> {
+    /// 전체 크롤링의 경우 `total_pages가` 필요하므로 파라미터로 받음
+    #[must_use] pub const fn to_page_range(&self, total_pages: u32) -> Option<(u32, u32)> {
         match self {
-            CrawlingRangeRecommendation::Full => Some((1, total_pages)),
-            CrawlingRangeRecommendation::Partial(pages) => Some((1, *pages)),
-            CrawlingRangeRecommendation::None => None,
+            Self::Full => Some((1, total_pages)),
+            Self::Partial(pages) => Some((1, *pages)),
+            Self::None => None,
         }
     }
 }
@@ -253,7 +253,7 @@ pub struct ProcessingStrategy {
 }
 
 /// 사이트 데이터 변화 상태
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export)]
 pub enum SiteDataChangeStatus {
     /// 데이터 증가 - 새로운 제품이 추가됨

@@ -76,7 +76,7 @@ pub async fn scan_db_pagination_mismatches(
         //    Only when products has non-null page_id/index_in_page.
         // Count how many rows would collide with existing target slot
         let res0 = sqlx::query_scalar::<_, i64>(
-                                                r#"
+                                                r"
                                                 SELECT COUNT(*) FROM product_details pd
                                                 WHERE EXISTS (SELECT 1 FROM products WHERE products.url = pd.url)
                                                     AND (SELECT page_id FROM products WHERE products.url = pd.url) IS NOT NULL
@@ -93,14 +93,14 @@ pub async fn scan_db_pagination_mismatches(
                                                                             (SELECT page_id FROM products WHERE products.url = pd.url),
                                                                             (SELECT index_in_page FROM products WHERE products.url = pd.url))
                                                     )
-                                                "#,
+                                                ",
                                 )
                                 .fetch_one(&mut *tx)
                                 .await
                                 .unwrap_or(0);
 
         let res1 = sqlx::query(
-                        r#"
+                        r"
                         UPDATE product_details
                         SET
                             page_id = (SELECT page_id FROM products WHERE products.url = product_details.url),
@@ -129,7 +129,7 @@ pub async fn scan_db_pagination_mismatches(
                                         (SELECT page_id FROM products WHERE products.url = product_details.url),
                                         (SELECT index_in_page FROM products WHERE products.url = product_details.url))
                             )
-                        "#,
+                        ",
                 )
                 .execute(&mut *tx)
                 .await
@@ -140,7 +140,7 @@ pub async fn scan_db_pagination_mismatches(
 
         // 2) Backfill products.id from product_details.id when NULL/empty
         let res2 = sqlx::query(
-                        r#"
+                        r"
                         UPDATE products
                         SET id = (SELECT id FROM product_details WHERE product_details.url = products.url)
                         WHERE (id IS NULL OR id = '')
@@ -150,7 +150,7 @@ pub async fn scan_db_pagination_mismatches(
                                     AND product_details.id IS NOT NULL 
                                     AND product_details.id <> ''
                             )
-                        "#,
+                        ",
                 )
                 .execute(&mut *tx)
                 .await
@@ -199,7 +199,7 @@ pub async fn scan_db_pagination_mismatches(
     // Organize by page_id
     let mut by_pid: BTreeMap<i32, Vec<(String, Option<i32>)>> = BTreeMap::new();
     let mut out_of_range_count_by_pid: HashMap<i32, u32> = HashMap::new();
-    for r in rows.into_iter() {
+    for r in rows {
         let url: String = r.try_get("url").unwrap_or_default();
         let pid_opt: Option<i64> = r.try_get("page_id").ok();
         let idx_opt: Option<i64> = r.try_get("index_in_page").ok();
@@ -209,7 +209,7 @@ pub async fn scan_db_pagination_mismatches(
         entry.push((url, idx));
         // track out-of-range
         if let Some(ix) = idx {
-            if ix < 0 || ix > 11 {
+            if !(0..=11).contains(&ix) {
                 *out_of_range_count_by_pid.entry(pid).or_insert(0) += 1;
             }
         } else {
@@ -237,7 +237,7 @@ pub async fn scan_db_pagination_mismatches(
     let mut group_summaries: Vec<GroupSummary> = Vec::new();
     let mut duplicate_positions: Vec<DuplicatePosition> = Vec::new();
 
-    for (pid, items) in by_pid.iter() {
+    for (pid, items) in &by_pid {
         let count = items.len() as u32;
         let terminal = *pid == max_page_id_db;
         let expected_count = if terminal { count } else { 12 };
@@ -251,26 +251,26 @@ pub async fn scan_db_pagination_mismatches(
         // Build map index -> urls
         let mut index_map: BTreeMap<i32, Vec<&str>> = BTreeMap::new();
         let mut indices: Vec<i32> = Vec::new();
-        for (url, idx_opt) in items.iter() {
+        for (url, idx_opt) in items {
             if let Some(ix) = *idx_opt {
                 indices.push(ix);
                 index_map.entry(ix).or_default().push(url.as_str());
             }
         }
         let distinct_indices = index_map.len() as u32;
-        let min_index = indices.iter().min().cloned();
-        let max_index = indices.iter().max().cloned();
+        let min_index = indices.iter().min().copied();
+        let max_index = indices.iter().max().copied();
 
         // Detect duplicates and missing
         let mut dup_indices: Vec<i32> = Vec::new();
-        for (ix, urls) in index_map.iter() {
+        for (ix, urls) in &index_map {
             if urls.len() > 1 {
                 dup_indices.push(*ix);
                 duplicate_positions.push(DuplicatePosition {
                     page_id: *pid,
                     current_page_number,
                     index_in_page: *ix,
-                    urls: urls.iter().map(|s| s.to_string()).collect(),
+                    urls: urls.iter().map(|s| (*s).to_string()).collect(),
                 });
             }
         }

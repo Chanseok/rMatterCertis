@@ -208,17 +208,14 @@ pub async fn quick_crawling_test(
             )
             .await;
 
-        match detail_result {
-            StageResult::Success {
+        if let StageResult::Success {
                 processed_items, ..
-            } => {
-                info!(processed_items = processed_items, "✅ 상세 수집 성공");
-                processed_items
-            }
-            _ => {
-                warn!("⚠️ 상세 수집 실패, 리스트 수집 결과만 반환");
-                0
-            }
+            } = detail_result {
+            info!(processed_items = processed_items, "✅ 상세 수집 성공");
+            processed_items
+        } else {
+            warn!("⚠️ 상세 수집 실패, 리스트 수집 결과만 반환");
+            0
         }
     } else {
         0
@@ -227,20 +224,20 @@ pub async fn quick_crawling_test(
     // 9. 성능 메트릭 계산
     let total_duration = start_time.elapsed();
     let avg_time_per_page = if test_pages > 0 {
-        total_duration.as_millis() as u64 / test_pages as u64
+        total_duration.as_millis() as u64 / u64::from(test_pages)
     } else {
         0
     };
 
     let performance_metrics = PerformanceMetrics {
         avg_urls_per_page: if test_pages > 0 {
-            collected_urls as f64 / test_pages as f64
+            f64::from(collected_urls) / f64::from(test_pages)
         } else {
             0.0
         },
         network_success_rate: if success { 1.0 } else { 0.5 },
         parsing_success_rate: if success { 1.0 } else { 0.7 },
-        estimated_memory_kb: (collected_urls * 2 + collected_details * 10) as u64, // 추정치
+        estimated_memory_kb: u64::from(collected_urls * 2 + collected_details * 10), // 추정치
     };
 
     let result = CrawlingTestResult {

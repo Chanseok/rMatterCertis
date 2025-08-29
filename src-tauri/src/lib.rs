@@ -1,7 +1,7 @@
 //! Matter Certis v2 - E-commerce Product Crawling Application
 //!
 //! This application provides web crawling capabilities for e-commerce sites
-//! with a modern desktop interface built with Tauri and SolidJS.
+//! with a modern desktop interface built with Tauri and `SolidJS`.
 //!
 //! Modern Rust module organization (Rust 2024+ style):
 //! - Each module is defined in its own .rs file or directory
@@ -222,7 +222,7 @@ pub fn run() {
     rt.block_on(async {
         let concise_all = std::env::var("MC_CONCISE_ALL")
             .ok()
-            .map_or(true, |v| !(v == "0" || v.eq_ignore_ascii_case("false")));
+            .is_none_or(|v| !(v == "0" || v.eq_ignore_ascii_case("false")));
         let concise = concise_all
             || std::env::var("MC_CONCISE_STARTUP")
                 .ok()
@@ -296,7 +296,7 @@ pub fn run() {
             Ok(_pool) => {
                 let concise_all = std::env::var("MC_CONCISE_ALL")
                     .ok()
-                    .map_or(true, |v| !(v == "0" || v.eq_ignore_ascii_case("false")));
+                    .is_none_or(|v| !(v == "0" || v.eq_ignore_ascii_case("false")));
                 let concise = concise_all
                     || std::env::var("MC_CONCISE_STARTUP")
                         .ok()

@@ -267,7 +267,7 @@ pub struct AdvancedConfig {
 /// 세션 실패/제거 정책 구성
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FailurePolicyConfig {
-    /// Range 실패 누적 임계치 (SessionFailed 전환)
+    /// Range 실패 누적 임계치 (`SessionFailed` 전환)
     #[serde(default = "FailurePolicyConfig::default_threshold")]
     pub failure_threshold: u32,
     /// Completed/Failed 후 레지스트리 유지(grace) 초
@@ -276,10 +276,10 @@ pub struct FailurePolicyConfig {
 }
 
 impl FailurePolicyConfig {
-    fn default_threshold() -> u32 {
+    const fn default_threshold() -> u32 {
         5
     }
-    fn default_grace_secs() -> i64 {
+    const fn default_grace_secs() -> i64 {
         10
     }
 }
@@ -308,11 +308,11 @@ pub struct AppManagedConfig {
 
 impl AppConfig {
     /// 개발/테스트용 기본 설정 생성
-    pub fn for_development() -> Self {
+    #[must_use] pub fn for_development() -> Self {
         Self::default()
     }
 
-    /// HttpClient 생성을 위한 편의 메서드
+    /// `HttpClient` 생성을 위한 편의 메서드
     pub fn create_http_client(
         &self,
     ) -> anyhow::Result<crate::infrastructure::simple_http_client::HttpClient> {
@@ -384,7 +384,7 @@ impl Default for AdvancedConfig {
             retry_delay_ms: defaults::RETRY_DELAY_MS,
             product_selectors: defaults::PRODUCT_SELECTORS
                 .iter()
-                .map(|s| s.to_string())
+                .map(|s| (*s).to_string())
                 .collect(),
             request_timeout_seconds: defaults::REQUEST_TIMEOUT_SECONDS,
         }
@@ -840,15 +840,12 @@ impl ConfigManager {
             );
 
             // Add migration logic here as needed
-            match config.app_managed.config_version {
-                0 => {
-                    // Migrate from version 0 to 1
-                    config.app_managed.config_version = 1;
-                    info!("✅ Migrated to version 1");
-                }
-                _ => {
-                    // No migration needed
-                }
+            if config.app_managed.config_version == 0 {
+                // Migrate from version 0 to 1
+                config.app_managed.config_version = 1;
+                info!("✅ Migrated to version 1");
+            } else {
+                // No migration needed
             }
 
             // Save migrated configuration
@@ -860,7 +857,7 @@ impl ConfigManager {
     }
 
     /// Get the configuration file path
-    pub fn config_path(&self) -> &PathBuf {
+    #[must_use] pub const fn config_path(&self) -> &PathBuf {
         &self.config_path
     }
 }
@@ -881,13 +878,13 @@ pub mod csa_iot {
 
     /// Matter products only - filtered URL with specific parameters
     /// Parameters explanation:
-    /// - p_type[0]=14: Matter product type filter
-    /// - p_program_type[0]=1049: Matter program type filter
+    /// - `p_type`[0]=14: Matter product type filter
+    /// - `p_program_type`[0]=1049: Matter program type filter
     /// - Other parameters are left empty for maximum coverage
     pub const PRODUCTS_PAGE_MATTER_ONLY: &str = "https://csa-iot.org/csa-iot_products/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver";
 
     /// URL pattern for Matter products with page pagination
-    /// Format: https://csa-iot.org/csa-iot_products/page/{page_number}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver
+    /// Format: <https://csa-iot.org/csa-iot_products/page/{page_number}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver>
     pub const PRODUCTS_PAGE_MATTER_PAGINATED: &str = "https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver";
 
     /// Filter parameters for Matter products
@@ -1054,11 +1051,11 @@ pub mod defaults {
 
 /// URL building helper functions
 pub mod utils {
-    use super::csa_iot::*;
+    use super::csa_iot::{PRODUCTS_BASE, MATTER_QUERY_PARAMS, BASE_URL};
 
     /// Build a Matter products URL for a specific page number
-    /// Uses the new URL structure: https://csa-iot.org/csa-iot_products/page/{page}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver
-    pub fn matter_products_page_url(page: u32) -> String {
+    /// Uses the new URL structure: <https://csa-iot.org/csa-iot_products/page/{page}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver>
+    #[must_use] pub fn matter_products_page_url(page: u32) -> String {
         if page <= 1 {
             // First page uses base URL without /page/ path
             format!("{}{}", PRODUCTS_BASE, MATTER_QUERY_PARAMS)
@@ -1068,14 +1065,14 @@ pub mod utils {
         }
     }
 
-    /// Build a Matter products URL by using the same structure as matter_products_page_url
+    /// Build a Matter products URL by using the same structure as `matter_products_page_url`
     /// This function is kept for compatibility but now uses the same logic
-    pub fn matter_products_page_url_simple(page: u32) -> String {
+    #[must_use] pub fn matter_products_page_url_simple(page: u32) -> String {
         matter_products_page_url(page)
     }
 
     /// Resolve a relative URL to an absolute URL using the base URL
-    pub fn resolve_url(relative_url: &str) -> String {
+    #[must_use] pub fn resolve_url(relative_url: &str) -> String {
         if relative_url.starts_with("http://") || relative_url.starts_with("https://") {
             relative_url.to_string()
         } else if relative_url.starts_with('/') {

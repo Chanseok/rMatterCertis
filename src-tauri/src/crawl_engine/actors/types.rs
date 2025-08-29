@@ -37,7 +37,7 @@ pub enum ActorCommand {
     /// 세션 취소
     CancelSession { session_id: String, reason: String },
 
-    /// 미리 생성된 ExecutionPlan을 그대로 실행 (재계획 금지)
+    /// 미리 생성된 `ExecutionPlan을` 그대로 실행 (재계획 금지)
     ExecutePrePlanned {
         session_id: String,
         plan: ExecutionPlan,
@@ -76,15 +76,15 @@ pub enum ActorCommand {
 ///
 /// 시스템 상태 변화를 알리는 이벤트들입니다.
 /// 이벤트 드리븐 아키텍처의 핵심 구성 요소입니다.
-/// ActorContractVersion: v1
+/// `ActorContractVersion`: v1
 /// Core field groups (v2 clarification - additive only):
-/// - Session lifecycle: SessionStarted/Completed/Failed { session_id, timestamp }
-/// - Progress: Progress { session_id, current_step, total_steps, percentage }
-/// - Batch: BatchStarted/Completed/Failed { batch_id, session_id, timestamp }
-/// - Stage: StageStarted/Completed/Failed { stage_type, session_id, batch_id? }
+/// - Session lifecycle: SessionStarted/Completed/Failed { `session_id`, timestamp }
+/// - Progress: Progress { `session_id`, `current_step`, `total_steps`, percentage }
+/// - Batch: BatchStarted/Completed/Failed { `batch_id`, `session_id`, timestamp }
+/// - Stage: StageStarted/Completed/Failed { `stage_type`, `session_id`, `batch_id`? }
 /// - Persistence diagnostics: `ProductLifecycle` { status, metrics? }, `PersistenceAnomaly` { kind, detail }
-/// - Metrics snapshots: DatabaseStats { total_product_details, min_page, max_page }
-/// UI 소비자는 최소 session_id + timestamp 조합을 키로 사용하고, 선택적으로 batch_id / stage_type 으로 세분화 렌더링.
+/// - Metrics snapshots: `DatabaseStats` { `total_product_details`, `min_page`, `max_page` }
+/// UI 소비자는 최소 `session_id` + timestamp 조합을 키로 사용하고, 선택적으로 `batch_id` / `stage_type` 으로 세분화 렌더링.
 ///
 /// 버전 관리 원칙:
 /// 1. Additive-only (새 이벤트/필드 추가는 허용)
@@ -149,7 +149,7 @@ pub enum AppEvent {
         timestamp: DateTime<Utc>,
     },
 
-    /// 저장 단계 이상 탐지 (예: 예상 신규/업데이트 없을 때, page_id 역순 불일치 등)
+    /// 저장 단계 이상 탐지 (예: 예상 신규/업데이트 없을 때, `page_id` 역순 불일치 등)
     PersistenceAnomaly {
         session_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -263,7 +263,7 @@ pub enum AppEvent {
         error: Option<String>,
         duration_ms: u64,
         retry_count: u32,
-        /// 수집된 엔트리 수 (ListPage: product URL 개수, ProductDetail: 상세 필드 객체 개수)
+        /// 수집된 엔트리 수 (`ListPage`: product URL 개수, `ProductDetail`: 상세 필드 객체 개수)
         #[serde(skip_serializing_if = "Option::is_none")]
         collected_count: Option<u32>,
         timestamp: DateTime<Utc>,
@@ -357,7 +357,7 @@ pub enum AppEvent {
     },
 
     // === (Additive v1) Granular Page / Detail Task Events ===
-    /// 개별 페이지 처리 시작 (ListPages phase 범위 내)
+    /// 개별 페이지 처리 시작 (`ListPages` phase 범위 내)
     PageTaskStarted {
         session_id: String,
         page: u32,
@@ -384,7 +384,7 @@ pub enum AppEvent {
     // DetailTask* removed: use ProductLifecycle/ProductLifecycleGroup instead
 
     // === Fine-grained lifecycle events (additive v2) ===
-    /// Page lifecycle state transition (queued -> fetch_started -> fetch_completed | failed -> urls_extracted)
+    /// Page lifecycle state transition (queued -> `fetch_started` -> `fetch_completed` | failed -> `urls_extracted`)
     PageLifecycle {
         session_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -522,7 +522,7 @@ pub enum AppEvent {
     /// Per-attempt retry notification for This Range Sync (additive v1)
     SyncRetrying {
         session_id: String,
-        /// Scope of retry: "list_page" | "product_detail"
+        /// Scope of retry: "`list_page`" | "`product_detail`"
         scope: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         physical_page: Option<u32>,
@@ -554,7 +554,7 @@ pub enum AppEvent {
     },
 }
 
-/// Compact anomaly entry for SyncCompleted summary
+/// Compact anomaly entry for `SyncCompleted` summary
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncAnomalyEntry {
     pub page_id: i32,
@@ -707,14 +707,14 @@ pub enum StageType {
 }
 
 impl StageType {
-    /// StageType을 문자열로 변환
-    pub fn as_str(&self) -> &'static str {
+    /// `StageType을` 문자열로 변환
+    #[must_use] pub const fn as_str(&self) -> &'static str {
         match self {
-            StageType::StatusCheck => "status_check",
-            StageType::ListPageCrawling => "list_page_crawling",
-            StageType::ProductDetailCrawling => "product_detail_crawling",
-            StageType::DataValidation => "data_validation",
-            StageType::DataSaving => "data_saving",
+            Self::StatusCheck => "status_check",
+            Self::ListPageCrawling => "list_page_crawling",
+            Self::ProductDetailCrawling => "product_detail_crawling",
+            Self::DataValidation => "data_validation",
+            Self::DataSaving => "data_saving",
         }
     }
 }
@@ -796,9 +796,9 @@ pub struct StageItemResult {
     pub retry_count: u32,
 
     /// 수집된 데이터 (JSON 문자열)
-    /// ListPageCrawling: ProductURL들의 JSON 배열
-    /// ProductDetailCrawling: ProductDetail들의 JSON 배열
-    /// DataSaving: 저장된 데이터의 메타정보
+    /// `ListPageCrawling`: `ProductURL들의` JSON 배열
+    /// `ProductDetailCrawling`: `ProductDetail들의` JSON 배열
+    /// `DataSaving`: 저장된 데이터의 메타정보
     pub collected_data: Option<String>,
 }
 
@@ -821,14 +821,14 @@ pub enum StageResultData {
         response_time_ms: u64,
     },
 
-    /// 리스트 페이지 크롤링 결과 - ProductUrl 직접 반환
+    /// 리스트 페이지 크롤링 결과 - `ProductUrl` 직접 반환
     ProductUrls {
         urls: Vec<ProductUrl>,
         page_number: u32,
         total_found: u32,
     },
 
-    /// 상품 상세 크롤링 결과 - ProductDetail 직접 반환
+    /// 상품 상세 크롤링 결과 - `ProductDetail` 직접 반환
     ProductDetails {
         details: Vec<ProductDetail>,
         successful_count: u32,
@@ -867,7 +867,7 @@ pub enum StageResultData {
 
 /// 개선된 스테이지 아이템 결과
 ///
-/// collected_data를 StageResultData로 교체하여 타입 안전성 향상
+/// `collected_data를` `StageResultData로` 교체하여 타입 안전성 향상
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct EnhancedStageItemResult {
@@ -934,7 +934,7 @@ pub struct SessionSummary {
     /// 총 성공 수
     pub total_success_count: u32,
 
-    /// 세션 전체에서 중복 제거로 스킵된 Product URL 수 (BatchReport 합산)
+    /// 세션 전체에서 중복 제거로 스킵된 Product URL 수 (`BatchReport` 합산)
     #[serde(default)]
     pub duplicates_skipped: u32,
     #[serde(default)]
@@ -1185,14 +1185,14 @@ pub enum ActorError {
 // From 구현들
 impl From<anyhow::Error> for ActorError {
     fn from(err: anyhow::Error) -> Self {
-        ActorError::CommandProcessingFailed(err.to_string())
+        Self::CommandProcessingFailed(err.to_string())
     }
 }
 
-/// 실행 계획 - CrawlingPlanner에서 생성되어 SessionActor에게 전달
+/// 실행 계획 - `CrawlingPlanner에서` 생성되어 `SessionActor에게` 전달
 ///
 /// 분석-계획-실행 워크플로우를 명확히 분리하기 위한 핵심 구조체입니다.
-/// CrawlingPlanner가 시스템 상태를 분석하여 생성한 최적의 실행 계획을 담습니다.
+/// `CrawlingPlanner가` 시스템 상태를 분석하여 생성한 최적의 실행 계획을 담습니다.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ExecutionPlan {
@@ -1243,7 +1243,7 @@ pub struct ExecutionPlan {
 pub enum DuplicatePersistencePolicy {
     /// 기존 동작: 변경 없으면 스킵 (noop)
     Skip,
-    /// 수동 크롤링 등에서 사용: page_id, index_in_page, id 만 업데이트
+    /// 수동 크롤링 등에서 사용: `page_id`, `index_in_page`, id 만 업데이트
     UpdateIdIndexOnly,
     /// 상세필드를 포함해 실제 변경이 있는 모든 칼럼 업데이트 시도
     FullUpdate,
@@ -1260,9 +1260,9 @@ impl Default for DuplicatePersistencePolicy {
 pub struct PageSlot {
     /// 실제 물리 페이지 번호 (사이트 기준)
     pub physical_page: u32,
-    /// 논리 page_id (0 = 가장 오래된 페이지의 마지막 제품 그룹)
+    /// 논리 `page_id` (0 = 가장 오래된 페이지의 마지막 제품 그룹)
     pub page_id: i64,
-    /// 해당 물리 페이지 내에서의 index_in_page (0 기반, 최신→오래된 역순 규칙 반영)
+    /// 해당 물리 페이지 내에서의 `index_in_page` (0 기반, 최신→오래된 역순 규칙 반영)
     pub index_in_page: i16,
 }
 
@@ -1277,19 +1277,18 @@ pub struct ExecutionPlanKpi {
 }
 
 impl ExecutionPlan {
-    /// Preplanned 실행 시 최소한의 SiteStatus 형태를 구성 (페이지 처리 통계용)
-    pub fn input_snapshot_to_site_status(&self) -> crate::domain::services::SiteStatus {
+    /// Preplanned 실행 시 최소한의 `SiteStatus` 형태를 구성 (페이지 처리 통계용)
+    #[must_use] pub fn input_snapshot_to_site_status(&self) -> crate::domain::services::SiteStatus {
         use crate::domain::services::crawling_services::{
             CrawlingRangeRecommendation, SiteDataChangeStatus,
         };
         // 안정 상태 count 산출: DB 총량 >0 이면 사용, 아니면 페이지 * 마지막페이지상품수 (대략치)
         let stable_count: u32 = if self.input_snapshot.db_total_products > 0 {
             // u64 -> u32 캐스팅 (과도한 값은 u32::MAX 로 clamp)
-            self.input_snapshot.db_total_products.min(u32::MAX as u64) as u32
+            self.input_snapshot.db_total_products.min(u64::from(u32::MAX)) as u32
         } else {
-            let fallback =
-                self.input_snapshot.total_pages * self.input_snapshot.products_on_last_page.max(1);
-            fallback
+            
+            self.input_snapshot.total_pages * self.input_snapshot.products_on_last_page.max(1)
         };
         crate::domain::services::SiteStatus {
             is_accessible: true,
@@ -1309,7 +1308,7 @@ impl ExecutionPlan {
     }
 }
 
-/// ExecutionPlan 생성 시의 입력 상태 스냅샷
+/// `ExecutionPlan` 생성 시의 입력 상태 스냅샷
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct PlanInputSnapshot {

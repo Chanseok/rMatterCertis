@@ -1,4 +1,4 @@
-//! CrawlingPlanner - 지능형 크롤링 계획 수립 시스템
+//! `CrawlingPlanner` - 지능형 크롤링 계획 수립 시스템
 //!
 //! Actor 기반 아키텍처에서 크롤링 전략을 수립하고
 //! 최적화된 실행 계획을 생성하는 모듈입니다.
@@ -37,12 +37,12 @@ pub struct CrawlingPlanner {
     /// 시스템 설정
     config: Arc<SystemConfig>,
 
-    /// (선택) 통합 제품 저장소 - ContinueFromDb 전략 정밀 계산에 사용
+    /// (선택) 통합 제품 저장소 - `ContinueFromDb` 전략 정밀 계산에 사용
     product_repo: Option<Arc<crate::infrastructure::IntegratedProductRepository>>,
 }
 
 impl CrawlingPlanner {
-    /// 새로운 CrawlingPlanner 인스턴스를 생성합니다.
+    /// 새로운 `CrawlingPlanner` 인스턴스를 생성합니다.
     ///
     /// # Arguments
     /// * `status_checker` - 사이트 상태 확인기
@@ -110,7 +110,7 @@ impl CrawlingPlanner {
         Ok(plan)
     }
 
-    /// 캐시된 SiteStatus를 활용해 크롤링 계획을 수립하고, 사용된 SiteStatus도 함께 반환합니다.
+    /// 캐시된 `SiteStatus를` 활용해 크롤링 계획을 수립하고, 사용된 `SiteStatus도` 함께 반환합니다.
     pub async fn create_crawling_plan_with_cache(
         &self,
         crawling_config: &CrawlingConfig,
@@ -146,8 +146,8 @@ impl CrawlingPlanner {
         Ok((plan, site_status))
     }
 
-    /// 캐시된 SiteStatus 및 DatabaseAnalysis를 활용해 크롤링 계획을 수립하고 모두 반환합니다.
-    /// 기존 create_crawling_plan_with_cache 와 달리 DB 분석도 캐시를 재사용합니다.
+    /// 캐시된 `SiteStatus` 및 `DatabaseAnalysis를` 활용해 크롤링 계획을 수립하고 모두 반환합니다.
+    /// 기존 `create_crawling_plan_with_cache` 와 달리 DB 분석도 캐시를 재사용합니다.
     pub async fn create_crawling_plan_with_caches(
         &self,
         crawling_config: &CrawlingConfig,
@@ -410,12 +410,12 @@ impl CrawlingPlanner {
                                 selected.len(),
                                 selected
                             );
-                            if !selected.is_empty() {
-                                selected
-                            } else {
+                            if selected.is_empty() {
                                 let start = total_pages_on_site;
                                 let end = start.saturating_sub(count - 1).max(1);
                                 (end..=start).rev().collect()
+                            } else {
+                                selected
                             }
                         }
                         Ok(_) => {
@@ -643,7 +643,7 @@ impl CrawlingPlanner {
         if !page_range.is_empty() {
             // Prefer already fetched DB position (ContinueFromDb) to avoid an extra query.
             let position = if let Some(pos) = &db_position_for_reuse {
-                Some(pos.clone())
+                Some(*pos)
             } else if let Some(repo) = &self.product_repo {
                 repo.get_max_page_id_and_index().await.ok()
             } else {
@@ -682,7 +682,7 @@ impl CrawlingPlanner {
         let batched_pages: Vec<Vec<u32>> = if page_range.is_empty() {
             Vec::new()
         } else if page_range.len() > batch_size {
-            page_range.chunks(batch_size).map(|c| c.to_vec()).collect()
+            page_range.chunks(batch_size).map(<[u32]>::to_vec).collect()
         } else {
             vec![page_range.clone()]
         };
@@ -720,7 +720,7 @@ impl CrawlingPlanner {
 
         phases.extend(vec![CrawlingPhase {
             phase_type: PhaseType::DataValidation,
-            estimated_duration_secs: (count / 2).max(1) as u64,
+            estimated_duration_secs: u64::from((count / 2).max(1)),
             priority: 101,
             pages: vec![],
         }]);
@@ -740,7 +740,7 @@ impl CrawlingPlanner {
     }
 
     /// 최적 배치 크기를 계산합니다.
-    fn calculate_optimal_batch_size(&self, total_pages: u32) -> u32 {
+    const fn calculate_optimal_batch_size(&self, total_pages: u32) -> u32 {
         // 총 페이지 수에 따른 적응적 배치 크기
         match total_pages {
             1..=50 => 10,

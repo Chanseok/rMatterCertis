@@ -24,8 +24,8 @@ pub struct ValidatedCrawlingConfig {
 }
 
 impl ValidatedCrawlingConfig {
-    /// Create validated configuration from AppConfig using safe defaults
-    pub fn from_app_config(app_config: &AppConfig) -> Self {
+    /// Create validated configuration from `AppConfig` using safe defaults
+    #[must_use] pub fn from_app_config(app_config: &AppConfig) -> Self {
         Self {
             max_concurrent_requests: app_config
                 .user
@@ -63,19 +63,19 @@ impl ValidatedCrawlingConfig {
     }
 
     // Add helper methods that infrastructure expects
-    pub fn request_delay(&self) -> std::time::Duration {
+    #[must_use] pub const fn request_delay(&self) -> std::time::Duration {
         std::time::Duration::from_millis(self.request_delay_ms)
     }
 
-    pub fn batch_size(&self) -> u32 {
+    #[must_use] pub const fn batch_size(&self) -> u32 {
         self.batch_size
     }
 
-    pub fn max_concurrent(&self) -> u32 {
+    #[must_use] pub const fn max_concurrent(&self) -> u32 {
         self.max_concurrent_requests
     }
 
-    pub fn max_retries(&self) -> u32 {
+    #[must_use] pub const fn max_retries(&self) -> u32 {
         self.max_retries
     }
 }
