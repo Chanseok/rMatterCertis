@@ -85,20 +85,22 @@ pub mod domain {
 
 pub mod application {
     //! Application layer - Use cases and application services
-    pub mod dto;
+    // removed: unused dto module
     pub mod events;
     pub mod integrated_use_cases;
-    pub mod parsing_service;
+    // removed: unused parsing_service module
     pub mod shared_state; // 새로 추가된 공유 상태 관리
     pub mod state;
     pub mod validated_crawling_config; // 검증된 크롤링 설정
     // pub mod crawler_manager;  // 🚧 임시 비활성화 - 컴파일 문제로 인해
 
     // Re-export commonly used items
-    pub use events::EventEmitter;
-    pub use shared_state::SharedStateCache;
-    pub use state::AppState;
-    pub use validated_crawling_config::ValidatedCrawlingConfig;
+        pub use events::EventEmitter;
+        pub use shared_state::SharedStateCache;
+        pub use state::AppState;
+        // removed: dto::* re-export (module unused)
+        pub use integrated_use_cases::IntegratedProductUseCases;
+        // removed: parsing_service re-exports (module unused)
     // pub use crawler_manager::{CrawlerManager, CrawlingConfig, CrawlingEngineType}; // 임시 비활성화
 }
 
