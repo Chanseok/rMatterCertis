@@ -1,0 +1,15 @@
+{
+  "identifier": "default",
+  "description": "Default capability allowing the frontend to subscribe to core event streams.",
+  "platforms": ["linux", "macOS", "windows"],
+  "windows": ["main"],
+  "webviews": ["main"],
+  "urls": [
+    "http://localhost:1420/*",
+    "tauri://localhost/*"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:default"
+  ]
+}
