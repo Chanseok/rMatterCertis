@@ -3470,9 +3470,8 @@ pub async fn retry_failed_details(
         let succeeded_c = succeeded.clone();
         let failed_c = failed.clone();
         let handle = tokio::spawn(async move {
-            let _p = match permit.await {
-                Ok(p) => p,
-                Err(_) => return,
+            let Ok(_p) = permit.await else {
+                return;
             };
             attempted_c.fetch_add(1, Ordering::SeqCst);
             if dry {
@@ -3502,9 +3501,12 @@ pub async fn retry_failed_details(
                         if let Ok(detail0) = extracted {
                             let mut detail = detail0;
                             // Prefer existing coordinates if present
-                            detail.page_id = detail.page_id.or(page_id_opt.map(|v| v as i32));
-                            detail.index_in_page =
-                                detail.index_in_page.or(index_opt.map(|v| v as i32));
+                            detail.page_id = detail
+                                .page_id
+                                .or_else(|| page_id_opt.map(|v| v as i32));
+                            detail.index_in_page = detail
+                                .index_in_page
+                                .or_else(|| index_opt.map(|v| v as i32));
                             if detail.id.is_none() {
                                 if let (Some(pid), Some(ix)) =
                                     (detail.page_id, detail.index_in_page)
@@ -3522,7 +3524,7 @@ pub async fn retry_failed_details(
                                     .clone()
                                     .unwrap_or_else(|| "Matter".to_string()),
                             );
-                            let mut tx = if let Ok(t) = pool_c.begin().await { t } else {
+                            let Ok(mut tx) = pool_c.begin().await else {
                                 failed_c.fetch_add(1, Ordering::SeqCst);
                                 return;
                             };

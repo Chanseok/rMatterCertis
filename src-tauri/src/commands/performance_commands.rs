@@ -52,10 +52,9 @@ pub async fn get_current_performance_metrics(
     let optimizer_lock = optimizer_state.optimizer.read().await;
 
     if let Some(optimizer) = optimizer_lock.as_ref() {
-        Ok(optimizer.get_current_metrics().await)
-    } else {
-        Err("Performance optimizer not initialized".to_string())
+        return Ok(optimizer.get_current_metrics().await);
     }
+    Err("Performance optimizer not initialized".to_string())
 }
 
 /// 💡 최적화 추천사항 조회
@@ -66,10 +65,9 @@ pub async fn get_optimization_recommendation(
     let optimizer_lock = optimizer_state.optimizer.read().await;
 
     if let Some(optimizer) = optimizer_lock.as_ref() {
-        Ok(optimizer.get_optimization_recommendation().await)
-    } else {
-        Err("Performance optimizer not initialized".to_string())
+        return Ok(optimizer.get_optimization_recommendation().await);
     }
+    Err("Performance optimizer not initialized".to_string())
 }
 
 /// 📈 성능 히스토리 조회
@@ -80,10 +78,9 @@ pub async fn get_performance_history(
     let optimizer_lock = optimizer_state.optimizer.read().await;
 
     if let Some(optimizer) = optimizer_lock.as_ref() {
-        Ok(optimizer.get_performance_history().await)
-    } else {
-        Err("Performance optimizer not initialized".to_string())
+        return Ok(optimizer.get_performance_history().await);
     }
+    Err("Performance optimizer not initialized".to_string())
 }
 
 /// 🧹 성능 히스토리 초기화
@@ -95,10 +92,9 @@ pub async fn clear_performance_history(
 
     if let Some(optimizer) = optimizer_lock.as_ref() {
         optimizer.clear_performance_history().await;
-        Ok("Performance history cleared".to_string())
-    } else {
-        Err("Performance optimizer not initialized".to_string())
+        return Ok("Performance history cleared".to_string());
     }
+    Err("Performance optimizer not initialized".to_string())
 }
 
 /// 🔄 성능 최적화 세션 시작
@@ -112,10 +108,9 @@ pub async fn start_performance_session(
     if let Some(optimizer) = optimizer_lock.as_ref() {
         optimizer.start_session(session_id.clone()).await;
         info!(session_id = %session_id, "🔄 Performance optimization session started");
-        Ok(format!("Performance session started: {}", session_id))
-    } else {
-        Err("Performance optimizer not initialized".to_string())
+        return Ok(format!("Performance session started: {}", session_id));
     }
+    Err("Performance optimizer not initialized".to_string())
 }
 
 /// ⏹️ 성능 최적화 세션 종료
@@ -128,10 +123,9 @@ pub async fn end_performance_session(
     if let Some(optimizer) = optimizer_lock.as_ref() {
         optimizer.end_session().await;
         info!("⏹️ Performance optimization session ended");
-        Ok("Performance session ended".to_string())
-    } else {
-        Err("Performance optimizer not initialized".to_string())
+        return Ok("Performance session ended".to_string());
     }
+    Err("Performance optimizer not initialized".to_string())
 }
 
 /// 📊 성능 메트릭 기록 (내부용)
@@ -156,8 +150,7 @@ pub async fn record_performance_metrics(
                 network_error,
             )
             .await;
-        Ok(())
-    } else {
-        Err("Performance optimizer not initialized".to_string())
+        return Ok(());
     }
+    Err("Performance optimizer not initialized".to_string())
 }

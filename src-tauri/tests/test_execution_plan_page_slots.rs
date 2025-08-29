@@ -49,7 +49,7 @@ mod tests {
                 if physical_page == 0 {
                     continue;
                 }
-                let page_id: i64 = i64::from((total_site_pages.saturating_sub(physical_page)));
+                let page_id: i64 = i64::from(total_site_pages.saturating_sub(physical_page));
                 let capacity = if physical_page == total_site_pages {
                     products_on_last_page.max(1)
                 } else {

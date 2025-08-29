@@ -196,7 +196,9 @@ pub async fn get_recent_products(
     // AppState에서 중앙화된 데이터베이스 풀 사용
     let database_pool = {
         let pool_guard = app_state.database_pool.read().await;
-        if let Some(pool) = pool_guard.as_ref() { pool.clone() } else {
+        if let Some(pool) = pool_guard.as_ref() {
+            pool.clone()
+        } else {
             error!("Database pool is not initialized");
             return Err("Database pool is not available".to_string());
         }
@@ -275,7 +277,9 @@ pub async fn get_database_stats(
     // AppState에서 중앙화된 데이터베이스 풀 사용
     let database_pool = {
         let pool_guard = app_state.database_pool.read().await;
-        if let Some(pool) = pool_guard.as_ref() { pool.clone() } else {
+        if let Some(pool) = pool_guard.as_ref() {
+            pool.clone()
+        } else {
             error!("Database pool is not initialized");
             return Err("Database pool is not available".to_string());
         }

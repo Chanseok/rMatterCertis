@@ -17,6 +17,11 @@
 #![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 #![allow(ambiguous_glob_reexports)]
+// High-noise lints we intentionally allow during active refactoring (no behavior change)
+#![allow(clippy::unused_async)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::cognitive_complexity)]
+#![allow(clippy::large_stack_frames)]
 
 // moved: test_execution_plan_page_slots -> tests/ (integration test)
 // moved: test_http_client_config -> tests/ (integration test)

@@ -205,11 +205,17 @@ impl RealtimeDashboardService {
                     state.last_updated = now;
                 }
             } else {
+                // 세션을 찾지 못한 경우에도 프론트가 진행률 갱신 실패를 감지할 수 있도록 이벤트를 보냅니다.
+                let _ = self.event_sender.send(DashboardEvent::ProgressUpdate {
+                    session_id: session_id.clone(),
+                    progress: overall_progress,
+                    stage_progress,
+                });
                 return Err(format!("Session not found: {}", session_id));
             }
         }
 
-        // 이벤트 발송
+        // 이벤트 발송 (정상 경로)
         let _ = self.event_sender.send(DashboardEvent::ProgressUpdate {
             session_id,
             progress: overall_progress,
