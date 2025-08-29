@@ -6,8 +6,8 @@
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use matter_certis_v2_lib::infrastructure::config::AppConfig;
-use matter_certis_v2_lib::new_architecture::config::SystemConfig;
-use matter_certis_v2_lib::new_architecture::services::crawling_integration::CrawlingIntegrationService;
+use matter_certis_v2_lib::crawl_engine::system_config::SystemConfig;
+use matter_certis_v2_lib::crawl_engine::services::crawling_integration::CrawlingIntegrationService;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 

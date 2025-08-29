@@ -1,4 +1,4 @@
-//! Small sanity run to verify CrawlingPlanner newest-first range and batching
+//! Small sanity run to verify `CrawlingPlanner` newest-first range and batching
 
 use matter_certis_v2_lib::crawl_engine::actors::types::{CrawlingConfig, CrawlingStrategy};
 use matter_certis_v2_lib::crawl_engine::services::crawling_planner::{CrawlingPlanner, PhaseType};
@@ -43,7 +43,7 @@ impl StatusChecker for MockStatusChecker {
     }
 
     async fn estimate_crawling_time(&self, pages: u32) -> std::time::Duration {
-        std::time::Duration::from_secs(pages as u64)
+    std::time::Duration::from_secs(u64::from(pages))
     }
 
     async fn verify_site_accessibility(&self) -> anyhow::Result<bool> {
@@ -153,7 +153,7 @@ async fn main() -> anyhow::Result<()> {
             }
             PhaseType::StatusCheck => println!("phase[{i}] StatusCheck"),
             PhaseType::ProductDetailCrawling => {
-                println!("phase[{i}] Detail ({} pages)", ph.pages.len())
+                println!("phase[{i}] Detail ({} pages)", ph.pages.len());
             }
             PhaseType::DataValidation => println!("phase[{i}] Validation"),
             PhaseType::DataSaving => println!("phase[{i}] Saving"),

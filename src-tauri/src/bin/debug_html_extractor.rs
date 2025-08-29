@@ -35,10 +35,7 @@ async fn main() -> anyhow::Result<()> {
         .len();
     let calc =
         lib::domain::pagination::CanonicalPageIdCalculator::new(total_pages, items_on_last_page);
-    println!(
-        "[meta] total_pages={} items_on_last_page={}",
-        total_pages, items_on_last_page
-    );
+    println!("[meta] total_pages={total_pages} items_on_last_page={items_on_last_page}");
 
     for a in args {
         let page: u32 = a.parse().unwrap_or(1);
@@ -51,11 +48,7 @@ async fn main() -> anyhow::Result<()> {
                     let urls = extractor
                         .extract_product_urls_from_content(&html_str)
                         .unwrap_or_default();
-                    println!(
-                        "\n[app extractor] Page {} => {} product URLs",
-                        page,
-                        urls.len()
-                    );
+                    println!("\n[app extractor] Page {page} => {} product URLs", urls.len());
                     for (i, u) in urls.iter().enumerate() {
                         let pos = calc.calculate(page, i);
                         println!(
@@ -67,17 +60,16 @@ async fn main() -> anyhow::Result<()> {
                         );
                     }
                     println!(
-                        "Fetched+parsed in {} ms: {}",
-                        started.elapsed().as_millis(),
-                        url
+                        "Fetched+parsed in {} ms: {url}",
+                        started.elapsed().as_millis()
                     );
                 }
                 Err(e) => {
-                    eprintln!("\n[app extractor] Page {} read failed: {}", page, e);
+                    eprintln!("\n[app extractor] Page {page} read failed: {e}");
                 }
             },
             Err(e) => {
-                eprintln!("\n[app extractor] Page {} HTTP failed: {}", page, e);
+                eprintln!("\n[app extractor] Page {page} HTTP failed: {e}");
             }
         }
         tokio::time::sleep(Duration::from_millis(250)).await;

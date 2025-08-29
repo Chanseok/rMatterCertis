@@ -4,6 +4,7 @@
 
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 use crate::crawl_engine::SystemConfig;
 use serde::{Deserialize, Serialize};
@@ -190,6 +191,7 @@ impl ChannelFactory {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::panic)]
     use super::*;
     use crate::crawl_engine::system_config::SystemConfig;
 

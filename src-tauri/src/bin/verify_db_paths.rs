@@ -10,11 +10,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("✅ 데이터베이스 경로 초기화 성공");
 
             let main_url = database_paths::get_main_database_url();
-            println!("📁 메인 데이터베이스 URL: {}", main_url);
+            println!("📁 메인 데이터베이스 URL: {main_url}");
 
             // 실제 파일 경로 추출
             let file_path = main_url.strip_prefix("sqlite:").unwrap_or(&main_url);
-            println!("📂 파일 경로: {}", file_path);
+            println!("📂 파일 경로: {file_path}");
 
             // 파일 존재 여부 확인
             if std::path::Path::new(file_path).exists() {
@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // 파일 권한 확인
                 match std::fs::OpenOptions::new().write(true).open(file_path) {
                     Ok(_) => println!("✅ 데이터베이스 파일 쓰기 가능"),
-                    Err(e) => println!("❌ 데이터베이스 파일 쓰기 불가: {}", e),
+                    Err(e) => println!("❌ 데이터베이스 파일 쓰기 불가: {e}"),
                 }
             } else {
                 println!("❌ 데이터베이스 파일 존재하지 않음");
@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Err(e) => {
-            println!("❌ 데이터베이스 경로 초기화 실패: {}", e);
+            println!("❌ 데이터베이스 경로 초기화 실패: {e}");
             return Err(e.into());
         }
     }
