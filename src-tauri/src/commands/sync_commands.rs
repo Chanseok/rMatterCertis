@@ -81,7 +81,7 @@ pub async fn start_basic_sync_pages(
                 max_attempts: None,
             },
         )
-        .await
+    .await
     {
         Ok(resp) => resp.text().await.map_err(|e| e.to_string())?,
         Err(e) => return Err(e.to_string()),
