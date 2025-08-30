@@ -51,7 +51,7 @@ pub mod domain {
     pub mod atomic_events; // 추가: 원자적 태스크 이벤트
     pub mod constants; // 추가: 사이트 및 도메인 상수들
     pub mod entities;
-    pub mod events;
+        // pub mod events; // removed: legacy event types (replaced by AppEvent + FE API types)
     pub mod product_url;
     // pub mod repositories; // removed: legacy repository traits (no active implementations)
     // pub mod value_objects; // removed: unused value objects (ValidatedUrl, ProductData, etc.)
@@ -82,7 +82,7 @@ pub mod domain {
 
     // Re-export commonly used items
     pub use entities::*;
-    pub use events::*;
+        // pub use events::*; // removed re-export of legacy event types
     pub use pagination::{CanonicalPageIdCalculator, PagePosition, PaginationCalculator};
 }
 

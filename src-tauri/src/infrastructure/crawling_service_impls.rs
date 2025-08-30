@@ -3115,6 +3115,17 @@ pub struct CrawlingRangeCalculator {
     config: AppConfig,
 }
 
+/// Simplified progress snapshot used by smart_crawling without legacy domain::events types
+#[derive(Debug, Clone)]
+pub struct RangeSimpleProgress {
+    pub current: u32,
+    pub total: u32,
+    pub percentage: f64,
+    pub current_batch: Option<u32>,
+    pub total_batches: Option<u32>,
+    pub is_completed: bool,
+}
+
 impl CrawlingRangeCalculator {
     #[must_use] pub const fn new(product_repo: Arc<IntegratedProductRepository>, config: AppConfig) -> Self {
         Self {
@@ -3428,7 +3439,7 @@ impl CrawlingRangeCalculator {
         &self,
         total_pages_on_site: u32,
         products_on_last_page: u32,
-    ) -> Result<crate::domain::events::CrawlingProgress> {
+    ) -> Result<RangeSimpleProgress> {
         // 로컬 DB 상태 확인
         let all_products = match self.product_repo.get_all_products().await {
             Ok(products) => {
@@ -3499,33 +3510,13 @@ impl CrawlingRangeCalculator {
             max_page_id
         );
 
-        Ok(crate::domain::events::CrawlingProgress {
+        Ok(RangeSimpleProgress {
             current: saved_products,
             total: total_estimated_products,
             percentage,
-            current_stage: if percentage >= 100.0 {
-                crate::domain::events::CrawlingStage::DatabaseSave
-            } else {
-                crate::domain::events::CrawlingStage::Idle
-            },
-            current_step: format!(
-                "Saved {} of {} products",
-                saved_products, total_estimated_products
-            ),
-            status: if percentage >= 100.0 {
-                crate::domain::events::CrawlingStatus::Completed
-            } else {
-                crate::domain::events::CrawlingStatus::Idle
-            },
-            message: format!("Progress: {:.1}%", percentage),
-            remaining_time: None,
-            elapsed_time: 0,
-            new_items: 0,
-            updated_items: 0,
             current_batch: Some(max_page_id as u32),
             total_batches: Some(total_pages_on_site),
-            errors: 0,
-            timestamp: chrono::Utc::now(),
+            is_completed: percentage >= 100.0,
         })
     }
 
@@ -3534,24 +3525,15 @@ impl CrawlingRangeCalculator {
         _url: &str,
         _config: &CrawlingConfig,
         _database_analysis: &DatabaseAnalysis,
-    ) -> Result<crate::domain::events::CrawlingProgress> {
+    ) -> Result<RangeSimpleProgress> {
         // Placeholder implementation
-        Ok(crate::domain::events::CrawlingProgress {
+        Ok(RangeSimpleProgress {
             current: 0,
             total: 1,
             percentage: 0.0,
-            current_stage: crate::domain::events::CrawlingStage::Idle,
-            current_step: "Waiting".to_string(),
-            status: crate::domain::events::CrawlingStatus::Idle,
-            message: "Ready".to_string(),
-            remaining_time: None,
-            elapsed_time: 0,
-            new_items: 0,
-            updated_items: 0,
             current_batch: Some(0),
             total_batches: Some(1),
-            errors: 0,
-            timestamp: chrono::Utc::now(),
+            is_completed: false,
         })
     }
 }

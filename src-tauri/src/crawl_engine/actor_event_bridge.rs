@@ -5,7 +5,6 @@
 //! 낮은 복잡성의 구현으로도 모든 경우를 다 커버할 수 있도록 함
 
 use crate::crawl_engine::actors::types::{AppEvent, SimpleMetrics};
-use crate::domain::events::CrawlingEvent;
 use crate::infrastructure::features::feature_events_generalized_only;
 use std::collections::VecDeque;
 use std::sync::{
@@ -430,71 +429,7 @@ impl ActorEventBridge {
         Ok((event_name.to_string(), flat))
     }
 
-    /// `CrawlingEvent` 호환성을 위한 변환 (필요시)
-    #[allow(dead_code)]
-    fn convert_to_crawling_event(&self, actor_event: &AppEvent) -> Option<CrawlingEvent> {
-        match actor_event {
-            AppEvent::SessionStarted { session_id, .. } => Some(CrawlingEvent::SessionEvent {
-                session_id: session_id.clone(),
-                event_type: crate::domain::events::SessionEventType::Started,
-                message: "Actor session started".to_string(),
-                timestamp: chrono::Utc::now(),
-            }),
-            AppEvent::SessionCompleted { summary, .. } => {
-                let result = crate::domain::events::CrawlingResult {
-                    total_processed: summary.total_pages_processed,
-                    new_items: summary.total_pages_processed, // TODO: 실제 새 아이템 수
-                    updated_items: 0,                         // TODO: 실제 업데이트된 아이템 수
-                    errors: 0,                                // TODO: 실제 에러 수
-                    duration_ms: summary.total_duration_ms,
-                    stages_completed: vec![], // TODO: 완료된 스테이지들
-                    start_time: chrono::Utc::now()
-                        - chrono::Duration::milliseconds(summary.total_duration_ms as i64),
-                    end_time: chrono::Utc::now(),
-                    performance_metrics: crate::domain::events::PerformanceMetrics {
-                        avg_processing_time_ms: summary.avg_page_processing_time as f64,
-                        items_per_second: if summary.total_duration_ms > 0 {
-                            (f64::from(summary.total_pages_processed) * 1000.0)
-                                / summary.total_duration_ms as f64
-                        } else {
-                            0.0
-                        },
-                        memory_usage_mb: 0.0, // TODO: 실제 메모리 사용량
-                        network_requests: u64::from(summary.total_pages_processed), // 근사치
-                        cache_hit_rate: 0.0,  // TODO: 실제 캐시 히트율
-                    },
-                };
-                Some(CrawlingEvent::Completed(result))
-            }
-            AppEvent::Progress {
-                current_step,
-                total_steps,
-                percentage,
-                message,
-                ..
-            } => {
-                let progress = crate::domain::events::CrawlingProgress {
-                    current: *current_step,
-                    total: *total_steps,
-                    percentage: *percentage,
-                    current_stage: crate::domain::events::CrawlingStage::ProductList, // 진행 중이므로 ProductList 단계로 가정
-                    current_step: message.clone(),
-                    status: crate::domain::events::CrawlingStatus::Running,
-                    message: format!("Processing step {} of {}", current_step, total_steps),
-                    remaining_time: None,
-                    elapsed_time: 0, // TODO: 실제 경과 시간
-                    new_items: 0,
-                    updated_items: 0,
-                    current_batch: None,
-                    total_batches: None,
-                    errors: 0,
-                    timestamp: chrono::Utc::now(),
-                };
-                Some(CrawlingEvent::ProgressUpdate(progress))
-            }
-            _ => None, // 다른 이벤트들은 필요시 추가
-        }
-    }
+    // NOTE: Legacy `CrawlingEvent` conversion removed. Frontend should consume unified `actor-event` only.
 
     /// 브릿지 상태 확인
     #[must_use] pub fn is_active(&self) -> bool {

@@ -7,7 +7,9 @@
 use crate::application::events::EventEmitter;
 // use crate::application::crawler_manager::CrawlerManager; // 임시 비활성화
 use crate::domain::entities::CrawlingSession;
-use crate::domain::events::{CrawlingProgress, CrawlingStatus, DatabaseStats};
+// Use frontend-facing progress/info types to avoid legacy domain::events coupling
+use crate::types::frontend_api as fe_types;
+use crate::types::frontend_api::DatabaseStats;
 use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -29,8 +31,8 @@ pub struct AppState {
     /// Current crawling session
     pub current_session: Arc<RwLock<Option<CrawlingSession>>>,
 
-    /// Current crawling progress
-    pub current_progress: Arc<RwLock<CrawlingProgress>>,
+    /// Current crawling progress (frontend-friendly summary)
+    pub current_progress: Arc<RwLock<fe_types::CrawlingProgressInfo>>,
 
     /// Database statistics
     pub database_stats: Arc<RwLock<Option<DatabaseStats>>>,
@@ -56,7 +58,16 @@ impl AppState {
             database_pool: Arc::new(RwLock::new(None)),
             // crawler_manager: Arc::new(RwLock::new(None)), // 임시 비활성화
             current_session: Arc::new(RwLock::new(None)),
-            current_progress: Arc::new(RwLock::new(CrawlingProgress::default())),
+            current_progress: Arc::new(RwLock::new(fe_types::CrawlingProgressInfo {
+                stage: 0,
+                stage_name: "Idle".to_string(),
+                progress_percentage: 0.0,
+                items_processed: 0,
+                current_message: "대기 중".to_string(),
+                estimated_remaining_time: None,
+                session_id: "".to_string(),
+                timestamp: Utc::now(),
+            })),
             database_stats: Arc::new(RwLock::new(None)),
             config: Arc::new(RwLock::new(config)),
             http_client: Arc::new(RwLock::new(None)),
@@ -143,32 +154,15 @@ impl AppState {
     }
 
     /// Update the current crawling progress with calculated fields
-    pub async fn update_progress(&self, mut progress: CrawlingProgress) -> Result<(), String> {
-        // Get start time for calculations
-        let start_time = {
-            let start_time_guard = self.session_start_time.read().await;
-            start_time_guard.unwrap_or_else(Utc::now)
-        };
-
-        // Calculate derived fields
-        progress.calculate_derived_fields(start_time);
-
-        // Update stored progress
-        {
-            let mut progress_guard = self.current_progress.write().await;
-            *progress_guard = progress.clone();
-        }
-
-        // Emit progress update event
-        if let Some(emitter) = self.get_event_emitter().await {
-            let _ = emitter.emit_progress(progress).await;
-        }
-
+    pub async fn update_progress(&self, progress: fe_types::CrawlingProgressInfo) -> Result<(), String> {
+        // Update stored progress (already frontend-friendly)
+        let mut progress_guard = self.current_progress.write().await;
+        *progress_guard = progress;
         Ok(())
     }
 
     /// Get the current crawling progress
-    pub async fn get_progress(&self) -> CrawlingProgress {
+    pub async fn get_progress(&self) -> fe_types::CrawlingProgressInfo {
         self.current_progress.read().await.clone()
     }
 
@@ -191,26 +185,25 @@ impl AppState {
             *start_time_guard = Some(now);
         }
 
+        // Clone to avoid move, needed below for session_id
+        let session_clone = session.clone();
         {
             let mut session_guard = self.current_session.write().await;
             *session_guard = Some(session);
         }
 
         // Reset progress for new session with calculated fields
-        let initial_progress = CrawlingProgress::new_with_calculation(
-            0,
-            0,
-            crate::domain::events::CrawlingStage::Idle,
-            "크롤링 세션을 시작합니다".to_string(),
-            CrawlingStatus::Running,
-            "크롤링 세션을 시작합니다".to_string(),
-            now,
-            0,
-            0,
-            0,
-        );
-
-        self.update_progress(initial_progress).await?;
+        // Initialize minimal progress info for UI summary
+        self.update_progress(fe_types::CrawlingProgressInfo {
+            stage: 0,
+            stage_name: "Started".to_string(),
+            progress_percentage: 0.0,
+            items_processed: 0,
+            current_message: "크롤링 세션을 시작합니다".to_string(),
+            estimated_remaining_time: None,
+            session_id: session_clone.id.clone(),
+            timestamp: now,
+        }).await?;
         info!("Crawling session started");
         Ok(())
     }
@@ -244,12 +237,12 @@ impl AppState {
         }
 
         // Update progress to stopped state
-        let mut stopped_progress = self.get_progress().await;
-        stopped_progress.status = CrawlingStatus::Cancelled;
-        stopped_progress.message = "크롤링이 중단되었습니다".to_string();
-        stopped_progress.timestamp = Utc::now();
-
-        self.update_progress(stopped_progress).await?;
+    let now = Utc::now();
+    let mut stopped = self.get_progress().await;
+    stopped.current_message = "크롤링이 중단되었습니다".to_string();
+    stopped.stage_name = "Cancelled".to_string();
+    stopped.timestamp = now;
+    self.update_progress(stopped).await?;
         info!("Crawling session stopped");
         Ok(())
     }
@@ -272,10 +265,7 @@ impl AppState {
             *stats_guard = Some(stats.clone());
         }
 
-        // Emit database update event
-        if let Some(emitter) = self.get_event_emitter().await {
-            let _ = emitter.emit_database_update(stats).await;
-        }
+    // DB 통계의 FE 알림은 Actor 이벤트/대시보드 경로로 대체됩니다. 여기서는 별도 emit 하지 않습니다.
 
         Ok(())
     }
@@ -308,29 +298,21 @@ impl AppState {
 
     /// Emit an error event
     pub async fn emit_error(&self, error_id: String, message: String, recoverable: bool) {
-        if let Some(emitter) = self.get_event_emitter().await {
-            let current_progress = self.get_progress().await;
-            let _ = emitter
-                .emit_error(
-                    error_id,
-                    message,
-                    current_progress.current_stage,
-                    recoverable,
-                )
-                .await;
-        }
+    // Unified actor-event flow handles errors; this is a no-op placeholder for compatibility.
+    let _ = (error_id, message, recoverable);
+    tracing::debug!("emit_error called (no-op under unified event system)");
     }
 
     /// Emit a stage change event
     pub async fn emit_stage_change(
         &self,
-        from: crate::domain::events::CrawlingStage,
-        to: crate::domain::events::CrawlingStage,
+    from: &str,
+    to: &str,
         message: String,
     ) {
-        if let Some(emitter) = self.get_event_emitter().await {
-            let _ = emitter.emit_stage_change(from, to, message).await;
-        }
+    // Unified actor-event flow handles stage lifecycle; this is a no-op placeholder.
+    let _ = (from, to, message);
+    tracing::debug!("emit_stage_change called (no-op under unified event system)");
     }
 }
 
@@ -343,7 +325,7 @@ impl Default for AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::events::CrawlingStage;
+    // use crate::domain::events::CrawlingStage;
 
     #[tokio::test]
     async fn test_app_state_creation() {
@@ -358,22 +340,22 @@ mod tests {
     async fn test_progress_update() {
         let state = AppState::default();
 
-        let progress = CrawlingProgress {
-            current: 10,
-            total: 100,
-            percentage: 10.0,
-            current_stage: CrawlingStage::ProductList,
-            status: CrawlingStatus::Running,
-            message: "Test progress".to_string(),
-            ..Default::default()
+        let progress = fe_types::CrawlingProgressInfo {
+            stage: 1,
+            stage_name: "ProductList".to_string(),
+            progress_percentage: 10.0,
+            items_processed: 10,
+            current_message: "Test progress".to_string(),
+            estimated_remaining_time: None,
+            session_id: "test-session".to_string(),
+            timestamp: Utc::now(),
         };
 
         state.update_progress(progress.clone()).await.unwrap();
         let stored_progress = state.get_progress().await;
 
-        assert_eq!(stored_progress.current, 10);
-        assert_eq!(stored_progress.total, 100);
-        assert_eq!(stored_progress.percentage, 10.0);
+        assert_eq!(stored_progress.items_processed, 10);
+        assert_eq!(stored_progress.progress_percentage, 10.0);
     }
 
     #[tokio::test]

@@ -4,17 +4,11 @@
 //! the crawling engine to send real-time updates to the frontend.
 
 use crate::domain::atomic_events::AtomicTaskEvent; // 추가
-use crate::domain::events::{
-    ConcurrencyEvent, CrawlingEvent, CrawlingProgress, CrawlingTaskStatus, DatabaseSaveEvent,
-    DatabaseStats, ValidationEvent,
-};
-use futures::future::join_all;
 use std::sync::Arc;
-use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
-use tokio::sync::{RwLock, mpsc};
-use tracing::{debug, error, warn};
+use tokio::sync::RwLock;
+use tracing::{debug, error};
 
 /// 이벤트 발신 관련 오류 타입
 #[derive(Debug, Error)]
@@ -40,8 +34,6 @@ pub struct EventEmitter {
     app_handle: AppHandle,
     /// Whether event emission is enabled
     enabled: Arc<RwLock<bool>>,
-    /// Event queue for batched emissions
-    event_sender: Option<mpsc::Sender<CrawlingEvent>>,
 }
 
 impl EventEmitter {
@@ -50,60 +42,11 @@ impl EventEmitter {
         Self {
             app_handle,
             enabled: Arc::new(RwLock::new(true)),
-            event_sender: None,
         }
     }
 
     /// Create a new event emitter with batching enabled
-    #[must_use] pub fn with_batching(app_handle: AppHandle, batch_size: usize, interval_ms: u64) -> Self {
-        let (tx, mut rx) = mpsc::channel::<CrawlingEvent>(batch_size * 2);
-
-        let emitter = Self {
-            app_handle: app_handle.clone(),
-            enabled: Arc::new(RwLock::new(true)),
-            event_sender: Some(tx),
-        };
-
-        // 백그라운드 태스크로 이벤트 배치 처리
-        let app_handle_clone = app_handle;
-        tokio::spawn(async move {
-            let mut batch: Vec<CrawlingEvent> = Vec::with_capacity(batch_size);
-            let mut interval = tokio::time::interval(Duration::from_millis(interval_ms));
-
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        if !batch.is_empty() {
-                            for event in batch.drain(..) {
-                                let event_name = event.event_name();
-                                if let Err(e) = app_handle_clone.emit(event_name, &event) {
-                                    warn!("Failed to emit batched event {}: {}", event_name, e);
-                                }
-                            }
-                        }
-                    }
-                    event = rx.recv() => {
-                        match event {
-                            Some(event) => {
-                                batch.push(event);
-                                if batch.len() >= batch_size {
-                                    for event in batch.drain(..) {
-                                        let event_name = event.event_name();
-                                        if let Err(e) = app_handle_clone.emit(event_name, &event) {
-                                            warn!("Failed to emit batched event {}: {}", event_name, e);
-                                        }
-                                    }
-                                }
-                            }
-                            None => break,
-                        }
-                    }
-                }
-            }
-        });
-
-        emitter
-    }
+    #[must_use] pub fn with_batching(app_handle: AppHandle, _batch_size: usize, _interval_ms: u64) -> Self { Self::new(app_handle) }
 
     /// Enable or disable event emission
     pub async fn set_enabled(&self, enabled: bool) {
@@ -120,97 +63,27 @@ impl EventEmitter {
         *self.enabled.read().await
     }
 
-    /// Emit a crawling event to the frontend
-    pub async fn emit_event(&self, event: CrawlingEvent) -> EventResult {
-        // 빠른 경로: 비활성화 검사 (읽기 락만 필요)
-        if !self.is_enabled().await {
-            return Err(EventEmissionError::Disabled);
-        }
-
-        // If legacy domain events are disabled, suppress legacy Error emissions
-        // Errors should flow via actor-event bridge (AppEvent variants) instead.
-        if matches!(event, CrawlingEvent::Error { .. }) {
-            if !crate::infrastructure::features::feature_legacy_domain_events() {
-                return Ok(());
-            }
-        }
-
-        // 배치 모드인 경우 이벤트 큐에 추가
-        if let Some(sender) = &self.event_sender {
-            return sender
-                .send(event)
-                .await
-                .map_err(|_| EventEmissionError::QueueFull);
-        }
-
-    let event_name = event.event_name();
-
-        match self.app_handle.emit(event_name, &event) {
-            Ok(()) => {
-                debug!("Successfully emitted event: {}", event_name);
-                Ok(())
-            }
-            Err(e) => {
-                error!("Failed to emit event {}: {}", event_name, e);
-                Err(EventEmissionError::TauriError(e))
-            }
-        }
-    }
+    // Legacy CrawlingEvent emission removed – unified actor-event only.
 
     /// Emit a progress update
-    pub async fn emit_progress(&self, progress: CrawlingProgress) -> EventResult {
-        let event = CrawlingEvent::ProgressUpdate(progress);
-        self.emit_event(event).await
-    }
+    pub async fn emit_progress(&self, _progress: serde_json::Value) -> EventResult { Ok(()) }
 
     /// Emit a task status update
-    pub async fn emit_task_update(&self, task_status: CrawlingTaskStatus) -> EventResult {
-        let event = CrawlingEvent::TaskUpdate(task_status);
-        self.emit_event(event).await
+    pub async fn emit_task_update(&self, _task_status: serde_json::Value) -> EventResult {
+        Ok(())
     }
 
     /// Emit a stage change notification
-    pub async fn emit_stage_change(
-        &self,
-        from: crate::domain::events::CrawlingStage,
-        to: crate::domain::events::CrawlingStage,
-        message: String,
-    ) -> EventResult {
-        let event = CrawlingEvent::StageChange { from, to, message };
-        self.emit_event(event).await
-    }
+    pub async fn emit_stage_change(&self, _from: &str, _to: &str, _message: String) -> EventResult { Ok(()) }
 
     /// Emit an error notification
-    pub async fn emit_error(
-        &self,
-        error_id: String,
-        message: String,
-        stage: crate::domain::events::CrawlingStage,
-        recoverable: bool,
-    ) -> EventResult {
-        let event = CrawlingEvent::Error {
-            error_id,
-            message,
-            stage,
-            recoverable,
-        };
-        self.emit_event(event).await
-    }
+    pub async fn emit_error(&self, _error_id: String, _message: String, _stage: &str, _recoverable: bool) -> EventResult { Ok(()) }
 
     /// Emit database statistics update
-    pub async fn emit_database_update(&self, stats: DatabaseStats) -> EventResult {
-        let event = CrawlingEvent::DatabaseUpdate(stats);
-        self.emit_event(event).await
-    }
+    pub async fn emit_database_update(&self, _stats: serde_json::Value) -> EventResult { Ok(()) }
 
     /// Emit crawling completion notification
-    pub async fn emit_completed(
-        &self,
-        result: crate::domain::events::CrawlingResult,
-    ) -> EventResult {
-        let event = CrawlingEvent::Completed(result);
-        self.emit_event(event).await
-    }
+    pub async fn emit_completed(&self, _result: serde_json::Value) -> EventResult { Ok(()) }
 
     /// Emit detailed crawling event for hierarchical event monitor
     pub async fn emit_detailed_crawling_event<T: serde::Serialize>(
@@ -351,56 +224,43 @@ impl EventEmitter {
     // =========================================================================
 
     /// Emit multiple events in batch (useful for reducing frontend update frequency)
-    pub async fn emit_batch(&self, events: Vec<CrawlingEvent>) -> Vec<EventResult> {
-        // 최적화: 비활성화된 경우 빠르게 리턴
-        if !self.is_enabled().await {
-            return events
-                .into_iter()
-                .map(|_| Err(EventEmissionError::Disabled))
-                .collect();
-        }
-
-        // 병렬 이벤트 전송
-        let futures = events.into_iter().map(|event| self.emit_event(event));
-
-        join_all(futures).await
-    }
+    pub async fn emit_batch(&self, events: Vec<serde_json::Value>) -> Vec<EventResult> { events.into_iter().map(|_| Ok(())).collect() }
 
     // =========================================================================
     // 확장: 독립 이벤트 스트림 emit 헬퍼들
     // =========================================================================
 
     /// Emit a concurrency status event
-    pub async fn emit_concurrency_event(&self, event: ConcurrencyEvent) -> EventResult {
+    pub async fn emit_concurrency_event(&self, _event: serde_json::Value) -> EventResult {
         if !self.is_enabled().await {
             return Err(EventEmissionError::Disabled);
         }
-        let event_name = event.event_name();
-        match self.app_handle.emit(event_name, &event) {
+        let event_name = "concurrency-event";
+        match self.app_handle.emit(event_name, &serde_json::json!({})) {
             Ok(()) => Ok(()),
             Err(e) => Err(EventEmissionError::TauriError(e)),
         }
     }
 
     /// Emit a validation event
-    pub async fn emit_validation_event(&self, event: ValidationEvent) -> EventResult {
+    pub async fn emit_validation_event(&self, _event: serde_json::Value) -> EventResult {
         if !self.is_enabled().await {
             return Err(EventEmissionError::Disabled);
         }
-        let event_name = event.event_name();
-        match self.app_handle.emit(event_name, &event) {
+        let event_name = "validation-event";
+        match self.app_handle.emit(event_name, &serde_json::json!({})) {
             Ok(()) => Ok(()),
             Err(e) => Err(EventEmissionError::TauriError(e)),
         }
     }
 
     /// Emit a database save event
-    pub async fn emit_db_save_event(&self, event: DatabaseSaveEvent) -> EventResult {
+    pub async fn emit_db_save_event(&self, _event: serde_json::Value) -> EventResult {
         if !self.is_enabled().await {
             return Err(EventEmissionError::Disabled);
         }
-        let event_name = event.event_name();
-        match self.app_handle.emit(event_name, &event) {
+        let event_name = "db-save-event";
+        match self.app_handle.emit(event_name, &serde_json::json!({})) {
             Ok(()) => Ok(()),
             Err(e) => Err(EventEmissionError::TauriError(e)),
         }
@@ -483,16 +343,7 @@ mod tests {
         assert!(!*enabled.read().await);
     }
 
-    #[tokio::test]
-    async fn test_crawling_progress_serialization() {
-        // CrawlingProgress 구조체가 제대로 직렬화되는지 테스트
-        let progress = CrawlingProgress::default();
-        let serialized = serde_json::to_value(&progress);
-        assert!(serialized.is_ok());
-
-        let json_value = serialized.unwrap();
-        assert!(json_value.is_object());
-    }
+    // legacy CrawlingProgress serialization test removed
 
     #[tokio::test]
     async fn test_event_emission_error_types() {

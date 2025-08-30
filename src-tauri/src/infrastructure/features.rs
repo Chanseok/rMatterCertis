@@ -64,10 +64,10 @@ fn read_flag(name: &str, default: bool) -> bool {
 }
 
 /// Emit legacy domain::events::CrawlingEvent payloads (for backward compatibility)
-/// Default: true (current behavior). Flip to false to silence legacy event emissions.
+/// Default: false (prefer unified actor events). Enable only if FE still relies on legacy channels.
 #[must_use]
 pub fn feature_legacy_domain_events() -> bool {
-    read_flag("MC_FEATURE_LEGACY_DOMAIN_EVENTS", true)
+    read_flag("MC_FEATURE_LEGACY_DOMAIN_EVENTS", false)
 }
 
 /// Emit legacy PageTask* AppEvents (for backward compatibility with FE listeners)
