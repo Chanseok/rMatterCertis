@@ -7,6 +7,7 @@
 use crate::crawl_engine::actors::types::{AppEvent, SimpleMetrics};
 use crate::domain::events::CrawlingEvent;
 use crate::infrastructure::features::feature_events_generalized_only;
+use std::collections::VecDeque;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -25,6 +26,8 @@ pub struct ActorEventBridge {
     is_active: Arc<std::sync::atomic::AtomicBool>,
     /// 단조 증가 시퀀스 번호
     seq: Arc<AtomicU64>,
+    /// 최근 네이티브 PageLifecycle 키 캐시 (세션/배치/페이지) to prevent synthetic duplicates
+    recent_pages: Arc<tokio::sync::Mutex<VecDeque<(String, Option<String>, u32, std::time::Instant)>>>,
 }
 
 impl ActorEventBridge {
@@ -35,6 +38,7 @@ impl ActorEventBridge {
             event_rx,
             is_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             seq: Arc::new(AtomicU64::new(1)),
+            recent_pages: Arc::new(tokio::sync::Mutex::new(VecDeque::with_capacity(64))),
         }
     }
 
@@ -106,7 +110,7 @@ impl ActorEventBridge {
             v
         };
         // Generalized-only 모드: 단일 채널로 통일된 이벤트를 방출하고 종료
-        if feature_events_generalized_only() {
+    if feature_events_generalized_only() {
             let unified_name = "actor-event";
             self.app_handle
                 .emit(unified_name, &enriched)
@@ -183,6 +187,8 @@ impl ActorEventBridge {
                     metrics,
                     ..
                 } => {
+                    // Record native PageLifecycle key in recent cache
+                    self.push_recent_page(session_id, batch_id.as_ref(), *page_number).await;
                     // Extract a couple key metrics if available
                     let (urls, scheduled, err) = match metrics {
                         Some(SimpleMetrics::Page {
@@ -308,7 +314,7 @@ impl ActorEventBridge {
             return Ok(());
         }
         if let Some((derived_name, mut derived_payload)) =
-            self.create_synthetic_page_lifecycle(&actor_event)
+            self.create_synthetic_page_lifecycle(&actor_event).await
         {
             if let Some(obj) = derived_payload.as_object_mut() {
                 obj.insert(
@@ -497,7 +503,7 @@ impl ActorEventBridge {
 
     /// PageTaskStarted/Completed/Failed 로부터 actor-page-lifecycle 합성 이벤트 생성
     /// New pipeline(StageActor)에서 이미 `PageLifecycle` 이벤트를 직접 방출하는 경우에는 합성하지 않음
-    fn create_synthetic_page_lifecycle(
+    async fn create_synthetic_page_lifecycle(
         &self,
         event: &AppEvent,
     ) -> Option<(String, serde_json::Value)> {
@@ -508,7 +514,9 @@ impl ActorEventBridge {
                 page,
                 batch_id,
                 ..
-            } => Some((
+            } => {
+                if self.is_recent_page(session_id, batch_id.as_ref(), *page).await { return None; }
+                Some((
                 "actor-page-lifecycle".to_string(),
                 json!({
                     "variant": "PageLifecycle",
@@ -518,14 +526,17 @@ impl ActorEventBridge {
                     "status": "fetch_started",
                     "metrics": serde_json::Value::Null,
                 }),
-            )),
+            ))
+            }
             AppEvent::PageTaskCompleted {
                 session_id,
                 page,
                 batch_id,
                 duration_ms,
                 ..
-            } => Some((
+            } => {
+                if self.is_recent_page(session_id, batch_id.as_ref(), *page).await { return None; }
+                Some((
                 "actor-page-lifecycle".to_string(),
                 json!({
                     "variant": "PageLifecycle",
@@ -536,14 +547,17 @@ impl ActorEventBridge {
                     "metrics": {"kind":"Page", "data": {"url_count": serde_json::Value::Null, "scheduled_details": serde_json::Value::Null, "error": serde_json::Value::Null}},
                     "duration_ms": duration_ms,
                 }),
-            )),
+            ))
+            }
             AppEvent::PageTaskFailed {
                 session_id,
                 page,
                 batch_id,
                 error,
                 ..
-            } => Some((
+            } => {
+                if self.is_recent_page(session_id, batch_id.as_ref(), *page).await { return None; }
+                Some((
                 "actor-page-lifecycle".to_string(),
                 json!({
                     "variant": "PageLifecycle",
@@ -553,9 +567,33 @@ impl ActorEventBridge {
                     "status": "failed",
                     "metrics": {"kind":"Page", "data": {"url_count": serde_json::Value::Null, "scheduled_details": serde_json::Value::Null, "error": error}},
                 }),
-            )),
+            ))
+            }
             _ => None,
         }
+    }
+
+    async fn push_recent_page(&self, session_id: &str, batch_id: Option<&String>, page: u32) {
+        use std::time::{Duration, Instant};
+        let mut q = self.recent_pages.lock().await;
+        let now = Instant::now();
+        let key = (session_id.to_string(), batch_id.cloned(), page, now);
+        q.push_back(key);
+        // Evict old entries (> 15s) and bound size
+        while q.len() > 64 {
+            q.pop_front();
+        }
+        let cutoff = now - Duration::from_secs(15);
+        while let Some(front) = q.front() {
+            if front.3 < cutoff { q.pop_front(); } else { break; }
+        }
+    }
+
+    async fn is_recent_page(&self, session_id: &str, batch_id: Option<&String>, page: u32) -> bool {
+        use std::time::{Duration, Instant};
+        let q = self.recent_pages.lock().await;
+        let cutoff = Instant::now() - Duration::from_secs(15);
+        q.iter().rev().take(64).any(|(s, b, p, t)| s == session_id && b.as_ref() == batch_id && *p == page && *t >= cutoff)
     }
 }
 

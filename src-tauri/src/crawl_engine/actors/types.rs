@@ -372,14 +372,16 @@ pub enum AppEvent {
     },
 
     // === (Additive v1) Granular Page / Detail Task Events ===
-    /// 개별 페이지 처리 시작 (`ListPages` phase 범위 내)
+    /// [DEPRECATED] 개별 페이지 처리 시작 (`ListPages` phase 범위 내)
+    /// - Use `PageLifecycle` instead. This variant remains for legacy pipelines.
     PageTaskStarted {
         session_id: String,
         page: u32,
         batch_id: Option<String>,
         timestamp: DateTime<Utc>,
     },
-    /// 개별 페이지 처리 성공
+    /// [DEPRECATED] 개별 페이지 처리 성공
+    /// - Use `PageLifecycle` with status transitions instead.
     PageTaskCompleted {
         session_id: String,
         page: u32,
@@ -387,7 +389,8 @@ pub enum AppEvent {
         duration_ms: u64,
         timestamp: DateTime<Utc>,
     },
-    /// 개별 페이지 처리 실패 (재시도 후 최종 실패 또는 중간 실패)
+    /// [DEPRECATED] 개별 페이지 처리 실패 (재시도 후 최종 실패 또는 중간 실패)
+    /// - Use `PageLifecycle` with status="failed" instead.
     PageTaskFailed {
         session_id: String,
         page: u32,
