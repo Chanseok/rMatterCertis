@@ -858,7 +858,7 @@ pub async fn get_crawling_status_check(
     let current_time = chrono::Utc::now().to_rfc3339();
 
     // Analyze local database
-    let local_product_count = db_stats.total_products as u32;
+    let local_product_count = db_stats.total_products;
 
     // Get last crawl info from app_managed config
     let last_crawl_time = config.app_managed.last_successful_crawl.clone();
