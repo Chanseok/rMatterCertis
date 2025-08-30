@@ -1,5 +1,6 @@
 import { createSignal, onCleanup, onMount } from 'solid-js';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { tauriApi } from '../services/tauri-api';
 
 export type VisualizationEvent = {
   seq: number;
@@ -47,7 +48,15 @@ function normalize(raw: any): VisualizationEvent | null {
     case 'actor-page-task-started': return { ...base, type: 'page', page: raw.page } as VisualizationEvent;
     case 'actor-page-task-completed': return { ...base, type: 'page', page: raw.page } as VisualizationEvent;
     case 'actor-page-task-failed': return { ...base, type: 'page', page: raw.page } as VisualizationEvent;
+    // Consolidated lifecycle (preferred in new pipeline): map to page type
+    case 'actor-page-lifecycle': {
+      const status = (raw.status || '').toString().toLowerCase();
+      const pageNum = raw.page_number ?? raw.page;
+      return { ...base, type: 'page', page: Number(pageNum) } as VisualizationEvent;
+    }
     case 'actor-progress': return { ...base, type: 'progress', progressPct: raw.percentage, currentStep: raw.current_step, totalSteps: raw.total_steps } as VisualizationEvent;
+  case 'actor-product-lifecycle': return { ...base, type: 'detail' } as VisualizationEvent;
+  case 'actor-product-lifecycle-group': return { ...base, type: 'detail' } as VisualizationEvent;
   case 'actor-performance-metrics': return { ...base, type: 'metrics' } as VisualizationEvent;
   case 'actor-detail-concurrency-downshifted': return { ...base, type: 'concurrency' } as VisualizationEvent;
   case 'actor-batch-report': return { ...base, type: 'report', reportKind: 'batch' } as VisualizationEvent;
@@ -134,37 +143,24 @@ export function useActorVisualizationStream(limit: number = 500) {
   let unlisteners: UnlistenFn[] = [];
   let lastSeq = 0;
 
-  const eventNames = [
-    'actor-session-started','actor-session-completed','actor-session-failed','actor-session-paused','actor-session-resumed','actor-session-timeout',
-    'actor-phase-started','actor-phase-completed','actor-phase-aborted',
-    'actor-batch-started','actor-batch-completed','actor-batch-failed',
-    'actor-stage-started','actor-stage-completed','actor-stage-failed',
-    'actor-page-task-started','actor-page-task-completed','actor-page-task-failed',
-  'actor-product-lifecycle','actor-product-lifecycle-group',
-  'actor-progress','actor-performance-metrics','actor-detail-concurrency-downshifted',
-    // newly added report / shutdown events
-    'actor-batch-report','actor-session-report','actor-shutdown-requested','actor-shutdown-completed'
-  ];
+  // Subscribe via tauriApi bridge (handles both unified and actor-* channels)
 
   async function setup() {
-    for (const name of eventNames) {
-      const un = await listen<any>(name, (e) => {
-        const ev = normalize(e.payload);
-        if (!ev) return;
-        // seq gap detection
-        if (ev.seq && lastSeq && ev.seq !== lastSeq + 1) {
-          // Insert synthetic gap event (optional for visualization layering)
-          // Could push a marker event later
-        }
-        lastSeq = ev.seq || lastSeq;
-        setEvents(prev => {
-          const next = [...prev, ev];
-            if (next.length > limit) next.splice(0, next.length - limit);
-            return next;
-        });
+    const unBridge = await tauriApi.subscribeToActorBridgeEvents((name, payload) => {
+      const enriched = { event_name: name, ...payload };
+      const ev = normalize(enriched);
+      if (!ev) return;
+      if (ev.seq && lastSeq && ev.seq !== lastSeq + 1) {
+        // optional: handle gap marker
+      }
+      lastSeq = ev.seq || lastSeq;
+      setEvents((prev) => {
+        const next = [...prev, ev];
+        if (next.length > limit) next.splice(0, next.length - limit);
+        return next;
       });
-      unlisteners.push(un);
-    }
+    });
+    unlisteners.push(unBridge);
     // concurrency-event (separate schema)
     const unConcurrency = await listen<any>('concurrency-event', (e) => {
       const list = normalizeConcurrency(e.payload);

@@ -1185,24 +1185,8 @@ export default function CrawlingEngineTabSimple() {
         )
       );
 
-    // Legacy completion/stopped fallbacks
-    tauriApi
-      .subscribeToCompletion(() => {
-        setIsRunning(false);
-        setStatusMessage("크롤링 완료");
-        addLog("🏁 완료 이벤트 수신");
-      })
-      .then((un) => unsubs.push(un))
-      .catch(() => {});
-
-    tauriApi
-      .subscribeToCrawlingStopped(() => {
-        setIsRunning(false);
-        setStatusMessage("크롤링 중지됨");
-        addLog("⏹️ 중지 이벤트 수신");
-      })
-      .then((un) => unsubs.push(un))
-      .catch(() => {});
+  // Rely on actor-session lifecycle for completion/stop handling
+  // Session completed handling already present above; stopped/failed/timeouts handled via actor-session-* cases
 
     onCleanup(() => {
       unsubs.forEach((u) => u());

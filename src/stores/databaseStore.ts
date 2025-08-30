@@ -8,6 +8,7 @@
 import { createStore } from 'solid-js/store';
 import { createSignal, onCleanup } from 'solid-js';
 import { tauriApi } from '../services/tauri-api';
+import { FLAGS } from '../utils/env';
 import type { DatabaseStats } from '../types/crawling';
 
 // 데이터베이스 상태 인터페이스
@@ -356,14 +357,19 @@ class DatabaseStore {
 
   private async subscribeToEvents(): Promise<void> {
     try {
-      // 데이터베이스 업데이트 이벤트 구독
-      const unsub = await tauriApi.subscribeToDatabaseUpdates((stats) => {
-        console.log('📊 실시간 데이터베이스 통계 업데이트:', stats);
-        this.setStats(stats);
+  // actor-event 브리지 구독 (actor-database-stats 또는 variant=DatabaseStats)
+      const unsubActor = await tauriApi.subscribeToActorBridgeEvents((_name, payload) => {
+        const name = payload?.event_name || _name;
+        const variant = payload?.variant;
+        if (name === 'actor-database-stats' || variant === 'DatabaseStats') {
+          const stats = payload?.stats ?? payload; // tolerate wrapped or flat shapes
+          if (stats) {
+            console.log('📊 [actor] DatabaseStats 업데이트:', stats);
+            this.setStats(stats);
+          }
+        }
       });
-
-      // 구독 해제 함수 저장
-      eventSubscriptions()[0] = unsub;
+  eventSubscriptions()[0] = unsubActor;
       
       console.log('📡 데이터베이스 이벤트 구독 완료');
     } catch (error) {

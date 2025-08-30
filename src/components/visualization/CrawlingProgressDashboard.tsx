@@ -5,7 +5,7 @@
  *              실제 크롤링 이벤트와 연결 가능
  */
 import { Component, onMount, onCleanup, createSignal } from 'solid-js';
-import { listen } from '@tauri-apps/api/event';
+import { tauriApi } from '../../services/tauri-api';
 
 // D3.js will be loaded via CDN in index.html
 declare const d3: any;
@@ -792,30 +792,63 @@ const CrawlingProgressDashboard: Component = () => {
     initializeSVG();
   };
 
-  // 실제 이벤트 리스너 (향후 백엔드 연결용)
+  // 실제 이벤트 리스너: actor-event 브리지 구독으로 대체
   const setupEventListeners = async () => {
     try {
-      // 실제 크롤링 이벤트 리스너
-      await listen('batch-created', (event: any) => {
-        console.log('실제 배치 생성됨:', event.payload);
-        handleLiveBatchCreated(event.payload);
+      const un = await tauriApi.subscribeToActorBridgeEvents((name, payload) => {
+        switch (name) {
+          case 'actor-batch-started': {
+            const data: CrawlingEventData = {
+              batchId: String(payload?.batch_id ?? payload?.id ?? ''),
+              status: 'created',
+              data: payload,
+            };
+            console.log('실제 배치 생성됨 [actor]:', data);
+            handleLiveBatchCreated(data);
+            break;
+          }
+          case 'actor-batch-completed': {
+            const data: CrawlingEventData = {
+              batchId: String(payload?.batch_id ?? payload?.id ?? ''),
+              status: 'completed',
+              data: payload,
+            };
+            console.log('실제 배치 완료됨 [actor]:', data);
+            handleLiveBatchCompleted(data);
+            break;
+          }
+          case 'actor-page-lifecycle': {
+            const status = String(payload?.status || '').toLowerCase();
+            if (status === 'fetch_completed' || status === 'urls_extracted') {
+              const data: CrawlingEventData = {
+                batchId: String(payload?.batch_id ?? ''),
+                pageId: String(payload?.page_number ?? payload?.page ?? ''),
+                status: 'completed',
+                data: payload,
+              };
+              console.log('실제 페이지 크롤링됨 [actor]:', data);
+              handleLivePageCrawled(data);
+            }
+            break;
+          }
+          case 'actor-product-lifecycle': {
+            const status = String(payload?.status || '').toLowerCase();
+            if (status === 'completed' || status === 'success') {
+              const data: CrawlingEventData = {
+                batchId: String(payload?.batch_id ?? ''),
+                productId: String(payload?.product_id ?? payload?.id ?? ''),
+                status: 'completed',
+                data: payload,
+              };
+              console.log('실제 제품 수집됨 [actor]:', data);
+              handleLiveProductCollected(data);
+            }
+            break;
+          }
+        }
       });
-      
-      await listen('page-crawled', (event: any) => {
-        console.log('실제 페이지 크롤링됨:', event.payload);
-        handleLivePageCrawled(event.payload);
-      });
-      
-      await listen('product-collected', (event: any) => {
-        console.log('실제 제품 수집됨:', event.payload);
-        handleLiveProductCollected(event.payload);
-      });
-      
-      await listen('batch-completed', (event: any) => {
-        console.log('실제 배치 완료됨:', event.payload);
-        handleLiveBatchCompleted(event.payload);
-      });
-      
+      // 정리 시 해제
+      onCleanup(() => { try { un(); } catch {} });
     } catch (error) {
       console.error('이벤트 리스너 설정 실패:', error);
     }

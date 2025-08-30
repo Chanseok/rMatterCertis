@@ -6,6 +6,7 @@
   "scripts": {
     "start": "vite",
     "dev": "vite",
+    "dev:no-legacy": "VITE_DISABLE_LEGACY_EVENTS=true vite",
     "build": "vite build",
     "serve": "vite preview",
   "tauri": "OS_ACTIVITY_MODE=disable CA_DEBUG_TRANSACTIONS=0 tauri",
