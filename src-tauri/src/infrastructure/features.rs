@@ -4,6 +4,7 @@
 //! - `MC_FEATURE_HTTP_CLIENT_UNIFIED` (default: false)
 //! - `MC_FEATURE_STAGE_EXECUTOR_TEMPLATE` (deprecated, permanently enabled)
 //! - `MC_FEATURE_EVENTS_GENERALIZED_ONLY` (default: false)
+//! - `MC_FEATURE_LEGACY_DOMAIN_EVENTS` (default: true) — emits legacy `domain::events::CrawlingEvent` payloads
 //!
 //! Values: "1"/"true" enable, "0"/"false" disable (case-insensitive)
 
@@ -59,6 +60,13 @@ fn read_flag(name: &str, default: bool) -> bool {
 #[must_use] pub fn feature_events_generalized_only() -> bool {
     // Default to false to maintain backward compatibility with FE listeners
     read_flag("MC_FEATURE_EVENTS_GENERALIZED_ONLY", false)
+}
+
+/// Emit legacy domain::events::CrawlingEvent payloads (for backward compatibility)
+/// Default: true (current behavior). Flip to false to silence legacy event emissions.
+#[must_use]
+pub fn feature_legacy_domain_events() -> bool {
+    read_flag("MC_FEATURE_LEGACY_DOMAIN_EVENTS", true)
 }
 
 #[cfg(test)]

@@ -391,13 +391,17 @@ impl SystemStateBroadcaster {
     }
 
     /// 🔥 세션 이벤트 발송 (크롤링 라이프사이클)
+    /// DEPRECATED: Prefer ActorEvent/AppEvent via ActorEventBridge. Controlled by MC_FEATURE_LEGACY_DOMAIN_EVENTS.
     pub fn emit_session_event(
         &self,
         session_id: String,
         event_type: crate::domain::events::SessionEventType,
         message: String,
     ) -> anyhow::Result<()> {
-        use crate::domain::events::{CrawlingEvent, SessionEventType};
+    use crate::domain::events::{CrawlingEvent, SessionEventType};
+    use crate::infrastructure::features::feature_legacy_domain_events;
+
+    if !feature_legacy_domain_events() { return Ok(()); }
 
         let event_name = match event_type {
             SessionEventType::Started => "session-started",
@@ -423,6 +427,7 @@ impl SystemStateBroadcaster {
 
     /// 크롤링 에러 이벤트 발송
     pub fn emit_crawling_error(&self, error_message: String) -> anyhow::Result<()> {
+    // This is a generic payload, not a CrawlingEvent; keep always-on
         let payload = serde_json::json!({
             "error": error_message,
             "timestamp": chrono::Utc::now().to_rfc3339(),
@@ -618,15 +623,19 @@ impl SystemStateBroadcaster {
     }
 
     /// 🔥 새로운 `CrawlingEvent` 기반 발송 메서드 추가
+    /// DEPRECATED: Prefer AppEvent::PreflightDiagnostics. Controlled by MC_FEATURE_LEGACY_DOMAIN_EVENTS.
     pub fn emit_site_status_check(
         &self,
         event: &crate::domain::events::CrawlingEvent,
     ) -> anyhow::Result<()> {
+        use crate::infrastructure::features::feature_legacy_domain_events;
+        if !feature_legacy_domain_events() { return Ok(()); }
         self.app_handle.emit(event.event_name(), event)?;
         Ok(())
     }
 
     /// 🔥 배치 이벤트 발송
+    /// DEPRECATED: Prefer AppEvent Batch* variants. Controlled by MC_FEATURE_LEGACY_DOMAIN_EVENTS.
     pub fn emit_batch_event(
         &self,
         session_id: String,
@@ -636,6 +645,8 @@ impl SystemStateBroadcaster {
         message: String,
         metadata: Option<crate::domain::events::BatchMetadata>,
     ) -> anyhow::Result<()> {
+        use crate::infrastructure::features::feature_legacy_domain_events;
+        if !feature_legacy_domain_events() { return Ok(()); }
         let event = crate::domain::events::CrawlingEvent::BatchEvent {
             session_id,
             batch_id,
@@ -650,6 +661,7 @@ impl SystemStateBroadcaster {
     }
 
     /// 🔥 `ProductList` 페이지별 이벤트 발송
+    /// DEPRECATED: Prefer AppEvent::PageLifecycle. Controlled by MC_FEATURE_LEGACY_DOMAIN_EVENTS.
     pub fn emit_product_list_page_event(
         &self,
         session_id: String,
@@ -659,6 +671,8 @@ impl SystemStateBroadcaster {
         message: String,
         metadata: Option<crate::domain::events::PageMetadata>,
     ) -> anyhow::Result<()> {
+        use crate::infrastructure::features::feature_legacy_domain_events;
+        if !feature_legacy_domain_events() { return Ok(()); }
         let event = crate::domain::events::CrawlingEvent::ProductListPageEvent {
             session_id,
             batch_id,
@@ -673,6 +687,7 @@ impl SystemStateBroadcaster {
     }
 
     /// 🔥 제품 상세정보 이벤트 발송
+    /// DEPRECATED: Prefer AppEvent::ProductLifecycle. Controlled by MC_FEATURE_LEGACY_DOMAIN_EVENTS.
     pub fn emit_product_detail_event(
         &self,
         session_id: String,
@@ -683,6 +698,8 @@ impl SystemStateBroadcaster {
         message: String,
         metadata: Option<crate::domain::events::ProductMetadata>,
     ) -> anyhow::Result<()> {
+        use crate::infrastructure::features::feature_legacy_domain_events;
+        if !feature_legacy_domain_events() { return Ok(()); }
         let event = crate::domain::events::CrawlingEvent::ProductDetailEvent {
             session_id,
             batch_id,
@@ -698,28 +715,37 @@ impl SystemStateBroadcaster {
     }
 
     /// 🔥 동시성 상태 이벤트 발송
+    /// DEPRECATED: Prefer unified actor events. Controlled by MC_FEATURE_LEGACY_DOMAIN_EVENTS.
     pub fn emit_concurrency_event(
         &self,
         event: crate::domain::events::ConcurrencyEvent,
     ) -> anyhow::Result<()> {
+        use crate::infrastructure::features::feature_legacy_domain_events;
+        if !feature_legacy_domain_events() { return Ok(()); }
         self.app_handle.emit(event.event_name(), &event)?;
         Ok(())
     }
 
     /// 🔥 Validation 이벤트 발송
+    /// DEPRECATED: Prefer AppEvent::Validation*. Controlled by MC_FEATURE_LEGACY_DOMAIN_EVENTS.
     pub fn emit_validation_event(
         &self,
         event: crate::domain::events::ValidationEvent,
     ) -> anyhow::Result<()> {
+        use crate::infrastructure::features::feature_legacy_domain_events;
+        if !feature_legacy_domain_events() { return Ok(()); }
         self.app_handle.emit(event.event_name(), &event)?;
         Ok(())
     }
 
     /// 🔥 DB 저장 이벤트 발송
+    /// DEPRECATED: Prefer AppEvent::Persistence*. Controlled by MC_FEATURE_LEGACY_DOMAIN_EVENTS.
     pub fn emit_db_save_event(
         &self,
         event: crate::domain::events::DatabaseSaveEvent,
     ) -> anyhow::Result<()> {
+        use crate::infrastructure::features::feature_legacy_domain_events;
+        if !feature_legacy_domain_events() { return Ok(()); }
         self.app_handle.emit(event.event_name(), &event)?;
         Ok(())
     }
