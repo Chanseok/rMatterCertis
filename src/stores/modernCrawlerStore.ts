@@ -7,6 +7,7 @@
 
 import { createStore } from 'solid-js/store';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { tauriApi } from '@/services/tauri-api';
 
 // 자동 생성된 Rust 타입들만 사용
 import type {
@@ -137,10 +138,18 @@ class ModernCrawlerStore {
       setModernCrawlerState('actorSystemStatus', event.payload);
     });
     
-    // 에러 이벤트
-    const errorUnsubscriber = await listen<string>('event-crawling-error', (event) => {
-      console.error('❌ Crawling Error:', event.payload);
-      setModernCrawlerState('lastError', event.payload);
+    // 에러 이벤트 (unified actor-based)
+    const errorUnsubscriber = await tauriApi.subscribeToErrorsUnified((payload) => {
+      try {
+        const message = typeof payload === 'string'
+          ? payload
+          : payload?.message || payload?.reason || payload?.error || JSON.stringify(payload);
+        console.error('❌ Crawling Error (unified):', message, payload);
+        setModernCrawlerState('lastError', String(message));
+      } catch (e) {
+        console.error('❌ Failed to handle unified error payload:', e);
+        setModernCrawlerState('lastError', 'Unknown error');
+      }
     });
     
     // 구독 해제 함수들 저장
@@ -149,7 +158,7 @@ class ModernCrawlerStore {
       progressUnsubscriber,
       responseUnsubscriber,
       actorStatusUnsubscriber,
-      errorUnsubscriber
+  errorUnsubscriber
     ];
   }
   

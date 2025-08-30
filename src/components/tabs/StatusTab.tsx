@@ -2,18 +2,18 @@
  * StatusTab - 크롤링 상태 및 제어 탭 (단순화된 레이아웃)
  * @description 사이트/DB 상태 확인, 크롤링 제어, 결과 표시라는 핵심 기능에 집중한 간소화된 버전입니다.
  */
-import { Component, createSignal, onMount, onCleanup } from 'solid-js';
+import { Component, createSignal } from 'solid-js';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { tauriApi } from '../../services/tauri-api';
 import { crawlerStore } from '../../stores/crawlerStore';
 import type { CrawlingStatusCheck } from '../../types/crawling';
+import { CrawlingStatus } from '../../types/crawling';
 
 export const StatusTab: Component = () => {
   console.log('🚀 간소화된 StatusTab 컴포넌트가 로드되었습니다');
 
   // --- 상태 관리 ---
-  const [crawlingStatus, setCrawlingStatus] = createSignal<'idle' | 'running' | 'paused' | 'completed'>('idle');
-  const [progress, setProgress] = createSignal(0);
+  // 진행/상태는 crawlerStore의 actor-event 기반 스트림을 사용합니다.
   const [statusCheckResult, setStatusCheckResult] = createSignal<CrawlingStatusCheck | null>(null);
   const [isCheckingStatus, setIsCheckingStatus] = createSignal(false);
   const [statusCheckError, setStatusCheckError] = createSignal<string>('');
@@ -21,27 +21,6 @@ export const StatusTab: Component = () => {
   // 사이트 분석 결과는 글로벌 store에서 가져옵니다.
   const siteAnalysisResult = crawlerStore.siteAnalysisResult;
 
-  // --- 이벤트 리스너 ---
-  onMount(async () => {
-    const unlistenStopped = await tauriApi.subscribeToCrawlingStopped(() => {
-      console.log('🛑 크롤링 중지 이벤트 수신');
-      setCrawlingStatus('idle');
-      setProgress(0);
-    });
-
-    const unlistenProgress = await tauriApi.subscribeToProgress((p: any) => {
-      setProgress(p.percentage);
-      if (p.percentage >= 100) {
-        setCrawlingStatus('completed');
-      }
-    });
-
-    onCleanup(() => {
-      unlistenStopped();
-      unlistenProgress();
-      console.log('🧹 StatusTab 이벤트 리스너 정리됨');
-    });
-  });
 
   // --- API 호출 함수 ---
 
@@ -91,14 +70,11 @@ export const StatusTab: Component = () => {
       return;
     }
 
-    try {
-      setCrawlingStatus('running');
-      setProgress(0);
+  try {
       console.log('🚀 백엔드 지능형 크롤링 시작...');
       await tauriApi.startCrawling(undefined, undefined);
     } catch (error) {
       console.error('❌ 크롤링 시작 실패:', error);
-      setCrawlingStatus('idle');
       alert(`크롤링 시작에 실패했습니다: ${error}`);
     }
   };
@@ -106,7 +82,6 @@ export const StatusTab: Component = () => {
   const pauseCrawling = async () => {
     try {
       await tauriApi.pauseCrawling();
-      setCrawlingStatus('paused');
       console.log('⏸️ 크롤링 일시정지됨');
     } catch (error) {
       console.error('❌ 크롤링 일시정지 실패:', error);
@@ -116,8 +91,6 @@ export const StatusTab: Component = () => {
   const stopCrawling = async () => {
     try {
       await tauriApi.stopCrawling();
-      setCrawlingStatus('idle');
-      setProgress(0);
       console.log('⏹️ 크롤링 중지됨');
     } catch (error) {
       console.error('❌ 크롤링 중지 실패:', error);
@@ -125,9 +98,20 @@ export const StatusTab: Component = () => {
   };
 
   // --- 헬퍼 및 렌더링 함수 ---
+  // 상태는 crawlerStore의 반응형 값으로 대체 (actor-event 기반)
+  const uiCrawlingStatus = () => {
+    const st = crawlerStore.status();
+    switch (st) {
+      case CrawlingStatus.Running: return 'running' as const;
+      case CrawlingStatus.Paused: return 'paused' as const;
+      case CrawlingStatus.Completed: return 'completed' as const;
+      default: return 'idle' as const;
+    }
+  };
+  const progress = () => crawlerStore.progressPercentage();
 
   const getStatusInfo = () => {
-    switch (crawlingStatus()) {
+    switch (uiCrawlingStatus()) {
       case 'running': return { text: '실행 중', color: '#22c55e' };
       case 'paused': return { text: '일시 정지', color: '#f59e0b' };
       case 'completed': return { text: '완료', color: '#3b82f6' };
@@ -225,7 +209,7 @@ export const StatusTab: Component = () => {
             <div class="space-y-3">
               <button
                 onClick={startCrawling}
-                disabled={crawlingStatus() === 'running'}
+                disabled={uiCrawlingStatus() === 'running'}
                 class="w-full p-4 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 disabled:bg-gray-400 transition shadow-lg"
               >
                 ▶️ 크롤링 시작
@@ -233,14 +217,14 @@ export const StatusTab: Component = () => {
               <div class="grid grid-cols-2 gap-3">
                 <button
                   onClick={pauseCrawling}
-                  disabled={crawlingStatus() !== 'running'}
+                  disabled={uiCrawlingStatus() !== 'running'}
                   class="w-full p-3 rounded-lg bg-amber-500 text-white font-semibold hover:bg-amber-600 disabled:bg-gray-300 transition"
                 >
                   ⏸️ 일시정지
                 </button>
                 <button
                   onClick={stopCrawling}
-                  disabled={crawlingStatus() === 'idle'}
+                  disabled={uiCrawlingStatus() === 'idle'}
                   class="w-full p-3 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 disabled:bg-gray-300 transition"
                 >
                   ⏹️ 중지

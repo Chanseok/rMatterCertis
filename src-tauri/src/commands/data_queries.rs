@@ -116,8 +116,8 @@ pub async fn get_crawling_status_v2(
 
     let status = CrawlingStatusInfo {
         is_running: current_session.is_some(),
-        current_page: Some(current_progress.current),
-        total_pages: Some(current_progress.total),
+    current_page: None,
+    total_pages: None,
         last_updated: None, // CrawlingProgress doesn't have last_updated field
         session_id: current_session.as_ref().map(|s| s.id.clone()),
     };

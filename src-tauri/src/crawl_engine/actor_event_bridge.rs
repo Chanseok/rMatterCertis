@@ -5,8 +5,8 @@
 //! 낮은 복잡성의 구현으로도 모든 경우를 다 커버할 수 있도록 함
 
 use crate::crawl_engine::actors::types::{AppEvent, SimpleMetrics};
-use crate::domain::events::CrawlingEvent;
 use crate::infrastructure::features::feature_events_generalized_only;
+use std::collections::VecDeque;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -25,6 +25,8 @@ pub struct ActorEventBridge {
     is_active: Arc<std::sync::atomic::AtomicBool>,
     /// 단조 증가 시퀀스 번호
     seq: Arc<AtomicU64>,
+    /// 최근 네이티브 PageLifecycle 키 캐시 (세션/배치/페이지) to prevent synthetic duplicates
+    recent_pages: Arc<tokio::sync::Mutex<VecDeque<(String, Option<String>, u32, std::time::Instant)>>>,
 }
 
 impl ActorEventBridge {
@@ -35,6 +37,7 @@ impl ActorEventBridge {
             event_rx,
             is_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             seq: Arc::new(AtomicU64::new(1)),
+            recent_pages: Arc::new(tokio::sync::Mutex::new(VecDeque::with_capacity(64))),
         }
     }
 
@@ -106,7 +109,7 @@ impl ActorEventBridge {
             v
         };
         // Generalized-only 모드: 단일 채널로 통일된 이벤트를 방출하고 종료
-        if feature_events_generalized_only() {
+    if feature_events_generalized_only() {
             let unified_name = "actor-event";
             self.app_handle
                 .emit(unified_name, &enriched)
@@ -128,9 +131,12 @@ impl ActorEventBridge {
             }
             // Specialized concise lines per important variants to improve ProductDetail visibility
             match &actor_event {
-                AppEvent::ProductLifecycle {
+                // Native TaskLifecycle is now emitted directly by actors; no synthetic re-emit needed
+                AppEvent::ProductLifecycle { .. } => {}
+                AppEvent::TaskLifecycle {
                     session_id,
                     batch_id,
+                    task_kind,
                     page_number,
                     product_ref,
                     status,
@@ -138,10 +144,11 @@ impl ActorEventBridge {
                     ..
                 } => {
                     tracing::info!(target: "actor-event",
-                        "[ProductLifecycle] status={} ref={} page={:?} batch={:?} dur_ms={:?} session={}",
-                        status, product_ref, page_number, batch_id, duration_ms, session_id
+                        "[TaskLifecycle] kind={:?} status={} page={:?} ref={:?} dur_ms={:?} batch={:?} session={}",
+                        task_kind, status, page_number, product_ref, duration_ms, batch_id, session_id
                     );
                 }
+                // ProductLifecycle logging is covered by synthetic TaskLifecycle above; keep concise log via that path
                 AppEvent::ProductLifecycleGroup {
                     session_id,
                     batch_id,
@@ -183,6 +190,8 @@ impl ActorEventBridge {
                     metrics,
                     ..
                 } => {
+                    // Record native PageLifecycle key in recent cache
+                    self.push_recent_page(session_id, batch_id.as_ref(), *page_number).await;
                     // Extract a couple key metrics if available
                     let (urls, scheduled, err) = match metrics {
                         Some(SimpleMetrics::Page {
@@ -308,7 +317,7 @@ impl ActorEventBridge {
             return Ok(());
         }
         if let Some((derived_name, mut derived_payload)) =
-            self.create_synthetic_page_lifecycle(&actor_event)
+            self.create_synthetic_page_lifecycle(&actor_event).await
         {
             if let Some(obj) = derived_payload.as_object_mut() {
                 obj.insert(
@@ -363,14 +372,10 @@ impl ActorEventBridge {
             AppEvent::PerformanceMetrics { .. } => "actor-performance-metrics",
             AppEvent::BatchReport { .. } => "actor-batch-report",
             AppEvent::CrawlReportSession { .. } => "actor-session-report",
-            AppEvent::PhaseStarted { .. } => "actor-phase-started",
-            AppEvent::PhaseCompleted { .. } => "actor-phase-completed",
-            AppEvent::PhaseAborted { .. } => "actor-phase-aborted",
             AppEvent::ShutdownRequested { .. } => "actor-shutdown-requested",
             AppEvent::ShutdownCompleted { .. } => "actor-shutdown-completed",
-            AppEvent::PageTaskStarted { .. } => "actor-page-task-started",
-            AppEvent::PageTaskCompleted { .. } => "actor-page-task-completed",
-            AppEvent::PageTaskFailed { .. } => "actor-page-task-failed",
+            // PageTask* removed; prefer PageLifecycle
+            AppEvent::TaskLifecycle { .. } => "actor-task-lifecycle",
             // DetailTask* and detail concurrency downshift events removed
             AppEvent::StageItemStarted { .. } => "actor-stage-item-started",
             AppEvent::StageItemCompleted { .. } => "actor-stage-item-completed",
@@ -424,139 +429,42 @@ impl ActorEventBridge {
         Ok((event_name.to_string(), flat))
     }
 
-    /// `CrawlingEvent` 호환성을 위한 변환 (필요시)
-    #[allow(dead_code)]
-    fn convert_to_crawling_event(&self, actor_event: &AppEvent) -> Option<CrawlingEvent> {
-        match actor_event {
-            AppEvent::SessionStarted { session_id, .. } => Some(CrawlingEvent::SessionEvent {
-                session_id: session_id.clone(),
-                event_type: crate::domain::events::SessionEventType::Started,
-                message: "Actor session started".to_string(),
-                timestamp: chrono::Utc::now(),
-            }),
-            AppEvent::SessionCompleted { summary, .. } => {
-                let result = crate::domain::events::CrawlingResult {
-                    total_processed: summary.total_pages_processed,
-                    new_items: summary.total_pages_processed, // TODO: 실제 새 아이템 수
-                    updated_items: 0,                         // TODO: 실제 업데이트된 아이템 수
-                    errors: 0,                                // TODO: 실제 에러 수
-                    duration_ms: summary.total_duration_ms,
-                    stages_completed: vec![], // TODO: 완료된 스테이지들
-                    start_time: chrono::Utc::now()
-                        - chrono::Duration::milliseconds(summary.total_duration_ms as i64),
-                    end_time: chrono::Utc::now(),
-                    performance_metrics: crate::domain::events::PerformanceMetrics {
-                        avg_processing_time_ms: summary.avg_page_processing_time as f64,
-                        items_per_second: if summary.total_duration_ms > 0 {
-                            (f64::from(summary.total_pages_processed) * 1000.0)
-                                / summary.total_duration_ms as f64
-                        } else {
-                            0.0
-                        },
-                        memory_usage_mb: 0.0, // TODO: 실제 메모리 사용량
-                        network_requests: u64::from(summary.total_pages_processed), // 근사치
-                        cache_hit_rate: 0.0,  // TODO: 실제 캐시 히트율
-                    },
-                };
-                Some(CrawlingEvent::Completed(result))
-            }
-            AppEvent::Progress {
-                current_step,
-                total_steps,
-                percentage,
-                message,
-                ..
-            } => {
-                let progress = crate::domain::events::CrawlingProgress {
-                    current: *current_step,
-                    total: *total_steps,
-                    percentage: *percentage,
-                    current_stage: crate::domain::events::CrawlingStage::ProductList, // 진행 중이므로 ProductList 단계로 가정
-                    current_step: message.clone(),
-                    status: crate::domain::events::CrawlingStatus::Running,
-                    message: format!("Processing step {} of {}", current_step, total_steps),
-                    remaining_time: None,
-                    elapsed_time: 0, // TODO: 실제 경과 시간
-                    new_items: 0,
-                    updated_items: 0,
-                    current_batch: None,
-                    total_batches: None,
-                    errors: 0,
-                    timestamp: chrono::Utc::now(),
-                };
-                Some(CrawlingEvent::ProgressUpdate(progress))
-            }
-            _ => None, // 다른 이벤트들은 필요시 추가
-        }
-    }
+    // NOTE: Legacy `CrawlingEvent` conversion removed. Frontend should consume unified `actor-event` only.
 
     /// 브릿지 상태 확인
     #[must_use] pub fn is_active(&self) -> bool {
         self.is_active.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// PageTaskStarted/Completed/Failed 로부터 actor-page-lifecycle 합성 이벤트 생성
-    /// New pipeline(StageActor)에서 이미 `PageLifecycle` 이벤트를 직접 방출하는 경우에는 합성하지 않음
-    fn create_synthetic_page_lifecycle(
+    // PageTask* removed; synthetic conversion no longer needed. If needed later, we could synthesize TaskLifecycle from Page/Product lifecycles.
+    async fn create_synthetic_page_lifecycle(
         &self,
-        event: &AppEvent,
+        _event: &AppEvent,
     ) -> Option<(String, serde_json::Value)> {
-        use serde_json::json;
-        match event {
-            AppEvent::PageTaskStarted {
-                session_id,
-                page,
-                batch_id,
-                ..
-            } => Some((
-                "actor-page-lifecycle".to_string(),
-                json!({
-                    "variant": "PageLifecycle",
-                    "session_id": session_id,
-                    "batch_id": batch_id,
-                    "page_number": page,
-                    "status": "fetch_started",
-                    "metrics": serde_json::Value::Null,
-                }),
-            )),
-            AppEvent::PageTaskCompleted {
-                session_id,
-                page,
-                batch_id,
-                duration_ms,
-                ..
-            } => Some((
-                "actor-page-lifecycle".to_string(),
-                json!({
-                    "variant": "PageLifecycle",
-                    "session_id": session_id,
-                    "batch_id": batch_id,
-                    "page_number": page,
-                    "status": "fetch_completed",
-                    "metrics": {"kind":"Page", "data": {"url_count": serde_json::Value::Null, "scheduled_details": serde_json::Value::Null, "error": serde_json::Value::Null}},
-                    "duration_ms": duration_ms,
-                }),
-            )),
-            AppEvent::PageTaskFailed {
-                session_id,
-                page,
-                batch_id,
-                error,
-                ..
-            } => Some((
-                "actor-page-lifecycle".to_string(),
-                json!({
-                    "variant": "PageLifecycle",
-                    "session_id": session_id,
-                    "batch_id": batch_id,
-                    "page_number": page,
-                    "status": "failed",
-                    "metrics": {"kind":"Page", "data": {"url_count": serde_json::Value::Null, "scheduled_details": serde_json::Value::Null, "error": error}},
-                }),
-            )),
-            _ => None,
+        None
+    }
+
+    // Build synthetic TaskLifecycle payload from PageLifecycle/ProductLifecycle
+    // (previously had an experimental helper to synthesize TaskLifecycle from Page/Product lifecycles)
+    // Removed as native TaskLifecycle is now emitted directly by actors.
+
+    async fn push_recent_page(&self, session_id: &str, batch_id: Option<&String>, page: u32) {
+        use std::time::{Duration, Instant};
+        let mut q = self.recent_pages.lock().await;
+        let now = Instant::now();
+        let key = (session_id.to_string(), batch_id.cloned(), page, now);
+        q.push_back(key);
+        // Evict old entries (> 15s) and bound size
+        while q.len() > 64 {
+            q.pop_front();
+        }
+        let cutoff = now - Duration::from_secs(15);
+        while let Some(front) = q.front() {
+            if front.3 < cutoff { q.pop_front(); } else { break; }
         }
     }
+
+    // Note: we intentionally don't need a lookup accessor; we only use the cache to aid logs and potential future deduping.
 }
 
 /// Actor Event Bridge 시작 유틸리티 함수

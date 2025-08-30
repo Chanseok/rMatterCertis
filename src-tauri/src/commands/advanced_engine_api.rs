@@ -1,7 +1,7 @@
 //! Advanced Crawling Engine 관련 status / 조회 전용 명령어 모듈
 //! NOTE: `start_advanced_crawling(실행` 엔트리포인트)는 통합 Actor 진입점으로 완전히 이관되어 제거되었습니다.
 
-use tauri::{AppHandle, Emitter, State, command};
+use tauri::{AppHandle, State, command};
 use tracing::{error, info, warn};
 
 use crate::application::shared_state::SharedStateCache;
@@ -18,17 +18,7 @@ pub async fn check_advanced_site_status(
 ) -> Result<ApiResponse<SiteStatusInfo>, String> {
     info!("🌐 Advanced site status check requested");
 
-    // 🔥 독립적인 사이트 상태 체크 시작 이벤트 발송
-    let start_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
-        is_standalone: true,
-        status: crate::domain::events::SiteCheckStatus::Started,
-        message: "사이트 상태 확인을 시작합니다...".to_string(),
-        timestamp: chrono::Utc::now(),
-    };
-
-    if let Err(e) = app.emit("site-status-check", &start_event) {
-        warn!("Failed to emit site status check start event: {}", e);
-    }
+    // 시작: unified actor-event를 사용하므로 별도 레거시 이벤트 발신은 생략합니다 (로그만 남김)
 
     // 먼저 캐시된 사이트 분석 결과 확인 (5분 TTL)
     if let Some(cached_analysis) = shared_state.get_valid_site_analysis_async(Some(5)).await {
@@ -40,17 +30,7 @@ pub async fn check_advanced_site_status(
                 .num_minutes()
         );
 
-        // 🔥 캐시 사용 완료 이벤트 발송
-        let cache_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
-            is_standalone: true,
-            status: crate::domain::events::SiteCheckStatus::Success,
-            message: "캐시된 사이트 분석 결과를 사용했습니다".to_string(),
-            timestamp: chrono::Utc::now(),
-        };
-
-        if let Err(e) = app.emit("site-status-check", &cache_event) {
-            warn!("Failed to emit cached site status event: {}", e);
-        }
+    // 캐시 히트: 이벤트 발신 대신 로그만 남깁니다
 
         let site_status_info = SiteStatusInfo {
             is_accessible: true,
@@ -66,25 +46,7 @@ pub async fn check_advanced_site_status(
     info!("⏰ No valid cached site analysis found - performing fresh site check");
     info!("🔄 Starting real site status check...");
 
-    // 🔥 실제 사이트 체크 진행 중 이벤트 발송
-    let _progress_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
-        is_standalone: true,
-        status: crate::domain::events::SiteCheckStatus::InProgress,
-        message: "사이트에 접속하여 상태를 확인 중입니다...".to_string(),
-        timestamp: chrono::Utc::now(),
-    };
-
-    // 🔥 실제 사이트 체크 진행 중 이벤트 발송
-    let progress_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
-        is_standalone: true,
-        status: crate::domain::events::SiteCheckStatus::InProgress,
-        message: "사이트에 접속하여 상태를 확인 중입니다...".to_string(),
-        timestamp: chrono::Utc::now(),
-    };
-
-    if let Err(e) = app.emit("site-status-check", &progress_event) {
-        warn!("Failed to emit site status progress event: {}", e);
-    }
+    // 진행 로그만 남깁니다 (actor-event 브릿지가 진짜 진행 이벤트를 처리합니다)
 
     // 실제 사이트 상태 분석 (system_analysis 로직 재사용 경량 버전)
     use crate::application::shared_state::SiteAnalysisResult;
@@ -147,21 +109,7 @@ pub async fn check_advanced_site_status(
     );
     shared_state.set_site_analysis(analysis.clone()).await;
 
-    // 4. 성공 이벤트 발송
-    let success_event = crate::domain::events::CrawlingEvent::SiteStatusCheck {
-        is_standalone: true,
-        status: crate::domain::events::SiteCheckStatus::Success,
-        message: format!(
-            "사이트 분석 완료: pages={} last_page_products={} est_products={}",
-            site_status.total_pages,
-            site_status.products_on_last_page,
-            site_status.estimated_products
-        ),
-        timestamp: chrono::Utc::now(),
-    };
-    if let Err(e) = app.emit("site-status-check", &success_event) {
-        warn!("Failed to emit site status success event: {}", e);
-    }
+    // 성공: unified 경로 사용으로 레거시 이벤트는 발신하지 않습니다
 
     // 5. 응답 변환
     let site_status_info = SiteStatusInfo {

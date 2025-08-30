@@ -1,5 +1,6 @@
 import { createSignal, onCleanup, Accessor } from 'solid-js';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { FLAGS } from '../utils/env';
 
 // Simple throttle to batch rapid progress updates
 function createThrottler(delayMs: number, fn: (...args: any[]) => void) {
@@ -51,6 +52,7 @@ export function useSessionEventStream(
     mergeStatus(prev => {
       if (!prev) return prev;
       const pages = { ...(prev.pages || {}) };
+      // Preferred structured page progress
       if (progress.overall_progress?.page_progress) {
         const pg = progress.overall_progress.page_progress;
         if (typeof pg.processed === 'number') pages.processed = pg.processed;
@@ -62,6 +64,10 @@ export function useSessionEventStream(
         if (typeof progress.pages_processed === 'number') pages.processed = progress.pages_processed;
         if (typeof progress.pages_total === 'number') pages.total = progress.pages_total;
       }
+      // Actor Progress fallback: map percentage/current_step/total_steps to pages
+      if (typeof progress.percentage === 'number') pages.percent = progress.percentage;
+      if (typeof progress.current_step === 'number') pages.processed = progress.current_step;
+      if (typeof progress.total_steps === 'number') pages.total = progress.total_steps;
       return { ...prev, pages } as StatusLike;
     });
   });
@@ -70,15 +76,8 @@ export function useSessionEventStream(
 
   const listeners: UnlistenFn[] = [];
   // Legacy + new actor-system event names we care about.
+  // Only actor streams going forward
   const eventNames = [
-    // === Legacy events (keep until fully deprecated) ===
-    'crawling-progress',
-    'session-event',
-    'batch-event',
-    'product-list-page-event',
-    'product-detail-event',
-    'crawling-completed',
-    'crawling-error',
     // === Actor Session lifecycle ===
     'actor-session-started',
     'actor-session-paused',
@@ -86,10 +85,7 @@ export function useSessionEventStream(
     'actor-session-completed',
     'actor-session-failed',
     'actor-session-timeout',
-    // === Phase & Stage ===
-    'actor-phase-started',
-    'actor-phase-completed',
-    'actor-phase-aborted',
+  // === Stage === (Phase* removed)
     'actor-stage-started',
     'actor-stage-completed',
     'actor-stage-failed',
@@ -102,15 +98,16 @@ export function useSessionEventStream(
     'actor-performance-metrics',
     'actor-batch-report',
     'actor-session-report',
-    // === Page task granularity ===
-    'actor-page-task-started',
-    'actor-page-task-completed',
-    'actor-page-task-failed',
-  // === Product lifecycle (Stage 2 grouping) ===
-  'actor-product-lifecycle',
-  'actor-product-lifecycle-group',
-  // Optional: keep if backend still emits downshift notifications
-  'actor-detail-concurrency-downshifted',
+    // unified stream
+    'actor-event',
+  // === Page & product lifecycle ===
+    'actor-page-lifecycle',
+    'actor-product-lifecycle',
+    'actor-product-lifecycle-group',
+    // Optional: keep if backend still emits downshift notifications
+    'actor-detail-concurrency-downshifted',
+    // New unified task lifecycle
+    'actor-task-lifecycle',
   ];
 
   const markLive = (ev: string, payload: any) => {
@@ -182,18 +179,95 @@ export function useSessionEventStream(
     incrementEvent(ev);
     markLive(ev, payload);
     summaryLog(ev, payload);
-    if (ev === 'crawling-progress') {
+  if (ev === 'actor-progress') {
       applyProgress(payload);
       return;
     }
+  // Unified stream progress
+    if (ev === 'actor-event') {
+      if (payload?.variant === 'Progress') { applyProgress(payload); return; }
+      // Unified stream lifecycle routing
+      const sid = sessionId();
+      if (!sid || !payload || payload.session_id !== sid) return;
+      const variant = payload?.variant;
+      if (variant === 'TaskLifecycle' || variant === 'ProductLifecycle' || variant === 'ProductLifecycleGroup' || variant === 'PageLifecycle') {
+        mergeStatus(prev => {
+          if (!prev) return prev;
+          const details = { ...(prev.details || { total: 0, completed: 0, failed: 0 }) } as any;
+          if (variant === 'TaskLifecycle') {
+            const status = String(payload?.status || '').toLowerCase();
+            const kind = payload?.task_kind;
+            if (kind === 'Product') {
+              if (status === 'succeeded' || status === 'completed' || status === 'persisted') {
+                details.total = (details.total ?? 0) + 1;
+                details.completed = (details.completed ?? 0) + 1;
+              } else if (status === 'failed') {
+                details.total = (details.total ?? 0) + 1;
+                details.failed = (details.failed ?? 0) + 1;
+              }
+            }
+          } else if (variant === 'ProductLifecycleGroup') {
+            if (payload?.phase === 'fetch') {
+              const group = Number(payload?.group_size ?? payload?.started ?? 0) || 0;
+              const succeeded = Number(payload?.succeeded ?? 0) || 0;
+              const failed = Number(payload?.failed ?? 0) || 0;
+              details.total = (typeof details.total === 'number' ? details.total : 0) + group;
+              details.completed = (typeof details.completed === 'number' ? details.completed : 0) + succeeded;
+              details.failed = (typeof details.failed === 'number' ? details.failed : 0) + failed;
+            }
+          } else if (variant === 'ProductLifecycle') {
+            const status = String(payload?.status || '').toLowerCase();
+            if (status === 'failed') { details.failed = (details.failed ?? 0) + 1; details.total = (details.total ?? 0) + 1; }
+            if (status === 'product_inserted' || status === 'product_updated' || status === 'succeeded' || status === 'completed') {
+              details.completed = (details.completed ?? 0) + 1; details.total = (details.total ?? 0) + 1;
+            }
+          }
+          return { ...prev, details } as StatusLike;
+        });
+        return;
+      }
+    }
+    // New unified TaskLifecycle event
+    if (ev === 'actor-task-lifecycle') {
+      const sid = sessionId();
+      if (!sid || !payload || payload.session_id !== sid) return;
+      mergeStatus(prev => {
+        if (!prev) return prev;
+        const details = { ...(prev.details || { total: 0, completed: 0, failed: 0 }) } as any;
+        const status = String(payload?.status || '').toLowerCase();
+        if (payload?.task_kind === 'Product') {
+          // Count per-product outcomes
+          if (status === 'succeeded' || status === 'completed' || status === 'persisted') {
+            details.total = (details.total ?? 0) + 1;
+            details.completed = (details.completed ?? 0) + 1;
+          } else if (status === 'failed') {
+            details.total = (details.total ?? 0) + 1;
+            details.failed = (details.failed ?? 0) + 1;
+          }
+        }
+        return { ...prev, details } as StatusLike;
+      });
+      return;
+    }
     // Stage 2 detail progress via product lifecycle events (group + per-product failures)
-    if (ev === 'actor-product-lifecycle' || ev === 'actor-product-lifecycle-group' || ev === 'actor-detail-concurrency-downshifted') {
+    if (ev === 'actor-product-lifecycle' || ev === 'actor-product-lifecycle-group' || ev === 'actor-detail-concurrency-downshifted' || ev === 'actor-page-lifecycle') {
       const payload: any = (evt as any).payload;
       const sid = sessionId();
       if (!sid || !payload || payload.session_id !== sid) return;
       mergeStatus(prev => {
         if (!prev) return prev;
         const details = { ...(prev.details || { total: 0, completed: 0, failed: 0 }) } as any;
+        // map page lifecycle to detail totals heuristically (optional)
+        if (ev === 'actor-page-lifecycle') {
+          const status = String(payload?.status || '').toLowerCase();
+          if (status === 'fetch_started') {
+            // no-op for totals; Stage 1 handled elsewhere
+          } else if (status === 'fetch_completed' || status === 'urls_extracted') {
+            // could update a separate page progress channel if needed
+          } else if (status === 'failed') {
+            // treat as page failure; no detail counter impact here
+          }
+        }
         if (ev === 'actor-product-lifecycle-group' && payload?.phase === 'fetch') {
           const group = Number(payload?.group_size ?? payload?.started ?? 0) || 0;
           const succeeded = Number(payload?.succeeded ?? 0) || 0;

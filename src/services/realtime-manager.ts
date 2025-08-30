@@ -220,13 +220,10 @@ class RealtimeManager {
    * 모든 이벤트 구독 설정
    */
   private async subscribeToAllEvents(): Promise<void> {
+    // crawlerStore가 actor-event 스트림을 직접 구독하므로 중복 갱신을 줄입니다.
+    // 여기서는 오류 및 DB 업데이트 중심으로 유지합니다.
     const subscriptions = await Promise.all([
-      this.subscribeToProgressEvents(),
-      this.subscribeToTaskEvents(),
-      this.subscribeToStageEvents(),
       this.subscribeToErrorEvents(),
-      this.subscribeToDatabaseEvents(),
-      this.subscribeToCompletionEvents(),
     ]);
 
     // 구독 해제 함수들 저장
@@ -234,129 +231,37 @@ class RealtimeManager {
       this.subscriptions.set(`subscription_${index}`, unsub);
     });
 
-    console.log('📡 모든 실시간 이벤트 구독 완료');
+  console.log('📡 실시간 이벤트 구독 완료 (errors only; DB via databaseStore)');
   }
 
-  /**
-   * 크롤링 진행 상황 이벤트 구독
-   */
-  private async subscribeToProgressEvents(): Promise<() => void> {
-    return tauriApi.subscribeToProgress((progress: CrawlingProgress) => {
-      console.log('📊 진행 상황 업데이트:', progress);
-      
-      // Backend 이벤트 수신 로깅
-      loggingService.info(
-        `Progress Event: ${progress.current_stage} - ${progress.percentage}% (${progress.current}/${progress.total}) - ${progress.message}`,
-        'RealtimeManager'
-      );
-      
-      crawlerStore.setProgress(progress);
-      this.updateEventStats('progress');
-    });
-  }
-
-  /**
-   * 작업 상태 이벤트 구독
-   */
-  private async subscribeToTaskEvents(): Promise<() => void> {
-    return tauriApi.subscribeToTaskStatus((taskStatus: CrawlingTaskStatus) => {
-      console.log('📋 작업 상태 업데이트:', taskStatus);
-      
-      // Backend 작업 상태 이벤트 로깅
-      loggingService.info(
-        `Task Event: ${taskStatus.task_id} - ${taskStatus.status} - ${taskStatus.message || 'No message'}`,
-        'RealtimeManager'
-      );
-      
-      crawlerStore.updateTaskStatus(taskStatus);
-      this.updateEventStats('task');
-    });
-  }
-
-  /**
-   * 스테이지 변경 이벤트 구독
-   */
-  private async subscribeToStageEvents(): Promise<() => void> {
-    return tauriApi.subscribeToStageChange((data) => {
-      console.log(`🔄 스테이지 변경: ${data.from} → ${data.to}`);
-      
-      // Backend 스테이지 변경 이벤트 로깅
-      loggingService.info(
-        `Stage Change Event: ${data.from} → ${data.to} - ${data.message}`,
-        'RealtimeManager'
-      );
-      
-      uiStore.showInfo(`${data.message}`, '단계 변경');
-      this.updateEventStats('stage');
-    });
-  }
+  // 진행/작업/스테이지/DB/완료 레거시 구독은 제거되었습니다. 각 스토어나 훅이 actor-* 브리지로 직접 처리합니다.
 
   /**
    * 에러 이벤트 구독
    */
   private async subscribeToErrorEvents(): Promise<() => void> {
-    return tauriApi.subscribeToErrors((error) => {
+    return tauriApi.subscribeToErrorsUnified((error) => {
       console.error('❌ 크롤링 에러:', error);
       
       // Backend 에러 이벤트 로깅
       loggingService.error(
-        `Error Event: ${error.message} - Recoverable: ${error.recoverable}`,
+        `Error Event: ${error?.message ?? JSON.stringify(error)} - Recoverable: ${String(error?.recoverable ?? '')}`,
         'RealtimeManager'
       );
       
-      crawlerStore.setError(error.message);
+      crawlerStore.setError(error?.message ?? 'Unknown error');
       
-      if (error.recoverable) {
-        uiStore.showWarning(error.message, '복구 가능한 오류');
+      if (error?.recoverable) {
+        uiStore.showWarning(error?.message ?? 'Recoverable error', '복구 가능한 오류');
       } else {
-        uiStore.showError(error.message, '치명적 오류');
+        uiStore.showError(error?.message ?? 'Fatal error', '치명적 오류');
       }
       
       this.updateEventStats('error');
     });
   }
 
-  /**
-   * 데이터베이스 이벤트 구독
-   */
-  private async subscribeToDatabaseEvents(): Promise<() => void> {
-    return tauriApi.subscribeToDatabaseUpdates((stats: DatabaseStats) => {
-      console.log('🗄️ 데이터베이스 통계 업데이트:', stats);
-      
-      // Backend 데이터베이스 이벤트 로깅
-      loggingService.info(
-        `Database Event: Total: ${stats.total_products}, Health: ${stats.health_status}, Size: ${stats.storage_size}`,
-        'RealtimeManager'
-      );
-      
-      databaseStore.setStats(stats);
-      this.updateEventStats('database');
-    });
-  }
-
-  /**
-   * 완료 이벤트 구독
-   */
-  private async subscribeToCompletionEvents(): Promise<() => void> {
-    return tauriApi.subscribeToCompletion((result: CrawlingResult) => {
-      console.log('🎉 크롤링 완료:', result);
-      
-      // Backend 완료 이벤트 로깅
-      loggingService.info(
-        `Completion Event: Total: ${result.total_processed}, New: ${result.new_items}, Updated: ${result.updated_items}, Errors: ${result.errors}, Duration: ${result.duration_ms}ms`,
-        'RealtimeManager'
-      );
-      
-      crawlerStore.setResult(result);
-      
-      uiStore.showSuccess(
-        `총 ${result.total_processed}개 항목 처리 완료 (신규: ${result.new_items}, 업데이트: ${result.updated_items})`,
-        '크롤링 완료'
-      );
-      
-      this.updateEventStats('completion');
-    });
-  }
+  // DB/완료 알림도 각 스토어/컴포넌트가 actor-브리지로 처리합니다.
 
   // =========================================================================
   // 상태 동기화

@@ -408,22 +408,7 @@ export class TauriApiService {
   // Real-time Event Subscription
   // =========================================================================
 
-  /**
-   * Subscribe to crawling progress updates
-   */
-  async subscribeToProgress(callback: (progress: CrawlingProgress) => void): Promise<UnlistenFn> {
-    const unlisten = await listen<CrawlingProgress>('crawling-progress', (event) => {
-      // 저수준 이벤트 수신 로깅
-      loggingService.debug(
-        `Raw Event Received: crawling-progress - ${JSON.stringify(event.payload)}`,
-        'TauriApiService'
-      );
-      callback(event.payload);
-    });
-    
-    this.eventListeners.set('crawling-progress', unlisten);
-    return unlisten;
-  }
+  // Deprecated legacy subscriptions removed: progress, task-status, stage-change, database-update, completion, crawling-stopped
 
   /**
    * Subscribe to concurrency broadcast events (optional)
@@ -464,101 +449,30 @@ export class TauriApiService {
     return unlisten;
   }
 
-  /**
-   * Subscribe to individual task status updates
-   */
-  async subscribeToTaskStatus(callback: (status: CrawlingTaskStatus) => void): Promise<UnlistenFn> {
-    const unlisten = await listen<CrawlingTaskStatus>('crawling-task-update', (event) => {
-      // 저수준 이벤트 수신 로깅
-      loggingService.debug(
-        `Raw Event Received: crawling-task-update - ${JSON.stringify(event.payload)}`,
-        'TauriApiService'
-      );
-      callback(event.payload);
-    });
-    
-    this.eventListeners.set('crawling-task-update', unlisten);
-    return unlisten;
-  }
+  
+  
+  
 
-  /**
-   * Subscribe to crawling stage changes
-   */
-  async subscribeToStageChange(
-    callback: (data: { from: string; to: string; message: string }) => void
-  ): Promise<UnlistenFn> {
-    const unlisten = await listen<{ from: string; to: string; message: string }>(
-      'crawling-stage-change',
-      (event) => {
-        callback(event.payload);
-      }
-    );
-    
-    this.eventListeners.set('crawling-stage-change', unlisten);
-    return unlisten;
-  }
-
-  /**
-   * Subscribe to error notifications
-   */
-  async subscribeToErrors(
-    callback: (error: { error_id: string; message: string; stage: string; recoverable: boolean }) => void
-  ): Promise<UnlistenFn> {
-    const unlisten = await listen<{ error_id: string; message: string; stage: string; recoverable: boolean }>(
-      'crawling-error',
-      (event) => {
-        callback(event.payload);
-      }
-    );
-    
-    this.eventListeners.set('crawling-error', unlisten);
-    return unlisten;
-  }
-
-  /**
-   * Subscribe to database statistics updates
-   */
-  async subscribeToDatabaseUpdates(callback: (stats: DatabaseStats) => void): Promise<UnlistenFn> {
-    const unlisten = await listen<DatabaseStats>('database-update', (event) => {
-      callback(event.payload);
-    });
-    
-    this.eventListeners.set('database-update', unlisten);
-    return unlisten;
-  }
-
-  /**
-   * Subscribe to crawling completion events
-   */
-  async subscribeToCompletion(callback: (result: CrawlingResult) => void): Promise<UnlistenFn> {
-    const unlisten = await listen<CrawlingResult>('crawling-completed', (event) => {
-      callback(event.payload);
-    });
-    
-    this.eventListeners.set('crawling-completed', unlisten);
-    return unlisten;
-  }
-
-  /**
-   * Subscribe to crawling stop events
-   */
-  async subscribeToCrawlingStopped(callback: (data: { status: string; message: string; timestamp: string }) => void): Promise<UnlistenFn> {
-    const unlisten = await listen<{ status: string; message: string; timestamp: string }>(
-      'crawling-stopped',
-      (event) => {
-        callback(event.payload);
-      }
-    );
-    
-    this.eventListeners.set('crawling-stopped', unlisten);
-    return unlisten;
-  }
+  
 
   // =========================================================================
   // 원자적 태스크 이벤트 구독 (proposal5.md 구현)
   // =========================================================================
   // Live Production Line Event Subscriptions
   // =========================================================================
+
+  /**
+   * Subscribe to atomic task updates (emitted as 'atomic-task-update' by backend)
+   */
+  async subscribeToAtomicTaskUpdates(
+    callback: (event: AtomicTaskEvent) => void
+  ): Promise<UnlistenFn> {
+    const unlisten = await listen<AtomicTaskEvent>('atomic-task-update', (evt) => {
+      callback(evt.payload);
+    });
+    this.eventListeners.set('atomic-task-update', unlisten);
+    return unlisten;
+  }
 
   /**
    * Subscribe to task started events specifically
@@ -583,63 +497,27 @@ export class TauriApiService {
   }
 
   /**
-   * Subscribe to task failed events specifically
+   * Subscribe to system state updates (snapshot-style)
    */
-  async subscribeToTaskFailed(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
-    return this.subscribeToAtomicTaskUpdates((event) => {
-      if (event.status === 'Error') {
-        callback(event);
-      }
+  async subscribeToSystemStateUpdates(
+    callback: (state: SystemStatePayload) => void
+  ): Promise<UnlistenFn> {
+    const unlisten = await listen<SystemStatePayload>('system-state-update', (evt) => {
+      callback(evt.payload);
     });
-  }
-
-  /**
-   * Subscribe to task retrying events specifically
-   */
-  async subscribeToTaskRetrying(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
-    return this.subscribeToAtomicTaskUpdates((event) => {
-      if (event.status === 'Retrying') {
-        callback(event);
-      }
-    });
-  }
-
-  // =========================================================================
-  // Live Production Line Event Subscriptions
-  // =========================================================================
-
-  /**
-   * Subscribe to system state updates (macro-level information)
-   */
-  async subscribeToSystemStateUpdates(callback: (state: SystemStatePayload) => void): Promise<UnlistenFn> {
-    const unlisten = await listen<SystemStatePayload>('system-state-update', (event) => {
-      callback(event.payload);
-    });
-    
     this.eventListeners.set('system-state-update', unlisten);
     return unlisten;
   }
 
   /**
-   * Subscribe to atomic task events (micro-level information)
+   * Subscribe to live system state updates (graph-friendly aggregate)
    */
-  async subscribeToAtomicTaskUpdates(callback: (event: AtomicTaskEvent) => void): Promise<UnlistenFn> {
-    const unlisten = await listen<AtomicTaskEvent>('atomic-task-update', (event) => {
-      callback(event.payload);
+  async subscribeToLiveSystemState(
+    callback: (state: LiveSystemState) => void
+  ): Promise<UnlistenFn> {
+    const unlisten = await listen<LiveSystemState>('live-state-update', (evt) => {
+      callback(evt.payload);
     });
-    
-    this.eventListeners.set('atomic-task-update', unlisten);
-    return unlisten;
-  }
-
-  /**
-   * Subscribe to live system state updates (comprehensive Live Production Line data)
-   */
-  async subscribeToLiveSystemState(callback: (state: LiveSystemState) => void): Promise<UnlistenFn> {
-    const unlisten = await listen<LiveSystemState>('live-state-update', (event) => {
-      callback(event.payload);
-    });
-    
     this.eventListeners.set('live-state-update', unlisten);
     return unlisten;
   }
@@ -647,15 +525,7 @@ export class TauriApiService {
   /**
    * Subscribe to detailed crawling events (hierarchical event monitor)
    */
-  async subscribeToDetailedCrawlingEvents(callback: (event: any) => void): Promise<UnlistenFn> {
-    const unlisten = await listen<any>('detailed-crawling-event', (event) => {
-      console.log('[Debug] [TauriApiService] Raw Detailed Event Received:', event.payload);
-      callback(event.payload);
-    });
-    
-    this.eventListeners.set('detailed-crawling-event', unlisten);
-    return unlisten;
-  }
+    // legacy detailed-crawling-event removed
 
   /**
    * Subscribe to all Live Production Line events with proper typing
@@ -717,17 +587,11 @@ export class TauriApiService {
       'actor-batch-report',
       'actor-session-report',
   'actor-next-plan-ready',
-      // Phases / Shutdown
-      'actor-phase-started',
-      'actor-phase-completed',
-      'actor-phase-aborted',
+  // Shutdown only (Phase* removed)
       'actor-shutdown-requested',
       'actor-shutdown-completed',
-      // Page & Detail lifecycle (Stage2/3)
-      'actor-page-task-started',
-      'actor-page-task-completed',
-      'actor-page-task-failed',
-  // detail-task-* removed in favor of product lifecycle events
+  // Page & Detail lifecycle (Stage2/3)
+  // page-task-* removed in favor of consolidated page-lifecycle events
       'actor-detail-concurrency-downshifted',
       'actor-stage-item-started',
       'actor-stage-item-completed',
@@ -802,6 +666,83 @@ export class TauriApiService {
   }
 
   /**
+   * Subscribe to unified actor-event stream optionally filtering by variant.
+   * Falls back to actor-* names if unified stream isn't present.
+   */
+  async subscribeToUnifiedActorEvents(options: {
+    variants?: string[];
+    onEvent: (payload: any) => void;
+  }): Promise<() => void> {
+    const unsubs: UnlistenFn[] = [];
+    try {
+      const un = await listen<any>('actor-event', (evt) => {
+        const p = evt?.payload ?? {};
+        if (options.variants && options.variants.length) {
+          if (typeof p.variant === 'string' && options.variants.includes(p.variant)) {
+            options.onEvent(p);
+          }
+        } else {
+          options.onEvent(p);
+        }
+      });
+      unsubs.push(un);
+    } catch (e) {
+      // ignore if unified not available
+    }
+    return () => unsubs.forEach((u) => u());
+  }
+
+  /** Subscribe to actor-page-lifecycle events */
+  async subscribeToPageLifecycle(callback: (payload: any) => void): Promise<UnlistenFn> {
+    const un = await listen<any>('actor-page-lifecycle', (evt) => callback(evt.payload));
+    this.eventListeners.set('actor-page-lifecycle', un);
+    return un;
+  }
+
+  /** Subscribe to actor-product-lifecycle events */
+  async subscribeToProductLifecycle(callback: (payload: any) => void): Promise<UnlistenFn> {
+    const un = await listen<any>('actor-product-lifecycle', (evt) => callback(evt.payload));
+    this.eventListeners.set('actor-product-lifecycle', un);
+    return un;
+  }
+
+  /** Subscribe to actor-progress events */
+  async subscribeToActorProgress(callback: (payload: any) => void): Promise<UnlistenFn> {
+    const un = await listen<any>('actor-progress', (evt) => callback(evt.payload));
+    this.eventListeners.set('actor-progress', un);
+    return un;
+  }
+
+  /**
+   * Unified error subscription (actor-only): listens to actor-bridge anomaly/error-like events.
+   */
+  async subscribeToErrorsUnified(
+    callback: (error: any) => void
+  ): Promise<() => void> {
+    const unsubs: UnlistenFn[] = [];
+    // Actor bridge: anomalies or error/failed variants
+    try {
+      const unActor = await this.subscribeToActorBridgeEvents((name, payload) => {
+        const variant = payload?.variant as string | undefined;
+        if (
+          name === 'actor-persistence-anomaly' ||
+          name === 'actor-validation-anomaly' ||
+          name === 'actor-preflight-diagnostics' ||
+          name === 'actor-session-failed' ||
+          name === 'actor-batch-failed' ||
+          name === 'actor-stage-failed' ||
+          (variant && /anomaly|error|failed/i.test(variant))
+        ) {
+          callback(payload);
+        }
+      });
+      unsubs.push(unActor);
+    } catch {}
+
+    return () => unsubs.forEach((u) => u());
+  }
+
+  /**
    * Unsubscribe from a specific event type
    */
   unsubscribeFromEvent(eventType: string): void {
@@ -829,44 +770,7 @@ export class TauriApiService {
     return Array.from(this.eventListeners.keys());
   }
 
-  // =========================================================================
-  // Convenience Methods
-  // =========================================================================
-
-  /**
-   * Subscribe to all crawling-related events at once
-   */
-  async subscribeToAllCrawlingEvents(callbacks: {
-    onProgress?: (progress: CrawlingProgress) => void;
-    onTaskUpdate?: (status: CrawlingTaskStatus) => void;
-    onStageChange?: (data: { from: string; to: string; message: string }) => void;
-    onError?: (error: { error_id: string; message: string; stage: string; recoverable: boolean }) => void;
-    onDatabaseUpdate?: (stats: DatabaseStats) => void;
-    onCompletion?: (result: CrawlingResult) => void;
-  }): Promise<void> {
-    const subscriptions: Promise<UnlistenFn>[] = [];
-
-    if (callbacks.onProgress) {
-      subscriptions.push(this.subscribeToProgress(callbacks.onProgress));
-    }
-    if (callbacks.onTaskUpdate) {
-      subscriptions.push(this.subscribeToTaskStatus(callbacks.onTaskUpdate));
-    }
-    if (callbacks.onStageChange) {
-      subscriptions.push(this.subscribeToStageChange(callbacks.onStageChange));
-    }
-    if (callbacks.onError) {
-      subscriptions.push(this.subscribeToErrors(callbacks.onError));
-    }
-    if (callbacks.onDatabaseUpdate) {
-      subscriptions.push(this.subscribeToDatabaseUpdates(callbacks.onDatabaseUpdate));
-    }
-    if (callbacks.onCompletion) {
-      subscriptions.push(this.subscribeToCompletion(callbacks.onCompletion));
-    }
-
-    await Promise.all(subscriptions);
-  }
+  // Convenience helper removed; prefer explicit actor-bridge subscriptions per feature.
 
   // =========================================================================
   // Configuration Management Commands

@@ -11,7 +11,8 @@ use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
-use crate::domain::events::CrawlingStage;
+// Decoupled from legacy domain::events. Use a simple stage name representation.
+pub type StageName = String;
 
 /// 재시도 관리자
 #[derive(Clone)]
@@ -26,7 +27,7 @@ pub struct RetryManager {
 #[derive(Debug, Clone)]
 pub struct RetryItem {
     pub item_id: String,
-    pub stage: CrawlingStage,
+    pub stage: StageName,
     pub attempt_count: u32,
     pub last_error: String,
     pub next_retry_time: DateTime<Utc>,
@@ -48,7 +49,7 @@ pub struct RetryAttempt {
 /// 실패 분류기 트레이트
 #[async_trait::async_trait]
 pub trait FailureClassifier: Send + Sync {
-    async fn classify_error(&self, error: &str, stage: CrawlingStage) -> ErrorClassification;
+    async fn classify_error(&self, error: &str, stage: StageName) -> ErrorClassification;
     async fn calculate_backoff(&self, attempt_count: u32) -> Duration;
     async fn should_retry(&self, classification: &ErrorClassification, attempt_count: u32) -> bool;
 }
@@ -122,7 +123,7 @@ impl RetryManager {
     pub async fn add_failed_item(
         &self,
         item_id: String,
-        stage: CrawlingStage,
+    stage: StageName,
         error: String,
         url: String,
         metadata: HashMap<String, String>,
@@ -325,7 +326,7 @@ impl StandardFailureClassifier {
 
 #[async_trait::async_trait]
 impl FailureClassifier for StandardFailureClassifier {
-    async fn classify_error(&self, error: &str, _stage: CrawlingStage) -> ErrorClassification {
+    async fn classify_error(&self, error: &str, _stage: StageName) -> ErrorClassification {
         let error_lower = error.to_lowercase();
 
         // HTTP 상태 코드 기반 분류

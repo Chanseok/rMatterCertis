@@ -1,13 +1,13 @@
 //! Actor System Commands for Tauri Integration
 //!
-//! Commands to test and use the Actor system from the UI
+// Commands to test and use the Actor system from the UI
 
 use crate::application::{AppState, shared_state::SharedStateCache};
 use crate::crawl_engine::actor_event_bridge::start_actor_event_bridge;
 use crate::crawl_engine::actors::SessionActor;
 use crate::crawl_engine::actors::contract::ACTOR_CONTRACT_VERSION;
 use crate::crawl_engine::actors::types::{
-    BatchConfig, CrawlPhase, CrawlingConfig, ExecutionPlan, PageRange, SessionSummary,
+    BatchConfig, CrawlPhase, CrawlingConfig, ExecutionPlan, PageRange, SessionSummary, SimpleMetrics, TaskKind,
 };
 use crate::crawl_engine::channels::types::ActorCommand; // 올바른 ActorCommand 사용
 use crate::crawl_engine::channels::types::AppEvent;
@@ -194,7 +194,7 @@ async fn bootstrap_and_spawn_session(
         }
         phases.push(CrawlPhase::Finalize);
         let total_phase_start = std::time::Instant::now();
-        for phase in phases {
+    for phase in phases {
             let mut emitted_pause_event = false;
             loop {
                 if *shutdown_req_rx.borrow() {
@@ -219,21 +219,9 @@ async fn bootstrap_and_spawn_session(
                 }
                 break;
             }
-            if *shutdown_req_rx.borrow() {
-                let _ = actor_event_tx.send(AppEvent::PhaseAborted {
-                    session_id: exec_clone_for_loop.session_id.clone(),
-                    phase: phase.clone(),
-                    reason: "shutdown_requested".into(),
-                    timestamp: Utc::now(),
-                });
-                break;
-            }
+            if *shutdown_req_rx.borrow() { break; }
             let phase_started_at = std::time::Instant::now();
-            let _ = actor_event_tx.send(AppEvent::PhaseStarted {
-                session_id: exec_clone_for_loop.session_id.clone(),
-                phase: phase.clone(),
-                timestamp: Utc::now(),
-            });
+            // PhaseStarted removed
             let phase_res = match phase {
                 CrawlPhase::ListPages => execute_session_actor_with_execution_plan(
                     exec_clone_for_loop.clone(),
@@ -249,23 +237,10 @@ async fn bootstrap_and_spawn_session(
             };
             let dur_ms = phase_started_at.elapsed().as_millis() as u64;
             match phase_res {
-                Ok(ok) => {
-                    let _ = actor_event_tx.send(AppEvent::PhaseCompleted {
-                        session_id: exec_clone_for_loop.session_id.clone(),
-                        phase: phase.clone(),
-                        succeeded: ok,
-                        duration_ms: dur_ms,
-                        timestamp: Utc::now(),
-                    });
-                }
+                Ok(_ok) => { /* PhaseCompleted removed */ }
                 Err(e) => {
                     error!("Phase {:?} failed: {}", phase, e);
-                    let _ = actor_event_tx.send(AppEvent::PhaseAborted {
-                        session_id: exec_clone_for_loop.session_id.clone(),
-                        phase: phase.clone(),
-                        reason: format!("{}", e),
-                        timestamp: Utc::now(),
-                    });
+                    // PhaseAborted removed
                     break;
                 }
             }
@@ -2759,10 +2734,26 @@ async fn execute_session_actor_with_execution_plan(
             let mut per_page_start: HashMap<u32, std::time::Instant> = HashMap::new();
             for p in page_chunk {
                 per_page_start.insert(*p, std::time::Instant::now());
-                let _ = actor_event_tx.send(AppEvent::PageTaskStarted {
+                // Emit native PageLifecycle
+                let _ = actor_event_tx.send(AppEvent::PageLifecycle {
                     session_id: execution_plan.session_id.clone(),
-                    page: *p,
                     batch_id: Some(batch_id.clone()),
+                    page_number: *p,
+                    status: "fetch_started".to_string(),
+                    metrics: None,
+                    timestamp: Utc::now(),
+                });
+                // Emit native TaskLifecycle (page) started
+                let _ = actor_event_tx.send(AppEvent::TaskLifecycle {
+                    session_id: execution_plan.session_id.clone(),
+                    batch_id: Some(batch_id.clone()),
+                    task_kind: TaskKind::Page,
+                    page_number: Some(*p),
+                    product_ref: None,
+                    status: "fetch_started".to_string(),
+                    retry: None,
+                    duration_ms: None,
+                    metrics: None,
                     timestamp: Utc::now(),
                 });
             }
@@ -2799,13 +2790,26 @@ async fn execute_session_actor_with_execution_plan(
                                 rec.2 = now;
                             })
                             .or_insert((1, now, now));
-                        // 페이지 실패 이벤트 (final_failure=true)
-                        let _ = actor_event_tx.send(AppEvent::PageTaskFailed {
+                        // Emit native PageLifecycle failed
+                        let _ = actor_event_tx.send(AppEvent::PageLifecycle {
                             session_id: execution_plan.session_id.clone(),
-                            page: *p,
                             batch_id: Some(batch_id.clone()),
-                            error: err_s,
-                            final_failure: true,
+                            page_number: *p,
+                            status: "failed".to_string(),
+                            metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: Some("batch_error_no_retry".to_string()) }),
+                            timestamp: Utc::now(),
+                        });
+                        // Emit native TaskLifecycle (page) failed
+                        let _ = actor_event_tx.send(AppEvent::TaskLifecycle {
+                            session_id: execution_plan.session_id.clone(),
+                            batch_id: Some(batch_id.clone()),
+                            task_kind: TaskKind::Page,
+                            page_number: Some(*p),
+                            product_ref: None,
+                            status: "failed".to_string(),
+                            retry: None,
+                            duration_ms: None,
+                            metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: Some("batch_error_no_retry".to_string()) }),
                             timestamp: Utc::now(),
                         });
                     }
@@ -2829,11 +2833,26 @@ async fn execute_session_actor_with_execution_plan(
                     .get(p)
                     .map(|t| t.elapsed().as_millis() as u64)
                     .unwrap_or_default();
-                let _ = actor_event_tx.send(AppEvent::PageTaskCompleted {
+                // Emit native PageLifecycle completed
+                let _ = actor_event_tx.send(AppEvent::PageLifecycle {
                     session_id: execution_plan.session_id.clone(),
-                    page: *p,
                     batch_id: Some(batch_id.clone()),
-                    duration_ms,
+                    page_number: *p,
+                    status: "fetch_completed".to_string(),
+                    metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: None }),
+                    timestamp: Utc::now(),
+                });
+                // Emit native TaskLifecycle (page) completed
+                let _ = actor_event_tx.send(AppEvent::TaskLifecycle {
+                    session_id: execution_plan.session_id.clone(),
+                    batch_id: Some(batch_id.clone()),
+                    task_kind: TaskKind::Page,
+                    page_number: Some(*p),
+                    product_ref: None,
+                    status: "fetch_completed".to_string(),
+                    retry: None,
+                    duration_ms: Some(duration_ms),
+                    metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: None }),
                     timestamp: Utc::now(),
                 });
                 let registry = session_registry();

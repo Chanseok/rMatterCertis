@@ -64,10 +64,13 @@ export const dashboardEvents = {
     });
   },
 
-  // 크롤링 진행 상황 업데이트
+  // 크롤링 진행 상황 업데이트 (unified actor-event 기반)
   async onCrawlingProgress(callback: (progress: any) => void) {
-    return await listen('crawling_progress', (event) => {
-      callback(event.payload);
+    return await listen<any>('actor-event', (event) => {
+      const payload = event.payload;
+      if (payload && payload.variant === 'Progress') {
+        callback(payload);
+      }
     });
   },
 

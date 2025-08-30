@@ -4,7 +4,7 @@
 //! the next pages to crawl based on the current database state and site information.
 
 use crate::application::AppState;
-use crate::domain::events::CrawlingProgress;
+use crate::infrastructure::crawling_service_impls::RangeSimpleProgress;
 use crate::domain::pagination::CanonicalPageIdCalculator;
 use crate::infrastructure::DatabaseConnection;
 use crate::infrastructure::config::ConfigManager;
@@ -523,13 +523,13 @@ pub async fn demo_prompts6_calculation() -> Result<String, String> {
 }
 
 /// Convert internal progress to API response format
-fn convert_progress(progress: &CrawlingProgress) -> CrawlingProgressInfo {
+fn convert_progress(progress: &RangeSimpleProgress) -> CrawlingProgressInfo {
     CrawlingProgressInfo {
-        total_products: progress.total,
-        saved_products: progress.current,
-        progress_percentage: progress.percentage,
-        max_page_id: progress.current_batch.map(|b| b as i32),
-        max_index_in_page: progress.total_batches.map(|b| b as i32),
-        is_completed: progress.status == crate::domain::events::CrawlingStatus::Completed,
+    total_products: progress.total,
+    saved_products: progress.current,
+    progress_percentage: progress.percentage,
+    max_page_id: progress.current_batch.map(|b| b as i32),
+    max_index_in_page: progress.total_batches.map(|b| b as i32),
+    is_completed: progress.is_completed,
     }
 }

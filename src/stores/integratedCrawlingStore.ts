@@ -249,8 +249,9 @@ export const integratedActions = {
     console.log('🔗 실시간 업데이트 시작');
     
     try {
-      // v4.0 아키텍처에 따른 이벤트 리스너 등록
-      const unlisten = await listen<SystemStatePayload>('crawling-system-update', (event) => {
+  // v4.0 아키텍처에 따른 이벤트 리스너 등록
+  // Backend broadcaster emits "system-state-update"
+  const unlisten = await listen<SystemStatePayload>('system-state-update', (event) => {
         setIntegratedState({
           systemState: event.payload,
           lastBackendUpdate: new Date().toISOString()
@@ -360,29 +361,14 @@ export const integratedActions = {
     try {
       console.log('🔄 실시간 이벤트 리스너 설정 중...');
       
-      // 시스템 상태 업데이트 리스너
-      await listen<SystemStatePayload>('system_state_update', (event) => {
+  // 시스템 상태 업데이트 리스너 (dash-case per backend)
+  await listen<SystemStatePayload>('system-state-update', (event) => {
         console.log('📡 시스템 상태 업데이트 수신:', event.payload);
         setIntegratedState('systemState', event.payload);
         setIntegratedState('lastBackendUpdate', new Date().toISOString());
       });
 
-      // 진행률 업데이트 리스너
-      await listen<any>('crawling_progress_update', (event) => {
-        console.log('📊 진행률 업데이트 수신:', event.payload);
-        if (integratedState.systemState) {
-          setIntegratedState('systemState', 'progress', event.payload);
-        }
-      });
-
-      // 에러 이벤트 리스너
-      await listen<any>('crawling_error', (event) => {
-        console.error('❌ 크롤링 에러 수신:', event.payload);
-        if (integratedState.systemState) {
-          setIntegratedState('systemState', 'errorCount', 
-            (integratedState.systemState.errorCount || 0) + 1);
-        }
-      });
+  // 진행/에러는 unified actor-event 기반 UI 경로를 사용합니다.
 
       console.log('✅ 실시간 이벤트 리스너 설정 완료');
     } catch (error) {

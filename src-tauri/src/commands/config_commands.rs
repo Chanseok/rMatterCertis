@@ -831,8 +831,8 @@ pub async fn get_crawling_status_check(
 ) -> Result<CrawlingStatusCheck, String> {
     info!("Frontend requesting crawling status check");
 
-    // Get database stats (inlined - legacy get_databasestats removed)
-    use crate::domain::events::DatabaseStats; // ensure struct in scope
+    // Get database stats (frontend-friendly type)
+    use crate::types::frontend_api::DatabaseStats;
     let db_stats = {
         let pool_guard = state.database_pool.read().await;
         let pool = pool_guard.as_ref().ok_or("Database pool not initialized")?;
@@ -846,12 +846,10 @@ pub async fn get_crawling_status_check(
                 .await
                 .ok();
         DatabaseStats {
-            total_products: total_products as u64,
-            total_devices: 0,
-            last_updated: chrono::Utc::now(),
-            storage_size: "N/A".to_string(),
-            incomplete_records: 0,
-            health_status: crate::domain::events::DatabaseHealth::Healthy,
+            total_products: total_products as u32,
+            products_added_today: 0,
+            last_updated: None,
+            database_size_bytes: 0,
         }
     };
 
@@ -860,7 +858,7 @@ pub async fn get_crawling_status_check(
     let current_time = chrono::Utc::now().to_rfc3339();
 
     // Analyze local database
-    let local_product_count = db_stats.total_products as u32;
+    let local_product_count = db_stats.total_products;
 
     // Get last crawl info from app_managed config
     let last_crawl_time = config.app_managed.last_successful_crawl.clone();

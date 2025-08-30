@@ -390,47 +390,9 @@ impl SystemStateBroadcaster {
         Ok(())
     }
 
-    /// 🔥 세션 이벤트 발송 (크롤링 라이프사이클)
-    pub fn emit_session_event(
-        &self,
-        session_id: String,
-        event_type: crate::domain::events::SessionEventType,
-        message: String,
-    ) -> anyhow::Result<()> {
-        use crate::domain::events::{CrawlingEvent, SessionEventType};
+    // Legacy session event emission removed (use ActorEvent bridge)
 
-        let event_name = match event_type {
-            SessionEventType::Started => "session-started",
-            SessionEventType::SiteStatusCheck => "session-site-status-check",
-            SessionEventType::BatchPlanning => "session-batch-planning",
-            SessionEventType::Completed => "session-completed",
-            SessionEventType::Failed => "session-failed",
-            SessionEventType::Cancelled => "session-cancelled",
-            SessionEventType::Paused => "session-paused",
-            SessionEventType::Resumed => "session-resumed",
-        };
-
-        let event = CrawlingEvent::SessionLifecycle {
-            session_id,
-            event_type,
-            message,
-            timestamp: chrono::Utc::now(),
-        };
-
-        self.app_handle.emit(event_name, &event)?;
-        Ok(())
-    }
-
-    /// 크롤링 에러 이벤트 발송
-    pub fn emit_crawling_error(&self, error_message: String) -> anyhow::Result<()> {
-        let payload = serde_json::json!({
-            "error": error_message,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        });
-
-        self.app_handle.emit("crawling-error", &payload)?;
-        Ok(())
-    }
+    // Legacy crawling error emission removed (use ActorEvent bridge)
 
     // 🔥 재시도 관련 이벤트 발송 메서드들 추가
     /// 재시도 시도 이벤트 발송
@@ -617,112 +579,19 @@ impl SystemStateBroadcaster {
         Ok(())
     }
 
-    /// 🔥 새로운 `CrawlingEvent` 기반 발송 메서드 추가
-    pub fn emit_site_status_check(
-        &self,
-        event: &crate::domain::events::CrawlingEvent,
-    ) -> anyhow::Result<()> {
-        self.app_handle.emit(event.event_name(), event)?;
-        Ok(())
-    }
+    // Legacy site status event removed (use AppEvent::PreflightDiagnostics)
 
-    /// 🔥 배치 이벤트 발송
-    pub fn emit_batch_event(
-        &self,
-        session_id: String,
-        batch_id: String,
-        stage: crate::domain::events::CrawlingStage,
-        event_type: crate::domain::events::BatchEventType,
-        message: String,
-        metadata: Option<crate::domain::events::BatchMetadata>,
-    ) -> anyhow::Result<()> {
-        let event = crate::domain::events::CrawlingEvent::BatchEvent {
-            session_id,
-            batch_id,
-            stage,
-            event_type,
-            message,
-            timestamp: chrono::Utc::now(),
-            metadata,
-        };
-        self.app_handle.emit(event.event_name(), &event)?;
-        Ok(())
-    }
+    // Legacy batch event emission removed (use AppEvent::Batch*)
 
-    /// 🔥 `ProductList` 페이지별 이벤트 발송
-    pub fn emit_product_list_page_event(
-        &self,
-        session_id: String,
-        batch_id: String,
-        page_number: u32,
-        event_type: crate::domain::events::PageEventType,
-        message: String,
-        metadata: Option<crate::domain::events::PageMetadata>,
-    ) -> anyhow::Result<()> {
-        let event = crate::domain::events::CrawlingEvent::ProductListPageEvent {
-            session_id,
-            batch_id,
-            page_number,
-            event_type,
-            message,
-            timestamp: chrono::Utc::now(),
-            metadata,
-        };
-        self.app_handle.emit(event.event_name(), &event)?;
-        Ok(())
-    }
+    // Legacy product list page events removed (use AppEvent::PageLifecycle)
 
-    /// 🔥 제품 상세정보 이벤트 발송
-    pub fn emit_product_detail_event(
-        &self,
-        session_id: String,
-        batch_id: String,
-        product_id: String,
-        product_url: String,
-        event_type: crate::domain::events::ProductEventType,
-        message: String,
-        metadata: Option<crate::domain::events::ProductMetadata>,
-    ) -> anyhow::Result<()> {
-        let event = crate::domain::events::CrawlingEvent::ProductDetailEvent {
-            session_id,
-            batch_id,
-            product_id,
-            product_url,
-            event_type,
-            message,
-            timestamp: chrono::Utc::now(),
-            metadata,
-        };
-        self.app_handle.emit(event.event_name(), &event)?;
-        Ok(())
-    }
+    // Legacy product detail events removed (use AppEvent::ProductLifecycle)
 
-    /// 🔥 동시성 상태 이벤트 발송
-    pub fn emit_concurrency_event(
-        &self,
-        event: crate::domain::events::ConcurrencyEvent,
-    ) -> anyhow::Result<()> {
-        self.app_handle.emit(event.event_name(), &event)?;
-        Ok(())
-    }
+    // Legacy concurrency event emission removed
 
-    /// 🔥 Validation 이벤트 발송
-    pub fn emit_validation_event(
-        &self,
-        event: crate::domain::events::ValidationEvent,
-    ) -> anyhow::Result<()> {
-        self.app_handle.emit(event.event_name(), &event)?;
-        Ok(())
-    }
+    // Legacy validation event emission removed
 
-    /// 🔥 DB 저장 이벤트 발송
-    pub fn emit_db_save_event(
-        &self,
-        event: crate::domain::events::DatabaseSaveEvent,
-    ) -> anyhow::Result<()> {
-        self.app_handle.emit(event.event_name(), &event)?;
-        Ok(())
-    }
+    // Legacy DB save event emission removed
 }
 
 /// 전역 브로드캐스터 인스턴스 생성 및 시작

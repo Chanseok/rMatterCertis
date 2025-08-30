@@ -1,35 +1,29 @@
 //! TypeScript 타입 생성을 위한 유틸리티
 //!
 //! Phase 4: ts-rs를 활용한 자동 타입 생성
+use ts_rs::TS;
 
 /// TypeScript 바인딩 생성 함수
 /// 프론트엔드와 백엔드 간 타입 동기화를 위해 TS 파일을 생성합니다.
 pub fn generate_ts_bindings() -> Result<(), Box<dyn std::error::Error>> {
-    // 기본 응답 타입들 생성
-    // 주석 처리된 부분들은 TS trait이 구현되지 않아서 임시로 비활성화
-    // TODO: 필요한 타입들에 #[derive(TS)] 추가 후 활성화
+    // 명시적으로 핵심 타입들을 내보내 TS 스키마를 강제 동기화한다.
+    // build.rs의 TS_RS_EXPORT_DIR도 동작하지만, 여기서 보완적으로 export_all_to를 호출해 최신 스키마를 보장한다.
+    let out_dir = "../src/types/generated";
 
-    /*
-    crate::crawl_engine::actors::types::ActorCommand::export_all_to("../src/types/")?;
-    crate::crawl_engine::actors::types::AppEvent::export_all_to("../src/types/")?;
-    crate::crawl_engine::actors::types::StageResult::export_all_to("../src/types/")?;
-    crate::crawl_engine::actors::types::StageItemResult::export_all_to("../src/types/")?;
-    crate::crawl_engine::actors::types::CrawlingConfig::export_all_to("../src/types/")?;
-    crate::crawl_engine::actors::types::BatchConfig::export_all_to("../src/types/")?;
-    crate::crawl_engine::actors::types::StageType::export_all_to("../src/types/")?;
-    crate::crawl_engine::actors::types::StageItem::export_all_to("../src/types/")?;
-
-    // Additional types exports
-    crate::crawl_engine::actors::types::StageError::export_all_to("../src/types/")?;
-    crate::crawl_engine::actors::types::StageSuccessResult::export_all_to("../src/types/")?;
-    crate::crawl_engine::actors::types::CollectionMetrics::export_all_to("../src/types/")?;
-    crate::crawl_engine::actors::types::ProcessingMetrics::export_all_to("../src/types/")?;
-    crate::crawl_engine::actors::types::FailedItem::export_all_to("../src/types/")?;
-
-    // Actor traits
-    crate::crawl_engine::actors::traits::ActorHealth::export_all_to("../src/types/")?;
-    crate::crawl_engine::actors::traits::ActorStatus::export_all_to("../src/types/")?;
-    */
+    // Core actor system types
+    crate::crawl_engine::actors::types::AppEvent::export_all_to(out_dir)?;
+    crate::crawl_engine::actors::types::ActorCommand::export_all_to(out_dir)?;
+    crate::crawl_engine::actors::types::StageResult::export_all_to(out_dir)?;
+    crate::crawl_engine::actors::types::StageItemResult::export_all_to(out_dir)?;
+    crate::crawl_engine::actors::types::CrawlingConfig::export_all_to(out_dir)?;
+    crate::crawl_engine::actors::types::BatchConfig::export_all_to(out_dir)?;
+    crate::crawl_engine::actors::types::StageType::export_all_to(out_dir)?;
+    crate::crawl_engine::actors::types::StageItem::export_all_to(out_dir)?;
+    crate::crawl_engine::actors::types::CrawlPhase::export_all_to(out_dir)?;
+    crate::crawl_engine::actors::types::SessionSummary::export_all_to(out_dir)?;
+    crate::crawl_engine::actors::types::PerformanceMetrics::export_all_to(out_dir)?;
+    crate::crawl_engine::actors::types::SimpleMetrics::export_all_to(out_dir)?;
+    crate::crawl_engine::actors::types::TaskKind::export_all_to(out_dir)?;
 
     println!("TypeScript bindings generated successfully!");
     Ok(())
