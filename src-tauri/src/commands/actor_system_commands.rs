@@ -2759,12 +2759,14 @@ async fn execute_session_actor_with_execution_plan(
             let mut per_page_start: HashMap<u32, std::time::Instant> = HashMap::new();
             for p in page_chunk {
                 per_page_start.insert(*p, std::time::Instant::now());
-                let _ = actor_event_tx.send(AppEvent::PageTaskStarted {
-                    session_id: execution_plan.session_id.clone(),
-                    page: *p,
-                    batch_id: Some(batch_id.clone()),
-                    timestamp: Utc::now(),
-                });
+                if crate::infrastructure::features::feature_emit_pagetask_legacy() {
+                    let _ = actor_event_tx.send(AppEvent::PageTaskStarted {
+                        session_id: execution_plan.session_id.clone(),
+                        page: *p,
+                        batch_id: Some(batch_id.clone()),
+                        timestamp: Utc::now(),
+                    });
+                }
                 // Also emit native PageLifecycle (additive)
                 let _ = actor_event_tx.send(AppEvent::PageLifecycle {
                     session_id: execution_plan.session_id.clone(),
@@ -2809,14 +2811,16 @@ async fn execute_session_actor_with_execution_plan(
                             })
                             .or_insert((1, now, now));
                         // 페이지 실패 이벤트 (final_failure=true)
-                        let _ = actor_event_tx.send(AppEvent::PageTaskFailed {
-                            session_id: execution_plan.session_id.clone(),
-                            page: *p,
-                            batch_id: Some(batch_id.clone()),
-                            error: err_s,
-                            final_failure: true,
-                            timestamp: Utc::now(),
-                        });
+                        if crate::infrastructure::features::feature_emit_pagetask_legacy() {
+                            let _ = actor_event_tx.send(AppEvent::PageTaskFailed {
+                                session_id: execution_plan.session_id.clone(),
+                                page: *p,
+                                batch_id: Some(batch_id.clone()),
+                                error: err_s,
+                                final_failure: true,
+                                timestamp: Utc::now(),
+                            });
+                        }
                         // Also emit native PageLifecycle failed
                         let _ = actor_event_tx.send(AppEvent::PageLifecycle {
                             session_id: execution_plan.session_id.clone(),
@@ -2847,13 +2851,15 @@ async fn execute_session_actor_with_execution_plan(
                     .get(p)
                     .map(|t| t.elapsed().as_millis() as u64)
                     .unwrap_or_default();
-                let _ = actor_event_tx.send(AppEvent::PageTaskCompleted {
-                    session_id: execution_plan.session_id.clone(),
-                    page: *p,
-                    batch_id: Some(batch_id.clone()),
-                    duration_ms,
-                    timestamp: Utc::now(),
-                });
+                if crate::infrastructure::features::feature_emit_pagetask_legacy() {
+                    let _ = actor_event_tx.send(AppEvent::PageTaskCompleted {
+                        session_id: execution_plan.session_id.clone(),
+                        page: *p,
+                        batch_id: Some(batch_id.clone()),
+                        duration_ms,
+                        timestamp: Utc::now(),
+                    });
+                }
                 // Also emit native PageLifecycle completed
                 let _ = actor_event_tx.send(AppEvent::PageLifecycle {
                     session_id: execution_plan.session_id.clone(),
