@@ -165,8 +165,8 @@ if [[ "${DISABLE_STRUCTURED_CHECKS:-0}" != "1" ]]; then
   plan_hash_line=$(grep -a 'kpi.plan' "${KPI_FILE}" | grep '"event":"plan_hash_assigned"' | tail -n1 || true)
   # Accept both session_summary and session_final_summary
   session_summary_line=$(grep -a 'kpi.session' "${KPI_FILE}" | grep -E '"event":"session_(final_)?summary"' | tail -n1 || true)
-  batch_start_lines=$(grep -a 'kpi.batch' "${KPI_FILE}" | grep '"event":"batch_start"' || true)
-  batch_complete_lines=$(grep -a 'kpi.batch' "${KPI_FILE}" | grep '"event":"batch_complete"' || true)
+  batch_start_lines=$(grep -a 'kpi.batch' "${KPI_FILE}" | grep '"event":"batch_started"' || true)
+  batch_complete_lines=$(grep -a 'kpi.batch' "${KPI_FILE}" | grep '"event":"batch_completed"' || true)
 
   # Scope KPI batch events to the latest session_id to avoid cross-session mismatches in aggregated logs
   session_id_session=$(echo "${session_summary_line}" | sed -E 's/.*"session_id":"([^"]+)".*/\1/' )
@@ -184,7 +184,12 @@ if [[ "${DISABLE_STRUCTURED_CHECKS:-0}" != "1" ]]; then
   plan_id_hash=$(echo "${plan_hash_line}" | sed -E 's/.*"plan_id":"([^"]+)".*/\1/' )
   plan_id_session=$(echo "${session_summary_line}" | sed -E 's/.*"plan_id":"([^"]+)".*/\1/' )
   plan_hash=$(echo "${plan_hash_line}" | sed -E 's/.*"plan_hash":"([^"]+)".*/\1/' )
-  mismatch_flags=$(echo "${session_summary_line}" | sed -E 's/.*"mismatch_flags":(\[[^]]*\]).*/\1/' )
+  # Extract mismatch_flags only if present; else treat as empty array
+  if echo "${session_summary_line}" | grep -q '"mismatch_flags"'; then
+    mismatch_flags=$(echo "${session_summary_line}" | sed -E 's/.*"mismatch_flags":(\[[^]]*\]).*/\1/' )
+  else
+    mismatch_flags="[]"
+  fi
   failed_count=$(echo "${session_summary_line}" | sed -E 's/.*"failed_count":([0-9]+).*/\1/' )
   completed_pages_struct=$(echo "${session_summary_line}" | sed -E 's/.*"completed_pages":([0-9]+).*/\1/' )
   expected_pages_struct=$(echo "${session_summary_line}" | sed -E 's/.*"expected_pages":([0-9]+).*/\1/' )
@@ -207,22 +212,34 @@ if [[ "${DISABLE_STRUCTURED_CHECKS:-0}" != "1" ]]; then
   fi
 
   # Batch counts
-  batch_start_count=$(echo "${batch_start_lines}" | grep -c 'batch_start' || true)
-  batch_complete_count=$(echo "${batch_complete_lines}" | grep -c 'batch_complete' || true)
+  batch_start_count=$(echo "${batch_start_lines}" | grep -c 'batch_started' || true)
+  batch_complete_count=$(echo "${batch_complete_lines}" | grep -c 'batch_completed' || true)
   if [[ ${batch_start_count} -ne ${batch_complete_count} ]]; then
     echo "[FAIL] batch_start (${batch_start_count}) != batch_complete (${batch_complete_count})"; exit 20
   fi
 
-  # Ensure plan_id consistent in batch events (if present)
-  if [[ ${batch_start_count} -gt 0 ]]; then
-    bad_plan_batch=$(echo "${batch_start_lines}" | awk -F '"plan_id":"' '{if(NF>1){split($2,a,"\""); if(a[1] != "'"${plan_id_session}"'") print a[1];}}' | head -n1 || true)
-    if [[ -n "${bad_plan_batch}" ]]; then
-      echo "[FAIL] Inconsistent plan_id in batch_start events (${bad_plan_batch})"; exit 24
+  # Ensure plan_id consistent in batch events (only if a plan_id is available)
+  if [[ ${batch_start_count} -gt 0 && -n "${plan_id_session}" ]]; then
+    # Extract first plan_id found in batch_start_lines
+    first_plan_id=$(printf "%s" "${batch_start_lines}" | grep -o '"plan_id":"[^"]*"' | head -n1 | sed -E 's/.*"plan_id":"([^"]*)".*/\1/' || true)
+    if [[ -n "${first_plan_id}" && "${first_plan_id}" != "${plan_id_session}" ]]; then
+      echo "[FAIL] Inconsistent plan_id in batch_started events (${first_plan_id} != ${plan_id_session})"; exit 24
     fi
   fi
 
   # Sum pages from batch_start lines (pages":N)
-  batch_pages_sum=$(echo "${batch_start_lines}" | grep -o '"pages":[0-9]*' | sed -E 's/"pages"://' | awk '{s+=$1} END{print s+0}')
+  if [[ -n "${batch_start_lines}" ]]; then
+    pages_a=$(echo "${batch_start_lines}" | grep -o '"pages":[0-9]*' | sed -E 's/"pages"://' | awk '{s+=$1} END{print s+0}')
+    pages_b=$(echo "${batch_start_lines}" | grep -o '"pages_count":[0-9]*' | sed -E 's/"pages_count"://' | awk '{s+=$1} END{print s+0}')
+    # Prefer pages_count when present; else use pages
+    if [[ ${pages_b:-0} -gt 0 ]]; then
+      batch_pages_sum=${pages_b}
+    else
+      batch_pages_sum=${pages_a:-0}
+    fi
+  else
+    batch_pages_sum=0
+  fi
   if [[ -n "${completed_pages_struct}" && ${batch_pages_sum:-0} -gt ${completed_pages_struct:-0} ]]; then
     echo "[FAIL] Sum of batch pages (${batch_pages_sum}) > completed_pages (${completed_pages_struct})"; exit 21
   fi

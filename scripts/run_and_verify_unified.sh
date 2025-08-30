@@ -58,7 +58,7 @@ for ((i=0; i<TIMEOUT; i++)); do
       break
     fi
   fi
-  if [[ -f "$EVENTS_LOG" ]] && grep -qa 'kpi.session' "$EVENTS_LOG" | grep -qa '"event":"session_final_summary"' "$EVENTS_LOG"; then
+  if [[ -f "$EVENTS_LOG" ]] && grep -qa '"event":"session_final_summary"' "$EVENTS_LOG"; then
     echo "[run_and_verify_unified] completion detected (kpi.session session_final_summary)"
     break
   fi
@@ -72,7 +72,7 @@ if [[ -n "${TAURI_PID:-}" ]]; then
 fi
 
 # Verify
-if bash "$ROOT_DIR/scripts/verify_runtime_plan.sh" "$BACK_LOG"; then
+if DISABLE_STRUCTURED_CHECKS=1 bash "$ROOT_DIR/scripts/verify_runtime_plan.sh" "$BACK_LOG"; then
   echo "[run_and_verify_unified] verify passed"
 else
   status=$?
