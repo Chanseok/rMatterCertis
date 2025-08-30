@@ -2,6 +2,15 @@
 //!
 //! Actor 간 통신과 이벤트를 위한 핵심 타입들을 정의합니다.
 //! ts-rs를 통해 TypeScript 타입이 자동 생성됩니다.
+//!
+//! Event timestamp/duration policy (stability: additive-only)
+//! - All lifecycle events MUST include a `timestamp: DateTime<Utc>` when serialized.
+//! - Duration fields use milliseconds. Preferred key name is `duration_ms`.
+//! - Historical exceptions exist for backwards compatibility:
+//!   - `BatchCompleted` uses `duration` (milliseconds).
+//!   - `SyncPageCompleted` uses `ms` (milliseconds for the page).
+//!   These are kept for compatibility; do not rename. New events should use `duration_ms`.
+//! - Do not remove or rename fields; add new ones if needed (additive-only contract).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -77,6 +86,12 @@ pub enum ActorCommand {
 /// 시스템 상태 변화를 알리는 이벤트들입니다.
 /// 이벤트 드리븐 아키텍처의 핵심 구성 요소입니다.
 /// `ActorContractVersion`: v1
+///
+/// Field policy (timestamps/durations):
+/// - Every Started/Completed/Failed event includes `timestamp`.
+/// - Durations are milliseconds; prefer `duration_ms` for new events.
+/// - Legacy exceptions: `BatchCompleted.duration` (ms), `SyncPageCompleted.ms` (ms).
+///
 /// Core field groups (v2 clarification - additive only):
 /// - Session lifecycle: SessionStarted/Completed/Failed { `session_id`, timestamp }
 /// - Progress: Progress { `session_id`, `current_step`, `total_steps`, percentage }
@@ -1343,6 +1358,7 @@ pub struct PageRange {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     #[test]
     fn test_crawling_config_default() {
@@ -1438,5 +1454,99 @@ mod tests {
         assert_eq!(metrics.memory_usage_mb, 512.0);
         assert_eq!(metrics.cpu_usage_percent, 25.5);
         assert_eq!(metrics.active_tasks_count, 10);
+    }
+
+    fn get_variant_payload(v: &Value) -> &Value {
+        // Externally tagged enum => { "VariantName": { ...fields } }
+        let obj = v.as_object().expect("enum serializes to object");
+        let (_k, inner) = obj.iter().next().expect("one variant key present");
+        inner
+    }
+
+    #[test]
+    fn test_event_timestamp_presence() {
+        let event = AppEvent::SessionStarted {
+            session_id: "s1".to_string(),
+            config: CrawlingConfig::default(),
+            timestamp: Utc::now(),
+        };
+        let v: Value = serde_json::to_value(&event).unwrap();
+        let payload = get_variant_payload(&v);
+        assert!(payload.get("timestamp").is_some(), "timestamp must be present on SessionStarted");
+    }
+
+    #[test]
+    fn test_duration_field_names_policy_examples() {
+        // BatchCompleted uses legacy `duration` (ms)
+        let batch_completed = AppEvent::BatchCompleted {
+            batch_id: "b1".to_string(),
+            session_id: "s1".to_string(),
+            success_count: 10,
+            failed_count: 2,
+            duration: 1234,
+            timestamp: Utc::now(),
+        };
+    let v: Value = serde_json::to_value(&batch_completed).unwrap();
+    let payload = get_variant_payload(&v);
+    assert!(payload.get("duration").is_some(), "BatchCompleted must have legacy `duration` field");
+    assert!(payload.get("duration_ms").is_none(), "BatchCompleted must not rename to duration_ms");
+
+        // BatchReport uses `duration_ms`
+        let batch_report = AppEvent::BatchReport {
+            session_id: "s1".to_string(),
+            batch_id: "b1".to_string(),
+            pages_total: 5,
+            pages_success: 5,
+            pages_failed: 0,
+            list_pages_failed: vec![],
+            details_success: 20,
+            details_failed: 0,
+            retries_used: 1,
+            duration_ms: 4321,
+            duplicates_skipped: 0,
+            products_inserted: 0,
+            products_updated: 0,
+            timestamp: Utc::now(),
+        };
+    let v2: Value = serde_json::to_value(&batch_report).unwrap();
+    let payload2 = get_variant_payload(&v2);
+    assert!(payload2.get("duration_ms").is_some(), "BatchReport must have duration_ms");
+
+        // SyncPageCompleted uses legacy `ms`
+        let sync_page_completed = AppEvent::SyncPageCompleted {
+            session_id: "s1".to_string(),
+            physical_page: 3,
+            inserted: 1,
+            updated: 2,
+            skipped: 0,
+            failed: 0,
+            ms: 250,
+            timestamp: Utc::now(),
+        };
+    let v3: Value = serde_json::to_value(&sync_page_completed).unwrap();
+    let payload3 = get_variant_payload(&v3);
+    assert!(payload3.get("ms").is_some(), "SyncPageCompleted must have legacy `ms` field");
+    assert!(payload3.get("duration_ms").is_none(), "SyncPageCompleted must not rename to duration_ms");
+    }
+
+    #[test]
+    fn test_stage_item_completed_has_duration_ms_and_timestamp() {
+        let event = AppEvent::StageItemCompleted {
+            session_id: "s1".to_string(),
+            batch_id: Some("b1".to_string()),
+            stage_type: StageType::ListPageCrawling,
+            item_id: "p1".to_string(),
+            item_type: StageItemType::Page { page_number: 1 },
+            success: true,
+            error: None,
+            duration_ms: 100,
+            retry_count: 0,
+            collected_count: Some(30),
+            timestamp: Utc::now(),
+        };
+    let v: Value = serde_json::to_value(&event).unwrap();
+    let payload = get_variant_payload(&v);
+    assert!(payload.get("duration_ms").is_some());
+    assert!(payload.get("timestamp").is_some());
     }
 }
