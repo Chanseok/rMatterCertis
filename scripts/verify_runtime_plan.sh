@@ -65,6 +65,16 @@ fi
 plan_lines=$(grep -a "📋 CrawlingPlan created:" "${LOG_FILE}" || true)
 plan_count=$(printf "%s" "${plan_lines}" | grep -c "CrawlingPlan created" || true)
 
+# Detect pre-planned execution path (planning occurred earlier; no plan_created emitted here)
+# Consider both the selected stage file and any log in the same directory.
+if grep -a -q "pre-planned ExecutionPlan" "${STAGE_FILE}" 2>/dev/null; then
+  preplanned=1
+elif grep -a -q "pre-planned ExecutionPlan" "${LOG_DIR}"/*.log 2>/dev/null; then
+  preplanned=1
+else
+  preplanned=0
+fi
+
 # Prefer structured plan_created event for robustness; fall back to legacy line parsing
 structured_plan_line=$(grep -a '"event":"plan_created"' "${KPI_FILE}" | tail -n1 || true)
 if [[ -n "${structured_plan_line}" ]]; then
@@ -73,14 +83,20 @@ if [[ -n "${structured_plan_line}" ]]; then
   if ! [[ ${list_phase_count} =~ ^[0-9]+$ ]]; then list_phase_count=0; fi
 else
   structured_mode=0
-  if [[ ${plan_count} -eq 0 ]]; then
-    echo "[FAIL] No CrawlingPlan line (legacy) nor structured plan_created event found"; exit 11
+  if [[ "${preplanned}" == "1" ]]; then
+    echo "[INFO] Pre-planned ExecutionPlan detected; skipping plan_created check"
+    # Derive list_phase_count from actual observed starts (best-effort)
+    list_phase_count=$(grep -a "Starting Stage 2: ListPageCrawling" "${STAGE_FILE}" | wc -l | tr -d ' ')
+  else
+    if [[ ${plan_count} -eq 0 ]]; then
+      echo "[FAIL] No CrawlingPlan line (legacy) nor structured plan_created event found"; exit 11
+    fi
+    if [[ ${plan_count} -gt 1 ]]; then
+      echo "[FAIL] Duplicate plan creation entries: ${plan_count}"; exit 12
+    fi
+    # Count list phases inside the single legacy plan line
+    list_phase_count=$(printf "%s" "${plan_lines}" | grep -o "phase_type: ListPageCrawling" | wc -l | tr -d ' ')
   fi
-  if [[ ${plan_count} -gt 1 ]]; then
-    echo "[FAIL] Duplicate plan creation entries: ${plan_count}"; exit 12
-  fi
-  # Count list phases inside the single legacy plan line
-  list_phase_count=$(printf "%s" "${plan_lines}" | grep -o "phase_type: ListPageCrawling" | wc -l | tr -d ' ')
 fi
 # Stage 2 start & completion counts (from stage/text log file)
 stage2_start_count=$(grep -a "Starting Stage 2: ListPageCrawling" "${STAGE_FILE}" | wc -l | tr -d ' ')
@@ -147,7 +163,8 @@ fi
 if [[ "${DISABLE_STRUCTURED_CHECKS:-0}" != "1" ]]; then
   plan_created_line=$(grep -a 'kpi.plan' "${KPI_FILE}" | grep '"event":"plan_created"' | tail -n1 || true)
   plan_hash_line=$(grep -a 'kpi.plan' "${KPI_FILE}" | grep '"event":"plan_hash_assigned"' | tail -n1 || true)
-  session_summary_line=$(grep -a 'kpi.session' "${KPI_FILE}" | grep '"event":"session_summary"' | tail -n1 || true)
+  # Accept both session_summary and session_final_summary
+  session_summary_line=$(grep -a 'kpi.session' "${KPI_FILE}" | grep -E '"event":"session_(final_)?summary"' | tail -n1 || true)
   batch_start_lines=$(grep -a 'kpi.batch' "${KPI_FILE}" | grep '"event":"batch_start"' || true)
   batch_complete_lines=$(grep -a 'kpi.batch' "${KPI_FILE}" | grep '"event":"batch_complete"' || true)
 

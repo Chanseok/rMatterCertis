@@ -1080,7 +1080,14 @@ impl Actor for SessionActor {
                                             if let Err(e) = context.emit_event(start_event) { error!("Failed to emit start event: {}", e); }
                                             let site_status = plan.input_snapshot_to_site_status();
                                             for (idx, range) in plan.crawling_ranges.iter().enumerate() {
-                                                let pages: Vec<u32> = if range.reverse_order { (range.start_page..=range.end_page).rev().collect() } else { (range.start_page..=range.end_page).collect() };
+                                                // Expand physical pages for this range.
+                                                // For reverse_order=true, start_page is greater than end_page.
+                                                // Using start_page..=end_page would yield an empty iterator; instead, build end..=start then reverse.
+                                                let pages: Vec<u32> = if range.reverse_order {
+                                                    (range.end_page..=range.start_page).rev().collect()
+                                                } else {
+                                                    (range.start_page..=range.end_page).collect()
+                                                };
                                                 let batch_id = format!("{}-pre-{}", session_id, idx+1);
                                                 if let Err(e) = self.run_batch_with_services(&batch_id, &pages, &context, &http_client, &data_extractor, &product_repo, &site_status, Some(plan.skip_duplicate_urls)).await {
                                                     error!("Batch {} failed: {}", batch_id, e);

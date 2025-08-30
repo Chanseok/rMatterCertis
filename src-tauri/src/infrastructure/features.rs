@@ -78,9 +78,15 @@ pub fn feature_legacy_domain_events() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex;
+
+    // Serialize tests in this module to avoid races on TEST_ENV
+    static TEST_GUARD: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
     #[test]
     fn defaults_are_sane() {
+        let _g = TEST_GUARD.lock().unwrap();
         // Clear test env map
         #[allow(clippy::unwrap_used)]
         super::test_env::TEST_ENV.lock().unwrap().clear();
@@ -94,6 +100,7 @@ mod tests {
 
     #[test]
     fn explicit_values_parse() {
+    let _g = TEST_GUARD.lock().unwrap();
         // Set values in test env map
         let mut map = super::test_env::TEST_ENV.lock().unwrap();
         map.insert("MC_FEATURE_HTTP_CLIENT_UNIFIED".into(), "1".into());

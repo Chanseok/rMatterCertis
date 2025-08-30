@@ -176,7 +176,9 @@ export function useSessionEventStream(
     } catch { /* ignore */ }
   };
 
-  Promise.all(eventNames.map(ev => listen(ev, (evt) => {
+  const disableLegacy = ((import.meta as any).env?.VITE_DISABLE_LEGACY_EVENTS === 'true');
+  const subscribeNames = disableLegacy ? ['actor-event', 'actor-progress', 'actor-task-lifecycle'] : eventNames;
+  Promise.all(subscribeNames.map(ev => listen(ev, (evt) => {
     const payload: any = (evt as any).payload;
     incrementEvent(ev);
     markLive(ev, payload);

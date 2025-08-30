@@ -4,7 +4,7 @@ Source of truth: environment variables. Values: "1"/"true" enable, "0"/"false" d
 
 - MC_FEATURE_EVENTS_GENERALIZED_ONLY (default: false)
   - Use single unified frontend event channel ("actor-event") and generalized routing.
-- MC_FEATURE_LEGACY_DOMAIN_EVENTS (default: true)
+- MC_FEATURE_LEGACY_DOMAIN_EVENTS (default: false)
   - Emit legacy domain::events::CrawlingEvent payloads via SystemStateBroadcaster.
   - Set to 0 to silence legacy emissions after FE migrates to AppEvent.
 

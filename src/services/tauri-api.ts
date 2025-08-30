@@ -618,7 +618,8 @@ export class TauriApiService {
       'actor-sync-completed',
     ];
 
-    const unsubs: UnlistenFn[] = [];
+  const unsubs: UnlistenFn[] = [];
+  const disableLegacy = ((import.meta as any).env?.VITE_DISABLE_LEGACY_EVENTS === 'true');
     // Prefer unified stream if backend emits generalized-only 'actor-event'.
     // When present, we map enriched.payload.event_name back to the legacy name
     // so existing UI callbacks keep working without changes.
@@ -635,15 +636,19 @@ export class TauriApiService {
       console.debug('[ActorBridge] unified channel not available yet:', e);
     }
 
-    for (const name of names) {
-      try {
-        const un = await listen<any>(name, (evt) => callback(name, evt.payload));
-        this.eventListeners.set(name, un);
-        unsubs.push(un);
-      } catch (e) {
-        // If some names are not emitted in a build, ignore subscription failures.
-        console.warn(`[ActorBridge] Failed to subscribe '${name}':`, e);
+    if (!disableLegacy) {
+      for (const name of names) {
+        try {
+          const un = await listen<any>(name, (evt) => callback(name, evt.payload));
+          this.eventListeners.set(name, un);
+          unsubs.push(un);
+        } catch (e) {
+          // If some names are not emitted in a build, ignore subscription failures.
+          console.warn(`[ActorBridge] Failed to subscribe '${name}':`, e);
+        }
       }
+    } else {
+      console.debug('[ActorBridge] VITE_DISABLE_LEGACY_EVENTS=true → skip subscribing to actor-* names');
     }
     return () => unsubs.forEach((u) => u());
   }

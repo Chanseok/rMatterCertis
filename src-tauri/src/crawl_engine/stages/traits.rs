@@ -8,6 +8,7 @@ use crate::crawl_engine::actors::types::StageType;
 use crate::crawl_engine::channels::types::StageItem;
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
+use crate::domain::services::crawling_services::{ProductDetailCollector, ProductListCollector};
 
 /// Dependencies passed into strategies (DI-friendly, Arc'ed at the boundary)
 #[derive(Clone)]
@@ -16,6 +17,9 @@ pub struct Deps {
     pub extractor: Arc<MatterDataExtractor>,
     pub repo: Arc<IntegratedProductRepository>,
     pub duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy,
+    /// Optional DI for collectors (strategies prefer these when provided)
+    pub list_collector: Option<Arc<dyn ProductListCollector>>,
+    pub detail_collector: Option<Arc<dyn ProductDetailCollector>>,
 }
 
 /// Input to a `StageLogic` strategy

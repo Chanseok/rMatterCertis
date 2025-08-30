@@ -5,7 +5,7 @@
 
 use chrono::Utc;
 use once_cell::sync::Lazy;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
@@ -47,6 +47,19 @@ pub struct StageDeps {
 // Duplicate-execution guard for DataSaving stage (session+batch scoped)
 static DATA_SAVING_RUN_GUARD: Lazy<StdMutex<HashSet<String>>> =
     Lazy::new(|| StdMutex::new(HashSet::new()));
+
+// Lightweight per-session metrics aggregator (throttled, best-effort)
+#[derive(Default, Clone)]
+struct MetricsWindow {
+    last_emit: Option<Instant>,
+    item_count: u64,
+    sum_latency_ms: u128,
+    success: u64,
+    failure: u64,
+}
+
+static METRICS_BY_SESSION: Lazy<StdMutex<HashMap<String, MetricsWindow>>> =
+    Lazy::new(|| StdMutex::new(HashMap::new()));
 
 /// 스테이지 상태 열거형 (local to `StageActor`)
 #[derive(Debug, Clone, PartialEq)]
@@ -161,6 +174,66 @@ impl StageItemExt for StageItem {
 
 #[allow(dead_code)]
 impl StageActor {
+    /// Before-each-item hook (middleware slot): emit logs/metrics or modify context in future.
+    async fn before_each_item_hook(
+        _context: &AppContext,
+        _stage_type: &StageType,
+        _item: &StageItem,
+    ) {
+        // No-op by default. Reserved for cross-cutting concerns (logging/metrics/instrumentation).
+    }
+
+    /// After-each-item hook (middleware slot): observe result/error for telemetry.
+    async fn after_each_item_hook(
+        _context: &AppContext,
+        _stage_type: &StageType,
+        _item: &StageItem,
+        _result: &Result<StageItemResult, StageError>,
+        _started_at: std::time::Instant,
+    ) {
+        // Best-effort, low-noise telemetry: keep a tiny rolling window per session and occasionally emit
+        let latency_ms = _started_at.elapsed().as_millis();
+        let key = _context.session_id.to_string();
+        if let Ok(mut map) = METRICS_BY_SESSION.lock() {
+            let entry = map.entry(key.clone()).or_default();
+            entry.item_count = entry.item_count.saturating_add(1);
+            entry.sum_latency_ms = entry.sum_latency_ms.saturating_add(latency_ms);
+            match _result {
+                Ok(_) => entry.success = entry.success.saturating_add(1),
+                Err(_) => entry.failure = entry.failure.saturating_add(1),
+            }
+            let now = Instant::now();
+            let should_emit = match entry.last_emit {
+                None => true,
+                Some(prev) => now.duration_since(prev) >= Duration::from_millis(1000),
+            };
+            if should_emit && entry.item_count > 0 {
+                let avg_ms = (entry.sum_latency_ms as f64) / (entry.item_count as f64);
+                let throughput = if avg_ms > 0.0 { 1000.0 / avg_ms } else { 0.0 };
+                // Compose high-level metrics snapshot; unknown fields left conservative
+                let snapshot = crate::crawl_engine::actors::types::PerformanceMetrics {
+                    memory_usage_mb: 0.0,
+                    cpu_usage_percent: 0.0,
+                    active_tasks_count: 0,
+                    queued_tasks_count: 0,
+                    avg_response_time_ms: avg_ms,
+                    throughput_per_second: throughput,
+                };
+                // Emit as AppEvent::PerformanceMetrics (additive, consumed by UI)
+                let _ = _context.emit_event(AppEvent::PerformanceMetrics {
+                    session_id: key,
+                    metrics: snapshot,
+                    timestamp: Utc::now(),
+                });
+                entry.last_emit = Some(now);
+                // Keep window from growing unbounded
+                entry.item_count = 0;
+                entry.sum_latency_ms = 0;
+                entry.success = 0;
+                entry.failure = 0;
+            }
+        }
+    }
     /// 공통 재시도 래퍼 (Exponential Backoff + Jitter) with telemetry
     async fn retry_with_backoff<T, Fut, Op>(
         &self,
@@ -845,6 +918,9 @@ impl StageActor {
                 let _permit = sem.acquire().await.map_err(|e| StageError::GenericError {
                     message: format!("Semaphore error: {}", e),
                 })?;
+                // Before-each-item middleware (best-effort)
+                StageActor::before_each_item_hook(&ctx_clone, &stage_type_clone, &base_item)
+                    .await;
                 if let Err(e) = ctx_clone.emit_event(AppEvent::StageItemStarted {
                     session_id: session_id_clone.clone(),
                     batch_id: batch_id_opt.clone(),
@@ -928,6 +1004,8 @@ impl StageActor {
                         extractor: data_extractor_clone.clone(),
                         repo: product_repo_clone.clone(),
                         duplicate_policy: duplicate_policy.clone(),
+                        list_collector: None,
+                        detail_collector: None,
                     };
                     let input = crate::crawl_engine::stages::traits::StageInput {
                         stage_type: stage_type_clone.clone(),
@@ -950,6 +1028,15 @@ impl StageActor {
                         message: format!("No strategy registered for stage {:?}", stage_type_clone),
                     })
                 };
+                // After-each-item middleware (best-effort)
+                StageActor::after_each_item_hook(
+                    &ctx_clone,
+                    &stage_type_clone,
+                    &base_item,
+                    &result,
+                    item_start,
+                )
+                .await;
                 match &result {
                     Ok(r) => {
                         // Emit Validation events in aggregate for DataValidation stage
@@ -2143,6 +2230,177 @@ impl StageActor {
         } else {
             f64::from(self.success_count) / f64::from(self.completed_items)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crawl_engine::channels::types as ch;
+    use crate::crawl_engine::integrated_context::IntegratedContextFactory;
+    use crate::crawl_engine::system_config::SystemConfig;
+    use crate::domain::services::crawling_services as svc;
+    use crate::domain::services::crawling_services::{CrawlingRangeRecommendation, SiteDataChangeStatus};
+    use std::sync::Arc;
+
+    struct FakeStatusChecker;
+    #[async_trait::async_trait]
+    impl svc::StatusChecker for FakeStatusChecker {
+        async fn check_site_status(&self) -> anyhow::Result<SiteStatus> {
+            Ok(SiteStatus {
+                is_accessible: true,
+                response_time_ms: 10,
+                total_pages: 1,
+                estimated_products: 2,
+                products_on_last_page: 2,
+                last_check_time: chrono::Utc::now(),
+                health_score: 1.0,
+                data_change_status: SiteDataChangeStatus::Stable { count: 2 },
+                decrease_recommendation: None,
+                crawling_range_recommendation: CrawlingRangeRecommendation::Full,
+            })
+        }
+        async fn calculate_crawling_range_recommendation(
+            &self,
+            _site_status: &SiteStatus,
+            _db_analysis: &crate::domain::services::DatabaseAnalysis,
+        ) -> anyhow::Result<CrawlingRangeRecommendation> {
+            Ok(CrawlingRangeRecommendation::Full)
+        }
+        async fn estimate_crawling_time(&self, _pages: u32) -> std::time::Duration { std::time::Duration::from_millis(1) }
+        async fn verify_site_accessibility(&self) -> anyhow::Result<bool> { Ok(true) }
+    }
+
+    struct FakeListCollector;
+    #[async_trait::async_trait]
+    impl svc::ProductListCollector for FakeListCollector {
+        async fn collect_all_pages(&self, _tp: u32, _plp: u32) -> anyhow::Result<Vec<crate::domain::product_url::ProductUrl>> { Ok(vec![]) }
+        async fn collect_page_range(&self, _s: u32, _e: u32, _tp: u32, _plp: u32) -> anyhow::Result<Vec<crate::domain::product_url::ProductUrl>> { Ok(vec![]) }
+        async fn collect_page_range_with_cancellation(&self, _s: u32, _e: u32, _tp: u32, _plp: u32, _ct: tokio_util::sync::CancellationToken) -> anyhow::Result<Vec<crate::domain::product_url::ProductUrl>> { Ok(vec![]) }
+        async fn collect_single_page(&self, _p: u32, _tp: u32, _plp: u32) -> anyhow::Result<Vec<crate::domain::product_url::ProductUrl>> { Ok(vec![]) }
+        async fn collect_page_batch(&self, _pages: &[u32], _tp: u32, _plp: u32) -> anyhow::Result<Vec<crate::domain::product_url::ProductUrl>> { Ok(vec![]) }
+        fn as_any(&self) -> &dyn std::any::Any { self }
+    }
+
+    struct FakeDetailCollector;
+    #[async_trait::async_trait]
+    impl svc::ProductDetailCollector for FakeDetailCollector {
+        async fn collect_details(&self, _urls: &[crate::domain::product_url::ProductUrl]) -> anyhow::Result<Vec<crate::domain::product::ProductDetail>> { Ok(vec![]) }
+        async fn collect_details_with_cancellation(&self, _urls: &[crate::domain::product_url::ProductUrl], _ct: tokio_util::sync::CancellationToken) -> anyhow::Result<Vec<crate::domain::product::ProductDetail>> { Ok(vec![]) }
+        async fn collect_single_product(&self, _url: &crate::domain::product_url::ProductUrl) -> anyhow::Result<crate::domain::product::ProductDetail> {
+            Ok(crate::domain::product::ProductDetail {
+                url: "https://e/p1".into(), page_id: Some(1), index_in_page: Some(1), id: None,
+                manufacturer: None, model: None, device_type: None, certificate_id: None, certification_date: None, software_version: None, hardware_version: None, vid: None, pid: None,
+                family_sku: None, family_variant_sku: None, firmware_version: None, family_id: None, tis_trp_tested: None, specification_version: None, transport_interface: None,
+                primary_device_type_id: None, application_categories: None, description: None, compliance_document_url: None, program_type: None,
+                created_at: chrono::Utc::now(), updated_at: chrono::Utc::now()
+            })
+        }
+        async fn collect_product_batch(&self, _urls: &[crate::domain::product_url::ProductUrl]) -> anyhow::Result<Vec<crate::domain::product::ProductDetail>> { Ok(vec![]) }
+        fn as_any(&self) -> &dyn std::any::Any { self }
+    }
+
+    async fn memory_repo() -> Arc<IntegratedProductRepository> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("memory pool");
+        Arc::new(IntegratedProductRepository::new(pool))
+    }
+
+    #[tokio::test]
+    async fn stage_actor_emits_validation_and_metrics_with_hermetic_context() {
+        // Context and channels
+        let config = Arc::new(SystemConfig::default());
+        let factory = IntegratedContextFactory::new(config);
+        let (context, channels) = factory
+            .create_session_context("sess-itg".to_string())
+            .expect("context");
+    let event_rx = channels.event_tx.subscribe();
+
+        // DI deps
+        let app_config = crate::infrastructure::config::AppConfig::default();
+        let http_client = Arc::new(app_config.create_http_client().expect("http"));
+        let extractor = Arc::new(crate::infrastructure::MatterDataExtractor::new().expect("extractor"));
+        let repo = memory_repo().await;
+
+        let deps = StageDeps {
+            http_client: Arc::clone(&http_client),
+            data_extractor: Arc::clone(&extractor),
+            product_repo: Arc::clone(&repo),
+            status_checker: Arc::new(FakeStatusChecker),
+            product_list_collector: Arc::new(FakeListCollector),
+            product_detail_collector: Arc::new(FakeDetailCollector),
+            app_config: app_config.clone(),
+            duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
+        };
+
+        let mut actor = StageActor::new_with_deps(
+            "actor-itg".into(),
+            "batch-itg".into(),
+            deps,
+            Arc::new(DefaultStageLogicFactory),
+        );
+
+        // Build a minimal valid ProductDetails payload for DataValidation
+        let now = chrono::Utc::now();
+        let pd1 = crate::domain::product::ProductDetail {
+            url: "https://e/p1".into(), page_id: Some(1), index_in_page: Some(1), id: None,
+            manufacturer: Some("A".into()), model: Some("M".into()), device_type: None, certificate_id: None, certification_date: None, software_version: None, hardware_version: None, vid: None, pid: None,
+            family_sku: None, family_variant_sku: None, firmware_version: None, family_id: None, tis_trp_tested: None, specification_version: None, transport_interface: None,
+            primary_device_type_id: None, application_categories: None, description: None, compliance_document_url: None, program_type: Some("Matter".into()), created_at: now, updated_at: now
+        };
+        let items = vec![ch::StageItem::ProductDetails(ch::ProductDetails {
+            products: vec![pd1],
+            source_urls: vec![],
+            extraction_stats: ch::ExtractionStats { attempted: 1, successful: 1, failed: 0, empty_responses: 0 },
+        })];
+
+        // Spawn a task to collect a handful of events until StageCompleted received
+        let mut rx = event_rx;
+        let collector = tokio::spawn(async move {
+            use crate::crawl_engine::actors::types::AppEvent;
+            let mut got_stage_completed = false;
+            let mut metrics_seen = false;
+            let mut started_seen = false;
+            let mut validation_completed_seen = false;
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                if let Ok(ev) = tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
+                    match ev {
+                        Ok(AppEvent::StageCompleted { .. }) => { got_stage_completed = true; },
+                        Ok(AppEvent::PerformanceMetrics { .. }) => { metrics_seen = true; },
+                        Ok(AppEvent::StageStarted { .. }) => { started_seen = true; },
+                        Ok(AppEvent::ValidationCompleted { .. }) => { validation_completed_seen = true; },
+                        _ => {}
+                    }
+                    if got_stage_completed && validation_completed_seen { break; }
+                } else {
+                    // timeout, continue loop until overall deadline
+                }
+            }
+            (got_stage_completed, metrics_seen, started_seen, validation_completed_seen)
+        });
+
+        // Run the stage
+        let res = actor
+            .execute_stage(
+                StageType::DataValidation,
+                items,
+                2,
+                3, // seconds
+                &context,
+            )
+            .await
+            .expect("stage ok");
+        assert!(res.successful_items >= 1);
+
+        let (got_completed, metrics_seen, started_seen, validation_done) = collector.await.expect("collector join");
+        assert!(started_seen, "StageStarted not seen");
+        assert!(validation_done, "ValidationCompleted not seen");
+        assert!(got_completed, "StageCompleted not seen");
+        assert!(metrics_seen, "PerformanceMetrics not seen");
     }
 }
 

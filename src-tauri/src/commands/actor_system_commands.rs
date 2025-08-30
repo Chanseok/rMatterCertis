@@ -7,11 +7,14 @@ use crate::crawl_engine::actor_event_bridge::start_actor_event_bridge;
 use crate::crawl_engine::actors::SessionActor;
 use crate::crawl_engine::actors::contract::ACTOR_CONTRACT_VERSION;
 use crate::crawl_engine::actors::types::{
-    BatchConfig, CrawlPhase, CrawlingConfig, ExecutionPlan, PageRange, SessionSummary, SimpleMetrics, TaskKind,
+    CrawlingConfig, ExecutionPlan, PageRange,
 };
-use crate::crawl_engine::channels::types::ActorCommand; // 올바른 ActorCommand 사용
+// Use ActorCommand from actors::types for SessionActor control channel
+use crate::crawl_engine::actors::types::ActorCommand as ActorActorCommand;
+use crate::crawl_engine::channels::types::ActorCommand; // keep channel ActorCommand for context wiring
 use crate::crawl_engine::channels::types::AppEvent;
 use crate::crawl_engine::context::{AppContext, SystemConfig};
+use crate::crawl_engine::actors::traits::Actor; // bring Actor::run into scope
 use crate::domain::services::SiteStatus;
 use crate::domain::services::crawling_services::{
     CrawlingRangeRecommendation, SiteDataChangeStatus, SiteStatus as DomainSiteStatus,
@@ -23,7 +26,7 @@ use crate::infrastructure::simple_http_client::HttpClient;
 use tauri::State; // For accessing managed state
 // 실제 CrawlingPlanner에서 사용
 use crate::crawl_engine::runtime::session_registry::{
-    SessionEntry, SessionStatus, failure_threshold, removal_grace_secs, session_registry,
+    SessionEntry, SessionStatus, failure_threshold, session_registry,
     update_global_failure_policy_from_config,
 };
 use crate::infrastructure::config::ConfigManager; // 설정 관리자 추가
@@ -35,8 +38,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio::sync::{broadcast, mpsc, watch};
-use tokio::time::Duration; // for sleep & timing
+// use tokio::time::Duration; // for sleep & timing
 use tracing::{error, info, warn};
+use crate::crawl_engine::services::planning_service::PlanningStrategy;
 
 // Graceful shutdown channel (single active session assumption)
 static PHASE_SHUTDOWN_TX: OnceCell<watch::Sender<bool>> = OnceCell::new();
@@ -53,45 +57,21 @@ fn compute_plan_hash(
     blake3::hash(hash_string.as_bytes()).to_hex().to_string()
 }
 
-// ========== Error Classification ==========
-fn classify_error_type(err: &str) -> String {
-    let e = err.to_lowercase();
-    if e.contains("timeout") {
-        "TimeoutError"
-    } else if e.contains("network") || e.contains("connect") {
-        "NetworkError"
-    } else if e.contains("parse") || e.contains("html") {
-        "ParsingError"
-    } else if e.contains("db") || e.contains("sql") {
-        "DatabaseError"
-    } else if e.contains("config") {
-        "ConfigurationError"
-    } else if e.contains("retry") {
-        "RetryExhausted"
-    } else if e.contains("batch") {
-        "BatchError"
-    } else {
-        "GenericError"
-    }
-    .to_string()
-}
+// (removed: error classification helper; no longer used)
 
 // ========== API Request/Response (backward-compatible) ==========
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CrawlingMode {
-    LiveProduction,
     AdvancedEngine,
+    LiveProduction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub struct ActorCrawlingRequest {
-    // New unified fields (optional for backward compatibility)
     pub site_url: Option<String>,
     pub start_page: Option<u32>,
     pub end_page: Option<u32>,
     pub page_count: Option<u32>,
-    // Legacy optional tuning knobs retained so existing callers compile
     pub concurrency: Option<u32>,
     pub batch_size: Option<u32>,
     pub delay_ms: Option<u64>,
@@ -106,7 +86,7 @@ pub struct ActorSystemResponse {
     pub data: Option<serde_json::Value>,
 }
 
-// Shared bootstrap helper (start or resume)
+/// Bootstrap common wiring and spawn SessionActor to execute a pre-planned plan
 async fn bootstrap_and_spawn_session(
     app: &AppHandle,
     execution_plan: ExecutionPlan,
@@ -117,48 +97,109 @@ async fn bootstrap_and_spawn_session(
     failed_pages: Option<Vec<u32>>,
     retrying_pages: Option<Vec<u32>>,
 ) -> Result<(String, ExecutionPlan), String> {
-    let (actor_event_tx, actor_event_rx) = broadcast::channel::<AppEvent>(1000);
-    start_actor_event_bridge(app.clone(), actor_event_rx)
-        .await
-        .map_err(|e| format!("Failed to start Actor Event Bridge: {}", e))?;
-    let _session_actor = SessionActor::new(execution_plan.session_id.clone());
     let session_id = execution_plan.session_id.clone();
-    let (shutdown_req_tx, shutdown_req_rx) = watch::channel(false);
-    let (pause_tx, pause_rx) = watch::channel(false);
-    let _ = PHASE_SHUTDOWN_TX.set(shutdown_req_tx.clone());
+
+    // Update global failure policy from config (best-effort)
+    update_global_failure_policy_from_config(&app_config);
+
+    // Build event channel and start the bridge to FE
+    let (actor_event_tx, actor_event_rx) = broadcast::channel::<AppEvent>(1000);
+    let _bridge_handle = start_actor_event_bridge(app.clone(), actor_event_rx)
+        .await
+        .map_err(|e| format!("failed to start event bridge: {e}"))?;
+
+    // Build session AppContext
+    let system_config = Arc::new(SystemConfig::default());
+    let (control_tx, _control_rx) = mpsc::channel::<ActorCommand>(100);
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    // expose shutdown handle for request_graceful_shutdown
+    let _ = PHASE_SHUTDOWN_TX.set(shutdown_tx.clone());
+    let context = AppContext::new(
+        session_id.clone(),
+        control_tx,
+        actor_event_tx.clone(),
+        shutdown_rx,
+        system_config,
+    );
+
+    // Spawn SessionActor and send ExecutePrePlanned
+    let mut session_actor = SessionActor::new(session_id.clone());
+    let (cmd_tx, cmd_rx) = mpsc::channel::<ActorActorCommand>(100);
+    tokio::spawn(async move {
+        if let Err(e) = session_actor.run(context, cmd_rx).await {
+            error!("SessionActor run error: {}", e);
+        }
+    });
+    cmd_tx
+        .send(ActorActorCommand::ExecutePrePlanned {
+            session_id: session_id.clone(),
+            plan: execution_plan.clone(),
+        })
+        .await
+        .map_err(|e| format!("failed to send ExecutePrePlanned: {e}"))?;
+
+    // Initialize session registry entry
+    let total_pages_planned: u64 = execution_plan
+        .crawling_ranges
+        .iter()
+        .map(|r| {
+            if r.start_page >= r.end_page {
+                (r.start_page - r.end_page + 1) as u64
+            } else {
+                (r.end_page - r.start_page + 1) as u64
+            }
+        })
+        .sum();
+    let batch_unit = execution_plan.batch_size.max(1) as usize;
+    let total_batches_planned: u64 = execution_plan
+        .crawling_ranges
+        .iter()
+        .map(|r| {
+            let pages = if r.start_page >= r.end_page {
+                (r.start_page - r.end_page + 1) as usize
+            } else {
+                (r.end_page - r.start_page + 1) as usize
+            };
+            (pages.div_ceil(batch_unit)) as u64
+        })
+        .sum();
+    // Build pages list for remaining (physical)
+    let mut remaining_pages: Vec<u32> = Vec::new();
+    for r in &execution_plan.crawling_ranges {
+        if r.start_page <= r.end_page {
+            remaining_pages.extend(r.start_page..=r.end_page);
+        } else {
+            remaining_pages.extend((r.end_page..=r.start_page).rev());
+        }
+    }
+    let (pause_tx, _pause_rx) = watch::channel(false);
     {
-        let registry = session_registry();
-        let mut g = registry.write().await;
+        let reg = session_registry();
+        let mut g = reg.write().await;
         g.insert(
             session_id.clone(),
             SessionEntry {
                 status: SessionStatus::Running,
-                pause_tx: pause_tx.clone(),
+                pause_tx,
                 started_at: Utc::now(),
                 completed_at: None,
-                total_pages_planned: execution_plan.page_slots.len() as u64,
+                total_pages_planned,
                 processed_pages: 0,
-                total_batches_planned: execution_plan.crawling_ranges.len() as u64,
+                total_batches_planned,
                 completed_batches: 0,
                 batch_size: execution_plan.batch_size,
                 concurrency_limit: execution_plan.concurrency_limit,
                 last_error: None,
                 error_count: 0,
                 resume_token,
-                remaining_page_slots: Some(
-                    execution_plan
-                        .page_slots
-                        .iter()
-                        .map(|s| s.physical_page)
-                        .collect(),
-                ),
+                remaining_page_slots: Some(remaining_pages),
                 plan_hash: Some(execution_plan.plan_hash.clone()),
                 removal_deadline: None,
                 failed_emitted: false,
                 retries_per_page: retries_per_page.unwrap_or_default(),
                 failed_pages: failed_pages.unwrap_or_default(),
                 retrying_pages: retrying_pages.unwrap_or_default(),
-                product_list_max_retries: app_config.user.crawling.product_list_retry_count.max(1),
+                product_list_max_retries: app_config.advanced.retry_attempts,
                 error_type_stats: HashMap::new(),
                 detail_tasks_total: 0,
                 detail_tasks_completed: 0,
@@ -169,7 +210,7 @@ async fn bootstrap_and_spawn_session(
                 remaining_detail_ids: None,
                 detail_failed_ids: Vec::new(),
                 page_failure_threshold: failure_threshold(),
-                detail_failure_threshold: failure_threshold() / 2, // provisional separate threshold
+                detail_failure_threshold: app_config.advanced.failure_policy.failure_threshold,
                 detail_downshifted: false,
                 detail_downshift_timestamp: None,
                 detail_downshift_old_limit: None,
@@ -178,88 +219,30 @@ async fn bootstrap_and_spawn_session(
             },
         );
     }
-    let exec_clone_for_loop = execution_plan.clone();
-    let app_cfg_for_loop = app_config.clone();
-    let site_status_for_loop = site_status.clone();
-    let registry_for_loop = session_registry();
-    let pause_rx_for_loop = pause_rx.clone();
-    tokio::spawn(async move {
-        // Feature flag: ProductDetails phase 포함 여부
-        let details_enabled = std::env::var("BOOTSTRAP_PRODUCT_DETAILS")
-            .ok()
-            .is_none_or(|v| v != "0");
-        let mut phases = vec![CrawlPhase::ListPages];
-        if details_enabled {
-            phases.push(CrawlPhase::ProductDetails);
-        }
-        phases.push(CrawlPhase::Finalize);
-        let total_phase_start = std::time::Instant::now();
-    for phase in phases {
-            let mut emitted_pause_event = false;
-            loop {
-                if *shutdown_req_rx.borrow() {
-                    break;
-                }
-                if *pause_rx_for_loop.borrow() {
-                    if !emitted_pause_event {
-                        info!("⏸ Session paused (phase {:?})", phase);
-                        emitted_pause_event = true;
-                    }
-                    {
-                        let mut g = registry_for_loop.write().await;
-                        if let Some(e) = g.get_mut(&exec_clone_for_loop.session_id) {
-                            e.status = SessionStatus::Paused;
-                        }
-                    }
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    continue;
-                }
-                if emitted_pause_event {
-                    info!("▶️ Session resumed");
-                }
-                break;
-            }
-            if *shutdown_req_rx.borrow() { break; }
-            let phase_started_at = std::time::Instant::now();
-            // PhaseStarted removed
-            let phase_res = match phase {
-                CrawlPhase::ListPages => execute_session_actor_with_execution_plan(
-                    exec_clone_for_loop.clone(),
-                    &app_cfg_for_loop,
-                    &site_status_for_loop,
-                    actor_event_tx.clone(),
-                )
-                .await
-                .map(|()| true),
-                CrawlPhase::ProductDetails => Ok(true),
-                CrawlPhase::DataValidation => Ok(true),
-                CrawlPhase::Finalize => Ok(true),
-            };
-            let dur_ms = phase_started_at.elapsed().as_millis() as u64;
-            match phase_res {
-                Ok(_ok) => { /* PhaseCompleted removed */ }
-                Err(e) => {
-                    error!("Phase {:?} failed: {}", phase, e);
-                    // PhaseAborted removed
-                    break;
-                }
-            }
-        }
-        info!(
-            "🎉 Session phases finished in {} ms",
-            total_phase_start.elapsed().as_millis()
-        );
-        {
-            let mut g = registry_for_loop.write().await;
-            if let Some(entry) = g.get_mut(&exec_clone_for_loop.session_id) {
-                if entry.status != SessionStatus::Failed {
-                    entry.status = SessionStatus::Completed;
-                    entry.completed_at = Some(Utc::now());
-                    entry.resume_token = None;
-                }
-            }
-        }
+
+    // Emit initial SessionStarted event (best-effort)
+    let _ = actor_event_tx.send(AppEvent::SessionStarted {
+        session_id: session_id.clone(),
+        config: CrawlingConfig {
+            site_url: "https://csa-iot.org/csa-iot_products/".to_string(),
+            start_page: execution_plan
+                .crawling_ranges
+                .first()
+                .map_or(1, |r| r.start_page),
+            end_page: execution_plan
+                .crawling_ranges
+                .last()
+                .map_or(1, |r| r.end_page),
+            concurrency_limit: execution_plan.concurrency_limit,
+            batch_size: execution_plan.batch_size,
+            request_delay_ms: app_config.user.request_delay_ms,
+            timeout_secs: app_config.advanced.request_timeout_seconds,
+            max_retries: app_config.advanced.retry_attempts,
+            strategy: crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst,
+        },
+        timestamp: Utc::now(),
     });
+
     Ok((session_id, execution_plan))
 }
 
@@ -269,70 +252,27 @@ pub async fn start_actor_system_crawling(
     app: AppHandle,
     request: ActorCrawlingRequest,
 ) -> Result<ActorSystemResponse, String> {
-    // 1. Intelligent planner 기반 ExecutionPlan 생성
-    let (mut execution_plan, mut app_config, _domain_site_status) = create_execution_plan(&app)
-        .await
-        .map_err(|e| format!("failed to create execution plan: {}", e))?;
+    // 1) Use PlanningService (Intelligent strategy) with overrides
+    let overrides = crate::crawl_engine::services::planning_service::PlanOverrides {
+        batch_size: request.batch_size,
+        concurrency: request.concurrency,
+        delay_ms: request.delay_ms,
+        start_page: request.start_page,
+        end_page: request.end_page,
+        page_count: request.page_count,
+    };
+    let strategist = crate::crawl_engine::services::planning_service::IntelligentPlanningStrategy;
+    let (execution_plan, app_config, _site_status) = strategist
+        .plan(&app, Some(&overrides))
+        .await?;
 
-    // 2. 사용자가 ActorCrawlingRequest 로 override 한 값 적용 (옵션)
-    //    - batch_size / concurrency / (지연은 추후 Phase 구현에서 사용)
-    if let Some(override_batch) = request.batch_size {
-        if override_batch > 0 {
-            execution_plan.batch_size = override_batch;
-        }
-    }
-    if let Some(override_conc) = request.concurrency {
-        if override_conc > 0 {
-            execution_plan.concurrency_limit = override_conc;
-        }
-    }
-    if let Some(delay_ms) = request.delay_ms {
-        app_config.user.request_delay_ms = delay_ms;
-    }
+    // 2) Mode log (informational only)
+    if let Some(mode) = &request.mode { info!("[start_actor_system_crawling] mode={:?}", mode); }
 
-    // KPI 메타 갱신 (override 적용 후 batch_size 변경 시 반영)
-    if let Some(ref mut kpi) = execution_plan.kpi_meta {
-        kpi.batches = execution_plan.crawling_ranges.len();
-        // total_pages 재계산
-        let total_pages: u32 = execution_plan
-            .crawling_ranges
-            .iter()
-            .map(|r| {
-                if r.reverse_order {
-                    r.start_page - r.end_page + 1
-                } else {
-                    r.end_page - r.start_page + 1
-                }
-            })
-            .sum();
-        kpi.total_pages = total_pages;
-    }
+    // 3) ProductDetails feature flag
+    let details_enabled = std::env::var("BOOTSTRAP_PRODUCT_DETAILS").ok().is_none_or(|v| v != "0");
+    if !details_enabled { info!("🔧 ProductDetails phase disabled via BOOTSTRAP_PRODUCT_DETAILS=0"); }
 
-    // (NEW) 2b. 사용자가 start_page/end_page/page_count 로 범위를 제한하려는 경우 ExecutionPlan 조정
-    if request.start_page.is_some() || request.end_page.is_some() || request.page_count.is_some() {
-        if let Err(e) = adjust_execution_plan_with_page_overrides(&mut execution_plan, &request) {
-            warn!(
-                "⚠️ Failed to apply page overrides: {} (continuing with original plan)",
-                e
-            );
-        }
-    }
-
-    // 3. CrawlingMode 별 로깅/전략 태그 (현재는 정보성)
-    if let Some(mode) = &request.mode {
-        info!("[start_actor_system_crawling] mode={:?}", mode);
-    }
-
-    // 4. Feature Flag (환경변수) 로 ProductDetails Phase on/off
-    //    BOOTSTRAP_PRODUCT_DETAILS=0 이면 ProductDetails phase 를 스킵
-    let details_enabled = std::env::var("BOOTSTRAP_PRODUCT_DETAILS")
-        .ok()
-        .is_none_or(|v| v != "0");
-    if !details_enabled {
-        info!("🔧 ProductDetails phase disabled via BOOTSTRAP_PRODUCT_DETAILS=0");
-    }
-
-    // 5. SiteStatus 파생
     let site_status = execution_plan.input_snapshot_to_site_status();
     let (sid, exec_clone) = bootstrap_and_spawn_session(
         &app,
@@ -887,139 +827,30 @@ pub async fn resume_from_token(
         contract_version: ACTOR_CONTRACT_VERSION,
         page_slots,
     };
-    // 3. 기존 start_actor_system_crawling 과 동일한 실행 경로 재사용 위해 내부 함수 추출이 이상적이나 현재는 임시 direct 실행
-    // 재사용을 위해 start_actor_system_crawling 의 주요 블록을 축약하여 삽입 (중복: Phase3 리팩토링 항목)
-    let (actor_event_tx, actor_event_rx) = broadcast::channel::<AppEvent>(1000);
-    let _bridge_handle = start_actor_event_bridge(app.clone(), actor_event_rx)
-        .await
-        .map_err(|e| format!("Failed to start Actor Event Bridge: {}", e))?;
-    let _session_actor = SessionActor::new(new_session_id.clone());
-    let (shutdown_req_tx, _shutdown_req_rx) = watch::channel(false);
-    let (pause_tx, _pause_rx) = watch::channel(false);
-    let _ = PHASE_SHUTDOWN_TX.set(shutdown_req_tx.clone());
-    // Registry 등록
-    {
-        let registry = session_registry();
-        let mut guard = registry.write().await;
-        guard.insert(
-            new_session_id.clone(),
-            SessionEntry {
-                status: SessionStatus::Running,
-                pause_tx: pause_tx.clone(),
-                started_at: Utc::now(),
-                completed_at: None,
-                total_pages_planned: execution_plan.page_slots.len() as u64,
-                processed_pages: 0,
-                total_batches_planned: execution_plan.crawling_ranges.len() as u64,
-                completed_batches: 0,
-                batch_size: execution_plan.batch_size,
-                concurrency_limit: execution_plan.concurrency_limit,
-                last_error: None,
-                error_count: 0,
-                resume_token: Some(resume_token.clone()),
-                remaining_page_slots: Some(
-                    execution_plan
-                        .page_slots
-                        .iter()
-                        .map(|s| s.physical_page)
-                        .collect(),
-                ),
-                plan_hash: Some(plan_hash),
-                removal_deadline: None,
-                failed_emitted: false,
-                retries_per_page,
-                failed_pages,
-                retrying_pages,
-                product_list_max_retries: 1, // 실제 config 로드 후 아래에서 갱신
-                error_type_stats: HashMap::new(),
-                detail_tasks_total: 0,
-                detail_tasks_completed: 0,
-                detail_tasks_failed: 0,
-                detail_retry_counts,
-                detail_retries_total,
-                detail_retry_histogram: HashMap::new(),
-                remaining_detail_ids,
-                detail_failed_ids: Vec::new(),
-                page_failure_threshold: failure_threshold(),
-                detail_failure_threshold: failure_threshold() / 2,
-                detail_downshifted: false,
-                detail_downshift_timestamp: None,
-                detail_downshift_old_limit: None,
-                detail_downshift_new_limit: None,
-                detail_downshift_trigger: None,
-            },
-        );
-    }
-    // 앱 설정 / 사이트 상태 최소 생성 (ExecutionPlan snapshot 이용)
+    // 3. 공통 부트스트랩 경로를 사용해 SessionActor로 실행
     let site_status = execution_plan.input_snapshot_to_site_status();
-    // 설정 로드 재사용 (간단히 현재 ConfigManager 통해 로드)
     let cfg_manager =
         ConfigManager::new().map_err(|e| format!("config manager init failed: {}", e))?;
     let app_config = cfg_manager
         .load_config()
         .await
         .map_err(|e| format!("config load failed: {}", e))?;
-    {
-        // config 로드 후 retry 한도 갱신
-        let registry = session_registry();
-        let mut g = registry.write().await;
-        if let Some(entry) = g.get_mut(&new_session_id) {
-            entry.product_list_max_retries =
-                app_config.user.crawling.product_list_retry_count.max(1);
-        }
-    }
-    // 실행 태스크 spawn
-    let exec_clone = execution_plan.clone();
-    tokio::spawn(async move {
-        // plan_hash 무결성 재검증 (v1 간단: page_slots + crawling_ranges 직렬화 후 해시 비교)
-        let integrity_serialized = serde_json::json!({
-            "ranges": exec_clone.crawling_ranges,
-            "slots": exec_clone.page_slots,
-            "batch_size": exec_clone.batch_size,
-            "concurrency": exec_clone.concurrency_limit,
-        })
-        .to_string();
-        let recomputed = blake3::hash(integrity_serialized.as_bytes())
-            .to_hex()
-            .to_string();
-        if recomputed != exec_clone.plan_hash {
-            error!(
-                "resume plan hash mismatch: token={} recomputed={}",
-                exec_clone.plan_hash, recomputed
-            );
-            let _ = actor_event_tx.send(AppEvent::SessionFailed {
-                session_id: exec_clone.session_id.clone(),
-                error: "plan_hash_mismatch".into(),
-                final_failure: true,
-                timestamp: Utc::now(),
-            });
-            // 레지스트리 상태 Failed 반영
-            {
-                let registry = session_registry();
-                let mut g = registry.write().await;
-                if let Some(entry) = g.get_mut(&exec_clone.session_id) {
-                    entry.status = SessionStatus::Failed;
-                    entry.last_error = Some("plan_hash_mismatch".into());
-                }
-            }
-            return;
-        }
-        if let Err(e) = execute_session_actor_with_execution_plan(
-            exec_clone,
-            &app_config,
-            &site_status,
-            actor_event_tx.clone(),
-        )
-        .await
-        {
-            error!("resume session execution failed: {}", e);
-        }
-    });
+    let (sid, exec_clone) = bootstrap_and_spawn_session(
+        &app,
+        execution_plan.clone(),
+        app_config,
+        site_status,
+        Some(resume_token.clone()),
+        Some(retries_per_page),
+        Some(failed_pages),
+        Some(retrying_pages),
+    )
+    .await?;
     Ok(ActorSystemResponse {
         success: true,
         message: "resume session started".into(),
-        session_id: Some(new_session_id),
-        data: Some(serde_json::to_value(&execution_plan).unwrap()),
+        session_id: Some(sid),
+        data: Some(serde_json::to_value(&exec_clone).unwrap()),
     })
 }
 
@@ -1317,158 +1148,7 @@ async fn calculate_intelligent_crawling_range(
     Ok((final_start_page, final_end_page, analysis_info))
 }
 
-/// 실제 `BatchActor` 실행
-async fn execute_real_batch_actor(
-    batch_id: &str,
-    pages: &[u32],
-    context: &AppContext,
-    app_config: &AppConfig,
-    site_status: &SiteStatus,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use crate::crawl_engine::actors::traits::Actor;
-    use crate::crawl_engine::actors::{ActorCommand, BatchActor};
-    use tokio::sync::mpsc;
-
-    info!(
-        "🎯 BatchActor {} starting REAL processing of {} pages",
-        batch_id,
-        pages.len()
-    );
-    info!("🔧 Creating BatchActor instance with real services...");
-
-    // 🔥 Phase 1: 실제 서비스들 생성 및 주입
-    use crate::infrastructure::{HttpClient, MatterDataExtractor};
-    // AppConfig type is provided via function parameter; no local import needed
-    use crate::infrastructure::IntegratedProductRepository;
-    use std::sync::Arc;
-
-    // HttpClient 생성
-    let http_client = Arc::new(
-        HttpClient::create_from_global_config()
-            .map_err(|e| format!("Failed to create HttpClient: {}", e))?
-            .with_context_label(&format!("BatchActor:{}", batch_id)),
-    );
-    info!("✅ HttpClient created (labeled)");
-
-    // MatterDataExtractor 생성
-    let data_extractor = Arc::new(
-        MatterDataExtractor::new()
-            .map_err(|e| format!("Failed to create MatterDataExtractor: {}", e))?,
-    );
-    info!("✅ MatterDataExtractor created");
-
-    // IntegratedProductRepository 생성
-    use crate::infrastructure::DatabaseConnection;
-    let database_url = crate::infrastructure::database_paths::get_main_database_url();
-    info!("🔧 Using database URL: {}", database_url);
-    let db_connection = DatabaseConnection::new(&database_url)
-        .await
-        .map_err(|e| format!("Failed to create DatabaseConnection: {}", e))?;
-    let product_repo = Arc::new(IntegratedProductRepository::new(
-        db_connection.pool().clone(),
-    ));
-    info!("✅ IntegratedProductRepository created with centralized database path");
-
-    // AppConfig 사용: ExecutionPlan 경로에서 로드한 설정 사용 (개발 기본값 사용하지 않음)
-    let app_config = app_config.clone();
-    // Clone once more for passing into BatchActor::new_with_services (it takes ownership)
-    let app_config_for_actor = app_config.clone();
-    info!("✅ AppConfig provided from ExecutionPlan context");
-
-    // AppConfig에서 실제 batch_size 미리 추출 (app_config이 move되기 전에)
-    let user_batch_size = app_config.user.batch.batch_size;
-    info!("📊 Using batch_size from config: {}", user_batch_size);
-
-    // BatchActor를 실제 서비스들과 함께 생성
-    let mut batch_actor = BatchActor::new_with_services(
-        batch_id.to_string(),
-        batch_id.to_string(), // batch_id도 같이 전달
-        http_client,
-        data_extractor,
-        product_repo,
-        app_config_for_actor,
-    );
-    info!("✅ BatchActor created successfully with real services");
-
-    // Apply dedupe behavior: in real batch actor path, use conservative default (do not skip duplicates)
-    // This path is invoked by unified executor with pre-planned ranges; ExecutionPlan context isn’t available here.
-    batch_actor.set_skip_duplicate_urls(false);
-    info!(
-        "[DedupCfg] Applied skip_duplicate_urls=false to BatchActor (batch_id={})",
-        batch_id
-    );
-
-    // 수동 실행에서는 중복 URL도 위치 정보(page_id, index_in_page, id)를 강제 업데이트
-    // StageDeps로 전달되도록 Session/Batch 경로에서 설정한다.
-    // BatchActor 내부 StageDeps 생성 지점들은 기본 Skip으로 두고, manual 경로에서만 정책을 변경하기 위해
-    // 환경 변수 힌트를 사용한다.
-    // Hint policy for duplicate handling in manual/pre-planned runs is handled by BatchActor via config/env elsewhere.
-
-    // BatchActor 실행을 위한 채널 생성
-    info!("🔧 Creating communication channels...");
-    let (command_tx, command_rx) = mpsc::channel::<ActorCommand>(100);
-    info!("✅ Channels created successfully");
-
-    // ProcessBatch 명령 생성
-    info!("🔧 Creating BatchConfig...");
-
-    let batch_config = BatchConfig {
-        batch_size: user_batch_size,
-        // Use the app-level max concurrency for batch execution to match plan/session
-        concurrency_limit: app_config.user.max_concurrent_requests,
-        batch_delay_ms: 1000,
-        retry_on_failure: true,
-        start_page: Some(pages[0]),
-        end_page: Some(pages[pages.len() - 1]),
-    };
-    info!("✅ BatchConfig created: {:?}", batch_config);
-
-    info!("🔧 Creating ProcessBatch command...");
-    let process_batch_cmd = ActorCommand::ProcessBatch {
-        batch_id: batch_id.to_string(),
-        pages: pages.to_vec(),
-        config: batch_config,
-        batch_size: user_batch_size,
-        concurrency_limit: app_config.user.max_concurrent_requests,
-        total_pages: site_status.total_pages,
-        products_on_last_page: site_status.products_on_last_page,
-    };
-    info!("✅ ProcessBatch command created");
-
-    // BatchActor 실행 태스크 시작
-    info!("🚀 Starting BatchActor task...");
-    let context_clone = context.clone();
-    let batch_task = tokio::spawn(async move {
-        info!("📡 BatchActor.run() starting...");
-        let result = batch_actor.run(context_clone, command_rx).await;
-        info!("📡 BatchActor.run() completed with result: {:?}", result);
-        result
-    });
-    info!("✅ BatchActor task spawned");
-
-    // ProcessBatch 명령 전송
-    info!("📡 Sending ProcessBatch command...");
-    command_tx
-        .send(process_batch_cmd)
-        .await
-        .map_err(|e| format!("Failed to send ProcessBatch command: {}", e))?;
-    info!("✅ ProcessBatch command sent");
-
-    // Shutdown 명령은 모든 작업이 자연 종료될 때까지 지연 (다음 phase/배치 전환 로직에서 결정)
-    info!("⏳ Waiting for BatchActor completion (deferred shutdown)...");
-    batch_task
-        .await
-        .map_err(|e| format!("BatchActor task failed: {}", e))?
-        .map_err(|e| format!("BatchActor execution failed: {:?}", e))?;
-
-    info!(
-        "✅ BatchActor {} completed REAL processing of {} pages",
-        batch_id,
-        pages.len()
-    );
-    // TODO: phase/plan 실행 컨트롤러에서 남은 배치/phase 진행 후 최종 Shutdown 발송
-    Ok(())
-}
+// (removed legacy execute_real_batch_actor)
 
 // (run_single_batch_real removed)
 
@@ -2011,161 +1691,7 @@ async fn create_execution_plan(
     Ok((execution_plan, app_config, site_status))
 }
 
-/// Adjusts an existing `ExecutionPlan` with optional `start_page/end_page/page_count` overrides.
-/// Rules:
-/// - If `page_count` provided (N): take first N physical pages from current plan order (respecting reverse order flags) then rebuild `crawling_ranges` & `page_slots`.
-/// - Else if both `start_page` & `end_page` provided: restrict to inclusive range (supports start>=end reverse semantics). If direction mismatches plan ranges, will normalize.
-/// - Else if only `start_page` provided: treat as limiting to pages >= `end_page` of plan and <= `start_page` (reverse newest→oldest semantics).
-/// - Else if only `end_page` provided: limit to pages down to `end_page` from current highest.
-/// Any invalid combination results in Err and original plan is retained.
-fn adjust_execution_plan_with_page_overrides(
-    plan: &mut ExecutionPlan,
-    req: &ActorCrawlingRequest,
-) -> Result<(), String> {
-    use crate::crawl_engine::actors::types::PageSlot;
-    // Normalize sentinel values (0 => None) to avoid generating meaningless overrides
-    let mut norm_start = req.start_page;
-    let mut norm_end = req.end_page;
-    let mut norm_count = req.page_count;
-    if matches!(norm_start, Some(0)) {
-        norm_start = None;
-    }
-    if matches!(norm_end, Some(0)) {
-        norm_end = None;
-    }
-    if matches!(norm_count, Some(0)) {
-        norm_count = None;
-    }
-    if norm_count.is_none() && norm_start.is_none() && norm_end.is_none() {
-        return Ok(());
-    }
-    let mut pages: Vec<u32> = plan
-        .crawling_ranges
-        .iter()
-        .flat_map(|r| {
-            if r.reverse_order {
-                (r.end_page..=r.start_page).rev().collect::<Vec<_>>()
-            } else {
-                (r.start_page..=r.end_page).collect::<Vec<_>>()
-            }
-        })
-        .collect();
-    // Pages currently newest→oldest (because we reversed reverse_order ranges above)
-    pages.sort_by(|a, b| b.cmp(a));
-    pages.dedup();
-    let original_len = pages.len();
-    let min_page = *pages.iter().min().unwrap_or(&1);
-    let max_page = *pages.iter().max().unwrap_or(&1);
-    tracing::info!(
-        "🛠️ override_request(start_page={:?}, end_page={:?}, page_count={:?}) normalized(start={:?}, end={:?}, count={:?}) plan_range=[{}..{}] total_pages_in_plan={}",
-        req.start_page,
-        req.end_page,
-        req.page_count,
-        norm_start,
-        norm_end,
-        norm_count,
-        min_page,
-        max_page,
-        original_len
-    );
-    // Heuristic: if user start_page is lower than min_page and end_page/page_count absent -> treat as page_count (legacy semantics)
-    let mut synthetic_page_count: Option<u32> = None;
-    if norm_count.is_none() && norm_end.is_none() {
-        if let Some(sp) = norm_start {
-            if sp < min_page {
-                synthetic_page_count = Some(sp);
-            }
-        }
-    }
-    if let Some(pc) = norm_count {
-        if pc as usize > 0 && (pc as usize) < pages.len() {
-            pages.truncate(pc as usize);
-        }
-    } else if let Some(spc) = synthetic_page_count {
-        if spc as usize > 0 && (spc as usize) < pages.len() {
-            pages.truncate(spc as usize);
-            tracing::info!(
-                "🔁 interpreted start_page={} as page_count override (legacy UI)",
-                spc
-            );
-        }
-    }
-    // Range filtering if explicit bounds
-    let start_opt = norm_start;
-    let end_opt = norm_end;
-    if start_opt.is_some() || end_opt.is_some() {
-        // Interpret start_page as higher (newer) page, end_page as lower (older)
-        let high = start_opt.unwrap_or_else(|| pages.first().copied().unwrap_or(1));
-        let low = end_opt.unwrap_or_else(|| pages.last().copied().unwrap_or(1));
-        if low > high {
-            return Err(format!(
-                "invalid override range: end_page {} > start_page {}",
-                low, high
-            ));
-        }
-        pages.retain(|p| *p <= high && *p >= low);
-    }
-    if pages.is_empty() {
-        tracing::warn!(
-            "⚠️ override filtering produced empty set (normalized start={:?} end={:?} count={:?}) -> keeping original plan (override ignored)",
-            norm_start,
-            norm_end,
-            norm_count
-        );
-        return Ok(()); // Keep original plan unchanged intentionally
-    }
-    if pages.len() == original_len {
-        tracing::info!("ℹ️ ExecutionPlan override produced no change (ignored)");
-    } else {
-        tracing::info!(
-            "📏 ExecutionPlan override: pages reduced {} -> {}",
-            original_len,
-            pages.len()
-        );
-    }
-    // Rebuild crawling_ranges using existing batch_size semantics (reverse order newest→oldest)
-    let batch_size = plan.batch_size.max(1) as usize;
-    let mut new_ranges: Vec<PageRange> = Vec::new();
-    for chunk in pages.chunks(batch_size) {
-        let first = *chunk.first().unwrap();
-        let last = *chunk.last().unwrap();
-        new_ranges.push(PageRange {
-            start_page: first,
-            end_page: last,
-            estimated_products: ((first - last) + 1) * 12,
-            reverse_order: true,
-        });
-    }
-    // Recompute page_slots (canonical)
-    use crate::domain::pagination::PaginationCalculator;
-    let calc = PaginationCalculator::default();
-    let mut page_slots: Vec<PageSlot> = Vec::new();
-    if let Some(total_pages_site) = Some(plan.input_snapshot.total_pages) {
-        for p in &pages {
-            for idx in 0..crate::domain::constants::site::PRODUCTS_PER_PAGE as u32 {
-                let pos = calc.calculate(*p, idx, total_pages_site);
-                page_slots.push(PageSlot {
-                    physical_page: *p,
-                    page_id: i64::from(pos.page_id),
-                    index_in_page: pos.index_in_page as i16,
-                });
-            }
-        }
-    }
-    page_slots.sort_by(|a, b| match a.page_id.cmp(&b.page_id) {
-        core::cmp::Ordering::Equal => a.index_in_page.cmp(&b.index_in_page),
-        other => other,
-    });
-    page_slots.dedup_by(|a, b| a.page_id == b.page_id && a.index_in_page == b.index_in_page);
-    plan.crawling_ranges = new_ranges;
-    plan.page_slots = page_slots;
-    // kpi_meta update
-    if let Some(kpi) = &mut plan.kpi_meta {
-        kpi.total_pages = pages.len() as u32;
-        kpi.batches = plan.crawling_ranges.len();
-    }
-    Ok(())
-}
+// (Removed unused adjust_execution_plan_with_page_overrides; logic lives in planning_service)
 
 // Build an ExecutionPlan from explicit pages (newest -> oldest) with contiguous range compression.
 async fn build_execution_plan_from_explicit_pages(
@@ -2367,886 +1893,7 @@ pub async fn start_manual_crawl_pages_actor(
     })
 }
 
-/// `ExecutionPlan` 기반 `SessionActor` 실행 (순수 실행 전용)
-///
-/// `SessionActor는` 더 이상 분석/계획하지 않고 `ExecutionPlan을` 충실히 실행합니다.
-async fn execute_session_actor_with_execution_plan(
-    execution_plan: ExecutionPlan,
-    app_config: &AppConfig,
-    site_status: &SiteStatus,
-    actor_event_tx: broadcast::Sender<AppEvent>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Install a lightweight panic hook (idempotent) to surface silent panics inside async tasks
-    static SET_HOOK: std::sync::Once = std::sync::Once::new();
-    let tx_clone_for_panic = actor_event_tx.clone();
-    let session_id_for_panic = execution_plan.session_id.clone();
-    SET_HOOK.call_once(|| {
-        std::panic::set_hook(Box::new(move |pi| {
-            let payload = if let Some(s) = pi.payload().downcast_ref::<&str>() {
-                *s
-            } else {
-                "<non-str>"
-            };
-            error!(
-                "[PanicHook] panic captured payload='{}' location={:?}",
-                payload,
-                pi.location()
-            );
-            // Try best-effort fallback session completion for diagnostics (non-blocking; ignore send errors)
-            let now = Utc::now();
-            let _ = tx_clone_for_panic.send(AppEvent::Progress {
-                session_id: session_id_for_panic.clone(),
-                current_step: 0,
-                total_steps: 0,
-                message: format!("panic: {}", payload),
-                percentage: 0.0,
-                timestamp: now,
-            });
-        }));
-    });
-    // Scope guard 상태
-    use std::sync::atomic::{AtomicBool, Ordering};
-    let completed_normally = Arc::new(AtomicBool::new(false));
-    let guard_flag = completed_normally.clone();
-    let session_id_for_guard = execution_plan.session_id.clone();
-    let actor_event_tx_guard = actor_event_tx.clone();
-    let planned_batches_guard: u32 = {
-        let mut _total_pages: usize = 0;
-        let mut total_batches: usize = 0;
-        let batch_unit = execution_plan.batch_size.max(1) as usize;
-        for r in &execution_plan.crawling_ranges {
-            let pages_in_range = if r.reverse_order {
-                r.start_page - r.end_page + 1
-            } else {
-                r.end_page - r.start_page + 1
-            } as usize;
-            _total_pages += pages_in_range;
-            total_batches += pages_in_range.div_ceil(batch_unit);
-        }
-        total_batches as u32
-    };
-    struct SessionFinalizer {
-        flag: Arc<AtomicBool>,
-        session_id: String,
-        tx: broadcast::Sender<AppEvent>,
-        planned_batches: u32,
-    }
-    impl Drop for SessionFinalizer {
-        fn drop(&mut self) {
-            if !self.flag.load(Ordering::SeqCst) {
-                let now = Utc::now();
-                let fallback = AppEvent::SessionCompleted {
-                    session_id: self.session_id.clone(),
-                    summary: SessionSummary {
-                        session_id: self.session_id.clone(),
-                        total_duration_ms: 0,
-                        total_pages_processed: 0,
-                        total_products_processed: 0,
-                        success_rate: 0.0,
-                        avg_page_processing_time: 0,
-                        error_summary: vec![crate::crawl_engine::actors::types::ErrorSummary {
-                            error_type: "Aborted".into(),
-                            count: 1,
-                            first_occurrence: now,
-                            last_occurrence: now,
-                        }],
-                        total_retry_events: 0,
-                        max_retries_single_page: 0,
-                        pages_retried: 0,
-                        retry_histogram: vec![],
-                        processed_batches: 0,
-                        total_success_count: 0,
-                        duplicates_skipped: 0,
-                        planned_list_batches: self.planned_batches,
-                        executed_list_batches: 0,
-                        failed_pages_count: 0,
-                        failed_page_ids: vec![],
-                        final_state: "AbortedNoCompletion".into(),
-                        products_inserted: 0,
-                        products_updated: 0,
-                        timestamp: now,
-                    },
-                    timestamp: now,
-                };
-                let _ = self.tx.send(fallback);
-                tracing::warn!(
-                    "⚠️ SessionFinalizer emitted fallback SessionCompleted (aborted) session_id={}",
-                    self.session_id
-                );
-            }
-        }
-    }
-    let _finalizer = SessionFinalizer {
-        flag: guard_flag,
-        session_id: session_id_for_guard,
-        tx: actor_event_tx_guard,
-        planned_batches: planned_batches_guard,
-    };
-    info!("🎭 Executing SessionActor with predefined ExecutionPlan...");
-    info!(
-        "📋 Plan: {} batches, batch_size: {}, effective_concurrency: {}",
-        execution_plan.crawling_ranges.len(),
-        execution_plan.batch_size,
-        execution_plan.concurrency_limit
-    );
-    let session_start = std::time::Instant::now();
-    let session_started_at = chrono::Utc::now();
-
-    // ----- Aggregated metrics (ranges -> batches/pages) -----
-    let batch_unit = execution_plan.batch_size.max(1);
-    let mut expected_pages: usize = 0;
-    let mut expected_batches: usize = 0;
-    for r in &execution_plan.crawling_ranges {
-        let pages_in_range = if r.reverse_order {
-            r.start_page - r.end_page + 1
-        } else {
-            r.end_page - r.start_page + 1
-        } as usize;
-        expected_pages += pages_in_range;
-        expected_batches += pages_in_range.div_ceil(batch_unit as usize);
-    }
-    info!(
-        "🧮 Aggregated metrics => ranges: {}, expected_pages: {}, expected_batches: {}, batch_size: {}",
-        execution_plan.crawling_ranges.len(),
-        expected_pages,
-        expected_batches,
-        batch_unit
-    );
-    let mut completed_pages: usize = 0;
-    let mut completed_batches: usize = 0;
-
-    // 실행 전 해시 재계산 & 검증 (생성 시와 동일한 직렬화 스키마 사용)
-    let current_hash = compute_plan_hash(
-        &execution_plan.input_snapshot,
-        &execution_plan.crawling_ranges,
-        &execution_plan.original_strategy,
-    );
-    {
-        info!(
-            "[SessionTrace] BEFORE plan hash verify session_id={}",
-            execution_plan.session_id
-        );
-        if current_hash == execution_plan.plan_hash {
-            tracing::info!(
-                "🔐 ExecutionPlan integrity verified (hash={})",
-                current_hash
-            );
-        } else {
-            tracing::error!(
-                "❌ ExecutionPlan hash mismatch! expected={}, got={}",
-                execution_plan.plan_hash,
-                current_hash
-            );
-            return Err("ExecutionPlan integrity check failed".into());
-        }
-    }
-    info!(
-        "[SessionTrace] AFTER plan hash verify session_id={}",
-        execution_plan.session_id
-    );
-
-    // 시작 이벤트 방출 (설정 파일 기반 값 사용)
-    // 전략 추론: 첫 배치가 마지막 페이지보다 작은 페이지를 포함하면 ContinueFromDb였을 가능성 높음
-    let inferred_strategy = if execution_plan.crawling_ranges.len() > 1 {
-        // 여러 범위가 있고 첫 start_page가 site_status.total_pages 보다 작으면 ContinueFromDb 추정
-        let first_start = execution_plan
-            .crawling_ranges
-            .first()
-            .map_or(1, |r| r.start_page);
-        if first_start < site_status.total_pages {
-            crate::crawl_engine::actors::types::CrawlingStrategy::ContinueFromDb
-        } else {
-            crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst
-        }
-    } else {
-        let first_range = execution_plan.crawling_ranges.first();
-        if let Some(r) = first_range {
-            if r.start_page < site_status.total_pages {
-                crate::crawl_engine::actors::types::CrawlingStrategy::ContinueFromDb
-            } else {
-                crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst
-            }
-        } else {
-            crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst
-        }
-    };
-
-    let session_event = AppEvent::SessionStarted {
-        session_id: execution_plan.session_id.clone(),
-        config: CrawlingConfig {
-            site_url: "https://csa-iot.org/csa-iot_products/".to_string(),
-            start_page: execution_plan
-                .crawling_ranges
-                .first()
-                .map_or(1, |r| r.start_page),
-            end_page: execution_plan
-                .crawling_ranges
-                .last()
-                .map_or(1, |r| r.end_page),
-            concurrency_limit: execution_plan.concurrency_limit,
-            batch_size: execution_plan.batch_size,
-            request_delay_ms: app_config.user.request_delay_ms,
-            timeout_secs: app_config.advanced.request_timeout_seconds,
-            max_retries: app_config.advanced.retry_attempts,
-            strategy: inferred_strategy,
-        },
-        timestamp: Utc::now(),
-    };
-
-    if let Err(e) = actor_event_tx.send(session_event) {
-        error!("Failed to send SessionStarted event: {}", e);
-    }
-
-    // Diagnostic: dump crawling_ranges structure to trace multi-range execution anomalies
-    // Elevated to info so it appears in production logs for current anomaly investigation (second range not executing)
-    info!(
-        "[ExecPlanDump] ranges_count={} details={:?}",
-        execution_plan.crawling_ranges.len(),
-        execution_plan
-            .crawling_ranges
-            .iter()
-            .map(|r| (r.start_page, r.end_page, r.reverse_order))
-            .collect::<Vec<_>>()
-    );
-
-    // 각 범위별로 순차 실행
-    // Track how many ranges we actually execute to detect premature loop termination
-    let mut ranges_executed: usize = 0;
-    // Guard struct to detect silent drops inside a range before post-batch / final logs
-    struct RangeExecutionGuard {
-        idx: usize,
-        post_batch_logged: bool,
-        finalized: bool,
-        started_at: std::time::Instant,
-    }
-    impl Drop for RangeExecutionGuard {
-        fn drop(&mut self) {
-            // If guard drops without post_batch_logged, we know we never reached that code path
-            if !self.post_batch_logged {
-                info!(
-                    "[RangeLoopGuard] DROP without POST-BATCH idx={} elapsed_ms={} (range body aborted before post-range section)",
-                    self.idx,
-                    self.started_at.elapsed().as_millis()
-                );
-            } else if !self.finalized {
-                info!(
-                    "[RangeLoopGuard] DROP after POST-BATCH but before FINAL idx={} elapsed_ms={} (finalization skipped)",
-                    self.idx,
-                    self.started_at.elapsed().as_millis()
-                );
-            }
-        }
-    }
-    for (range_idx, page_range) in execution_plan.crawling_ranges.iter().enumerate() {
-        let mut _range_guard = RangeExecutionGuard {
-            idx: range_idx,
-            post_batch_logged: false,
-            finalized: false,
-            started_at: std::time::Instant::now(),
-        };
-        ranges_executed += 1;
-        info!(
-            "[RangeLoop] ENTER range_idx={} start_page={} end_page={} reverse={} total_ranges={}",
-            range_idx,
-            page_range.start_page,
-            page_range.end_page,
-            page_range.reverse_order,
-            execution_plan.crawling_ranges.len()
-        );
-        // Range watchdog: if processing this range takes excessively long without completing batches, warn
-        let range_start_inst = std::time::Instant::now();
-        let pages_in_range = if page_range.reverse_order {
-            page_range.start_page - page_range.end_page + 1
-        } else {
-            page_range.end_page - page_range.start_page + 1
-        } as usize;
-        let range_batches = pages_in_range.div_ceil(batch_unit as usize);
-        info!(target: "kpi.batch", "{{\"event\":\"batch_start\",\"plan_id\":\"{}\",\"session_id\":\"{}\",\"range_idx\":{},\"pages\":{},\"range_batches_est\":{},\"batch_size\":{}}}", execution_plan.plan_id, execution_plan.session_id, range_idx, pages_in_range, range_batches, batch_unit);
-        info!(
-            "🎯 Range {}/{} start: pages {} to {} ({} pages => {} batches, reverse: {})",
-            range_idx + 1,
-            execution_plan.crawling_ranges.len(),
-            page_range.start_page,
-            page_range.end_page,
-            pages_in_range,
-            range_batches,
-            page_range.reverse_order
-        );
-
-        // 진행 상황 이벤트 방출
-        let progress_percentage =
-            ((completed_pages as f64) / (expected_pages as f64).max(1.0)) * 100.0;
-        let progress_event = AppEvent::Progress {
-            session_id: execution_plan.session_id.clone(),
-            current_step: range_idx as u32 + 1,
-            total_steps: execution_plan.crawling_ranges.len() as u32,
-            message: format!(
-                "Processing range {}/{} pages {}->{} (range pages={}, est batches={})",
-                range_idx + 1,
-                execution_plan.crawling_ranges.len(),
-                page_range.start_page,
-                page_range.end_page,
-                pages_in_range,
-                range_batches
-            ),
-            percentage: progress_percentage,
-            timestamp: Utc::now(),
-        };
-
-        if let Err(e) = actor_event_tx.send(progress_event) {
-            error!("Failed to send progress event: {}", e);
-        }
-
-        // Unified inline batch execution (replacing legacy execute_session_actor_with_batches)
-        let pages_vec: Vec<u32> = if page_range.start_page > page_range.end_page {
-            (page_range.end_page..=page_range.start_page)
-                .rev()
-                .collect()
-        } else {
-            (page_range.start_page..=page_range.end_page).collect()
-        };
-        for (batch_index, page_chunk) in pages_vec
-            .chunks(execution_plan.batch_size as usize)
-            .enumerate()
-        {
-            info!(
-                "[RangeLoop] BATCH ENTER range_idx={} batch_index={} pages={:?}",
-                range_idx, batch_index, page_chunk
-            );
-            info!(
-                "[RangeLoopTrace] BEFORE execute_real_batch_actor range_idx={} batch_index={}",
-                range_idx, batch_index
-            );
-            let batch_id = format!(
-                "{}_range{}_batch{}",
-                execution_plan.session_id, range_idx, batch_index
-            );
-            let system_config = Arc::new(SystemConfig::default());
-            let (control_tx, _control_rx) = mpsc::channel::<ActorCommand>(100);
-            let (_cancel_tx, cancel_rx) = watch::channel(false);
-            let context = Arc::new(AppContext::new(
-                execution_plan.session_id.clone(),
-                control_tx,
-                actor_event_tx.clone(),
-                cancel_rx,
-                system_config,
-            ));
-            let mut per_page_start: HashMap<u32, std::time::Instant> = HashMap::new();
-            for p in page_chunk {
-                per_page_start.insert(*p, std::time::Instant::now());
-                // Emit native PageLifecycle
-                let _ = actor_event_tx.send(AppEvent::PageLifecycle {
-                    session_id: execution_plan.session_id.clone(),
-                    batch_id: Some(batch_id.clone()),
-                    page_number: *p,
-                    status: "fetch_started".to_string(),
-                    metrics: None,
-                    timestamp: Utc::now(),
-                });
-                // Emit native TaskLifecycle (page) started
-                let _ = actor_event_tx.send(AppEvent::TaskLifecycle {
-                    session_id: execution_plan.session_id.clone(),
-                    batch_id: Some(batch_id.clone()),
-                    task_kind: TaskKind::Page,
-                    page_number: Some(*p),
-                    product_ref: None,
-                    status: "fetch_started".to_string(),
-                    retry: None,
-                    duration_ms: None,
-                    metrics: None,
-                    timestamp: Utc::now(),
-                });
-            }
-            if let Err(e) =
-                execute_real_batch_actor(&batch_id, page_chunk, &context, app_config, site_status)
-                    .await
-            {
-                error!(
-                    "❌ Batch {} failed: {} (policy=ContinueWithoutRetry)",
-                    batch_id, e
-                );
-                // 정책(b): 재시도 없이 지금 실패한 페이지를 즉시 final_failure 처리하고 다음 배치로 진행
-                for p in page_chunk {
-                    let registry = session_registry();
-                    let mut g = registry.write().await;
-                    if let Some(entry) = g.get_mut(&execution_plan.session_id) {
-                        // 기존 retry/threshold 로직 우회: 즉시 final 로 마킹
-                        if !entry.failed_pages.contains(p) {
-                            entry.failed_pages.push(*p);
-                        }
-                        if let Some(ref mut rem) = entry.remaining_page_slots {
-                            rem.retain(|rp: &u32| rp != p);
-                        }
-                        entry.processed_pages += 1; // 카운트 증가
-                        // 에러 통계 갱신
-                        let err_s = format!("batch_error_no_retry: {}", e);
-                        let etype = classify_error_type(&err_s);
-                        let now = Utc::now();
-                        entry
-                            .error_type_stats
-                            .entry(etype)
-                            .and_modify(|rec| {
-                                rec.0 += 1;
-                                rec.2 = now;
-                            })
-                            .or_insert((1, now, now));
-                        // Emit native PageLifecycle failed
-                        let _ = actor_event_tx.send(AppEvent::PageLifecycle {
-                            session_id: execution_plan.session_id.clone(),
-                            batch_id: Some(batch_id.clone()),
-                            page_number: *p,
-                            status: "failed".to_string(),
-                            metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: Some("batch_error_no_retry".to_string()) }),
-                            timestamp: Utc::now(),
-                        });
-                        // Emit native TaskLifecycle (page) failed
-                        let _ = actor_event_tx.send(AppEvent::TaskLifecycle {
-                            session_id: execution_plan.session_id.clone(),
-                            batch_id: Some(batch_id.clone()),
-                            task_kind: TaskKind::Page,
-                            page_number: Some(*p),
-                            product_ref: None,
-                            status: "failed".to_string(),
-                            retry: None,
-                            duration_ms: None,
-                            metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: Some("batch_error_no_retry".to_string()) }),
-                            timestamp: Utc::now(),
-                        });
-                    }
-                }
-                let _ = actor_event_tx.send(AppEvent::BatchFailed {
-                    session_id: execution_plan.session_id.clone(),
-                    batch_id: batch_id.clone(),
-                    error: format!("{}", e),
-                    final_failure: true,
-                    timestamp: Utc::now(),
-                });
-                info!("➡️ Continuing to next batch after failure (policy b)");
-                info!(
-                    "[RangeLoopTrace] AFTER execute_real_batch_actor (FAILED) range_idx={} batch_index={}",
-                    range_idx, batch_index
-                );
-                continue; // 다음 배치 진행
-            }
-            for p in page_chunk {
-                let duration_ms = per_page_start
-                    .get(p)
-                    .map(|t| t.elapsed().as_millis() as u64)
-                    .unwrap_or_default();
-                // Emit native PageLifecycle completed
-                let _ = actor_event_tx.send(AppEvent::PageLifecycle {
-                    session_id: execution_plan.session_id.clone(),
-                    batch_id: Some(batch_id.clone()),
-                    page_number: *p,
-                    status: "fetch_completed".to_string(),
-                    metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: None }),
-                    timestamp: Utc::now(),
-                });
-                // Emit native TaskLifecycle (page) completed
-                let _ = actor_event_tx.send(AppEvent::TaskLifecycle {
-                    session_id: execution_plan.session_id.clone(),
-                    batch_id: Some(batch_id.clone()),
-                    task_kind: TaskKind::Page,
-                    page_number: Some(*p),
-                    product_ref: None,
-                    status: "fetch_completed".to_string(),
-                    retry: None,
-                    duration_ms: Some(duration_ms),
-                    metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: None }),
-                    timestamp: Utc::now(),
-                });
-                let registry = session_registry();
-                let mut g = registry.write().await;
-                if let Some(entry) = g.get_mut(&execution_plan.session_id) {
-                    if let Some(ref mut rem) = entry.remaining_page_slots {
-                        rem.retain(|rp: &u32| rp != p);
-                    }
-                    entry.processed_pages += 1;
-                    // Page failure threshold check (separate from detail threshold)
-                    if entry.failed_pages.len() as u32 >= entry.page_failure_threshold
-                        && !entry.failed_emitted
-                    {
-                        entry.failed_emitted = true;
-                        entry.status = SessionStatus::Failed;
-                        entry.last_error = Some(format!(
-                            "page_failure_threshold_exceeded: {}>={}",
-                            entry.failed_pages.len(),
-                            entry.page_failure_threshold
-                        ));
-                        entry.completed_at = Some(Utc::now());
-                        entry.removal_deadline =
-                            Some(Utc::now() + chrono::Duration::seconds(removal_grace_secs()));
-                    }
-                }
-            }
-            info!(
-                "[RangeLoopTrace] AFTER execute_real_batch_actor (OK) range_idx={} batch_index={} pages={:?}",
-                range_idx, batch_index, page_chunk
-            );
-            if batch_index < range_batches - 1 {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-        }
-        info!(
-            "[RangeLoop] POST-BATCH range_idx={} executed_batches={} expected_batches={}",
-            range_idx, range_batches, range_batches
-        );
-        _range_guard.post_batch_logged = true; // mark guard state
-        // Range result treated as Ok(()) for unified logic
-        let range_elapsed = range_start_inst.elapsed().as_millis();
-        if range_elapsed > 60_000 {
-            warn!(
-                "[RangeLoopWatchdog] range_idx={} elapsed_ms={} exceeded_threshold_ms=60000",
-                range_idx, range_elapsed
-            );
-        }
-        // Always ok in unified path (errors already handled per batch)
-        {
-            // Approximate increments (recompute similar to helper)
-            let added_pages = if page_range.reverse_order {
-                page_range.start_page - page_range.end_page + 1
-            } else {
-                page_range.end_page - page_range.start_page + 1
-            } as usize;
-            let added_batches = added_pages.div_ceil(batch_unit as usize);
-            completed_pages += added_pages;
-            completed_batches += added_batches;
-            // Registry 업데이트
-            {
-                let registry = session_registry();
-                let mut g = registry.write().await;
-                if let Some(entry) = g.get_mut(&execution_plan.session_id) {
-                    entry.processed_pages = completed_pages as u64;
-                    entry.completed_batches = completed_batches as u64;
-                    // remaining_page_slots 업데이트: 현재 range 내 완료된 물리 페이지 제거
-                    if let Some(ref mut remaining) = entry.remaining_page_slots {
-                        let (from, to, rev) = (
-                            page_range.start_page,
-                            page_range.end_page,
-                            page_range.reverse_order,
-                        );
-                        let pages_range: Vec<u32> = if rev {
-                            (to..=from).rev().collect()
-                        } else {
-                            (from..=to).collect()
-                        };
-                        remaining.retain(|p: &u32| !pages_range.contains(p));
-                    }
-                }
-            }
-            let pct_batches = (completed_batches as f64 / expected_batches as f64) * 100.0;
-            let pct_pages = (completed_pages as f64 / expected_pages as f64) * 100.0;
-            info!(
-                "✅ Range {} complete | cumulative: {}/{} batches ({:.1}%), {}/{} pages ({:.1}%)",
-                range_idx + 1,
-                completed_batches,
-                expected_batches,
-                pct_batches,
-                completed_pages,
-                expected_pages,
-                pct_pages
-            );
-            info!(
-                "[RangeLoop] PRE-RANGE-FINAL range_idx={} cumulative_batches={} cumulative_pages={} expected_batches={} expected_pages={}",
-                range_idx, completed_batches, completed_pages, expected_batches, expected_pages
-            );
-            info!(
-                "[RangeLoop] EXIT range_idx={} cumulative_batches={} cumulative_pages={}",
-                range_idx, completed_batches, completed_pages
-            );
-            info!(target: "kpi.batch", "{{\"event\":\"batch_complete\",\"plan_id\":\"{}\",\"session_id\":\"{}\",\"range_idx\":{},\"elapsed_ms\":{},\"cumulative_batches\":{},\"cumulative_pages\":{}}}", execution_plan.plan_id, execution_plan.session_id, range_idx, range_start_inst.elapsed().as_millis(), completed_batches, completed_pages);
-            _range_guard.finalized = true; // mark finalized
-            // Emit an explicit event for FE/diagnostics that a range has completed
-            let _ = actor_event_tx.send(AppEvent::Progress {
-                session_id: execution_plan.session_id.clone(),
-                current_step: (range_idx + 1) as u32,
-                total_steps: execution_plan.crawling_ranges.len() as u32,
-                message: format!(
-                    "Range {}/{} completed",
-                    range_idx + 1,
-                    execution_plan.crawling_ranges.len()
-                ),
-                percentage: (completed_pages as f64 / expected_pages as f64) * 100.0,
-                timestamp: Utc::now(),
-            });
-        }
-        // Post-loop integrity check: did we execute all planned ranges?
-        if ranges_executed == execution_plan.crawling_ranges.len() {
-            info!(target: "kpi.range_loop", "{{\"event\":\"range_loop_complete\",\"planned\":{},\"executed\":{},\"completed_batches\":{},\"expected_batches\":{},\"completed_pages\":{},\"expected_pages\":{}}}",
-              execution_plan.crawling_ranges.len(), ranges_executed, completed_batches, expected_batches, completed_pages, expected_pages);
-        } else {
-            // Downgraded from warning anomaly to informational integrity summary (false positives were frequent)
-            info!(target: "kpi.range_loop", "{{\"event\":\"range_loop_incomplete\",\"planned\":{},\"executed\":{},\"completed_batches\":{},\"expected_batches\":{},\"completed_pages\":{},\"expected_pages\":{}}}",
-              execution_plan.crawling_ranges.len(), ranges_executed, completed_batches, expected_batches, completed_pages, expected_pages);
-            let _ = actor_event_tx.send(AppEvent::Progress {
-                session_id: execution_plan.session_id.clone(),
-                current_step: ranges_executed as u32,
-                total_steps: execution_plan.crawling_ranges.len() as u32,
-                message: format!(
-                    "Range loop incomplete: {}/{}",
-                    ranges_executed,
-                    execution_plan.crawling_ranges.len()
-                ),
-                percentage: ((completed_pages as f64) / (expected_pages as f64).max(1.0)) * 100.0,
-                timestamp: Utc::now(),
-            });
-        }
-    }
-
-    // 완료 이벤트 방출
-    // Integrity logging
-    if completed_batches != expected_batches {
-        warn!(
-            "⚠️ Batch count mismatch: expected={} actual={}",
-            expected_batches, completed_batches
-        );
-    }
-    if completed_pages != expected_pages {
-        warn!(
-            "⚠️ Page count mismatch: expected={} actual={}",
-            expected_pages, completed_pages
-        );
-    }
-    let total_duration_ms = session_start.elapsed().as_millis() as u64;
-    let avg_page_ms = if completed_pages > 0 {
-        (total_duration_ms / completed_pages as u64) as u32
-    } else {
-        0
-    };
-    // Registry 상태 기반 성공률/실패/재시도 통계 수집
-    let (success_rate, total_success_count, failed_pages_vec, _retrying_pages_vec, _retries_map) = {
-        let registry = session_registry();
-        let g = registry.read().await;
-        if let Some(entry) = g.get(&execution_plan.session_id) {
-            let failed_ct = entry.failed_pages.len() as u64;
-            let processed = entry.processed_pages.max(completed_pages as u64);
-            let succeeded = processed.saturating_sub(failed_ct);
-            let rate = if processed > 0 {
-                (succeeded as f64 / processed as f64) * 100.0
-            } else {
-                0.0
-            };
-            (
-                rate,
-                succeeded as u32,
-                entry.failed_pages.clone(),
-                entry.retrying_pages.clone(),
-                entry.retries_per_page.clone(),
-            )
-        } else {
-            (
-                100.0,
-                completed_pages as u32,
-                vec![],
-                vec![],
-                HashMap::new(),
-            )
-        }
-    };
-    let final_state = if !failed_pages_vec.is_empty() {
-        if completed_batches == expected_batches {
-            "CompletedWithFailures"
-        } else {
-            "CompletedWithFailuresAndDiscrepancy"
-        }
-    } else if completed_batches == expected_batches {
-        "Completed"
-    } else {
-        "CompletedWithDiscrepancy"
-    };
-    let mut mismatch_flags: Vec<&str> = Vec::new();
-    if completed_batches != expected_batches {
-        mismatch_flags.push("batch_count");
-    }
-    if completed_pages != expected_pages {
-        mismatch_flags.push("page_count");
-    }
-    if ranges_executed != execution_plan.crawling_ranges.len() {
-        mismatch_flags.push("range_count");
-    }
-    let mismatch_json = if mismatch_flags.is_empty() {
-        "[]".to_string()
-    } else {
-        format!(
-            "[{}]",
-            mismatch_flags
-                .iter()
-                .map(|f| format!("\"{}\"", f))
-                .collect::<Vec<_>>()
-                .join(",")
-        )
-    };
-    let failures_meta = if failed_pages_vec.is_empty() {
-        "{}".to_string()
-    } else {
-        format!(
-            "{{\"failed_pages\":{},\"truncated\":false}}",
-            failed_pages_vec.len()
-        )
-    };
-    info!(target: "kpi.session", "{{\"event\":\"session_summary\",\"session_id\":\"{}\",\"plan_id\":\"{}\",\"final_state\":\"{}\",\"planned_ranges\":{},\"executed_ranges\":{},\"completed_batches\":{},\"expected_batches\":{},\"completed_pages\":{},\"expected_pages\":{},\"failed_count\":{},\"mismatch_flags\":{},\"failures_meta\":{}}}",
-          execution_plan.session_id,
-          execution_plan.plan_id,
-          final_state,
-          execution_plan.crawling_ranges.len(), ranges_executed, completed_batches, expected_batches, completed_pages, expected_pages, failed_pages_vec.len(), mismatch_json, failures_meta);
-    let completion_event = AppEvent::SessionCompleted {
-        session_id: execution_plan.session_id.clone(),
-        summary: SessionSummary {
-            session_id: execution_plan.session_id.clone(),
-            total_duration_ms,
-            total_pages_processed: completed_pages as u32,
-            total_products_processed: (completed_pages as u32) * 12,
-            success_rate,
-            avg_page_processing_time: u64::from(avg_page_ms),
-            error_summary: {
-                let registry = session_registry();
-                let g = registry.read().await;
-                if let Some(entry) = g.get(&execution_plan.session_id) {
-                    if entry.error_type_stats.is_empty() {
-                        if failed_pages_vec.is_empty() {
-                            vec![]
-                        } else {
-                            vec![crate::crawl_engine::actors::types::ErrorSummary {
-                                error_type: "PageFailed".into(),
-                                count: failed_pages_vec.len() as u32,
-                                first_occurrence: session_started_at,
-                                last_occurrence: Utc::now(),
-                            }]
-                        }
-                    } else {
-                        entry
-                            .error_type_stats
-                            .iter()
-                            .map(|(k, (c, f, l))| {
-                                crate::crawl_engine::actors::types::ErrorSummary {
-                                    error_type: k.clone(),
-                                    count: *c,
-                                    first_occurrence: *f,
-                                    last_occurrence: *l,
-                                }
-                            })
-                            .collect()
-                    }
-                } else {
-                    vec![]
-                }
-            },
-            // Retry metrics (new architecture path)
-            total_retry_events: {
-                let registry = session_registry();
-                let g = registry.read().await;
-                g.get(&execution_plan.session_id)
-                    .map_or(0, |e| e.retries_per_page.values().sum())
-            },
-            max_retries_single_page: {
-                let registry = session_registry();
-                let g = registry.read().await;
-                g.get(&execution_plan.session_id)
-                    .and_then(|e| e.retries_per_page.values().copied().max())
-                    .unwrap_or(0)
-            },
-            pages_retried: {
-                let registry = session_registry();
-                let g = registry.read().await;
-                g.get(&execution_plan.session_id)
-                    .map_or(0, |e| e.retries_per_page.values().filter(|v| **v > 0).count() as u32)
-            },
-            failed_pages_count: failed_pages_vec.len() as u32,
-            failed_page_ids: failed_pages_vec.clone(),
-            retry_histogram: {
-                let registry = session_registry();
-                let g = registry.read().await;
-                if let Some(e) = g.get(&execution_plan.session_id) {
-                    let mut hist: std::collections::BTreeMap<u32, u32> =
-                        std::collections::BTreeMap::new();
-                    for c in e.retries_per_page.values() {
-                        if *c > 0 {
-                            *hist.entry(*c).or_insert(0) += 1;
-                        }
-                    }
-                    // merge detail retry histogram (distinct domain) using offset key prefix 1000+retries to avoid collision if needed
-                    if !e.detail_retry_histogram.is_empty() {
-                        for (retry_count, pages) in &e.detail_retry_histogram {
-                            // use actual retry_count; semantics are disjoint but consumer can differentiate via context if needed
-                            *hist.entry(*retry_count).or_insert(0) += *pages;
-                        }
-                    }
-                    hist.into_iter().collect()
-                } else {
-                    Vec::new()
-                }
-            },
-            processed_batches: completed_batches as u32,
-            total_success_count,
-            duplicates_skipped: 0,
-            planned_list_batches: expected_batches as u32,
-            executed_list_batches: completed_batches as u32,
-            final_state: final_state.to_string(),
-            products_inserted: 0,
-            products_updated: 0,
-            timestamp: Utc::now(),
-        },
-        timestamp: Utc::now(),
-    };
-
-    if let Err(e) = actor_event_tx.send(completion_event) {
-        error!("Failed to send SessionCompleted event: {}", e);
-    } else {
-        info!(
-            "🎉 SessionCompleted event emitted for {}",
-            execution_plan.session_id
-        );
-    }
-    completed_normally.store(true, Ordering::SeqCst);
-
-    info!("🎉 ExecutionPlan fully executed!");
-    // Update registry for completed (if not already failed) and schedule grace removal
-    {
-        let registry = session_registry();
-        let mut g = registry.write().await;
-        if let Some(entry) = g.get_mut(&execution_plan.session_id) {
-            if entry.status != SessionStatus::Failed {
-                entry.status = SessionStatus::Completed;
-                entry.completed_at = Some(Utc::now());
-                entry.removal_deadline =
-                    Some(Utc::now() + chrono::Duration::seconds(removal_grace_secs()));
-                if entry.resume_token.is_none() {
-                    entry.resume_token = Some(serde_json::json!({
-                        "version": 2,
-                        "plan_hash": entry.plan_hash.clone(),
-                        "remaining_pages": entry.remaining_page_slots.clone().unwrap_or_default(),
-                        "remaining_detail_ids": entry.remaining_detail_ids.clone().unwrap_or_default(),
-                        "generated_at": Utc::now().to_rfc3339(),
-                        "processed_pages": entry.processed_pages,
-                        "total_pages": entry.total_pages_planned,
-                        "batch_size": entry.batch_size,
-                        "concurrency_limit": entry.concurrency_limit,
-                        "retrying_pages": entry.retrying_pages,
-                        "failed_pages": entry.failed_pages,
-                        "retries_per_page": entry.retries_per_page.iter().map(|(p,c)| serde_json::json!([p,c])).collect::<Vec<_>>(),
-                        "detail_retry_counts": entry.detail_retry_counts.iter().map(|(id,c)| serde_json::json!([id,c])).collect::<Vec<_>>(),
-                        "detail_retries_total": entry.detail_retries_total,
-                        "detail_retry_histogram": entry.detail_retry_histogram.iter().map(|(k,v)| serde_json::json!([k,v])).collect::<Vec<_>>()
-                    }).to_string());
-                }
-            }
-        }
-    }
-    let cleanup_id = execution_plan.session_id.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(removal_grace_secs() as u64 + 1)).await;
-        let registry = session_registry();
-        let mut g = registry.write().await;
-        if let Some(entry) = g.get(&cleanup_id) {
-            if let Some(deadline) = entry.removal_deadline {
-                if Utc::now() >= deadline {
-                    g.remove(&cleanup_id);
-                }
-            }
-        }
-    });
-    Ok(())
-}
+// (removed: legacy execute_session_actor_with_execution_plan; SessionActor handles execution)
 
 // (Removed unused simulation helpers: execute_batch_actor_simulation, run_simulation_crawling)
 
