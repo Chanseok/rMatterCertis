@@ -608,10 +608,7 @@ export class TauriApiService {
       'actor-batch-report',
       'actor-session-report',
   'actor-next-plan-ready',
-      // Phases / Shutdown
-      'actor-phase-started',
-      'actor-phase-completed',
-      'actor-phase-aborted',
+  // Shutdown only (Phase* removed)
       'actor-shutdown-requested',
       'actor-shutdown-completed',
   // Page & Detail lifecycle (Stage2/3)

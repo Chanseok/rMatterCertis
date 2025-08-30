@@ -7,7 +7,7 @@ const EVENT_NAMES = [
   'actor-batch-started','actor-batch-completed','actor-batch-failed','actor-batch-report',
   // page-task-* removed; prefer lifecycle
   'actor-task-lifecycle','actor-product-lifecycle','actor-product-lifecycle-group','actor-detail-concurrency-downshifted',
-  'actor-progress','actor-phase-started','actor-phase-completed','actor-phase-aborted',
+  'actor-progress',
   'crawling-progress'
 ];
 

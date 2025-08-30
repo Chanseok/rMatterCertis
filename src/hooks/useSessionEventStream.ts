@@ -85,10 +85,7 @@ export function useSessionEventStream(
     'actor-session-completed',
     'actor-session-failed',
     'actor-session-timeout',
-    // === Phase & Stage ===
-    'actor-phase-started',
-    'actor-phase-completed',
-    'actor-phase-aborted',
+  // === Stage === (Phase* removed)
     'actor-stage-started',
     'actor-stage-completed',
     'actor-stage-failed',

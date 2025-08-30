@@ -343,14 +343,32 @@ class CrawlerStore {
             setCrawlerState('currentSessionId', payload.session_id);
             break;
 
-    case 'PhaseStarted': {
-      const stageName: string = payload.phase?.type || 'UnknownStage';
+  // Phase* removed
+
+    case 'StageStarted': {
+      // Prefer structured stage type when present
+      const stageType = this.normalizeStageType(payload.stage_type);
+      const stage = this.mapStageTypeToCrawlingStage(stageType);
       setCrawlerState('progress', (prev: CrawlingProgress | null) => ({
         ...prev!,
-        current_stage: this.mapPhaseToCrawlingStage(stageName),
-        message: `Phase started: ${stageName}`,
+        current_stage: stage,
+        message: `Stage started: ${stageType}`,
       }));
-      console.log(`Phase started: ${stageName}`);
+      break;
+    }
+
+    case 'TaskLifecycle': {
+      // Derive stage heuristically from task kind
+      const kind = payload.task_kind;
+      let stage: CrawlingStage | null = null;
+      if (kind === 'Page') stage = CrawlingStage.ProductList;
+      if (kind === 'Product') stage = CrawlingStage.ProductDetails;
+      if (stage) {
+        setCrawlerState('progress', (prev: CrawlingProgress | null) => ({
+          ...prev!,
+          current_stage: stage!,
+        }));
+      }
       break;
     }
 
@@ -408,16 +426,7 @@ class CrawlerStore {
     return CrawlingStage.StatusCheck;
   }
 
-  // Conservative mapping from PhaseStarted.phase into CrawlingStage
-  private mapPhaseToCrawlingStage(phaseType: string): CrawlingStage {
-    const p = String(phaseType || '').toLowerCase();
-    if (p.includes('list') || p.includes('page')) return CrawlingStage.ProductList;
-    if (p.includes('detail') || p.includes('product')) return CrawlingStage.ProductDetails;
-    if (p.includes('valid')) return CrawlingStage.DatabaseAnalysis;
-    if (p.includes('save') || p.includes('persist')) return CrawlingStage.DatabaseSave;
-    if (p.includes('db') || p.includes('database')) return CrawlingStage.Database;
-    return CrawlingStage.StatusCheck;
-  }
+  // Phase mapping removed
 
   // =========================================================================
   // 실시간 업데이트 및 자동 갱신 메서드

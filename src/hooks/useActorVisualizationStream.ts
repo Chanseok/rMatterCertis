@@ -39,8 +39,7 @@ function normalize(raw: any): VisualizationEvent | null {
   switch (event_name) {
     case 'actor-session-started': return { ...base, type: 'session', } as VisualizationEvent;
     case 'actor-session-completed': return { ...base, type: 'session', } as VisualizationEvent;
-    case 'actor-phase-started': return { ...base, type: 'phase', phase: raw.phase?.phase_type || raw.phase?.type } as VisualizationEvent;
-    case 'actor-phase-completed': return { ...base, type: 'phase', phase: raw.phase?.phase_type || raw.phase?.type } as VisualizationEvent;
+  // Phase* removed
     case 'actor-batch-started': return { ...base, type: 'batch' } as VisualizationEvent;
     case 'actor-batch-completed': return { ...base, type: 'batch' } as VisualizationEvent;
     case 'actor-stage-started': return { ...base, type: 'stage', stageType: raw.stage_type } as VisualizationEvent;

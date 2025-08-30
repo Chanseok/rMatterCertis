@@ -341,25 +341,7 @@ pub enum AppEvent {
         timestamp: DateTime<Utc>,
     },
 
-    // === Phase lifecycle events (high-level orchestration) ===
-    PhaseStarted {
-        session_id: String,
-        phase: CrawlPhase,
-        timestamp: DateTime<Utc>,
-    },
-    PhaseCompleted {
-        session_id: String,
-        phase: CrawlPhase,
-        succeeded: bool,
-        duration_ms: u64,
-        timestamp: DateTime<Utc>,
-    },
-    PhaseAborted {
-        session_id: String,
-        phase: CrawlPhase,
-        reason: String,
-        timestamp: DateTime<Utc>,
-    },
+    // Phase* events removed in favor of Stage*/TaskLifecycle
 
     // === Graceful shutdown events ===
     ShutdownRequested {

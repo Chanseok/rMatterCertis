@@ -10,11 +10,12 @@
 - actor-session-failed
 - actor-session-timeout
 
-## Phase / Stage / Progress
-- actor-phase-started / actor-phase-completed / actor-phase-aborted
-- actor-stage-started / actor-stage-completed / actor-stage-failed
+## Stage / Progress
+ - actor-stage-started / actor-stage-completed / actor-stage-failed
 - actor-progress (generic percentage & message)
 - crawling-progress (legacy / service-based)
+
+Note: Phase* events have been deprecated and are no longer emitted. Use Session/Batch/Stage lifecycles.
 
 ## Batch
 - actor-batch-started
@@ -22,15 +23,15 @@
 - actor-batch-failed
 - actor-batch-report
 
-## Page Tasks
-- actor-page-task-started
-- actor-page-task-completed
-- actor-page-task-failed
+## Task Lifecycle (preferred)
+- actor-task-lifecycle (TaskLifecycle for Page/Product)
 
-## Detail Tasks
-- actor-detail-task-started
-- actor-detail-task-completed
-- actor-detail-task-failed
+## Page/Product Lifecycle (transitional)
+- actor-page-lifecycle
+- actor-product-lifecycle
+- actor-product-lifecycle-group
+
+## Concurrency signals
 - actor-detail-concurrency-downshifted
 
 ## Metrics & Reports
@@ -45,17 +46,16 @@
 ## Pending Additions / Validation TODO
 | Event | Must Fields | Nice-to-have | Notes |
 |-------|-------------|--------------|-------|
-| actor-detail-task-* | session_id, detail_id, timestamp | page(optional) | For animation: need cumulative counts per session (merge logic) |
+| actor-task-lifecycle | session_id, task_kind, status, timestamp | page_number, product_ref, duration_ms, retry, metrics | Primary FE driver (page/product) |
 | actor-detail-concurrency-downshifted | session_id, old_limit, new_limit, trigger, timestamp | failure_rate snapshot | Drives DOWN pulse UI |
 | actor-batch-started | session_id, batch_id, pages_count, timestamp | planned_pages[] | Needed for batch progress segmentation |
 | actor-progress | session_id, percentage, current_step, total_steps | message | Mixes multiple granularities; may split later |
-| actor-page-task-completed | session_id, page, duration_ms | batch_id | Needed for page throughput charts |
 | actor-session-report | session_id, batches_processed, total_pages, total_success, total_failed, duration_ms | retries | Source of final KPIs |
 
 ## Gaps / Recommendations
 1. Add monotonic `seq` to every AppEvent before bridging.
 2. Include `backend_ts` (RFC3339) for latency measurement.
-3. Ensure batch_started always precedes first page-task-started of that batch.
+3. Ensure batch_started always precedes first task-lifecycle of that batch.
 4. Consider delta-specific events (e.g. detail-progress-delta) to reduce payload size.
 5. Provide a lightweight heartbeat when idle (>5s gap) to keep UI Live indicator.
 

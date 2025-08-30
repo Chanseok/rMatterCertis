@@ -7,6 +7,7 @@
 //! - `MC_FEATURE_LEGACY_DOMAIN_EVENTS` (default: false) — emits legacy `domain::events::CrawlingEvent` payloads
 //! - `MC_FEATURE_EMIT_PAGETASK_LEGACY` (removed) — PageTask* variants were deleted; always use PageLifecycle
 //!
+//!
 //! Values: "1"/"true" enable, "0"/"false" disable (case-insensitive)
 
 // Environment variable accessor (production vs. tests)
@@ -69,6 +70,8 @@ fn read_flag(name: &str, default: bool) -> bool {
 pub fn feature_legacy_domain_events() -> bool {
     read_flag("MC_FEATURE_LEGACY_DOMAIN_EVENTS", false)
 }
+
+// Phase* events removed; obsolete flag deleted.
 
 // PageTask* legacy emission removed. Always emit PageLifecycle only.
 

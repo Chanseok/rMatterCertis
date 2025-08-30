@@ -372,9 +372,6 @@ impl ActorEventBridge {
             AppEvent::PerformanceMetrics { .. } => "actor-performance-metrics",
             AppEvent::BatchReport { .. } => "actor-batch-report",
             AppEvent::CrawlReportSession { .. } => "actor-session-report",
-            AppEvent::PhaseStarted { .. } => "actor-phase-started",
-            AppEvent::PhaseCompleted { .. } => "actor-phase-completed",
-            AppEvent::PhaseAborted { .. } => "actor-phase-aborted",
             AppEvent::ShutdownRequested { .. } => "actor-shutdown-requested",
             AppEvent::ShutdownCompleted { .. } => "actor-shutdown-completed",
             // PageTask* removed; prefer PageLifecycle
@@ -448,44 +445,8 @@ impl ActorEventBridge {
     }
 
     // Build synthetic TaskLifecycle payload from PageLifecycle/ProductLifecycle
-    fn create_task_lifecycle_payload(&self, event: &AppEvent) -> Option<serde_json::Value> {
-    use serde_json::{Map, Value};
-        match event {
-            AppEvent::PageLifecycle { session_id, batch_id, page_number, status, metrics, timestamp } => {
-                let mut obj = Map::new();
-                obj.insert("variant".into(), Value::String("TaskLifecycle".into()));
-                obj.insert("session_id".into(), Value::String(session_id.clone()));
-                obj.insert("batch_id".into(), batch_id.as_ref().map(|s| Value::String(s.clone())).unwrap_or(Value::Null));
-                obj.insert("task_kind".into(), Value::String("Page".into()));
-                obj.insert("page_number".into(), Value::Number((*page_number).into()));
-                obj.insert("product_ref".into(), Value::Null);
-                obj.insert("status".into(), Value::String(status.clone()));
-                obj.insert("retry".into(), Value::Null);
-                obj.insert("duration_ms".into(), Value::Null);
-                let m = metrics.as_ref().map(|m| serde_json::to_value(m).unwrap_or(Value::Null)).unwrap_or(Value::Null);
-                obj.insert("metrics".into(), m);
-                obj.insert("timestamp".into(), Value::String(timestamp.to_rfc3339()));
-                Some(Value::Object(obj))
-            }
-            AppEvent::ProductLifecycle { session_id, batch_id, page_number, product_ref, status, retry, duration_ms, metrics, timestamp } => {
-                let mut obj = Map::new();
-                obj.insert("variant".into(), Value::String("TaskLifecycle".into()));
-                obj.insert("session_id".into(), Value::String(session_id.clone()));
-                obj.insert("batch_id".into(), batch_id.as_ref().map(|s| Value::String(s.clone())).unwrap_or(Value::Null));
-                obj.insert("task_kind".into(), Value::String("Product".into()));
-                obj.insert("page_number".into(), page_number.map(|n| Value::Number(n.into())).unwrap_or(Value::Null));
-                obj.insert("product_ref".into(), Value::String(product_ref.clone()));
-                obj.insert("status".into(), Value::String(status.clone()));
-                obj.insert("retry".into(), retry.map(|n| Value::Number(n.into())).unwrap_or(Value::Null));
-                obj.insert("duration_ms".into(), duration_ms.map(|n| Value::Number(n.into())).unwrap_or(Value::Null));
-                let m = metrics.as_ref().map(|m| serde_json::to_value(m).unwrap_or(Value::Null)).unwrap_or(Value::Null);
-                obj.insert("metrics".into(), m);
-                obj.insert("timestamp".into(), Value::String(timestamp.to_rfc3339()));
-                Some(Value::Object(obj))
-            }
-            _ => None,
-        }
-    }
+    // (previously had an experimental helper to synthesize TaskLifecycle from Page/Product lifecycles)
+    // Removed as native TaskLifecycle is now emitted directly by actors.
 
     async fn push_recent_page(&self, session_id: &str, batch_id: Option<&String>, page: u32) {
         use std::time::{Duration, Instant};
@@ -503,12 +464,7 @@ impl ActorEventBridge {
         }
     }
 
-    async fn is_recent_page(&self, session_id: &str, batch_id: Option<&String>, page: u32) -> bool {
-        use std::time::{Duration, Instant};
-        let q = self.recent_pages.lock().await;
-        let cutoff = Instant::now() - Duration::from_secs(15);
-        q.iter().rev().take(64).any(|(s, b, p, t)| s == session_id && b.as_ref() == batch_id && *p == page && *t >= cutoff)
-    }
+    // Note: we intentionally don't need a lookup accessor; we only use the cache to aid logs and potential future deduping.
 }
 
 /// Actor Event Bridge 시작 유틸리티 함수

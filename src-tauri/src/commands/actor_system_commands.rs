@@ -1,6 +1,6 @@
 //! Actor System Commands for Tauri Integration
 //!
-//! Commands to test and use the Actor system from the UI
+// Commands to test and use the Actor system from the UI
 
 use crate::application::{AppState, shared_state::SharedStateCache};
 use crate::crawl_engine::actor_event_bridge::start_actor_event_bridge;
@@ -194,7 +194,7 @@ async fn bootstrap_and_spawn_session(
         }
         phases.push(CrawlPhase::Finalize);
         let total_phase_start = std::time::Instant::now();
-        for phase in phases {
+    for phase in phases {
             let mut emitted_pause_event = false;
             loop {
                 if *shutdown_req_rx.borrow() {
@@ -219,21 +219,9 @@ async fn bootstrap_and_spawn_session(
                 }
                 break;
             }
-            if *shutdown_req_rx.borrow() {
-                let _ = actor_event_tx.send(AppEvent::PhaseAborted {
-                    session_id: exec_clone_for_loop.session_id.clone(),
-                    phase: phase.clone(),
-                    reason: "shutdown_requested".into(),
-                    timestamp: Utc::now(),
-                });
-                break;
-            }
+            if *shutdown_req_rx.borrow() { break; }
             let phase_started_at = std::time::Instant::now();
-            let _ = actor_event_tx.send(AppEvent::PhaseStarted {
-                session_id: exec_clone_for_loop.session_id.clone(),
-                phase: phase.clone(),
-                timestamp: Utc::now(),
-            });
+            // PhaseStarted removed
             let phase_res = match phase {
                 CrawlPhase::ListPages => execute_session_actor_with_execution_plan(
                     exec_clone_for_loop.clone(),
@@ -249,23 +237,10 @@ async fn bootstrap_and_spawn_session(
             };
             let dur_ms = phase_started_at.elapsed().as_millis() as u64;
             match phase_res {
-                Ok(ok) => {
-                    let _ = actor_event_tx.send(AppEvent::PhaseCompleted {
-                        session_id: exec_clone_for_loop.session_id.clone(),
-                        phase: phase.clone(),
-                        succeeded: ok,
-                        duration_ms: dur_ms,
-                        timestamp: Utc::now(),
-                    });
-                }
+                Ok(_ok) => { /* PhaseCompleted removed */ }
                 Err(e) => {
                     error!("Phase {:?} failed: {}", phase, e);
-                    let _ = actor_event_tx.send(AppEvent::PhaseAborted {
-                        session_id: exec_clone_for_loop.session_id.clone(),
-                        phase: phase.clone(),
-                        reason: format!("{}", e),
-                        timestamp: Utc::now(),
-                    });
+                    // PhaseAborted removed
                     break;
                 }
             }

@@ -19,7 +19,7 @@ This plan reflects the analysis captured in `.local/prompts7` and our latest cod
 1. Single event source of truth: `AppEvent` remains primary for runtime and UI.
 2. Keep fine-grained task-level emissions. Prefer `PageLifecycle` over `PageTask*` for richer status.
 3. Retain KPI logs (`kpi.*`) as separate diagnostic channel.
-4. Phase events: either (A) constrain and document as orchestration milestones, or (B) deprecate in favor of Session/Batch/Stage.
+4. Phase events: DECISION = (B) deprecate in favor of Session/Batch/Stage. All Phase* emissions removed; docs updated.
 
 ## Milestones
 
@@ -41,10 +41,8 @@ This plan reflects the analysis captured in `.local/prompts7` and our latest cod
 - Regenerate or remove generated TS types that depend on `CrawlingEvent`.
 - Keep archival code in `_archive/` only.
 
-### M4: Phase events decision
-- Option A (retain): Rename to `OrchestrationPhase*` and limit to coarse milestones; ensure UI does not rely on them for per-item visuals.
-- Option B (deprecate): Replace with well-defined Session/Stage boundaries + PlanReady.
-- Whichever chosen, document with concrete producer functions and sample payloads.
+### M4: Phase events decision (Completed)
+Removed Phase* from runtime and documentation; UI relies on Session/Batch/Stage + PageLifecycle.
 
 ### M5: Plan signals (pre-run estimates)
 - Add/confirm `PlanReady { total_pages, total_products, total_batches, estimated_time_secs }`.
