@@ -1,4 +1,4 @@
-//! Session registry & failure policy management (extracted from actor_system_commands)
+//! Session registry & failure policy management (extracted from `actor_system_commands`)
 use chrono::{DateTime, Utc};
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
@@ -87,10 +87,10 @@ pub fn failure_policy() -> FailurePolicy {
             removal_grace_secs: 30,
         })
 }
-pub fn failure_threshold() -> u32 {
+#[must_use] pub fn failure_threshold() -> u32 {
     failure_policy().failure_threshold
 }
-pub fn removal_grace_secs() -> i64 {
+#[must_use] pub fn removal_grace_secs() -> i64 {
     failure_policy().removal_grace_secs
 }
 
@@ -103,8 +103,8 @@ pub fn update_global_failure_policy_from_config(cfg: &crate::infrastructure::con
             let env_grace = std::env::var("APP_REMOVAL_GRACE_SECS")
                 .ok()
                 .and_then(|v| v.parse::<i64>().ok());
-            let th = env_fail.unwrap_or_else(|| cfg.advanced.failure_policy.failure_threshold);
-            let grace = env_grace.unwrap_or_else(|| cfg.advanced.failure_policy.removal_grace_secs);
+            let th = env_fail.unwrap_or(cfg.advanced.failure_policy.failure_threshold);
+            let grace = env_grace.unwrap_or(cfg.advanced.failure_policy.removal_grace_secs);
             guard.failure_threshold = th.max(1);
             guard.removal_grace_secs = grace.max(5);
         }

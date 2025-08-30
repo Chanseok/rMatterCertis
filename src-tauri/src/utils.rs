@@ -14,7 +14,6 @@
 /// - 481페이지는:
 ///   - 앞의 4개 제품: pageId=1, indexInPage=3,2,1,0
 ///   - 뒤의 8개 제품: pageId=0, indexInPage=11,10,9,8,7,6,5,4
-
 #[allow(dead_code)]
 const PRODUCTS_PER_PAGE: usize = 12; // Used later by validation assignment logic
 
@@ -34,13 +33,13 @@ pub struct PageIdCalculator {
 }
 
 impl PageIdCalculator {
-    pub fn new(last_page_number: u32, products_in_last_page: usize) -> Self {
+    #[must_use] pub const fn new(last_page_number: u32, products_in_last_page: usize) -> Self {
         Self {
             last_page_number,
             products_in_last_page,
         }
     }
-    pub fn calculate(
+    #[must_use] pub const fn calculate(
         &self,
         actual_page_number: u32,
         product_index_in_actual_page: usize,
@@ -84,7 +83,7 @@ impl PageIdCalculator {
             index_in_page,
         }
     }
-    pub fn reverse_calculate(&self, page_id: i32, index_in_page: i32) -> Option<(u32, usize)> {
+    #[must_use] pub fn reverse_calculate(&self, page_id: i32, index_in_page: i32) -> Option<(u32, usize)> {
         let calc = crate::domain::pagination::PaginationCalculator::default();
         calc.reverse(page_id, index_in_page, self.last_page_number)
             .map(|(phys, idx)| (phys, idx as usize))

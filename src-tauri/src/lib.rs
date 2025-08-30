@@ -1,7 +1,7 @@
 //! Matter Certis v2 - E-commerce Product Crawling Application
 //!
 //! This application provides web crawling capabilities for e-commerce sites
-//! with a modern desktop interface built with Tauri and SolidJS.
+//! with a modern desktop interface built with Tauri and `SolidJS`.
 //!
 //! Modern Rust module organization (Rust 2024+ style):
 //! - Each module is defined in its own .rs file or directory
@@ -17,11 +17,14 @@
 #![allow(clippy::unnecessary_operation)]
 #![allow(unused_must_use)]
 #![allow(ambiguous_glob_reexports)]
+// High-noise lints we intentionally allow during active refactoring (no behavior change)
+#![allow(clippy::unused_async)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::cognitive_complexity)]
+#![allow(clippy::large_stack_frames)]
 
-#[cfg(test)]
-mod test_execution_plan_page_slots;
-#[cfg(test)]
-mod test_http_client_config;
+// moved: test_execution_plan_page_slots -> tests/ (integration test)
+// moved: test_http_client_config -> tests/ (integration test)
 
 use crate::infrastructure::config::{AppConfig, ConfigManager};
 use crate::infrastructure::{DatabaseConnection, init_logging_with_config};
@@ -50,8 +53,8 @@ pub mod domain {
     pub mod entities;
     pub mod events;
     pub mod product_url;
-    pub mod repositories;
-    pub mod value_objects; // 추가: URL과 메타데이터를 함께 전달하는 구조체
+    // pub mod repositories; // removed: legacy repository traits (no active implementations)
+    // pub mod value_objects; // removed: unused value objects (ValidatedUrl, ProductData, etc.)
     pub mod services {
         //! Domain services for business logic
         pub mod crawling_services;
@@ -81,31 +84,26 @@ pub mod domain {
     pub use entities::*;
     pub use events::*;
     pub use pagination::{CanonicalPageIdCalculator, PagePosition, PaginationCalculator};
-    pub use value_objects::*;
 }
 
 pub mod application {
     //! Application layer - Use cases and application services
-    pub mod crawling_profile; // 크롤링 프로필 정의
-    pub mod crawling_use_cases;
-    pub mod dto;
+    // removed: unused dto module
     pub mod events;
     pub mod integrated_use_cases;
-    pub mod page_discovery_service;
-    pub mod parsing_service;
+    // removed: unused parsing_service module
     pub mod shared_state; // 새로 추가된 공유 상태 관리
     pub mod state;
-    pub mod use_cases;
     pub mod validated_crawling_config; // 검증된 크롤링 설정
     // pub mod crawler_manager;  // 🚧 임시 비활성화 - 컴파일 문제로 인해
 
     // Re-export commonly used items
-    pub use crawling_profile::{CrawlingProfile, CrawlingRequest};
-    pub use events::EventEmitter;
-    pub use page_discovery_service::PageDiscoveryService;
-    pub use shared_state::SharedStateCache;
-    pub use state::AppState;
-    pub use validated_crawling_config::ValidatedCrawlingConfig;
+        pub use events::EventEmitter;
+        pub use shared_state::SharedStateCache;
+        pub use state::AppState;
+        // removed: dto::* re-export (module unused)
+        pub use integrated_use_cases::IntegratedProductUseCases;
+        // removed: parsing_service re-exports (module unused)
     // pub use crawler_manager::{CrawlerManager, CrawlingConfig, CrawlingEngineType}; // 임시 비활성화
 }
 
@@ -138,8 +136,8 @@ pub mod commands {
     pub mod db_diagnostics; // 🧪 DB pagination mismatch scan
     pub mod db_repair; // 🔧 DB repair/sync between products and product_details
     pub mod debug_commands; // 🔎 UI debug logging helpers
-    pub mod product_details_analytics; // 📊 product_details analytics endpoints
     pub mod performance_commands; // 🔧 Phase C: 성능 최적화 도구
+    pub mod product_details_analytics; // 📊 product_details analytics endpoints
     pub mod real_actor_commands; // 🎭 진짜 Actor 시스템 명령어
     pub mod real_crawling_commands; // 🚀 Phase C: 실제 크롤링 기능
     pub mod simple_actor_test;
@@ -161,9 +159,9 @@ pub mod commands {
     pub use db_repair::*; // DB repair/sync 명령어 export
     pub use debug_commands::*; // UI debug logger export
     pub use performance_commands::*; // Phase C 성능 최적화 명령어 export
+    pub use product_details_analytics::*;
     pub use real_crawling_commands::*; // Phase C 실제 크롤링 명령어 export
-    pub use sync_commands::*; // Partial Sync 명령어 export // DB cleanup 명령어 export
-    pub use product_details_analytics::*; // Export analytics command
+    pub use sync_commands::*; // Partial Sync 명령어 export // DB cleanup 명령어 export // Export analytics command
 } // Modern Rust 2024 - 명시적 모듈 선언
 // Deprecated legacy crawling engine module (disabled). See _archive for reference.
 // pub mod crawling;
@@ -171,13 +169,8 @@ pub mod commands {
 // Utilities module
 pub mod utils;
 
-// Test utilities (only available during testing)
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils;
-
-// PageIdCalculator 테스트 모듈 추가
-#[cfg(test)]
-pub mod test_page_id_calculator;
+// moved: test_utils -> tests/ (integration test utilities)
+// moved: test_page_id_calculator -> tests/ (integration test)
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -234,7 +227,7 @@ pub fn run() {
     rt.block_on(async {
         let concise_all = std::env::var("MC_CONCISE_ALL")
             .ok()
-            .map_or(true, |v| !(v == "0" || v.eq_ignore_ascii_case("false")));
+            .is_none_or(|v| !(v == "0" || v.eq_ignore_ascii_case("false")));
         let concise = concise_all
             || std::env::var("MC_CONCISE_STARTUP")
                 .ok()
@@ -308,7 +301,7 @@ pub fn run() {
             Ok(_pool) => {
                 let concise_all = std::env::var("MC_CONCISE_ALL")
                     .ok()
-                    .map_or(true, |v| !(v == "0" || v.eq_ignore_ascii_case("false")));
+                    .is_none_or(|v| !(v == "0" || v.eq_ignore_ascii_case("false")));
                 let concise = concise_all
                     || std::env::var("MC_CONCISE_STARTUP")
                         .ok()
@@ -507,6 +500,4 @@ pub fn run() {
     info!("👋 Matter Certis v2 application ended");
 }
 
-// Priority 1 검증 테스트 모듈
-#[cfg(test)]
-mod priority1_verification_tests;
+// moved: priority1_verification_tests -> tests/ (integration test)

@@ -1,6 +1,6 @@
 //! 시스템 상태 분석 커맨드
 //!
-//! proposal6.md의 워크플로우 재정의에 따라 StatusTab에서 사용하는
+//! proposal6.md의 워크플로우 재정의에 따라 `StatusTab에서` 사용하는
 //! 사이트 종합 분석 기능을 제공합니다.
 
 use serde_json;
@@ -37,9 +37,11 @@ pub async fn analyze_system_status(
 
     // Phase 1 & 2: Perform Site and Database Analysis in Parallel
     info!("📊 Phase 1 & 2: Performing site and database analysis in parallel...");
-    let (site_analysis, db_analysis) =
-        tokio::try_join!(perform_site_analysis(Some(&*shared_state)), perform_database_analysis())
-            .map_err(|e| format!("System analysis failed: {}", e))?;
+    let (site_analysis, db_analysis) = tokio::try_join!(
+        perform_site_analysis(Some(&*shared_state)),
+        perform_database_analysis()
+    )
+    .map_err(|e| format!("System analysis failed: {}", e))?;
 
     // Phase 3: Update SharedStateCache
     info!("💾 Phase 3: Updating SharedStateCache with analysis results");
@@ -49,10 +51,10 @@ pub async fn analyze_system_status(
     }
 
     // Phase 4: Calculate intelligent range preview (optional)
-    let range_preview = if !db_analysis.is_empty {
-        calculate_range_preview(&site_analysis, &db_analysis).await
-    } else {
+    let range_preview = if db_analysis.is_empty {
         None
+    } else {
+        calculate_range_preview(&site_analysis, &db_analysis).await
     };
 
     // Phase 5: Prepare comprehensive response for UI
@@ -119,12 +121,11 @@ pub async fn diagnose_and_repair_data(
     let site_total_pages = shared_state
         .get_valid_site_analysis_async(Some(5))
         .await
-        .map(|s| s.total_pages)
-        .unwrap_or(0);
+        .map_or(0, |s| s.total_pages);
 
     // 2) 이상치/미스매치 수집
     let orphans_products = sqlx::query_scalar::<_, i64>(
-        r#"SELECT COUNT(*) FROM products p LEFT JOIN product_details d ON p.url=d.url WHERE d.url IS NULL"#,
+        r"SELECT COUNT(*) FROM products p LEFT JOIN product_details d ON p.url=d.url WHERE d.url IS NULL",
     )
     .fetch_one(&pool)
     .await
@@ -133,8 +134,8 @@ pub async fn diagnose_and_repair_data(
     // 샘플 orphan URL 목록 (최대 200개)
     let orphan_sample_limit: i64 = 200;
     let orphan_urls: Vec<String> = sqlx::query_scalar::<_, String>(
-        r#"SELECT p.url FROM products p LEFT JOIN product_details d ON p.url=d.url
-           WHERE d.url IS NULL ORDER BY p.page_id ASC, p.index_in_page ASC LIMIT ?"#,
+        r"SELECT p.url FROM products p LEFT JOIN product_details d ON p.url=d.url
+           WHERE d.url IS NULL ORDER BY p.page_id ASC, p.index_in_page ASC LIMIT ?",
     )
     .bind(orphan_sample_limit)
     .fetch_all(&pool)
@@ -142,7 +143,7 @@ pub async fn diagnose_and_repair_data(
     .unwrap_or_default();
 
     let nullish_core = sqlx::query_scalar::<_, i64>(
-        r#"SELECT COUNT(*) FROM products WHERE (manufacturer IS NULL OR model IS NULL OR certificate_id IS NULL)"#,
+        r"SELECT COUNT(*) FROM products WHERE (manufacturer IS NULL OR model IS NULL OR certificate_id IS NULL)",
     )
     .fetch_one(&pool)
     .await
@@ -152,7 +153,7 @@ pub async fn diagnose_and_repair_data(
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM products WHERE page_id IS NOT NULL AND page_id > ?",
         )
-        .bind(site_total_pages as i64)
+        .bind(i64::from(site_total_pages))
         .fetch_one(&pool)
         .await
         .unwrap_or(0)
@@ -161,7 +162,7 @@ pub async fn diagnose_and_repair_data(
     };
 
     let bad_indices = sqlx::query_scalar::<_, i64>(
-        r#"SELECT COUNT(*) FROM products WHERE (index_in_page IS NOT NULL AND index_in_page < 0) OR (page_id IS NOT NULL AND page_id < 0)"#,
+        r"SELECT COUNT(*) FROM products WHERE (index_in_page IS NOT NULL AND index_in_page < 0) OR (page_id IS NOT NULL AND page_id < 0)",
     )
     .fetch_one(&pool)
     .await
@@ -169,11 +170,17 @@ pub async fn diagnose_and_repair_data(
 
     // 3) 심각한 page_id 연속성 붕괴(break) 탐지: page_id 오름차순에서 인접 차이가 2 이상인 최초 위치
     #[derive(Debug, Default, Clone)]
-    struct BreakInfo { first_break_at: Option<i64>, break_next: Option<i64>, gap: i64 }
+    struct BreakInfo {
+        first_break_at: Option<i64>,
+        break_next: Option<i64>,
+        gap: i64,
+    }
     let mut break_info: BreakInfo = BreakInfo::default();
-    if let Ok(rows) = sqlx::query("SELECT DISTINCT page_id FROM products WHERE page_id IS NOT NULL ORDER BY page_id")
-        .fetch_all(&pool)
-        .await
+    if let Ok(rows) = sqlx::query(
+        "SELECT DISTINCT page_id FROM products WHERE page_id IS NOT NULL ORDER BY page_id",
+    )
+    .fetch_all(&pool)
+    .await
     {
         let mut prev: Option<i64> = None;
         for r in rows {
@@ -196,16 +203,17 @@ pub async fn diagnose_and_repair_data(
     if delete_mismatches.unwrap_or(false) {
         // 안전한 순서: out-of-range → bad-indices → nullish-core (목록-only 무의미 레코드) → orphans (상세 미존재)
         if site_total_pages > 0 {
-            if let Ok(res) = sqlx::query("DELETE FROM products WHERE page_id IS NOT NULL AND page_id > ?")
-                .bind(site_total_pages as i64)
-                .execute(&pool)
-                .await
+            if let Ok(res) =
+                sqlx::query("DELETE FROM products WHERE page_id IS NOT NULL AND page_id > ?")
+                    .bind(i64::from(site_total_pages))
+                    .execute(&pool)
+                    .await
             {
                 deleted_rows += res.rows_affected() as i64;
             }
         }
         if let Ok(res) = sqlx::query(
-            r#"DELETE FROM products WHERE (index_in_page IS NOT NULL AND index_in_page < 0) OR (page_id IS NOT NULL AND page_id < 0)"#,
+            r"DELETE FROM products WHERE (index_in_page IS NOT NULL AND index_in_page < 0) OR (page_id IS NOT NULL AND page_id < 0)",
         )
         .execute(&pool)
         .await
@@ -213,7 +221,7 @@ pub async fn diagnose_and_repair_data(
             deleted_rows += res.rows_affected() as i64;
         }
         if let Ok(res) = sqlx::query(
-            r#"DELETE FROM products WHERE manufacturer IS NULL AND model IS NULL AND certificate_id IS NULL"#,
+            r"DELETE FROM products WHERE manufacturer IS NULL AND model IS NULL AND certificate_id IS NULL",
         )
         .execute(&pool)
         .await
@@ -222,10 +230,11 @@ pub async fn diagnose_and_repair_data(
         }
         // 심각한 break 이후 레코드 일괄 삭제: 기준 = break_next 이상 모든 page_id
         if let Some(threshold) = break_info.break_next {
-            if let Ok(res) = sqlx::query("DELETE FROM products WHERE page_id IS NOT NULL AND page_id >= ?")
-                .bind(threshold)
-                .execute(&pool)
-                .await
+            if let Ok(res) =
+                sqlx::query("DELETE FROM products WHERE page_id IS NOT NULL AND page_id >= ?")
+                    .bind(threshold)
+                    .execute(&pool)
+                    .await
             {
                 deleted_rows += res.rows_affected() as i64;
             }
@@ -249,7 +258,7 @@ pub async fn diagnose_and_repair_data(
             .map_err(|e| format!("Failed to create extractor: {}", e))?;
         let sync_ua = config.user.crawling.workers.user_agent_sync.clone();
 
-        for url in orphan_urls.iter() {
+        for url in &orphan_urls {
             // referer는 기본 Matter 필터 목록을 사용(충분히 허용적)
             let referer = crate::infrastructure::config::csa_iot::PRODUCTS_BASE.to_string();
             if let Ok(resp) = http_client
@@ -277,7 +286,7 @@ pub async fn diagnose_and_repair_data(
                         let cert_clone = detail.certificate_id.clone();
                         // page_id/index_in_page는 알 수 있으면 보정, 없으면 NULL 유지
                         let _ = sqlx::query(
-                            r#"INSERT INTO product_details (
+                            r"INSERT INTO product_details (
                                 url, page_id, index_in_page, id, manufacturer, model, device_type,
                                 certificate_id, certification_date, software_version, hardware_version, firmware_version,
                                 specification_version, vid, pid, family_sku, family_variant_sku, family_id,
@@ -315,7 +324,7 @@ pub async fn diagnose_and_repair_data(
                                 compliance_document_url=COALESCE(excluded.compliance_document_url, product_details.compliance_document_url),
                                 program_type=COALESCE(excluded.program_type, product_details.program_type),
                                 updated_at=CURRENT_TIMESTAMP
-                        "#,
+                        ",
                         )
                         .bind(&detail.url)
                         .bind(detail.page_id)
@@ -347,12 +356,12 @@ pub async fn diagnose_and_repair_data(
 
                         // products의 코어 필드 보정
                         let _ = sqlx::query(
-                            r#"UPDATE products SET
+                            r"UPDATE products SET
                                 manufacturer = COALESCE(?, manufacturer),
                                 model = COALESCE(?, model),
                                 certificate_id = COALESCE(?, certificate_id),
                                 updated_at = CURRENT_TIMESTAMP
-                              WHERE url = ?"#,
+                              WHERE url = ?",
                         )
                         .bind(&man_clone)
                         .bind(&model_clone)
@@ -389,11 +398,17 @@ pub async fn diagnose_and_repair_data(
         }
     });
 
-    Ok(CrawlingResponse { success: true, message: "Diagnosis completed".into(), data: Some(payload) })
+    Ok(CrawlingResponse {
+        success: true,
+        message: "Diagnosis completed".into(),
+        data: Some(payload),
+    })
 }
 
 /// 사이트 분석 수행
-async fn perform_site_analysis(shared_cache: Option<&SharedStateCache>) -> Result<SiteAnalysisResult, String> {
+async fn perform_site_analysis(
+    shared_cache: Option<&SharedStateCache>,
+) -> Result<SiteAnalysisResult, String> {
     info!("🌐 Analyzing site status...");
 
     // Create necessary components for site analysis
@@ -417,20 +432,28 @@ async fn perform_site_analysis(shared_cache: Option<&SharedStateCache>) -> Resul
         crate::infrastructure::IntegratedProductRepository::new(db_pool),
     );
 
-    let status_checker: std::sync::Arc<dyn crate::domain::services::crawling_services::StatusChecker> =
-        std::sync::Arc::new(
-            crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
-                http_client,
-                data_extractor,
-                config,
-                product_repo,
-            ),
-        );
+    let status_checker: std::sync::Arc<
+        dyn crate::domain::services::crawling_services::StatusChecker,
+    > = std::sync::Arc::new(
+        crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
+            http_client,
+            data_extractor,
+            config,
+            product_repo,
+        ),
+    );
 
     // Perform site status check (single-flight via SharedStateCache if available)
     let site_analysis_cached = if let Some(cache) = shared_cache {
-        Some(cache.get_or_refresh_site_analysis_singleflight(Some(5), status_checker.clone()).await.map_err(|e| format!("Failed to refresh site status: {}", e))?)
-    } else { None };
+        Some(
+            cache
+                .get_or_refresh_site_analysis_singleflight(Some(5), status_checker.clone())
+                .await
+                .map_err(|e| format!("Failed to refresh site status: {}", e))?,
+        )
+    } else {
+        None
+    };
     let site_status = if let Some(cached) = site_analysis_cached {
         crate::domain::services::SiteStatus {
             is_accessible: true,
@@ -440,9 +463,13 @@ async fn perform_site_analysis(shared_cache: Option<&SharedStateCache>) -> Resul
             products_on_last_page: cached.products_on_last_page,
             last_check_time: cached.analyzed_at,
             health_score: cached.health_score,
-            data_change_status: crate::domain::services::crawling_services::SiteDataChangeStatus::Stable { count: cached.estimated_products },
+            data_change_status:
+                crate::domain::services::crawling_services::SiteDataChangeStatus::Stable {
+                    count: cached.estimated_products,
+                },
             decrease_recommendation: None,
-            crawling_range_recommendation: crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
+            crawling_range_recommendation:
+                crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
         }
     } else {
         status_checker

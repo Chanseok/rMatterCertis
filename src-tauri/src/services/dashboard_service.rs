@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::crawl_engine::services::performance_optimizer::CrawlingPerformanceOptimizer;
-use crate::types::dashboard_types::*;
+use crate::types::dashboard_types::{DashboardState, ActiveCrawlingSession, CompletedSession, RealtimeChartData, DashboardAlert, DashboardEvent, DashboardConfig, SystemStatus, ServerStatus, DatabaseStatus, SiteStatus, AlertLevel, RealtimePerformanceMetrics, ChartDataPoint};
 
 /// 실시간 대시보드 서비스
 pub struct RealtimeDashboardService {
@@ -34,7 +34,7 @@ pub struct RealtimeDashboardService {
 #[allow(dead_code)] // Phase2: some methods temporarily unused
 impl RealtimeDashboardService {
     /// 새 대시보드 서비스 생성
-    pub fn new(config: DashboardConfig) -> Self {
+    #[must_use] pub fn new(config: DashboardConfig) -> Self {
         let (event_sender, _) = broadcast::channel(1000);
 
         let initial_state = DashboardState {
@@ -87,7 +87,7 @@ impl RealtimeDashboardService {
     }
 
     /// 성능 최적화 서비스 연결
-    pub fn with_performance_optimizer(
+    #[must_use] pub fn with_performance_optimizer(
         mut self,
         optimizer: Arc<CrawlingPerformanceOptimizer>,
     ) -> Self {
@@ -175,7 +175,7 @@ impl RealtimeDashboardService {
 
                 // 처리 속도 계산
                 let current_speed_ppm = if elapsed_minutes > 0.0 {
-                    processed_pages as f64 / elapsed_minutes
+                    f64::from(processed_pages) / elapsed_minutes
                 } else {
                     0.0
                 };
@@ -183,7 +183,7 @@ impl RealtimeDashboardService {
                 // 예상 완료 시간 계산
                 let estimated_completion = if current_speed_ppm > 0.0 {
                     let remaining_pages = session.total_pages.saturating_sub(processed_pages);
-                    let remaining_minutes = remaining_pages as f64 / current_speed_ppm;
+                    let remaining_minutes = f64::from(remaining_pages) / current_speed_ppm;
                     Some(now + chrono::Duration::minutes(remaining_minutes as i64))
                 } else {
                     None
@@ -205,11 +205,17 @@ impl RealtimeDashboardService {
                     state.last_updated = now;
                 }
             } else {
+                // 세션을 찾지 못한 경우에도 프론트가 진행률 갱신 실패를 감지할 수 있도록 이벤트를 보냅니다.
+                let _ = self.event_sender.send(DashboardEvent::ProgressUpdate {
+                    session_id: session_id.clone(),
+                    progress: overall_progress,
+                    stage_progress,
+                });
                 return Err(format!("Session not found: {}", session_id));
             }
         }
 
-        // 이벤트 발송
+        // 이벤트 발송 (정상 경로)
         let _ = self.event_sender.send(DashboardEvent::ProgressUpdate {
             session_id,
             progress: overall_progress,
@@ -235,7 +241,7 @@ impl RealtimeDashboardService {
                 let duration_seconds = duration.num_seconds() as u64;
 
                 let avg_speed_ppm = if duration_seconds > 0 {
-                    (active_session.processed_pages as f64 * 60.0) / duration_seconds as f64
+                    (f64::from(active_session.processed_pages) * 60.0) / duration_seconds as f64
                 } else {
                     0.0
                 };
@@ -323,7 +329,7 @@ impl RealtimeDashboardService {
     }
 
     /// 이벤트 수신자 생성
-    pub fn subscribe_events(&self) -> broadcast::Receiver<DashboardEvent> {
+    #[must_use] pub fn subscribe_events(&self) -> broadcast::Receiver<DashboardEvent> {
         self.event_sender.subscribe()
     }
 
@@ -386,19 +392,19 @@ impl RealtimeDashboardService {
         let metrics = optimizer.get_current_metrics().await.unwrap_or_else(|| {
             crate::crawl_engine::services::performance_optimizer::CrawlingPerformanceMetrics {
                 session_id: "default".to_string(),
-                throughput_rps: 10.0 + (random_factor * 5.0), // 10-15 RPS
-                avg_response_time_ms: 500.0 + (random_factor * 200.0), // 500-700ms
-                success_rate: 0.95 + (random_factor * 0.04), // 95-99%
-                current_concurrency: (3.0 + random_factor * 4.0) as u32, // 3-7 동시 연결
-                recommended_concurrency: (5.0 + random_factor * 3.0) as u32, // 5-8 권장 동시성
-                memory_usage_kb: (256.0 + (random_factor * 128.0)) as u64 * 1024, // 256-384 MB를 KB로 변환
-                network_error_rate: 0.01 + (random_factor * 0.04), // 1-5% 에러율
+                throughput_rps: random_factor.mul_add(5.0, 10.0), // 10-15 RPS
+                avg_response_time_ms: random_factor.mul_add(200.0, 500.0), // 500-700ms
+                success_rate: random_factor.mul_add(0.04, 0.95), // 95-99%
+                current_concurrency: random_factor.mul_add(4.0, 3.0) as u32, // 3-7 동시 연결
+                recommended_concurrency: random_factor.mul_add(3.0, 5.0) as u32, // 5-8 권장 동시성
+                memory_usage_kb: random_factor.mul_add(128.0, 256.0) as u64 * 1024, // 256-384 MB를 KB로 변환
+                network_error_rate: random_factor.mul_add(0.04, 0.01), // 1-5% 에러율
                 optimization_status: crate::crawl_engine::services::performance_optimizer::OptimizationStatus::Optimal,
             }
         });
 
         let realtime_metrics = RealtimePerformanceMetrics {
-            cpu_usage_percent: 30.0 + (random_factor * 40.0), // CPU 사용률 추정
+            cpu_usage_percent: random_factor.mul_add(40.0, 30.0), // CPU 사용률 추정
             memory_usage_mb: (metrics.memory_usage_kb as f64) / 1024.0, // KB를 MB로 변환
             network_throughput_kbps: metrics.throughput_rps * 2.0, // 추정치
             avg_response_time_ms: metrics.avg_response_time_ms,
@@ -439,7 +445,7 @@ impl RealtimeDashboardService {
 
             chart.concurrent_connections.push(ChartDataPoint {
                 timestamp: now,
-                value: metrics.current_concurrency as f64,
+                value: f64::from(metrics.current_concurrency),
                 label: None,
             });
         }
@@ -546,7 +552,7 @@ impl RealtimeDashboardService {
 
                 let now = timestamp.timestamp();
                 let speed = if current_step > 0 {
-                    current_step as f64 / (now as f64 / 60.0) // pages per minute estimate
+                    f64::from(current_step) / (now as f64 / 60.0) // pages per minute estimate
                 } else {
                     0.0
                 };
@@ -561,7 +567,7 @@ impl RealtimeDashboardService {
 
                     chart.pages_processed.push(ChartDataPoint {
                         timestamp: now,
-                        value: current_step as f64,
+                        value: f64::from(current_step),
                         label: None,
                     });
                 }

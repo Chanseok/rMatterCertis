@@ -1,13 +1,13 @@
-//! DataConsistencyChecker
-//! DB의 products 테이블에 저장된 page_id, index_in_page 값이
-//! 현재 사이트 구조( total_pages, last page 제품 수 )와 일치하는지 검증.
+//! `DataConsistencyChecker`
+//! DB의 products 테이블에 저장된 `page_id`, `index_in_page` 값이
+//! 현재 사이트 구조( `total_pages`, last page 제품 수 )와 일치하는지 검증.
 //!
 //! 검증 방식:
-//! 1) 사이트 상태(StatusChecker)로 total_pages, products_on_last_page 획득
-//! 2) 모든 products (page_id, index_in_page, page_id NULL 제외) 조회
-//! 3) 역산(reverse_calculate)을 통해 (물리적 페이지, 물리적 인덱스) -> 다시 정방향 calculate 후 동일성 확인
+//! 1) 사이트 상태(StatusChecker)로 `total_pages`, `products_on_last_page` 획득
+//! 2) 모든 products (`page_id`, `index_in_page`, `page_id` NULL 제외) 조회
+//! 3) `역산(reverse_calculate)을` 통해 (물리적 페이지, 물리적 인덱스) -> 다시 정방향 calculate 후 동일성 확인
 //! 4) 불일치/경계 오류/범위 초과 등을 집계
-//! 5) JSON 형태 요약 반환 (명세: DataConsistencyReport)
+//! 5) JSON 형태 요약 반환 (명세: `DataConsistencyReport`)
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -60,7 +60,7 @@ impl DataConsistencyChecker {
         }
     }
 
-    pub fn with_max_samples(mut self, samples: usize) -> Self {
+    #[must_use] pub const fn with_max_samples(mut self, samples: usize) -> Self {
         self.max_samples = samples;
         self
     }
@@ -80,7 +80,7 @@ impl DataConsistencyChecker {
         // 2. products 테이블에서 필요한 필드 조회
         // NOTE: compile-time query macros (query!) require offline DB schema; fallback to dynamic query + manual extraction
         let rows = sqlx::query("SELECT url, page_id, index_in_page FROM products")
-            .fetch_all(&*self.product_repo.pool())
+            .fetch_all(self.product_repo.pool())
             .await?;
 
         let mut valid = 0u64;
@@ -101,44 +101,41 @@ impl DataConsistencyChecker {
                 continue;
             };
             // 역방향 계산: (page_id, index_in_page) -> (physical_page, physical_index)
-            match calculator.reverse_calculate(stored_page_id, stored_index_in_page) {
-                Some((phys_page, phys_index)) => {
-                    // 정방향 재계산
-                    let recalc = calculator.calculate(phys_page, phys_index);
-                    if recalc.page_id == stored_page_id
-                        && recalc.index_in_page == stored_index_in_page
-                    {
-                        valid += 1;
-                    } else {
-                        invalid += 1;
-                        if samples.len() < self.max_samples {
-                            samples.push(InconsistentRecord {
-                                url: url.clone(),
-                                stored_page_id,
-                                stored_index_in_page,
-                                recomputed_page_id: recalc.page_id,
-                                recomputed_index_in_page: recalc.index_in_page,
-                                physical_page: phys_page,
-                                physical_index: phys_index,
-                                reason: "Recalculation mismatch".into(),
-                            });
-                        }
-                    }
-                }
-                None => {
+            if let Some((phys_page, phys_index)) = calculator.reverse_calculate(stored_page_id, stored_index_in_page) {
+                // 정방향 재계산
+                let recalc = calculator.calculate(phys_page, phys_index);
+                if recalc.page_id == stored_page_id
+                    && recalc.index_in_page == stored_index_in_page
+                {
+                    valid += 1;
+                } else {
                     invalid += 1;
                     if samples.len() < self.max_samples {
                         samples.push(InconsistentRecord {
-                            url,
+                            url: url.clone(),
                             stored_page_id,
                             stored_index_in_page,
-                            recomputed_page_id: -1,
-                            recomputed_index_in_page: -1,
-                            physical_page: 0,
-                            physical_index: 0,
-                            reason: "Reverse calculation failed (out of range)".into(),
+                            recomputed_page_id: recalc.page_id,
+                            recomputed_index_in_page: recalc.index_in_page,
+                            physical_page: phys_page,
+                            physical_index: phys_index,
+                            reason: "Recalculation mismatch".into(),
                         });
                     }
+                }
+            } else {
+                invalid += 1;
+                if samples.len() < self.max_samples {
+                    samples.push(InconsistentRecord {
+                        url,
+                        stored_page_id,
+                        stored_index_in_page,
+                        recomputed_page_id: -1,
+                        recomputed_index_in_page: -1,
+                        physical_page: 0,
+                        physical_index: 0,
+                        reason: "Reverse calculation failed (out of range)".into(),
+                    });
                 }
             }
         }

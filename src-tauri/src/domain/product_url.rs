@@ -3,7 +3,7 @@ use std::fmt;
 use ts_rs::TS;
 
 /// URL과 함께 페이지 위치 정보를 담는 구조체
-/// ProductListCollector에서 ProductDetailCollector로 메타데이터를 전달하기 위해 사용
+/// `ProductListCollector에서` `ProductDetailCollector로` 메타데이터를 전달하기 위해 사용
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ProductUrl {
@@ -16,8 +16,8 @@ pub struct ProductUrl {
 }
 
 impl ProductUrl {
-    /// 새로운 ProductUrl 생성
-    pub fn new(url: String, page_id: i32, index_in_page: i32) -> Self {
+    /// 새로운 `ProductUrl` 생성
+    #[must_use] pub const fn new(url: String, page_id: i32, index_in_page: i32) -> Self {
         Self {
             url,
             page_id,
@@ -26,12 +26,12 @@ impl ProductUrl {
     }
 
     /// URL만 추출 (기존 코드와의 호환성을 위해)
-    pub fn get_url(&self) -> &str {
+    #[must_use] pub fn get_url(&self) -> &str {
         &self.url
     }
 
     /// 메타데이터를 튜플로 반환
-    pub fn get_position(&self) -> (i32, i32) {
+    #[must_use] pub const fn get_position(&self) -> (i32, i32) {
         (self.page_id, self.index_in_page)
     }
 }

@@ -13,3 +13,10 @@
 
 # Ignore archived artifacts
 src/application/archive/*.zip
+
+# Local artifacts (logs, databases, compiled artifacts)
+*.log
+*.db
+*.sqlite*
+*.rlib
+.DS_Store

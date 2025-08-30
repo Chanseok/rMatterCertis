@@ -29,7 +29,7 @@ pub struct CrawlingRangeResponse {
     pub message: String,
 }
 
-/// CrawlingPlanner가 계산한 배치 계획 정보
+/// `CrawlingPlanner가` 계산한 배치 계획 정보
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchPlan {
     pub batch_size: u32,
@@ -96,9 +96,7 @@ async fn create_product_repo() -> Result<IntegratedProductRepository, String> {
     // 데이터베이스 경로 생성 (macOS 경로에 맞게 수정)
     let database_url = {
         let app_data_dir = if cfg!(target_os = "macos") {
-            std::env::var("HOME")
-                .map(|h| format!("{}/Library/Application Support", h))
-                .unwrap_or_else(|_| "./data".to_string())
+            std::env::var("HOME").map_or_else(|_| "./data".to_string(), |h| format!("{}/Library/Application Support", h))
         } else {
             std::env::var("APPDATA")
                 .or_else(|_| std::env::var("HOME").map(|h| format!("{}/.local/share", h)))
@@ -204,83 +202,80 @@ pub async fn calculate_crawling_range(
         }
     };
 
-    let response = match result {
-        Some((start_page, end_page)) => {
-            let total_pages = if start_page >= end_page {
-                start_page - end_page + 1
-            } else {
-                end_page - start_page + 1
-            };
+    let response = if let Some((start_page, end_page)) = result {
+        let total_pages = if start_page >= end_page {
+            start_page - end_page + 1
+        } else {
+            end_page - start_page + 1
+        };
 
-            let estimated_new_products = total_pages * 12; // 평균 12개 제품/페이지
+        let estimated_new_products = total_pages * 12; // 평균 12개 제품/페이지
 
-            let crawling_info = CrawlingInfo {
-                pages_to_crawl: Some(total_pages),
-                estimated_new_products: Some(estimated_new_products),
-                strategy: "partial".to_string(),
-            };
+        let crawling_info = CrawlingInfo {
+            pages_to_crawl: Some(total_pages),
+            estimated_new_products: Some(estimated_new_products),
+            strategy: "partial".to_string(),
+        };
 
-            // CrawlingPlanner 기반 배치 계획 생성
-            info!(
-                "🔧 Creating batch plan for range: {} to {}",
-                start_page, end_page
-            );
-            let batch_plan = create_batch_plan(start_page, end_page).await;
+        // CrawlingPlanner 기반 배치 계획 생성
+        info!(
+            "🔧 Creating batch plan for range: {} to {}",
+            start_page, end_page
+        );
+        let batch_plan = create_batch_plan(start_page, end_page).await;
 
-            let message = format!(
-                "Next crawling range: pages {} to {} (total: {} pages)",
-                start_page, end_page, total_pages
-            );
-            info!("✅ {}", message);
+        let message = format!(
+            "Next crawling range: pages {} to {} (total: {} pages)",
+            start_page, end_page, total_pages
+        );
+        info!("✅ {}", message);
 
-            CrawlingRangeResponse {
-                success: true,
-                range: Some((start_page, end_page)),
-                progress: convert_progress(&progress),
-                site_info,
-                local_db_info,
-                crawling_info,
-                batch_plan,
-                message,
-            }
+        CrawlingRangeResponse {
+            success: true,
+            range: Some((start_page, end_page)),
+            progress: convert_progress(&progress),
+            site_info,
+            local_db_info,
+            crawling_info,
+            batch_plan,
+            message,
         }
-        None => {
-            let crawling_info = CrawlingInfo {
-                pages_to_crawl: Some(0),
-                estimated_new_products: Some(0),
-                strategy: "none".to_string(),
-            };
+    } else {
+        let crawling_info = CrawlingInfo {
+            pages_to_crawl: Some(0),
+            estimated_new_products: Some(0),
+            strategy: "none".to_string(),
+        };
 
-            // 빈 배치 계획
-            let batch_plan = BatchPlan {
-                batch_size: 0,
-                total_batches: 0,
-                concurrency_limit: 0,
-                batches: vec![],
-                execution_strategy: "none".to_string(),
-                estimated_duration_seconds: 0,
-            };
+        // 빈 배치 계획
+        let batch_plan = BatchPlan {
+            batch_size: 0,
+            total_batches: 0,
+            concurrency_limit: 0,
+            batches: vec![],
+            execution_strategy: "none".to_string(),
+            estimated_duration_seconds: 0,
+        };
 
-            let message = "All products have been crawled - no more pages to process".to_string();
-            info!("🏁 {}", message);
+        let message = "All products have been crawled - no more pages to process".to_string();
+        info!("🏁 {}", message);
 
-            CrawlingRangeResponse {
-                success: true,
-                range: None,
-                progress: convert_progress(&progress),
-                site_info,
-                local_db_info,
-                crawling_info,
-                batch_plan,
-                message,
-            }
+        CrawlingRangeResponse {
+            success: true,
+            range: None,
+            progress: convert_progress(&progress),
+            site_info,
+            local_db_info,
+            crawling_info,
+            batch_plan,
+            message,
         }
     };
 
     Ok(response)
 }
 
-/// CrawlingPlanner 기반 배치 계획 생성
+/// `CrawlingPlanner` 기반 배치 계획 생성
 async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
     info!(
         "🔧 Creating batch plan: start_page={}, end_page={}",
@@ -323,7 +318,7 @@ async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
     };
 
     let total_pages = pages.len() as u32;
-    let total_batches = (total_pages + batch_size - 1) / batch_size; // 올림 계산
+    let total_batches = total_pages.div_ceil(batch_size); // 올림 계산
 
     info!(
         "📊 Batch plan calculation: total_pages={}, total_batches={}",
@@ -460,7 +455,7 @@ pub async fn demo_prompts6_calculation() -> Result<String, String> {
 
     let mut result = String::new();
     result.push_str("📊 prompts6 Example Calculation Demo\n\n");
-    result.push_str(&format!("Input data:\n"));
+    result.push_str("Input data:\n");
     result.push_str(&format!("  max_page_id: {}\n", max_page_id));
     result.push_str(&format!("  max_index_in_page: {}\n", max_index_in_page));
     result.push_str(&format!("  total_pages_on_site: {}\n", total_pages_on_site));
@@ -522,9 +517,7 @@ pub async fn demo_prompts6_calculation() -> Result<String, String> {
         "\n✅ Final result: crawl pages {} to {}\n",
         start_page, end_page
     ));
-    result.push_str(&format!(
-        "🎯 This matches the prompts6 specification exactly!\n"
-    ));
+    result.push_str("🎯 This matches the prompts6 specification exactly!\n");
 
     Ok(result)
 }

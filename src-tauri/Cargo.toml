@@ -66,13 +66,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # name = "test_core_functionality"
 # path = "src/bin/test_core_functionality.rs"
 
-[[bin]]
-name = "phase3_test"
-path = "src/bin/phase3_test.rs"
-
-[[bin]]
-name = "real_crawling_test_fixed"
-path = "src/bin/real_crawling_test_fixed.rs"
+## Removed stale bins (files deleted): phase3_test, real_crawling_test_fixed
 
 [[bin]]
 name = "batch_actor_sanity"
@@ -148,6 +142,8 @@ tokio-test = "0.4"
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.4"
 rstest = "0.18"
+
+ 
 
 # 🚀 Modern Rust Development Profile (2024)
 [profile.dev]
@@ -240,6 +236,7 @@ event-driven = []        # Event-driven architecture
 telemetry = []          # Telemetry and observability
 minimal = []            # Minimal build for CI/CD
 test-utils = []         # Testing utilities
+live_crawl_test = []    # Enable real async main for src/bin/live_crawl_test.rs
 
 [[bench]]
 name = "shared_service_benchmark"

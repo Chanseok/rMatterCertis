@@ -1,9 +1,9 @@
 //! 🎭 Real Actor System Commands
 //!
-//! SessionActor → BatchActor → StageActor 계층 구조로 병렬 크롤링 실행
-//! - SessionActor: CrawlingPlanner 기반 전체 세션 관리
-//! - BatchActor: 병렬 배치 실행 (sequential이 아닌 parallel)
-//! - StageActor: Stage 2,3,4를 순차 실행 (SessionActor가 아닌 BatchActor가 관리)
+//! `SessionActor` → `BatchActor` → `StageActor` 계층 구조로 병렬 크롤링 실행
+//! - `SessionActor`: `CrawlingPlanner` 기반 전체 세션 관리
+//! - `BatchActor`: 병렬 배치 실행 (sequential이 아닌 parallel)
+//! - `StageActor`: Stage 2,3,4를 순차 실행 (`SessionActor가` 아닌 `BatchActor가` 관리)
 //! - Frontend Events: 실시간 진행 상황 브로드캐스트
 
 use chrono::Utc;
@@ -23,7 +23,9 @@ use crate::infrastructure::{HttpClient, MatterDataExtractor};
 use crate::application::AppState;
 use crate::domain::product::ProductDetail;
 use crate::domain::services::StatusChecker;
-use crate::domain::services::crawling_services::{SiteDataChangeStatus, CrawlingRangeRecommendation};
+use crate::domain::services::crawling_services::{
+    CrawlingRangeRecommendation, SiteDataChangeStatus,
+};
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository; // StatusChecker trait 임포트
 
@@ -134,8 +136,10 @@ pub async fn start_legacy_service_based_crawling(
 
     // 🔍 다음 크롤링 범위 계산 (캐시 재사용)
     let shared_cache = app.state::<crate::application::shared_state::SharedStateCache>();
-    let cached_site_status = shared_cache.get_valid_site_analysis_async(Some(5)).await.map(|cached| {
-        crate::domain::services::SiteStatus {
+    let cached_site_status = shared_cache
+        .get_valid_site_analysis_async(Some(5))
+        .await
+        .map(|cached| crate::domain::services::SiteStatus {
             is_accessible: true,
             response_time_ms: 0,
             total_pages: cached.total_pages,
@@ -143,11 +147,12 @@ pub async fn start_legacy_service_based_crawling(
             products_on_last_page: cached.products_on_last_page,
             last_check_time: cached.analyzed_at,
             health_score: cached.health_score,
-            data_change_status: SiteDataChangeStatus::Stable { count: cached.estimated_products },
+            data_change_status: SiteDataChangeStatus::Stable {
+                count: cached.estimated_products,
+            },
             decrease_recommendation: None,
             crawling_range_recommendation: CrawlingRangeRecommendation::Full,
-        }
-    });
+        });
     let cached_site_status_clone = cached_site_status.clone();
     let (site_status, db_analysis) = crawling_planner
         .analyze_system_state_with_cache(cached_site_status)
@@ -155,20 +160,24 @@ pub async fn start_legacy_service_based_crawling(
         .map_err(|e| format!("Failed to analyze system state: {}", e))?;
     // 캐시에 저장 (site_status는 캐시가 없을 때만 저장)
     if cached_site_status_clone.is_none() {
-        shared_cache.set_site_analysis(crate::application::shared_state::SiteAnalysisResult::new(
-            site_status.total_pages,
-            site_status.products_on_last_page,
-            site_status.estimated_products,
-            crate::infrastructure::config::utils::matter_products_page_url_simple(1),
-            site_status.health_score,
-        )).await;
+        shared_cache
+            .set_site_analysis(crate::application::shared_state::SiteAnalysisResult::new(
+                site_status.total_pages,
+                site_status.products_on_last_page,
+                site_status.estimated_products,
+                crate::infrastructure::config::utils::matter_products_page_url_simple(1),
+                site_status.health_score,
+            ))
+            .await;
     }
-    shared_cache.set_db_analysis(crate::application::shared_state::DbAnalysisResult::new(
-        db_analysis.total_products,
-        None,
-        None,
-        db_analysis.data_quality_score,
-    )).await;
+    shared_cache
+        .set_db_analysis(crate::application::shared_state::DbAnalysisResult::new(
+            db_analysis.total_products,
+            None,
+            None,
+            db_analysis.data_quality_score,
+        ))
+        .await;
 
     let (range_recommendation, processing_strategy) = crawling_planner
         .determine_crawling_strategy(&site_status, &db_analysis)
@@ -184,22 +193,19 @@ pub async fn start_legacy_service_based_crawling(
     );
 
     // � CrawlingRangeRecommendation을 실제 페이지 범위로 변환
-    let (start_page, end_page) = match range_recommendation.to_page_range(site_status.total_pages) {
-        Some((s, e)) => {
-            // 역순 크롤링으로 변환 (최신 페이지부터)
-            if s > e { (s, e) } else { (e, s) }
-        }
-        None => {
-            // 크롤링이 필요 없는 경우 최신 5페이지만 확인
-            let verification_pages = 5;
-            let start = site_status.total_pages;
-            let end = if start >= verification_pages {
-                start - verification_pages + 1
-            } else {
-                1
-            };
-            (start, end)
-        }
+    let (start_page, end_page) = if let Some((s, e)) = range_recommendation.to_page_range(site_status.total_pages) {
+        // 역순 크롤링으로 변환 (최신 페이지부터)
+        if s > e { (s, e) } else { (e, s) }
+    } else {
+        // 크롤링이 필요 없는 경우 최신 5페이지만 확인
+        let verification_pages = 5;
+        let start = site_status.total_pages;
+        let end = if start >= verification_pages {
+            start - verification_pages + 1
+        } else {
+            1
+        };
+        (start, end)
     };
 
     info!("📊 Final page range: {} to {}", start_page, end_page);
@@ -236,7 +242,7 @@ pub async fn start_legacy_service_based_crawling(
     )
     .await
     {
-        Ok(_) => {
+        Ok(()) => {
             let duration = start_time.elapsed();
             info!("✅ Real Actor Crawling completed in {:?}", duration);
 
@@ -259,7 +265,7 @@ pub async fn start_legacy_service_based_crawling(
     }
 }
 
-/// 🔥 핵심: 순차 Batch 실행 (SessionActor 역할)
+/// 🔥 핵심: 순차 Batch 실행 (`SessionActor` 역할)
 ///
 /// ⚠️ 중요: 배치는 병렬이 아닌 순차 실행!
 /// - 이유: 메모리 과부하 및 DB 저장 실패 방지
@@ -340,7 +346,7 @@ async fn execute_session_with_parallel_batches(
     Ok(())
 }
 
-/// 🎯 BatchActor 전체 파이프라인 실제 구현 (Stage 2→3→4)
+/// 🎯 `BatchActor` 전체 파이프라인 실제 구현 (Stage 2→3→4)
 #[allow(unused_variables)]
 async fn execute_batch_actor_complete_pipeline_simulation(
     batch_id: String,
@@ -526,7 +532,7 @@ async fn execute_real_stage_3_detail_collection(
     let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency as usize));
     let mut tasks = Vec::new();
 
-    for (_index, url) in stage2_urls.iter().enumerate() {
+    for url in &stage2_urls {
         let http_client_clone = Arc::clone(&http_client);
         let data_extractor_clone = Arc::clone(&data_extractor);
         let semaphore_clone = Arc::clone(&semaphore);
@@ -669,7 +675,7 @@ async fn execute_real_stage_4_storage(
         );
 
         // 🔄 JSON을 ProductDetail로 변환
-        if let Ok(product_detail) = convert_json_to_product_detail(&product_json) {
+        if let Ok(product_detail) = convert_json_to_product_detail(product_json) {
             // 🏪 실제 데이터베이스 저장
             match repository
                 .create_or_update_product_detail(&product_detail)
@@ -704,7 +710,7 @@ async fn execute_real_stage_4_storage(
     Ok(())
 }
 
-/// 🔄 JSON을 ProductDetail로 변환하는 헬퍼 함수
+/// 🔄 JSON을 `ProductDetail로` 변환하는 헬퍼 함수
 fn convert_json_to_product_detail(
     json: &serde_json::Value,
 ) -> Result<ProductDetail, serde_json::Error> {
@@ -718,42 +724,42 @@ fn convert_json_to_product_detail(
     let device_type = json
         .get("certification_id")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let certification_date = json
         .get("certification_date")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let software_version = json
         .get("software_version")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let hardware_version = json
         .get("hardware_version")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let description = json
         .get("description")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let manufacturer = json
         .get("manufacturer")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let model = json
         .get("model")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let certification_id = json
         .get("certification_id")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     Ok(ProductDetail {
         url,

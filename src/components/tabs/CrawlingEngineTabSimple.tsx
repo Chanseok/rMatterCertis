@@ -42,6 +42,9 @@ export default function CrawlingEngineTabSimple() {
   const [validationPages, setValidationPages] = createSignal<number | "">("");
   // Auto re-plan from backend after a session completes
   const [nextPlan, setNextPlan] = createSignal<any | null>(null);
+  // Lightweight live actor-event telemetry (debug aid)
+  const [actorEventCount, setActorEventCount] = createSignal(0);
+  const [lastActorEvent, setLastActorEvent] = createSignal<string>("");
 
   // Dramatic transition for Calculated Crawling Range
   const [rangeFxKey, setRangeFxKey] = createSignal(0);
@@ -628,6 +631,9 @@ export default function CrawlingEngineTabSimple() {
     // Listen to unified Actor session lifecycle to toggle buttons/status
     tauriApi
       .subscribeToActorBridgeEvents((name, payload) => {
+  // Debug: track live event stream
+  setActorEventCount((n) => n + 1);
+  setLastActorEvent(name);
         // === Sync events → compact Sync panel ===
         if (name === "actor-sync-started") {
           try {
@@ -931,6 +937,49 @@ export default function CrawlingEngineTabSimple() {
           });
           if (effectsOn()) triggerStage1Pulse();
         }
+        // Fallback: some backends emit only consolidated 'actor-page-lifecycle' events
+        // Map them to Stage 1 counters so the UI remains responsive.
+        if (name === "actor-page-lifecycle") {
+          const status = String(payload?.status || "").toLowerCase();
+          const pageNum = Number(payload?.page_number ?? NaN);
+          if (!Number.isFinite(pageNum)) return;
+          if (status === "fetch_started") {
+            const prevAttempts = pageAttempts.get(pageNum) ?? 0;
+            pageAttempts.set(pageNum, prevAttempts + 1);
+            if (!pageSeen.has(pageNum)) {
+              pageSeen.add(pageNum);
+              setPageStats((prev) => {
+                const started = pageSeen.size;
+                const inflight = Math.max(0, started - (prev.completed + prev.failed));
+                return { ...prev, started, inflight };
+              });
+            }
+            if (effectsOn()) triggerStage1Pulse();
+          } else if (status === "fetch_completed" || status === "urls_extracted") {
+            if (!pageCompleted.has(pageNum)) pageCompleted.add(pageNum);
+            if (!pageSeen.has(pageNum)) pageSeen.add(pageNum);
+            setPageStats((prev) => {
+              const started = pageSeen.size;
+              const completed = pageCompleted.size;
+              const inflight = Math.max(0, started - (completed + prev.failed));
+              return { ...prev, started, completed, inflight };
+            });
+            if (effectsOn()) triggerStage1Pulse();
+          } else if (status === "failed") {
+            const prevAttempts = pageAttempts.get(pageNum) ?? 0;
+            pageAttempts.set(pageNum, prevAttempts + 1);
+            if (!pageSeen.has(pageNum)) pageSeen.add(pageNum);
+            // lifecycle doesn't carry final_failure flag; treat as final for UI
+            pageFailedFinal.add(pageNum);
+            setPageStats((prev) => {
+              const started = pageSeen.size;
+              const failed = pageFailedFinal.size;
+              const inflight = Math.max(0, started - (prev.completed + failed));
+              return { ...prev, started, failed, inflight };
+            });
+            if (effectsOn()) triggerStage1Pulse();
+          }
+        }
         // Stage 2 (product detail) itemized - deduplicate by detail_id and track retries
         // Stage 2 via product lifecycle events
         if (
@@ -1043,7 +1092,13 @@ export default function CrawlingEngineTabSimple() {
 
         // Fallback: If backend emits only generic stage events for Validation, reflect them here
         if (name === "actor-stage-started") {
-          const t = String(payload?.stage_type || "").toLowerCase();
+          // stage_type may be serialized as nested enum object; normalize to string
+          const stageTypeRaw = (payload as any)?.stage_type;
+          const t = typeof stageTypeRaw === "string"
+            ? stageTypeRaw.toLowerCase()
+            : stageTypeRaw && typeof stageTypeRaw === "object"
+            ? (Object.keys(stageTypeRaw)[0] || "").toLowerCase()
+            : "";
           if (t.includes("validation")) {
             const total = Number(payload?.items_count ?? 0) || 0;
             setValidationStats((prev) => ({
@@ -1055,7 +1110,12 @@ export default function CrawlingEngineTabSimple() {
           }
         }
         if (name === "actor-stage-completed") {
-          const t = String(payload?.stage_type || "").toLowerCase();
+          const stageTypeRaw = (payload as any)?.stage_type;
+          const t = typeof stageTypeRaw === "string"
+            ? stageTypeRaw.toLowerCase()
+            : stageTypeRaw && typeof stageTypeRaw === "object"
+            ? (Object.keys(stageTypeRaw)[0] || "").toLowerCase()
+            : "";
           if (t.includes("validation")) {
             const processed =
               Number(payload?.result?.processed_items ?? 0) || 0;
@@ -1152,6 +1212,12 @@ export default function CrawlingEngineTabSimple() {
   return (
     <div class="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-blue-50 p-6">
       <div class="w-full max-w-7xl mx-auto space-y-6">
+        {/* Live Actor Event Telemetry (compact) */}
+        <div class="flex items-center justify-end text-[11px] text-gray-500 select-none">
+          <span class="px-2 py-1 rounded bg-white/70 border border-gray-200">
+            events: {actorEventCount()} {lastActorEvent() ? `· last: ${lastActorEvent()}` : ""}
+          </span>
+        </div>
         {/* Sync Runtime Status - Premium Card Design */}
         <Show when={syncLive().active || syncLive().pagesProcessed > 0}>
           <div class="bg-gradient-to-r from-teal-500 to-cyan-500 rounded-2xl p-6 mb-8 text-white shadow-2xl">

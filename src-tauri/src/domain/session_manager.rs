@@ -1,7 +1,7 @@
 //! Memory-based crawling session state management
 //!
 //! Implements the industry-standard approach: "State management layer + save only final results to DB"
-//! This replaces the previous crawling_sessions table with in-memory state management for better performance.
+//! This replaces the previous `crawling_sessions` table with in-memory state management for better performance.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -34,12 +34,12 @@ impl<'q> Encode<'q, sqlx::Sqlite> for SessionStatus {
         buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
     ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>> {
         let s = match self {
-            SessionStatus::Initializing => "Initializing",
-            SessionStatus::Running => "Running",
-            SessionStatus::Paused => "Paused",
-            SessionStatus::Completed => "Completed",
-            SessionStatus::Failed => "Failed",
-            SessionStatus::Stopped => "Stopped",
+            Self::Initializing => "Initializing",
+            Self::Running => "Running",
+            Self::Paused => "Paused",
+            Self::Completed => "Completed",
+            Self::Failed => "Failed",
+            Self::Stopped => "Stopped",
         };
         match <String as Encode<sqlx::Sqlite>>::encode(s.to_string(), buf) {
             Ok(null) => Ok(null),
@@ -52,19 +52,19 @@ impl<'r> Decode<'r, sqlx::Sqlite> for SessionStatus {
     fn decode(value: sqlx::sqlite::SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
         let s = <String as Decode<sqlx::Sqlite>>::decode(value)?;
         match s.as_str() {
-            "Initializing" => Ok(SessionStatus::Initializing),
-            "Running" => Ok(SessionStatus::Running),
-            "Paused" => Ok(SessionStatus::Paused),
-            "Completed" => Ok(SessionStatus::Completed),
-            "Failed" => Ok(SessionStatus::Failed),
-            "Stopped" => Ok(SessionStatus::Stopped),
+            "Initializing" => Ok(Self::Initializing),
+            "Running" => Ok(Self::Running),
+            "Paused" => Ok(Self::Paused),
+            "Completed" => Ok(Self::Completed),
+            "Failed" => Ok(Self::Failed),
+            "Stopped" => Ok(Self::Stopped),
             _ => Err(format!("Invalid SessionStatus: {s}").into()),
         }
     }
 }
 
 /// Current stage of crawling process
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CrawlingStage {
     ProductList,    // Stage 1: Collecting product URLs
     ProductDetails, // Stage 2: Collecting detailed product information
@@ -83,9 +83,9 @@ impl<'q> Encode<'q, sqlx::Sqlite> for CrawlingStage {
         buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
     ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>> {
         let s = match self {
-            CrawlingStage::ProductList => "ProductList",
-            CrawlingStage::ProductDetails => "ProductDetails",
-            CrawlingStage::MatterDetails => "MatterDetails",
+            Self::ProductList => "ProductList",
+            Self::ProductDetails => "ProductDetails",
+            Self::MatterDetails => "MatterDetails",
         };
         match <String as Encode<sqlx::Sqlite>>::encode(s.to_string(), buf) {
             Ok(null) => Ok(null),
@@ -98,9 +98,9 @@ impl<'r> Decode<'r, sqlx::Sqlite> for CrawlingStage {
     fn decode(value: sqlx::sqlite::SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
         let s = <String as Decode<sqlx::Sqlite>>::decode(value)?;
         match s.as_str() {
-            "ProductList" => Ok(CrawlingStage::ProductList),
-            "ProductDetails" => Ok(CrawlingStage::ProductDetails),
-            "MatterDetails" => Ok(CrawlingStage::MatterDetails),
+            "ProductList" => Ok(Self::ProductList),
+            "ProductDetails" => Ok(Self::ProductDetails),
+            "MatterDetails" => Ok(Self::MatterDetails),
             _ => Err(format!("Invalid CrawlingStage: {s}").into()),
         }
     }
@@ -164,7 +164,7 @@ struct SessionMetrics {
 
 impl SessionManager {
     /// Create a new session manager
-    pub fn new() -> Self {
+    #[must_use] pub fn new() -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             metrics: Arc::new(Mutex::new(SessionMetrics::default())),
@@ -495,7 +495,7 @@ impl SessionManager {
         }
 
         let elapsed = (Utc::now() - session.started_at).num_seconds() as f64;
-        let progress_ratio = session.current_page as f64 / session.total_pages as f64;
+        let progress_ratio = f64::from(session.current_page) / f64::from(session.total_pages);
 
         if progress_ratio > 0.0 {
             let estimated_total_time = elapsed / progress_ratio;
@@ -512,20 +512,20 @@ impl SessionManager {
         let mut metrics = self.metrics.lock().await;
 
         if session.current_page > 0 {
-            let pages_per_second = session.current_page as f64 / execution_time as f64;
+            let pages_per_second = f64::from(session.current_page) / f64::from(execution_time);
             metrics.avg_pages_per_second = if metrics.avg_pages_per_second == 0.0 {
                 pages_per_second
             } else {
-                (metrics.avg_pages_per_second + pages_per_second) / 2.0
+                f64::midpoint(metrics.avg_pages_per_second, pages_per_second)
             };
         }
 
         if session.current_page > 0 {
-            let products_per_page = session.products_found as f64 / session.current_page as f64;
+            let products_per_page = f64::from(session.products_found) / f64::from(session.current_page);
             metrics.avg_products_per_page = if metrics.avg_products_per_page == 0.0 {
                 products_per_page
             } else {
-                (metrics.avg_products_per_page + products_per_page) / 2.0
+                f64::midpoint(metrics.avg_products_per_page, products_per_page)
             };
         }
 

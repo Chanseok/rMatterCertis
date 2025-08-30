@@ -25,7 +25,7 @@ pub async fn test_real_crawling_init() -> Result<String, String> {
         }
         Err(e) => {
             error!(error = %e, "❌ 실제 크롤링 서비스 초기화 실패");
-            Err(format!("크롤링 서비스 초기화 실패: {}", e))
+            Err(format!("크롤링 서비스 초기화 실패: {e}"))
         }
     }
 }
@@ -42,7 +42,7 @@ pub async fn test_real_site_status() -> Result<String, String> {
         }
         Err(e) => {
             error!(error = %e, "❌ 사이트 상태 확인 실패");
-            Err(format!("사이트 상태 확인 실패: {}", e))
+            Err(format!("사이트 상태 확인 실패: {e}"))
         }
     }
 }
@@ -59,7 +59,7 @@ pub async fn test_real_crawling_analysis() -> Result<String, String> {
         }
         Err(e) => {
             error!(error = %e, "❌ 크롤링 범위 분석 실패");
-            Err(format!("크롤링 범위 분석 실패: {}", e))
+            Err(format!("크롤링 범위 분석 실패: {e}"))
         }
     }
 }
@@ -76,7 +76,7 @@ pub async fn test_real_page_crawling() -> Result<String, String> {
         }
         Err(e) => {
             error!(error = %e, "❌ 소량 페이지 크롤링 실패");
-            Err(format!("소량 페이지 크롤링 실패: {}", e))
+            Err(format!("소량 페이지 크롤링 실패: {e}"))
         }
     }
 }
@@ -93,7 +93,7 @@ pub async fn test_real_oneshot_integration() -> Result<String, String> {
         }
         Err(e) => {
             error!(error = %e, "❌ OneShot Actor 통합 실패");
-            Err(format!("OneShot Actor 통합 실패: {}", e))
+            Err(format!("OneShot Actor 통합 실패: {e}"))
         }
     }
 }
@@ -141,8 +141,7 @@ async fn test_crawling_range_analysis() -> Result<String> {
         .await?;
 
     Ok(format!(
-        "크롤링 범위 분석 완료 - 권장사항: {:?}",
-        recommendation
+        "크롤링 범위 분석 완료 - 권장사항: {recommendation:?}"
     ))
 }
 
@@ -166,8 +165,7 @@ async fn test_small_scale_crawling() -> Result<String> {
             processed_items,
             duration_ms,
         } => Ok(format!(
-            "소량 크롤링 성공 - 처리된 페이지: {}, 실행시간: {}ms",
-            processed_items, duration_ms
+            "소량 크롤링 성공 - 처리된 페이지: {processed_items}, 실행시간: {duration_ms}ms"
         )),
         StageResult::Failure { error, .. } => {
             Err(anyhow::anyhow!("크롤링 실행 중 오류: {:?}", error))
@@ -215,14 +213,14 @@ mod tests {
 
         // 크롤링 서비스 초기화 테스트
         match test_real_crawling_init().await {
-            Ok(message) => println!("✅ 초기화 테스트: {}", message),
-            Err(e) => println!("❌ 초기화 테스트 실패: {}", e),
+            Ok(message) => println!("✅ 초기화 테스트: {message}"),
+            Err(e) => println!("❌ 초기화 테스트 실패: {e}"),
         }
 
         // OneShot 통합 테스트
         match test_real_oneshot_integration().await {
-            Ok(message) => println!("✅ 통합 테스트: {}", message),
-            Err(e) => println!("❌ 통합 테스트 실패: {}", e),
+            Ok(message) => println!("✅ 통합 테스트: {message}"),
+            Err(e) => println!("❌ 통합 테스트 실패: {e}"),
         }
 
         println!("🎯 실제 크롤링 명령 테스트 완료!");

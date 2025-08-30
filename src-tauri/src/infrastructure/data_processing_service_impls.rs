@@ -1,6 +1,6 @@
 //! 고급 데이터 처리 서비스 구현체들
 //!
-//! domain/services/data_processing_services.rs의 트레이트들에 대한 실제 구현체
+//! `domain/services/data_processing_services.rs의` 트레이트들에 대한 실제 구현체
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
 use crate::domain::product::Product;
-use crate::domain::services::data_processing_services::*;
+use crate::domain::services::data_processing_services::{DeduplicationService, DuplicationAnalysis, DuplicateProductGroup, DuplicationType, ValidationService, ValidationResult, InvalidProduct, ValidationSummary, ProductValidation, ValidationError, ValidationErrorType, ValidationWarning, ValidationWarningType, FieldValidation, ResolutionStrategy, ConflictResolver, ConflictGroup, ConflictType, BatchProgressTracker, BatchProgress, BatchResult, BatchRecoveryService, RecoveryResult, RecoveryAction, RecoverabilityAssessment, RetryManager, ErrorClassification, ErrorType, ErrorSeverity, RetryStrategy, ErrorClassifier, ErrorAction};
 
 /// 중복 제거 서비스 구현체
 pub struct DeduplicationServiceImpl {
@@ -16,7 +16,7 @@ pub struct DeduplicationServiceImpl {
 }
 
 impl DeduplicationServiceImpl {
-    pub fn new(similarity_threshold: f64) -> Self {
+    #[must_use] pub const fn new(similarity_threshold: f64) -> Self {
         Self {
             similarity_threshold: similarity_threshold.clamp(0.0, 1.0),
         }
@@ -101,10 +101,10 @@ impl DeduplicationService for DeduplicationServiceImpl {
 
             let is_duplicate = self.is_duplicate(&product, &unique_products).await?;
 
-            if !is_duplicate {
-                unique_products.push(product);
-            } else {
+            if is_duplicate {
                 debug!("Removed duplicate product: {:?}", product.model);
+            } else {
+                unique_products.push(product);
             }
 
             if processed_count % 100 == 0 {
@@ -171,10 +171,10 @@ impl DeduplicationService for DeduplicationServiceImpl {
             .sum::<usize>() as u32;
 
         let unique_products = products.len() as u32 - total_duplicates;
-        let duplicate_rate = if products.len() > 0 {
-            total_duplicates as f64 / products.len() as f64
-        } else {
+        let duplicate_rate = if products.is_empty() {
             0.0
+        } else {
+            f64::from(total_duplicates) / products.len() as f64
         };
 
         Ok(DuplicationAnalysis {
@@ -201,8 +201,14 @@ pub struct ValidationServiceImpl {
     required_fields: Vec<String>,
 }
 
+impl Default for ValidationServiceImpl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ValidationServiceImpl {
-    pub fn new() -> Self {
+    #[must_use] pub fn new() -> Self {
         Self {
             required_fields: vec!["manufacturer".to_string(), "model".to_string()],
         }
@@ -222,11 +228,11 @@ impl ValidationServiceImpl {
                 "manufacturer" => product
                     .manufacturer
                     .as_ref()
-                    .map_or(false, |m| !m.trim().is_empty()),
+                    .is_some_and(|m| !m.trim().is_empty()),
                 "model" => product
                     .model
                     .as_ref()
-                    .map_or(false, |m| !m.trim().is_empty()),
+                    .is_some_and(|m| !m.trim().is_empty()),
                 _ => false,
             })
             .filter(|&filled| filled)
@@ -242,7 +248,7 @@ impl ValidationServiceImpl {
         ];
         let optional_filled = optional_fields
             .iter()
-            .filter(|field| field.map_or(false, |f| !f.trim().is_empty()))
+            .filter(|field| field.is_some_and(|f| !f.trim().is_empty()))
             .count();
 
         score += 0.3 * (optional_filled as f64 / optional_fields.len() as f64);
@@ -398,13 +404,13 @@ impl ValidationService for ValidationServiceImpl {
                     if product
                         .manufacturer
                         .as_ref()
-                        .map_or(true, |m| m.trim().is_empty())
+                        .is_none_or(|m| m.trim().is_empty())
                     {
                         missing_required_fields.push("manufacturer".to_string());
                     }
                 }
                 "model" => {
-                    if product.model.as_ref().map_or(true, |m| m.trim().is_empty()) {
+                    if product.model.as_ref().is_none_or(|m| m.trim().is_empty()) {
                         missing_required_fields.push("model".to_string());
                     }
                 }
@@ -416,7 +422,7 @@ impl ValidationService for ValidationServiceImpl {
         if product
             .certificate_id
             .as_ref()
-            .map_or(false, |c| c.trim().is_empty())
+            .is_some_and(|c| c.trim().is_empty())
         {
             empty_fields.push("certificate_id".to_string());
         }
@@ -449,7 +455,7 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
 
     for i in 1..=len1 {
         for j in 1..=len2 {
-            let cost = if chars1[i - 1] == chars2[j - 1] { 0 } else { 1 };
+            let cost = usize::from(chars1[i - 1] != chars2[j - 1]);
             matrix[i][j] = std::cmp::min(
                 std::cmp::min(
                     matrix[i - 1][j] + 1, // deletion
@@ -469,7 +475,7 @@ pub struct ConflictResolverImpl {
 }
 
 impl ConflictResolverImpl {
-    pub fn new(strategy: ResolutionStrategy) -> Self {
+    #[must_use] pub const fn new(strategy: ResolutionStrategy) -> Self {
         Self {
             resolution_strategy: strategy,
         }
@@ -619,8 +625,14 @@ pub struct BatchProgressTrackerImpl {
     // 실제 구현에서는 데이터베이스나 메모리 저장소 사용
 }
 
+impl Default for BatchProgressTrackerImpl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BatchProgressTrackerImpl {
-    pub fn new() -> Self {
+    #[must_use] pub const fn new() -> Self {
         Self {}
     }
 }
@@ -664,8 +676,14 @@ impl BatchProgressTracker for BatchProgressTrackerImpl {
 /// 배치 복구 서비스 구현체
 pub struct BatchRecoveryServiceImpl {}
 
+impl Default for BatchRecoveryServiceImpl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BatchRecoveryServiceImpl {
-    pub fn new() -> Self {
+    #[must_use] pub const fn new() -> Self {
         Self {}
     }
 }
@@ -723,7 +741,7 @@ pub struct RetryManagerImpl {
 }
 
 impl RetryManagerImpl {
-    pub fn new(max_retries: u32, base_delay_ms: u64) -> Self {
+    #[must_use] pub const fn new(max_retries: u32, base_delay_ms: u64) -> Self {
         Self {
             max_retries,
             base_delay_ms,
@@ -843,8 +861,14 @@ impl RetryManager for RetryManagerImpl {
 /// 오류 분류 서비스 구현체
 pub struct ErrorClassifierImpl {}
 
+impl Default for ErrorClassifierImpl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ErrorClassifierImpl {
-    pub fn new() -> Self {
+    #[must_use] pub const fn new() -> Self {
         Self {}
     }
 }

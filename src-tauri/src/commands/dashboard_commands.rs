@@ -10,7 +10,7 @@ use crate::crawl_engine::config::SystemConfig;
 use crate::crawl_engine::services::performance_optimizer::CrawlingPerformanceOptimizer;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 use crate::services::dashboard_service::RealtimeDashboardService;
-use crate::types::dashboard_types::*;
+use crate::types::dashboard_types::{DashboardConfig, PerformanceThresholds, DashboardState, ChartDataPoint, DashboardEvent};
 
 /// 대시보드 서비스 상태 관리
 pub struct DashboardServiceState {
@@ -244,7 +244,7 @@ pub async fn test_dashboard_integration(
 
         // 시뮬레이션된 진행 상황 업데이트
         for i in 1..=pages {
-            let overall_progress = (i as f64 / pages as f64) * 100.0;
+            let overall_progress = (f64::from(i) / f64::from(pages)) * 100.0;
             let stage_progress = 100.0; // 각 페이지는 100% 완료
 
             service

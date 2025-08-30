@@ -130,7 +130,7 @@ pub struct SystemStateBroadcaster {
 }
 
 impl SystemStateBroadcaster {
-    pub fn new(app_handle: AppHandle) -> Self {
+    #[must_use] pub const fn new(app_handle: AppHandle) -> Self {
         Self {
             app_handle,
             last_broadcast: None,
@@ -176,7 +176,7 @@ impl SystemStateBroadcaster {
 
         Ok(SystemStatePayload {
             is_running, // 🔥 더 엄격한 조건으로 수정됨
-            total_pages: site_analysis.as_ref().map(|s| s.total_pages).unwrap_or(0),
+            total_pages: site_analysis.as_ref().map_or(0, |s| s.total_pages),
             db_total_products: total_products as u64,
             last_db_cursor: last_cursor,
             session_target_items: runtime_state.session_target_items.unwrap_or(0),
@@ -295,7 +295,7 @@ impl SystemStateBroadcaster {
         self.current_batch_id = Some(batch_id.clone());
 
         let payload = BatchCreatedPayload {
-            batch_id: batch_id.clone(),
+            batch_id,
             page_range: (page_start, page_end),
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
@@ -617,7 +617,7 @@ impl SystemStateBroadcaster {
         Ok(())
     }
 
-    /// 🔥 새로운 CrawlingEvent 기반 발송 메서드 추가
+    /// 🔥 새로운 `CrawlingEvent` 기반 발송 메서드 추가
     pub fn emit_site_status_check(
         &self,
         event: &crate::domain::events::CrawlingEvent,
@@ -649,7 +649,7 @@ impl SystemStateBroadcaster {
         Ok(())
     }
 
-    /// 🔥 ProductList 페이지별 이벤트 발송
+    /// 🔥 `ProductList` 페이지별 이벤트 발송
     pub fn emit_product_list_page_event(
         &self,
         session_id: String,

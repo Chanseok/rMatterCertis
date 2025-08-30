@@ -23,7 +23,7 @@ pub struct IntegratedProductUseCases {
 }
 
 impl IntegratedProductUseCases {
-    pub fn new(repo: Arc<IntegratedProductRepository>) -> Self {
+    #[must_use] pub const fn new(repo: Arc<IntegratedProductRepository>) -> Self {
         Self { repo }
     }
 
@@ -170,7 +170,7 @@ impl IntegratedProductUseCases {
     // ===============================
 
     /// Convert hex string to integer for vid/pid fields
-    pub fn convert_hex_to_int(hex_str: &str) -> Option<i32> {
+    #[must_use] pub fn convert_hex_to_int(hex_str: &str) -> Option<i32> {
         if hex_str.starts_with("0x") || hex_str.starts_with("0X") {
             i32::from_str_radix(&hex_str[2..], 16).ok()
         } else {
@@ -179,7 +179,7 @@ impl IntegratedProductUseCases {
     }
 
     /// Convert integer back to hex string for display
-    pub fn convert_int_to_hex(value: i32) -> String {
+    #[must_use] pub fn convert_int_to_hex(value: i32) -> String {
         format!("0x{:X}", value)
     }
 
@@ -188,7 +188,7 @@ impl IntegratedProductUseCases {
         let mut successful = 0;
         for product in products {
             match self.create_or_update_product(product).await {
-                Ok(_) => successful += 1,
+                Ok(()) => successful += 1,
                 Err(e) => {
                     eprintln!("Failed to create product: {}", e);
                 }
@@ -202,7 +202,7 @@ impl IntegratedProductUseCases {
         let mut successful = 0;
         for detail in details {
             match self.create_or_update_product_detail(detail).await {
-                Ok(_) => successful += 1,
+                Ok(()) => successful += 1,
                 Err(e) => {
                     eprintln!("Failed to create product detail: {}", e);
                 }
@@ -239,7 +239,7 @@ impl IntegratedProductUseCases {
 /// Helper functions for data conversion and validation
 impl IntegratedProductUseCases {
     /// Create product from basic crawling data
-    pub fn create_product_from_crawl_data(
+    #[must_use] pub fn create_product_from_crawl_data(
         url: String,
         manufacturer: Option<String>,
         model: Option<String>,
@@ -268,7 +268,7 @@ impl IntegratedProductUseCases {
     }
 
     /// Create product detail from detailed crawling data
-    pub fn create_product_detail_from_crawl_data(url: String) -> ProductDetail {
+    #[must_use] pub fn create_product_detail_from_crawl_data(url: String) -> ProductDetail {
         ProductDetail {
             url,
             page_id: None,

@@ -9,11 +9,11 @@
 //! - KST (Korea Standard Time) timezone support
 //! - Separate backend and frontend log files
 //!
-//! Note on macOS CoreAnimation warnings: The console may show noisy system-level warnings
-//! like "CoreAnimation: [CATransformLayer] shadowRadius" originating from the OS compositor.
+//! Note on macOS `CoreAnimation` warnings: The console may show noisy system-level warnings
+//! like "`CoreAnimation`: [`CATransformLayer`] shadowRadius" originating from the OS compositor.
 //! These are not emitted by this application. We restrict our console/file outputs to
 //! our own targets and dedicated `actor-event`/`kpi.*` targets. If further suppression is needed,
-//! run with MC_CONCISE_STARTUP=1 or adjust module filters in LoggingConfig.
+//! run with `MC_CONCISE_STARTUP=1` or adjust module filters in `LoggingConfig`.
 
 #![allow(clippy::uninlined_format_args)]
 #![allow(clippy::needless_borrows_for_generic_args)]
@@ -55,11 +55,11 @@ impl FormatTime for KstTimeFormatter {
 }
 
 /// Get the log directory relative to the executable location
-pub fn get_log_directory() -> PathBuf {
+#[must_use] pub fn get_log_directory() -> PathBuf {
     // Get the directory where the executable is located
     let exe_dir = std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
     exe_dir.join("logs")
@@ -150,7 +150,7 @@ fn rotate_all_existing_log_files(log_dir: &PathBuf) -> Result<()> {
 /// - When level == "trace": All logs including verbose dependencies are shown
 ///
 /// # Environment Variable Override
-/// You can override the filtering using RUST_LOG environment variable:
+/// You can override the filtering using `RUST_LOG` environment variable:
 /// ```bash
 /// # Show all SQL queries even on DEBUG level
 /// RUST_LOG="debug,sqlx::query=debug" cargo run
@@ -554,11 +554,11 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
         info!("Console output: {}", config.console_output);
 
         // Log filter optimization info
-        if !config.level.to_lowercase().contains("trace") {
+        if config.level.to_lowercase().contains("trace") {
+            info!("TRACE level active - all logs including SQL queries will be shown");
+        } else {
             info!("SQL and verbose logs suppressed (use TRACE level to see all logs)");
             info!("Optimized filters: sqlx=warn, reqwest=info, tokio=info, tauri=info");
-        } else {
-            info!("TRACE level active - all logs including SQL queries will be shown");
         }
         info!("File output: {}", config.file_output);
         info!(

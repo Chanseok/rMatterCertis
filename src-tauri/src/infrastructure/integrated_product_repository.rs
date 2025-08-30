@@ -1,6 +1,6 @@
 //! Repository implementation for integrated product operations
 //!
-//! This module provides database operations that combine product and product_detail
+//! This module provides database operations that combine product and `product_detail`
 //! tables to provide comprehensive product information with advanced search and
 //! filtering capabilities.
 
@@ -20,14 +20,14 @@ use sqlx::{Row, sqlite::SqlitePool};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-/// Repository for the integrated schema (products + product_details + vendors + crawling_results)
+/// Repository for the integrated schema (products + `product_details` + vendors + `crawling_results`)
 #[derive(Clone)]
 pub struct IntegratedProductRepository {
     pool: Arc<SqlitePool>,
 }
 
 impl IntegratedProductRepository {
-    /// Vacate an occupied (page_id, index_in_page) slot if it's taken by a different URL.
+    /// Vacate an occupied (`page_id`, `index_in_page`) slot if it's taken by a different URL.
     /// This helps avoid UNIQUE constraint violations when moving an item to a new position.
     /// Returns the URL that was occupying the slot, if any, after setting its position to NULL.
     async fn vacate_position_if_occupied(
@@ -42,9 +42,9 @@ impl IntegratedProductRepository {
         // Find occupant different from the target URL
         // First check product_details (source of truth), then fallback to products
         let mut occupant_url: Option<String> = sqlx::query_scalar(
-            r#"SELECT url FROM product_details
+            r"SELECT url FROM product_details
                WHERE page_id = ? AND index_in_page = ? AND url != ?
-               LIMIT 1"#,
+               LIMIT 1",
         )
         .bind(page_id)
         .bind(index_in_page)
@@ -53,9 +53,9 @@ impl IntegratedProductRepository {
         .await?;
         if occupant_url.is_none() {
             occupant_url = sqlx::query_scalar(
-                r#"SELECT url FROM products
+                r"SELECT url FROM products
                    WHERE page_id = ? AND index_in_page = ? AND url != ?
-                   LIMIT 1"#,
+                   LIMIT 1",
             )
             .bind(page_id)
             .bind(index_in_page)
@@ -67,9 +67,9 @@ impl IntegratedProductRepository {
         if let Some(occ_url) = occupant_url.clone() {
             // Set occupant's position to NULL to free the slot
             let _ = sqlx::query(
-                r#"UPDATE product_details
+                r"UPDATE product_details
                    SET page_id = NULL, index_in_page = NULL, id = NULL, updated_at = ?
-                   WHERE url = ?"#,
+                   WHERE url = ?",
             )
             .bind(now)
             .bind(&occ_url)
@@ -78,9 +78,9 @@ impl IntegratedProductRepository {
 
             // Keep products table in sync
             let _ = sqlx::query(
-                r#"UPDATE products
+                r"UPDATE products
                    SET page_id = NULL, index_in_page = NULL, id = NULL, updated_at = ?
-                   WHERE url = ?"#,
+                   WHERE url = ?",
             )
             .bind(now)
             .bind(&occ_url)
@@ -96,8 +96,8 @@ impl IntegratedProductRepository {
             Ok(None)
         }
     }
-    /// 강제 위치 업데이트: URL이 존재하면 products, product_details에 대해
-    /// page_id, index_in_page, id 세 필드만 업데이트합니다. 존재하지 않으면 0 리턴.
+    /// 강제 위치 업데이트: URL이 존재하면 products, `product_details에` 대해
+    /// `page_id`, `index_in_page`, id 세 필드만 업데이트합니다. 존재하지 않으면 0 리턴.
     pub async fn force_update_position_by_url(
         &self,
         url: &str,
@@ -113,17 +113,17 @@ impl IntegratedProductRepository {
             .vacate_position_if_occupied(page_id, index_in_page, &normalized)
             .await?;
 
-     // products 테이블 업데이트 (include id derived from position)
-     let forced_id = format!("p{:04}i{:02}", page_id, index_in_page);
+        // products 테이블 업데이트 (include id derived from position)
+        let forced_id = format!("p{:04}i{:02}", page_id, index_in_page);
         let prod_res = sqlx::query(
-            r#"UPDATE products
+            r"UPDATE products
          SET page_id = ?, index_in_page = ?, id = ?, updated_at = ?
-               WHERE url = ?"#,
+               WHERE url = ?",
         )
         .bind(page_id)
         .bind(index_in_page)
-     .bind(&forced_id)
-     .bind(now)
+        .bind(&forced_id)
+        .bind(now)
         .bind(&normalized)
         .execute(&*self.pool)
         .await?;
@@ -131,9 +131,9 @@ impl IntegratedProductRepository {
 
         // product_details 테이블 업데이트 (id 포함)
         let det_res = sqlx::query(
-            r#"UPDATE product_details
+            r"UPDATE product_details
                SET page_id = ?, index_in_page = ?, id = ?, updated_at = ?
-               WHERE url = ?"#,
+               WHERE url = ?",
         )
         .bind(page_id)
         .bind(index_in_page)
@@ -168,10 +168,10 @@ impl IntegratedProductRepository {
         }
     }
     /// Expose underlying pool reference (read-only operations convenience)
-    pub fn pool(&self) -> &sqlx::SqlitePool {
+    #[must_use] pub fn pool(&self) -> &sqlx::SqlitePool {
         &self.pool
     }
-    pub fn new(pool: SqlitePool) -> Self {
+    #[must_use] pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool: Arc::new(pool),
         }
@@ -180,7 +180,7 @@ impl IntegratedProductRepository {
     /// Danger zone: completely remove all product related data so we can rebuild
     /// indexing semantics (Plan B). This is intentionally explicit and NOT called
     /// automatically; the frontend must invoke the dedicated reset command.
-    /// Returns (products_deleted, product_details_deleted).
+    /// Returns (`products_deleted`, `product_details_deleted`).
     pub async fn clear_all_products_and_details(&self) -> Result<(u64, u64)> {
         // Foreign key constraints: ensure ON DELETE CASCADE or delete child first.
         // We optimistically attempt child table deletion then parent.
@@ -216,7 +216,7 @@ impl IntegratedProductRepository {
 
     /// Insert or update basic product information from listing page
     /// 🎯 지능적 비교: 실제로 변경된 필드가 있을 때만 업데이트
-    /// Returns: (was_updated: bool, was_created: bool)
+    /// Returns: (`was_updated`: bool, `was_created`: bool)
     pub async fn create_or_update_product(&self, product: &Product) -> Result<(bool, bool)> {
         let now = chrono::Utc::now();
         // Normalize URL to ensure consistent storage and matching
@@ -237,9 +237,16 @@ impl IntegratedProductRepository {
         }
 
         // Optional: quick trace for incoming coords when verbose
-        if std::env::var("MC_PERSIST_VERBOSE").ok().as_deref().map(|v| v=="1" || v.eq_ignore_ascii_case("true")).unwrap_or(false) {
+        if std::env::var("MC_PERSIST_VERBOSE")
+            .ok()
+            .as_deref()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        {
             if let (Some(pid), Some(idx)) = (product.page_id, product.index_in_page) {
-                debug!("[PersistTrace] incoming coords url={} pid={} idx={}", normalized_url, pid, idx);
+                debug!(
+                    "[PersistTrace] incoming coords url={} pid={} idx={}",
+                    normalized_url, pid, idx
+                );
             }
         }
 
@@ -281,9 +288,7 @@ impl IntegratedProductRepository {
 
                 info!(
                     "[Persist] products: url={} pid={:?} idx={:?} action=update",
-                    normalized_url,
-                    product.page_id,
-                    product.index_in_page
+                    normalized_url, product.page_id, product.index_in_page
                 );
                 info!(
                     "📝 Product updated: {} (changes detected)",
@@ -331,8 +336,8 @@ impl IntegratedProductRepository {
             .bind(&product.manufacturer)
             .bind(&product.model)
             .bind(&product.certificate_id)
-            .bind(product.page_id.map(|v| v as i64))
-            .bind(product.index_in_page.map(|v| v as i64))
+            .bind(product.page_id.map(i64::from))
+            .bind(product.index_in_page.map(i64::from))
             .bind(now)
             .bind(now)
             .execute(&*self.pool)
@@ -340,9 +345,7 @@ impl IntegratedProductRepository {
 
             info!(
                 "[Persist] products: url={} pid={:?} idx={:?} action=insert",
-                normalized_url,
-                product.page_id,
-                product.index_in_page
+                normalized_url, product.page_id, product.index_in_page
             );
             // info!("🆕 New product created: {}", product.model.as_deref().unwrap_or("Unknown"));
             Ok((false, true)) // updated=false, created=true
@@ -351,7 +354,7 @@ impl IntegratedProductRepository {
 
     /// Insert or update detailed product specifications
     /// 🎯 지능적 비교: 빈 필드 채움 및 실제 변경사항만 업데이트
-    /// Returns: (was_updated: bool, was_created: bool)
+    /// Returns: (`was_updated`: bool, `was_created`: bool)
     pub async fn create_or_update_product_detail(
         &self,
         detail: &ProductDetail,
@@ -366,7 +369,7 @@ impl IntegratedProductRepository {
 
         let existing = self.get_product_detail_by_url(&detail.url).await?;
 
-    if let Some(existing_detail) = existing {
+        if let Some(existing_detail) = existing {
             // 🔍 지능적 비교: 빈 필드 채우기 + 실제 변경사항 확인
             let mut updates = Vec::new();
             // Heterogeneous bind values (different Option<T> types) captured via enum to avoid type mismatch
@@ -379,8 +382,7 @@ impl IntegratedProductRepository {
             let mut change_kinds: Vec<String> = Vec::new(); // human readable change descriptors
             let verbose = std::env::var("MC_PERSIST_VERBOSE")
                 .ok()
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false);
+                .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
 
             // === Expanded fill/change detection (P1) ===
             macro_rules! fill_or_change_opt_str {
@@ -488,8 +490,10 @@ impl IntegratedProductRepository {
                 }
 
                 // If page_id/index_in_page are being cleared to NULL, also clear id to NULL for consistency
-                let clearing_position = (change_kinds.iter().any(|k| k == "change:page_id") && detail.page_id.is_none())
-                    || (change_kinds.iter().any(|k| k == "change:index_in_page") && detail.index_in_page.is_none());
+                let clearing_position = (change_kinds.iter().any(|k| k == "change:page_id")
+                    && detail.page_id.is_none())
+                    || (change_kinds.iter().any(|k| k == "change:index_in_page")
+                        && detail.index_in_page.is_none());
                 if clearing_position {
                     updates.push("id = NULL");
                     // No bind needed for NULL literal
@@ -510,8 +514,7 @@ impl IntegratedProductRepository {
                     // helper closures for formatting
                     fn fmt_opt_str(v: &Option<String>) -> String {
                         v.as_deref()
-                            .map(|s| if s.is_empty() { "" } else { s })
-                            .unwrap_or("∅")
+                            .map_or("∅", |s| if s.is_empty() { "" } else { s })
                             .to_string()
                     }
                     fn fmt_opt_i32(v: &Option<i32>) -> String {
@@ -617,14 +620,13 @@ impl IntegratedProductRepository {
                     }
                 }
                 // If position present in the target detail and we haven't already added an id assignment, set id accordingly
-                if detail.page_id.is_some() && detail.index_in_page.is_some() {
-                    if !updates.iter().any(|u| *u == "id = NULL" || *u == "id = ?") {
+                if detail.page_id.is_some() && detail.index_in_page.is_some()
+                    && !updates.iter().any(|u| *u == "id = NULL" || *u == "id = ?") {
                         if let Some(ref forced) = derived_id {
                             updates.push("id = ?");
                             binds.push(BindValue::OwnedStr(forced.clone()));
                         }
                     }
-                }
 
                 let query = format!(
                     "UPDATE product_details SET {}, updated_at = ? WHERE url = ?",
@@ -646,17 +648,19 @@ impl IntegratedProductRepository {
                 // Keep products table in sync for pagination coordinates and id
                 if detail.page_id.is_some() || detail.index_in_page.is_some() || id_mismatch {
                     // Update products when page fields changed OR id needed correction
-                    let changed_page = change_kinds.iter().any(|k| k == "change:page_id" || k == "change:index_in_page");
+                    let changed_page = change_kinds
+                        .iter()
+                        .any(|k| k == "change:page_id" || k == "change:index_in_page");
                     if changed_page || id_mismatch {
                         let _ = sqlx::query(
-                            r#"
+                            r"
                             UPDATE products
                             SET page_id = ?,
                                 index_in_page = ?,
                                 id = CASE WHEN ? IS NULL THEN NULL ELSE ? END,
                                 updated_at = ?
                             WHERE url = ?
-                            "#,
+                            ",
                         )
                         .bind(detail.page_id)
                         .bind(detail.index_in_page)
@@ -684,9 +688,7 @@ impl IntegratedProductRepository {
                 }
                 info!(
                     "[Persist] product_details: url={} pid={:?} idx={:?} action=update",
-                    detail.url,
-                    detail.page_id,
-                    detail.index_in_page
+                    detail.url, detail.page_id, detail.index_in_page
                 );
                 Ok((true, false)) // updated=true, created=false
             } else {
@@ -706,7 +708,7 @@ impl IntegratedProductRepository {
                 }
                 Ok((false, false)) // updated=false, created=false
             }
-    } else {
+        } else {
             // 🆕 새로운 ProductDetail 삽입
             // ✅ Foreign Key 제약 해결: products 테이블에 먼저 기본 정보 삽입
             let basic_product = Product {
@@ -823,8 +825,7 @@ impl IntegratedProductRepository {
 
             let verbose = std::env::var("MC_PERSIST_VERBOSE")
                 .ok()
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false);
+                .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
             if verbose {
                 info!(
                     "🆕 New ProductDetail created: {} url={} page_id={:?} idx={:?}",
@@ -841,15 +842,13 @@ impl IntegratedProductRepository {
             }
             info!(
                 "[Persist] product_details: url={} pid={:?} idx={:?} action=insert",
-                detail.url,
-                detail.page_id,
-                detail.index_in_page
+                detail.url, detail.page_id, detail.index_in_page
             );
             Ok((false, true)) // updated=false, created=true
         }
     }
 
-    /// 빠른 통계: product_details 전체 개수, page_id 범위, 마지막 업데이트 시각
+    /// 빠른 통계: `product_details` 전체 개수, `page_id` 범위, 마지막 업데이트 시각
     pub async fn get_product_detail_stats(
         &self,
     ) -> Result<(i64, Option<i32>, Option<i32>, Option<DateTime<Utc>>)> {
@@ -1028,7 +1027,7 @@ impl IntegratedProductRepository {
         }
 
         let where_clause = if conditions.is_empty() {
-            "".to_string()
+            String::new()
         } else {
             format!("WHERE {}", conditions.join(" AND "))
         };
@@ -1162,11 +1161,11 @@ impl IntegratedProductRepository {
         let mut basic_product = Product {
             id: None, // Will be generated in create_or_update_product
             url: url.clone(),
-            manufacturer: product_json["manufacturer"].as_str().map(|s| s.to_string()),
-            model: product_json["model"].as_str().map(|s| s.to_string()),
+            manufacturer: product_json["manufacturer"].as_str().map(std::string::ToString::to_string),
+            model: product_json["model"].as_str().map(std::string::ToString::to_string),
             certificate_id: product_json["certification_id"]
                 .as_str()
-                .map(|s| s.to_string()),
+                .map(std::string::ToString::to_string),
             page_id: product_json["page_id"].as_i64().map(|i| i as i32),
             index_in_page: product_json["index_in_page"].as_i64().map(|i| i as i32),
             created_at: chrono::Utc::now(),
@@ -1190,54 +1189,54 @@ impl IntegratedProductRepository {
                 url: url.clone(),
                 page_id: basic_product.page_id,
                 index_in_page: basic_product.index_in_page,
-                id: product_json["id"].as_str().map(|s| s.to_string()),
+                id: product_json["id"].as_str().map(std::string::ToString::to_string),
                 manufacturer: basic_product.manufacturer.clone(),
                 model: basic_product.model.clone(),
-                device_type: product_json["device_type"].as_str().map(|s| s.to_string()),
+                device_type: product_json["device_type"].as_str().map(std::string::ToString::to_string),
                 certificate_id: basic_product.certificate_id.clone(),
                 certification_date: product_json["certification_date"]
                     .as_str()
-                    .map(|s| s.to_string()),
+                    .map(std::string::ToString::to_string),
                 software_version: product_json["software_version"]
                     .as_str()
-                    .map(|s| s.to_string()),
+                    .map(std::string::ToString::to_string),
                 hardware_version: product_json["hardware_version"]
                     .as_str()
-                    .map(|s| s.to_string()),
+                    .map(std::string::ToString::to_string),
                 vid,
                 pid,
-                family_sku: product_json["family_sku"].as_str().map(|s| s.to_string()),
+                family_sku: product_json["family_sku"].as_str().map(std::string::ToString::to_string),
                 family_variant_sku: product_json["family_variant_sku"]
                     .as_str()
-                    .map(|s| s.to_string()),
+                    .map(std::string::ToString::to_string),
                 firmware_version: product_json["firmware_version"]
                     .as_str()
-                    .map(|s| s.to_string()),
-                family_id: product_json["family_id"].as_str().map(|s| s.to_string()),
+                    .map(std::string::ToString::to_string),
+                family_id: product_json["family_id"].as_str().map(std::string::ToString::to_string),
                 tis_trp_tested: product_json["tis_trp_tested"]
                     .as_str()
-                    .map(|s| s.to_string()),
+                    .map(std::string::ToString::to_string),
                 specification_version: product_json["specification_version"]
                     .as_str()
-                    .map(|s| s.to_string()),
+                    .map(std::string::ToString::to_string),
                 transport_interface: product_json["transport_interface"]
                     .as_str()
-                    .map(|s| s.to_string()),
+                    .map(std::string::ToString::to_string),
                 primary_device_type_id: product_json["primary_device_type_id"]
                     .as_str()
-                    .map(|s| s.to_string()),
+                    .map(std::string::ToString::to_string),
                 application_categories: product_json["application_categories"].as_array().map(
                     |arr| {
                         arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
                             .collect()
                     },
                 ),
-                description: product_json["description"].as_str().map(|s| s.to_string()),
+                description: product_json["description"].as_str().map(std::string::ToString::to_string),
                 compliance_document_url: product_json["compliance_document_url"]
                     .as_str()
-                    .map(|s| s.to_string()),
-                program_type: product_json["program_type"].as_str().map(|s| s.to_string()),
+                    .map(std::string::ToString::to_string),
+                program_type: product_json["program_type"].as_str().map(std::string::ToString::to_string),
                 created_at: basic_product.created_at,
                 updated_at: basic_product.updated_at,
             };
@@ -1437,7 +1436,7 @@ impl IntegratedProductRepository {
                     .map(|dt| dt.with_timezone(&Utc))
             }),
             matter_products_count: matter_products_count.into(),
-            completion_rate: completion_rate as f64,
+            completion_rate: f64::from(completion_rate),
         })
     }
 
@@ -1475,7 +1474,7 @@ impl IntegratedProductRepository {
         Ok(products)
     }
 
-    /// Get only product URLs (no details yet) within a specific set of page_ids
+    /// Get only product URLs (no details yet) within a specific set of `page_ids`
     /// Returns at most `limit` URLs. If `pages` is empty returns empty Vec.
     pub async fn get_product_urls_without_details_in_pages(
         &self,
@@ -1489,9 +1488,9 @@ impl IntegratedProductRepository {
         let mut placeholders = String::new();
         for i in 0..pages.len() {
             if i > 0 {
-                placeholders.push_str(",");
+                placeholders.push(',');
             }
-            placeholders.push_str("?");
+            placeholders.push('?');
         }
         let query = format!(
             "SELECT p.url FROM products p LEFT JOIN product_details pd ON p.url = pd.url \
@@ -1576,11 +1575,11 @@ impl IntegratedProductRepository {
     // CRAWLING RANGE CALCULATION
     // ===============================
 
-    /// Get the maximum page_id and index_in_page from the database
-    /// Returns (max_page_id, max_index_in_page) or (None, None) if no data
+    /// Get the maximum `page_id` and `index_in_page` from the database
+    /// Returns (`max_page_id`, `max_index_in_page`) or (None, None) if no data
     ///
-    /// This finds the product with the highest page_id, and among those products,
-    /// the one with the highest index_in_page. This represents the "last" product
+    /// This finds the product with the highest `page_id`, and among those products,
+    /// the one with the highest `index_in_page`. This represents the "last" product
     /// we've crawled in the reverse chronological order.
     pub async fn get_max_page_id_and_index(&self) -> Result<(Option<i32>, Option<i32>)> {
         let row = sqlx::query(
@@ -1619,7 +1618,7 @@ impl IntegratedProductRepository {
     }
 
     /// Calculate the next crawling range based on local DB state and site information
-    /// Returns (start_page, end_page) for the next crawling range
+    /// Returns (`start_page`, `end_page`) for the next crawling range
     ///
     /// This implements the logic from prompts6:
     /// 1. Get the last saved product's reverse absolute index
@@ -1787,8 +1786,8 @@ impl IntegratedProductRepository {
         Ok(Some((start_page, end_page)))
     }
 
-    /// Check if a given site page (1..=total_pages_on_site) is fully stored in product_details
-    /// Uses product_details table as source of truth for deduplication decisions.
+    /// Check if a given site page (`1..=total_pages_on_site`) is fully stored in `product_details`
+    /// Uses `product_details` table as source of truth for deduplication decisions.
     pub async fn is_site_page_fully_detailed(
         &self,
         site_page: u32,

@@ -1,5 +1,5 @@
 //! Validation (MI-2) Skeleton
-//! Provides event enums and coordinator stub for page_id/index_in_page integrity validation.
+//! Provides event enums and coordinator stub for `page_id/index_in_page` integrity validation.
 
 use serde::Serialize;
 use tracing::info;
@@ -45,7 +45,7 @@ pub struct ValidationCoordinator {
 }
 
 impl ValidationCoordinator {
-    pub fn new(scan_depth: u32) -> Self {
+    #[must_use] pub const fn new(scan_depth: u32) -> Self {
         Self { scan_depth }
     }
 

@@ -47,7 +47,7 @@ impl DatabaseConnection {
         Ok(Self { pool })
     }
 
-    pub fn pool(&self) -> &SqlitePool {
+    #[must_use] pub const fn pool(&self) -> &SqlitePool {
         &self.pool
     }
 
@@ -55,13 +55,11 @@ impl DatabaseConnection {
         use std::fs;
         let concise_all = std::env::var("MC_CONCISE_ALL")
             .ok()
-            .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
-            .unwrap_or(true);
+            .is_none_or(|v| !(v == "0" || v.eq_ignore_ascii_case("false")));
         let concise = concise_all
             || std::env::var("MC_CONCISE_STARTUP")
                 .ok()
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false);
+                .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
 
         // Enable foreign key constraints
         sqlx::query("PRAGMA foreign_keys = ON")
@@ -140,19 +138,15 @@ impl DatabaseConnection {
                         info!("✅ Migrated legacy data using embedded script");
                     }
                 }
+            } else if concise {
+                debug!("ℹ️ No legacy data to migrate");
             } else {
-                if concise {
-                    debug!("ℹ️ No legacy data to migrate");
-                } else {
-                    info!("ℹ️ No legacy data to migrate");
-                }
+                info!("ℹ️ No legacy data to migrate");
             }
+        } else if concise {
+            debug!("ℹ️ No legacy migration needed (modern schema already in use)");
         } else {
-            if concise {
-                debug!("ℹ️ No legacy migration needed (modern schema already in use)");
-            } else {
-                info!("ℹ️ No legacy migration needed (modern schema already in use)");
-            }
+            info!("ℹ️ No legacy migration needed (modern schema already in use)");
         }
 
         // Apply 005_add_product_id.sql if products.id is missing

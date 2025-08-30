@@ -1,5 +1,4 @@
 #![cfg(any())]
-//! ARCHIVED: infrastructure/http.rs (unused HTTP infra placeholder)
-// Historical reference only. Active HTTP client is in `simple_http_client.rs`.
-
-// ...original file was just a placeholder comment...
+//! ARCHIVED: HTTP client infrastructure placeholder
+// Active HTTP client lives in `infrastructure/simple_http_client.rs`.
+// This file is excluded from build to reduce confusion.

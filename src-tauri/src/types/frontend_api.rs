@@ -1,5 +1,5 @@
 //! Advanced Crawling Engine을 위한 TypeScript 연동 타입
-//! ts-rs를 사용하여 Rust 타입을 TypeScript로 자동 변환
+//! ts-rs를 사용하여 Rust 타입을 `TypeScript로` 자동 변환
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -207,7 +207,7 @@ impl<T> ApiResponse<T> {
         }
     }
 
-    pub fn error(code: String, message: String) -> Self {
+    #[must_use] pub fn error(code: String, message: String) -> Self {
         Self {
             success: false,
             data: None,

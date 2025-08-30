@@ -1,6 +1,6 @@
 //! Actor 이벤트 프론트엔드 브릿지
 //!
-//! Actor 시스템의 AppEvent를 실제 Tauri 프론트엔드로 전달하는 브릿지 컴포넌트
+//! Actor 시스템의 `AppEvent를` 실제 Tauri 프론트엔드로 전달하는 브릿지 컴포넌트
 //! 설계 의도: 각 Actor, Task 레벨에서 독립적으로 이벤트 발행을 가능하게 하여
 //! 낮은 복잡성의 구현으로도 모든 경우를 다 커버할 수 있도록 함
 
@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 
 /// Actor 이벤트를 프론트엔드로 전달하는 브릿지
 pub struct ActorEventBridge {
-    /// Tauri AppHandle
+    /// Tauri `AppHandle`
     app_handle: AppHandle,
     /// Actor 이벤트 수신기
     event_rx: broadcast::Receiver<AppEvent>,
@@ -29,7 +29,7 @@ pub struct ActorEventBridge {
 
 impl ActorEventBridge {
     /// 새로운 브릿지 생성
-    pub fn new(app_handle: AppHandle, event_rx: broadcast::Receiver<AppEvent>) -> Self {
+    #[must_use] pub fn new(app_handle: AppHandle, event_rx: broadcast::Receiver<AppEvent>) -> Self {
         Self {
             app_handle,
             event_rx,
@@ -114,7 +114,7 @@ impl ActorEventBridge {
             // Also write a concise info-level line to events.log so stage/page/detail events are visible
             if let Some(obj) = enriched.as_object() {
                 let variant = obj.get("variant").and_then(|v| v.as_str()).unwrap_or("?");
-                let seq_val = obj.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
+                let seq_val = obj.get("seq").and_then(serde_json::Value::as_u64).unwrap_or(0);
                 let session_id = obj.get("session_id").and_then(|v| v.as_str());
                 let batch_id = obj.get("batch_id").and_then(|v| v.as_str());
                 tracing::info!(target: "actor-event",
@@ -243,7 +243,7 @@ impl ActorEventBridge {
         // Always emit a concise info-level line so users see forwarding even if debug is filtered.
         if let Some(obj) = enriched.as_object() {
             let variant = obj.get("variant").and_then(|v| v.as_str()).unwrap_or("?");
-            let seq_val = obj.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
+            let seq_val = obj.get("seq").and_then(serde_json::Value::as_u64).unwrap_or(0);
             let session_id = obj.get("session_id").and_then(|v| v.as_str());
             let batch_id = obj.get("batch_id").and_then(|v| v.as_str());
             // Route this concise line to events.log by using the dedicated target
@@ -337,7 +337,7 @@ impl ActorEventBridge {
         Ok(())
     }
 
-    /// AppEvent를 프론트엔드 이벤트로 변환
+    /// `AppEvent를` 프론트엔드 이벤트로 변환
     fn convert_actor_event_to_frontend(
         &self,
         event: AppEvent,
@@ -404,9 +404,9 @@ impl ActorEventBridge {
             if map.len() == 1 {
                 let mut out = Map::new();
                 if let Some((k, v)) = map.into_iter().next() {
-                    out.insert("variant".into(), Value::String(k.clone()));
+                    out.insert("variant".into(), Value::String(k));
                     if let Value::Object(inner) = v {
-                        for (ik, iv) in inner.into_iter() {
+                        for (ik, iv) in inner {
                             out.insert(ik, iv);
                         }
                     } else {
@@ -424,7 +424,7 @@ impl ActorEventBridge {
         Ok((event_name.to_string(), flat))
     }
 
-    /// CrawlingEvent 호환성을 위한 변환 (필요시)
+    /// `CrawlingEvent` 호환성을 위한 변환 (필요시)
     #[allow(dead_code)]
     fn convert_to_crawling_event(&self, actor_event: &AppEvent) -> Option<CrawlingEvent> {
         match actor_event {
@@ -448,13 +448,13 @@ impl ActorEventBridge {
                     performance_metrics: crate::domain::events::PerformanceMetrics {
                         avg_processing_time_ms: summary.avg_page_processing_time as f64,
                         items_per_second: if summary.total_duration_ms > 0 {
-                            (summary.total_pages_processed as f64 * 1000.0)
+                            (f64::from(summary.total_pages_processed) * 1000.0)
                                 / summary.total_duration_ms as f64
                         } else {
                             0.0
                         },
                         memory_usage_mb: 0.0, // TODO: 실제 메모리 사용량
-                        network_requests: summary.total_pages_processed as u64, // 근사치
+                        network_requests: u64::from(summary.total_pages_processed), // 근사치
                         cache_hit_rate: 0.0,  // TODO: 실제 캐시 히트율
                     },
                 };
@@ -491,12 +491,12 @@ impl ActorEventBridge {
     }
 
     /// 브릿지 상태 확인
-    pub fn is_active(&self) -> bool {
+    #[must_use] pub fn is_active(&self) -> bool {
         self.is_active.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// PageTaskStarted/Completed/Failed 로부터 actor-page-lifecycle 합성 이벤트 생성
-    /// New pipeline(StageActor)에서 이미 PageLifecycle 이벤트를 직접 방출하는 경우에는 합성하지 않음
+    /// New pipeline(StageActor)에서 이미 `PageLifecycle` 이벤트를 직접 방출하는 경우에는 합성하지 않음
     fn create_synthetic_page_lifecycle(
         &self,
         event: &AppEvent,

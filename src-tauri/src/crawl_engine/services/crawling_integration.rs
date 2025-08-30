@@ -1,5 +1,5 @@
-//! 실제 크롤링 서비스와 OneShot Actor 시스템 통합
-//! Modern Rust 2024 준수: 기존 크롤링 서비스를 OneShot Actor 패턴으로 연동
+//! 실제 크롤링 서비스와 `OneShot` Actor 시스템 통합
+//! Modern Rust 2024 준수: 기존 크롤링 서비스를 `OneShot` Actor 패턴으로 연동
 
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -26,7 +26,7 @@ use crate::infrastructure::crawling_service_impls::{
 };
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
 
-/// 실제 크롤링 서비스와 OneShot Actor 시스템을 연결하는 통합 서비스
+/// 실제 크롤링 서비스와 `OneShot` Actor 시스템을 연결하는 통합 서비스
 #[allow(dead_code)] // Phase2: allow unused fields temporarily – evaluate in Phase3
 pub struct CrawlingIntegrationService {
     status_checker: Arc<dyn StatusChecker>,
@@ -85,8 +85,8 @@ impl CrawlingIntegrationService {
             Arc::new(ProductListCollectorImpl::new(
                 Arc::new(HttpClient::create_from_global_config()?), // 🔥 Mutex 제거
                 data_extractor.clone(),
-                collector_config.clone(),
-                status_checker_impl.clone(),
+                collector_config,
+                status_checker_impl,
             ));
 
         // ProductDetailCollector: 실제 상세 수집 전용 구현 사용
@@ -127,7 +127,7 @@ impl CrawlingIntegrationService {
         })
     }
 
-    /// 실제 리스트 수집 단계 실행 (OneShot 결과 반환)
+    /// 실제 리스트 수집 단계 실행 (`OneShot` 결과 반환)
     pub async fn execute_list_collection_stage(
         &self,
         pages: Vec<u32>,
@@ -228,7 +228,7 @@ impl CrawlingIntegrationService {
         if successful_count == 0 {
             StageResult::FatalError {
                 error: StageError::NetworkError {
-                    message: format!("All {} pages failed to collect", total_pages),
+                    message: format!("All {total_pages} pages failed to collect"),
                 },
                 stage_id: "list-collection".to_string(),
                 context: "Complete collection failure".to_string(),
@@ -242,8 +242,7 @@ impl CrawlingIntegrationService {
             StageResult::Failure {
                 error: StageError::ProcessingError {
                     message: format!(
-                        "Partial failure: {} successes, {} failures",
-                        successful_count, failed_count
+                        "Partial failure: {successful_count} successes, {failed_count} failures"
                     ),
                 },
                 partial_results: successful_count,
@@ -253,7 +252,7 @@ impl CrawlingIntegrationService {
 
     /// 페이지별 상세 URL 수집 결과를 반환 (per-page detailed results)
     ///
-    /// 반환값: Vec<(page_number, Vec<ProductUrl>)>
+    /// 반환값: Vec<(`page_number`, Vec<ProductUrl>)>
     pub async fn collect_pages_detailed(
         &self,
         pages: Vec<u32>,
@@ -267,9 +266,9 @@ impl CrawlingIntegrationService {
         Ok(result)
     }
 
-    /// 페이지별 상세 URL 수집 결과(+메타: retry_count, duration_ms)를 반환
+    /// 페이지별 상세 URL 수집 결과(+메타: `retry_count`, `duration_ms)를` 반환
     ///
-    /// 반환값: Vec<(page_number, Vec<ProductUrl>, retry_count, duration_ms)>
+    /// 반환값: Vec<(`page_number`, Vec<ProductUrl>, `retry_count`, `duration_ms`)>
     pub async fn collect_pages_detailed_with_meta(
         &self,
         pages: Vec<u32>,
@@ -301,7 +300,7 @@ impl CrawlingIntegrationService {
         Ok(results)
     }
 
-    /// 실제 상세 수집 단계 실행 (OneShot 결과 반환)
+    /// 실제 상세 수집 단계 실행 (`OneShot` 결과 반환)
     pub async fn execute_detail_collection_stage(
         &self,
         product_urls: Vec<ProductUrl>,
@@ -361,7 +360,7 @@ impl CrawlingIntegrationService {
         if successful_count == 0 {
             StageResult::FatalError {
                 error: StageError::NetworkError {
-                    message: format!("All {} product details failed to collect", total_urls),
+                    message: format!("All {total_urls} product details failed to collect"),
                 },
                 stage_id: "detail-collection".to_string(),
                 context: "Complete detail collection failure".to_string(),
@@ -374,7 +373,7 @@ impl CrawlingIntegrationService {
         } else {
             StageResult::Failure {
                 error: StageError::ProcessingError {
-                    message: format!("Partial failure in detail collection"),
+                    message: "Partial failure in detail collection".to_string(),
                 },
                 partial_results: successful_count,
             }
@@ -393,7 +392,7 @@ impl CrawlingIntegrationService {
             .map_err(|e| anyhow::anyhow!("{}", e))
     }
 
-    /// 상세 수집 결과(+메타: retry_count, duration_ms)를 반환 (per-item detailed bridging 용)
+    /// 상세 수집 결과(+메타: `retry_count`, `duration_ms)를` 반환 (per-item detailed bridging 용)
     pub async fn collect_details_detailed_with_meta(
         &self,
         urls: Vec<ProductUrl>,
@@ -512,8 +511,8 @@ impl CrawlingIntegrationService {
                 crawling_range_recommendation: CrawlingRangeRecommendation::Partial(5),
             }
         };
-    let mut last_error = None;
-    let expected_per_page: usize = 12;
+        let mut last_error = None;
+        let expected_per_page: usize = 12;
 
         for attempt in 0..=max_retries {
             match self
@@ -531,7 +530,9 @@ impl CrawlingIntegrationService {
                     if !is_last && urls.len() < expected_per_page {
                         last_error = Some(anyhow::anyhow!(
                             "Insufficient products on page {}: expected >= {}, got {}",
-                            page, expected_per_page, urls.len()
+                            page,
+                            expected_per_page,
+                            urls.len()
                         ));
                         if attempt < max_retries {
                             let delay = Duration::from_millis(1000 * (2_u64.pow(attempt)));
@@ -605,8 +606,8 @@ impl CrawlingIntegrationService {
             }
         };
 
-    let mut last_error = None;
-    let expected_per_page: usize = 12;
+        let mut last_error = None;
+        let expected_per_page: usize = 12;
         let started = std::time::Instant::now();
 
         for attempt in 0..=max_retries {
@@ -625,7 +626,9 @@ impl CrawlingIntegrationService {
                     if !is_last && urls.len() < expected_per_page {
                         last_error = Some(anyhow::anyhow!(
                             "Insufficient products on page {}: expected >= {}, got {}",
-                            page, expected_per_page, urls.len()
+                            page,
+                            expected_per_page,
+                            urls.len()
                         ));
                         if attempt < max_retries {
                             let delay = Duration::from_millis(1000 * (2_u64.pow(attempt)));
@@ -732,19 +735,19 @@ impl CrawlingIntegrationService {
     }
 }
 
-/// StageActor에서 실제 크롤링 서비스 사용을 위한 도우미 구조체
+/// `StageActor에서` 실제 크롤링 서비스 사용을 위한 도우미 구조체
 pub struct RealCrawlingStageExecutor {
     integration_service: Arc<CrawlingIntegrationService>,
 }
 
 impl RealCrawlingStageExecutor {
-    pub fn new(integration_service: Arc<CrawlingIntegrationService>) -> Self {
+    #[must_use] pub const fn new(integration_service: Arc<CrawlingIntegrationService>) -> Self {
         Self {
             integration_service,
         }
     }
 
-    /// StageActor에서 호출할 실제 단계 실행 메서드
+    /// `StageActor에서` 호출할 실제 단계 실행 메서드
     pub async fn execute_stage(
         &self,
         stage_type: StageType,

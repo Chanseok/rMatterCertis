@@ -247,7 +247,7 @@ impl ProductListParser {
     fn resolve_url(&self, href: &str, base_url: &str) -> ParsingResult<String> {
         let resolved_url = if href.starts_with("http") {
             href.to_string()
-        } else if href.starts_with("/") {
+        } else if href.starts_with('/') {
             // Absolute path
             let base = Url::parse(base_url).map_err(|e| ParsingError::UrlResolutionFailed {
                 url: base_url.to_string(),
@@ -292,7 +292,7 @@ impl ProductListParser {
             errors.push("URL is empty".to_string());
         }
 
-        if product.model.as_ref().map_or(true, |m| m.is_empty()) {
+        if product.model.as_ref().map_or(true, std::string::String::is_empty) {
             errors.push("Model/title is empty".to_string());
         }
 
@@ -307,7 +307,7 @@ impl ProductListParser {
     }
 
     /// Check if there are more pages to crawl
-    pub fn has_next_page(&self, html: &Html) -> bool {
+    #[must_use] pub fn has_next_page(&self, html: &Html) -> bool {
         for selector in &self.pagination_selectors {
             if html.select(selector).any(|element| {
                 let text = element.text().collect::<String>().to_lowercase();

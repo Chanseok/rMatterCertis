@@ -46,7 +46,7 @@ pub struct EventEmitter {
 
 impl EventEmitter {
     /// Create a new event emitter
-    pub fn new(app_handle: AppHandle) -> Self {
+    #[must_use] pub fn new(app_handle: AppHandle) -> Self {
         Self {
             app_handle,
             enabled: Arc::new(RwLock::new(true)),
@@ -55,7 +55,7 @@ impl EventEmitter {
     }
 
     /// Create a new event emitter with batching enabled
-    pub fn with_batching(app_handle: AppHandle, batch_size: usize, interval_ms: u64) -> Self {
+    #[must_use] pub fn with_batching(app_handle: AppHandle, batch_size: usize, interval_ms: u64) -> Self {
         let (tx, mut rx) = mpsc::channel::<CrawlingEvent>(batch_size * 2);
 
         let emitter = Self {
@@ -65,7 +65,7 @@ impl EventEmitter {
         };
 
         // 백그라운드 태스크로 이벤트 배치 처리
-        let app_handle_clone = app_handle.clone();
+        let app_handle_clone = app_handle;
         tokio::spawn(async move {
             let mut batch: Vec<CrawlingEvent> = Vec::with_capacity(batch_size);
             let mut interval = tokio::time::interval(Duration::from_millis(interval_ms));
@@ -138,7 +138,7 @@ impl EventEmitter {
         let event_name = event.event_name();
 
         match self.app_handle.emit(event_name, &event) {
-            Ok(_) => {
+            Ok(()) => {
                 debug!("Successfully emitted event: {}", event_name);
                 Ok(())
             }
@@ -217,7 +217,7 @@ impl EventEmitter {
         let event_name = "detailed-crawling-event";
 
         match self.app_handle.emit(event_name, &detailed_event) {
-            Ok(_) => {
+            Ok(()) => {
                 debug!(
                     "Successfully emitted detailed crawling event: {}",
                     event_name
@@ -234,7 +234,7 @@ impl EventEmitter {
         }
     }
 
-    /// Emit detailed crawling event with JSON payload (for TaskLifecycleEvent)
+    /// Emit detailed crawling event with JSON payload (for `TaskLifecycleEvent`)
     pub async fn emit_detailed_crawling_event_json(
         &self,
         json_payload: serde_json::Value,
@@ -247,7 +247,7 @@ impl EventEmitter {
         let event_name = "detailed-crawling-event";
 
         match self.app_handle.emit(event_name, &json_payload) {
-            Ok(_) => {
+            Ok(()) => {
                 debug!(
                     "Successfully emitted detailed crawling event JSON: {}",
                     event_name
@@ -278,7 +278,7 @@ impl EventEmitter {
         let event_name = AtomicTaskEvent::event_name();
 
         match self.app_handle.emit(event_name, &event) {
-            Ok(_) => {
+            Ok(()) => {
                 debug!(
                     "Successfully emitted atomic task event: {} for task {}",
                     event_name,
@@ -369,7 +369,7 @@ impl EventEmitter {
         }
         let event_name = event.event_name();
         match self.app_handle.emit(event_name, &event) {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(()),
             Err(e) => Err(EventEmissionError::TauriError(e)),
         }
     }
@@ -381,7 +381,7 @@ impl EventEmitter {
         }
         let event_name = event.event_name();
         match self.app_handle.emit(event_name, &event) {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(()),
             Err(e) => Err(EventEmissionError::TauriError(e)),
         }
     }
@@ -393,7 +393,7 @@ impl EventEmitter {
         }
         let event_name = event.event_name();
         match self.app_handle.emit(event_name, &event) {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(()),
             Err(e) => Err(EventEmissionError::TauriError(e)),
         }
     }
@@ -411,7 +411,7 @@ pub struct EventEmitterBuilder {
 
 impl EventEmitterBuilder {
     /// Create a new event emitter builder
-    pub fn new() -> Self {
+    #[must_use] pub const fn new() -> Self {
         Self {
             app_handle: None,
             enabled: true,
@@ -422,19 +422,19 @@ impl EventEmitterBuilder {
     }
 
     /// Set the app handle
-    pub fn with_app_handle(mut self, app_handle: AppHandle) -> Self {
+    #[must_use] pub fn with_app_handle(mut self, app_handle: AppHandle) -> Self {
         self.app_handle = Some(app_handle);
         self
     }
 
     /// Set initial enabled state
-    pub fn with_enabled(mut self, enabled: bool) -> Self {
+    #[must_use] pub const fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
     /// Enable batched event emission
-    pub fn with_batching(mut self, batch_size: usize, interval_ms: u64) -> Self {
+    #[must_use] pub const fn with_batching(mut self, batch_size: usize, interval_ms: u64) -> Self {
         self.enable_batching = true;
         self.batch_size = batch_size;
         self.batch_interval_ms = interval_ms;

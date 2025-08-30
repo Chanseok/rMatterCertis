@@ -57,8 +57,14 @@ pub struct StorageAssessment {
 
 pub struct DataQualityAnalyzer;
 
+impl Default for DataQualityAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DataQualityAnalyzer {
-    pub fn new() -> Self {
+    #[must_use] pub const fn new() -> Self {
         Self
     }
 
@@ -113,7 +119,7 @@ impl DataQualityAnalyzer {
         if product
             .manufacturer
             .as_ref()
-            .map_or(true, |s| s.trim().is_empty())
+            .is_none_or(|s| s.trim().is_empty())
         {
             missing_fields.push("manufacturer".to_string());
             issues.push(QualityIssue {
@@ -124,7 +130,7 @@ impl DataQualityAnalyzer {
             });
         }
 
-        if product.model.as_ref().map_or(true, |s| s.trim().is_empty()) {
+        if product.model.as_ref().is_none_or(|s| s.trim().is_empty()) {
             missing_fields.push("model".to_string());
             issues.push(QualityIssue {
                 severity: IssueSeverity::Critical,
@@ -137,7 +143,7 @@ impl DataQualityAnalyzer {
         if product
             .device_type
             .as_ref()
-            .map_or(true, |s| s.trim().is_empty())
+            .is_none_or(|s| s.trim().is_empty())
         {
             missing_fields.push("device_type".to_string());
             issues.push(QualityIssue {
@@ -151,7 +157,7 @@ impl DataQualityAnalyzer {
         if product
             .certificate_id
             .as_ref()
-            .map_or(true, |s| s.trim().is_empty())
+            .is_none_or(|s| s.trim().is_empty())
         {
             missing_fields.push("certificate_id".to_string());
             issues.push(QualityIssue {
@@ -221,8 +227,7 @@ impl DataQualityAnalyzer {
         // Decide logging mode (concise vs verbose) using env flag MC_CONCISE_DQ=1/true
         let concise = std::env::var("MC_CONCISE_DQ")
             .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
 
         // Pre-compute issue counts
         let critical_count = report
@@ -262,8 +267,7 @@ impl DataQualityAnalyzer {
 
         let json_mode = std::env::var("MC_DQ_JSON")
             .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
         if concise {
             // Build compact missing field summary (max 4 entries)
             let mut missing: Vec<(String, usize)> = report
@@ -359,7 +363,7 @@ impl DataQualityAnalyzer {
                         issue
                             .product_url
                             .split('/')
-                            .last()
+                            .next_back()
                             .unwrap_or(&issue.product_url)
                     );
                 }
@@ -457,9 +461,9 @@ struct ProductCompleteness {
 impl fmt::Display for IssueSeverity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            IssueSeverity::Critical => write!(f, "Critical"),
-            IssueSeverity::Warning => write!(f, "Warning"),
-            IssueSeverity::Info => write!(f, "Info"),
+            Self::Critical => write!(f, "Critical"),
+            Self::Warning => write!(f, "Warning"),
+            Self::Info => write!(f, "Info"),
         }
     }
 }
@@ -467,10 +471,10 @@ impl fmt::Display for IssueSeverity {
 impl fmt::Display for IssueType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            IssueType::MissingRequired => write!(f, "Missing Required Field"),
-            IssueType::InvalidFormat => write!(f, "Invalid Format"),
-            IssueType::EmptyValue => write!(f, "Empty Value"),
-            IssueType::Duplicate => write!(f, "Duplicate"),
+            Self::MissingRequired => write!(f, "Missing Required Field"),
+            Self::InvalidFormat => write!(f, "Invalid Format"),
+            Self::EmptyValue => write!(f, "Empty Value"),
+            Self::Duplicate => write!(f, "Duplicate"),
         }
     }
 }

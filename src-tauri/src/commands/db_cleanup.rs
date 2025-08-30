@@ -20,7 +20,7 @@ pub struct UrlDedupCleanupReport {
 async fn delete_dupes_in_table(pool: &sqlx::SqlitePool, table: &str) -> Result<u64, String> {
     // Delete rows whose url duplicates exist, keeping the lowest rowid per url
     let sql = format!(
-        r#"
+        r"
         WITH dupes AS (
             SELECT url, MIN(rowid) AS keep_rowid
             FROM {table}
@@ -31,7 +31,7 @@ async fn delete_dupes_in_table(pool: &sqlx::SqlitePool, table: &str) -> Result<u
         DELETE FROM {table}
         WHERE url IN (SELECT url FROM dupes)
           AND rowid NOT IN (SELECT keep_rowid FROM dupes);
-        "#,
+        ",
         table = table
     );
 
@@ -44,7 +44,7 @@ async fn delete_dupes_in_table(pool: &sqlx::SqlitePool, table: &str) -> Result<u
 
 async fn count_remaining_dupes(pool: &sqlx::SqlitePool, table: &str) -> Result<u64, String> {
     let sql = format!(
-        r#"
+        r"
         SELECT COALESCE(SUM(cnt - 1), 0) AS remain
         FROM (
             SELECT url, COUNT(*) AS cnt
@@ -53,7 +53,7 @@ async fn count_remaining_dupes(pool: &sqlx::SqlitePool, table: &str) -> Result<u
             GROUP BY url
             HAVING COUNT(*) > 1
         ) t;
-        "#,
+        ",
         table = table
     );
     let remain: i64 = sqlx::query_scalar(&sql)
@@ -67,7 +67,7 @@ async fn count_remaining_dupes(pool: &sqlx::SqlitePool, table: &str) -> Result<u
 async fn delete_slot_dupes_in_table(pool: &sqlx::SqlitePool, table: &str) -> Result<u64, String> {
     // Delete rows that collide on (page_id, index_in_page), keep the lowest rowid per slot
     let sql = format!(
-        r#"
+        r"
         WITH kept AS (
             SELECT MIN(rowid) AS keep_rowid
             FROM {table}
@@ -77,7 +77,7 @@ async fn delete_slot_dupes_in_table(pool: &sqlx::SqlitePool, table: &str) -> Res
         DELETE FROM {table}
         WHERE page_id IS NOT NULL AND index_in_page IS NOT NULL
           AND rowid NOT IN (SELECT keep_rowid FROM kept);
-        "#,
+        ",
         table = table
     );
 
@@ -90,7 +90,7 @@ async fn delete_slot_dupes_in_table(pool: &sqlx::SqlitePool, table: &str) -> Res
 
 async fn count_remaining_slot_dupes(pool: &sqlx::SqlitePool, table: &str) -> Result<u64, String> {
     let sql = format!(
-        r#"
+        r"
         SELECT COALESCE(SUM(cnt - 1), 0) AS remain
         FROM (
             SELECT page_id, index_in_page, COUNT(*) AS cnt
@@ -99,7 +99,7 @@ async fn count_remaining_slot_dupes(pool: &sqlx::SqlitePool, table: &str) -> Res
             GROUP BY page_id, index_in_page
             HAVING COUNT(*) > 1
         ) t;
-        "#,
+        ",
         table = table
     );
     let remain: i64 = sqlx::query_scalar(&sql)

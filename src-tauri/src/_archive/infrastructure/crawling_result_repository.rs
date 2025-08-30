@@ -1,7 +1,5 @@
 #![cfg(any())]
-//! ARCHIVED: infrastructure/crawling_result_repository.rs
-// Historical snapshot preserved for reference. Not part of active build.
+//! ARCHIVED: crawling result repository (see `_archive/infrastructure/crawling_result_repository.rs`)
+// Not part of the active build.
 
-/*
-... original content moved from src-tauri/src/infrastructure/crawling_result_repository.rs ...
-*/
+// intentionally empty

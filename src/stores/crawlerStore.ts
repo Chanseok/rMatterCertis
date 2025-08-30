@@ -21,10 +21,9 @@ import type {
   CrawlingResult,
   BackendCrawlerConfig,
   CrawlingStatusCheck,
-  CrawlingStatus, 
-  CrawlingStage,
   AtomicTaskEvent
 } from '../types/crawling';
+import { CrawlingStatus, CrawlingStage } from '../types/crawling';
 import { DatabaseHealth } from '../types/crawling';
 import type { 
   SessionStatusDto, 
@@ -118,11 +117,11 @@ class CrawlerStore {
   }
 
   get status() {
-    return () => crawlerState.progress?.status || 'Idle';
+  return () => crawlerState.progress?.status ?? CrawlingStatus.Idle;
   }
 
   get currentStage() {
-    return () => crawlerState.progress?.current_stage || 'Idle';
+  return () => crawlerState.progress?.current_stage ?? CrawlingStage.Idle;
   }
 
   get isConnected() {
@@ -170,23 +169,23 @@ class CrawlerStore {
   // =========================================================================
 
   get isIdle() {
-    return () => this.status() === 'Idle';
+  return () => this.status() === CrawlingStatus.Idle;
   }
 
   get isRunning() {
-    return () => this.status() === 'Running';
+  return () => this.status() === CrawlingStatus.Running;
   }
 
   get isPaused() {
-    return () => this.status() === 'Paused';
+  return () => this.status() === CrawlingStatus.Paused;
   }
 
   get isCompleted() {
-    return () => this.status() === 'Completed';
+  return () => this.status() === CrawlingStatus.Completed;
   }
 
   get hasError() {
-    return () => this.status() === 'Error' || crawlerState.lastError !== null;
+  return () => this.status() === CrawlingStatus.Error || crawlerState.lastError !== null;
   }
 
   get progressPercentage() {
@@ -309,51 +308,115 @@ class CrawlerStore {
   }
 
   private async subscribeToEvents(): Promise<void> {
-    const subscriptions: (() => void)[] = [];
+    console.log('📡 Subscribing to unified actor bridge events...');
+    const unlisten = await tauriApi.subscribeToActorBridgeEvents((_eventName, payload) => {
+        this.handleActorEvent(payload);
+    });
+    eventSubscriptions()[0] = () => {
+        unlisten();
+    };
+    console.log('✅ Subscribed to unified actor bridge events.');
+  }
 
-    try {
-      // 진행 상황 이벤트 구독
-      const progressUnsub = await tauriApi.subscribeToProgress((progress) => {
-        this.setProgress(progress);
-      });
-      subscriptions.push(progressUnsub);
+  private handleActorEvent(payload: any): void {
+    // Log all events for debugging
+    console.log(`[Actor Event] variant: ${payload.variant}`, payload);
 
-      // 작업 상태 이벤트 구독
-      const taskUnsub = await tauriApi.subscribeToTaskStatus((taskStatus) => {
-        this.updateTaskStatus(taskStatus);
-      });
-      subscriptions.push(taskUnsub);
+    const variant = payload.variant;
 
-      // 스테이지 변경 이벤트 구독
-      const stageUnsub = await tauriApi.subscribeToStageChange((data) => {
-        console.log(`🔄 스테이지 변경: ${data.from} → ${data.to} (${data.message})`);
-      });
-      subscriptions.push(stageUnsub);
+    switch (variant) {
+        case 'SessionStarted':
+            setCrawlerState('progress', {
+                status: CrawlingStatus.Running,
+                current_stage: CrawlingStage.StatusCheck,
+                percentage: 0,
+                current: 0,
+                total: payload.total_pages || 0,
+                message: 'Session started...',
+                new_items: 0,
+                updated_items: 0,
+                errors: 0,
+                timestamp: payload.timestamp,
+                current_step: 'Starting',
+                elapsed_time: 0,
+            });
+            setCrawlerState('currentSessionId', payload.session_id);
+            break;
 
-      // 에러 이벤트 구독
-      const errorUnsub = await tauriApi.subscribeToErrors((error) => {
-        console.error('❌ 크롤링 에러:', error);
-        this.setError(error.message);
-      });
-      subscriptions.push(errorUnsub);
-
-      // 완료 이벤트 구독
-      const completedUnsub = await tauriApi.subscribeToCompletion((result) => {
-        console.log('🎉 크롤링 완료:', result);
-        this.setResult(result);
-      });
-      subscriptions.push(completedUnsub);
-
-      // 구독 목록 저장
-      eventSubscriptions()[0] = () => {
-        subscriptions.forEach(unsub => unsub());
-      };
-
-      console.log('📡 실시간 이벤트 구독 완료');
-    } catch (error) {
-      console.error('❌ 이벤트 구독 실패:', error);
-      throw error;
+    case 'PhaseStarted': {
+      const stageName: string = payload.phase?.type || 'UnknownStage';
+      setCrawlerState('progress', (prev: CrawlingProgress | null) => ({
+        ...prev!,
+        current_stage: this.mapPhaseToCrawlingStage(stageName),
+        message: `Phase started: ${stageName}`,
+      }));
+      console.log(`Phase started: ${stageName}`);
+      break;
     }
+
+    case 'Progress':
+       setCrawlerState('progress', (prev: CrawlingProgress | null) => ({
+        ...prev!,
+        status: CrawlingStatus.Running,
+        percentage: payload.percentage,
+        current_step: payload.message,
+        current: payload.current_step,
+        total: payload.total_steps,
+      }));
+      break;
+
+    case 'SessionCompleted':
+      setCrawlerState('progress', (prev: CrawlingProgress | null) => ({
+        ...prev!,
+        status: CrawlingStatus.Completed,
+        percentage: 100,
+        message: 'Session completed successfully.',
+      }));
+            setCrawlerState('lastResult', payload.summary);
+            break;
+        
+    case 'SessionFailed':
+       setCrawlerState('progress', (prev: CrawlingProgress | null) => ({
+        ...prev!,
+        status: CrawlingStatus.Error,
+       }));
+            this.setError(payload.error || 'Session failed');
+            break;
+
+        default:
+            break;
+    }
+  }
+
+  // Normalize stage_type field that can be string or nested-enum object
+  private normalizeStageType(stageTypeRaw: any): string {
+    if (typeof stageTypeRaw === 'string') return stageTypeRaw.toLowerCase();
+    if (stageTypeRaw && typeof stageTypeRaw === 'object') {
+      const k = Object.keys(stageTypeRaw)[0];
+      return (k || '').toLowerCase();
+    }
+    return '';
+  }
+
+  // Best-effort mapping from backend stage type to UI CrawlingStage enum
+  private mapStageTypeToCrawlingStage(stageTypeLower: string): CrawlingStage {
+    if (stageTypeLower.includes('listpage')) return CrawlingStage.ProductList;
+    if (stageTypeLower.includes('productdetail')) return CrawlingStage.ProductDetails;
+    if (stageTypeLower.includes('validation')) return CrawlingStage.DatabaseAnalysis;
+    if (stageTypeLower.includes('database')) return CrawlingStage.Database;
+    if (stageTypeLower.includes('saving') || stageTypeLower.includes('persist')) return CrawlingStage.DatabaseSave;
+    return CrawlingStage.StatusCheck;
+  }
+
+  // Conservative mapping from PhaseStarted.phase into CrawlingStage
+  private mapPhaseToCrawlingStage(phaseType: string): CrawlingStage {
+    const p = String(phaseType || '').toLowerCase();
+    if (p.includes('list') || p.includes('page')) return CrawlingStage.ProductList;
+    if (p.includes('detail') || p.includes('product')) return CrawlingStage.ProductDetails;
+    if (p.includes('valid')) return CrawlingStage.DatabaseAnalysis;
+    if (p.includes('save') || p.includes('persist')) return CrawlingStage.DatabaseSave;
+    if (p.includes('db') || p.includes('database')) return CrawlingStage.Database;
+    return CrawlingStage.StatusCheck;
   }
 
   // =========================================================================
@@ -361,27 +424,8 @@ class CrawlerStore {
   // =========================================================================
 
   async startRealTimeUpdates(): Promise<void> {
-    try {
-      console.log('🎧 Starting real-time event listeners...');
-      
-      // Subscribe to progress updates
-      await tauriApi.subscribeToProgress((progress: CrawlingProgress) => {
-        console.log('📈 Progress update received:', progress);
-        this.setProgress(progress);
-      });
-      
-      // Subscribe to stage changes (if available)
-      if (tauriApi.subscribeToStageChange) {
-        await tauriApi.subscribeToStageChange((stageChange: any) => {
-          console.log('🔄 Stage change received:', stageChange);
-        });
-      }
-      
-      console.log('✅ Real-time event listeners started successfully');
-    } catch (error) {
-      console.error('❌ Failed to start real-time updates:', error);
-      // Fallback to basic progress monitoring
-    }
+    // This method is now handled by the unified subscribeToEvents
+    console.log('🎧 Real-time updates are managed by the unified event bridge.');
   }
 
   stopAutoRefresh(): void {
@@ -714,8 +758,16 @@ class CrawlerStore {
             current: Math.floor(result.data.progress * 100),
             total: 100,
             percentage: result.data.progress,
-            current_stage: 'Processing' as any, // 타입 캐스팅으로 해결
-            status: result.data.status as any,
+            current_stage: CrawlingStage.ProductList,
+            status: ((): CrawlingStatus => {
+              const s = String(result.data.status || '').toLowerCase();
+              if (s === 'running') return CrawlingStatus.Running;
+              if (s === 'paused') return CrawlingStatus.Paused;
+              if (s === 'completed') return CrawlingStatus.Completed;
+              if (s === 'error') return CrawlingStatus.Error;
+              if (s === 'cancelled') return CrawlingStatus.Cancelled;
+              return CrawlingStatus.Idle;
+            })(),
             new_items: 0,
             updated_items: 0,
             errors: 0,

@@ -1,4 +1,4 @@
-//! StageActor: 개별 스테이지 작업 처리 Actor
+//! `StageActor`: 개별 스테이지 작업 처리 Actor
 //!
 //! Phase 3: Actor 구현 - 스테이지 레벨 작업 실행 및 관리
 //! Modern Rust 2024 준수: 함수형 원칙, 명시적 의존성, 상태 최소화
@@ -30,7 +30,7 @@ use crate::infrastructure::crawling_service_impls::{
 };
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
 
-/// Dependency bundle for StageActor (to move construction out of the actor)
+/// Dependency bundle for `StageActor` (to move construction out of the actor)
 #[derive(Clone)]
 pub struct StageDeps {
     pub http_client: Arc<HttpClient>,
@@ -48,7 +48,7 @@ pub struct StageDeps {
 static DATA_SAVING_RUN_GUARD: Lazy<StdMutex<HashSet<String>>> =
     Lazy::new(|| StdMutex::new(HashSet::new()));
 
-/// 스테이지 상태 열거형 (local to StageActor)
+/// 스테이지 상태 열거형 (local to `StageActor`)
 #[derive(Debug, Clone, PartialEq)]
 enum StageState {
     Idle,
@@ -59,7 +59,7 @@ enum StageState {
     Timeout,
 }
 
-/// StageActor: 개별 스테이지 작업의 실행 및 관리
+/// `StageActor`: 개별 스테이지 작업의 실행 및 관리
 #[allow(clippy::struct_excessive_bools)]
 pub struct StageActor {
     // 기본 메타데이터
@@ -123,36 +123,36 @@ trait StageItemExt {
 impl StageItemExt for StageItem {
     fn id_string(&self) -> String {
         match self {
-            StageItem::Page(p) => format!("page_{}", p),
-            StageItem::Url(u) => u.clone(),
-            StageItem::Product(p) => p.url.clone(),
-            StageItem::ProductList(l) => format!("list_page_{}", l.page_number),
-            StageItem::ProductUrls(urls) => format!("product_urls_{}", urls.urls.len()),
-            StageItem::ProductDetails(d) => format!("product_details_{}", d.products.len()),
-            StageItem::ValidatedProducts(v) => format!("validated_products_{}", v.products.len()),
-            StageItem::ValidationTarget(v) => format!("validation_target_{}", v.len()),
+            Self::Page(p) => format!("page_{}", p),
+            Self::Url(u) => u.clone(),
+            Self::Product(p) => p.url.clone(),
+            Self::ProductList(l) => format!("list_page_{}", l.page_number),
+            Self::ProductUrls(urls) => format!("product_urls_{}", urls.urls.len()),
+            Self::ProductDetails(d) => format!("product_details_{}", d.products.len()),
+            Self::ValidatedProducts(v) => format!("validated_products_{}", v.products.len()),
+            Self::ValidationTarget(v) => format!("validation_target_{}", v.len()),
         }
     }
     fn item_type_enum(&self) -> StageItemType {
         match self {
-            StageItem::Page(page) => StageItemType::Page { page_number: *page },
-            StageItem::Url(_u) => StageItemType::Url {
+            Self::Page(page) => StageItemType::Page { page_number: *page },
+            Self::Url(_u) => StageItemType::Url {
                 url_type: "generic".into(),
             },
-            StageItem::Product(_p) => StageItemType::Url {
+            Self::Product(_p) => StageItemType::Url {
                 url_type: "product".into(),
             },
-            StageItem::ProductList(_l) => StageItemType::ProductUrls { urls: vec![] },
-            StageItem::ProductUrls(list) => StageItemType::ProductUrls {
+            Self::ProductList(_l) => StageItemType::ProductUrls { urls: vec![] },
+            Self::ProductUrls(list) => StageItemType::ProductUrls {
                 urls: list.urls.iter().map(|u| u.url.clone()).collect(),
             },
-            StageItem::ProductDetails(_d) => StageItemType::Url {
+            Self::ProductDetails(_d) => StageItemType::Url {
                 url_type: "product_details".into(),
             },
-            StageItem::ValidatedProducts(_v) => StageItemType::Url {
+            Self::ValidatedProducts(_v) => StageItemType::Url {
                 url_type: "validated_products".into(),
             },
-            StageItem::ValidationTarget(_t) => StageItemType::Url {
+            Self::ValidationTarget(_t) => StageItemType::Url {
                 url_type: "validation_target".into(),
             },
         }
@@ -214,21 +214,20 @@ impl StageActor {
                         tokio::time::sleep(Duration::from_millis(delay)).await;
                         attempt = next;
                         continue;
-                    } else {
-                        return (Err(err), attempt);
                     }
+                    return (Err(err), attempt);
                 }
             }
         }
     }
-    /// 새로운 StageActor 인스턴스 생성
+    /// 새로운 `StageActor` 인스턴스 생성
     ///
     /// # Arguments
     /// * `actor_id` - Actor 고유 식별자
     ///
     /// # Returns
-    /// * `Self` - 새로운 StageActor 인스턴스
-    pub fn new(actor_id: String) -> Self {
+    /// * `Self` - 새로운 `StageActor` 인스턴스
+    #[must_use] pub fn new(actor_id: String) -> Self {
         let batch_id = Uuid::new_v4().to_string();
         Self {
             actor_id,
@@ -258,7 +257,7 @@ impl StageActor {
     }
 
     /// New constructor that takes explicit dependencies and a strategy factory.
-    /// This supports proper DI and makes StageActor focused on orchestration only.
+    /// This supports proper DI and makes `StageActor` focused on orchestration only.
     #[must_use]
     pub fn new_with_deps(
         actor_id: String,
@@ -294,7 +293,7 @@ impl StageActor {
         }
     }
 
-    /// Inject a StageLogic factory (strategy dispatch). Safe no-op if not provided.
+    /// Inject a `StageLogic` factory (strategy dispatch). Safe no-op if not provided.
     pub fn with_strategy_factory(
         mut self,
         factory: Arc<dyn StageLogicFactory + Send + Sync>,
@@ -305,7 +304,7 @@ impl StageActor {
 
     // (Early duplicate progress helpers removed; canonical versions near file end)
 
-    /// 🔥 Phase 1: 실제 서비스들과 함께 StageActor 생성
+    /// 🔥 Phase 1: 실제 서비스들과 함께 `StageActor` 생성
     ///
     /// # Arguments
     /// * `actor_id` - Actor 고유 식별자
@@ -316,7 +315,7 @@ impl StageActor {
     /// * `app_config` - 앱 설정
     ///
     /// # Returns
-    /// * `Self` - 서비스가 주입된 StageActor 인스턴스
+    /// * `Self` - 서비스가 주입된 `StageActor` 인스턴스
     #[must_use]
     #[deprecated(note = "Use StageActor::new_with_deps with StageDeps for proper DI")]
     pub fn new_with_services(
@@ -363,7 +362,7 @@ impl StageActor {
             Some(Arc::new(ProductListCollectorImpl::new(
                 Arc::new(http_client_inner.clone()),
                 Arc::new(data_extractor_inner.clone()),
-                list_collector_config.clone(),
+                list_collector_config,
                 status_checker_for_list,
             )));
 
@@ -388,8 +387,8 @@ impl StageActor {
 
         let product_detail_collector: Option<Arc<dyn ProductDetailCollector>> =
             Some(Arc::new(ProductDetailCollectorImpl::new(
-                Arc::new(http_client_inner.clone()),
-                Arc::new(data_extractor_inner.clone()),
+                Arc::new(http_client_inner),
+                Arc::new(data_extractor_inner),
                 detail_collector_config,
             )));
 
@@ -421,7 +420,7 @@ impl StageActor {
         }
     }
 
-    /// OneShot Actor 시스템 호환성을 위한 생성자
+    /// `OneShot` Actor 시스템 호환성을 위한 생성자
     ///
     /// # Arguments
     /// * `batch_id` - 배치 식별자
@@ -430,8 +429,8 @@ impl StageActor {
     /// * `products_on_last_page` - 마지막 페이지 제품 수 (선택적)
     ///
     /// # Returns
-    /// * `Self` - 새로운 StageActor 인스턴스
-    pub fn new_with_oneshot(
+    /// * `Self` - 새로운 `StageActor` 인스턴스
+    #[must_use] pub fn new_with_oneshot(
         batch_id: String,
         _config: Arc<crate::crawl_engine::config::SystemConfig>,
         _total_pages: u32,
@@ -465,7 +464,7 @@ impl StageActor {
         }
     }
 
-    /// 사이트 페이지네이션 힌트 설정 (StatusCheck 결과를 상위에서 주입)
+    /// 사이트 페이지네이션 힌트 설정 (`StatusCheck` 결과를 상위에서 주입)
     pub fn set_site_pagination_hints(&mut self, total_pages: u32, products_on_last_page: u32) {
         self.site_total_pages_hint = Some(total_pages);
         self.products_on_last_page_hint = Some(products_on_last_page);
@@ -476,7 +475,7 @@ impl StageActor {
     }
 
     /// 실제 서비스 초기화 - guide/re-arch-plan-final2.md 설계 기반
-    /// ServiceBasedBatchCrawlingEngine 패턴 참조하되 Actor 모델에 맞게 구현
+    /// `ServiceBasedBatchCrawlingEngine` 패턴 참조하되 Actor 모델에 맞게 구현
     #[deprecated(
         note = "Construct services outside and pass via StageDeps; keep for transitional compatibility"
     )]
@@ -591,7 +590,7 @@ impl StageActor {
 
     /// 크롤링 엔진 초기화 (임시 구현)
     /// 현재는 시뮬레이션 모드이므로 실제 엔진 초기화는 건너뛰기
-    pub fn initialize_default_engines(&mut self) -> Result<(), StageError> {
+    pub const fn initialize_default_engines(&mut self) -> Result<(), StageError> {
         // No-op in production. Historical simulation path kept for tests/benchmarks via feature.
         #[cfg(feature = "simulate-details")]
         info!(
@@ -601,7 +600,7 @@ impl StageActor {
         Ok(())
     }
 
-    /// 공개 스테이지 실행 메서드 (BatchActor에서 사용)
+    /// 공개 스테이지 실행 메서드 (`BatchActor에서` 사용)
     ///
     /// # Arguments
     /// * `stage_type` - 실행할 스테이지 타입
@@ -612,7 +611,7 @@ impl StageActor {
     pub async fn execute_stage(
         &mut self,
         stage_type: StageType,
-    items: Vec<StageItem>,
+        items: Vec<StageItem>,
         concurrency_limit: u32,
         timeout_secs: u64,
         context: &AppContext,
@@ -626,8 +625,7 @@ impl StageActor {
             failed_items: self.failure_count,
             duration_ms: self
                 .start_time
-                .map(|start| start.elapsed().as_millis() as u64)
-                .unwrap_or(0),
+                .map_or(0, |start| start.elapsed().as_millis() as u64),
             details: self.item_results.clone(),
         })
     }
@@ -643,7 +641,7 @@ impl StageActor {
     async fn handle_execute_stage(
         &mut self,
         stage_type: StageType,
-    items: Vec<StageItem>,
+        items: Vec<StageItem>,
         concurrency_limit: u32,
         timeout_secs: u64,
         context: &AppContext,
@@ -812,19 +810,19 @@ impl StageActor {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency_limit as usize));
         // 전략/설정 및 의존성 복사
         let strategy_factory_clone = self.strategy_factory.clone();
-    // 페이지네이션 힌트 복사 (Copy types; safe to move into tasks)
-    let site_total_pages_hint = self.site_total_pages_hint;
-    let products_on_last_page_hint = self.products_on_last_page_hint;
-    // Duplicate policy 사전 클론 (self를 태스크 내부에서 캡처하지 않기 위해)
-    let duplicate_policy_base = self.duplicate_policy.clone();
+        // 페이지네이션 힌트 복사 (Copy types; safe to move into tasks)
+        let site_total_pages_hint = self.site_total_pages_hint;
+        let products_on_last_page_hint = self.products_on_last_page_hint;
+        // Duplicate policy 사전 클론 (self를 태스크 내부에서 캡처하지 않기 위해)
+        let duplicate_policy_base = self.duplicate_policy.clone();
 
         // 각 아이템을 병렬로 처리 (StageItemStarted를 먼저 emit하여 이벤트 순서 보장)
         let deadline = Instant::now() + overall_timeout;
         // join 전에 추후 abort 대상 추적을 위해 task handle 저장
         let mut handles: Vec<tokio::task::JoinHandle<Result<StageItemResult, StageError>>> =
             Vec::new();
-    let batch_id_owned = self.batch_id.clone();
-    for item in items {
+        let batch_id_owned = self.batch_id.clone();
+        for item in items {
             let sem = semaphore.clone();
             let base_item = item.clone(); // used for lifecycle pre-emits
             let stage_type_clone = stage_type.clone();
@@ -986,7 +984,7 @@ impl StageActor {
                                             } else {
                                                 (0u32, 0u32)
                                             };
-                                            return (found, found as u64, div_ct, anom_ct);
+                                            return (found, u64::from(found), div_ct, anom_ct);
                                         }
                                     }
                                     (0u32, 0u64, 0u32, 0u32)
@@ -1002,7 +1000,7 @@ impl StageActor {
                                 physical_page: 0,
                                 products_found,
                                 assigned_start_offset: 0,
-                                assigned_end_offset: products_found.saturating_sub(1) as u64,
+                                assigned_end_offset: u64::from(products_found.saturating_sub(1)),
                                 timestamp: Utc::now(),
                             });
                             let _ = ctx_clone.emit_event(AppEvent::ValidationCompleted {
@@ -1043,8 +1041,8 @@ impl StageActor {
                                         }
                                         // Emit some divergence events (duplicates) for live counting
                                         let mut dup_emitted = 0u32;
-                                        for issue in rep.issues.iter() {
-                                            if let crate::crawl_engine::services::data_quality_analyzer::IssueType::Duplicate = issue.issue_type {
+                                        for issue in &rep.issues {
+                                            if matches!(issue.issue_type, crate::crawl_engine::services::data_quality_analyzer::IssueType::Duplicate) {
                                                 let detail = format!("Duplicate in '{}' (url={})", issue.field_name, issue.product_url);
                                                 let _ = ctx_clone.emit_event(AppEvent::ValidationDivergenceFound {
                                                     session_id: session_id_clone.clone(),
@@ -1063,10 +1061,10 @@ impl StageActor {
                             }
                         }
                         // For grouped product detail crawling, emit a grouped completion event summarizing counts
-                        if let StageType::ProductDetailCrawling = stage_type_clone {
+                        if matches!(stage_type_clone, StageType::ProductDetailCrawling) {
                             if let StageItem::ProductUrls(ref urls) = lifecycle_item {
                                 let page_hint =
-                                    urls.urls.first().map(|u| u.page_id as u32).unwrap_or(0u32);
+                                    urls.urls.first().map_or(0u32, |u| u.page_id as u32);
                                 let total = urls.urls.len() as u32;
                                 let duration_ms = item_start.elapsed().as_millis() as u64;
                                 debug!(
@@ -1083,7 +1081,7 @@ impl StageActor {
                                         succeeded: total,
                                         failed: 0,
                                         duplicates: 0,
-                                        duration_ms: duration_ms,
+                                        duration_ms,
                                         phase: "fetch".into(),
                                         timestamp: Utc::now(),
                                     })
@@ -1139,18 +1137,16 @@ impl StageActor {
                                             retry_count: 0,
                                             collected_data: None,
                                         });
-                                    } else {
-                                        guard.insert(guard_key);
-                                        info!(
-                                            "[PersistGuard] first DataSaving execution proceeding"
-                                        );
                                     }
+                                    guard.insert(guard_key);
+                                    info!(
+                                        "[PersistGuard] first DataSaving execution proceeding"
+                                    );
                                 }
                                 // decide skip via env inside task scope
                                 let skip_save = std::env::var("MC_SKIP_DB_SAVE")
                                     .ok()
-                                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                                    .unwrap_or(false);
+                                    .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
                                 if skip_save {
                                     info!("[Persist] Skipped by env MC_SKIP_DB_SAVE");
                                     if let Err(e) =
@@ -1243,7 +1239,7 @@ impl StageActor {
                                                 _ => "Other",
                                             }
                                         );
-                                        match StageActor::execute_real_database_storage(
+                                        match Self::execute_real_database_storage(
                                             &lifecycle_item,
                                             repo.clone(),
                                         )
@@ -1255,11 +1251,7 @@ impl StageActor {
                                                 let attempted = attempted_count; // from outer scope (입력 product 개수)
                                                 // unchanged = attempted - (inserted+updated+duplicates) 로 해석: duplicates 는 이미 동일 데이터 존재
                                                 let consumed = inserted + updated + duplicates_ct;
-                                                let unchanged = if attempted > consumed {
-                                                    attempted - consumed
-                                                } else {
-                                                    0
-                                                };
+                                                let unchanged = attempted.saturating_sub(consumed);
                                                 let status = if inserted > 0 && updated == 0 {
                                                     "persist_inserted"
                                                 } else if updated > 0 && inserted == 0 {
@@ -1455,7 +1447,7 @@ impl StageActor {
                                                         ),
                                                         metrics: Some(SimpleMetrics::Generic {
                                                             key: "error".into(),
-                                                            value: e.clone(),
+                                                            value: e,
                                                         }),
                                                         timestamp: Utc::now(),
                                                     },
@@ -1489,7 +1481,7 @@ impl StageActor {
                             collected_count: r.collected_data.as_ref().map(|d| {
                                 // JSON 배열일 가능성 높음 → 대략 길이 추정 (간단 처리)
                                 if d.starts_with('[') {
-                                    d.matches("\"").count() as u32 / 2
+                                    d.matches('"').count() as u32 / 2
                                 } else {
                                     1
                                 }
@@ -1506,8 +1498,7 @@ impl StageActor {
                                 url_count: Some(
                                     r.collected_data
                                         .as_ref()
-                                        .map(|d| d.len() as u32)
-                                        .unwrap_or(0),
+                                        .map_or(0, |d| d.len() as u32),
                                 ),
                                 scheduled_details: None,
                                 error: None,
@@ -1644,12 +1635,9 @@ impl StageActor {
             let remaining = deadline.saturating_duration_since(now);
             // 개별 task join에 대해 남은 전체 시간만 허용
             let join_res = tokio::time::timeout(remaining, task).await;
-            let join_outcome = match join_res {
-                Ok(j) => j,
-                Err(_) => {
-                    timeout_triggered = true;
-                    break;
-                }
+            let join_outcome = if let Ok(j) = join_res { j } else {
+                timeout_triggered = true;
+                break;
             };
             match join_outcome {
                 Ok(Ok(result)) => {
@@ -1701,8 +1689,7 @@ impl StageActor {
 
         let duration = self
             .start_time
-            .map(|start| start.elapsed())
-            .unwrap_or(Duration::ZERO);
+            .map_or(Duration::ZERO, |start| start.elapsed());
 
         Ok(StageResult {
             processed_items: self.completed_items,
@@ -1861,7 +1848,7 @@ impl StageActor {
         }
     }
 
-    /// 실제 데이터 검증 처리 (현재 외부에서 직접 호출하지 않아 dead_code 경고 발생 가능)
+    /// 실제 데이터 검증 처리 (현재 외부에서 직접 호출하지 않아 `dead_code` 경고 발생 가능)
     #[allow(dead_code)]
     async fn execute_real_data_validation(item: &StageItem) -> Result<(), String> {
         match item {
@@ -1928,10 +1915,7 @@ impl StageActor {
                 for (i, d) in wrapper.products.iter().take(3).enumerate() {
                     debug!(
                         "[PersistExecSample] idx={} url={} page_id={:?} index_in_page={:?}",
-                        i,
-                        d.url,
-                        d.page_id,
-                        d.index_in_page
+                        i, d.url, d.page_id, d.index_in_page
                     );
                 }
                 let products = &wrapper.products;
@@ -1974,14 +1958,19 @@ impl StageActor {
                                 // 중복(no-op) → 정책 적용: UpdateIdIndexOnly면 위치 강제 업데이트 시도
                                 let policy_env = std::env::var("MC_DUPLICATE_POLICY").ok();
                                 if matches!(policy_env.as_deref(), Some("UpdateIdIndexOnly")) {
-                                    if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
+                                    if let (Some(pid), Some(idx)) =
+                                        (detail.page_id, detail.index_in_page)
+                                    {
                                         if let Ok((prod_rows, det_rows)) = product_repo
                                             .force_update_position_by_url(&detail.url, pid, idx)
                                             .await
                                         {
                                             if det_rows > 0 || prod_rows > 0 {
                                                 updated += 1;
-                                                debug!("[PersistExecDetail] forced pos update idx={} url={} pid={} idx_in_page={} (prod_rows={}, det_rows={})", idx, detail.url, pid, idx, prod_rows, det_rows);
+                                                debug!(
+                                                    "[PersistExecDetail] forced pos update idx={} url={} pid={} idx_in_page={} (prod_rows={}, det_rows={})",
+                                                    idx, detail.url, pid, idx, prod_rows, det_rows
+                                                );
                                                 continue;
                                             }
                                         }
@@ -2011,10 +2000,7 @@ impl StageActor {
                 for (i, d) in wrapper.products.iter().take(3).enumerate() {
                     debug!(
                         "[PersistExecSample] validated idx={} url={} page_id={:?} index_in_page={:?}",
-                        i,
-                        d.url,
-                        d.page_id,
-                        d.index_in_page
+                        i, d.url, d.page_id, d.index_in_page
                     );
                 }
                 let products = &wrapper.products;
@@ -2055,14 +2041,19 @@ impl StageActor {
                             if !was_created && !was_updated {
                                 let policy_env = std::env::var("MC_DUPLICATE_POLICY").ok();
                                 if matches!(policy_env.as_deref(), Some("UpdateIdIndexOnly")) {
-                                    if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
+                                    if let (Some(pid), Some(idx)) =
+                                        (detail.page_id, detail.index_in_page)
+                                    {
                                         if let Ok((prod_rows, det_rows)) = product_repo
                                             .force_update_position_by_url(&detail.url, pid, idx)
                                             .await
                                         {
                                             if det_rows > 0 || prod_rows > 0 {
                                                 updated += 1;
-                                                debug!("[PersistExecDetail] forced pos update(validated) idx={} url={} pid={} idx_in_page={} (prod_rows={}, det_rows={})", idx, detail.url, pid, idx, prod_rows, det_rows);
+                                                debug!(
+                                                    "[PersistExecDetail] forced pos update(validated) idx={} url={} pid={} idx_in_page={} (prod_rows={}, det_rows={})",
+                                                    idx, detail.url, pid, idx, prod_rows, det_rows
+                                                );
                                                 continue;
                                             }
                                         }
@@ -2189,30 +2180,27 @@ impl Actor for StageActor {
                 }
                 // 명령 처리
                 maybe_cmd = command_rx.recv() => {
-                    match maybe_cmd {
-                        Some(cmd) => {
-                            debug!("📨 StageActor {} received command: {:?}", self.actor_id, cmd);
-                            match cmd {
-                                ActorCommand::ExecuteStage { stage_type, items: _, concurrency_limit, timeout_secs } => {
-                                    // Temporary: this control path is not used in production; ignore payload type and run with empty items
-                                    let empty: Vec<StageItem> = Vec::new();
-                                    if let Err(e) = self.execute_stage(stage_type.clone(), empty, concurrency_limit, timeout_secs, &context).await {
-                                        error!("Failed to execute stage: {:?}", e);
-                                    }
-                                }
-                                ActorCommand::Shutdown => {
-                                    info!("🛑 StageActor {} received shutdown command", self.actor_id);
-                                    break;
-                                }
-                                _ => {
-                                    debug!("StageActor {} ignoring non-stage command", self.actor_id);
+                    if let Some(cmd) = maybe_cmd {
+                        debug!("📨 StageActor {} received command: {:?}", self.actor_id, cmd);
+                        match cmd {
+                            ActorCommand::ExecuteStage { stage_type, items: _, concurrency_limit, timeout_secs } => {
+                                // Temporary: this control path is not used in production; ignore payload type and run with empty items
+                                let empty: Vec<StageItem> = Vec::new();
+                                if let Err(e) = self.execute_stage(stage_type.clone(), empty, concurrency_limit, timeout_secs, &context).await {
+                                    error!("Failed to execute stage: {:?}", e);
                                 }
                             }
+                            ActorCommand::Shutdown => {
+                                info!("🛑 StageActor {} received shutdown command", self.actor_id);
+                                break;
+                            }
+                            _ => {
+                                debug!("StageActor {} ignoring non-stage command", self.actor_id);
+                            }
                         }
-                        None => {
-                            warn!("📪 StageActor {} command channel closed", self.actor_id);
-                            break;
-                        }
+                    } else {
+                        warn!("📪 StageActor {} command channel closed", self.actor_id);
+                        break;
                     }
                 }
             }
@@ -2286,10 +2274,10 @@ impl Actor for StageActor {
 }
 
 impl StageActor {
-    /// 실제 URL에서 ProductDetail을 추출하는 헬퍼 함수
-    /// ServiceBasedBatchCrawlingEngine의 로직을 참조하여 구현
+    /// 실제 URL에서 `ProductDetail을` 추출하는 헬퍼 함수
+    /// `ServiceBasedBatchCrawlingEngine의` 로직을 참조하여 구현
     /// 실제 HTTP 요청으로 제품 상세 정보 추출
-    /// DataValidation 스테이지에서 ProductUrls -> ProductDetails 변환에 사용
+    /// `DataValidation` 스테이지에서 `ProductUrls` -> `ProductDetails` 변환에 사용
     #[allow(dead_code)]
     async fn extract_product_detail_from_url(
         &self,
@@ -2347,17 +2335,17 @@ impl StageActor {
         let manufacturer = product_data_json
             .get("manufacturer")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         let model = product_data_json
             .get("model")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         let certificate_id = product_data_json
             .get("certificate_id")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         let pid = product_data_json
             .get("pid")
@@ -2374,7 +2362,7 @@ impl StageActor {
             manufacturer,
             model,
             device_type: None,
-            certificate_id: certificate_id,
+            certificate_id,
             certification_date: None,
             software_version: None,
             hardware_version: None,

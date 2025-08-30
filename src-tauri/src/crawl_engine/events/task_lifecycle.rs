@@ -392,7 +392,7 @@ pub enum ConcurrencyEvent {
         timestamp: DateTime<Utc>,
     },
 
-    /// 스테이지별 작업 이벤트 (ProductList, ProductDetails 구분)
+    /// 스테이지별 작업 이벤트 (`ProductList`, `ProductDetails` 구분)
     StageEvent {
         session_id: String,
         batch_id: Option<String>,
@@ -493,7 +493,7 @@ pub enum BatchEventType {
     Retrying,
 }
 
-/// 스테이지별 작업 유형 (ProductList, ProductDetails 구분)
+/// 스테이지별 작업 유형 (`ProductList`, `ProductDetails` 구분)
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../src/types/generated/")]
 pub enum StageType {

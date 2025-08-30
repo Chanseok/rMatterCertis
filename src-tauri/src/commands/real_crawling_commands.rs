@@ -205,10 +205,10 @@ pub async fn execute_real_crawling(
             _ => 0,
         },
         duration_ms: list_duration.as_millis() as u64,
-        error_message: if !list_success {
-            Some(format!("리스트 수집 실패: {:?}", list_result))
-        } else {
+        error_message: if list_success {
             None
+        } else {
+            Some(format!("리스트 수집 실패: {:?}", list_result))
         },
     });
 
@@ -276,10 +276,10 @@ pub async fn execute_real_crawling(
             _ => 0,
         },
         duration_ms: detail_duration.as_millis() as u64,
-        error_message: if !detail_success {
-            Some(format!("상세 정보 수집 실패: {:?}", detail_result))
-        } else {
+        error_message: if detail_success {
             None
+        } else {
+            Some(format!("상세 정보 수집 실패: {:?}", detail_result))
         },
     });
 
@@ -310,10 +310,10 @@ pub async fn execute_real_crawling(
             _ => 0,
         },
         total_duration_ms: total_duration.as_millis() as u64,
-        error_message: if !overall_success {
-            Some("크롤링 과정에서 오류가 발생했습니다".to_string())
-        } else {
+        error_message: if overall_success {
             None
+        } else {
+            Some("크롤링 과정에서 오류가 발생했습니다".to_string())
         },
         stage_results,
         completed_at: Utc::now(),

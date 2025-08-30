@@ -4,6 +4,7 @@
 
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 use crate::crawl_engine::SystemConfig;
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 pub type ControlChannel<T> = mpsc::Sender<T>;
 pub type ControlReceiver<T> = mpsc::Receiver<T>;
 
-/// 데이터 채널: 결과 상향 보고 (OneShot)
+/// 데이터 채널: 결과 상향 보고 (`OneShot`)
 pub type DataChannel<T> = oneshot::Sender<T>;
 pub type DataReceiver<T> = oneshot::Receiver<T>;
 
@@ -80,7 +81,7 @@ pub enum StageItem {
     ValidatedProducts(ValidatedProducts),
 }
 
-/// 제품 목록 (Stage 2 ListPageCrawling 결과)
+/// 제품 목록 (Stage 2 `ListPageCrawling` 결과)
 #[derive(Debug, Clone)]
 pub struct ProductList {
     pub products: Vec<ProductInfo>,
@@ -88,14 +89,14 @@ pub struct ProductList {
     pub total_count: Option<u32>,
 }
 
-/// 제품 URL 목록 (Stage 2 ProductUrlExtraction 결과)
+/// 제품 URL 목록 (Stage 2 `ProductUrlExtraction` 결과)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProductUrls {
     pub urls: Vec<crate::domain::product_url::ProductUrl>,
     pub batch_id: Option<String>,
 }
 
-/// 제품 상세 정보 목록 (Stage 3 ProductDetailCrawling 결과)
+/// 제품 상세 정보 목록 (Stage 3 `ProductDetailCrawling` 결과)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProductDetails {
     pub products: Vec<crate::domain::product::ProductDetail>,
@@ -103,7 +104,7 @@ pub struct ProductDetails {
     pub extraction_stats: ExtractionStats,
 }
 
-/// 검증된 제품 목록 (Stage 4 DataValidation 결과)  
+/// 검증된 제품 목록 (Stage 4 `DataValidation` 결과)  
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatedProducts {
     pub products: Vec<crate::domain::product::ProductDetail>,
@@ -157,46 +158,47 @@ pub struct ChannelFactory {
 }
 
 impl ChannelFactory {
-    pub fn new(config: Arc<SystemConfig>) -> Self {
+    #[must_use] pub const fn new(config: Arc<SystemConfig>) -> Self {
         Self { config }
     }
 
     /// 설정 기반 제어 채널 생성
-    pub fn create_control_channel<T>(&self) -> (ControlChannel<T>, ControlReceiver<T>) {
+    #[must_use] pub fn create_control_channel<T>(&self) -> (ControlChannel<T>, ControlReceiver<T>) {
         mpsc::channel(self.config.channels.control_buffer_size)
     }
 
     /// 설정 기반 이벤트 채널 생성
-    pub fn create_event_channel<T: Clone>(&self) -> EventChannel<T> {
+    #[must_use] pub fn create_event_channel<T: Clone>(&self) -> EventChannel<T> {
         let (tx, _) = broadcast::channel(self.config.channels.event_buffer_size);
         tx
     }
 
-    /// 데이터 채널 생성 (OneShot은 크기 설정 불필요)
-    pub fn create_data_channel<T>(&self) -> (DataChannel<T>, DataReceiver<T>) {
+    /// 데이터 채널 생성 (`OneShot은` 크기 설정 불필요)
+    #[must_use] pub fn create_data_channel<T>(&self) -> (DataChannel<T>, DataReceiver<T>) {
         oneshot::channel()
     }
 
     /// 취소 채널 생성
-    pub fn create_cancellation_channel(&self) -> (CancellationChannel, CancellationReceiver) {
+    #[must_use] pub fn create_cancellation_channel(&self) -> (CancellationChannel, CancellationReceiver) {
         watch::channel(false)
     }
 
     /// 백프레셔 임계값 확인
-    pub fn check_backpressure(&self, current_load: f64) -> bool {
+    #[must_use] pub fn check_backpressure(&self, current_load: f64) -> bool {
         current_load > self.config.channels.backpressure_threshold
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::panic)]
     use super::*;
     use crate::crawl_engine::system_config::SystemConfig;
 
     #[test]
     fn test_channel_factory_creation() {
         let config = Arc::new(SystemConfig::default());
-        let factory = ChannelFactory::new(config.clone());
+        let factory = ChannelFactory::new(config);
 
         // 제어 채널 생성 테스트
         let (tx, _rx) = factory.create_control_channel::<ActorCommand>();

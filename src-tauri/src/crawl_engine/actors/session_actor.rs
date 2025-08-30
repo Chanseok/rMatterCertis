@@ -1,4 +1,4 @@
-//! SessionActor: 크롤링 세션 관리 Actor
+//! `SessionActor`: 크롤링 세션 관리 Actor
 //!
 //! Phase 3: Actor 구현 - 세션 레벨 제어 및 모니터링
 //! Modern Rust 2024 준수: 함수형 원칙, 명시적 의존성, 상태 최소화
@@ -27,7 +27,7 @@ use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::crawling_service_impls::{DatabaseAnalyzerImpl, StatusCheckerImpl};
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
 
-/// SessionActor: 크롤링 세션의 전체 생명주기 관리
+/// `SessionActor`: 크롤링 세션의 전체 생명주기 관리
 ///
 /// 책임:
 /// - 세션 시작/일시정지/재개/종료 제어
@@ -48,7 +48,7 @@ pub struct SessionActor {
     processed_batches: u32,
     /// 총 성공 아이템 수
     total_success_count: u32,
-    /// 세션 레벨 SiteStatus 캐시
+    /// 세션 레벨 `SiteStatus` 캐시
     site_status_cache: Option<(crate::domain::services::SiteStatus, Instant)>,
     /// 이미 외부에서 확정된 계획을 실행 중인지 여부 (재계획 방지)
     preplanned_mode: bool,
@@ -56,7 +56,7 @@ pub struct SessionActor {
     products_inserted: u32,
     /// 배치 완료 시 업데이트된 제품 수
     products_updated: u32,
-    /// 현재 실행 중인 ExecutionPlan 해시 (무결성 로그 목적)
+    /// 현재 실행 중인 `ExecutionPlan` 해시 (무결성 로그 목적)
     active_plan_hash: Option<String>,
     /// 배치/세션 실행 중 발생한 에러 메시지 누적 (요약/리포트 용)
     errors: Vec<String>,
@@ -72,7 +72,7 @@ pub struct SessionActor {
 }
 
 /// 세션 상태 열거형
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionState {
     Idle,
     Starting,
@@ -107,14 +107,14 @@ pub enum SessionError {
 }
 
 impl SessionActor {
-    /// 새로운 SessionActor 인스턴스 생성
+    /// 새로운 `SessionActor` 인스턴스 생성
     ///
     /// # Arguments
     /// * `actor_id` - Actor 고유 식별자
     ///
     /// # Returns
-    /// * `Self` - 새로운 SessionActor 인스턴스
-    pub fn new(actor_id: String) -> Self {
+    /// * `Self` - 새로운 `SessionActor` 인스턴스
+    #[must_use] pub const fn new(actor_id: String) -> Self {
         Self {
             actor_id,
             session_id: None,
@@ -190,12 +190,11 @@ impl SessionActor {
 
         // 서비스 구성
         let http_client = Arc::new(HttpClient::create_from_global_config().map_err(|e| {
-            SessionError::InitializationFailed(format!("Failed to create HttpClient: {}", e))
+            SessionError::InitializationFailed(format!("Failed to create HttpClient: {e}"))
         })?);
         let data_extractor = Arc::new(MatterDataExtractor::new().map_err(|e| {
             SessionError::InitializationFailed(format!(
-                "Failed to create MatterDataExtractor: {}",
-                e
+                "Failed to create MatterDataExtractor: {e}"
             ))
         })?);
 
@@ -203,7 +202,7 @@ impl SessionActor {
         let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
             .await
             .map_err(|e| {
-                SessionError::InitializationFailed(format!("Failed to obtain database pool: {}", e))
+                SessionError::InitializationFailed(format!("Failed to obtain database pool: {e}"))
             })?;
         let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
 
@@ -267,7 +266,7 @@ impl SessionActor {
             .create_crawling_plan_with_cache(&config, cached)
             .await
             .map_err(|e| {
-                SessionError::InitializationFailed(format!("Failed to create crawling plan: {}", e))
+                SessionError::InitializationFailed(format!("Failed to create crawling plan: {e}"))
             })?;
 
         self.plan_version = 1;
@@ -384,13 +383,13 @@ impl SessionActor {
         let planned_batches_count = planned_list_batches.len();
         let mut executed_batches_pages: Vec<Vec<u32>> = Vec::new();
         let mut batch_idx = 0u32;
-        for phase in planned_list_batches.iter() {
+        for phase in &planned_list_batches {
             batch_idx += 1;
             let pages = phase.pages.clone();
             if pages.is_empty() {
                 continue;
             }
-            let batch_id = format!("{}-batch-{}", session_id, batch_idx);
+            let batch_id = format!("{session_id}-batch-{batch_idx}");
             info!(
                 "🏃 SessionActor {} running batch {} (batch_index={}/{}) with {} pages: {:?}",
                 self.actor_id,
@@ -407,14 +406,14 @@ impl SessionActor {
                 current_step: 1,
                 total_steps: plan.phases.len() as u32,
                 message: format!("Starting batch {} with {} pages", batch_id, pages.len()),
-                percentage: ((batch_idx - 1) as f64 / plan.phases.len() as f64) * 100.0,
+                percentage: (f64::from(batch_idx - 1) / plan.phases.len() as f64) * 100.0,
                 timestamp: Utc::now(),
             };
             context
                 .emit_event(progress_event)
                 .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
-        if let Err(e) = self
+            if let Err(e) = self
                 .run_batch_with_services(
                     &batch_id,
                     &pages,
@@ -422,17 +421,17 @@ impl SessionActor {
                     &http_client,
                     &data_extractor,
                     &product_repo,
-            &site_status,
-            None,
+                    &site_status,
+                    None,
                 )
                 .await
             {
                 error!("❌ Batch {} failed: {}", batch_id, e);
-                self.errors.push(format!("batch {}: {}", batch_id, e));
+                self.errors.push(format!("batch {batch_id}: {e}"));
                 // 세션 실패 이벤트 발행
                 let fail_event = AppEvent::SessionFailed {
                     session_id: session_id.clone(),
-                    error: format!("Batch {} failed: {}", batch_id, e),
+                    error: format!("Batch {batch_id} failed: {e}"),
                     final_failure: false,
                     timestamp: Utc::now(),
                 };
@@ -455,7 +454,7 @@ impl SessionActor {
                 current_step: 2,
                 total_steps: plan.phases.len() as u32,
                 message: format!("Completed batch {} ({} pages)", batch_id, pages.len()),
-                percentage: (batch_idx as f64 / plan.phases.len() as f64) * 100.0,
+                percentage: (f64::from(batch_idx) / plan.phases.len() as f64) * 100.0,
                 timestamp: Utc::now(),
             };
             context
@@ -489,14 +488,14 @@ impl SessionActor {
 
         // 상태를 Running으로 전환 후 Complete로 이동
         self.state = SessionState::Running;
-        if self.processed_batches as usize != planned_batches_count {
-            warn!(
-                "⚠️ List batch execution mismatch planned={} executed={}",
+        if self.processed_batches as usize == planned_batches_count {
+            info!(
+                "📊 All planned list batches executed planned={} executed={}",
                 planned_batches_count, self.processed_batches
             );
         } else {
-            info!(
-                "📊 All planned list batches executed planned={} executed={}",
+            warn!(
+                "⚠️ List batch execution mismatch planned={} executed={}",
                 planned_batches_count, self.processed_batches
             );
         }
@@ -511,8 +510,7 @@ impl SessionActor {
             session_id: session_id.clone(),
             total_duration_ms: self
                 .start_time
-                .map(|t| t.elapsed().as_millis() as u64)
-                .unwrap_or(0),
+                .map_or(0, |t| t.elapsed().as_millis() as u64),
             total_pages_processed: self.total_success_count,
             total_products_processed: self.products_inserted + self.products_updated,
             success_rate: if self.total_success_count > 0 {
@@ -522,8 +520,7 @@ impl SessionActor {
             },
             avg_page_processing_time: if self.total_success_count > 0 {
                 self.start_time
-                    .map(|t| t.elapsed().as_millis() as u64 / self.total_success_count as u64)
-                    .unwrap_or(0)
+                    .map_or(0, |t| t.elapsed().as_millis() as u64 / u64::from(self.total_success_count))
             } else {
                 0
             },
@@ -558,8 +555,7 @@ impl SessionActor {
         // === 추가: 세션 리포트 이벤트 발행 ===
         let duration_ms = self
             .start_time
-            .map(|t| t.elapsed().as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |t| t.elapsed().as_millis() as u64);
         // 총 실패 페이지/리트라이 수는 배치 리포트 합산이 이상적이지만, 최소한 현재 수치로 요약 제공
         let crawl_report = AppEvent::CrawlReportSession {
             session_id: session_id.clone(),
@@ -579,7 +575,7 @@ impl SessionActor {
 
         // === KPI: 최종 세션 요약 로그 (DB 저장 내역 포함) ===
         let plan_hash_json = match &self.active_plan_hash {
-            Some(h) => format!("\"{}\"", h),
+            Some(h) => format!("\"{h}\""),
             None => "null".to_string(),
         };
         let s = &aggregated_summary;
@@ -627,18 +623,17 @@ impl SessionActor {
         // === 세션 종료 후: 다음 계획 자동 수립 및 이벤트 발행 ===
         // 사이트 상태/DB 분석을 다시 수행하여 다음 크롤링 범위를 계산하고 UI에 전달
         let http_client2 = Arc::new(HttpClient::create_from_global_config().map_err(|e| {
-            SessionError::InitializationFailed(format!("Failed to create HttpClient: {}", e))
+            SessionError::InitializationFailed(format!("Failed to create HttpClient: {e}"))
         })?);
         let data_extractor2 = Arc::new(MatterDataExtractor::new().map_err(|e| {
             SessionError::InitializationFailed(format!(
-                "Failed to create MatterDataExtractor: {}",
-                e
+                "Failed to create MatterDataExtractor: {e}"
             ))
         })?);
         let db_pool2 = crate::infrastructure::database_connection::get_or_init_global_pool()
             .await
             .map_err(|e| {
-                SessionError::InitializationFailed(format!("Failed to obtain database pool: {}", e))
+                SessionError::InitializationFailed(format!("Failed to obtain database pool: {e}"))
             })?;
         let product_repo2 = Arc::new(IntegratedProductRepository::new(db_pool2));
 
@@ -675,14 +670,13 @@ impl SessionActor {
             .await
             .map_err(|e| {
                 SessionError::InitializationFailed(format!(
-                    "Failed to create next crawling plan: {}",
-                    e
+                    "Failed to create next crawling plan: {e}"
                 ))
             })?;
 
         let next_event = AppEvent::NextPlanReady {
             session_id: session_id.clone(),
-            plan: next_plan.clone(),
+            plan: next_plan,
             timestamp: Utc::now(),
         };
         context
@@ -694,7 +688,7 @@ impl SessionActor {
 
     // (Removed misplaced unified detail crawling block)
 
-    /// 실서비스가 주입된 BatchActor를 생성해 주어진 페이지들을 처리
+    /// 실서비스가 주입된 `BatchActor를` 생성해 주어진 페이지들을 처리
     async fn run_batch_with_services(
         &mut self,
         batch_id: &str,
@@ -721,7 +715,10 @@ impl SessionActor {
         // Apply explicit setting when provided (e.g., preplanned ExecutionPlan)
         if let Some(flag) = skip_duplicate_urls {
             batch_actor.set_skip_duplicate_urls(flag);
-            info!("[DedupCfg] Applied skip_duplicate_urls={} to BatchActor (batch_id={})", flag, batch_id);
+            info!(
+                "[DedupCfg] Applied skip_duplicate_urls={} to BatchActor (batch_id={})",
+                flag, batch_id
+            );
         }
         batch_actor.shared_metrics = Some(shared_metrics.clone());
         let (tx, rx) = mpsc::channel::<super::types::ActorCommand>(100);
@@ -737,7 +734,7 @@ impl SessionActor {
             start_page: pages.first().copied(),
             end_page: pages.last().copied(),
         };
-    let cmd = super::types::ActorCommand::ProcessBatch {
+        let cmd = super::types::ActorCommand::ProcessBatch {
             batch_id: batch_id.to_string(),
             pages: pages.to_vec(),
             config: batch_config,
@@ -747,14 +744,14 @@ impl SessionActor {
             products_on_last_page: site_status.products_on_last_page,
         };
         tx.send(cmd).await.map_err(|e| {
-            SessionError::ContextError(format!("Failed to send ProcessBatch: {}", e))
+            SessionError::ContextError(format!("Failed to send ProcessBatch: {e}"))
         })?;
         tx.send(super::types::ActorCommand::Shutdown)
             .await
-            .map_err(|e| SessionError::ContextError(format!("Failed to send Shutdown: {}", e)))?;
+            .map_err(|e| SessionError::ContextError(format!("Failed to send Shutdown: {e}")))?;
         actor_task
             .await
-            .map_err(|e| SessionError::ContextError(format!("BatchActor join error: {}", e)))?;
+            .map_err(|e| SessionError::ContextError(format!("BatchActor join error: {e}")))?;
         if let Ok(g) = shared_metrics.lock() {
             self.products_inserted = self.products_inserted.saturating_add(g.0);
             self.products_updated = self.products_updated.saturating_add(g.1);
@@ -781,7 +778,7 @@ impl SessionActor {
             return Err(SessionError::InvalidStateTransition {
                 from: self.state.clone(),
                 to: SessionState::Paused {
-                    reason: reason.clone(),
+                    reason,
                 },
             });
         }
@@ -903,8 +900,7 @@ impl SessionActor {
         match &self.session_id {
             Some(current_id) if current_id == session_id => Ok(()),
             Some(current_id) => Err(SessionError::SessionNotFound(format!(
-                "Expected {}, got {}",
-                current_id, session_id
+                "Expected {current_id}, got {session_id}"
             ))),
             None => Err(SessionError::SessionNotFound(
                 "No active session".to_string(),
@@ -929,8 +925,7 @@ impl SessionActor {
         self.session_id.as_ref().map(|session_id| {
             let duration = self
                 .start_time
-                .map(|start| start.elapsed())
-                .unwrap_or(Duration::ZERO);
+                .map_or(Duration::ZERO, |start| start.elapsed());
 
             // 에러 문자열을 ErrorSummary 집계로 변환
             use std::collections::BTreeMap;
@@ -974,7 +969,7 @@ impl SessionActor {
                     0.0
                 },
                 avg_page_processing_time: if self.total_success_count > 0 {
-                    duration.as_millis() as u64 / self.total_success_count as u64
+                    duration.as_millis() as u64 / u64::from(self.total_success_count)
                 } else {
                     0
                 },
@@ -1024,179 +1019,173 @@ impl Actor for SessionActor {
             tokio::select! {
                 // 명령 처리
                 command = command_rx.recv() => {
-                    match command {
-                        Some(cmd) => {
-                            debug!("📨 SessionActor {} received command: {:?}", self.actor_id, cmd);
+                    if let Some(cmd) = command {
+                        debug!("📨 SessionActor {} received command: {:?}", self.actor_id, cmd);
 
-                            match cmd {
-                                ActorCommand::StartCrawling { session_id, config } => {
-                                    if self.preplanned_mode || self.active_plan_hash.is_some() {
-                                        warn!("🛑 Ignoring StartCrawling – preplanned or active plan hash already set (SessionActor {})", self.actor_id);
-                                    } else if !matches!(self.state, SessionState::Idle) {
-                                        warn!("🛑 Ignoring StartCrawling – state not Idle: {:?}", self.state);
-                                    } else if let Err(e) = self.handle_start_crawling(session_id, config, &context).await {
-                                        error!("Failed to start crawling: {}", e);
-                                    }
-                                }
-                                ActorCommand::ExecutePrePlanned { session_id, plan } => {
-                                    if self.preplanned_mode {
-                                        if let Some(active_hash) = &self.active_plan_hash {
-                                            if *active_hash != plan.plan_hash {
-                                                warn!("⚠️ SessionActor {} already executing a different plan hash (active={}, new={})", self.actor_id, active_hash, plan.plan_hash);
-                                            } else {
-                                                warn!("⚠️ SessionActor {} duplicate ExecutePrePlanned (same hash) ignored", self.actor_id);
-                                            }
-                                        } else {
-                                            warn!("⚠️ SessionActor {} preplanned_mode without active hash (unexpected) — ignoring", self.actor_id);
-                                        }
-                                    } else if !matches!(self.state, SessionState::Idle) {
-                                        error!("Cannot execute preplanned plan – session not idle");
-                                    } else {
-                                        self.preplanned_mode = true;
-                                        self.active_plan_hash = Some(plan.plan_hash.clone());
-                                        info!("🔐 SessionActor {} executing pre-planned ExecutionPlan (hash={})", self.actor_id, plan.plan_hash);
-                                        // 서비스 준비 (실패 시 중단)
-                                        match crate::infrastructure::database_connection::get_or_init_global_pool().await {
-                                            Ok(db_pool) => {
-                                                let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
-                                                let http_client = match HttpClient::create_from_global_config() {
-                                                    Ok(c) => Arc::new(c),
-                                                    Err(e) => {
-                                                        error!("HTTP client init failed: {}", e);
-                                                        let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("HTTP client init failed: {}", e), final_failure: true, timestamp: Utc::now() };
-                                                        if let Err(er) = context.emit_event(fail_event) { error!("emit fail event error: {}", er); }
-                                                        self.state = SessionState::Failed { error: "http_client_init".into() };
-                                                        continue;
-                                                    }
-                                                };
-                                                let data_extractor = match MatterDataExtractor::new() {
-                                                    Ok(d) => Arc::new(d),
-                                                    Err(e) => {
-                                                        error!("Extractor init failed: {}", e);
-                                                        let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("Extractor init failed: {}", e), final_failure: true, timestamp: Utc::now() };
-                                                        if let Err(er) = context.emit_event(fail_event) { error!("emit fail event error: {}", er); }
-                                                        self.state = SessionState::Failed { error: "extractor_init".into() };
-                                                        continue;
-                                                    }
-                                                };
-                                                self.session_id = Some(session_id.clone());
-                                                self.state = SessionState::Running;
-                                                self.start_time = Some(Instant::now());
-                                                let start_event = AppEvent::SessionStarted { session_id: session_id.clone(), config: CrawlingConfig { site_url: "preplanned".into(), start_page: 1, end_page: 1, concurrency_limit: plan.concurrency_limit, batch_size: plan.batch_size, request_delay_ms: 0, timeout_secs: 300, max_retries: 3, strategy: crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst }, timestamp: Utc::now() };
-                                                if let Err(e) = context.emit_event(start_event) { error!("Failed to emit start event: {}", e); }
-                                                let site_status = plan.input_snapshot_to_site_status();
-                                                for (idx, range) in plan.crawling_ranges.iter().enumerate() {
-                                                    let pages: Vec<u32> = if range.reverse_order { (range.start_page..=range.end_page).rev().collect() } else { (range.start_page..=range.end_page).collect() };
-                                                    let batch_id = format!("{}-pre-{}", session_id, idx+1);
-                                                    if let Err(e) = self.run_batch_with_services(&batch_id, &pages, &context, &http_client, &data_extractor, &product_repo, &site_status, Some(plan.skip_duplicate_urls)).await {
-                                                        error!("Batch {} failed: {}", batch_id, e);
-                                                        self.errors.push(format!("batch {}: {}", batch_id, e));
-                                                        let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("Batch {} failed: {}", batch_id, e), final_failure: false, timestamp: Utc::now() };
-                                                        if let Err(er) = context.emit_event(fail_event) { error!("emit batch fail event error: {}", er); }
-                                                    }
-                                                    self.processed_batches += 1; self.total_success_count += pages.len() as u32;
-                                                    // BatchReport 이벤트에서 누적 중복 스킵을 수신할 수 없으므로 여기서는 BatchActor 내부 누적이 반영된 값 없. 향후 이벤트 브릿지에서 BatchReport 수신 시 합산.
-                                                }
-                                                let duration_ms = self.start_time.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0);
-                                                self.state = SessionState::Completed;
-                                                // 에러 집계 (동일 로직 재사용)
-                                                use std::collections::BTreeMap;
-                                                let mut map: BTreeMap<String, (u32, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = BTreeMap::new();
-                                                for e in &self.errors { let now = chrono::Utc::now(); map.entry(e.clone()).and_modify(|entry| { entry.0 += 1; entry.2 = now; }).or_insert((1, now, now)); }
-                                                let aggregated: Vec<crate::crawl_engine::actors::types::ErrorSummary> = map.into_iter().map(|(k,(count, first, last))| crate::crawl_engine::actors::types::ErrorSummary { error_type: k, count, first_occurrence: first, last_occurrence: last }).collect();
-                                                let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / self.total_success_count as u64 } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, duplicates_skipped: self.duplicates_skipped, planned_list_batches: self.processed_batches, executed_list_batches: self.processed_batches, failed_pages_count: 0, failed_page_ids: Vec::new(), total_retry_events: 0, max_retries_single_page: 0, pages_retried: 0, retry_histogram: Vec::new(), products_inserted: 0, products_updated: 0, final_state: "completed".into(), timestamp: Utc::now() };
-                                                if let Err(e) = context.emit_event(AppEvent::SessionCompleted { session_id: session_id.clone(), summary: summary.clone(), timestamp: Utc::now() }) { error!("emit completion event failed: {}", e); }
-                                                if let Err(e) = context.emit_event(AppEvent::CrawlReportSession { session_id: session_id.clone(), batches_processed: self.processed_batches, total_pages: self.total_success_count, total_success: self.total_success_count, total_failed: 0, total_retries: 0, duration_ms, products_inserted: 0, products_updated: 0, timestamp: Utc::now() }) { error!("emit crawl report failed: {}", e); }
-                                                // KPI JSON (events.log)
-                                                info!(target: "kpi.session",
-                                                    "{{\"event\":\"session_final_summary\",\"session_id\":\"{}\",\"final_state\":\"{}\",\"duration_ms\":{},\"processed_batches\":{},\"total_pages_processed\":{},\"total_success_count\":{},\"failed_pages_count\":{},\"total_retry_events\":{},\"products_inserted\":{},\"products_updated\":{},\"duplicates_skipped\":{},\"plan_hash\":null,\"ts\":\"{}\"}}",
-                                                    summary.session_id,
-                                                    summary.final_state,
-                                                    summary.total_duration_ms,
-                                                    summary.processed_batches,
-                                                    summary.total_pages_processed,
-                                                    summary.total_success_count,
-                                                    summary.failed_pages_count,
-                                                    summary.total_retry_events,
-                                                    summary.products_inserted,
-                                                    summary.products_updated,
-                                                    summary.duplicates_skipped,
-                                                    chrono::Utc::now()
-                                                );
-                                                // Human-readable mirror (back_front.log)
-                                                info!(
-                                                    "📊 Session Final Summary | session_id={} state={} duration_ms={} batches={} pages_processed={} success={} failed={} retries={} inserted={} updated={} duplicates={} ts={}",
-                                                    summary.session_id,
-                                                    summary.final_state,
-                                                    summary.total_duration_ms,
-                                                    summary.processed_batches,
-                                                    summary.total_pages_processed,
-                                                    summary.total_success_count,
-                                                    summary.failed_pages_count,
-                                                    summary.total_retry_events,
-                                                    summary.products_inserted,
-                                                    summary.products_updated,
-                                                    summary.duplicates_skipped,
-                                                    chrono::Utc::now()
-                                                );
-                                            }
-                                            Err(e) => {
-                                                error!("DB pool init failed: {}", e);
-                                                let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("DB pool init failed: {}", e), final_failure: true, timestamp: Utc::now() };
-                                                if let Err(er) = context.emit_event(fail_event) { error!("emit fail event error: {}", er); }
-                                                self.state = SessionState::Failed { error: "db_pool_init".into() };
-                                            }
-                                        }
-                                    }
-                                }
-
-                                ActorCommand::PauseSession { session_id, reason } => {
-                                    if let Err(e) = self.handle_pause_session(session_id, reason, &context) {
-                                        error!("Failed to pause session: {}", e);
-                                    }
-                                }
-
-                                ActorCommand::ResumeSession { session_id } => {
-                                    if let Err(e) = self.handle_resume_session(session_id, &context) {
-                                        error!("Failed to resume session: {}", e);
-                                    }
-                                }
-
-                                ActorCommand::CancelSession { session_id, reason } => {
-                                    if let Err(e) = self.handle_cancel_session(session_id, reason, &context) {
-                                        error!("Failed to cancel session: {}", e);
-                                    }
-                                }
-
-                                ActorCommand::Shutdown => {
-                                    info!("🛑 SessionActor {} received shutdown command", self.actor_id);
-                                    break;
-                                }
-
-                                _ => {
-                                    debug!("SessionActor {} ignoring non-session command", self.actor_id);
+                        match cmd {
+                            ActorCommand::StartCrawling { session_id, config } => {
+                                if self.preplanned_mode || self.active_plan_hash.is_some() {
+                                    warn!("🛑 Ignoring StartCrawling – preplanned or active plan hash already set (SessionActor {})", self.actor_id);
+                                } else if !matches!(self.state, SessionState::Idle) {
+                                    warn!("🛑 Ignoring StartCrawling – state not Idle: {:?}", self.state);
+                                } else if let Err(e) = self.handle_start_crawling(session_id, config, &context).await {
+                                    error!("Failed to start crawling: {}", e);
                                 }
                             }
+                            ActorCommand::ExecutePrePlanned { session_id, plan } => {
+                                if self.preplanned_mode {
+                                    if let Some(active_hash) = &self.active_plan_hash {
+                                        if *active_hash == plan.plan_hash {
+                                            warn!("⚠️ SessionActor {} duplicate ExecutePrePlanned (same hash) ignored", self.actor_id);
+                                        } else {
+                                            warn!("⚠️ SessionActor {} already executing a different plan hash (active={}, new={})", self.actor_id, active_hash, plan.plan_hash);
+                                        }
+                                    } else {
+                                        warn!("⚠️ SessionActor {} preplanned_mode without active hash (unexpected) — ignoring", self.actor_id);
+                                    }
+                                } else if !matches!(self.state, SessionState::Idle) {
+                                    error!("Cannot execute preplanned plan – session not idle");
+                                } else {
+                                    self.preplanned_mode = true;
+                                    self.active_plan_hash = Some(plan.plan_hash.clone());
+                                    info!("🔐 SessionActor {} executing pre-planned ExecutionPlan (hash={})", self.actor_id, plan.plan_hash);
+                                    // 서비스 준비 (실패 시 중단)
+                                    match crate::infrastructure::database_connection::get_or_init_global_pool().await {
+                                        Ok(db_pool) => {
+                                            let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
+                                            let http_client = match HttpClient::create_from_global_config() {
+                                                Ok(c) => Arc::new(c),
+                                                Err(e) => {
+                                                    error!("HTTP client init failed: {}", e);
+                                                    let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("HTTP client init failed: {e}"), final_failure: true, timestamp: Utc::now() };
+                                                    if let Err(er) = context.emit_event(fail_event) { error!("emit fail event error: {}", er); }
+                                                    self.state = SessionState::Failed { error: "http_client_init".into() };
+                                                    continue;
+                                                }
+                                            };
+                                            let data_extractor = match MatterDataExtractor::new() {
+                                                Ok(d) => Arc::new(d),
+                                                Err(e) => {
+                                                    error!("Extractor init failed: {}", e);
+                                                    let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("Extractor init failed: {e}"), final_failure: true, timestamp: Utc::now() };
+                                                    if let Err(er) = context.emit_event(fail_event) { error!("emit fail event error: {}", er); }
+                                                    self.state = SessionState::Failed { error: "extractor_init".into() };
+                                                    continue;
+                                                }
+                                            };
+                                            self.session_id = Some(session_id.clone());
+                                            self.state = SessionState::Running;
+                                            self.start_time = Some(Instant::now());
+                                            let start_event = AppEvent::SessionStarted { session_id: session_id.clone(), config: CrawlingConfig { site_url: "preplanned".into(), start_page: 1, end_page: 1, concurrency_limit: plan.concurrency_limit, batch_size: plan.batch_size, request_delay_ms: 0, timeout_secs: 300, max_retries: 3, strategy: crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst }, timestamp: Utc::now() };
+                                            if let Err(e) = context.emit_event(start_event) { error!("Failed to emit start event: {}", e); }
+                                            let site_status = plan.input_snapshot_to_site_status();
+                                            for (idx, range) in plan.crawling_ranges.iter().enumerate() {
+                                                let pages: Vec<u32> = if range.reverse_order { (range.start_page..=range.end_page).rev().collect() } else { (range.start_page..=range.end_page).collect() };
+                                                let batch_id = format!("{}-pre-{}", session_id, idx+1);
+                                                if let Err(e) = self.run_batch_with_services(&batch_id, &pages, &context, &http_client, &data_extractor, &product_repo, &site_status, Some(plan.skip_duplicate_urls)).await {
+                                                    error!("Batch {} failed: {}", batch_id, e);
+                                                    self.errors.push(format!("batch {batch_id}: {e}"));
+                                                    let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("Batch {batch_id} failed: {e}"), final_failure: false, timestamp: Utc::now() };
+                                                    if let Err(er) = context.emit_event(fail_event) { error!("emit batch fail event error: {}", er); }
+                                                }
+                                                self.processed_batches += 1; self.total_success_count += pages.len() as u32;
+                                                // BatchReport 이벤트에서 누적 중복 스킵을 수신할 수 없으므로 여기서는 BatchActor 내부 누적이 반영된 값 없. 향후 이벤트 브릿지에서 BatchReport 수신 시 합산.
+                                            }
+                                            let duration_ms = self.start_time.map_or(0, |t| t.elapsed().as_millis() as u64);
+                                            self.state = SessionState::Completed;
+                                            // 에러 집계 (동일 로직 재사용)
+                                            use std::collections::BTreeMap;
+                                            let mut map: BTreeMap<String, (u32, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = BTreeMap::new();
+                                            for e in &self.errors { let now = chrono::Utc::now(); map.entry(e.clone()).and_modify(|entry| { entry.0 += 1; entry.2 = now; }).or_insert((1, now, now)); }
+                                            let aggregated: Vec<crate::crawl_engine::actors::types::ErrorSummary> = map.into_iter().map(|(k,(count, first, last))| crate::crawl_engine::actors::types::ErrorSummary { error_type: k, count, first_occurrence: first, last_occurrence: last }).collect();
+                                            let summary = SessionSummary { session_id: session_id.clone(), total_duration_ms: duration_ms, total_pages_processed: self.total_success_count, total_products_processed: 0, success_rate: 1.0, avg_page_processing_time: if self.total_success_count>0 { duration_ms / u64::from(self.total_success_count) } else {0}, error_summary: aggregated, processed_batches: self.processed_batches, total_success_count: self.total_success_count, duplicates_skipped: self.duplicates_skipped, planned_list_batches: self.processed_batches, executed_list_batches: self.processed_batches, failed_pages_count: 0, failed_page_ids: Vec::new(), total_retry_events: 0, max_retries_single_page: 0, pages_retried: 0, retry_histogram: Vec::new(), products_inserted: 0, products_updated: 0, final_state: "completed".into(), timestamp: Utc::now() };
+                                            if let Err(e) = context.emit_event(AppEvent::SessionCompleted { session_id: session_id.clone(), summary: summary.clone(), timestamp: Utc::now() }) { error!("emit completion event failed: {}", e); }
+                                            if let Err(e) = context.emit_event(AppEvent::CrawlReportSession { session_id: session_id.clone(), batches_processed: self.processed_batches, total_pages: self.total_success_count, total_success: self.total_success_count, total_failed: 0, total_retries: 0, duration_ms, products_inserted: 0, products_updated: 0, timestamp: Utc::now() }) { error!("emit crawl report failed: {}", e); }
+                                            // KPI JSON (events.log)
+                                            info!(target: "kpi.session",
+                                                "{{\"event\":\"session_final_summary\",\"session_id\":\"{}\",\"final_state\":\"{}\",\"duration_ms\":{},\"processed_batches\":{},\"total_pages_processed\":{},\"total_success_count\":{},\"failed_pages_count\":{},\"total_retry_events\":{},\"products_inserted\":{},\"products_updated\":{},\"duplicates_skipped\":{},\"plan_hash\":null,\"ts\":\"{}\"}}",
+                                                summary.session_id,
+                                                summary.final_state,
+                                                summary.total_duration_ms,
+                                                summary.processed_batches,
+                                                summary.total_pages_processed,
+                                                summary.total_success_count,
+                                                summary.failed_pages_count,
+                                                summary.total_retry_events,
+                                                summary.products_inserted,
+                                                summary.products_updated,
+                                                summary.duplicates_skipped,
+                                                chrono::Utc::now()
+                                            );
+                                            // Human-readable mirror (back_front.log)
+                                            info!(
+                                                "📊 Session Final Summary | session_id={} state={} duration_ms={} batches={} pages_processed={} success={} failed={} retries={} inserted={} updated={} duplicates={} ts={}",
+                                                summary.session_id,
+                                                summary.final_state,
+                                                summary.total_duration_ms,
+                                                summary.processed_batches,
+                                                summary.total_pages_processed,
+                                                summary.total_success_count,
+                                                summary.failed_pages_count,
+                                                summary.total_retry_events,
+                                                summary.products_inserted,
+                                                summary.products_updated,
+                                                summary.duplicates_skipped,
+                                                chrono::Utc::now()
+                                            );
+                                        }
+                                        Err(e) => {
+                                            error!("DB pool init failed: {}", e);
+                                            let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("DB pool init failed: {e}"), final_failure: true, timestamp: Utc::now() };
+                                            if let Err(er) = context.emit_event(fail_event) { error!("emit fail event error: {}", er); }
+                                            self.state = SessionState::Failed { error: "db_pool_init".into() };
+                                        }
+                                    }
+                                }
+                            }
+
+                            ActorCommand::PauseSession { session_id, reason } => {
+                                if let Err(e) = self.handle_pause_session(session_id, reason, &context) {
+                                    error!("Failed to pause session: {}", e);
+                                }
+                            }
+
+                            ActorCommand::ResumeSession { session_id } => {
+                                if let Err(e) = self.handle_resume_session(session_id, &context) {
+                                    error!("Failed to resume session: {}", e);
+                                }
+                            }
+
+                            ActorCommand::CancelSession { session_id, reason } => {
+                                if let Err(e) = self.handle_cancel_session(session_id, reason, &context) {
+                                    error!("Failed to cancel session: {}", e);
+                                }
+                            }
+
+                            ActorCommand::Shutdown => {
+                                info!("🛑 SessionActor {} received shutdown command", self.actor_id);
+                                break;
+                            }
+
+                            _ => {
+                                debug!("SessionActor {} ignoring non-session command", self.actor_id);
+                            }
                         }
-                        None => {
-                            warn!("📪 SessionActor {} command channel closed", self.actor_id);
-                            break;
-                        }
+                    } else {
+                        warn!("📪 SessionActor {} command channel closed", self.actor_id);
+                        break;
                     }
                 }
 
                 // 이벤트 스트림 수신 (BatchReport -> duplicates_skipped 누적)
                 Ok(evt) = event_rx.recv() => {
-                    match evt {
-                        AppEvent::BatchReport { duplicates_skipped, .. } => {
-                            if duplicates_skipped > 0 {
-                                let before = self.duplicates_skipped;
-                                self.duplicates_skipped = self.duplicates_skipped.saturating_add(duplicates_skipped);
-                                debug!("🧮 SessionActor {} accumulated duplicates_skipped: +{} ({} -> {})", self.actor_id, duplicates_skipped, before, self.duplicates_skipped);
-                            }
+                    if let AppEvent::BatchReport { duplicates_skipped, .. } = evt {
+                        if duplicates_skipped > 0 {
+                            let before = self.duplicates_skipped;
+                            self.duplicates_skipped = self.duplicates_skipped.saturating_add(duplicates_skipped);
+                            debug!("🧮 SessionActor {} accumulated duplicates_skipped: +{} ({} -> {})", self.actor_id, duplicates_skipped, before, self.duplicates_skipped);
                         }
-                        _ => { /* ignore other events */ }
-                    }
+                    } else { /* ignore other events */ }
                 }
 
                 // 취소 신호 확인
@@ -1228,7 +1217,7 @@ impl Actor for SessionActor {
         let status = match &self.state {
             SessionState::Idle | SessionState::Running => ActorStatus::Healthy,
             SessionState::Paused { reason } => ActorStatus::Degraded {
-                reason: format!("Paused: {}", reason),
+                reason: format!("Paused: {reason}"),
                 since: Utc::now(),
             },
             SessionState::Failed { error } => ActorStatus::Unhealthy {
@@ -1247,11 +1236,7 @@ impl Actor for SessionActor {
             status,
             last_activity: Utc::now(),
             memory_usage_mb: 0, // TODO: 실제 메모리 사용량 계산
-            active_tasks: if matches!(self.state, SessionState::Running) {
-                1
-            } else {
-                0
-            },
+            active_tasks: u32::from(matches!(self.state, SessionState::Running)),
             commands_processed: 0, // TODO: 실제 처리된 명령 수 계산
             errors_count: 0,       // TODO: 실제 에러 수 계산
             avg_command_processing_time_ms: 0.0, // TODO: 실제 평균 처리 시간 계산

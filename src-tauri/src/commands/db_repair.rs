@@ -24,8 +24,7 @@ pub struct ProductsToDetailsSyncReport {
 pub async fn sync_product_details_coordinates(
     _app: AppHandle,
     app_state: State<'_, AppState>,
-)
--> Result<ProductsToDetailsSyncReport, String> {
+) -> Result<ProductsToDetailsSyncReport, String> {
     let pool = app_state
         .get_database_pool()
         .await
@@ -44,23 +43,23 @@ pub async fn sync_product_details_coordinates(
         .await
         .unwrap_or(0);
 
-        // -1) Neutralize duplicate product_details rows per URL (keep canonical MIN(rowid))
-        let neutralize_dups_sql = r#"
+    // -1) Neutralize duplicate product_details rows per URL (keep canonical MIN(rowid))
+    let neutralize_dups_sql = r"
                 UPDATE product_details
                 SET page_id = NULL, index_in_page = NULL, id = NULL
                 WHERE rowid NOT IN (SELECT MIN(rowid) FROM product_details GROUP BY url)
                     AND url IN (
                         SELECT url FROM product_details GROUP BY url HAVING COUNT(*) > 1
                     );
-        "#;
-        let duplicates_neutralized = sqlx::query(neutralize_dups_sql)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?
-                .rows_affected();
+        ";
+    let duplicates_neutralized = sqlx::query(neutralize_dups_sql)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?
+        .rows_affected();
 
-        // 0) First, regenerate products.id from page_id/index_in_page (canonical form) when needed
-    let update_product_ids_sql = r#"
+    // 0) First, regenerate products.id from page_id/index_in_page (canonical form) when needed
+    let update_product_ids_sql = r"
         UPDATE products
         SET id = 'p' || printf('%04d', page_id) || 'i' || printf('%02d', index_in_page)
         WHERE page_id IS NOT NULL AND index_in_page IS NOT NULL
@@ -68,7 +67,7 @@ pub async fn sync_product_details_coordinates(
                 id IS NULL OR id = ''
              OR id != 'p' || printf('%04d', page_id) || 'i' || printf('%02d', index_in_page)
           );
-    "#;
+    ";
     let updated_product_ids = sqlx::query(update_product_ids_sql)
         .execute(&mut *tx)
         .await
@@ -76,7 +75,7 @@ pub async fn sync_product_details_coordinates(
         .rows_affected();
 
     // 1) Insert missing details from products (anti-join). Use NULL coords/id to avoid unique conflicts now.
-    let insert_sql = r#"
+    let insert_sql = r"
         INSERT INTO product_details (url, page_id, index_in_page, id)
         SELECT p.url,
                NULL,
@@ -85,7 +84,7 @@ pub async fn sync_product_details_coordinates(
         FROM products p
         LEFT JOIN product_details d ON d.url = p.url
         WHERE d.url IS NULL;
-    "#;
+    ";
     let inserted_details = sqlx::query(insert_sql)
         .execute(&mut *tx)
         .await
@@ -93,7 +92,7 @@ pub async fn sync_product_details_coordinates(
         .rows_affected();
 
     // 2) Update coordinates for canonical detail rows only, avoiding occupied target slots
-    let update_coords_sql = r#"
+    let update_coords_sql = r"
         UPDATE product_details AS d
         SET page_id = (
                 SELECT p.page_id FROM products p WHERE p.url = d.url LIMIT 1
@@ -119,7 +118,7 @@ pub async fn sync_product_details_coordinates(
                   AND pd2.page_id = (SELECT p4.page_id FROM products p4 WHERE p4.url = d.url LIMIT 1)
                   AND pd2.index_in_page = (SELECT p5.index_in_page FROM products p5 WHERE p5.url = d.url LIMIT 1)
           );
-    "#;
+    ";
     let updated_coordinates = sqlx::query(update_coords_sql)
         .execute(&mut *tx)
         .await
@@ -127,7 +126,7 @@ pub async fn sync_product_details_coordinates(
         .rows_affected();
 
     // 2b) Count updates skipped due to target slot being taken (for reporting)
-    let skipped_sql = r#"
+    let skipped_sql = r"
         SELECT COUNT(*) FROM product_details AS d
         WHERE d.rowid = (
                 SELECT MIN(rowid) FROM product_details AS pdsame WHERE pdsame.url = d.url
@@ -147,14 +146,14 @@ pub async fn sync_product_details_coordinates(
                   AND pd2.page_id = (SELECT p4.page_id FROM products p4 WHERE p4.url = d.url LIMIT 1)
                   AND pd2.index_in_page = (SELECT p5.index_in_page FROM products p5 WHERE p5.url = d.url LIMIT 1)
           );
-    "#;
+    ";
     let details_align_skipped_due_to_slot_taken: i64 = sqlx::query_scalar(skipped_sql)
         .fetch_one(&mut *tx)
         .await
         .unwrap_or(0);
 
     // 3) Mirror id in details from products.id when NULL/mismatched (canonical rows only)
-    let update_ids_sql = r#"
+    let update_ids_sql = r"
         UPDATE product_details AS d
         SET id = (
             SELECT p.id FROM products p WHERE p.url = d.url LIMIT 1
@@ -167,7 +166,7 @@ pub async fn sync_product_details_coordinates(
                 d.id IS NULL OR d.id = ''
              OR d.id != (SELECT p2.id FROM products p2 WHERE p2.url = d.url LIMIT 1)
           );
-    "#;
+    ";
     let updated_ids = sqlx::query(update_ids_sql)
         .execute(&mut *tx)
         .await
@@ -184,6 +183,8 @@ pub async fn sync_product_details_coordinates(
         updated_coordinates,
         updated_ids,
         duplicates_neutralized: Some(duplicates_neutralized),
-        details_align_skipped_due_to_slot_taken: Some(details_align_skipped_due_to_slot_taken as u64),
+        details_align_skipped_due_to_slot_taken: Some(
+            details_align_skipped_due_to_slot_taken as u64,
+        ),
     })
 }

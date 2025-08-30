@@ -47,8 +47,8 @@ pub struct HttpClientConfig {
 }
 
 impl HttpClientConfig {
-    /// Create HttpClientConfig from WorkerConfig
-    pub fn from_worker_config(worker_config: &WorkerConfig) -> Self {
+    /// Create `HttpClientConfig` from `WorkerConfig`
+    #[must_use] pub fn from_worker_config(worker_config: &WorkerConfig) -> Self {
         Self {
             max_requests_per_second: worker_config.max_requests_per_second,
             timeout_seconds: worker_config.request_timeout_seconds,
@@ -74,7 +74,7 @@ impl Default for HttpClientConfig {
     }
 }
 
-/// Global rate limiter shared across all HttpClient instances
+/// Global rate limiter shared across all `HttpClient` instances
 /// Uses token bucket algorithm for true concurrent rate limiting
 #[derive(Debug)]
 struct GlobalRateLimiter {
@@ -91,7 +91,7 @@ struct GlobalRateLimiter {
 static GLOBAL_RATE_LIMITER: OnceLock<GlobalRateLimiter> = OnceLock::new();
 
 impl GlobalRateLimiter {
-    fn get_instance() -> &'static GlobalRateLimiter {
+    fn get_instance() -> &'static Self {
         GLOBAL_RATE_LIMITER.get_or_init(|| {
             let initial_rate = 50; // Default 50 RPS
             // Start with 0 available permits; refill task will add permits as rate is applied
@@ -103,9 +103,9 @@ impl GlobalRateLimiter {
                 initial_rate
             );
 
-            GlobalRateLimiter {
-                semaphore: semaphore.clone(),
-                current_rate: current_rate.clone(),
+            Self {
+                semaphore,
+                current_rate,
                 refill_handle: Arc::new(Mutex::new(None)),
             }
         })
@@ -156,7 +156,7 @@ impl GlobalRateLimiter {
 
         let semaphore = self.semaphore.clone();
         // Refill once every (1000 / rate) ms; cap bucket size to `rate` (1s worth of tokens)
-        let refill_interval = Duration::from_millis(1000 / rate as u64);
+        let refill_interval = Duration::from_millis(1000 / u64::from(rate));
         let capacity: usize = rate as usize;
 
         info!(
@@ -164,7 +164,7 @@ impl GlobalRateLimiter {
             rate, refill_interval, capacity
         );
 
-    let new_handle = tokio::spawn(async move {
+        let new_handle = tokio::spawn(async move {
             let mut interval = interval(refill_interval);
             loop {
                 interval.tick().await;
@@ -172,10 +172,17 @@ impl GlobalRateLimiter {
                 let available = semaphore.available_permits();
                 if available < capacity {
                     semaphore.add_permits(1);
-            trace!("[rate-limit] token refilled (available={}/{})", available + 1, capacity);
+                    trace!(
+                        "[rate-limit] token refilled (available={}/{})",
+                        available + 1,
+                        capacity
+                    );
                 } else {
                     // At capacity; skip adding to avoid unbounded burst
-            trace!("[rate-limit] token refill skipped (at capacity {}/{})", available, capacity);
+                    trace!(
+                        "[rate-limit] token refill skipped (at capacity {}/{})",
+                        available, capacity
+                    );
                 }
             }
         });
@@ -192,13 +199,19 @@ impl GlobalRateLimiter {
             return; // No rate limiting
         }
 
-        debug!("🎫 [rate-limit] awaiting token ({} RPS)", max_requests_per_second);
+        debug!(
+            "🎫 [rate-limit] awaiting token ({} RPS)",
+            max_requests_per_second
+        );
 
         // Acquire a token (permit) from the bucket
         // This will wait if no tokens are available
-    let _permit = self.semaphore.acquire().await.unwrap();
+        let _permit = self.semaphore.acquire().await.unwrap();
 
-        debug!("🎫 [rate-limit] token acquired ({} RPS)", max_requests_per_second);
+        debug!(
+            "🎫 [rate-limit] token acquired ({} RPS)",
+            max_requests_per_second
+        );
 
         // Permit is automatically released when _permit goes out of scope
     }
@@ -210,12 +223,12 @@ impl GlobalRateLimiter {
 pub struct HttpClient {
     client: Client,
     config: HttpClientConfig,
-    /// Optional context label for provenance in logs (e.g., "BatchActor", "Stage:List")
+    /// Optional context label for provenance in logs (e.g., "`BatchActor`", "Stage:List")
     context_label: Option<String>,
 }
 
 impl HttpClient {
-    /// 글로벌 설정에서 HttpClient 생성
+    /// 글로벌 설정에서 `HttpClient` 생성
     pub fn create_from_global_config() -> Result<Self> {
         // Load actual configuration from file instead of using defaults
         let config_manager = crate::infrastructure::config::ConfigManager::new()
@@ -240,7 +253,7 @@ impl HttpClient {
         Self::from_worker_config(&app_config.user.crawling.workers)
     }
 
-    /// Create a new HTTP client from WorkerConfig
+    /// Create a new HTTP client from `WorkerConfig`
     pub fn from_worker_config(worker_config: &WorkerConfig) -> Result<Self> {
         let config = HttpClientConfig::from_worker_config(worker_config);
         Self::with_config(config)
@@ -280,7 +293,7 @@ impl HttpClient {
         })
     }
     /// Set a human-readable context label for logging provenance (returns self for chaining)
-    pub fn with_context_label(mut self, label: &str) -> Self {
+    #[must_use] pub fn with_context_label(mut self, label: &str) -> Self {
         self.context_label = Some(label.to_string());
         self
     }
@@ -290,7 +303,7 @@ impl HttpClient {
         self.context_label = Some(label.to_string());
     }
 
-    /// Adjust the global RPS limit for all HttpClient instances at runtime.
+    /// Adjust the global RPS limit for all `HttpClient` instances at runtime.
     /// This does not mutate this instance's stored config but affects the shared token bucket.
     pub async fn set_global_max_rps(rps: u32) {
         GlobalRateLimiter::set_global_rate_limit(rps).await;
@@ -344,7 +357,10 @@ impl HttpClient {
         // Include attempt info when provided by caller for better observability
         match (opts.attempt, opts.max_attempts) {
             (Some(a), Some(m)) if a > 1 => {
-                info!("🌐 HTTP GET (HttpClient,opts, {}/{} retrying): {}", a, m, url);
+                info!(
+                    "🌐 HTTP GET (HttpClient,opts, {}/{} retrying): {}",
+                    a, m, url
+                );
             }
             (Some(a), Some(m)) if a == 1 => {
                 info!("🌐 HTTP GET (HttpClient,opts, {}/{}): {}", a, m, url);
@@ -482,7 +498,7 @@ impl HttpClient {
     }
 
     /// Fetch raw response with cancellation support
-    /// This mirrors `fetch_response` but cooperates with a CancellationToken.
+    /// This mirrors `fetch_response` but cooperates with a `CancellationToken`.
     pub async fn fetch_response_with_cancel(
         &self,
         url: &str,
@@ -503,8 +519,8 @@ impl HttpClient {
         }
 
         tokio::select! {
-            _ = rate_limiter.apply_rate_limit(self.config.max_requests_per_second) => {},
-            _ = cancellation_token.cancelled() => {
+            () = rate_limiter.apply_rate_limit(self.config.max_requests_per_second) => {},
+            () = cancellation_token.cancelled() => {
                 return Err(anyhow!("Request cancelled during rate limiting"));
             }
         }
@@ -522,7 +538,7 @@ impl HttpClient {
             res = self.build_request(url, &RequestOptions::default())?.send() => {
                 res.map_err(|e| anyhow!("HTTP request failed: {}", e))?
             },
-            _ = cancellation_token.cancelled() => {
+            () = cancellation_token.cancelled() => {
                 warn!("🛑 HTTP request cancelled: {}", url);
                 return Err(anyhow!("HTTP request cancelled"));
             }
@@ -562,8 +578,8 @@ impl HttpClient {
             }
 
             tokio::select! {
-                _ = rate_limiter.apply_rate_limit(self.config.max_requests_per_second) => {},
-                _ = cancellation_token.cancelled() => {
+                () = rate_limiter.apply_rate_limit(self.config.max_requests_per_second) => {},
+                () = cancellation_token.cancelled() => {
                     return Err(anyhow!("Request cancelled during rate limiting"));
                 }
             }
@@ -591,7 +607,7 @@ impl HttpClient {
                 res = self.build_request(url, &RequestOptions::default())?.send() => {
                     res.map_err(|e| anyhow!("HTTP request failed: {}", e))
                 },
-                _ = cancellation_token.cancelled() => {
+                () = cancellation_token.cancelled() => {
                     warn!("🛑 HTTP request cancelled: {}", url);
                     return Err(anyhow!("HTTP request cancelled"));
                 }
@@ -620,7 +636,8 @@ impl HttpClient {
                     if retryable && attempt < self.config.max_retries {
                         // Respect Retry-After if present on 429/503
                         let mut delay_secs = 2_u64.pow(attempt - 1);
-                        if let Some(retry_after) = resp.headers().get(reqwest::header::RETRY_AFTER) {
+                        if let Some(retry_after) = resp.headers().get(reqwest::header::RETRY_AFTER)
+                        {
                             if let Ok(s) = retry_after.to_str() {
                                 if let Ok(parsed) = s.parse::<u64>() {
                                     delay_secs = parsed.max(delay_secs);
@@ -628,35 +645,42 @@ impl HttpClient {
                             }
                         }
                         // Full jitter: [0, delay_secs]
-                        let jitter_ms: u64 = if delay_secs == 0 { 0 } else { fastrand::u64(..(delay_secs * 1000)) };
+                        let jitter_ms: u64 = if delay_secs == 0 {
+                            0
+                        } else {
+                            fastrand::u64(..(delay_secs * 1000))
+                        };
                         info!(target: "kpi.network",
                             "{{\"event\":\"retry_scheduled\",\"attempt\":{},\"max\":{},\"base_delay_s\":{},\"jitter_ms\":{},\"url\":\"{}\"}}",
                             attempt, self.config.max_retries, delay_secs, jitter_ms, url
                         );
                         tokio::select! {
-                            _ = tokio::time::sleep(Duration::from_millis(jitter_ms)) => {},
-                            _ = cancellation_token.cancelled() => {
+                            () = tokio::time::sleep(Duration::from_millis(jitter_ms)) => {},
+                            () = cancellation_token.cancelled() => {
                                 return Err(anyhow!("Request cancelled during backoff"));
                             }
                         }
                         continue;
-                    } else {
-                        return Err(anyhow!("HTTP error {}: {}", status, url));
                     }
+                    return Err(anyhow!("HTTP error {}: {}", status, url));
                 }
                 Err(e) => {
                     warn!("⚠️ Network error on attempt {}: {}", attempt, e);
                     last_err = Some(anyhow!("HTTP request failed: {}", e));
                     if attempt < self.config.max_retries {
                         let delay_secs = 2_u64.pow(attempt - 1);
-                        let jitter_ms: u64 = if delay_secs == 0 { 0 } else { fastrand::u64(..(delay_secs * 1000)) };
+                        let jitter_ms: u64 = if delay_secs == 0 {
+                            0
+                        } else {
+                            fastrand::u64(..(delay_secs * 1000))
+                        };
                         info!(target: "kpi.network",
                             "{{\"event\":\"retry_scheduled\",\"attempt\":{},\"max\":{},\"base_delay_s\":{},\"jitter_ms\":{},\"url\":\"{}\"}}",
                             attempt, self.config.max_retries, delay_secs, jitter_ms, url
                         );
                         tokio::select! {
-                            _ = tokio::time::sleep(Duration::from_millis(jitter_ms)) => {},
-                            _ = cancellation_token.cancelled() => {
+                            () = tokio::time::sleep(Duration::from_millis(jitter_ms)) => {},
+                            () = cancellation_token.cancelled() => {
                                 return Err(anyhow!("Request cancelled during backoff"));
                             }
                         }
@@ -744,7 +768,9 @@ impl HttpClient {
                             }
                         }
                         // Full jitter: [0, delay_secs]
-                        let jitter_ms: u64 = if delay_secs == 0 { 0 } else {
+                        let jitter_ms: u64 = if delay_secs == 0 {
+                            0
+                        } else {
                             fastrand::u64(..(delay_secs * 1000))
                         };
                         info!(target: "kpi.network",
@@ -753,16 +779,17 @@ impl HttpClient {
                         );
                         tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
                         continue;
-                    } else {
-                        return Err(anyhow!("HTTP error {}: {}", status, url));
                     }
+                    return Err(anyhow!("HTTP error {}: {}", status, url));
                 }
                 Err(e) => {
                     warn!("⚠️ Network error on attempt {}: {}", attempt, e);
                     last_err = Some(anyhow!("HTTP request failed: {}", e));
                     if attempt < self.config.max_retries {
                         let delay_secs = 2_u64.pow(attempt - 1);
-                        let jitter_ms: u64 = if delay_secs == 0 { 0 } else {
+                        let jitter_ms: u64 = if delay_secs == 0 {
+                            0
+                        } else {
                             fastrand::u64(..(delay_secs * 1000))
                         };
                         info!(target: "kpi.network",
@@ -800,8 +827,6 @@ impl HttpClient {
         }
     }
 
-    
-
     /// Fetch HTML content and return it as a string (Send-compatible)
     pub async fn fetch_html_string(&self, url: &str) -> Result<String> {
         info!("🔄 Starting HTML fetch: {}", url);
@@ -837,7 +862,7 @@ impl HttpClient {
             res = response.text() => {
                 res.map_err(|e| anyhow!("Failed to read response body: {}", e))?
             },
-            _ = cancellation_token.cancelled() => {
+            () = cancellation_token.cancelled() => {
                 warn!("🛑 Response reading cancelled for URL: {}", url);
                 return Err(anyhow!("Response reading cancelled"));
             }
@@ -849,10 +874,8 @@ impl HttpClient {
         Ok(text)
     }
 
-    
-
     /// Parse HTML from string (non-async, can be called after fetch)
-    pub fn parse_html(&self, html_content: &str) -> Html {
+    #[must_use] pub fn parse_html(&self, html_content: &str) -> Html {
         Html::parse_document(html_content)
     }
 }
@@ -1055,7 +1078,7 @@ mod tests {
         let results = futures::future::join_all(handles).await;
         let duration = start.elapsed();
 
-        let successful_requests = results.into_iter().filter(|r| r.is_ok()).count();
+        let successful_requests = results.into_iter().filter(std::result::Result::is_ok).count();
 
         println!("Rate Limiter Test ({} RPS):", rps);
         println!(

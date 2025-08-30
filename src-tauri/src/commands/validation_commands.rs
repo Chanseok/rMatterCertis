@@ -31,10 +31,10 @@ fn detect_page_anomalies(
     // 1. duplicate_index (duplicate URL occurrences)
     use std::collections::HashMap;
     let mut counts = HashMap::new();
-    for u in product_urls.iter() {
+    for u in product_urls {
         *counts.entry(u).or_insert(0usize) += 1;
     }
-    for (u, c) in counts.iter() {
+    for (u, c) in &counts {
         if *c > 1 {
             anomalies.push(DetectedAnomaly {
                 code: "duplicate_index".into(),
@@ -75,7 +75,7 @@ fn detect_page_anomalies(
         }
     }
     // 4. out_of_range (sanity: any absurdly long URL or missing required pattern)
-    for u in product_urls.iter() {
+    for u in product_urls {
         if !u.contains("csa_product") {
             anomalies.push(DetectedAnomaly {
                 code: "unexpected_url_pattern".into(),
@@ -141,7 +141,7 @@ pub struct GapRange {
     pub size: u64,
 }
 
-/// Emit an AppEvent directly to the frontend (lightweight bridge clone)
+/// Emit an `AppEvent` directly to the frontend (lightweight bridge clone)
 pub(crate) fn emit_actor_event(app: &AppHandle, event: AppEvent) {
     // Map variant -> event name (keep in sync with actor_event_bridge.rs)
     let event_name = match &event {
@@ -157,7 +157,7 @@ pub(crate) fn emit_actor_event(app: &AppHandle, event: AppEvent) {
         AppEvent::SyncUpsertProgress { .. } => "actor-sync-upsert-progress",
         AppEvent::SyncPageCompleted { .. } => "actor-sync-page-completed",
         AppEvent::SyncWarning { .. } => "actor-sync-warning",
-    AppEvent::SyncRetrying { .. } => "actor-sync-retrying",
+        AppEvent::SyncRetrying { .. } => "actor-sync-retrying",
         AppEvent::SyncCompleted { .. } => "actor-sync-completed",
         // Product lifecycle forwarding
         AppEvent::ProductLifecycle { .. } => "actor-product-lifecycle",
@@ -169,10 +169,10 @@ pub(crate) fn emit_actor_event(app: &AppHandle, event: AppEvent) {
             if map.len() == 1 {
                 let mut out = Map::new();
                 if let Some((k, v)) = map.into_iter().next() {
-                    out.insert("variant".into(), Value::String(k.clone()));
+                    out.insert("variant".into(), Value::String(k));
                     match v {
                         Value::Object(inner) => {
-                            for (ik, iv) in inner.into_iter() {
+                            for (ik, iv) in inner {
                                 out.insert(ik, iv);
                             }
                         }
@@ -254,20 +254,16 @@ pub async fn start_validation(
             // Parse first valid token from comma-separated list. Accept "a-b", "a~b", or single number "n".
             let tokens: Vec<String> = expr_raw
                 .split(',')
-                .map(|t| t.trim())
+                .map(str::trim)
                 .filter(|t| !t.is_empty())
                 .map(|t| {
                     let s = t.replace(char::is_whitespace, "");
                     // Normalize unicode dashes to '-'
                     let s = s
-                        .replace('–', "-")
-                        .replace('—', "-")
-                        .replace('−', "-")
-                        .replace('﹣', "-")
-                        .replace('－', "-");
+                        .replace(['–', '—', '−', '﹣', '－'], "-");
                     // Normalize unicode tildes to '~'
-                    let s = s.replace('〜', "~").replace('～', "~");
-                    s
+                    
+                    s.replace(['〜', '～'], "~")
                 })
                 .collect();
             debug!("ranges_expr tokens(normalized)={:?}", tokens);
@@ -471,8 +467,8 @@ pub async fn start_validation(
             .flatten();
             if total_products <= 360 {
                 // Use max_page_id span (max_page_id inclusive means +1 pages), fallback to count-derived
-                let pages_from_max = max_page_id.map(|v| (v as u32) + 1).unwrap_or(1);
-                let pages_from_count = (((total_products as u32) + 11) / 12).max(1);
+                let pages_from_max = max_page_id.map_or(1, |v| (v as u32) + 1);
+                let pages_from_count = (total_products as u32).div_ceil(12).max(1);
                 pages_from_max.max(pages_from_count)
             } else {
                 30u32
@@ -621,7 +617,7 @@ pub async fn start_validation(
             items_on_last_page,
         );
         let mut page_anomaly_count = 0u32;
-        for a in page_anomalies.into_iter() {
+        for a in page_anomalies {
             anomalies += 1;
             page_anomaly_count += 1;
             emit_actor_event(
@@ -645,10 +641,10 @@ pub async fn start_validation(
         for (i, url) in product_urls.iter().enumerate() {
             let calc_res = calculator.calculate(physical_page, i); // i: newest-first within physical page
             let expected_offset = (calc_res.page_id as u64) * 12 + (calc_res.index_in_page as u64);
-            if min_offset.map(|m| expected_offset < m).unwrap_or(true) {
+            if min_offset.is_none_or(|m| expected_offset < m) {
                 min_offset = Some(expected_offset);
             }
-            if max_offset.map(|m| expected_offset > m).unwrap_or(true) {
+            if max_offset.is_none_or(|m| expected_offset > m) {
                 max_offset = Some(expected_offset);
             }
             // Cross-page duplicate detection (ignore duplicates within same page already handled by anomaly)
@@ -708,13 +704,11 @@ pub async fn start_validation(
                     }
                     highest_divergence_physical_page = Some(
                         highest_divergence_physical_page
-                            .map(|h| h.max(physical_page))
-                            .unwrap_or(physical_page),
+                            .map_or(physical_page, |h| h.max(physical_page)),
                     );
                     lowest_divergence_physical_page = Some(
                         lowest_divergence_physical_page
-                            .map(|l| l.min(physical_page))
-                            .unwrap_or(physical_page),
+                            .map_or(physical_page, |l| l.min(physical_page)),
                     );
                 }
                 Some(r) => {
@@ -765,13 +759,11 @@ pub async fn start_validation(
                             }
                             highest_divergence_physical_page = Some(
                                 highest_divergence_physical_page
-                                    .map(|h| h.max(physical_page))
-                                    .unwrap_or(physical_page),
+                                    .map_or(physical_page, |h| h.max(physical_page)),
                             );
                             lowest_divergence_physical_page = Some(
                                 lowest_divergence_physical_page
-                                    .map(|l| l.min(physical_page))
-                                    .unwrap_or(physical_page),
+                                    .map_or(physical_page, |l| l.min(physical_page)),
                             );
                         }
                     }

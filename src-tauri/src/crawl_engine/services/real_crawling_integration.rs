@@ -1,5 +1,5 @@
 //! 실제 크롤링 서비스 통합을 위한 Actor 시스템 패치
-//! 기존 actor_system.rs에 실제 크롤링 서비스를 통합하는 코드를 추가
+//! 기존 `actor_system.rs에` 실제 크롤링 서비스를 통합하는 코드를 추가
 
 use std::sync::Arc;
 use tokio::sync::oneshot;
@@ -23,14 +23,14 @@ pub struct RealCrawlingIntegration {
 }
 
 impl RealCrawlingIntegration {
-    pub fn new(config: Arc<SystemConfig>, app_config: AppConfig) -> Self {
+    #[must_use] pub const fn new(config: Arc<SystemConfig>, app_config: AppConfig) -> Self {
         Self { config, app_config }
     }
 }
 
-/// StageActor 확장: 실제 크롤링 서비스 실행 기능
+/// `StageActor` 확장: 실제 크롤링 서비스 실행 기능
 impl StageActor {
-    /// 실제 크롤링 서비스를 사용하는 새로운 StageActor 생성
+    /// 실제 크롤링 서비스를 사용하는 새로운 `StageActor` 생성
     pub async fn new_with_real_crawling_service(
         batch_id: String,
         config: Arc<SystemConfig>,
@@ -68,7 +68,7 @@ impl StageActor {
         info!("Real crawling executor set for StageActor");
     }
 
-    /// 실제 크롤링 서비스를 사용하는 OneShot 실행
+    /// 실제 크롤링 서비스를 사용하는 `OneShot` 실행
     pub async fn run_with_real_crawling(
         self,
         mut control_rx: tokio::sync::mpsc::Receiver<
@@ -161,7 +161,7 @@ impl StageActor {
     }
 }
 
-/// BatchActor 확장: 실제 크롤링 서비스를 사용하는 OneShot 스테이지 실행
+/// `BatchActor` 확장: 실제 크롤링 서비스를 사용하는 `OneShot` 스테이지 실행
 impl crate::crawl_engine::actors::BatchActor {
     /// Stage 1용: 사이트 상태 점검을 수행하고 레거시 StageResult(details 포함)로 브리징
     pub async fn execute_status_check_with_details(
@@ -243,7 +243,7 @@ impl crate::crawl_engine::actors::BatchActor {
         }
     }
 
-    /// 실제 크롤링 서비스를 사용한 스테이지 실행 (actor_system::StageResult 반환)
+    /// 실제 크롤링 서비스를 사용한 스테이지 실행 (`actor_system::StageResult` 반환)
     pub async fn execute_stage_with_real_crawling(
         &self,
         stage_type: StageType,
@@ -378,7 +378,7 @@ impl crate::crawl_engine::actors::BatchActor {
         result
     }
 
-    /// Stage 3용: ProductUrls 입력을 받아 ProductDetails를 수집하고 레거시 StageResult(details 포함)로 브리징
+    /// Stage 3용: `ProductUrls` 입력을 받아 `ProductDetails를` 수집하고 레거시 StageResult(details 포함)로 브리징
     pub async fn execute_detail_collection_with_details(
         &self,
         product_urls_items: Vec<crate::crawl_engine::channels::types::ProductUrls>,
@@ -458,10 +458,7 @@ impl crate::crawl_engine::actors::BatchActor {
                                     empty_responses: 0,
                                 },
                         };
-                        match serde_json::to_string(&wrapper) {
-                            Ok(json) => Some(json),
-                            Err(_) => None,
-                        }
+                        serde_json::to_string(&wrapper).ok()
                     } else {
                         None
                     };
@@ -568,7 +565,7 @@ impl crate::crawl_engine::actors::BatchActor {
         let mut successful = 0u32;
         let mut failed = 0u32;
         let mut details: Vec<crate::crawl_engine::actors::types::StageItemResult> = Vec::new();
-        for (page, urls, retry_count, duration_ms) in page_results.into_iter() {
+        for (page, urls, retry_count, duration_ms) in page_results {
             let success = !urls.is_empty();
             if success {
                 successful += 1;
@@ -576,10 +573,7 @@ impl crate::crawl_engine::actors::BatchActor {
                 failed += 1;
             }
             let collected_data = if success {
-                match serde_json::to_string(&urls) {
-                    Ok(json) => Some(json),
-                    Err(_) => None,
-                }
+                serde_json::to_string(&urls).ok()
             } else {
                 None
             };
