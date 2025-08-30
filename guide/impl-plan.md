@@ -79,7 +79,8 @@ Rust의 타입을 "신뢰할 수 있는 단일 출처(Single Source of Truth)"�
     - **데이터 (Data Channel):** 작업의 최종 결과
         - `event-session-result`: `SessionResultPayload` 페이로드 전달
     - **오류 (Error Handling):**
-        - `event-crawling-error`: `ErrorPayload` 페이로드 전달
+        - Deprecated: `event-crawling-error` (legacy)
+        - Unified: prefer actor-based anomalies/failures via `actor-event` and handle in FE with `tauriApi.subscribeToErrorsUnified(...)`.
 
 2.  **프론트엔드 리스너 리팩토링:**
     - `crawlerStore.ts`에서 각 목적에 맞는 이벤트를 명시적으로 구독하고, 타입이 보장된 페이로드를 직접 사용합니다.

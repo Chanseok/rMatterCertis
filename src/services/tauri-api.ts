@@ -450,28 +450,7 @@ export class TauriApiService {
   }
 
   
-
   
-
-  /**
-   * Subscribe to error notifications
-   */
-  async subscribeToErrors(
-    callback: (error: { error_id: string; message: string; stage: string; recoverable: boolean }) => void
-  ): Promise<UnlistenFn> {
-    const unlisten = await listen<{ error_id: string; message: string; stage: string; recoverable: boolean }>(
-      'crawling-error',
-      (event) => {
-        callback(event.payload);
-      }
-    );
-    
-    this.eventListeners.set('crawling-error', unlisten);
-    return unlisten;
-  }
-
-  
-
   
 
   

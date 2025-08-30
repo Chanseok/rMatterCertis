@@ -631,10 +631,11 @@ pub async fn subscribe_to_crawling_events(app_handle: tauri::AppHandle, event_bu
                 CrawlingEvent::ProgressUpdate { .. } => "crawling-progress",
                 CrawlingEvent::StageComplete { .. } => "stage-complete",
                 CrawlingEvent::CrawlingComplete { .. } => "crawling-complete",
-                CrawlingEvent::CrawlingError { .. } => "crawling-error",
+                // Deprecated legacy mapping:
+                // CrawlingEvent::CrawlingError { .. } => "crawling-error",
                 _ => continue,
             };
-            
+
             if let Err(e) = app_handle.emit_all(event_name, &event) {
                 eprintln!("Failed to emit event to frontend: {:?}", e);
             }
@@ -1203,9 +1204,17 @@ pub async fn start_crawling(
     match crawling_service.start_crawling(config).await {
         Ok(_) => Ok(true),
         Err(e) => {
-            // 에러 이벤트 발송
-            app_handle.emit_all("crawling-error", &format!("{}", e))
-                .map_err(|e| format!("Failed to emit error event: {}", e))?;
+            // Unified anomaly emission (prefer actor-event)
+            app_handle.emit_all(
+                "actor-event",
+                &serde_json::json!({
+                    "event_name": "actor-session-failed",
+                    "variant": "SessionFailed",
+                    "message": format!("{}", e),
+                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                }),
+            )
+            .map_err(|e| format!("Failed to emit error event: {}", e))?;
             Err(format!("Crawling failed: {}", e))
         }
     }

@@ -845,8 +845,22 @@ pub async fn subscribe_to_crawling_events(
                         "message": message
                     }));
                 }
+                // Deprecated: legacy error emission (crawling-error)
+                // CrawlingEvent::Error(error) => {
+                //     let _ = app_handle_clone.emit_all("crawling-error", &error);
+                // }
+
+                // Unified: emit actor-based anomaly/failure via the unified stream
                 CrawlingEvent::Error(error) => {
-                    let _ = app_handle_clone.emit_all("crawling-error", &error);
+                    let _ = app_handle_clone.emit_all(
+                        "actor-event",
+                        &serde_json::json!({
+                            "event_name": "actor-stage-failed",
+                            "variant": "StageFailed",
+                            "message": format!("{}", error),
+                            "timestamp": chrono::Utc::now().to_rfc3339(),
+                        }),
+                    );
                 }
             }
         }

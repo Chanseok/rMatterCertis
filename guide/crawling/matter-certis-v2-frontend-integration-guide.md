@@ -1063,9 +1063,29 @@ class TauriApiService {
     });
   }
 
-  async subscribeToErrors(callback: (error: string) => void): Promise<UnlistenFn> {
-    return listen('crawling-error', (event) => {
-      callback(event.payload as string);
+  // Deprecated: legacy event. Prefer subscribeToErrorsUnified (actor-based)
+  // async subscribeToErrors(callback: (error: string) => void): Promise<UnlistenFn> {
+  //   return listen('crawling-error', (event) => {
+  //     callback(event.payload as string);
+  //   });
+  // }
+
+  // New: unified error subscription via actor-event
+  async subscribeToErrorsUnified(callback: (error: any) => void): Promise<UnlistenFn> {
+    return listen('actor-event', (event) => {
+      const payload: any = event.payload;
+      const name = payload?.event_name as string | undefined;
+      const variant = String(payload?.variant ?? '');
+      if (
+        name === 'actor-persistence-anomaly' ||
+        name === 'actor-validation-anomaly' ||
+        name === 'actor-session-failed' ||
+        name === 'actor-batch-failed' ||
+        name === 'actor-stage-failed' ||
+        /anomaly|error|failed/i.test(variant)
+      ) {
+        callback(payload);
+      }
     });
   }
 }
@@ -1240,8 +1260,8 @@ class CrawlerStore {
         this.setProgress(progress);
       });
 
-      const errorUnsub = await tauriApi.subscribeToErrors((error) => {
-        this.setError(error);
+      const errorUnsub = await tauriApi.subscribeToErrorsUnified((error) => {
+        this.setError(typeof error === 'string' ? error : (error?.message || error?.reason || JSON.stringify(error)));
       });
 
       // 구독 해제 함수 저장
