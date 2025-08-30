@@ -7,7 +7,7 @@ use crate::crawl_engine::actor_event_bridge::start_actor_event_bridge;
 use crate::crawl_engine::actors::SessionActor;
 use crate::crawl_engine::actors::contract::ACTOR_CONTRACT_VERSION;
 use crate::crawl_engine::actors::types::{
-    BatchConfig, CrawlPhase, CrawlingConfig, ExecutionPlan, PageRange, SessionSummary,
+    BatchConfig, CrawlPhase, CrawlingConfig, ExecutionPlan, PageRange, SessionSummary, SimpleMetrics,
 };
 use crate::crawl_engine::channels::types::ActorCommand; // 올바른 ActorCommand 사용
 use crate::crawl_engine::channels::types::AppEvent;
@@ -2765,6 +2765,15 @@ async fn execute_session_actor_with_execution_plan(
                     batch_id: Some(batch_id.clone()),
                     timestamp: Utc::now(),
                 });
+                // Also emit native PageLifecycle (additive)
+                let _ = actor_event_tx.send(AppEvent::PageLifecycle {
+                    session_id: execution_plan.session_id.clone(),
+                    batch_id: Some(batch_id.clone()),
+                    page_number: *p,
+                    status: "fetch_started".to_string(),
+                    metrics: None,
+                    timestamp: Utc::now(),
+                });
             }
             if let Err(e) =
                 execute_real_batch_actor(&batch_id, page_chunk, &context, app_config, site_status)
@@ -2808,6 +2817,15 @@ async fn execute_session_actor_with_execution_plan(
                             final_failure: true,
                             timestamp: Utc::now(),
                         });
+                        // Also emit native PageLifecycle failed
+                        let _ = actor_event_tx.send(AppEvent::PageLifecycle {
+                            session_id: execution_plan.session_id.clone(),
+                            batch_id: Some(batch_id.clone()),
+                            page_number: *p,
+                            status: "failed".to_string(),
+                            metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: Some("batch_error_no_retry".to_string()) }),
+                            timestamp: Utc::now(),
+                        });
                     }
                 }
                 let _ = actor_event_tx.send(AppEvent::BatchFailed {
@@ -2834,6 +2852,15 @@ async fn execute_session_actor_with_execution_plan(
                     page: *p,
                     batch_id: Some(batch_id.clone()),
                     duration_ms,
+                    timestamp: Utc::now(),
+                });
+                // Also emit native PageLifecycle completed
+                let _ = actor_event_tx.send(AppEvent::PageLifecycle {
+                    session_id: execution_plan.session_id.clone(),
+                    batch_id: Some(batch_id.clone()),
+                    page_number: *p,
+                    status: "fetch_completed".to_string(),
+                    metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: None }),
                     timestamp: Utc::now(),
                 });
                 let registry = session_registry();
