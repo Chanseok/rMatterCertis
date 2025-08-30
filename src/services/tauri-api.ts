@@ -741,6 +741,35 @@ export class TauriApiService {
   }
 
   /**
+   * Unified error subscription (actor-only): listens to actor-bridge anomaly/error-like events.
+   */
+  async subscribeToErrorsUnified(
+    callback: (error: any) => void
+  ): Promise<() => void> {
+    const unsubs: UnlistenFn[] = [];
+    // Actor bridge: anomalies or error/failed variants
+    try {
+      const unActor = await this.subscribeToActorBridgeEvents((name, payload) => {
+        const variant = payload?.variant as string | undefined;
+        if (
+          name === 'actor-persistence-anomaly' ||
+          name === 'actor-validation-anomaly' ||
+          name === 'actor-preflight-diagnostics' ||
+          name === 'actor-session-failed' ||
+          name === 'actor-batch-failed' ||
+          name === 'actor-stage-failed' ||
+          (variant && /anomaly|error|failed/i.test(variant))
+        ) {
+          callback(payload);
+        }
+      });
+      unsubs.push(unActor);
+    } catch {}
+
+    return () => unsubs.forEach((u) => u());
+  }
+
+  /**
    * Unsubscribe from a specific event type
    */
   unsubscribeFromEvent(eventType: string): void {
@@ -768,55 +797,7 @@ export class TauriApiService {
     return Array.from(this.eventListeners.keys());
   }
 
-  // =========================================================================
-  // Convenience Methods
-  // =========================================================================
-
-  /**
-   * Subscribe to all crawling-related events at once
-   */
-  async subscribeToAllCrawlingEvents(callbacks: {
-    onProgress?: (progress: CrawlingProgress) => void;
-    onTaskUpdate?: (status: CrawlingTaskStatus) => void;
-    onStageChange?: (data: { from: string; to: string; message: string }) => void;
-    onError?: (error: { error_id: string; message: string; stage: string; recoverable: boolean }) => void;
-    onDatabaseUpdate?: (stats: DatabaseStats) => void;
-    onCompletion?: (result: CrawlingResult) => void;
-  }): Promise<void> {
-    // Modern equivalent: bridge to actor-* events and call provided callbacks when applicable
-    await this.subscribeToActorBridgeEvents((name, payload) => {
-      switch (name) {
-        case 'actor-progress':
-          callbacks.onProgress?.(payload as CrawlingProgress);
-          break;
-        case 'actor-session-completed':
-          callbacks.onCompletion?.(payload as CrawlingResult);
-          break;
-        case 'actor-stage-started':
-        case 'actor-stage-completed':
-        case 'actor-stage-failed':
-          if (callbacks.onStageChange) {
-            const data = {
-              from: payload?.from || payload?.prev || '',
-              to: payload?.to || payload?.stage_type || payload?.stage_name || '',
-              message: payload?.message || '',
-            } as { from: string; to: string; message: string };
-            callbacks.onStageChange(data);
-          }
-          break;
-        case 'actor-database-stats':
-          callbacks.onDatabaseUpdate?.(payload?.stats ?? payload);
-          break;
-        default:
-          // errors still come via 'crawling-error' legacy channel currently; keep that subscription if requested
-          break;
-      }
-    });
-
-    if (callbacks.onError) {
-      await this.subscribeToErrors(callbacks.onError);
-    }
-  }
+  // Convenience helper removed; prefer explicit actor-bridge subscriptions per feature.
 
   // =========================================================================
   // Configuration Management Commands

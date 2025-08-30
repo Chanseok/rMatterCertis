@@ -127,6 +127,14 @@ impl EventEmitter {
             return Err(EventEmissionError::Disabled);
         }
 
+        // If legacy domain events are disabled, suppress legacy Error emissions
+        // Errors should flow via actor-event bridge (AppEvent variants) instead.
+        if matches!(event, CrawlingEvent::Error { .. }) {
+            if !crate::infrastructure::features::feature_legacy_domain_events() {
+                return Ok(());
+            }
+        }
+
         // 배치 모드인 경우 이벤트 큐에 추가
         if let Some(sender) = &self.event_sender {
             return sender
@@ -135,7 +143,7 @@ impl EventEmitter {
                 .map_err(|_| EventEmissionError::QueueFull);
         }
 
-        let event_name = event.event_name();
+    let event_name = event.event_name();
 
         match self.app_handle.emit(event_name, &event) {
             Ok(()) => {

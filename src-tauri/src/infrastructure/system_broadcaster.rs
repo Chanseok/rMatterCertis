@@ -425,9 +425,13 @@ impl SystemStateBroadcaster {
         Ok(())
     }
 
-    /// 크롤링 에러 이벤트 발송
+    /// 크롤링 에러 이벤트 발송 (레거시)
+    /// DEPRECATED: Prefer ActorEvent/AppEvent via ActorEventBridge. Controlled by MC_FEATURE_LEGACY_DOMAIN_EVENTS.
     pub fn emit_crawling_error(&self, error_message: String) -> anyhow::Result<()> {
-    // This is a generic payload, not a CrawlingEvent; keep always-on
+        // Respect legacy-domain-events feature; if disabled, skip emitting legacy error channel
+        use crate::infrastructure::features::feature_legacy_domain_events;
+        if !feature_legacy_domain_events() { return Ok(()); }
+        // This is a generic payload, not a CrawlingEvent
         let payload = serde_json::json!({
             "error": error_message,
             "timestamp": chrono::Utc::now().to_rfc3339(),

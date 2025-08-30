@@ -240,21 +240,21 @@ class RealtimeManager {
    * 에러 이벤트 구독
    */
   private async subscribeToErrorEvents(): Promise<() => void> {
-    return tauriApi.subscribeToErrors((error) => {
+    return tauriApi.subscribeToErrorsUnified((error) => {
       console.error('❌ 크롤링 에러:', error);
       
       // Backend 에러 이벤트 로깅
       loggingService.error(
-        `Error Event: ${error.message} - Recoverable: ${error.recoverable}`,
+        `Error Event: ${error?.message ?? JSON.stringify(error)} - Recoverable: ${String(error?.recoverable ?? '')}`,
         'RealtimeManager'
       );
       
-      crawlerStore.setError(error.message);
+      crawlerStore.setError(error?.message ?? 'Unknown error');
       
-      if (error.recoverable) {
-        uiStore.showWarning(error.message, '복구 가능한 오류');
+      if (error?.recoverable) {
+        uiStore.showWarning(error?.message ?? 'Recoverable error', '복구 가능한 오류');
       } else {
-        uiStore.showError(error.message, '치명적 오류');
+        uiStore.showError(error?.message ?? 'Fatal error', '치명적 오류');
       }
       
       this.updateEventStats('error');
