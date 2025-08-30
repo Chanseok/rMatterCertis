@@ -36,7 +36,9 @@ export function useSessionEventStream(
   mergeStatus: (updater: (prev: StatusLike | null) => StatusLike | null) => void,
   opts: UseSessionEventStreamOptions = {}
 ) {
-  const throttleMs = opts.throttleMs ?? 250;
+  // Lower default throttle for snappier UI; allow override via env
+  const envThrottle = Number((import.meta as any).env?.VITE_EVENT_THROTTLE_MS ?? '0');
+  const throttleMs = opts.throttleMs ?? (envThrottle > 0 ? envThrottle : 80);
   const liveWindowMs = opts.liveWindowMs ?? 5000;
   const debug = opts.debug ?? false;
   const [lastEventTs, setLastEventTs] = createSignal<number | null>(null);

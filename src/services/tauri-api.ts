@@ -1057,14 +1057,17 @@ export class TauriApiService {
     concurrencyLimit?: number;
   }): Promise<string> {
     try {
-      console.log('🎭 Starting Actor-based crawling (simulated)...', config);
-      
-      // For now, simulate actor system by calling existing crawling with enhanced events
+      const enableSim = (import.meta as any).env?.VITE_ENABLE_ACTOR_SIM === 'true';
+      console.log('🎭 Starting Actor-based crawling...', { config, enableSim });
+
+      // Always call real backend entry (if wired); simulation only when explicitly enabled
       const result = await this.startCrawling(config.startPage, config.endPage);
-      
-      // Emit simulated actor events to demonstrate UI integration
-      this.simulateActorSystemEvents(config);
-      
+
+      if (enableSim) {
+        // Emit simulated actor events to demonstrate UI integration (dev only)
+        this.simulateActorSystemEvents(config);
+      }
+
       return result;
     } catch (error) {
       throw new Error(`Failed to start actor-based crawling: ${error}`);
@@ -1076,6 +1079,11 @@ export class TauriApiService {
    * This demonstrates how the real Actor system would emit events
    */
   private simulateActorSystemEvents(config: any): void {
+    const enableSim = (import.meta as any).env?.VITE_ENABLE_ACTOR_SIM === 'true';
+    if (!enableSim) {
+      console.debug('🎭 Actor System simulation disabled (VITE_ENABLE_ACTOR_SIM!=true)');
+      return;
+    }
     console.log('🎭 Simulating Actor System events for UI integration...');
     
     // Simulate session start
@@ -1170,7 +1178,13 @@ export class TauriApiService {
     onBatchCompleted?: (data: any) => void;
     onSessionCompleted?: (data: any) => void;
   }): Promise<() => void> {
+    const enableSim = (import.meta as any).env?.VITE_ENABLE_ACTOR_SIM === 'true';
     const eventListeners: Array<() => void> = [];
+
+    if (!enableSim) {
+      console.debug('[ActorSim] subscribeToActorSystemEvents ignored (simulation disabled)');
+      return () => {};
+    }
 
     if (callbacks.onSessionStarted) {
       const handler = (event: any) => callbacks.onSessionStarted!(event.detail);
