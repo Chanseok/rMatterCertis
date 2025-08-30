@@ -5,8 +5,8 @@ const EVENT_NAMES = [
   'actor-event', // unified stream (when generalized-only flag is ON)
   'actor-session-started','actor-session-completed','actor-session-failed','actor-session-report',
   'actor-batch-started','actor-batch-completed','actor-batch-failed','actor-batch-report',
-  'actor-page-task-started','actor-page-task-completed','actor-page-task-failed',
-  'actor-product-lifecycle','actor-product-lifecycle-group','actor-detail-concurrency-downshifted',
+  // page-task-* removed; prefer lifecycle
+  'actor-task-lifecycle','actor-product-lifecycle','actor-product-lifecycle-group','actor-detail-concurrency-downshifted',
   'actor-progress','actor-phase-started','actor-phase-completed','actor-phase-aborted',
   'crawling-progress'
 ];

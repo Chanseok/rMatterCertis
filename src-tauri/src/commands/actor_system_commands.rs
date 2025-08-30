@@ -7,7 +7,7 @@ use crate::crawl_engine::actor_event_bridge::start_actor_event_bridge;
 use crate::crawl_engine::actors::SessionActor;
 use crate::crawl_engine::actors::contract::ACTOR_CONTRACT_VERSION;
 use crate::crawl_engine::actors::types::{
-    BatchConfig, CrawlPhase, CrawlingConfig, ExecutionPlan, PageRange, SessionSummary, SimpleMetrics,
+    BatchConfig, CrawlPhase, CrawlingConfig, ExecutionPlan, PageRange, SessionSummary, SimpleMetrics, TaskKind,
 };
 use crate::crawl_engine::channels::types::ActorCommand; // 올바른 ActorCommand 사용
 use crate::crawl_engine::channels::types::AppEvent;
@@ -2759,20 +2759,25 @@ async fn execute_session_actor_with_execution_plan(
             let mut per_page_start: HashMap<u32, std::time::Instant> = HashMap::new();
             for p in page_chunk {
                 per_page_start.insert(*p, std::time::Instant::now());
-                if crate::infrastructure::features::feature_emit_pagetask_legacy() {
-                    let _ = actor_event_tx.send(AppEvent::PageTaskStarted {
-                        session_id: execution_plan.session_id.clone(),
-                        page: *p,
-                        batch_id: Some(batch_id.clone()),
-                        timestamp: Utc::now(),
-                    });
-                }
-                // Also emit native PageLifecycle (additive)
+                // Emit native PageLifecycle
                 let _ = actor_event_tx.send(AppEvent::PageLifecycle {
                     session_id: execution_plan.session_id.clone(),
                     batch_id: Some(batch_id.clone()),
                     page_number: *p,
                     status: "fetch_started".to_string(),
+                    metrics: None,
+                    timestamp: Utc::now(),
+                });
+                // Emit native TaskLifecycle (page) started
+                let _ = actor_event_tx.send(AppEvent::TaskLifecycle {
+                    session_id: execution_plan.session_id.clone(),
+                    batch_id: Some(batch_id.clone()),
+                    task_kind: TaskKind::Page,
+                    page_number: Some(*p),
+                    product_ref: None,
+                    status: "fetch_started".to_string(),
+                    retry: None,
+                    duration_ms: None,
                     metrics: None,
                     timestamp: Utc::now(),
                 });
@@ -2810,23 +2815,25 @@ async fn execute_session_actor_with_execution_plan(
                                 rec.2 = now;
                             })
                             .or_insert((1, now, now));
-                        // 페이지 실패 이벤트 (final_failure=true)
-                        if crate::infrastructure::features::feature_emit_pagetask_legacy() {
-                            let _ = actor_event_tx.send(AppEvent::PageTaskFailed {
-                                session_id: execution_plan.session_id.clone(),
-                                page: *p,
-                                batch_id: Some(batch_id.clone()),
-                                error: err_s,
-                                final_failure: true,
-                                timestamp: Utc::now(),
-                            });
-                        }
-                        // Also emit native PageLifecycle failed
+                        // Emit native PageLifecycle failed
                         let _ = actor_event_tx.send(AppEvent::PageLifecycle {
                             session_id: execution_plan.session_id.clone(),
                             batch_id: Some(batch_id.clone()),
                             page_number: *p,
                             status: "failed".to_string(),
+                            metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: Some("batch_error_no_retry".to_string()) }),
+                            timestamp: Utc::now(),
+                        });
+                        // Emit native TaskLifecycle (page) failed
+                        let _ = actor_event_tx.send(AppEvent::TaskLifecycle {
+                            session_id: execution_plan.session_id.clone(),
+                            batch_id: Some(batch_id.clone()),
+                            task_kind: TaskKind::Page,
+                            page_number: Some(*p),
+                            product_ref: None,
+                            status: "failed".to_string(),
+                            retry: None,
+                            duration_ms: None,
                             metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: Some("batch_error_no_retry".to_string()) }),
                             timestamp: Utc::now(),
                         });
@@ -2851,21 +2858,25 @@ async fn execute_session_actor_with_execution_plan(
                     .get(p)
                     .map(|t| t.elapsed().as_millis() as u64)
                     .unwrap_or_default();
-                if crate::infrastructure::features::feature_emit_pagetask_legacy() {
-                    let _ = actor_event_tx.send(AppEvent::PageTaskCompleted {
-                        session_id: execution_plan.session_id.clone(),
-                        page: *p,
-                        batch_id: Some(batch_id.clone()),
-                        duration_ms,
-                        timestamp: Utc::now(),
-                    });
-                }
-                // Also emit native PageLifecycle completed
+                // Emit native PageLifecycle completed
                 let _ = actor_event_tx.send(AppEvent::PageLifecycle {
                     session_id: execution_plan.session_id.clone(),
                     batch_id: Some(batch_id.clone()),
                     page_number: *p,
                     status: "fetch_completed".to_string(),
+                    metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: None }),
+                    timestamp: Utc::now(),
+                });
+                // Emit native TaskLifecycle (page) completed
+                let _ = actor_event_tx.send(AppEvent::TaskLifecycle {
+                    session_id: execution_plan.session_id.clone(),
+                    batch_id: Some(batch_id.clone()),
+                    task_kind: TaskKind::Page,
+                    page_number: Some(*p),
+                    product_ref: None,
+                    status: "fetch_completed".to_string(),
+                    retry: None,
+                    duration_ms: Some(duration_ms),
                     metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: None }),
                     timestamp: Utc::now(),
                 });

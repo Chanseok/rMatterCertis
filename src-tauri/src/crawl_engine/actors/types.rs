@@ -106,7 +106,8 @@ pub enum ActorCommand {
 /// 2. 필드 제거/의미 변경 금지 → 새 필드/이벤트로 교체 후 기존 Deprecated 유지
 /// 3. 버전 증가 조건: UI 분기 필수 스키마 변화(추가 필드가 breaking semantic) 또는 요약(summary) 구조 확장
 /// 4. TS `actorContractVersion.ts` 와 값 동기화 필요
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum AppEvent {
     // === 세션 이벤트 ===
     SessionStarted {
@@ -371,37 +372,30 @@ pub enum AppEvent {
         timestamp: DateTime<Utc>,
     },
 
-    // === (Additive v1) Granular Page / Detail Task Events ===
-    /// [DEPRECATED] 개별 페이지 처리 시작 (`ListPages` phase 범위 내)
-    /// - Use `PageLifecycle` instead. This variant remains for legacy pipelines.
-    PageTaskStarted {
-        session_id: String,
-        page: u32,
-        batch_id: Option<String>,
-        timestamp: DateTime<Utc>,
-    },
-    /// [DEPRECATED] 개별 페이지 처리 성공
-    /// - Use `PageLifecycle` with status transitions instead.
-    PageTaskCompleted {
-        session_id: String,
-        page: u32,
-        batch_id: Option<String>,
-        duration_ms: u64,
-        timestamp: DateTime<Utc>,
-    },
-    /// [DEPRECATED] 개별 페이지 처리 실패 (재시도 후 최종 실패 또는 중간 실패)
-    /// - Use `PageLifecycle` with status="failed" instead.
-    PageTaskFailed {
-        session_id: String,
-        page: u32,
-        batch_id: Option<String>,
-        error: String,
-        final_failure: bool,
-        timestamp: DateTime<Utc>,
-    },
-    // DetailTask* removed: use ProductLifecycle/ProductLifecycleGroup instead
+    // DetailTask* removed previously: use ProductLifecycle/ProductLifecycleGroup instead
 
     // === Fine-grained lifecycle events (additive v2) ===
+    /// Unified task lifecycle that covers both page and product tasks (additive v2.1)
+    TaskLifecycle {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
+        task_kind: TaskKind, // page | product
+        /// Origin page number if known
+        #[serde(skip_serializing_if = "Option::is_none")]
+        page_number: Option<u32>,
+        /// Product reference (URL or key) when task_kind is Product
+        #[serde(skip_serializing_if = "Option::is_none")]
+        product_ref: Option<String>,
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        retry: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metrics: Option<SimpleMetrics>,
+        timestamp: DateTime<Utc>,
+    },
     /// Page lifecycle state transition (queued -> `fetch_started` -> `fetch_completed` | failed -> `urls_extracted`)
     PageLifecycle {
         session_id: String,
@@ -573,7 +567,8 @@ pub enum AppEvent {
 }
 
 /// Compact anomaly entry for `SyncCompleted` summary
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct SyncAnomalyEntry {
     pub page_id: i32,
     pub count: i64,
@@ -581,7 +576,8 @@ pub struct SyncAnomalyEntry {
 }
 
 // Lightweight TS-friendly metrics container (additive, extensible)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(tag = "kind", content = "data")]
 pub enum SimpleMetrics {
     Page {
@@ -598,6 +594,14 @@ pub enum SimpleMetrics {
         key: String,
         value: String,
     },
+}
+
+/// Unified task kind for TaskLifecycle
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum TaskKind {
+    Page,
+    Product,
 }
 
 /// High-level crawl phases (extensible)

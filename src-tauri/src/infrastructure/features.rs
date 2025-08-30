@@ -5,7 +5,7 @@
 //! - `MC_FEATURE_STAGE_EXECUTOR_TEMPLATE` (deprecated, permanently enabled)
 //! - `MC_FEATURE_EVENTS_GENERALIZED_ONLY` (default: false)
 //! - `MC_FEATURE_LEGACY_DOMAIN_EVENTS` (default: false) — emits legacy `domain::events::CrawlingEvent` payloads
-//! - `MC_FEATURE_EMIT_PAGETASK_LEGACY` (default: true) — emit AppEvent::PageTask* alongside PageLifecycle
+//! - `MC_FEATURE_EMIT_PAGETASK_LEGACY` (removed) — PageTask* variants were deleted; always use PageLifecycle
 //!
 //! Values: "1"/"true" enable, "0"/"false" disable (case-insensitive)
 
@@ -70,12 +70,7 @@ pub fn feature_legacy_domain_events() -> bool {
     read_flag("MC_FEATURE_LEGACY_DOMAIN_EVENTS", false)
 }
 
-/// Emit legacy PageTask* AppEvents (for backward compatibility with FE listeners)
-/// Default: true (current behavior). Flip to false to stop emitting PageTask*.
-#[must_use]
-pub fn feature_emit_pagetask_legacy() -> bool {
-    read_flag("MC_FEATURE_EMIT_PAGETASK_LEGACY", true)
-}
+// PageTask* legacy emission removed. Always emit PageLifecycle only.
 
 #[cfg(test)]
 mod tests {
@@ -91,7 +86,7 @@ mod tests {
         assert!(feature_stage_executor_template());
     assert!(!feature_events_generalized_only());
     assert!(!feature_legacy_domain_events());
-    assert!(feature_emit_pagetask_legacy());
+    // pagetask legacy removed
     }
 
     #[test]
@@ -102,13 +97,13 @@ mod tests {
         map.insert("MC_FEATURE_STAGE_EXECUTOR_TEMPLATE".into(), "false".into()); // ignored now
         map.insert("MC_FEATURE_EVENTS_GENERALIZED_ONLY".into(), "0".into());
     map.insert("MC_FEATURE_LEGACY_DOMAIN_EVENTS".into(), "true".into());
-    map.insert("MC_FEATURE_EMIT_PAGETASK_LEGACY".into(), "0".into());
+    // pagetask legacy removed
         drop(map);
 
     assert!(feature_http_client_unified());
     assert!(feature_stage_executor_template());
     assert!(!feature_events_generalized_only());
     assert!(feature_legacy_domain_events());
-    assert!(!feature_emit_pagetask_legacy());
+    // pagetask legacy removed
     }
 }

@@ -23,7 +23,7 @@ use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataE
 use crate::crawl_engine::actors::traits::{Actor, ActorHealth, ActorStatus, ActorType};
 use crate::crawl_engine::actors::types::{
     ActorCommand, ActorError, AppEvent, SimpleMetrics, StageError, StageItemResult,
-    StageItemType, StageResult, StageType,
+    StageItemType, StageResult, StageType, TaskKind,
 };
 use crate::crawl_engine::channels::types::StageItem;
 use crate::crawl_engine::integrated_context::AppContext;
@@ -968,6 +968,21 @@ impl StageActor {
                                     let origin_page = purl.page_id as u32;
                                     // legacy DetailTaskStarted emission removed (use ProductLifecycle "detail_started")
                                     // started
+                                    // Native TaskLifecycle (product) started
+                                    if let Err(e) = ctx_clone.emit_event(AppEvent::TaskLifecycle {
+                                        session_id: session_id_clone.clone(),
+                                        batch_id: batch_id_opt.clone(),
+                                        task_kind: TaskKind::Product,
+                                        page_number: Some(origin_page),
+                                        product_ref: Some(prod_ref.clone()),
+                                        status: "detail_started".into(),
+                                        retry: None,
+                                        duration_ms: None,
+                                        metrics: None,
+                                        timestamp: Utc::now(),
+                                    }) {
+                                        error!("TaskLifecycle detail_started emit failed ref={} err={}", prod_ref, e);
+                                    }
                                     if let Err(e) =
                                         ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                             session_id: session_id_clone.clone(),
@@ -1008,9 +1023,23 @@ impl StageActor {
                                                     prod_ref, e
                                                 );
                                             }
+                                            // Native TaskLifecycle (product) completed
+                                            if let Err(e) = ctx_clone.emit_event(AppEvent::TaskLifecycle {
+                                                session_id: session_id_clone.clone(),
+                                                batch_id: batch_id_opt.clone(),
+                                                task_kind: TaskKind::Product,
+                                                page_number: Some(origin_page),
+                                                product_ref: Some(prod_ref.clone()),
+                                                status: "detail_completed".into(),
+                                                retry: None,
+                                                duration_ms: Some(latency),
+                                                metrics: None,
+                                                timestamp: Utc::now(),
+                                            }) {
+                                                error!("TaskLifecycle detail_completed emit failed ref={} err={}", prod_ref, e);
+                                            }
                                             // legacy DetailTaskCompleted emission removed (use ProductLifecycle "detail_completed")
-                                            if let Err(e) =
-                                                ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                            if let Err(e) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                                     session_id: session_id_clone.clone(),
                                                     batch_id: batch_id_opt.clone(),
                                                     page_number: Some(origin_page),
@@ -1049,9 +1078,23 @@ impl StageActor {
                                                     prod_ref, emit_err
                                                 );
                                             }
+                                            // Native TaskLifecycle (product) failed
+                                            if let Err(emit_err) = ctx_clone.emit_event(AppEvent::TaskLifecycle {
+                                                session_id: session_id_clone.clone(),
+                                                batch_id: batch_id_opt.clone(),
+                                                task_kind: TaskKind::Product,
+                                                page_number: Some(origin_page),
+                                                product_ref: Some(prod_ref.clone()),
+                                                status: "detail_failed".into(),
+                                                retry: None,
+                                                duration_ms: Some(latency),
+                                                metrics: Some(SimpleMetrics::Product { fields: None, size_bytes: None, error: Some(format!("{:?}", e)) }),
+                                                timestamp: Utc::now(),
+                                            }) {
+                                                error!("TaskLifecycle detail_failed emit failed ref={} err={}", prod_ref, emit_err);
+                                            }
                                             // legacy DetailTaskFailed emission removed (use ProductLifecycle "detail_failed")
-                                            if let Err(emit_err) =
-                                                ctx_clone.emit_event(AppEvent::ProductLifecycle {
+                                            if let Err(emit_err) = ctx_clone.emit_event(AppEvent::ProductLifecycle {
                                                     session_id: session_id_clone.clone(),
                                                     batch_id: batch_id_opt.clone(),
                                                     page_number: Some(origin_page),

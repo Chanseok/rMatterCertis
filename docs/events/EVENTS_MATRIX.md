@@ -15,9 +15,6 @@ This is a living map of event variants, their producers, and intended consumers,
 - StageStarted / StageCompleted
   - Producers: StageActor
   - Consumers: UI per-stage status and timing, logs
-- PageTaskStarted / PageTaskCompleted / PageTaskFailed
-  - Producers: StageActor and callers (older path)
-  - Consumers: UI item-level visualization (legacy path), logs
 - PageLifecycle { status: fetch_started|fetched|parse_started|parsed|upserted|failed, ... }
   - Producers: StageActor (new path)
   - Consumers: UI item-level visualization (preferred), logs
@@ -28,7 +25,6 @@ Other channels
   - Consumers: File logger (events.log), not UI
 
 ## Duplications/ambiguities
-- PageTask* overlaps PageLifecycle. Prefer PageLifecycle (richer states). Keep PageTask* temporarily for transition.
 - Phase* overlaps coarse session/stage milestones; decide to retain with constrained role or deprecate.
 
 ## Target intents
@@ -38,7 +34,7 @@ Other channels
 
 ## Action checklist (by milestone)
 - M1 Docs: finalize taxonomy and this matrix; add comments to `actors/types.rs` (no behavior change).
-- M2 De-dup: deprecate PageTask* in comments, prefer PageLifecycle everywhere; ensure bridge does not double-emit.
+- M2 De-dup: PageTask* removed. Prefer PageLifecycle everywhere; bridge emits lifecycle only.
 - M3 Retire CrawlingEvent: remove conversions and replace infra broadcaster usage with AppEvent; clean generated TS types.
 - M4 Phase decision: retain and rename as OrchestrationPhase* with documented scope, or deprecate.
 - M5 PlanReady: ensure pre-run plan emission with totals and estimate.

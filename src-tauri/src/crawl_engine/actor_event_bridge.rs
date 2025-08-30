@@ -131,9 +131,12 @@ impl ActorEventBridge {
             }
             // Specialized concise lines per important variants to improve ProductDetail visibility
             match &actor_event {
-                AppEvent::ProductLifecycle {
+                // Native TaskLifecycle is now emitted directly by actors; no synthetic re-emit needed
+                AppEvent::ProductLifecycle { .. } => {}
+                AppEvent::TaskLifecycle {
                     session_id,
                     batch_id,
+                    task_kind,
                     page_number,
                     product_ref,
                     status,
@@ -141,10 +144,11 @@ impl ActorEventBridge {
                     ..
                 } => {
                     tracing::info!(target: "actor-event",
-                        "[ProductLifecycle] status={} ref={} page={:?} batch={:?} dur_ms={:?} session={}",
-                        status, product_ref, page_number, batch_id, duration_ms, session_id
+                        "[TaskLifecycle] kind={:?} status={} page={:?} ref={:?} dur_ms={:?} batch={:?} session={}",
+                        task_kind, status, page_number, product_ref, duration_ms, batch_id, session_id
                     );
                 }
+                // ProductLifecycle logging is covered by synthetic TaskLifecycle above; keep concise log via that path
                 AppEvent::ProductLifecycleGroup {
                     session_id,
                     batch_id,
@@ -373,9 +377,8 @@ impl ActorEventBridge {
             AppEvent::PhaseAborted { .. } => "actor-phase-aborted",
             AppEvent::ShutdownRequested { .. } => "actor-shutdown-requested",
             AppEvent::ShutdownCompleted { .. } => "actor-shutdown-completed",
-            AppEvent::PageTaskStarted { .. } => "actor-page-task-started",
-            AppEvent::PageTaskCompleted { .. } => "actor-page-task-completed",
-            AppEvent::PageTaskFailed { .. } => "actor-page-task-failed",
+            // PageTask* removed; prefer PageLifecycle
+            AppEvent::TaskLifecycle { .. } => "actor-task-lifecycle",
             // DetailTask* and detail concurrency downshift events removed
             AppEvent::StageItemStarted { .. } => "actor-stage-item-started",
             AppEvent::StageItemCompleted { .. } => "actor-stage-item-completed",
@@ -436,73 +439,49 @@ impl ActorEventBridge {
         self.is_active.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// PageTaskStarted/Completed/Failed 로부터 actor-page-lifecycle 합성 이벤트 생성
-    /// New pipeline(StageActor)에서 이미 `PageLifecycle` 이벤트를 직접 방출하는 경우에는 합성하지 않음
+    // PageTask* removed; synthetic conversion no longer needed. If needed later, we could synthesize TaskLifecycle from Page/Product lifecycles.
     async fn create_synthetic_page_lifecycle(
         &self,
-        event: &AppEvent,
+        _event: &AppEvent,
     ) -> Option<(String, serde_json::Value)> {
-        use serde_json::json;
+        None
+    }
+
+    // Build synthetic TaskLifecycle payload from PageLifecycle/ProductLifecycle
+    fn create_task_lifecycle_payload(&self, event: &AppEvent) -> Option<serde_json::Value> {
+    use serde_json::{Map, Value};
         match event {
-            AppEvent::PageTaskStarted {
-                session_id,
-                page,
-                batch_id,
-                ..
-            } => {
-                if self.is_recent_page(session_id, batch_id.as_ref(), *page).await { return None; }
-                Some((
-                "actor-page-lifecycle".to_string(),
-                json!({
-                    "variant": "PageLifecycle",
-                    "session_id": session_id,
-                    "batch_id": batch_id,
-                    "page_number": page,
-                    "status": "fetch_started",
-                    "metrics": serde_json::Value::Null,
-                }),
-            ))
+            AppEvent::PageLifecycle { session_id, batch_id, page_number, status, metrics, timestamp } => {
+                let mut obj = Map::new();
+                obj.insert("variant".into(), Value::String("TaskLifecycle".into()));
+                obj.insert("session_id".into(), Value::String(session_id.clone()));
+                obj.insert("batch_id".into(), batch_id.as_ref().map(|s| Value::String(s.clone())).unwrap_or(Value::Null));
+                obj.insert("task_kind".into(), Value::String("Page".into()));
+                obj.insert("page_number".into(), Value::Number((*page_number).into()));
+                obj.insert("product_ref".into(), Value::Null);
+                obj.insert("status".into(), Value::String(status.clone()));
+                obj.insert("retry".into(), Value::Null);
+                obj.insert("duration_ms".into(), Value::Null);
+                let m = metrics.as_ref().map(|m| serde_json::to_value(m).unwrap_or(Value::Null)).unwrap_or(Value::Null);
+                obj.insert("metrics".into(), m);
+                obj.insert("timestamp".into(), Value::String(timestamp.to_rfc3339()));
+                Some(Value::Object(obj))
             }
-            AppEvent::PageTaskCompleted {
-                session_id,
-                page,
-                batch_id,
-                duration_ms,
-                ..
-            } => {
-                if self.is_recent_page(session_id, batch_id.as_ref(), *page).await { return None; }
-                Some((
-                "actor-page-lifecycle".to_string(),
-                json!({
-                    "variant": "PageLifecycle",
-                    "session_id": session_id,
-                    "batch_id": batch_id,
-                    "page_number": page,
-                    "status": "fetch_completed",
-                    "metrics": {"kind":"Page", "data": {"url_count": serde_json::Value::Null, "scheduled_details": serde_json::Value::Null, "error": serde_json::Value::Null}},
-                    "duration_ms": duration_ms,
-                }),
-            ))
-            }
-            AppEvent::PageTaskFailed {
-                session_id,
-                page,
-                batch_id,
-                error,
-                ..
-            } => {
-                if self.is_recent_page(session_id, batch_id.as_ref(), *page).await { return None; }
-                Some((
-                "actor-page-lifecycle".to_string(),
-                json!({
-                    "variant": "PageLifecycle",
-                    "session_id": session_id,
-                    "batch_id": batch_id,
-                    "page_number": page,
-                    "status": "failed",
-                    "metrics": {"kind":"Page", "data": {"url_count": serde_json::Value::Null, "scheduled_details": serde_json::Value::Null, "error": error}},
-                }),
-            ))
+            AppEvent::ProductLifecycle { session_id, batch_id, page_number, product_ref, status, retry, duration_ms, metrics, timestamp } => {
+                let mut obj = Map::new();
+                obj.insert("variant".into(), Value::String("TaskLifecycle".into()));
+                obj.insert("session_id".into(), Value::String(session_id.clone()));
+                obj.insert("batch_id".into(), batch_id.as_ref().map(|s| Value::String(s.clone())).unwrap_or(Value::Null));
+                obj.insert("task_kind".into(), Value::String("Product".into()));
+                obj.insert("page_number".into(), page_number.map(|n| Value::Number(n.into())).unwrap_or(Value::Null));
+                obj.insert("product_ref".into(), Value::String(product_ref.clone()));
+                obj.insert("status".into(), Value::String(status.clone()));
+                obj.insert("retry".into(), retry.map(|n| Value::Number(n.into())).unwrap_or(Value::Null));
+                obj.insert("duration_ms".into(), duration_ms.map(|n| Value::Number(n.into())).unwrap_or(Value::Null));
+                let m = metrics.as_ref().map(|m| serde_json::to_value(m).unwrap_or(Value::Null)).unwrap_or(Value::Null);
+                obj.insert("metrics".into(), m);
+                obj.insert("timestamp".into(), Value::String(timestamp.to_rfc3339()));
+                Some(Value::Object(obj))
             }
             _ => None,
         }

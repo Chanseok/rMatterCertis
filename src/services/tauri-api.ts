@@ -614,11 +614,8 @@ export class TauriApiService {
       'actor-phase-aborted',
       'actor-shutdown-requested',
       'actor-shutdown-completed',
-      // Page & Detail lifecycle (Stage2/3)
-      'actor-page-task-started',
-      'actor-page-task-completed',
-      'actor-page-task-failed',
-  // detail-task-* removed in favor of product lifecycle events
+  // Page & Detail lifecycle (Stage2/3)
+  // page-task-* removed in favor of consolidated page-lifecycle events
       'actor-detail-concurrency-downshifted',
       'actor-stage-item-started',
       'actor-stage-item-completed',

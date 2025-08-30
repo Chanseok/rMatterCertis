@@ -89,7 +89,8 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 
 # 🔄 Type Generation for Frontend
-ts-rs = { version = "8.0", features = ["chrono-impl", "uuid-impl"] }
+# Upgrade ts-rs for improved serde attribute support and silence unsupported serde warnings
+ts-rs = { version = "11.0", features = ["chrono-impl", "uuid-impl", "no-serde-warnings"] }
 
 # ⚡ Async Runtime & Concurrency
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "fs", "time", "signal"] }

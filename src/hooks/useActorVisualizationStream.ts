@@ -45,9 +45,6 @@ function normalize(raw: any): VisualizationEvent | null {
     case 'actor-batch-completed': return { ...base, type: 'batch' } as VisualizationEvent;
     case 'actor-stage-started': return { ...base, type: 'stage', stageType: raw.stage_type } as VisualizationEvent;
     case 'actor-stage-completed': return { ...base, type: 'stage', stageType: raw.stage_type } as VisualizationEvent;
-    case 'actor-page-task-started': return { ...base, type: 'page', page: raw.page } as VisualizationEvent;
-    case 'actor-page-task-completed': return { ...base, type: 'page', page: raw.page } as VisualizationEvent;
-    case 'actor-page-task-failed': return { ...base, type: 'page', page: raw.page } as VisualizationEvent;
     // Consolidated lifecycle (preferred in new pipeline): map to page type
     case 'actor-page-lifecycle': {
       const status = (raw.status || '').toString().toLowerCase();
