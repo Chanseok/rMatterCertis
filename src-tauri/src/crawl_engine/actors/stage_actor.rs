@@ -172,7 +172,6 @@ impl StageItemExt for StageItem {
     }
 }
 
-#[allow(dead_code)]
 impl StageActor {
     /// Before-each-item hook (middleware slot): emit logs/metrics or modify context in future.
     async fn before_each_item_hook(
@@ -231,65 +230,6 @@ impl StageActor {
                 entry.sum_latency_ms = 0;
                 entry.success = 0;
                 entry.failure = 0;
-            }
-        }
-    }
-    /// 공통 재시도 래퍼 (Exponential Backoff + Jitter) with telemetry
-    async fn retry_with_backoff<T, Fut, Op>(
-        &self,
-        context: &AppContext,
-        stage_type: StageType,
-        start_attempt: u32,
-        max_attempts: u32,
-        base_delay_ms: u64,
-        max_delay_ms: u64,
-        op: Op,
-    ) -> (Result<T, String>, u32)
-    where
-        Op: Fn() -> Fut,
-        Fut: std::future::Future<Output = Result<T, String>>,
-    {
-        let mut attempt = start_attempt;
-        loop {
-            if context.is_cancelled() {
-                return (Err("Operation cancelled".to_string()), attempt);
-            }
-
-            match op().await {
-                Ok(val) => return (Ok(val), attempt),
-                Err(err) => {
-                    if attempt < max_attempts {
-                        let next = attempt + 1;
-                        let _ = context.emit_event(AppEvent::StageRetrying {
-                            stage_type: stage_type.clone(),
-                            session_id: context.session_id.clone(),
-                            batch_id: Some(self.batch_id.clone()),
-                            attempt: next,
-                            max_attempts,
-                            reason: Some(err.clone()),
-                            timestamp: Utc::now(),
-                        });
-
-                        // exponential backoff: base * 2^(next-1)
-                        let factor = 1u64.checked_shl(next.saturating_sub(1)).unwrap_or(u64::MAX);
-                        let exp = base_delay_ms.saturating_mul(factor);
-                        let capped = std::cmp::min(exp, max_delay_ms);
-                        let jitter = if capped >= 10 {
-                            fastrand::u64(0..=(capped / 5))
-                        } else {
-                            0
-                        };
-                        let delay = capped.saturating_add(jitter);
-                        warn!(
-                            "🔁 {:?} attempt {}/{} after {}ms (reason: {})",
-                            stage_type, next, max_attempts, delay, err
-                        );
-                        tokio::time::sleep(Duration::from_millis(delay)).await;
-                        attempt = next;
-                        continue;
-                    }
-                    return (Err(err), attempt);
-                }
             }
         }
     }
@@ -358,7 +298,6 @@ impl StageActor {
             http_client: Some(deps.http_client),
             data_extractor: Some(deps.data_extractor),
             app_config: Some(deps.app_config),
-            // 정책은 이후 execute_real_database_storage 에서 사용하기 위해 필요 시 전파
             site_total_pages_hint: None,
             products_on_last_page_hint: None,
             strategy_factory,
@@ -366,144 +305,11 @@ impl StageActor {
         }
     }
 
-    /// Inject a `StageLogic` factory (strategy dispatch). Safe no-op if not provided.
-    pub fn with_strategy_factory(
-        mut self,
-        factory: Arc<dyn StageLogicFactory + Send + Sync>,
-    ) -> Self {
-        self.strategy_factory = factory;
-        self
-    }
-
-    // (Early duplicate progress helpers removed; canonical versions near file end)
-
-    /// 🔥 Phase 1: 실제 서비스들과 함께 `StageActor` 생성
-    ///
-    /// # Arguments
-    /// * `actor_id` - Actor 고유 식별자
-    /// * `batch_id` - 배치 식별자
-    /// * `http_client` - HTTP 클라이언트
-    /// * `data_extractor` - 데이터 추출기
-    /// * `product_repo` - 제품 레포지토리
-    /// * `app_config` - 앱 설정
-    ///
-    /// # Returns
-    /// * `Self` - 서비스가 주입된 `StageActor` 인스턴스
-    #[must_use]
-    #[deprecated(note = "Use StageActor::new_with_deps with StageDeps for proper DI")]
-    pub fn new_with_services(
-        actor_id: String,
-        batch_id: String,
-        http_client: Arc<HttpClient>,
-        data_extractor: Arc<MatterDataExtractor>,
-        product_repo: Arc<IntegratedProductRepository>,
-        app_config: AppConfig,
-    ) -> Self {
-        // Arc에서 클론을 통해 실제 값 추출
-        let http_client_inner = (*http_client).clone();
-        let data_extractor_inner = (*data_extractor).clone();
-
-        // 실제 서비스들을 사용하여 컬렉터 생성 (ServiceBasedBatchCrawlingEngine 패턴 참조)
-        let status_checker: Option<Arc<dyn StatusChecker>> =
-            Some(Arc::new(StatusCheckerImpl::with_product_repo(
-                http_client_inner.clone(),
-                data_extractor_inner.clone(),
-                app_config.clone(),
-                Arc::clone(&product_repo),
-            )));
-
-        // ProductListCollector 생성
-        let list_collector_config = CollectorConfig {
-            max_concurrent: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-            concurrency: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-            delay_between_requests: Duration::from_millis(app_config.user.request_delay_ms),
-            delay_ms: app_config.user.request_delay_ms,
-            batch_size: app_config.user.batch.batch_size,
-            retry_attempts: app_config.user.crawling.workers.max_retries,
-            retry_max: app_config.user.crawling.workers.max_retries,
-        };
-
-        // StatusCheckerImpl을 다시 생성 (ProductListCollector가 StatusCheckerImpl을 요구)
-        let status_checker_for_list = Arc::new(StatusCheckerImpl::with_product_repo(
-            http_client_inner.clone(),
-            data_extractor_inner.clone(),
-            app_config.clone(),
-            Arc::clone(&product_repo),
-        ));
-
-        let product_list_collector: Option<Arc<dyn ProductListCollector>> =
-            Some(Arc::new(ProductListCollectorImpl::new(
-                Arc::new(http_client_inner.clone()),
-                Arc::new(data_extractor_inner.clone()),
-                list_collector_config,
-                status_checker_for_list,
-            )));
-
-        // ProductDetailCollector 생성
-        let detail_collector_config = CollectorConfig {
-            max_concurrent: app_config
-                .user
-                .crawling
-                .workers
-                .product_detail_max_concurrent as u32,
-            concurrency: app_config
-                .user
-                .crawling
-                .workers
-                .product_detail_max_concurrent as u32,
-            delay_between_requests: Duration::from_millis(app_config.user.request_delay_ms),
-            delay_ms: app_config.user.request_delay_ms,
-            batch_size: app_config.user.batch.batch_size,
-            retry_attempts: app_config.user.crawling.workers.max_retries,
-            retry_max: app_config.user.crawling.workers.max_retries,
-        };
-
-        let product_detail_collector: Option<Arc<dyn ProductDetailCollector>> =
-            Some(Arc::new(ProductDetailCollectorImpl::new(
-                Arc::new(http_client_inner),
-                Arc::new(data_extractor_inner),
-                detail_collector_config,
-            )));
-
-        Self {
-            actor_id,
-            batch_id,
-            stage_id: None,
-            stage_type: None,
-            state: StageState::Idle,
-            start_time: None,
-            total_items: 0,
-            completed_items: 0,
-            success_count: 0,
-            failure_count: 0,
-            skipped_count: 0,
-            item_results: Vec::new(),
-            // 실제 서비스들 주입
-            status_checker,
-            product_list_collector,
-            product_detail_collector,
-            _product_repo: Some(product_repo),
-            http_client: Some(http_client),
-            data_extractor: Some(data_extractor),
-            app_config: Some(app_config),
-            site_total_pages_hint: None,
-            products_on_last_page_hint: None,
-            strategy_factory: Arc::new(DefaultStageLogicFactory),
-            duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
-        }
-    }
-
     /// `OneShot` Actor 시스템 호환성을 위한 생성자
     ///
-    /// # Arguments
-    /// * `batch_id` - 배치 식별자
-    /// * `config` - 시스템 설정
-    /// * `total_pages` - 총 페이지 수 (선택적)
-    /// * `products_on_last_page` - 마지막 페이지 제품 수 (선택적)
-    ///
-    /// # Returns
-    /// * `Self` - 새로운 `StageActor` 인스턴스
-    #[must_use] pub fn new_with_oneshot(
+    /// 사용처: 간단한 통합 경로(real_crawling_integration 등)
+    #[must_use]
+    pub fn new_with_oneshot(
         batch_id: String,
         _config: Arc<crate::crawl_engine::config::SystemConfig>,
         _total_pages: u32,
@@ -2532,114 +2338,5 @@ impl Actor for StageActor {
 }
 
 impl StageActor {
-    /// 실제 URL에서 `ProductDetail을` 추출하는 헬퍼 함수
-    /// `ServiceBasedBatchCrawlingEngine의` 로직을 참조하여 구현
-    /// 실제 HTTP 요청으로 제품 상세 정보 추출
-    /// `DataValidation` 스테이지에서 `ProductUrls` -> `ProductDetails` 변환에 사용
-    #[allow(dead_code)]
-    async fn extract_product_detail_from_url(
-        &self,
-        url: &str,
-    ) -> Result<crate::domain::product::ProductDetail, ActorError> {
-        // HTTP 클라이언트 확인
-        let http_client = self
-            .http_client
-            .as_ref()
-            .ok_or_else(|| ActorError::RequestFailed("HTTP client not available".to_string()))?;
-
-        // HTTP 클라이언트로 URL에서 HTML 가져오기
-        let response = http_client
-            .fetch_response_with_options(
-                url,
-                &crate::infrastructure::simple_http_client::RequestOptions {
-                    user_agent_override: None, // could be overridden at call site if needed
-                    referer: Some(
-                        crate::infrastructure::config::csa_iot::PRODUCTS_BASE.to_string(),
-                    ),
-                    skip_robots_check: false,
-                    attempt: None,
-                    max_attempts: None,
-                },
-            )
-            .await
-            .map_err(|e| ActorError::RequestFailed(format!("HTTP request failed: {}", e)))?;
-
-        let html_content = response.text().await.map_err(|e| {
-            ActorError::ParsingFailed(format!("Failed to get response text: {}", e))
-        })?;
-
-        if html_content.trim().is_empty() {
-            return Err(ActorError::ParsingFailed(format!(
-                "Empty HTML content from {}",
-                url
-            )));
-        }
-
-        // 데이터 추출기 확인
-        let data_extractor = self
-            .data_extractor
-            .as_ref()
-            .ok_or_else(|| ActorError::ParsingFailed("Data extractor not available".to_string()))?;
-
-        // 데이터 추출기로 HTML 파싱
-        let product_data_json =
-            data_extractor
-                .extract_product_data(&html_content)
-                .map_err(|e| {
-                    ActorError::ParsingFailed(format!("Failed to extract product data: {}", e))
-                })?;
-
-        // JSON에서 필드들을 안전하게 추출
-        let manufacturer = product_data_json
-            .get("manufacturer")
-            .and_then(|v| v.as_str())
-            .map(std::string::ToString::to_string);
-
-        let model = product_data_json
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(std::string::ToString::to_string);
-
-        let certificate_id = product_data_json
-            .get("certificate_id")
-            .and_then(|v| v.as_str())
-            .map(std::string::ToString::to_string);
-
-        let pid = product_data_json
-            .get("pid")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<i32>().ok());
-
-        // ProductDetail 구조체 생성
-        use crate::domain::product::ProductDetail;
-        Ok(ProductDetail {
-            url: url.to_string(),
-            page_id: None,
-            index_in_page: None,
-            id: None,
-            manufacturer,
-            model,
-            device_type: None,
-            certificate_id,
-            certification_date: None,
-            software_version: None,
-            hardware_version: None,
-            firmware_version: None,
-            specification_version: None,
-            vid: None,
-            pid,
-            family_sku: None,
-            family_variant_sku: None,
-            family_id: None,
-            tis_trp_tested: None,
-            transport_interface: None,
-            primary_device_type_id: None,
-            application_categories: None,
-            description: None,
-            compliance_document_url: None,
-            program_type: Some("Matter".to_string()),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        })
-    }
+    // ...existing code...
 }
