@@ -15,16 +15,15 @@ use crate::crawl_engine::services::crawling_integration::{
 use crate::crawl_engine::system_config::SystemConfig;
 use crate::infrastructure::config::AppConfig;
 
-/// 실제 크롤링 통합 서비스
-#[allow(dead_code)] // Phase2: retained for near-term expansion; prune in Phase3 if still unused
+/// 실제 크롤링 통합 서비스를
 pub struct RealCrawlingIntegration {
-    config: Arc<SystemConfig>, // REMOVE_CANDIDATE(if unused in Phase3)
-    app_config: AppConfig,     // REMOVE_CANDIDATE(if unused in Phase3)
+    _config: Arc<SystemConfig>, // currently unused; kept for future expansion
+    _app_config: AppConfig,     // currently unused; kept for future expansion
 }
 
 impl RealCrawlingIntegration {
     #[must_use] pub const fn new(config: Arc<SystemConfig>, app_config: AppConfig) -> Self {
-        Self { config, app_config }
+        Self { _config: config, _app_config: app_config }
     }
 }
 

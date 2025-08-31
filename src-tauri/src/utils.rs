@@ -14,7 +14,6 @@
 /// - 481페이지는:
 ///   - 앞의 4개 제품: pageId=1, indexInPage=3,2,1,0
 ///   - 뒤의 8개 제품: pageId=0, indexInPage=11,10,9,8,7,6,5,4
-#[allow(dead_code)]
 const PRODUCTS_PER_PAGE: usize = 12; // Used later by validation assignment logic
 
 /// 페이지 ID와 인덱스 계산 결과
@@ -28,7 +27,6 @@ pub struct PageIdCalculation {
 #[derive(Debug, Clone)]
 pub struct PageIdCalculator {
     last_page_number: u32,
-    #[allow(dead_code)]
     products_in_last_page: usize,
 }
 

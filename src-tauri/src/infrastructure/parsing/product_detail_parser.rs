@@ -15,7 +15,6 @@ use std::collections::HashMap;
 use tracing::{debug, warn};
 
 /// Parser for extracting detailed product information from product detail pages
-#[allow(dead_code)]
 pub struct ProductDetailParser {
     /// Compiled selectors for basic product information
     title_selectors: Vec<Selector>,
@@ -238,6 +237,42 @@ impl ProductDetailParser {
         html: &Html,
     ) -> ParsingResult<HashMap<String, String>> {
         let mut certification_data = HashMap::new();
+
+        // Strategy 0: Direct extraction using configured field-specific selectors
+        if let Some(v) = self.extract_basic_info(html, "vid", &self.vid_selectors) {
+            certification_data.insert("vid".to_string(), v);
+        }
+        if let Some(v) = self.extract_basic_info(html, "pid", &self.pid_selectors) {
+            certification_data.insert("pid".to_string(), v);
+        }
+        if let Some(v) = self.extract_basic_info(
+            html,
+            "certification_type",
+            &self.certification_type_selectors,
+        ) {
+            certification_data.insert("certification_type".to_string(), v);
+        }
+        if let Some(v) = self.extract_basic_info(
+            html,
+            "certification_date",
+            &self.certification_date_selectors,
+        ) {
+            certification_data.insert("certification_date".to_string(), v);
+        }
+        if let Some(v) = self.extract_basic_info(
+            html,
+            "specification_version",
+            &self.specification_version_selectors,
+        ) {
+            certification_data.insert("specification_version".to_string(), v);
+        }
+        if let Some(v) = self.extract_basic_info(
+            html,
+            "transport_interface",
+            &self.transport_interface_selectors,
+        ) {
+            certification_data.insert("transport_interface".to_string(), v);
+        }
 
         // Strategy 1: Extract from structured tables (most reliable)
         if let Some(table_data) = self.extract_from_tables(html) {

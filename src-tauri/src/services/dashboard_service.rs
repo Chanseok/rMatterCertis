@@ -31,7 +31,6 @@ pub struct RealtimeDashboardService {
     performance_optimizer: Option<Arc<CrawlingPerformanceOptimizer>>,
 }
 
-#[allow(dead_code)] // Phase2: some methods temporarily unused
 impl RealtimeDashboardService {
     /// 새 대시보드 서비스 생성
     #[must_use] pub fn new(config: DashboardConfig) -> Self {
@@ -378,6 +377,7 @@ impl RealtimeDashboardService {
 
     /// 성능 메트릭 업데이트
     // REMOVE_CANDIDATE(Phase3): currently unused aggregation routine
+    #[allow(dead_code)]
     async fn update_performance_metrics(
         state: &Arc<RwLock<DashboardState>>,
         chart_data: &Arc<RwLock<RealtimeChartData>>,
@@ -467,6 +467,7 @@ impl RealtimeDashboardService {
 
     /// 차트 데이터 정리
     // REMOVE_CANDIDATE(Phase3): currently unused retention routine
+    #[allow(dead_code)]
     async fn cleanup_chart_data(
         chart_data: &Arc<RwLock<RealtimeChartData>>,
         max_points: usize,

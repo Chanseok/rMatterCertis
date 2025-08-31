@@ -22,7 +22,6 @@ use crate::crawl_engine::channels::types::StageItem;
 use crate::crawl_engine::integrated_context::AppContext;
 use crate::crawl_engine::stages::DefaultStageLogicFactory;
 use crate::crawl_engine::stages::traits::StageLogicFactory;
-use crate::domain::services::SiteStatus;
 use crate::domain::services::{ProductDetailCollector, ProductListCollector, StatusChecker};
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::crawling_service_impls::{
@@ -1597,197 +1596,9 @@ impl StageActor {
 
     // === 실제 서비스 기반 처리 함수들 (Critical Issue #1) ===
 
-    /// 실제 상태 확인 처리
-    #[allow(dead_code)]
-    async fn execute_real_status_check(
-        item: &StageItem,
-        status_checker: Arc<dyn StatusChecker>,
-    ) -> Result<SiteStatus, String> {
-        // 새로운 StageItem 구조에 맞게 수정
-        let item_desc = match item {
-            StageItem::Page(page_num) => format!("page_{}", page_num),
-            StageItem::Url(url) => url.clone(),
-            _ => "unknown".to_string(),
-        };
-
-        // 실제 사이트 상태 확인
-        match status_checker.check_site_status().await {
-            Ok(status) => {
-                info!("✅ Real status check successful for item {}", item_desc);
-                Ok(status)
-            }
-            Err(e) => {
-                warn!("❌ Real status check failed for item {}: {}", item_desc, e);
-                Err(format!("Status check failed: {}", e))
-            }
-        }
-    }
-
-    /// 실제 리스트 페이지 처리
-    #[allow(dead_code)]
-    async fn execute_real_list_page_processing(
-        &self,
-        item: &StageItem,
-        product_list_collector: Arc<dyn ProductListCollector>,
-    ) -> Result<Vec<crate::domain::product_url::ProductUrl>, String> {
-        match item {
-            StageItem::Page(page_number) => {
-                // 실제 리스트 페이지 크롤링
-                // 페이지네이션 힌트 사용, 없으면 필요 시 상태 재확인
-                let (total_pages, products_on_last_page) = match (
-                    self.site_total_pages_hint,
-                    self.products_on_last_page_hint,
-                ) {
-                    (Some(tp), Some(plp)) => (tp, plp),
-                    _ => {
-                        if let Some(checker) = &self.status_checker {
-                            // StageActor는 AppHandle에 접근하지 않으므로 여기서는 직접 체크만 수행
-                            match checker.check_site_status().await {
-                                Ok(s) => (s.total_pages, s.products_on_last_page),
-                                Err(e) => {
-                                    warn!(
-                                        "⚠️ Failed to get site status for list processing, using conservative defaults: {}",
-                                        e
-                                    );
-                                    (100u32, 10u32)
-                                }
-                            }
-                        } else {
-                            warn!(
-                                "⚠️ No StatusChecker available; using conservative defaults for pagination"
-                            );
-                            (100u32, 10u32)
-                        }
-                    }
-                };
-
-                // 단일 페이지 수집 API를 사용하여 실패 시 에러를 그대로 전파
-                match product_list_collector
-                    .collect_single_page(*page_number, total_pages, products_on_last_page)
-                    .await
-                {
-                    Ok(urls) => {
-                        // 빈 결과는 실패로 간주하여 재시도를 유도
-                        if urls.is_empty() {
-                            warn!(
-                                "⚠️ Page {} returned 0 URLs — treating as failure to trigger retry",
-                                page_number
-                            );
-                            Err("Empty result from list page".to_string())
-                        } else {
-                            info!(
-                                "✅ Real list page processing successful for page {}: {} URLs collected",
-                                page_number,
-                                urls.len()
-                            );
-                            for (index, url) in urls.iter().enumerate() {
-                                debug!("  📄 Collected URL {}: {}", index + 1, url.url);
-                            }
-                            Ok(urls)
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            "❌ Real list page processing failed for page {}: {}",
-                            page_number, e
-                        );
-                        Err(format!("List page processing failed: {}", e))
-                    }
-                }
-            }
-            _ => Ok(vec![]), // 다른 타입은 빈 벡터 반환
-        }
-    }
-
-    /// 실제 제품 상세 처리
-    #[allow(dead_code)]
-    async fn execute_real_product_detail_processing(
-        product_urls: &crate::crawl_engine::channels::types::ProductUrls,
-        product_detail_collector: Arc<dyn ProductDetailCollector>,
-    ) -> Result<Vec<crate::domain::product::ProductDetail>, String> {
-        debug!(
-            "Processing {} product URLs for detail crawling",
-            product_urls.urls.len()
-        );
-
-        // ProductUrls 구조체에서 ProductUrl 객체들을 직접 사용
-        match product_detail_collector
-            .collect_details(&product_urls.urls)
-            .await
-        {
-            Ok(details) => {
-                info!(
-                    "✅ Real product detail processing successful: {} details collected",
-                    details.len()
-                );
-
-                // 수집된 ProductDetail들을 로그로 확인
-                for (index, detail) in details.iter().enumerate() {
-                    debug!(
-                        "  📄 Collected detail {}: {} (page_id: {:?}, index: {:?})",
-                        index + 1,
-                        detail.url,
-                        detail.page_id,
-                        detail.index_in_page
-                    );
-                }
-
-                Ok(details)
-            }
-            Err(e) => {
-                warn!("❌ Real product detail processing failed: {}", e);
-                Err(format!("Product detail processing failed: {}", e))
-            }
-        }
-    }
-
-    /// 실제 데이터 검증 처리 (현재 외부에서 직접 호출하지 않아 `dead_code` 경고 발생 가능)
-    #[allow(dead_code)]
-    async fn execute_real_data_validation(item: &StageItem) -> Result<(), String> {
-        match item {
-            StageItem::ProductDetails(product_details) => {
-                info!(
-                    "🔍 Starting data validation for {} ProductDetails",
-                    product_details.products.len()
-                );
-
-                // DataQualityAnalyzer 사용하여 실제 검증 수행
-                use crate::crawl_engine::services::data_quality_analyzer::DataQualityAnalyzer;
-                let analyzer = DataQualityAnalyzer::new();
-
-                match analyzer.validate_before_storage(&product_details.products) {
-                    Ok(validated_products) => {
-                        info!(
-                            "✅ Data quality validation completed: {} products validated",
-                            validated_products.len()
-                        );
-                        if validated_products.len() != product_details.products.len() {
-                            warn!(
-                                "⚠️  Data validation filtered out {} products",
-                                product_details.products.len() - validated_products.len()
-                            );
-                        }
-                        Ok(())
-                    }
-                    Err(e) => {
-                        error!("❌ Data quality validation failed: {}", e);
-                        Err(format!("Data validation failed: {}", e))
-                    }
-                }
-            }
-            StageItem::ValidatedProducts(products) => {
-                info!(
-                    "✅ ValidatedProducts already validated: {} products",
-                    products.products.len()
-                );
-                Ok(())
-            }
-            _ => {
-                warn!("⚠️  DataValidation received unexpected item type, skipping validation");
-                Ok(())
-            }
-        }
-    }
+    // Removed unused real-execution helpers: execute_real_status_check, execute_real_list_page_processing,
+    // execute_real_product_detail_processing, execute_real_data_validation. The actively used implementations
+    // live under new_architecture/actors/stage_actor.rs.
 
     /// 실제 데이터베이스 저장 처리
     async fn execute_real_database_storage(
@@ -1976,7 +1787,6 @@ impl StageActor {
 
     /// 리스트 페이지 처리 시뮬레이션 (test/dev only)
     #[cfg(feature = "simulate-details")]
-    #[allow(dead_code)]
     async fn simulate_list_page_processing(item: &StageItem) -> Result<(), String> {
         // 임시: 간단한 처리 시뮬레이션
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -2042,6 +1852,7 @@ impl StageActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::services::SiteStatus;
     use crate::crawl_engine::channels::types as ch;
     use crate::crawl_engine::integrated_context::IntegratedContextFactory;
     use crate::crawl_engine::system_config::SystemConfig;
