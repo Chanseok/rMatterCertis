@@ -31,13 +31,13 @@ pub struct PageIdCalculator {
 }
 
 impl PageIdCalculator {
-    #[must_use] pub const fn new(last_page_number: u32, products_in_last_page: usize) -> Self {
+    #[must_use] pub fn new(last_page_number: u32, products_in_last_page: usize) -> Self {
         Self {
             last_page_number,
             products_in_last_page,
         }
     }
-    #[must_use] pub const fn calculate(
+    #[must_use] pub fn calculate(
         &self,
         actual_page_number: u32,
         product_index_in_actual_page: usize,
@@ -50,7 +50,7 @@ impl PageIdCalculator {
         // Parameters:
         //  - actual_page_number: 1-based physical page (1 = newest, last_page_number = oldest)
         //  - product_index_in_actual_page: 0-based index within physical page (0 = newest on that page)
-        const P: u32 = PRODUCTS_PER_PAGE as u32;
+    const P: u32 = 12; // PRODUCTS_PER_PAGE as u32 (site constant)
         if self.last_page_number == 0 {
             return PageIdCalculation {
                 page_id: 0,
@@ -59,7 +59,7 @@ impl PageIdCalculator {
         }
         // 총 제품 수
         let total_products = if self.last_page_number > 0 {
-            (self.last_page_number - 1) * P + (self.products_in_last_page as u32)
+            (self.last_page_number - 1) * P + u32::try_from(self.products_in_last_page).unwrap_or(P)
         } else {
             0
         };
@@ -71,11 +71,11 @@ impl PageIdCalculator {
         }
         // newest-first 0-based global index
         let index_from_newest =
-            (actual_page_number - 1) * P + (product_index_in_actual_page as u32);
+            (actual_page_number - 1) * P + u32::try_from(product_index_in_actual_page).unwrap_or(P);
         // oldest-first 0-based global index
         let index_from_oldest = (total_products - 1).saturating_sub(index_from_newest);
-        let page_id = (index_from_oldest / P) as i32;
-        let index_in_page = (index_from_oldest % P) as i32;
+    let page_id = i32::try_from(index_from_oldest / P).unwrap_or(i32::MAX);
+    let index_in_page = i32::try_from(index_from_oldest % P).unwrap_or(i32::MAX);
         PageIdCalculation {
             page_id,
             index_in_page,

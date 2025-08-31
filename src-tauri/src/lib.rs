@@ -173,6 +173,10 @@ pub mod utils;
 // moved: test_page_id_calculator -> tests/ (integration test)
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Start the application runtime and initialize subsystems.
+///
+/// # Panics
+/// Panics if a Tokio runtime cannot be created.
 pub fn run() {
     // Initialize runtime for async operations first
     let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");

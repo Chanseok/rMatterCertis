@@ -37,6 +37,8 @@ pub async fn start_basic_sync_pages(
     mut pages: Vec<u32>,
     dry_run: Option<bool>,
 ) -> Result<SyncSummary, String> {
+    // Errors
+    // - Returns Err(String) if no pages provided, HTTP fetch/parse fails, or DB access fails.
     if pages.is_empty() {
         return Err("No pages provided".into());
     }
@@ -123,7 +125,7 @@ pub async fn start_basic_sync_pages(
     let session_id = format!("basic-{}", Utc::now().format("%Y%m%d%H%M%S"));
     emit_actor_event(
         &app,
-        AppEvent::SyncStarted {
+        &AppEvent::SyncStarted {
             session_id: session_id.clone(),
             ranges: pages.iter().map(|p| (*p, *p)).collect(),
             rate_limit: Some(app_config.user.crawling.workers.max_requests_per_second),
@@ -191,7 +193,7 @@ pub async fn start_basic_sync_pages(
 
             emit_actor_event(
                 &app,
-                AppEvent::SyncPageStarted {
+                &AppEvent::SyncPageStarted {
                     session_id: session_id.clone(),
                     physical_page,
                     timestamp: Utc::now(),
@@ -200,7 +202,7 @@ pub async fn start_basic_sync_pages(
 
             // Fetch + parse product list with retries
             let expected_count = if physical_page == oldest_page {
-                items_on_last_page as u32
+                u32::try_from(items_on_last_page).unwrap_or(u32::MAX)
             } else {
                 12u32
             };
@@ -250,7 +252,7 @@ pub async fn start_basic_sync_pages(
                     match extractor.extract_product_urls_from_content(&page_html) {
                         Ok(v) => {
                             product_urls = v;
-                            if product_urls.len() as u32 == expected_count {
+                            if u32::try_from(product_urls.len()).unwrap_or(u32::MAX) == expected_count {
                                 break;
                             }
                             last_err_msg = Some(format!(
@@ -271,7 +273,7 @@ pub async fn start_basic_sync_pages(
                 // Emit retrying event
                 emit_actor_event(
                     &app,
-                    AppEvent::SyncRetrying {
+                    &AppEvent::SyncRetrying {
                         session_id: session_id.clone(),
                         scope: "list_page".into(),
                         physical_page: Some(physical_page),
@@ -290,11 +292,11 @@ pub async fn start_basic_sync_pages(
                 attempt += 1;
             }
 
-            if product_urls.len() as u32 != expected_count {
+            if u32::try_from(product_urls.len()).unwrap_or(u32::MAX) != expected_count {
                 if let Some(msg) = &last_err_msg {
                     emit_actor_event(
                         &app,
-                        AppEvent::SyncWarning {
+                        &AppEvent::SyncWarning {
                             session_id: session_id.clone(),
                             code: "count_mismatch".into(),
                             detail: format!(
@@ -314,10 +316,10 @@ pub async fn start_basic_sync_pages(
             let mut tx = match pool.begin().await {
                 Ok(t) => t,
                 Err(e) => {
-                    failed_c.fetch_add(product_urls.len() as u32, Ordering::SeqCst);
+                    failed_c.fetch_add(u32::try_from(product_urls.len()).unwrap_or(0), Ordering::SeqCst);
                     emit_actor_event(
                         &app,
-                        AppEvent::SyncWarning {
+                        &AppEvent::SyncWarning {
                             session_id: session_id.clone(),
                             code: "tx_begin_failed".into(),
                             detail: format!("page {}: {}", physical_page, e),
@@ -340,7 +342,7 @@ pub async fn start_basic_sync_pages(
                     page_skipped += 1;
                     emit_actor_event(
                         &app,
-                        AppEvent::SyncUpsertProgress {
+                        &AppEvent::SyncUpsertProgress {
                             session_id: session_id.clone(),
                             physical_page,
                             inserted: page_inserted,
@@ -378,7 +380,7 @@ pub async fn start_basic_sync_pages(
                         failed_c.fetch_add(1, Ordering::SeqCst);
                         emit_actor_event(
                             &app,
-                            AppEvent::SyncWarning {
+                            &AppEvent::SyncWarning {
                                 session_id: session_id.clone(),
                                 code: "select_failed".into(),
                                 detail: format!("{}: {}", url, e),
@@ -398,8 +400,8 @@ pub async fn start_basic_sync_pages(
                                 .bind(calc.page_id)
                                 .bind(calc.index_in_page)
                                 .execute(&mut *tx).await {
-                                    Ok(_) => { page_inserted += 1; inserted_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: None, page_number: Some(physical_page), product_ref: url.clone(), status: "product_inserted".into(), retry: None, duration_ms: None, metrics: None, timestamp: Utc::now() }); },
-                                    Err(e) => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "insert_failed".into(), detail: format!("{}: {}", url, e), timestamp: Utc::now() }); continue; }
+                                    Ok(_) => { page_inserted += 1; inserted_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, &AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: None, page_number: Some(physical_page), product_ref: url.clone(), status: "product_inserted".into(), retry: None, duration_ms: None, metrics: None, timestamp: Utc::now() }); },
+                                    Err(e) => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, &AppEvent::SyncWarning { session_id: session_id.clone(), code: "insert_failed".into(), detail: format!("{}: {}", url, e), timestamp: Utc::now() }); continue; }
                                 }
                         }
                         // Ensure product_details placeholder with synthetic id
@@ -425,9 +427,11 @@ pub async fn start_basic_sync_pages(
                         let db_pid: Option<i64> = r.get("page_id");
                         let db_idx: Option<i64> = r.get("index_in_page");
                         let needs_update = match (db_pid, db_idx) {
-                            (Some(p), Some(ix)) => {
-                                p as i32 != calc.page_id || ix as i32 != calc.index_in_page
-                            }
+                            (Some(p), Some(ix)) => match (i32::try_from(p), i32::try_from(ix)) {
+                                (Ok(pp), Ok(ii)) => pp != calc.page_id || ii != calc.index_in_page,
+                                // If conversion fails (negative or out of range), force update to repair
+                                _ => true,
+                            },
                             _ => true,
                         };
                         if needs_update {
@@ -437,15 +441,15 @@ pub async fn start_basic_sync_pages(
                                 .bind(url)
                                 .execute(&mut *tx)
                                 .await {
-                                    Ok(_) => { page_updated += 1; updated_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: None, page_number: Some(physical_page), product_ref: url.clone(), status: "product_updated".into(), retry: None, duration_ms: None, metrics: None, timestamp: Utc::now() }); },
-                                    Err(e) => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "update_failed".into(), detail: format!("{}: {}", url, e), timestamp: Utc::now() }); emit_actor_event(&app, AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: None, page_number: Some(physical_page), product_ref: url.clone(), status: "product_update_failed".into(), retry: None, duration_ms: None, metrics: None, timestamp: Utc::now() }); }
+                                    Ok(_) => { page_updated += 1; updated_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, &AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: None, page_number: Some(physical_page), product_ref: url.clone(), status: "product_updated".into(), retry: None, duration_ms: None, metrics: None, timestamp: Utc::now() }); },
+                                    Err(e) => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, &AppEvent::SyncWarning { session_id: session_id.clone(), code: "update_failed".into(), detail: format!("{}: {}", url, e), timestamp: Utc::now() }); emit_actor_event(&app, &AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: None, page_number: Some(physical_page), product_ref: url.clone(), status: "product_update_failed".into(), retry: None, duration_ms: None, metrics: None, timestamp: Utc::now() }); }
                                 }
                         } else {
                             page_skipped += 1;
                             skipped_c.fetch_add(1, Ordering::SeqCst);
                             emit_actor_event(
                                 &app,
-                                AppEvent::ProductLifecycle {
+                                &AppEvent::ProductLifecycle {
                                     session_id: session_id.clone(),
                                     batch_id: None,
                                     page_number: Some(physical_page),
@@ -702,7 +706,7 @@ pub async fn start_basic_sync_pages(
                 failed_c.fetch_add(1, Ordering::SeqCst);
                 emit_actor_event(
                     &app,
-                    AppEvent::SyncWarning {
+                    &AppEvent::SyncWarning {
                         session_id: session_id.clone(),
                         code: "tx_commit_failed".into(),
                         detail: format!("page {}: {}", physical_page, e),
@@ -711,11 +715,11 @@ pub async fn start_basic_sync_pages(
                 );
             }
 
-            let ms = page_start.elapsed().as_millis() as u64;
+            let ms = u64::try_from(page_start.elapsed().as_millis()).unwrap_or(u64::MAX);
             pages_processed_c.fetch_add(1, Ordering::SeqCst);
             emit_actor_event(
                 &app,
-                AppEvent::SyncPageCompleted {
+                &AppEvent::SyncPageCompleted {
                     session_id: session_id.clone(),
                     physical_page,
                     inserted: page_inserted,
@@ -734,7 +738,7 @@ pub async fn start_basic_sync_pages(
         let _ = h.await;
     }
 
-    let duration_ms = started.elapsed().as_millis() as u64;
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let summary = SyncSummary {
         pages_processed: pages_processed.load(Ordering::SeqCst),
         inserted: inserted.load(Ordering::SeqCst),
@@ -746,7 +750,7 @@ pub async fn start_basic_sync_pages(
 
     emit_actor_event(
         &app,
-        AppEvent::SyncCompleted {
+        &AppEvent::SyncCompleted {
             session_id: session_id.clone(),
             pages_processed: summary.pages_processed,
             inserted: summary.inserted,
@@ -756,7 +760,7 @@ pub async fn start_basic_sync_pages(
             duration_ms: summary.duration_ms,
             deleted: None,
             total_pages: Some(total_pages),
-            items_on_last_page: Some(items_on_last_page as u32),
+            items_on_last_page: Some(u32::try_from(items_on_last_page).unwrap_or(0)),
             anomalies: None,
             timestamp: Utc::now(),
         },
@@ -775,6 +779,8 @@ pub async fn start_batched_sync(
     _batch_size_override: Option<u32>,
     dry_run: Option<bool>,
 ) -> Result<SyncSummary, String> {
+    // Errors
+    // - Returns Err(String) when input ranges are invalid, HTTP/DB access fails, or internal parsing fails.
     // If no explicit ranges, keep existing policy by delegating directly (default span inside partial_sync)
     if ranges.trim().is_empty() {
         return start_partial_sync(app, app_state, ranges, dry_run).await;
@@ -830,7 +836,7 @@ pub async fn start_batched_sync(
         idx = end;
     }
 
-    agg.duration_ms = started.elapsed().as_millis() as u64;
+    agg.duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     Ok(agg)
 }
 
@@ -843,6 +849,8 @@ pub async fn start_repair_sync(
     buffer: Option<u32>,
     dry_run: Option<bool>,
 ) -> Result<SyncSummary, String> {
+    // Errors
+    // - Returns Err(String) when configuration, HTTP, or database access fails during discovery or execution.
     // 1) Discover site meta (same approach as partial sync)
     let app_config = app_state.config.read().await.clone();
     let http = app_state.get_http_client().await?;
@@ -900,7 +908,7 @@ pub async fn start_repair_sync(
             let pid: Option<i64> = r.try_get("page_id").ok();
             if let Some(page_id) = pid {
                 // current physical page number = total_pages - page_id
-                let physical = total_pages.saturating_sub(page_id as u32);
+                let physical = total_pages.saturating_sub(u32::try_from(page_id).unwrap_or(0));
                 if physical >= 1 && physical <= total_pages {
                     centers.push(physical);
                 }
@@ -1025,6 +1033,8 @@ pub async fn start_partial_sync(
     ranges: String, // e.g., "498-492,489,487-485"
     dry_run: Option<bool>,
 ) -> Result<SyncSummary, String> {
+    // Errors
+    // - Returns Err(String) on configuration, HTTP/DB failures, or malformed ranges.
     let session_id = format!("sync-{}", Utc::now().format("%Y%m%d%H%M%S"));
     let started = std::time::Instant::now();
     info!(
@@ -1036,7 +1046,7 @@ pub async fn start_partial_sync(
     // Emit a preflight start event immediately so the UI reacts without waiting for network or DB
     emit_actor_event(
         &app,
-        AppEvent::SyncStarted {
+        &AppEvent::SyncStarted {
             session_id: session_id.clone(),
             ranges: ranges.clone(),
             rate_limit: None,
@@ -1147,7 +1157,7 @@ pub async fn start_partial_sync(
             .fetch_one(&pool)
             .await
             .unwrap_or(0);
-        let pages_from_count = ((total_products as u32) / 12).max(1);
+    let pages_from_count = (u32::try_from(total_products).unwrap_or(0) / 12).max(1);
         info!(
             "Using conditional sync span limit from DB: products={} => pages={} (floor(/12))",
             total_products, pages_from_count
@@ -1350,7 +1360,7 @@ pub async fn start_partial_sync(
 
             emit_actor_event(
                 &app,
-                AppEvent::SyncPageStarted {
+                &AppEvent::SyncPageStarted {
                     session_id: session_id.clone(),
                     physical_page,
                     timestamp: Utc::now(),
@@ -1359,7 +1369,7 @@ pub async fn start_partial_sync(
 
             // Fetch + parse with retries if count mismatch or transient errors
             let expected_count = if physical_page == oldest_page {
-                items_on_last_page as u32
+                u32::try_from(items_on_last_page).unwrap_or(u32::MAX)
             } else {
                 12u32
             };
@@ -1418,7 +1428,7 @@ pub async fn start_partial_sync(
                     match extractor.extract_product_urls_from_content(&page_html) {
                         Ok(v) => {
                             product_urls = v;
-                            if product_urls.len() as u32 == expected_count {
+                            if u32::try_from(product_urls.len()).ok() == Some(expected_count) {
                                 // success; no need to reset last_err_msg explicitly
                                 // success
                                 break;
@@ -1440,7 +1450,7 @@ pub async fn start_partial_sync(
                     if let Some(msg) = &last_err_msg {
                         emit_actor_event(
                             &app,
-                            AppEvent::SyncWarning {
+                            &AppEvent::SyncWarning {
                                 session_id: session_id.clone(),
                                 code: "page_incomplete_after_retries".into(),
                                 detail: format!(
@@ -1459,7 +1469,7 @@ pub async fn start_partial_sync(
                     info!(target: "kpi.sync", "{{\"event\":\"retry_attempt\",\"session_id\":\"{}\",\"page\":{},\"attempt\":{},\"max_retries\":{},\"reason\":\"{}\"}}", session_id, physical_page, attempt + 1, max_retries, msg);
                     emit_actor_event(
                         &app,
-                        AppEvent::SyncRetrying {
+                        &AppEvent::SyncRetrying {
                             session_id: session_id.clone(),
                             scope: "list_page".into(),
                             physical_page: Some(physical_page),
@@ -1474,7 +1484,7 @@ pub async fn start_partial_sync(
                     info!(target: "kpi.sync", "{{\"event\":\"retry_attempt\",\"session_id\":\"{}\",\"page\":{},\"attempt\":{},\"max_retries\":{}}}", session_id, physical_page, attempt + 1, max_retries);
                     emit_actor_event(
                         &app,
-                        AppEvent::SyncRetrying {
+                        &AppEvent::SyncRetrying {
                             session_id: session_id.clone(),
                             scope: "list_page".into(),
                             physical_page: Some(physical_page),
@@ -1497,10 +1507,10 @@ pub async fn start_partial_sync(
             }
 
             // Log mismatch if persists
-            if product_urls.len() as u32 != expected_count {
+            if u32::try_from(product_urls.len()).ok() != Some(expected_count) {
                 emit_actor_event(
                     &app,
-                    AppEvent::SyncWarning {
+                    &AppEvent::SyncWarning {
                         session_id: session_id.clone(),
                         code: "count_mismatch".into(),
                         detail: format!(
@@ -1524,10 +1534,10 @@ pub async fn start_partial_sync(
             let mut tx = match pool.begin().await {
                 Ok(t) => t,
                 Err(e) => {
-                    failed_c.fetch_add(product_urls.len() as u32, Ordering::SeqCst);
+                    failed_c.fetch_add(u32::try_from(product_urls.len()).unwrap_or(u32::MAX), Ordering::SeqCst);
                     emit_actor_event(
                         &app,
-                        AppEvent::SyncWarning {
+                        &AppEvent::SyncWarning {
                             session_id: session_id.clone(),
                             code: "tx_begin_failed".into(),
                             detail: format!("page {}: {}", physical_page, e),
@@ -1581,7 +1591,7 @@ pub async fn start_partial_sync(
                     page_skipped += 1; // dry-run counts as skipped
                     emit_actor_event(
                         &app,
-                        AppEvent::SyncUpsertProgress {
+                        &AppEvent::SyncUpsertProgress {
                             session_id: session_id.clone(),
                             physical_page,
                             inserted: page_inserted,
@@ -1608,7 +1618,7 @@ pub async fn start_partial_sync(
                 {
                     emit_actor_event(
                         &app,
-                        AppEvent::SyncWarning {
+                        &AppEvent::SyncWarning {
                             session_id: session_id.clone(),
                             code: "observed_record_failed".into(),
                             detail: format!("{}: {}", url, e),
@@ -1631,7 +1641,7 @@ pub async fn start_partial_sync(
                         failed_c.fetch_add(1, Ordering::SeqCst);
                         emit_actor_event(
                             &app,
-                            AppEvent::SyncWarning {
+                            &AppEvent::SyncWarning {
                                 session_id: session_id.clone(),
                                 code: "select_failed".into(),
                                 detail: format!("{}: {}", url, e),
@@ -1674,7 +1684,7 @@ pub async fn start_partial_sync(
                                     );
                                     emit_actor_event(
                                         &app,
-                                        AppEvent::ProductLifecycle {
+                                        &AppEvent::ProductLifecycle {
                                             session_id: session_id.clone(),
                                             batch_id: None,
                                             page_number: Some(physical_page),
@@ -1690,7 +1700,7 @@ pub async fn start_partial_sync(
                                 Err(e) => {
                                     emit_actor_event(
                                         &app,
-                                        AppEvent::SyncWarning {
+                                        &AppEvent::SyncWarning {
                                             session_id: session_id.clone(),
                                             code: "insert_failed".into(),
                                             detail: format!("{}: {}", url, e),
@@ -1704,7 +1714,7 @@ pub async fn start_partial_sync(
                             // skip invalid coordinates
                             emit_actor_event(
                                 &app,
-                                AppEvent::SyncWarning {
+                                &AppEvent::SyncWarning {
                                     session_id: session_id.clone(),
                                     code: "invalid_coordinates".into(),
                                     detail: format!(
@@ -1741,7 +1751,8 @@ pub async fn start_partial_sync(
                         let db_idx: Option<i64> = r.get("index_in_page");
                         let needs_update = match (db_pid, db_idx) {
                             (Some(p), Some(ix)) => {
-                                p as i32 != calc.page_id || ix as i32 != calc.index_in_page
+                                i32::try_from(p).unwrap_or_default() != calc.page_id
+                                    || i32::try_from(ix).unwrap_or_default() != calc.index_in_page
                             }
                             _ => true,
                         };
@@ -1772,7 +1783,7 @@ pub async fn start_partial_sync(
                                     );
                                     emit_actor_event(
                                         &app,
-                                        AppEvent::ProductLifecycle {
+                                        &AppEvent::ProductLifecycle {
                                             session_id: session_id.clone(),
                                             batch_id: None,
                                             page_number: Some(physical_page),
@@ -1790,7 +1801,7 @@ pub async fn start_partial_sync(
                                     failed_c.fetch_add(1, Ordering::SeqCst);
                                     emit_actor_event(
                                         &app,
-                                        AppEvent::SyncWarning {
+                                        &AppEvent::SyncWarning {
                                             session_id: session_id.clone(),
                                             code: "update_failed".into(),
                                             detail: format!("{}: {}", url, e),
@@ -1805,7 +1816,7 @@ pub async fn start_partial_sync(
                                     );
                                     emit_actor_event(
                                         &app,
-                                        AppEvent::ProductLifecycle {
+                                        &AppEvent::ProductLifecycle {
                                             session_id: session_id.clone(),
                                             batch_id: None,
                                             page_number: Some(physical_page),
@@ -1830,7 +1841,7 @@ pub async fn start_partial_sync(
                             );
                             emit_actor_event(
                                 &app,
-                                AppEvent::ProductLifecycle {
+                                &AppEvent::ProductLifecycle {
                                     session_id: session_id.clone(),
                                     batch_id: None,
                                     page_number: Some(physical_page),
@@ -1873,7 +1884,7 @@ pub async fn start_partial_sync(
                             Err(e) => {
                                 emit_actor_event(
                                     &app,
-                                    AppEvent::SyncWarning {
+                                    &AppEvent::SyncWarning {
                                         session_id: session_id.clone(),
                                         code: "details_update_failed".into(),
                                         detail: format!("{}: {}", url, e),
@@ -2017,7 +2028,7 @@ pub async fn start_partial_sync(
                                                     {
                                                         emit_actor_event(
                                                             &app,
-                                                            AppEvent::SyncWarning {
+                                                            &AppEvent::SyncWarning {
                                                                 session_id: session_id.clone(),
                                                                 code: "details_insert_failed".into(),
                                                                 detail: format!("{}: {}", url, e),
@@ -2039,7 +2050,7 @@ pub async fn start_partial_sync(
                                                         let affected: i64 = res.get::<i64, _>("affected");
                                                         emit_actor_event(
                                                             &app,
-                                                            AppEvent::ProductLifecycle {
+                                                            &AppEvent::ProductLifecycle {
                                                                 session_id: session_id.clone(),
                                                                 batch_id: None,
                                                                 page_number: Some(physical_page),
@@ -2080,7 +2091,7 @@ pub async fn start_partial_sync(
                                                 Err(e) => {
                                                     emit_actor_event(
                                                         &app,
-                                                        AppEvent::SyncWarning {
+                                                        &AppEvent::SyncWarning {
                                                             session_id: session_id.clone(),
                                                             code: "details_extract_failed".into(),
                                                             detail: format!("{}: {}", url, e),
@@ -2099,7 +2110,7 @@ pub async fn start_partial_sync(
                                         Err(e) => {
                                             emit_actor_event(
                                                 &app,
-                                                AppEvent::SyncWarning {
+                                                &AppEvent::SyncWarning {
                                                     session_id: session_id.clone(),
                                                     code: "details_read_failed".into(),
                                                     detail: format!("{}: {}", url, e),
@@ -2117,7 +2128,7 @@ pub async fn start_partial_sync(
                                     Err(e) => {
                                         emit_actor_event(
                                             &app,
-                                            AppEvent::SyncWarning {
+                                            &AppEvent::SyncWarning {
                                                 session_id: session_id.clone(),
                                                 code: "details_fetch_failed".into(),
                                                 detail: format!("{}: {}", url, e),
@@ -2136,7 +2147,7 @@ pub async fn start_partial_sync(
                                     // Emit detail retrying
                                     emit_actor_event(
                                         &app,
-                                        AppEvent::SyncRetrying {
+                                        &AppEvent::SyncRetrying {
                                             session_id: session_id.clone(),
                                             scope: "product_detail".into(),
                                             physical_page: Some(physical_page),
@@ -2202,7 +2213,7 @@ pub async fn start_partial_sync(
                 if (page_inserted + page_updated + page_skipped + page_failed) % 10 == 0 {
                     emit_actor_event(
                         &app,
-                        AppEvent::SyncUpsertProgress {
+                        &AppEvent::SyncUpsertProgress {
                             session_id: session_id.clone(),
                             physical_page,
                             inserted: page_inserted,
@@ -2248,7 +2259,7 @@ pub async fn start_partial_sync(
                 Err(e) => {
                     emit_actor_event(
                         &app,
-                        AppEvent::SyncWarning {
+                        &AppEvent::SyncWarning {
                             session_id: session_id.clone(),
                             code: "db_only_placeholder_failed".into(),
                             detail: format!("page {} (pid {}): {}", physical_page, canonical_pid, e),
@@ -2280,9 +2291,9 @@ pub async fn start_partial_sync(
                     );
                 }
                 Err(e) => {
-                    emit_actor_event(
-                        &app,
-                        AppEvent::SyncWarning {
+                        emit_actor_event(
+                            &app,
+                            &AppEvent::SyncWarning {
                             session_id: session_id.clone(),
                             code: "db_only_backfill_failed".into(),
                             detail: format!("page {} (pid {}): {}", physical_page, canonical_pid, e),
@@ -2318,7 +2329,7 @@ pub async fn start_partial_sync(
                     Err(e) => {
                         emit_actor_event(
                             &app,
-                            AppEvent::SyncWarning {
+                            &AppEvent::SyncWarning {
                                 session_id: session_id.clone(),
                                 code: "db_only_products_id_backfill_failed".into(),
                                 detail: format!(
@@ -2337,7 +2348,7 @@ pub async fn start_partial_sync(
                 failed_c.fetch_add(1, Ordering::SeqCst);
                 emit_actor_event(
                     &app,
-                    AppEvent::SyncWarning {
+                    &AppEvent::SyncWarning {
                         session_id: session_id.clone(),
                         code: "tx_commit_failed".into(),
                         detail: format!("page {}: {}", physical_page, e),
@@ -2356,7 +2367,7 @@ pub async fn start_partial_sync(
             // Also emit as SyncWarning for UI consumption
             emit_actor_event(
                 &app,
-                AppEvent::SyncWarning {
+                &AppEvent::SyncWarning {
                     session_id: session_id.clone(),
                     code: "db_only_backfill_metrics".into(),
                     detail: format!(
@@ -2385,7 +2396,7 @@ pub async fn start_partial_sync(
                     Err(e) => {
                         emit_actor_event(
                             &app,
-                            AppEvent::SyncWarning {
+                            &AppEvent::SyncWarning {
                                 session_id: session_id.clone(),
                                 code: "in_range_retry_query_failed".into(),
                                 detail: format!("page {} (pid {}): {}", physical_page, canonical_pid, e),
@@ -2440,7 +2451,9 @@ pub async fn start_partial_sync(
                                 // Inject coordinates and synthetic id if missing
                                 detail.page_id = Some(canonical_pid);
                                 detail.index_in_page =
-                                    detail.index_in_page.or(idx_opt.map(|v| v as i32));
+                                    detail
+                                        .index_in_page
+                                        .or_else(|| idx_opt.and_then(|v| i32::try_from(v).ok()));
                                 if detail.id.is_none() {
                                     if let (Some(pid), Some(ix)) =
                                         (detail.page_id, detail.index_in_page)
@@ -2569,7 +2582,7 @@ pub async fn start_partial_sync(
                         if attempt < max_detail_retries && !success {
                             emit_actor_event(
                                 &app,
-                                AppEvent::SyncRetrying {
+                                &AppEvent::SyncRetrying {
                                     session_id: session_id.clone(),
                                     scope: "product_detail".into(),
                                     physical_page: Some(physical_page),
@@ -2602,11 +2615,11 @@ pub async fn start_partial_sync(
                 );
             }
 
-            let ms = page_start.elapsed().as_millis() as u64;
+            let ms = u64::try_from(page_start.elapsed().as_millis()).unwrap_or(u64::MAX);
             pages_processed_c.fetch_add(1, Ordering::SeqCst);
             emit_actor_event(
                 &app,
-                AppEvent::SyncPageCompleted {
+                &AppEvent::SyncPageCompleted {
                     session_id: session_id.clone(),
                     physical_page,
                     inserted: page_inserted,
@@ -2651,7 +2664,7 @@ pub async fn start_partial_sync(
                 // Emit a lightweight event for FE visibility
                 emit_actor_event(
                     &app,
-                    AppEvent::SyncWarning {
+                    &AppEvent::SyncWarning {
                         session_id: session_id.clone(),
                         code: "global_products_id_backfill_sweep".into(),
                         detail: format!("affected_rows={}", affected),
@@ -2662,7 +2675,7 @@ pub async fn start_partial_sync(
             Err(e) => {
                 emit_actor_event(
                     &app,
-                    AppEvent::SyncWarning {
+                    &AppEvent::SyncWarning {
                         session_id: session_id.clone(),
                         code: "global_products_id_backfill_failed".into(),
                         detail: format!("{}", e),
@@ -2679,7 +2692,7 @@ pub async fn start_partial_sync(
     let skipped = skipped.load(Ordering::SeqCst);
     let failed = failed.load(Ordering::SeqCst);
 
-    let duration_ms = started.elapsed().as_millis() as u64;
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
     // Phase-2: bounded sweep for pages covered in this session
     // Only if not a dry_run and some pages were processed
@@ -2738,7 +2751,7 @@ pub async fn start_partial_sync(
             .await
             {
                 Ok(res) => {
-                    let affected = res.rows_affected() as u32;
+                    let affected = u32::try_from(res.rows_affected()).unwrap_or(u32::MAX);
                     if affected > 0 {
                         deleted_total = deleted_total.saturating_add(affected);
                         debug!(
@@ -2787,9 +2800,9 @@ pub async fn start_partial_sync(
             let cnt: Option<i64> = r.try_get("cnt").ok();
             if let (Some(page_id), Some(count)) = (pid, cnt) {
                 // current physical page number = total_pages - page_id
-                let current_page_number = total_pages.saturating_sub(page_id as u32);
+                let current_page_number = total_pages.saturating_sub(u32::try_from(page_id).unwrap_or(0));
                 anomalies.push(SyncAnomalyEntry {
-                    page_id: page_id as i32,
+                    page_id: i32::try_from(page_id).unwrap_or_default(),
                     count,
                     current_page_number,
                 });
@@ -2798,7 +2811,7 @@ pub async fn start_partial_sync(
     }
     emit_actor_event(
         &app,
-        AppEvent::SyncCompleted {
+        &AppEvent::SyncCompleted {
             session_id: session_id.clone(),
             pages_processed,
             inserted,
@@ -2812,7 +2825,7 @@ pub async fn start_partial_sync(
                 None
             },
             total_pages: Some(total_pages),
-            items_on_last_page: Some(items_on_last_page as u32),
+            items_on_last_page: Some(u32::try_from(items_on_last_page).unwrap_or(0)),
             anomalies: if anomalies.is_empty() {
                 None
             } else {
@@ -2839,6 +2852,8 @@ pub async fn start_partial_sync(
 /// This builds a comma-separated list of single-page ranges (no merges)
 /// to avoid policy-based span clamping in partial sync, then delegates to `start_partial_sync`.
 #[tauri::command(async)]
+/// # Errors
+/// Returns an error string if the `pages` list is empty or if the delegated partial sync fails.
 pub async fn start_sync_pages(
     app: AppHandle,
     app_state: State<'_, AppState>,
@@ -2864,6 +2879,8 @@ pub async fn start_sync_pages(
 /// Run a diagnostic-driven sync for specific pages and slot indices.
 /// Only the specified indices on each page will be processed (precise repair).
 #[tauri::command(async)]
+/// # Errors
+/// Returns an error string if no diagnostic pages were provided or all miss_indices are empty.
 pub async fn start_diagnostic_sync(
     app: AppHandle,
     app_state: State<'_, AppState>,
@@ -3200,13 +3217,14 @@ pub async fn start_diagnostic_sync(
                         let db_pid: Option<i64> = r.get("page_id");
                         let db_idx: Option<i64> = r.get("index_in_page");
                         let needs_update = match (db_pid, db_idx) {
-                            (Some(p), Some(ix)) => {
-                                p as i32 != calc.page_id || ix as i32 != calc.index_in_page
-                            }
+                            (Some(p), Some(ix)) => match (i32::try_from(p), i32::try_from(ix)) {
+                                (Ok(pp), Ok(ii)) => pp != calc.page_id || ii != calc.index_in_page,
+                                _ => true,
+                            },
                             _ => true,
                         };
                         if needs_update {
-                            match sqlx::query("UPDATE products SET page_id = ?, index_in_page = ?, updated_at = CURRENT_TIMESTAMP WHERE url = ?").bind(calc.page_id).bind(calc.index_in_page).bind(&url).execute(&mut *tx).await { Ok(_) => { page_updated += 1; updated_c.fetch_add(1, Ordering::SeqCst); }, Err(e) => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, AppEvent::SyncWarning { session_id: session_id.clone(), code: "update_failed".into(), detail: format!("{}: {}", url, e), timestamp: Utc::now() }); } }
+                            match sqlx::query("UPDATE products SET page_id = ?, index_in_page = ?, updated_at = CURRENT_TIMESTAMP WHERE url = ?").bind(calc.page_id).bind(calc.index_in_page).bind(&url).execute(&mut *tx).await { Ok(_) => { page_updated += 1; updated_c.fetch_add(1, Ordering::SeqCst); }, Err(e) => { page_failed += 1; failed_c.fetch_add(1, Ordering::SeqCst); emit_actor_event(&app, &AppEvent::SyncWarning { session_id: session_id.clone(), code: "update_failed".into(), detail: format!("{}: {}", url, e), timestamp: Utc::now() }); } }
                         } else {
                             page_skipped += 1;
                             skipped_c.fetch_add(1, Ordering::SeqCst);
@@ -3412,7 +3430,7 @@ pub async fn start_diagnostic_sync(
             duration_ms: summary.duration_ms,
             deleted: None,
             total_pages: Some(total_pages),
-            items_on_last_page: Some(items_on_last_page as u32),
+            items_on_last_page: Some(u32::try_from(items_on_last_page).unwrap_or(u32::MAX)),
             anomalies: None,
             timestamp: Utc::now(),
         },
@@ -3423,8 +3441,13 @@ pub async fn start_diagnostic_sync(
 /// Retry fetching product details for products with NULL certificate_id.
 /// Optionally limit the number of URLs processed. Uses simple referer and reuses extractor logic.
 #[tauri::command(async)]
+/// Retry fetching product details for products that failed previously.
+///
+/// # Errors
+/// Returns `Err(String)` if the database cannot be accessed, HTTP requests fail repeatedly,
+/// or parsing/upsert operations encounter unrecoverable errors.
 pub async fn retry_failed_details(
-    _app: AppHandle,
+    app: AppHandle,
     app_state: State<'_, AppState>,
     limit: Option<u32>,
     dry_run: Option<bool>,
@@ -3503,10 +3526,10 @@ pub async fn retry_failed_details(
                             // Prefer existing coordinates if present
                             detail.page_id = detail
                                 .page_id
-                                .or_else(|| page_id_opt.map(|v| v as i32));
+                                .or_else(|| page_id_opt.and_then(|v| i32::try_from(v).ok()));
                             detail.index_in_page = detail
                                 .index_in_page
-                                .or_else(|| index_opt.map(|v| v as i32));
+                                .or_else(|| index_opt.and_then(|v| i32::try_from(v).ok()));
                             if detail.id.is_none() {
                                 if let (Some(pid), Some(ix)) =
                                     (detail.page_id, detail.index_in_page)

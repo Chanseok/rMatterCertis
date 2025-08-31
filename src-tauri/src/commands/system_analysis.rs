@@ -19,6 +19,14 @@ pub struct CrawlingResponse {
 use crate::application::shared_state::{DbAnalysisResult, SharedStateCache, SiteAnalysisResult};
 use crate::domain::constants::{crawling::ttl, site};
 
+// Helper for page_id continuity analysis (moved top-level to avoid items-after-statements warning)
+#[derive(Debug, Default, Clone)]
+struct BreakInfo {
+    first_break_at: Option<i64>,
+    break_next: Option<i64>,
+    gap: i64,
+}
+
 /// 시스템 종합 분석 커맨드 (StatusTab용)
 ///
 /// proposal6.md Section 3.1: StatusTab의 역할 - 분석 및 캐시 업데이트
@@ -29,6 +37,10 @@ use crate::domain::constants::{crawling::ttl, site};
 /// 3. 분석 결과를 UI에 전송하여 화면에 표시합니다
 /// 4. 백엔드가 total_pages, DB 커서 위치를 "기억"하게 됩니다
 #[tauri::command]
+/// Analyze site and database status and update shared state caches.
+///
+/// # Errors
+/// Returns `Err(String)` if site or database analysis fails, or cache update encounters issues.
 pub async fn analyze_system_status(
     _app: AppHandle,
     shared_state: State<'_, SharedStateCache>,
@@ -108,6 +120,10 @@ pub async fn analyze_system_status(
 
 /// 진단: products / product_details 간 미스매치 및 이상치 탐지/정리
 #[tauri::command]
+/// Diagnose DB integrity and optionally delete mismatches or sync orphans.
+///
+/// # Errors
+/// Returns `Err(String)` on DB connection or query failures.
 pub async fn diagnose_and_repair_data(
     shared_state: State<'_, SharedStateCache>,
     delete_mismatches: Option<bool>,
@@ -169,12 +185,6 @@ pub async fn diagnose_and_repair_data(
     .unwrap_or(0);
 
     // 3) 심각한 page_id 연속성 붕괴(break) 탐지: page_id 오름차순에서 인접 차이가 2 이상인 최초 위치
-    #[derive(Debug, Default, Clone)]
-    struct BreakInfo {
-        first_break_at: Option<i64>,
-        break_next: Option<i64>,
-        gap: i64,
-    }
     let mut break_info: BreakInfo = BreakInfo::default();
     if let Ok(rows) = sqlx::query(
         "SELECT DISTINCT page_id FROM products WHERE page_id IS NOT NULL ORDER BY page_id",
@@ -209,7 +219,7 @@ pub async fn diagnose_and_repair_data(
                     .execute(&pool)
                     .await
             {
-                deleted_rows += res.rows_affected() as i64;
+                deleted_rows += i64::try_from(res.rows_affected()).unwrap_or(i64::MAX);
             }
         }
         if let Ok(res) = sqlx::query(
@@ -218,7 +228,7 @@ pub async fn diagnose_and_repair_data(
         .execute(&pool)
         .await
         {
-            deleted_rows += res.rows_affected() as i64;
+            deleted_rows += i64::try_from(res.rows_affected()).unwrap_or(i64::MAX);
         }
         if let Ok(res) = sqlx::query(
             r"DELETE FROM products WHERE manufacturer IS NULL AND model IS NULL AND certificate_id IS NULL",
@@ -226,7 +236,7 @@ pub async fn diagnose_and_repair_data(
         .execute(&pool)
         .await
         {
-            deleted_rows += res.rows_affected() as i64;
+            deleted_rows += i64::try_from(res.rows_affected()).unwrap_or(i64::MAX);
         }
         // 심각한 break 이후 레코드 일괄 삭제: 기준 = break_next 이상 모든 page_id
         if let Some(threshold) = break_info.break_next {
@@ -236,7 +246,7 @@ pub async fn diagnose_and_repair_data(
                     .execute(&pool)
                     .await
             {
-                deleted_rows += res.rows_affected() as i64;
+                deleted_rows += i64::try_from(res.rows_affected()).unwrap_or(i64::MAX);
             }
         }
         // 남은 orphans는 상세 동기화가 금방 따라올 수 있어 선택 삭제 대신 보고만 유지할 수도 있음
@@ -539,8 +549,9 @@ async fn calculate_range_preview(
     let max_index_in_page = db_analysis.max_index_in_page?;
 
     // Use site constants for calculation
-    let products_per_page = site::PRODUCTS_PER_PAGE as u32;
-    let last_saved_index = (max_page_id as u32 * products_per_page) + max_index_in_page as u32;
+    let products_per_page = u32::try_from(site::PRODUCTS_PER_PAGE).unwrap_or(12);
+    let last_saved_index = (u32::try_from(max_page_id).unwrap_or(0) * products_per_page)
+        + u32::try_from(max_index_in_page).unwrap_or(0);
     let next_product_index = last_saved_index + 1;
     let next_page = (next_product_index / products_per_page) + 1;
 
@@ -556,6 +567,10 @@ async fn calculate_range_preview(
 
 /// 캐시 상태 조회 (디버그/관리용)
 #[tauri::command]
+/// Get current analysis cache status from SharedState.
+///
+/// # Errors
+/// Returns `Err(String)` if cache retrieval fails unexpectedly.
 pub async fn get_analysis_cache_status(
     shared_state: State<'_, SharedStateCache>,
 ) -> Result<serde_json::Value, String> {
@@ -590,6 +605,10 @@ pub async fn get_analysis_cache_status(
 
 /// 분석 캐시 수동 클리어 (디버그/관리용)
 #[tauri::command]
+/// Clear analysis caches.
+///
+/// # Errors
+/// Returns `Err(String)` only if internal cache mechanisms fail.
 pub async fn clear_analysis_cache(
     shared_state: State<'_, SharedStateCache>,
 ) -> Result<String, String> {

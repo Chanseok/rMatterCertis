@@ -468,7 +468,7 @@ impl StageActor {
 
     /// 크롤링 엔진 초기화 (임시 구현)
     /// 현재는 시뮬레이션 모드이므로 실제 엔진 초기화는 건너뛰기
-    pub const fn initialize_default_engines(&mut self) -> Result<(), StageError> {
+    pub fn initialize_default_engines(&mut self) -> Result<(), StageError> {
         // No-op in production. Historical simulation path kept for tests/benchmarks via feature.
         #[cfg(feature = "simulate-details")]
         info!(
