@@ -14,7 +14,9 @@
 /// - 481페이지는:
 ///   - 앞의 4개 제품: pageId=1, indexInPage=3,2,1,0
 ///   - 뒤의 8개 제품: pageId=0, indexInPage=11,10,9,8,7,6,5,4
-const PRODUCTS_PER_PAGE: usize = 12; // Used later by validation assignment logic
+// 사이트 한 페이지당 제품 개수 (타입별 상수 제공)
+pub const PRODUCTS_PER_PAGE: usize = 12;
+pub const PRODUCTS_PER_PAGE_U32: u32 = 12;
 
 /// 페이지 ID와 인덱스 계산 결과
 #[derive(Debug, Clone)]
@@ -31,13 +33,15 @@ pub struct PageIdCalculator {
 }
 
 impl PageIdCalculator {
-    #[must_use] pub fn new(last_page_number: u32, products_in_last_page: usize) -> Self {
+    #[must_use]
+    pub const fn new(last_page_number: u32, products_in_last_page: usize) -> Self {
         Self {
             last_page_number,
             products_in_last_page,
         }
     }
-    #[must_use] pub fn calculate(
+    #[must_use]
+    pub fn calculate(
         &self,
         actual_page_number: u32,
         product_index_in_actual_page: usize,
@@ -50,7 +54,7 @@ impl PageIdCalculator {
         // Parameters:
         //  - actual_page_number: 1-based physical page (1 = newest, last_page_number = oldest)
         //  - product_index_in_actual_page: 0-based index within physical page (0 = newest on that page)
-    const P: u32 = 12; // PRODUCTS_PER_PAGE as u32 (site constant)
+        let p: u32 = PRODUCTS_PER_PAGE_U32;
         if self.last_page_number == 0 {
             return PageIdCalculation {
                 page_id: 0,
@@ -59,7 +63,8 @@ impl PageIdCalculator {
         }
         // 총 제품 수
         let total_products = if self.last_page_number > 0 {
-            (self.last_page_number - 1) * P + u32::try_from(self.products_in_last_page).unwrap_or(P)
+            (self.last_page_number - 1) * p
+                + u32::try_from(self.products_in_last_page).unwrap_or(p)
         } else {
             0
         };
@@ -71,17 +76,19 @@ impl PageIdCalculator {
         }
         // newest-first 0-based global index
         let index_from_newest =
-            (actual_page_number - 1) * P + u32::try_from(product_index_in_actual_page).unwrap_or(P);
+            (actual_page_number - 1) * p
+                + u32::try_from(product_index_in_actual_page).unwrap_or(p);
         // oldest-first 0-based global index
         let index_from_oldest = (total_products - 1).saturating_sub(index_from_newest);
-    let page_id = i32::try_from(index_from_oldest / P).unwrap_or(i32::MAX);
-    let index_in_page = i32::try_from(index_from_oldest % P).unwrap_or(i32::MAX);
+        let page_id = i32::try_from(index_from_oldest / p).unwrap_or(i32::MAX);
+        let index_in_page = i32::try_from(index_from_oldest % p).unwrap_or(i32::MAX);
         PageIdCalculation {
             page_id,
             index_in_page,
         }
     }
-    #[must_use] pub fn reverse_calculate(&self, page_id: i32, index_in_page: i32) -> Option<(u32, usize)> {
+    #[must_use]
+    pub fn reverse_calculate(&self, page_id: i32, index_in_page: i32) -> Option<(u32, usize)> {
         let calc = crate::domain::pagination::PaginationCalculator::default();
         calc.reverse(page_id, index_in_page, self.last_page_number)
             .map(|(phys, idx)| (phys, idx as usize))

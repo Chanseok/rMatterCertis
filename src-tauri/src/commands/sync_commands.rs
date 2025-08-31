@@ -30,6 +30,9 @@ pub struct SyncSummary {
 
 /// Run the basic 4-stage crawling engine for an explicit set of physical page numbers
 /// using the new page_filter path (avoids delegating to partial sync).
+///
+/// # Errors
+/// Returns `Err(String)` if no pages are provided, or if HTTP fetch/parse or DB access fails.
 #[tauri::command(async)]
 pub async fn start_basic_sync_pages(
     app: AppHandle,
@@ -59,16 +62,15 @@ pub async fn start_basic_sync_pages(
         .map_err(|e| format!("DB pool unavailable: {e}"))?;
 
     // Schema capability: does products have an 'id' column?
-    let products_has_id_column: bool = match sqlx::query("PRAGMA table_info(products)")
+    let products_has_id_column: bool = sqlx::query("PRAGMA table_info(products)")
         .fetch_all(&pool)
         .await
-    {
-        Ok(cols) => cols.iter().any(|r| {
-            let name: String = r.try_get("name").unwrap_or_default();
-            name == "id"
-        }),
-        Err(_) => false,
-    };
+        .is_ok_and(|cols| {
+            cols.iter().any(|r| {
+                let name: String = r.try_get("name").unwrap_or_default();
+                name == "id"
+            })
+        });
 
     // Discover site meta (Stage 1-equivalent)
     let newest_url = csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
@@ -771,12 +773,15 @@ pub async fn start_basic_sync_pages(
 
 /// Run partial sync in sequential batches of contiguous pages.
 /// Temporarily simplified to delegate to start_partial_sync without batching logic.
+///
+/// # Errors
+/// Returns `Err(String)` when input ranges are invalid, or HTTP/DB access fails during batch runs.
 #[tauri::command(async)]
 pub async fn start_batched_sync(
     app: AppHandle,
     app_state: State<'_, AppState>,
     ranges: String,
-    _batch_size_override: Option<u32>,
+    batch_size_override: Option<u32>,
     dry_run: Option<bool>,
 ) -> Result<SyncSummary, String> {
     // Errors
@@ -789,7 +794,7 @@ pub async fn start_batched_sync(
     // Resolve batch size: override > config > sane default
     let app_cfg = app_state.config.read().await.clone();
     let cfg_batch = app_cfg.user.batch.batch_size.max(1);
-    let batch_size = _batch_size_override.unwrap_or(cfg_batch).max(1);
+    let batch_size = batch_size_override.unwrap_or(cfg_batch).max(1);
 
     // Expand ranges into distinct physical pages (desc), then chunk
     let mut pages: Vec<u32> = Vec::new();
@@ -842,6 +847,9 @@ pub async fn start_batched_sync(
 
 /// Compute anomaly-driven buffered windows and run partial sync.
 /// Temporarily disabled; returns an error for now.
+///
+/// # Errors
+/// Returns `Err(String)` when configuration, HTTP, or DB discovery fails, or if execution cannot proceed.
 #[tauri::command(async)]
 pub async fn start_repair_sync(
     app: AppHandle,
@@ -862,16 +870,15 @@ pub async fn start_repair_sync(
         .map_err(|e| format!("DB pool unavailable: {e}"))?;
 
     // Detect schema compatibility for this DB: does products have an 'id' column?
-    let products_has_id_column: bool = match sqlx::query("PRAGMA table_info(products)")
+    let products_has_id_column: bool = sqlx::query("PRAGMA table_info(products)")
         .fetch_all(&pool)
         .await
-    {
-        Ok(cols) => cols.iter().any(|r| {
-            let name: String = r.try_get("name").unwrap_or_default();
-            name == "id"
-        }),
-        Err(_) => false,
-    };
+        .map_or(false, |cols| {
+            cols.iter().any(|r| {
+                let name: String = r.try_get("name").unwrap_or_default();
+                name == "id"
+            })
+        });
     // (deduped id-column detection)
 
     let newest_url = csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
@@ -1026,6 +1033,9 @@ fn parse_ranges(expr: &str) -> Result<Vec<(u32, u32)>, String> {
     Ok(merged)
 }
 
+///
+/// # Errors
+/// Returns `Err(String)` on configuration errors, HTTP/DB failures, or malformed/unsupported ranges.
 #[tauri::command(async)]
 pub async fn start_partial_sync(
     app: AppHandle,
@@ -1073,16 +1083,15 @@ pub async fn start_partial_sync(
     // (rate_limit will be included in subsequent events if needed)
 
     // start_partial_sync: Detect if products table has an 'id' column (legacy/production schema)
-    let products_has_id_column: bool = match sqlx::query("PRAGMA table_info(products)")
+    let products_has_id_column: bool = sqlx::query("PRAGMA table_info(products)")
         .fetch_all(&pool)
         .await
-    {
-        Ok(cols) => cols.iter().any(|r| {
-            let name: String = r.try_get("name").unwrap_or_default();
-            name == "id"
-        }),
-        Err(_) => false,
-    };
+        .is_ok_and(|cols| {
+            cols.iter().any(|r| {
+                let name: String = r.try_get("name").unwrap_or_default();
+                name == "id"
+            })
+        });
 
     // Discover site meta for calculator
     let newest_url = csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
@@ -1236,7 +1245,7 @@ pub async fn start_partial_sync(
     )
     .bind(&session_id)
     .bind(match ranges.as_slice() {
-        rs if rs.is_empty() => String::new(),
+        [] => String::new(),
         rs => rs
             .iter()
             .map(|(s, e)| if s == e { s.to_string() } else { format!("{}-{}", s, e) })
@@ -1271,26 +1280,23 @@ pub async fn start_partial_sync(
             // 1) 경계 확장(오래된 쪽): start_oldest 바로 다음(더 오래된) 페이지 포함
             if start_oldest < total_pages {
                 let extra_older = start_oldest + 1;
-                if !seen.contains(&extra_older) {
+                if seen.insert(extra_older) {
                     ordered.push(extra_older);
-                    seen.insert(extra_older);
                 }
             }
 
             // 2) 경계 확장(최신 쪽): end_newest 바로 이전(더 최신) 페이지 포함
             if end_newest > 1 {
                 let extra_newer = end_newest - 1;
-                if !seen.contains(&extra_newer) {
+                if seen.insert(extra_newer) {
                     ordered.push(extra_newer);
-                    seen.insert(extra_newer);
                 }
             }
 
             // 3) 원래 범위 Oldest -> Newer 순으로 추가 (start_oldest, start_oldest-1, ..., end_newest)
             for p in (end_newest..=start_oldest).rev() {
-                if !seen.contains(&p) {
+                if seen.insert(p) {
                     ordered.push(p);
-                    seen.insert(p);
                 }
             }
         }
