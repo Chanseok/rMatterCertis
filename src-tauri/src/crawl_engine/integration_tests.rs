@@ -183,8 +183,20 @@ mod actor_integration_tests {
     
     #[tokio::test]
     async fn test_stage_actor_execution() {
-        let config = Arc::new(SystemConfig::default());
-        let mut stage_actor = StageActor::new("test_batch".to_string(), config);
+        let _config = Arc::new(SystemConfig::default());
+        // Build minimal DI deps for StageActor
+        let app_config = crate::infrastructure::config::AppConfig::default();
+        let http_client = Arc::new(app_config.create_http_client().expect("http"));
+        let extractor = Arc::new(crate::infrastructure::MatterDataExtractor::new().expect("extractor"));
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        let repo = Arc::new(crate::infrastructure::IntegratedProductRepository::new(pool));
+        let status_checker: Arc<dyn crate::domain::services::StatusChecker> = Arc::new(crate::infrastructure::StatusCheckerImpl::with_product_repo((**http_client).clone(), (**extractor).clone(), app_config.clone(), Arc::clone(&repo)));
+        let list_cfg = crate::infrastructure::crawling_service_impls::CollectorConfig { max_concurrent: 2, concurrency: 2, delay_between_requests: std::time::Duration::from_millis(0), delay_ms: 0, batch_size: 2, retry_attempts: 0, retry_max: 0 };
+        let product_list_collector: Arc<dyn crate::domain::services::ProductListCollector> = Arc::new(crate::infrastructure::ProductListCollectorImpl::new(Arc::clone(&http_client), Arc::clone(&extractor), list_cfg, Arc::clone(&status_checker)));
+        let detail_cfg = crate::infrastructure::crawling_service_impls::CollectorConfig { max_concurrent: 2, concurrency: 2, delay_between_requests: std::time::Duration::from_millis(0), delay_ms: 0, batch_size: 2, retry_attempts: 0, retry_max: 0 };
+        let product_detail_collector: Arc<dyn crate::domain::services::ProductDetailCollector> = Arc::new(crate::infrastructure::ProductDetailCollectorImpl::new(Arc::clone(&http_client), Arc::clone(&extractor), detail_cfg));
+        let deps = crate::crawl_engine::actors::stage_actor::StageDeps { http_client, data_extractor: extractor, product_repo: repo, status_checker, product_list_collector, product_detail_collector, app_config: app_config.clone(), duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip };
+        let mut stage_actor = StageActor::new_with_deps("actor_test".into(), "test_batch".into(), deps, Arc::new(crate::crawl_engine::stages::DefaultStageLogicFactory));
         
         let items = vec![
             StageItem::Page(1),
@@ -305,8 +317,19 @@ mod actor_integration_tests {
     
     #[tokio::test]
     async fn test_concurrent_stage_processing() {
-        let config = Arc::new(SystemConfig::default());
-        let mut stage_actor = StageActor::new("test_concurrent".to_string(), config);
+        // Build minimal DI deps for StageActor
+        let app_config = crate::infrastructure::config::AppConfig::default();
+        let http_client = Arc::new(app_config.create_http_client().expect("http"));
+        let extractor = Arc::new(crate::infrastructure::MatterDataExtractor::new().expect("extractor"));
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        let repo = Arc::new(crate::infrastructure::IntegratedProductRepository::new(pool));
+        let status_checker: Arc<dyn crate::domain::services::StatusChecker> = Arc::new(crate::infrastructure::StatusCheckerImpl::with_product_repo((**http_client).clone(), (**extractor).clone(), app_config.clone(), Arc::clone(&repo)));
+        let list_cfg = crate::infrastructure::crawling_service_impls::CollectorConfig { max_concurrent: 3, concurrency: 3, delay_between_requests: std::time::Duration::from_millis(0), delay_ms: 0, batch_size: 3, retry_attempts: 0, retry_max: 0 };
+        let product_list_collector: Arc<dyn crate::domain::services::ProductListCollector> = Arc::new(crate::infrastructure::ProductListCollectorImpl::new(Arc::clone(&http_client), Arc::clone(&extractor), list_cfg, Arc::clone(&status_checker)));
+        let detail_cfg = crate::infrastructure::crawling_service_impls::CollectorConfig { max_concurrent: 3, concurrency: 3, delay_between_requests: std::time::Duration::from_millis(0), delay_ms: 0, batch_size: 3, retry_attempts: 0, retry_max: 0 };
+        let product_detail_collector: Arc<dyn crate::domain::services::ProductDetailCollector> = Arc::new(crate::infrastructure::ProductDetailCollectorImpl::new(Arc::clone(&http_client), Arc::clone(&extractor), detail_cfg));
+        let deps = crate::crawl_engine::actors::stage_actor::StageDeps { http_client, data_extractor: extractor, product_repo: repo, status_checker, product_list_collector, product_detail_collector, app_config: app_config.clone(), duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip };
+        let mut stage_actor = StageActor::new_with_deps("actor_test".into(), "test_concurrent".into(), deps, Arc::new(crate::crawl_engine::stages::DefaultStageLogicFactory));
         
         let items: Vec<StageItem> = (1..=10)
             .map(|i| StageItem::Page(i as u32))

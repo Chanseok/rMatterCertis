@@ -20,7 +20,6 @@ use crate::crawl_engine::actors::types::{
 };
 use crate::crawl_engine::channels::types::StageItem;
 use crate::crawl_engine::integrated_context::AppContext;
-use crate::crawl_engine::stages::DefaultStageLogicFactory;
 use crate::crawl_engine::stages::traits::StageLogicFactory;
 use crate::domain::services::{ProductDetailCollector, ProductListCollector, StatusChecker};
 use crate::infrastructure::config::AppConfig;
@@ -95,9 +94,9 @@ pub struct StageActor {
     product_list_collector: Option<Arc<dyn ProductListCollector>>, // 리스트 페이지 수집기
     product_detail_collector: Option<Arc<dyn ProductDetailCollector>>, // 상세 페이지 수집기
     _product_repo: Option<Arc<IntegratedProductRepository>>, // 저장소 (옵션)
-    http_client: Option<Arc<HttpClient>>,           // HTTP 클라이언트
+    http_client: Option<Arc<HttpClient>>, // HTTP 클라이언트
     data_extractor: Option<Arc<MatterDataExtractor>>, // HTML 파서
-    app_config: Option<AppConfig>,                  // 앱 설정
+    app_config: Option<AppConfig>, // 앱 설정
 
     // 상위에서 주입되는 페이지네이션 힌트
     site_total_pages_hint: Option<u32>,
@@ -106,24 +105,6 @@ pub struct StageActor {
     // 전략 분기 (Phase 3)
     strategy_factory: Arc<dyn StageLogicFactory + Send + Sync>,
     duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy,
-}
-
-// Manual Debug implementation to avoid requiring Debug on all service trait object dependencies
-impl std::fmt::Debug for StageActor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StageActor")
-            .field("actor_id", &self.actor_id)
-            .field("batch_id", &self.batch_id)
-            .field("stage_id", &self.stage_id)
-            .field("stage_type", &self.stage_type)
-            .field("state", &self.state)
-            .field("total_items", &self.total_items)
-            .field("completed_items", &self.completed_items)
-            .field("success_count", &self.success_count)
-            .field("failure_count", &self.failure_count)
-            .field("skipped_count", &self.skipped_count)
-            .finish()
-    }
 }
 
 // Extension trait to restore helper methods expected by per-item task logic
@@ -148,25 +129,15 @@ impl StageItemExt for StageItem {
     fn item_type_enum(&self) -> StageItemType {
         match self {
             Self::Page(page) => StageItemType::Page { page_number: *page },
-            Self::Url(_u) => StageItemType::Url {
-                url_type: "generic".into(),
-            },
-            Self::Product(_p) => StageItemType::Url {
-                url_type: "product".into(),
-            },
+            Self::Url(_u) => StageItemType::Url { url_type: "generic".into() },
+            Self::Product(_p) => StageItemType::Url { url_type: "product".into() },
             Self::ProductList(_l) => StageItemType::ProductUrls { urls: vec![] },
             Self::ProductUrls(list) => StageItemType::ProductUrls {
                 urls: list.urls.iter().map(|u| u.url.clone()).collect(),
             },
-            Self::ProductDetails(_d) => StageItemType::Url {
-                url_type: "product_details".into(),
-            },
-            Self::ValidatedProducts(_v) => StageItemType::Url {
-                url_type: "validated_products".into(),
-            },
-            Self::ValidationTarget(_t) => StageItemType::Url {
-                url_type: "validation_target".into(),
-            },
+            Self::ProductDetails(_d) => StageItemType::Url { url_type: "product_details".into() },
+            Self::ValidatedProducts(_v) => StageItemType::Url { url_type: "validated_products".into() },
+            Self::ValidationTarget(_t) => StageItemType::Url { url_type: "validation_target".into() },
         }
     }
 }
@@ -232,41 +203,7 @@ impl StageActor {
             }
         }
     }
-    /// 새로운 `StageActor` 인스턴스 생성
-    ///
-    /// # Arguments
-    /// * `actor_id` - Actor 고유 식별자
-    ///
-    /// # Returns
-    /// * `Self` - 새로운 `StageActor` 인스턴스
-    #[must_use] pub fn new(actor_id: String) -> Self {
-        let batch_id = Uuid::new_v4().to_string();
-        Self {
-            actor_id,
-            batch_id,
-            stage_id: None,
-            stage_type: None,
-            state: StageState::Idle,
-            start_time: None,
-            total_items: 0,
-            completed_items: 0,
-            success_count: 0,
-            failure_count: 0,
-            skipped_count: 0,
-            item_results: Vec::new(),
-            status_checker: None,
-            product_list_collector: None,
-            product_detail_collector: None,
-            _product_repo: None,
-            http_client: None,
-            data_extractor: None,
-            app_config: None,
-            site_total_pages_hint: None,
-            products_on_last_page_hint: None,
-            strategy_factory: Arc::new(DefaultStageLogicFactory),
-            duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
-        }
-    }
+    // Removed: deprecated constructors new() and new_with_oneshot()
 
     /// New constructor that takes explicit dependencies and a strategy factory.
     /// This supports proper DI and makes `StageActor` focused on orchestration only.
@@ -304,43 +241,6 @@ impl StageActor {
         }
     }
 
-    /// `OneShot` Actor 시스템 호환성을 위한 생성자
-    ///
-    /// 사용처: 간단한 통합 경로(real_crawling_integration 등)
-    #[must_use]
-    pub fn new_with_oneshot(
-        batch_id: String,
-        _config: Arc<crate::crawl_engine::config::SystemConfig>,
-        _total_pages: u32,
-        _products_on_last_page: u32,
-    ) -> Self {
-        let actor_id = Uuid::new_v4().to_string();
-        Self {
-            actor_id,
-            batch_id,
-            stage_id: None,
-            stage_type: None,
-            state: StageState::Idle,
-            start_time: None,
-            total_items: 0,
-            completed_items: 0,
-            success_count: 0,
-            failure_count: 0,
-            skipped_count: 0,
-            item_results: Vec::new(),
-            status_checker: None,
-            product_list_collector: None,
-            product_detail_collector: None,
-            _product_repo: None,
-            http_client: None,
-            data_extractor: None,
-            app_config: None,
-            site_total_pages_hint: None,
-            products_on_last_page_hint: None,
-            strategy_factory: Arc::new(DefaultStageLogicFactory),
-            duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
-        }
-    }
 
     /// 사이트 페이지네이션 힌트 설정 (`StatusCheck` 결과를 상위에서 주입)
     pub fn set_site_pagination_hints(&mut self, total_pages: u32, products_on_last_page: u32) {
@@ -1785,30 +1685,7 @@ impl StageActor {
 
     // === 시뮬레이션 함수들 (기존) ===
 
-    /// 리스트 페이지 처리 시뮬레이션 (test/dev only)
-    #[cfg(feature = "simulate-details")]
-    async fn simulate_list_page_processing(item: &StageItem) -> Result<(), String> {
-        // 임시: 간단한 처리 시뮬레이션
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // 90% 성공률 시뮬레이션 - 간단한 방법 사용
-        let success = match item {
-            StageItem::Page(_) => true,
-            StageItem::Url(_) => true,
-            StageItem::Product(_) => true,
-            StageItem::ValidationTarget(_) => true,
-            StageItem::ProductList(_) => true, // 대부분 성공으로 가정
-            StageItem::ProductUrls(_) => true,
-            StageItem::ProductDetails(_) => true,
-            StageItem::ValidatedProducts(_) => true,
-        };
-
-        if success {
-            Ok(())
-        } else {
-            Err("Simulated network error".to_string())
-        }
-    }
+    // (이전) 리스트 페이지 처리 시뮬레이션 함수는 미사용으로 제거됨
 
     /// 스테이지 정리
     fn cleanup_stage(&mut self) {
@@ -1856,6 +1733,7 @@ mod tests {
     use crate::crawl_engine::channels::types as ch;
     use crate::crawl_engine::integrated_context::IntegratedContextFactory;
     use crate::crawl_engine::system_config::SystemConfig;
+    use crate::crawl_engine::stages::DefaultStageLogicFactory;
     use crate::domain::services::crawling_services as svc;
     use crate::domain::services::crawling_services::{CrawlingRangeRecommendation, SiteDataChangeStatus};
     use std::sync::Arc;
