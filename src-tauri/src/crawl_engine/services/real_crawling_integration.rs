@@ -59,8 +59,7 @@ impl StageActor {
                 Arc::clone(&repo),
             ),
         );
-        let status_checker: Arc<dyn crate::domain::services::StatusChecker> = status_checker_impl.clone();
-        let list_cfg = crate::infrastructure::crawling_service_impls::CollectorConfig {
+    let list_cfg = crate::infrastructure::crawling_service_impls::CollectorConfig {
             max_concurrent: app_cfg.user.crawling.workers.list_page_max_concurrent as u32,
             concurrency: app_cfg.user.crawling.workers.list_page_max_concurrent as u32,
             delay_between_requests: std::time::Duration::from_millis(app_cfg.user.request_delay_ms),
@@ -69,7 +68,7 @@ impl StageActor {
             retry_attempts: app_cfg.user.crawling.workers.max_retries,
             retry_max: app_cfg.user.crawling.workers.max_retries,
         };
-        let product_list_collector: Arc<dyn crate::domain::services::ProductListCollector> =
+        let _product_list_collector =
             Arc::new(
                 crate::infrastructure::crawling_service_impls::ProductListCollectorImpl::new(
                     Arc::clone(&http_client),
@@ -95,21 +94,17 @@ impl StageActor {
             retry_attempts: app_cfg.user.crawling.workers.max_retries,
             retry_max: app_cfg.user.crawling.workers.max_retries,
         };
-        let product_detail_collector: Arc<dyn crate::domain::services::ProductDetailCollector> =
-            Arc::new(
-                crate::infrastructure::crawling_service_impls::ProductDetailCollectorImpl::new(
-                    Arc::clone(&http_client),
-                    Arc::clone(&extractor),
-                    detail_cfg,
-                ),
-            );
+        let _product_detail_collector = Arc::new(
+            crate::infrastructure::crawling_service_impls::ProductDetailCollectorImpl::new(
+                Arc::clone(&http_client),
+                Arc::clone(&extractor),
+                detail_cfg,
+            ),
+        );
         let deps = crate::crawl_engine::actors::stage_actor::StageDeps {
             http_client,
             data_extractor: extractor,
             product_repo: repo,
-            status_checker,
-            product_list_collector,
-            product_detail_collector,
             app_config: app_cfg.clone(),
             duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
         };
@@ -427,7 +422,7 @@ impl crate::crawl_engine::actors::BatchActor {
             retry_attempts: app_cfg.user.crawling.workers.max_retries,
             retry_max: app_cfg.user.crawling.workers.max_retries,
         };
-        let product_detail_collector: Arc<dyn crate::domain::services::ProductDetailCollector> =
+        let _product_detail_collector: Arc<dyn crate::domain::services::ProductDetailCollector> =
             Arc::new(
                 crate::infrastructure::crawling_service_impls::ProductDetailCollectorImpl::new(
                     Arc::clone(&http_client),
@@ -439,9 +434,6 @@ impl crate::crawl_engine::actors::BatchActor {
             http_client,
             data_extractor: extractor,
             product_repo: repo,
-            status_checker,
-            product_list_collector,
-            product_detail_collector,
             app_config: app_cfg.clone(),
             duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
         };

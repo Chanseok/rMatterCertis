@@ -21,11 +21,8 @@ use crate::crawl_engine::actors::types::{
 use crate::crawl_engine::channels::types::StageItem;
 use crate::crawl_engine::integrated_context::AppContext;
 use crate::crawl_engine::stages::traits::StageLogicFactory;
-use crate::domain::services::{ProductDetailCollector, ProductListCollector, StatusChecker};
+// Removed direct service imports; StageActor relies on strategy layer deps only
 use crate::infrastructure::config::AppConfig;
-use crate::infrastructure::crawling_service_impls::{
-    CollectorConfig, ProductDetailCollectorImpl, ProductListCollectorImpl, StatusCheckerImpl,
-};
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
 
 /// Dependency bundle for `StageActor` (to move construction out of the actor)
@@ -34,9 +31,6 @@ pub struct StageDeps {
     pub http_client: Arc<HttpClient>,
     pub data_extractor: Arc<MatterDataExtractor>,
     pub product_repo: Arc<IntegratedProductRepository>,
-    pub status_checker: Arc<dyn StatusChecker>,
-    pub product_list_collector: Arc<dyn ProductListCollector>,
-    pub product_detail_collector: Arc<dyn ProductDetailCollector>,
     pub app_config: AppConfig,
     /// 중복 URL 저장 정책 (수동 실행 등에서 제어)
     pub duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy,
@@ -90,10 +84,7 @@ pub struct StageActor {
     item_results: Vec<StageItemResult>,
 
     // 실제 크롤링 엔진 의존성
-    status_checker: Option<Arc<dyn StatusChecker>>, // 사이트 상태 체크
-    product_list_collector: Option<Arc<dyn ProductListCollector>>, // 리스트 페이지 수집기
-    product_detail_collector: Option<Arc<dyn ProductDetailCollector>>, // 상세 페이지 수집기
-    _product_repo: Option<Arc<IntegratedProductRepository>>, // 저장소 (옵션)
+    product_repo: Option<Arc<IntegratedProductRepository>>, // 저장소 (옵션)
     http_client: Option<Arc<HttpClient>>, // HTTP 클라이언트
     data_extractor: Option<Arc<MatterDataExtractor>>, // HTML 파서
     app_config: Option<AppConfig>, // 앱 설정
@@ -227,10 +218,7 @@ impl StageActor {
             failure_count: 0,
             skipped_count: 0,
             item_results: Vec::new(),
-            status_checker: Some(deps.status_checker),
-            product_list_collector: Some(deps.product_list_collector),
-            product_detail_collector: Some(deps.product_detail_collector),
-            _product_repo: Some(deps.product_repo),
+            product_repo: Some(deps.product_repo),
             http_client: Some(deps.http_client),
             data_extractor: Some(deps.data_extractor),
             app_config: Some(deps.app_config),
@@ -252,129 +240,11 @@ impl StageActor {
         );
     }
 
-    /// 실제 서비스 초기화 - guide/re-arch-plan-final2.md 설계 기반
-    /// `ServiceBasedBatchCrawlingEngine` 패턴 참조하되 Actor 모델에 맞게 구현
-    #[deprecated(
-        note = "Construct services outside and pass via StageDeps; keep for transitional compatibility"
-    )]
-    pub async fn initialize_real_services(
-        &mut self,
-        _context: &AppContext,
-    ) -> Result<(), StageError> {
-        info!(
-            "🎯 [ACTOR] Initializing real services for StageActor: {}",
-            self.actor_id
-        );
-
-        // AppConfig 로드 (설정 파일에서)
-        let app_config = crate::infrastructure::config::AppConfig::default();
-
-        // HTTP Client 생성 (ServiceBasedBatchCrawlingEngine과 동일한 방식)
-        let http_client =
-            app_config
-                .create_http_client()
-                .map_err(|e| StageError::GenericError {
-                    message: format!("Failed to create HTTP client: {}", e),
-                })?;
-
-        // 데이터 추출기 생성
-        let data_extractor = MatterDataExtractor::new().map_err(|e| StageError::GenericError {
-            message: format!("Failed to create data extractor: {}", e),
-        })?;
-
-        // 데이터베이스 연결 생성 (기본 경로 사용)
-        let pool = crate::infrastructure::database_connection::get_or_init_global_pool()
-            .await
-            .map_err(|e| StageError::GenericError {
-                message: format!("Failed to obtain database pool: {}", e),
-            })?;
-        let product_repo = Arc::new(IntegratedProductRepository::new(pool));
-
-        // StatusChecker 생성 (ServiceBasedBatchCrawlingEngine과 동일한 방식)
-        let status_checker = Arc::new(StatusCheckerImpl::with_product_repo(
-            http_client.clone(),
-            data_extractor.clone(),
-            app_config.clone(),
-            Arc::clone(&product_repo),
-        ));
-
-        // List Collector Config (ServiceBasedBatchCrawlingEngine 패턴 참조)
-        let list_collector_config = CollectorConfig {
-            max_concurrent: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-            concurrency: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-            delay_between_requests: Duration::from_millis(app_config.user.request_delay_ms),
-            delay_ms: app_config.user.request_delay_ms,
-            batch_size: app_config.user.batch.batch_size,
-            retry_attempts: app_config.user.crawling.workers.max_retries,
-            retry_max: app_config.user.crawling.workers.max_retries,
-        };
-
-        let detail_collector_config = CollectorConfig {
-            max_concurrent: app_config
-                .user
-                .crawling
-                .workers
-                .product_detail_max_concurrent as u32,
-            concurrency: app_config
-                .user
-                .crawling
-                .workers
-                .product_detail_max_concurrent as u32,
-            delay_between_requests: Duration::from_millis(app_config.user.request_delay_ms),
-            delay_ms: app_config.user.request_delay_ms,
-            batch_size: app_config.user.batch.batch_size,
-            retry_attempts: app_config.user.crawling.workers.max_retries,
-            retry_max: app_config.user.crawling.workers.max_retries,
-        };
-
-        // Status checker를 concrete type으로 생성 (ProductListCollector에 필요)
-        let status_checker_impl = Arc::new(StatusCheckerImpl::with_product_repo(
-            http_client.clone(),
-            data_extractor.clone(),
-            app_config.clone(),
-            Arc::clone(&product_repo),
-        ));
-
-        // ProductListCollector 생성 (ServiceBasedBatchCrawlingEngine과 동일한 방식)
-        let product_list_collector = Arc::new(ProductListCollectorImpl::new(
-            Arc::new(http_client.clone()),
-            Arc::new(data_extractor.clone()),
-            list_collector_config,
-            status_checker_impl,
-        ));
-
-        // ProductDetailCollector 생성 (ServiceBasedBatchCrawlingEngine과 동일한 방식)
-        let product_detail_collector = Arc::new(ProductDetailCollectorImpl::new(
-            Arc::new(http_client.clone()),
-            Arc::new(data_extractor.clone()),
-            detail_collector_config,
-        ));
-
-        // 서비스들을 StageActor에 할당
-        self.status_checker = Some(status_checker);
-        self.product_list_collector = Some(product_list_collector);
-        self.product_detail_collector = Some(product_detail_collector);
-        self._product_repo = Some(product_repo);
-        self.http_client = Some(Arc::new(http_client));
-        self.data_extractor = Some(Arc::new(data_extractor));
-        self.app_config = Some(app_config);
-
-        info!(
-            "✅ [ACTOR] Real services initialized successfully for StageActor: {}",
-            self.actor_id
-        );
-        Ok(())
-    }
 
     /// 크롤링 엔진 초기화 (임시 구현)
     /// 현재는 시뮬레이션 모드이므로 실제 엔진 초기화는 건너뛰기
     pub fn initialize_default_engines(&mut self) -> Result<(), StageError> {
-        // No-op in production. Historical simulation path kept for tests/benchmarks via feature.
-        #[cfg(feature = "simulate-details")]
-        info!(
-            "🔧 StageActor {} initialized (simulate-details enabled)",
-            self.actor_id
-        );
+    // No-op in production. Historical simulation path removed.
         Ok(())
     }
 
@@ -574,7 +444,7 @@ impl StageActor {
             self.app_config.clone(),
             self.http_client.clone(),
             self.data_extractor.clone(),
-            self._product_repo.clone(),
+            self.product_repo.clone(),
         ) {
             (Some(cfg), Some(http), Some(extractor), Some(repo)) => (cfg, http, extractor, repo),
             _ => {
@@ -1729,71 +1599,11 @@ impl StageActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::services::SiteStatus;
     use crate::crawl_engine::channels::types as ch;
     use crate::crawl_engine::integrated_context::IntegratedContextFactory;
     use crate::crawl_engine::system_config::SystemConfig;
     use crate::crawl_engine::stages::DefaultStageLogicFactory;
-    use crate::domain::services::crawling_services as svc;
-    use crate::domain::services::crawling_services::{CrawlingRangeRecommendation, SiteDataChangeStatus};
     use std::sync::Arc;
-
-    struct FakeStatusChecker;
-    #[async_trait::async_trait]
-    impl svc::StatusChecker for FakeStatusChecker {
-        async fn check_site_status(&self) -> anyhow::Result<SiteStatus> {
-            Ok(SiteStatus {
-                is_accessible: true,
-                response_time_ms: 10,
-                total_pages: 1,
-                estimated_products: 2,
-                products_on_last_page: 2,
-                last_check_time: chrono::Utc::now(),
-                health_score: 1.0,
-                data_change_status: SiteDataChangeStatus::Stable { count: 2 },
-                decrease_recommendation: None,
-                crawling_range_recommendation: CrawlingRangeRecommendation::Full,
-            })
-        }
-        async fn calculate_crawling_range_recommendation(
-            &self,
-            _site_status: &SiteStatus,
-            _db_analysis: &crate::domain::services::DatabaseAnalysis,
-        ) -> anyhow::Result<CrawlingRangeRecommendation> {
-            Ok(CrawlingRangeRecommendation::Full)
-        }
-        async fn estimate_crawling_time(&self, _pages: u32) -> std::time::Duration { std::time::Duration::from_millis(1) }
-        async fn verify_site_accessibility(&self) -> anyhow::Result<bool> { Ok(true) }
-    }
-
-    struct FakeListCollector;
-    #[async_trait::async_trait]
-    impl svc::ProductListCollector for FakeListCollector {
-        async fn collect_all_pages(&self, _tp: u32, _plp: u32) -> anyhow::Result<Vec<crate::domain::product_url::ProductUrl>> { Ok(vec![]) }
-        async fn collect_page_range(&self, _s: u32, _e: u32, _tp: u32, _plp: u32) -> anyhow::Result<Vec<crate::domain::product_url::ProductUrl>> { Ok(vec![]) }
-        async fn collect_page_range_with_cancellation(&self, _s: u32, _e: u32, _tp: u32, _plp: u32, _ct: tokio_util::sync::CancellationToken) -> anyhow::Result<Vec<crate::domain::product_url::ProductUrl>> { Ok(vec![]) }
-        async fn collect_single_page(&self, _p: u32, _tp: u32, _plp: u32) -> anyhow::Result<Vec<crate::domain::product_url::ProductUrl>> { Ok(vec![]) }
-        async fn collect_page_batch(&self, _pages: &[u32], _tp: u32, _plp: u32) -> anyhow::Result<Vec<crate::domain::product_url::ProductUrl>> { Ok(vec![]) }
-        fn as_any(&self) -> &dyn std::any::Any { self }
-    }
-
-    struct FakeDetailCollector;
-    #[async_trait::async_trait]
-    impl svc::ProductDetailCollector for FakeDetailCollector {
-        async fn collect_details(&self, _urls: &[crate::domain::product_url::ProductUrl]) -> anyhow::Result<Vec<crate::domain::product::ProductDetail>> { Ok(vec![]) }
-        async fn collect_details_with_cancellation(&self, _urls: &[crate::domain::product_url::ProductUrl], _ct: tokio_util::sync::CancellationToken) -> anyhow::Result<Vec<crate::domain::product::ProductDetail>> { Ok(vec![]) }
-        async fn collect_single_product(&self, _url: &crate::domain::product_url::ProductUrl) -> anyhow::Result<crate::domain::product::ProductDetail> {
-            Ok(crate::domain::product::ProductDetail {
-                url: "https://e/p1".into(), page_id: Some(1), index_in_page: Some(1), id: None,
-                manufacturer: None, model: None, device_type: None, certificate_id: None, certification_date: None, software_version: None, hardware_version: None, vid: None, pid: None,
-                family_sku: None, family_variant_sku: None, firmware_version: None, family_id: None, tis_trp_tested: None, specification_version: None, transport_interface: None,
-                primary_device_type_id: None, application_categories: None, description: None, compliance_document_url: None, program_type: None,
-                created_at: chrono::Utc::now(), updated_at: chrono::Utc::now()
-            })
-        }
-        async fn collect_product_batch(&self, _urls: &[crate::domain::product_url::ProductUrl]) -> anyhow::Result<Vec<crate::domain::product::ProductDetail>> { Ok(vec![]) }
-        fn as_any(&self) -> &dyn std::any::Any { self }
-    }
 
     async fn memory_repo() -> Arc<IntegratedProductRepository> {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -1820,13 +1630,10 @@ mod tests {
         let extractor = Arc::new(crate::infrastructure::MatterDataExtractor::new().expect("extractor"));
         let repo = memory_repo().await;
 
-        let deps = StageDeps {
+    let deps = StageDeps {
             http_client: Arc::clone(&http_client),
             data_extractor: Arc::clone(&extractor),
             product_repo: Arc::clone(&repo),
-            status_checker: Arc::new(FakeStatusChecker),
-            product_list_collector: Arc::new(FakeListCollector),
-            product_detail_collector: Arc::new(FakeDetailCollector),
             app_config: app_config.clone(),
             duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
         };

@@ -1225,67 +1225,6 @@ impl BatchActor {
 
         // StageActor 생성 (DI 경로: StageDeps + StrategyFactory)
         let deps = {
-            use crate::infrastructure::crawling_service_impls as impls;
-            // StatusChecker
-            let status_checker: Arc<dyn crate::domain::services::StatusChecker> =
-                Arc::new(impls::StatusCheckerImpl::with_product_repo(
-                    (**http_client).clone(),
-                    (**data_extractor).clone(),
-                    app_config.clone(),
-                    Arc::clone(product_repo),
-                ));
-            // List collector (needs its own StatusCheckerImpl concrete)
-            let list_cfg = impls::CollectorConfig {
-                max_concurrent: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-                concurrency: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-                delay_between_requests: std::time::Duration::from_millis(
-                    app_config.user.request_delay_ms,
-                ),
-                delay_ms: app_config.user.request_delay_ms,
-                batch_size: app_config.user.batch.batch_size,
-                retry_attempts: app_config.user.crawling.workers.max_retries,
-                retry_max: app_config.user.crawling.workers.max_retries,
-            };
-            let status_checker_for_list = Arc::new(impls::StatusCheckerImpl::with_product_repo(
-                (**http_client).clone(),
-                (**data_extractor).clone(),
-                app_config.clone(),
-                Arc::clone(product_repo),
-            ));
-            let product_list_collector: Arc<dyn crate::domain::services::ProductListCollector> =
-                Arc::new(impls::ProductListCollectorImpl::new(
-                    Arc::clone(http_client),
-                    Arc::clone(data_extractor),
-                    list_cfg,
-                    status_checker_for_list,
-                ));
-            // Detail collector
-            let detail_cfg = impls::CollectorConfig {
-                max_concurrent: app_config
-                    .user
-                    .crawling
-                    .workers
-                    .product_detail_max_concurrent as u32,
-                concurrency: app_config
-                    .user
-                    .crawling
-                    .workers
-                    .product_detail_max_concurrent as u32,
-                delay_between_requests: std::time::Duration::from_millis(
-                    app_config.user.request_delay_ms,
-                ),
-                delay_ms: app_config.user.request_delay_ms,
-                batch_size: app_config.user.batch.batch_size,
-                retry_attempts: app_config.user.crawling.workers.max_retries,
-                retry_max: app_config.user.crawling.workers.max_retries,
-            };
-            let product_detail_collector: Arc<dyn crate::domain::services::ProductDetailCollector> =
-                Arc::new(impls::ProductDetailCollectorImpl::new(
-                    Arc::clone(http_client),
-                    Arc::clone(data_extractor),
-                    detail_cfg,
-                ));
-
             // 중복 정책: 환경 변수 힌트(MC_DUPLICATE_POLICY)로 제어 (manual 경로에서 설정)
             let dup_policy = match std::env::var("MC_DUPLICATE_POLICY").ok().as_deref() {
                 Some("UpdateIdIndexOnly") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::UpdateIdIndexOnly,
@@ -1296,9 +1235,6 @@ impl BatchActor {
                 http_client: Arc::clone(http_client),
                 data_extractor: Arc::clone(data_extractor),
                 product_repo: Arc::clone(product_repo),
-                status_checker,
-                product_list_collector,
-                product_detail_collector,
                 app_config: app_config.clone(),
                 duplicate_policy: dup_policy,
             }
@@ -1354,63 +1290,6 @@ impl BatchActor {
 
         // canonical StageActor path below
         let deps = {
-            use crate::infrastructure::crawling_service_impls as impls;
-            let status_checker: Arc<dyn crate::domain::services::StatusChecker> =
-                Arc::new(impls::StatusCheckerImpl::with_product_repo(
-                    (**http_client).clone(),
-                    (**data_extractor).clone(),
-                    app_config.clone(),
-                    Arc::clone(product_repo),
-                ));
-            let list_cfg = impls::CollectorConfig {
-                max_concurrent: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-                concurrency: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-                delay_between_requests: std::time::Duration::from_millis(
-                    app_config.user.request_delay_ms,
-                ),
-                delay_ms: app_config.user.request_delay_ms,
-                batch_size: app_config.user.batch.batch_size,
-                retry_attempts: app_config.user.crawling.workers.max_retries,
-                retry_max: app_config.user.crawling.workers.max_retries,
-            };
-            let status_checker_for_list = Arc::new(impls::StatusCheckerImpl::with_product_repo(
-                (**http_client).clone(),
-                (**data_extractor).clone(),
-                app_config.clone(),
-                Arc::clone(product_repo),
-            ));
-            let product_list_collector: Arc<dyn crate::domain::services::ProductListCollector> =
-                Arc::new(impls::ProductListCollectorImpl::new(
-                    Arc::clone(http_client),
-                    Arc::clone(data_extractor),
-                    list_cfg,
-                    status_checker_for_list,
-                ));
-            let detail_cfg = impls::CollectorConfig {
-                max_concurrent: app_config
-                    .user
-                    .crawling
-                    .workers
-                    .product_detail_max_concurrent as u32,
-                concurrency: app_config
-                    .user
-                    .crawling
-                    .workers
-                    .product_detail_max_concurrent as u32,
-                delay_between_requests: std::time::Duration::from_millis(
-                    app_config.user.request_delay_ms,
-                ),
-                delay_ms: app_config.user.request_delay_ms,
-                batch_size: app_config.user.batch.batch_size,
-                retry_attempts: app_config.user.crawling.workers.max_retries,
-                retry_max: app_config.user.crawling.workers.max_retries,
-            };
-            let product_detail_collector: Arc<dyn crate::domain::services::ProductDetailCollector> =
-                Arc::new(impls::ProductDetailCollectorImpl::new(
-                    Arc::clone(http_client),
-                    Arc::clone(data_extractor),
-                    detail_cfg,
-                ));
             let dup_policy = match std::env::var("MC_DUPLICATE_POLICY").ok().as_deref() {
                 Some("UpdateIdIndexOnly") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::UpdateIdIndexOnly,
                 Some("FullUpdate") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::FullUpdate,
@@ -1420,9 +1299,6 @@ impl BatchActor {
                 http_client: Arc::clone(http_client),
                 data_extractor: Arc::clone(data_extractor),
                 product_repo: Arc::clone(product_repo),
-                status_checker,
-                product_list_collector,
-                product_detail_collector,
                 app_config: app_config.clone(),
                 duplicate_policy: dup_policy,
             }

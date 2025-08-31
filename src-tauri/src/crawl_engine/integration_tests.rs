@@ -195,7 +195,7 @@ mod actor_integration_tests {
         let product_list_collector: Arc<dyn crate::domain::services::ProductListCollector> = Arc::new(crate::infrastructure::ProductListCollectorImpl::new(Arc::clone(&http_client), Arc::clone(&extractor), list_cfg, Arc::clone(&status_checker)));
         let detail_cfg = crate::infrastructure::crawling_service_impls::CollectorConfig { max_concurrent: 2, concurrency: 2, delay_between_requests: std::time::Duration::from_millis(0), delay_ms: 0, batch_size: 2, retry_attempts: 0, retry_max: 0 };
         let product_detail_collector: Arc<dyn crate::domain::services::ProductDetailCollector> = Arc::new(crate::infrastructure::ProductDetailCollectorImpl::new(Arc::clone(&http_client), Arc::clone(&extractor), detail_cfg));
-        let deps = crate::crawl_engine::actors::stage_actor::StageDeps { http_client, data_extractor: extractor, product_repo: repo, status_checker, product_list_collector, product_detail_collector, app_config: app_config.clone(), duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip };
+    let deps = crate::crawl_engine::actors::stage_actor::StageDeps { http_client, data_extractor: extractor, product_repo: repo, app_config: app_config.clone(), duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip };
         let mut stage_actor = StageActor::new_with_deps("actor_test".into(), "test_batch".into(), deps, Arc::new(crate::crawl_engine::stages::DefaultStageLogicFactory));
         
         let items = vec![
@@ -328,7 +328,7 @@ mod actor_integration_tests {
         let product_list_collector: Arc<dyn crate::domain::services::ProductListCollector> = Arc::new(crate::infrastructure::ProductListCollectorImpl::new(Arc::clone(&http_client), Arc::clone(&extractor), list_cfg, Arc::clone(&status_checker)));
         let detail_cfg = crate::infrastructure::crawling_service_impls::CollectorConfig { max_concurrent: 3, concurrency: 3, delay_between_requests: std::time::Duration::from_millis(0), delay_ms: 0, batch_size: 3, retry_attempts: 0, retry_max: 0 };
         let product_detail_collector: Arc<dyn crate::domain::services::ProductDetailCollector> = Arc::new(crate::infrastructure::ProductDetailCollectorImpl::new(Arc::clone(&http_client), Arc::clone(&extractor), detail_cfg));
-        let deps = crate::crawl_engine::actors::stage_actor::StageDeps { http_client, data_extractor: extractor, product_repo: repo, status_checker, product_list_collector, product_detail_collector, app_config: app_config.clone(), duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip };
+    let deps = crate::crawl_engine::actors::stage_actor::StageDeps { http_client, data_extractor: extractor, product_repo: repo, app_config: app_config.clone(), duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip };
         let mut stage_actor = StageActor::new_with_deps("actor_test".into(), "test_concurrent".into(), deps, Arc::new(crate::crawl_engine::stages::DefaultStageLogicFactory));
         
         let items: Vec<StageItem> = (1..=10)

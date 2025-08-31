@@ -520,9 +520,7 @@ impl StageActor {
     /// 크롤링 엔진 초기화 (임시 구현)
     /// 현재는 시뮬레이션 모드이므로 실제 엔진 초기화는 건너뛰기
     pub fn initialize_default_engines(&mut self) -> Result<(), StageError> {
-        // No-op in production. Historical simulation path kept for tests/benchmarks via feature.
-        #[cfg(feature = "simulate-details")]
-        info!("🔧 StageActor {} initialized (simulate-details enabled)", self.actor_id);
+    // No-op in production. Historical simulation path removed.
         Ok(())
     }
 
@@ -2647,33 +2645,7 @@ impl StageActor {
         }
     }
 
-    // === 시뮬레이션 함수들 (기존) ===
-
-    /// 리스트 페이지 처리 시뮬레이션 (test/dev only)
-    #[cfg(feature = "simulate-details")]
-    #[allow(dead_code)]
-    async fn simulate_list_page_processing(item: &StageItem) -> Result<(), String> {
-        // 임시: 간단한 처리 시뮬레이션
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // 90% 성공률 시뮬레이션 - 간단한 방법 사용
-        let success = match item {
-            StageItem::Page(_) => true,
-            StageItem::Url(_) => true,
-            StageItem::Product(_) => true,
-            StageItem::ValidationTarget(_) => true,
-            StageItem::ProductList(_) => true, // 대부분 성공으로 가정
-            StageItem::ProductUrls(_) => true,
-            StageItem::ProductDetails(_) => true,
-            StageItem::ValidatedProducts(_) => true,
-        };
-
-        if success {
-            Ok(())
-        } else {
-            Err("Simulated network error".to_string())
-        }
-    }
+    // === 시뮬레이션 함수 제거됨 ===
 
     /// 스테이지 정리
     fn cleanup_stage(&mut self) {
