@@ -1484,6 +1484,34 @@ impl StageActor {
                                             }),
                                             timestamp: Utc::now(),
                                         });
+                                        // UI consistency: even for empty batches, emit Stage 4/5 snapshots
+                                        if let Some(repo) = product_repo_for_persist.as_ref() {
+                                            if let Ok((total_count, min_page, max_page, _)) = repo.get_product_detail_stats().await {
+                                                let _ = ctx_clone.emit_event(AppEvent::DatabaseStats {
+                                                    session_id: session_id_clone.clone(),
+                                                    batch_id: batch_id_opt.clone(),
+                                                    total_product_details: total_count,
+                                                    min_page,
+                                                    max_page,
+                                                    note: Some("Batch persisted: no changes (empty)".into()),
+                                                    timestamp: Utc::now(),
+                                                });
+                                            }
+                                            // Also publish a grouped persist snapshot with zeros for Stage 5 panel
+                                            let _ = ctx_clone.emit_event(AppEvent::ProductLifecycleGroup {
+                                                session_id: session_id_clone.clone(),
+                                                batch_id: batch_id_opt.clone(),
+                                                page_number: None,
+                                                group_size: 0,
+                                                started: 0,
+                                                succeeded: 0,
+                                                failed: 0,
+                                                duplicates: 0,
+                                                duration_ms: 0,
+                                                phase: "persist".into(),
+                                                timestamp: Utc::now(),
+                                            });
+                                        }
                                         return Ok(StageItemResult {
                                             item_id: "data_saving_empty".into(),
                                             item_type: StageItemType::Url {
@@ -1590,7 +1618,22 @@ impl StageActor {
                                                     },
                                                 );
 
-                                                // Emit DatabaseStats event for Stage 4 UI visibility
+                                                // Always emit grouped persistence lifecycle snapshot for UI animation (Stage 5)
+                                                let _ = ctx_clone.emit_event(AppEvent::ProductLifecycleGroup {
+                                                    session_id: session_id_clone.clone(),
+                                                    batch_id: batch_id_opt.clone(),
+                                                    page_number: None,
+                                                    group_size: attempted,
+                                                    started: attempted,
+                                                    succeeded: inserted + updated,
+                                                    failed: (attempted.saturating_sub(inserted + updated)),
+                                                    duplicates: duplicates_ct,
+                                                    duration_ms: persist_start.elapsed().as_millis() as u64,
+                                                    phase: "persist".into(),
+                                                    timestamp: Utc::now(),
+                                                });
+
+                                                // Emit DatabaseStats event for Stage 4 UI visibility (best-effort)
                                                 if let Some(repo) = product_repo_for_persist.as_ref() {
                                                     if let Ok((total_count, min_page, max_page, _)) = repo.get_product_detail_stats().await {
                                                         let note = if inserted > 0 || updated > 0 {
@@ -1607,20 +1650,8 @@ impl StageActor {
                                                             note,
                                                             timestamp: Utc::now(),
                                                         });
-                                                        // Emit grouped persistence lifecycle snapshot for UI animation (Stage 5)
-                                                        let _ = ctx_clone.emit_event(AppEvent::ProductLifecycleGroup {
-                                                            session_id: session_id_clone.clone(),
-                                                            batch_id: batch_id_opt.clone(),
-                                                            page_number: None,
-                                                            group_size: attempted,
-                                                            started: attempted,
-                                                            succeeded: inserted + updated,
-                                                            failed: (attempted.saturating_sub(inserted + updated)),
-                                                            duplicates: duplicates_ct,
-                                                            duration_ms: persist_start.elapsed().as_millis() as u64,
-                                                            phase: "persist".into(),
-                                                            timestamp: Utc::now(),
-                                                        });
+                                                    } else {
+                                                        // Stats fetch failed; skip DB snapshot but keep grouped persist event above
                                                     }
                                                 }
                                                 match emit_res {

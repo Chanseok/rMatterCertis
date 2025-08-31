@@ -15,7 +15,6 @@ use crate::crawl_engine::channels::types::ActorCommand; // keep channel ActorCom
 use crate::crawl_engine::channels::types::AppEvent;
 use crate::crawl_engine::context::{AppContext, SystemConfig};
 use crate::crawl_engine::actors::traits::Actor; // bring Actor::run into scope
-use crate::domain::services::SiteStatus;
 use crate::domain::services::crawling_services::{
     CrawlingRangeRecommendation, SiteDataChangeStatus, SiteStatus as DomainSiteStatus,
 };
@@ -91,11 +90,6 @@ async fn bootstrap_and_spawn_session(
     app: &AppHandle,
     execution_plan: ExecutionPlan,
     app_config: AppConfig,
-    site_status: SiteStatus,
-    resume_token: Option<String>,
-    retries_per_page: Option<HashMap<u32, u32>>,
-    failed_pages: Option<Vec<u32>>,
-    retrying_pages: Option<Vec<u32>>,
 ) -> Result<(String, ExecutionPlan), String> {
     let session_id = execution_plan.session_id.clone();
 
@@ -174,16 +168,10 @@ pub async fn start_actor_system_crawling(
     let details_enabled = std::env::var("BOOTSTRAP_PRODUCT_DETAILS").ok().is_none_or(|v| v != "0");
     if !details_enabled { info!("🔧 ProductDetails phase disabled via BOOTSTRAP_PRODUCT_DETAILS=0"); }
 
-    let site_status = execution_plan.input_snapshot_to_site_status();
     let (sid, exec_clone) = bootstrap_and_spawn_session(
         &app,
         execution_plan.clone(),
         app_config.clone(),
-        site_status,
-        None,
-        None,
-        None,
-        None,
     )
     .await?;
     Ok(ActorSystemResponse {
@@ -740,11 +728,6 @@ pub async fn resume_from_token(
         &app,
         execution_plan.clone(),
         app_config,
-        site_status,
-        Some(resume_token.clone()),
-        Some(retries_per_page),
-        Some(failed_pages),
-        Some(retrying_pages),
     )
     .await?;
     Ok(ActorSystemResponse {
@@ -1764,7 +1747,7 @@ pub async fn start_manual_crawl_pages_actor(
     if pages.is_empty() {
         return Err("No pages provided".into());
     }
-    let (execution_plan, app_config, site_status) =
+    let (execution_plan, app_config, _site_status) =
         build_execution_plan_from_explicit_pages(&app, pages).await?;
 
     info!(target: "kpi.plan", "{{\"event\":\"manual_actor_started\",\"session_id\":\"{}\",\"plan_id\":\"{}\",\"ranges\":{},\"hash\":\"{}\"}}",
@@ -1778,11 +1761,6 @@ pub async fn start_manual_crawl_pages_actor(
         &app,
         execution_plan.clone(),
         app_config.clone(),
-        site_status,
-        None,
-        None,
-        None,
-        None,
     )
     .await?;
 

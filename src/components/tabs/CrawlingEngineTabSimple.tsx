@@ -316,6 +316,8 @@ export default function CrawlingEngineTabSimple() {
   }>({ attempted: 0, succeeded: 0, failed: 0, duplicates: 0, unchanged: 0, failedTrue: 0, durationMs: 0 });
   // Stage 4: DB snapshot animation toggle
   const [dbFlash, setDbFlash] = createSignal(false);
+  // Preflight diagnostics (site totals) to improve expected counts
+  const [preflight, setPreflight] = createSignal<{ site_total_pages?: number } | null>(null);
   // Global effects toggle
   const [effectsOn, setEffectsOn] = createSignal(true);
   // Sync input pulse highlight
@@ -634,10 +636,28 @@ export default function CrawlingEngineTabSimple() {
     // Listen to unified Actor session lifecycle to toggle buttons/status
     tauriApi
       .subscribeToUnifiedActorEvents({ onEvent: (payload) => {
-  const name = String(payload?.event_name || '');
+  // Normalize event name: prefer event_name, fallback to variant -> kebab case
+  let name = String(payload?.event_name || "");
+  if (!name) {
+    const variantStr = String(payload?.variant || "");
+    if (variantStr) {
+      const kebab = variantStr
+        .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+        .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
+        .toLowerCase();
+      name = `actor-${kebab}`;
+    }
+  }
   // Debug: track live event stream
   setActorEventCount((n) => n + 1);
   setLastActorEvent(name);
+  
+  // Debug: log all events to console
+  if (name.includes("database-stats") || name.includes("product-lifecycle-group") || 
+      name.includes("batch-completed") || name.includes("session-report") ||
+      (name.includes("product-lifecycle") && payload?.status?.includes("persist"))) {
+    console.log("[DEBUG] Event received:", name, payload);
+  }
         // === Sync events → compact Sync panel ===
         if (name === "actor-sync-started") {
           try {
@@ -899,12 +919,38 @@ export default function CrawlingEngineTabSimple() {
           if (!Number.isFinite(pageNum)) return;
           // Stage 2 start accounting from mapping/schedule signals
           if (status === "detail_scheduled" || status === "detail_mapping_emitted") {
-            // If backend provided scheduled_details via metrics, use it; otherwise fallback to url_count
-            const scheduled = Number((payload?.metrics && payload.metrics?.data?.scheduled_details) ?? 0) ||
-                               Number((payload?.metrics && payload.metrics?.data?.url_count) ?? 0) || 0;
-            if (scheduled > 0) {
+            // Robustly extract scheduled_details or url_count from enum-serialized metrics
+            const m = payload?.metrics;
+            let scheduled = 0;
+            let urlCount = 0;
+            try {
+              // Shape A: { metrics: { Page: { url_count, scheduled_details } } }
+              if (m && typeof m === 'object' && !Array.isArray(m)) {
+                const k = Object.keys(m)[0];
+                if (k && typeof (m as any)[k] === 'object') {
+                  const inner = (m as any)[k];
+                  scheduled = Number(inner?.scheduled_details ?? 0) || 0;
+                  urlCount = Number(inner?.url_count ?? 0) || 0;
+                }
+                // Shape B: { metrics: { type: 'Page', data: { url_count, scheduled_details } } }
+                const typeStr = String((m as any)?.type || '').toLowerCase();
+                const dataObj = (m as any)?.data;
+                if (typeStr === 'page' && dataObj && typeof dataObj === 'object') {
+                  scheduled = Number(dataObj?.scheduled_details ?? scheduled) || scheduled;
+                  urlCount = Number(dataObj?.url_count ?? urlCount) || urlCount;
+                }
+                // Shape C: direct: { metrics: { url_count, scheduled_details } }
+                if ((m as any)?.url_count != null || (m as any)?.scheduled_details != null) {
+                  scheduled = Number((m as any)?.scheduled_details ?? scheduled) || scheduled;
+                  urlCount = Number((m as any)?.url_count ?? urlCount) || urlCount;
+                }
+              }
+            } catch {}
+            // Backend reports scheduled=0 but urls=12, so prefer url_count when available
+            const toAdd = urlCount > 0 ? urlCount : (scheduled > 0 ? scheduled : 0);
+            if (toAdd > 0) {
               setDetailStats((prev) => {
-                const started = (prev.started || 0) + scheduled;
+                const started = (prev.started || 0) + toAdd;
                 const inflight = Math.max(0, started - ((prev.completed || 0) + (prev.failed || 0)));
                 return { ...prev, started, inflight };
               });
@@ -1092,24 +1138,39 @@ export default function CrawlingEngineTabSimple() {
               pagesScanned: processed > 0 ? processed : prev.pagesScanned,
             }));
           }
+          // Mark Stage 1 as complete when list_page_crawling completes
+          if (t.includes("listpage") || t.includes("list_page")) {
+            setPageStats((prev) => ({
+              ...prev,
+              completed: prev.started, // Mark all started as completed
+              inflight: 0,
+            }));
+            if (effectsOn()) triggerStage1Pulse();
+          }
         }
 
         // Stage 4 (DB) snapshots and session summary
-  if (name === "actor-database-stats") {
+        if (name === "actor-database-stats") {
+          console.log("[DEBUG] DatabaseStats event received:", payload);
+          // Extract total from the correct field name
+          const totalFromPayload = Number(payload?.total_product_details ?? 0) || 0;
+          
+          // Extract page range information
+          const minPageFromPayload = payload?.min_page ?? null;
+          const maxPageFromPayload = payload?.max_page ?? null;
+          
           setDbSnapshot((prev) => ({
             ...prev,
-            total:
-              Number(payload?.total_product_details ?? prev.total ?? 0) ||
-              prev.total,
-            minPage: payload?.min_page ?? prev.minPage ?? null,
-            maxPage: payload?.max_page ?? prev.maxPage ?? null,
+            total: totalFromPayload > 0 ? totalFromPayload : prev.total,
+            minPage: minPageFromPayload !== null ? Number(minPageFromPayload) : prev.minPage,
+            maxPage: maxPageFromPayload !== null ? Number(maxPageFromPayload) : prev.maxPage,
           }));
           if (effectsOn()) {
             setDbFlash(true);
             setTimeout(() => setDbFlash(false), 500);
           }
         }
-        if (name === "actor-session-report") {
+  if (name === "actor-session-report") {
           setDbSnapshot((prev) => ({
             ...prev,
             inserted:
@@ -1120,11 +1181,54 @@ export default function CrawlingEngineTabSimple() {
               prev.updated,
           }));
         }
+        
+        // Handle batch completed event to extract DB stats when persist events are missing
+        if (name === "actor-batch-completed") {
+          console.log("[DEBUG] BatchCompleted event received:", payload);
+          // Try to extract products_inserted/updated from the payload
+          const insertedFromBatch = Number(payload?.products_inserted ?? 0) || 0;
+          const updatedFromBatch = Number(payload?.products_updated ?? 0) || 0;
+          
+          if (insertedFromBatch > 0 || updatedFromBatch > 0) {
+            setDbSnapshot((prev) => ({
+              ...prev,
+              inserted: insertedFromBatch,
+              updated: updatedFromBatch,
+            }));
+            
+            // If we don't get persist events, simulate persist stats
+            setPersistStats((prev) => ({
+              ...prev,
+              attempted: insertedFromBatch + updatedFromBatch,
+              succeeded: insertedFromBatch + updatedFromBatch,
+              failed: 0,
+              duplicates: 0,
+              unchanged: 0,
+              failedTrue: 0,
+              durationMs: 0,
+            }));
+            
+            if (effectsOn()) {
+              setDbFlash(true);
+              setPersistFlash(true);
+              setTimeout(() => {
+                setDbFlash(false);
+                setPersistFlash(false);
+              }, 500);
+            }
+          }
+        }
+        if (name === "actor-preflight-diagnostics") {
+          // Capture site totals for Stage 1 expected denominator
+          const site_total_pages = Number(payload?.site_total_pages ?? 0) || undefined;
+          setPreflight({ site_total_pages });
+        }
         // Stage 5 (Persist) grouped lifecycle snapshot
         if (
           name === "actor-product-lifecycle-group" &&
           payload?.phase === "persist"
         ) {
+          console.log("[DEBUG] ProductLifecycleGroup persist event received:", payload);
           const attempted = Number(payload?.group_size ?? 0) || 0;
           const succeeded = Number(payload?.succeeded ?? 0) || 0;
           // Backend's 'failed' may include unchanged; compute derived fields for UI clarity
@@ -1133,6 +1237,7 @@ export default function CrawlingEngineTabSimple() {
           const unchanged = Math.max(0, attempted - (succeeded + duplicates));
           const failedTrue = Math.max(0, failed - duplicates - unchanged);
           const durationMs = Number(payload?.duration_ms ?? 0) || 0;
+          
           setPersistStats({
             attempted,
             succeeded,
@@ -1142,6 +1247,7 @@ export default function CrawlingEngineTabSimple() {
             failedTrue,
             durationMs,
           });
+          
           // Also surface cumulative DB change counts when session report lags
           setDbSnapshot((prev) => ({
             ...prev,
@@ -1151,6 +1257,79 @@ export default function CrawlingEngineTabSimple() {
           if (effectsOn()) {
             setPersistFlash(true);
             setTimeout(() => setPersistFlash(false), 500);
+          }
+        }
+        
+        // Handle persist_empty case - when no products to persist
+        if (name === "actor-product-lifecycle" && payload?.status === "persist_empty") {
+          console.log("[DEBUG] ProductLifecycle persist_empty event received:", payload);
+          setPersistStats({
+            attempted: 0,
+            succeeded: 0,
+            failed: 0,
+            duplicates: 0,
+            unchanged: 0,
+            failedTrue: 0,
+            durationMs: 0,
+          });
+          
+          if (effectsOn()) {
+            setPersistFlash(true);
+            setTimeout(() => setPersistFlash(false), 500);
+          }
+        }
+
+        // Fallback: parse generic ProductLifecycle persist_* with metrics.persist_result
+        if (name === "actor-product-lifecycle" && typeof payload?.status === "string" && payload.status.startsWith("persist_")) {
+          try {
+            const m = payload?.metrics;
+            let key: string | undefined;
+            let value: string | undefined;
+            // Shape A: { metrics: { Generic: { key, value } } }
+            if (m && typeof m === 'object' && !Array.isArray(m)) {
+              const k1 = Object.keys(m)[0];
+              if (k1 && typeof (m as any)[k1] === 'object') {
+                key = (m as any)[k1]?.key;
+                value = (m as any)[k1]?.value;
+              }
+              // Shape B: { metrics: { type: 'Generic', data: { key, value } } }
+              const t = String((m as any)?.type || '').toLowerCase();
+              const d = (m as any)?.data;
+              if (t === 'generic' && d && typeof d === 'object') {
+                key = (d as any)?.key ?? key;
+                value = (d as any)?.value ?? value;
+              }
+              // Shape C: direct: { metrics: { key, value } }
+              if ((m as any)?.key != null || (m as any)?.value != null) {
+                key = (m as any)?.key ?? key;
+                value = (m as any)?.value ?? value;
+              }
+            }
+            if ((key || '').toLowerCase() === 'persist_result' && typeof value === 'string') {
+              // value format: attempted=..,inserted=..,updated=..,duplicates=..,unchanged=..
+              const parts = Object.fromEntries(
+                value.split(',').map((p) => {
+                  const [k, v] = p.split('=');
+                  return [k?.trim() || '', Number(v) || 0];
+                })
+              ) as Record<string, number>;
+              const attempted = parts.attempted ?? 0;
+              const inserted = parts.inserted ?? 0;
+              const updated = parts.updated ?? 0;
+              const duplicates = parts.duplicates ?? 0;
+              const unchanged = parts.unchanged ?? Math.max(0, attempted - (inserted + updated + duplicates));
+              const succeeded = inserted + updated;
+              const failed = Math.max(0, attempted - succeeded);
+              const failedTrue = Math.max(0, failed - duplicates - unchanged);
+              const durationMs = Number(payload?.duration_ms ?? 0) || 0;
+              setPersistStats({ attempted, succeeded, failed, duplicates, unchanged, failedTrue, durationMs });
+              if (effectsOn()) {
+                setPersistFlash(true);
+                setTimeout(() => setPersistFlash(false), 500);
+              }
+            }
+          } catch (e) {
+            console.warn('[CrawlingEngineTabSimple] persist_result parse failed', e);
           }
         }
   } })
@@ -1969,10 +2148,12 @@ export default function CrawlingEngineTabSimple() {
               <span class="text-xs text-gray-500">
                 {(() => {
                   const cr = crawlingRange();
-                  const fallback = (cr?.crawling_info?.pages_to_crawl ??
-                    ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 ||
-                      0)) as number;
-                  const est = pageStats().totalEstimated || fallback || 0;
+                  const pre = preflight();
+                  const siteTotal = Number(pre?.site_total_pages ?? 0) || 0;
+                  const planned = (cr?.crawling_info?.pages_to_crawl ??
+                    ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 || 0)) as number;
+                  const batchEst = pageStats().totalEstimated || 0;
+                  const est = batchEst > 0 ? batchEst : (planned > 0 ? planned : siteTotal);
                   return est > 0 ? `예상 ${est}p` : "";
                 })()}
               </span>
@@ -2015,10 +2196,12 @@ export default function CrawlingEngineTabSimple() {
                 style={{
                   width: `${(() => {
                     const cr = crawlingRange();
-                    const fallback = (cr?.crawling_info?.pages_to_crawl ??
-                      ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 ||
-                        0)) as number;
-                    const denom = pageStats().totalEstimated || fallback || 0;
+                    const pre = preflight();
+                    const siteTotal = Number(pre?.site_total_pages ?? 0) || 0;
+                    const planned = (cr?.crawling_info?.pages_to_crawl ??
+                      ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 || 0)) as number;
+                    const batchEst = pageStats().totalEstimated || 0;
+                    const denom = batchEst > 0 ? batchEst : (planned > 0 ? planned : siteTotal);
                     return denom > 0
                       ? Math.min(100, (pageStats().completed / denom) * 100)
                       : 0;
@@ -2049,8 +2232,8 @@ export default function CrawlingEngineTabSimple() {
                 {(() => {
                   const est = (crawlingRange()?.crawling_info?.estimated_new_products ?? 0) as number;
                   const observed = Math.max(detailStats().started || 0, detailStats().completed || 0);
-                  // If est exists but is suspiciously smaller than observed, trust observed
-                  const val = est > 0 ? Math.max(est, observed) : observed;
+                  // Prefer observed (session-scoped) to avoid overestimation from global plan during manual runs
+                  const val = observed > 0 ? observed : (est > 0 ? est : 0);
                   return val > 0 ? `예상 ${val}` : "";
                 })()}
               </span>
@@ -2094,7 +2277,8 @@ export default function CrawlingEngineTabSimple() {
                   width: `${(() => {
                     const est = (crawlingRange()?.crawling_info?.estimated_new_products ?? 0) as number;
                     const observed = Math.max(detailStats().started || 0, detailStats().completed || 0);
-                    const denom = est > 0 ? Math.max(est, observed) : observed;
+                    // Prefer observed when available; fallback to estimate only if no observed yet
+                    const denom = observed > 0 ? observed : (est > 0 ? est : 0);
                     return denom > 0
                       ? Math.min(100, (detailStats().completed / denom) * 100)
                       : 0;
