@@ -194,6 +194,8 @@ pub enum AppEvent {
     BatchStarted {
         batch_id: String,
         session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_id: Option<String>,
         pages_count: u32,
         timestamp: DateTime<Utc>,
     },
@@ -201,6 +203,8 @@ pub enum AppEvent {
     BatchCompleted {
         batch_id: String,
         session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_id: Option<String>,
         success_count: u32,
         failed_count: u32,
         duration: u64, // Duration을 milliseconds로 변경
@@ -210,6 +214,8 @@ pub enum AppEvent {
     BatchFailed {
         batch_id: String,
         session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_id: Option<String>,
         error: String,
         final_failure: bool,
         timestamp: DateTime<Utc>,
@@ -307,6 +313,8 @@ pub enum AppEvent {
     BatchReport {
         session_id: String,
         batch_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_id: Option<String>,
         pages_total: u32,
         pages_success: u32,
         pages_failed: u32,
@@ -1470,6 +1478,7 @@ mod tests {
         let batch_completed = AppEvent::BatchCompleted {
             batch_id: "b1".to_string(),
             session_id: "s1".to_string(),
+            plan_id: None,
             success_count: 10,
             failed_count: 2,
             duration: 1234,
@@ -1484,6 +1493,7 @@ mod tests {
         let batch_report = AppEvent::BatchReport {
             session_id: "s1".to_string(),
             batch_id: "b1".to_string(),
+            plan_id: None,
             pages_total: 5,
             pages_success: 5,
             pages_failed: 0,
@@ -1516,6 +1526,35 @@ mod tests {
     let payload3 = get_variant_payload(&v3);
     assert!(payload3.get("ms").is_some(), "SyncPageCompleted must have legacy `ms` field");
     assert!(payload3.get("duration_ms").is_none(), "SyncPageCompleted must not rename to duration_ms");
+    }
+
+    #[test]
+    fn test_batch_events_optionally_carry_plan_id() {
+        // BatchStarted with plan_id
+        let ev = AppEvent::BatchStarted {
+            batch_id: "b1".into(),
+            session_id: "s1".into(),
+            plan_id: Some("plan_123".into()),
+            pages_count: 3,
+            timestamp: Utc::now(),
+        };
+        let v: Value = serde_json::to_value(&ev).unwrap();
+        let payload = get_variant_payload(&v);
+        assert_eq!(payload.get("plan_id").and_then(|v| v.as_str()), Some("plan_123"));
+
+        // BatchCompleted without plan_id (None)
+        let ev2 = AppEvent::BatchCompleted {
+            batch_id: "b2".into(),
+            session_id: "s1".into(),
+            plan_id: None,
+            success_count: 2,
+            failed_count: 1,
+            duration: 100,
+            timestamp: Utc::now(),
+        };
+        let v2: Value = serde_json::to_value(&ev2).unwrap();
+        let payload2 = get_variant_payload(&v2);
+        assert!(payload2.get("plan_id").is_none(), "plan_id should be omitted when None");
     }
 
     #[test]

@@ -370,6 +370,7 @@ impl BatchActor {
         let start_event = AppEvent::BatchStarted {
             batch_id: batch_id.clone(),
             session_id: context.session_id.clone(),
+            plan_id: context.plan_id.clone(),
             pages_count: pages.len() as u32,
             timestamp: Utc::now(),
         };
@@ -379,10 +380,12 @@ impl BatchActor {
             .map_err(|e| BatchError::ContextError(e.to_string()))?;
 
         // KPI: 배치 시작 (구조화 로그)
+        let plan_id_json = if let Some(pid) = &context.plan_id { format!("\"{}\"", pid) } else { "null".to_string() };
         info!(target: "kpi.batch",
-            "{{\"event\":\"batch_started\",\"session_id\":\"{}\",\"batch_id\":\"{}\",\"pages_count\":{},\"ts\":\"{}\"}}",
+            "{{\"event\":\"batch_started\",\"session_id\":\"{}\",\"batch_id\":\"{}\",\"plan_id\":{},\"pages_count\":{},\"ts\":\"{}\"}}",
             context.session_id,
             batch_id,
+            plan_id_json,
             pages.len(),
             chrono::Utc::now()
         );
@@ -441,6 +444,7 @@ impl BatchActor {
                 let fail_event = AppEvent::BatchFailed {
                     batch_id: batch_id.clone(),
                     session_id: context.session_id.clone(),
+                    plan_id: context.plan_id.clone(),
                     error: "StatusCheck stage failed - no status check performed".to_string(),
                     final_failure: true,
                     timestamp: Utc::now(),
@@ -462,6 +466,7 @@ impl BatchActor {
                 let fail_event = AppEvent::BatchFailed {
                     batch_id: batch_id.clone(),
                     session_id: context.session_id.clone(),
+                    plan_id: context.plan_id.clone(),
                     error: "StatusCheck stage failed - site is not accessible".to_string(),
                     final_failure: true,
                     timestamp: Utc::now(),
@@ -578,6 +583,7 @@ impl BatchActor {
             let fail_event = AppEvent::BatchFailed {
                 batch_id: batch_id.clone(),
                 session_id: context.session_id.clone(),
+                plan_id: context.plan_id.clone(),
                 error: "ListPageCrawling stage failed completely".to_string(),
                 final_failure: true,
                 timestamp: Utc::now(),
@@ -626,6 +632,7 @@ impl BatchActor {
                     let fail_event = AppEvent::BatchFailed {
                         batch_id: batch_id.clone(),
                         session_id: context.session_id.clone(),
+                        plan_id: context.plan_id.clone(),
                         error: format!("Stage 3 failed: {e}"),
                         final_failure: true,
                         timestamp: Utc::now(),
@@ -772,6 +779,7 @@ impl BatchActor {
                 let fail_event = AppEvent::BatchFailed {
                     batch_id: batch_id.clone(),
                     session_id: context.session_id.clone(),
+                    plan_id: context.plan_id.clone(),
                     error: format!("Stage 4 failed: {e}"),
                     final_failure: true,
                     timestamp: Utc::now(),
@@ -820,6 +828,7 @@ impl BatchActor {
                 let fail_event = AppEvent::BatchFailed {
                     batch_id: batch_id.clone(),
                     session_id: context.session_id.clone(),
+                    plan_id: context.plan_id.clone(),
                     error: format!("Stage 5 failed: {e}"),
                     final_failure: true,
                     timestamp: Utc::now(),
@@ -916,6 +925,7 @@ impl BatchActor {
         let completion_event = AppEvent::BatchCompleted {
             batch_id: batch_id.clone(),
             session_id: context.session_id.clone(),
+            plan_id: context.plan_id.clone(),
             success_count: self.success_count,
             failed_count: saving_result.failed_items,
             duration: self
@@ -929,10 +939,12 @@ impl BatchActor {
             .map_err(|e| BatchError::ContextError(e.to_string()))?;
 
         // KPI: 배치 완료 (구조화 로그)
+        let plan_id_json = if let Some(pid) = &context.plan_id { format!("\"{}\"", pid) } else { "null".to_string() };
         info!(target: "kpi.batch",
-            "{{\"event\":\"batch_completed\",\"session_id\":\"{}\",\"batch_id\":\"{}\",\"pages_total\":{},\"pages_success\":{},\"pages_failed\":{},\"duration_ms\":{},\"products_inserted\":{},\"products_updated\":{},\"ts\":\"{}\"}}",
+            "{{\"event\":\"batch_completed\",\"session_id\":\"{}\",\"batch_id\":\"{}\",\"plan_id\":{},\"pages_total\":{},\"pages_success\":{},\"pages_failed\":{},\"duration_ms\":{},\"products_inserted\":{},\"products_updated\":{},\"ts\":\"{}\"}}",
             context.session_id,
             batch_id,
+            plan_id_json,
             self.total_pages,
             self.success_count.max(list_page_result.successful_items),
             list_page_result.failed_items,
@@ -969,6 +981,7 @@ impl BatchActor {
         let report_event = AppEvent::BatchReport {
             session_id: context.session_id.clone(),
             batch_id: batch_id.clone(),
+            plan_id: context.plan_id.clone(),
             pages_total,
             pages_success,
             pages_failed,

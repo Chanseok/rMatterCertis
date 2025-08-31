@@ -15,8 +15,13 @@ use matter_certis_v2_lib::crawl_engine::SessionActor;
 use tokio::sync::mpsc;
 
 #[tokio::test]
-#[ignore = "requires network and DB; run manually when environment is ready"]
+#[ignore = "set MC_RUN_PREPLANNED_IT=1 to enable; requires network and DB"]
 async fn preplanned_batches_run_sequentially_in_order() {
+    // Toggle guard
+    if std::env::var("MC_RUN_PREPLANNED_IT").ok().as_deref() != Some("1") {
+        eprintln!("MC_RUN_PREPLANNED_IT not set; skipping test body");
+        return;
+    }
     // Arrange: tiny two-range plan, reverse order newest->oldest
     let session_id = format!("actor_session_{}", chrono::Utc::now().timestamp());
     let plan = ExecutionPlan {
@@ -74,13 +79,15 @@ async fn preplanned_batches_run_sequentially_in_order() {
     let mut saw_completed_1 = false;
     let mut saw_started_2 = false;
     let mut saw_completed_2 = false;
+    let mut saw_plan_id = false;
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     loop {
         if tokio::time::Instant::now() > deadline { break; }
         match tokio::time::timeout(Duration::from_secs(5), event_rx.recv()).await {
             Ok(Ok(ev)) => match ev {
-                AppEvent::BatchStarted { batch_id, .. } => {
+                AppEvent::BatchStarted { batch_id, plan_id, .. } => {
+                    if plan_id.is_some() { saw_plan_id = true; }
                     if batch_id.ends_with("-pre-1") {
                         // first batch must start before the second
                         assert!(!saw_started_2, "Batch 2 started before Batch 1");
@@ -90,7 +97,8 @@ async fn preplanned_batches_run_sequentially_in_order() {
                         assert!(saw_completed_1, "Batch 2 started before Batch 1 completed");
                     }
                 }
-                AppEvent::BatchCompleted { batch_id, .. } => {
+                AppEvent::BatchCompleted { batch_id, plan_id, .. } => {
+                    if plan_id.is_some() { saw_plan_id = true; }
                     if batch_id.ends_with("-pre-1") {
                         saw_completed_1 = true;
                     } else if batch_id.ends_with("-pre-2") {
@@ -107,4 +115,5 @@ async fn preplanned_batches_run_sequentially_in_order() {
     let _ = handle.await;
     assert!(saw_started_1 && saw_completed_1 && saw_started_2 && saw_completed_2,
         "Expected sequential preplanned batches to start and complete in order");
+    assert!(saw_plan_id, "Expected plan_id to be present on batch events");
 }

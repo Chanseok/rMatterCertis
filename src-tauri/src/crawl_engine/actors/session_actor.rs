@@ -413,7 +413,7 @@ impl SessionActor {
                 .emit_event(progress_event)
                 .map_err(|e| SessionError::ContextError(e.to_string()))?;
 
-            if let Err(e) = self
+        if let Err(e) = self
                 .run_batch_with_services(
                     &batch_id,
                     &pages,
@@ -422,7 +422,8 @@ impl SessionActor {
                     &data_extractor,
                     &product_repo,
                     &site_status,
-                    None,
+            None,
+            None,
                 )
                 .await
             {
@@ -699,6 +700,7 @@ impl SessionActor {
         product_repo: &Arc<IntegratedProductRepository>,
         site_status: &crate::domain::services::SiteStatus,
         skip_duplicate_urls: Option<bool>,
+        plan_id: Option<String>,
     ) -> Result<(), SessionError> {
         use crate::crawl_engine::actors::traits::Actor;
         let app_config = AppConfig::for_development();
@@ -722,7 +724,10 @@ impl SessionActor {
         }
         batch_actor.shared_metrics = Some(shared_metrics.clone());
         let (tx, rx) = mpsc::channel::<super::types::ActorCommand>(100);
-        let actor_context = context.clone();
+        let actor_context = match plan_id {
+            Some(pid) => context.with_plan(pid),
+            None => context.clone(),
+        };
         let actor_task = tokio::spawn(async move {
             let _ = batch_actor.run(actor_context, rx).await;
         });
@@ -1089,7 +1094,7 @@ impl Actor for SessionActor {
                                                     (range.start_page..=range.end_page).collect()
                                                 };
                                                 let batch_id = format!("{}-pre-{}", session_id, idx+1);
-                                                if let Err(e) = self.run_batch_with_services(&batch_id, &pages, &context, &http_client, &data_extractor, &product_repo, &site_status, Some(plan.skip_duplicate_urls)).await {
+                                                if let Err(e) = self.run_batch_with_services(&batch_id, &pages, &context, &http_client, &data_extractor, &product_repo, &site_status, Some(plan.skip_duplicate_urls), Some(plan.plan_id.clone())).await {
                                                     error!("Batch {} failed: {}", batch_id, e);
                                                     self.errors.push(format!("batch {batch_id}: {e}"));
                                                     let fail_event = AppEvent::SessionFailed { session_id: session_id.clone(), error: format!("Batch {batch_id} failed: {e}"), final_failure: false, timestamp: Utc::now() };

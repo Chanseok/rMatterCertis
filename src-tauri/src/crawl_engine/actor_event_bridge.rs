@@ -475,6 +475,21 @@ mod tests {
     }
 
     #[test]
+    fn map_batch_started_includes_optional_plan_id() {
+        let ev = AppEvent::BatchStarted {
+            batch_id: "b1".into(),
+            session_id: "s1".into(),
+            plan_id: Some("plan_xyz".into()),
+            pages_count: 10,
+            timestamp: Utc::now(),
+        };
+        let (name, payload) = convert_actor_event_to_frontend_value(ev).expect("map ok");
+        assert_eq!(name, "actor-batch-started");
+        let obj = payload.as_object().expect("obj");
+        assert_eq!(obj.get("plan_id").and_then(|v| v.as_str()), Some("plan_xyz"));
+    }
+
+    #[test]
     fn map_validation_completed_event() {
         let ev = AppEvent::ValidationCompleted {
             session_id: "sess-val".into(),
