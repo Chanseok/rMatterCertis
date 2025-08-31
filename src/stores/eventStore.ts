@@ -69,14 +69,17 @@ export const eventStore = {
 
     const unsubs: Array<() => void> = [];
 
-  // Actor bridge: subscribe to unified + standardized actor-* events
+    // Unified actor-event subscription
     try {
-      const un = await tauriApi.subscribeToActorBridgeEvents((name, payload) => {
-        pushEvent(name, payload);
+      const un = await tauriApi.subscribeToUnifiedActorEvents({
+        onEvent: (payload) => {
+          const name = payload?.event_name || 'actor-event';
+          pushEvent(name, payload);
+        },
       });
       unsubs.push(un);
     } catch (e) {
-      console.warn('[eventStore] subscribeToActorBridgeEvents failed', e);
+      console.warn('[eventStore] subscribeToUnifiedActorEvents failed', e);
     }
 
     // Keep atomic-task updates (non-legacy) if present

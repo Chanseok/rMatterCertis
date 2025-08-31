@@ -15,8 +15,7 @@ mkdir -p "$LOG_DIR"
 
 echo "[run_and_verify_unified] starting tauri:dev with unified flags..."
 export VITE_DISABLE_LEGACY_EVENTS=true
-export MC_FEATURE_EVENTS_GENERALIZED_ONLY=1
-export MC_FEATURE_LEGACY_DOMAIN_EVENTS=0
+# Legacy event flags removed; backend always emits unified 'actor-event'.
 
 # Capture dev output to a file by default
 if [[ "${DEV_LOG_CAPTURE:-1}" == "1" ]]; then
@@ -71,8 +70,8 @@ if [[ -n "${TAURI_PID:-}" ]]; then
   kill -9 "$TAURI_PID" 2>/dev/null || true
 fi
 
-# Verify
-if DISABLE_STRUCTURED_CHECKS=1 bash "$ROOT_DIR/scripts/verify_runtime_plan.sh" "$BACK_LOG"; then
+# Verify (enable structured checks by default; set DISABLE_STRUCTURED_CHECKS=1 to skip)
+if bash "$ROOT_DIR/scripts/verify_runtime_plan.sh" "$BACK_LOG"; then
   echo "[run_and_verify_unified] verify passed"
 else
   status=$?

@@ -252,7 +252,7 @@ pub async fn start_actor_system_crawling(
     app: AppHandle,
     request: ActorCrawlingRequest,
 ) -> Result<ActorSystemResponse, String> {
-    // 1) Use PlanningService (Intelligent strategy) with overrides
+    // 1) Use PlanningService: choose Manual strategy if manual range present, else Intelligent
     let overrides = crate::crawl_engine::services::planning_service::PlanOverrides {
         batch_size: request.batch_size,
         concurrency: request.concurrency,
@@ -261,10 +261,14 @@ pub async fn start_actor_system_crawling(
         end_page: request.end_page,
         page_count: request.page_count,
     };
-    let strategist = crate::crawl_engine::services::planning_service::IntelligentPlanningStrategy;
-    let (execution_plan, app_config, _site_status) = strategist
-        .plan(&app, Some(&overrides))
-        .await?;
+    let use_manual = overrides.start_page.is_some() || overrides.end_page.is_some() || overrides.page_count.is_some();
+    let (execution_plan, app_config, _site_status) = if use_manual {
+        let strategist = crate::crawl_engine::services::planning_service::ManualPlanningStrategy;
+        strategist.plan(&app, Some(&overrides)).await?
+    } else {
+        let strategist = crate::crawl_engine::services::planning_service::IntelligentPlanningStrategy;
+        strategist.plan(&app, Some(&overrides)).await?
+    };
 
     // 2) Mode log (informational only)
     if let Some(mode) = &request.mode { info!("[start_actor_system_crawling] mode={:?}", mode); }

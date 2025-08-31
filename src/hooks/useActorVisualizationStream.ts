@@ -139,24 +139,26 @@ export function useActorVisualizationStream(limit: number = 500) {
   let unlisteners: UnlistenFn[] = [];
   let lastSeq = 0;
 
-  // Subscribe via tauriApi bridge (handles both unified and actor-* channels)
+  // Subscribe unified-only via tauriApi helper
 
   async function setup() {
-    const unBridge = await tauriApi.subscribeToActorBridgeEvents((name, payload) => {
-      const enriched = { event_name: name, ...payload };
-      const ev = normalize(enriched);
-      if (!ev) return;
-      if (ev.seq && lastSeq && ev.seq !== lastSeq + 1) {
-        // optional: handle gap marker
-      }
-      lastSeq = ev.seq || lastSeq;
-      setEvents((prev) => {
-        const next = [...prev, ev];
-        if (next.length > limit) next.splice(0, next.length - limit);
-        return next;
-      });
+    const unUnified = await tauriApi.subscribeToUnifiedActorEvents({
+      onEvent: (payload) => {
+        const enriched = { event_name: payload?.event_name ?? 'actor-event', ...payload };
+        const ev = normalize(enriched);
+        if (!ev) return;
+        if (ev.seq && lastSeq && ev.seq !== lastSeq + 1) {
+          // optional: handle gap marker
+        }
+        lastSeq = ev.seq || lastSeq;
+        setEvents((prev) => {
+          const next = [...prev, ev];
+          if (next.length > limit) next.splice(0, next.length - limit);
+          return next;
+        });
+      },
     });
-    unlisteners.push(unBridge);
+    unlisteners.push(unUnified);
     // concurrency-event (separate schema)
     const unConcurrency = await listen<any>('concurrency-event', (e) => {
       const list = normalizeConcurrency(e.payload);

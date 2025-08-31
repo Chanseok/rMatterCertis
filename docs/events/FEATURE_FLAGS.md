@@ -1,17 +1,12 @@
 # Event-related Feature Flags
 
-Source of truth: environment variables. Values: "1"/"true" enable, "0"/"false" disable (case-insensitive).
-
-- MC_FEATURE_EVENTS_GENERALIZED_ONLY (default: false)
-  - Use single unified frontend event channel ("actor-event") and generalized routing.
-- MC_FEATURE_LEGACY_DOMAIN_EVENTS (default: false)
-  - Emit legacy domain::events::CrawlingEvent payloads via SystemStateBroadcaster.
-  - Set to 0 to silence legacy emissions after FE migrates to AppEvent.
+Unified-only model: the backend always emits the single unified channel "actor-event". Legacy event paths have been removed.
 
 Removed flags
-- MC_FEATURE_EMIT_PAGETASK_LEGACY (removed)
-  - The PageTask* variants were deleted from AppEvent; UI must rely on PageLifecycle.
+- MC_FEATURE_EVENTS_GENERALIZED_ONLY — unified is always on
+- MC_FEATURE_LEGACY_DOMAIN_EVENTS — legacy emissions removed
+- MC_FEATURE_EMIT_PAGETASK_LEGACY — PageTask* variants deleted; use PageLifecycle
 
 Notes
-- Flags are additive/migration aids; defaults preserve current behavior.
-- Turning flags off should not break the new AppEvent flows.
+- Frontend should subscribe to 'actor-event' and dispatch by payload.event_name and variant.
+- Any references to actor-* direct names are for convenience-only shims and may be pruned.

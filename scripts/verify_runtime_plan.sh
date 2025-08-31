@@ -86,7 +86,7 @@ else
   if [[ "${preplanned}" == "1" ]]; then
     echo "[INFO] Pre-planned ExecutionPlan detected; skipping plan_created check"
     # Derive list_phase_count from actual observed starts (best-effort)
-    list_phase_count=$(grep -a "Starting Stage 2: ListPageCrawling" "${STAGE_FILE}" | wc -l | tr -d ' ')
+  list_phase_count=$(grep -a "Starting Stage 2: ListPageCrawling" "${STAGE_FILE}" | wc -l | tr -d ' ' || true)
   else
     if [[ ${plan_count} -eq 0 ]]; then
       echo "[FAIL] No CrawlingPlan line (legacy) nor structured plan_created event found"; exit 11
@@ -99,8 +99,8 @@ else
   fi
 fi
 # Stage 2 start & completion counts (from stage/text log file)
-stage2_start_count=$(grep -a "Starting Stage 2: ListPageCrawling" "${STAGE_FILE}" | wc -l | tr -d ' ')
-stage2_done_count=$(grep -a "Stage 2 (ListPageCrawling) completed" "${STAGE_FILE}" | wc -l | tr -d ' ')
+stage2_start_count=$(grep -a "Starting Stage 2: ListPageCrawling" "${STAGE_FILE}" | wc -l | tr -d ' ' || true)
+stage2_done_count=$(grep -a "Stage 2 (ListPageCrawling) completed" "${STAGE_FILE}" | wc -l | tr -d ' ' || true)
 
 if [[ ${list_phase_count} -ne ${stage2_start_count} ]]; then
   echo "[FAIL] Phase/start mismatch: phases=${list_phase_count} starts=${stage2_start_count}"; exit 13
@@ -179,20 +179,42 @@ if [[ "${DISABLE_STRUCTURED_CHECKS:-0}" != "1" ]]; then
     echo "[FAIL] Missing session_summary structured event"; exit 22
   fi
 
-  # Extract core fields (sed tolerant if field missing -> empty)
-  plan_id_created=$(echo "${plan_created_line}" | sed -E 's/.*"plan_id":"([^"]+)".*/\1/' )
-  plan_id_hash=$(echo "${plan_hash_line}" | sed -E 's/.*"plan_id":"([^"]+)".*/\1/' )
-  plan_id_session=$(echo "${session_summary_line}" | sed -E 's/.*"plan_id":"([^"]+)".*/\1/' )
-  plan_hash=$(echo "${plan_hash_line}" | sed -E 's/.*"plan_hash":"([^"]+)".*/\1/' )
+  # Extract core fields robustly; tolerate missing fields and timestamp prefixes
+  # plan_id_* only if present
+  if echo "${plan_created_line}" | grep -q '"plan_id":"'; then
+    plan_id_created=$(echo "${plan_created_line}" | grep -Eo '"plan_id":"[^"]*"' | head -n1 | sed -E 's/.*:"([^"]*)"/\1/')
+  else
+    plan_id_created=""
+  fi
+  if echo "${plan_hash_line}" | grep -q '"plan_id":"'; then
+    plan_id_hash=$(echo "${plan_hash_line}" | grep -Eo '"plan_id":"[^"]*"' | head -n1 | sed -E 's/.*:"([^"]*)"/\1/')
+  else
+    plan_id_hash=""
+  fi
+  if echo "${session_summary_line}" | grep -q '"plan_id":"'; then
+    plan_id_session=$(echo "${session_summary_line}" | grep -Eo '"plan_id":"[^"]*"' | head -n1 | sed -E 's/.*:"([^"]*)"/\1/')
+  else
+    plan_id_session=""
+  fi
+  if echo "${plan_hash_line}" | grep -q '"plan_hash":"'; then
+    plan_hash=$(echo "${plan_hash_line}" | grep -Eo '"plan_hash":"[^"]*"' | head -n1 | sed -E 's/.*:"([^"]*)"/\1/')
+  else
+    plan_hash=""
+  fi
   # Extract mismatch_flags only if present; else treat as empty array
   if echo "${session_summary_line}" | grep -q '"mismatch_flags"'; then
     mismatch_flags=$(echo "${session_summary_line}" | sed -E 's/.*"mismatch_flags":(\[[^]]*\]).*/\1/' )
   else
     mismatch_flags="[]"
   fi
-  failed_count=$(echo "${session_summary_line}" | sed -E 's/.*"failed_count":([0-9]+).*/\1/' )
-  completed_pages_struct=$(echo "${session_summary_line}" | sed -E 's/.*"completed_pages":([0-9]+).*/\1/' )
-  expected_pages_struct=$(echo "${session_summary_line}" | sed -E 's/.*"expected_pages":([0-9]+).*/\1/' )
+  # Numeric fields: support both session_summary and session_final_summary schemas
+  failed_count=$(echo "${session_summary_line}" | grep -Eo '"(failed_count|failed_pages_count)":([0-9]+)' | head -n1 | sed -E 's/.*:([0-9]+)$/\1/' )
+  completed_pages_struct=$(echo "${session_summary_line}" | grep -Eo '"(completed_pages|total_pages_processed)":([0-9]+)' | head -n1 | sed -E 's/.*:([0-9]+)$/\1/' )
+  expected_pages_struct=$(echo "${session_summary_line}" | grep -Eo '"(expected_pages|total_success_count)":([0-9]+)' | head -n1 | sed -E 's/.*:([0-9]+)$/\1/' )
+  # Default to 0 if empty
+  [[ -z "${failed_count}" ]] && failed_count=0 || true
+  [[ -z "${completed_pages_struct}" ]] && completed_pages_struct=0 || true
+  [[ -z "${expected_pages_struct}" ]] && expected_pages_struct=0 || true
 
   # Plan ID consistency
   if [[ -n "${plan_created_line}" ]]; then
@@ -227,11 +249,10 @@ if [[ "${DISABLE_STRUCTURED_CHECKS:-0}" != "1" ]]; then
     fi
   fi
 
-  # Sum pages from batch_start lines (pages":N)
+  # Sum pages from batch_start lines (prefer pages_count)
   if [[ -n "${batch_start_lines}" ]]; then
-    pages_a=$(echo "${batch_start_lines}" | grep -o '"pages":[0-9]*' | sed -E 's/"pages"://' | awk '{s+=$1} END{print s+0}')
     pages_b=$(echo "${batch_start_lines}" | grep -o '"pages_count":[0-9]*' | sed -E 's/"pages_count"://' | awk '{s+=$1} END{print s+0}')
-    # Prefer pages_count when present; else use pages
+    pages_a=$(echo "${batch_start_lines}" | grep -o '"pages":[0-9]*' | sed -E 's/"pages"://' | awk '{s+=$1} END{print s+0}')
     if [[ ${pages_b:-0} -gt 0 ]]; then
       batch_pages_sum=${pages_b}
     else
@@ -240,10 +261,11 @@ if [[ "${DISABLE_STRUCTURED_CHECKS:-0}" != "1" ]]; then
   else
     batch_pages_sum=0
   fi
-  if [[ -n "${completed_pages_struct}" && ${batch_pages_sum:-0} -gt ${completed_pages_struct:-0} ]]; then
+  # Only compare numerically when both sides are integers
+  if [[ ${completed_pages_struct} =~ ^[0-9]+$ ]] && [[ ${batch_pages_sum:-0} -gt ${completed_pages_struct} ]]; then
     echo "[FAIL] Sum of batch pages (${batch_pages_sum}) > completed_pages (${completed_pages_struct})"; exit 21
   fi
-  if [[ -n "${expected_pages_struct}" && ${batch_pages_sum:-0} -gt ${expected_pages_struct:-0} ]]; then
+  if [[ ${expected_pages_struct} =~ ^[0-9]+$ ]] && [[ ${batch_pages_sum:-0} -gt ${expected_pages_struct} ]]; then
     echo "[FAIL] Sum of batch pages (${batch_pages_sum}) > expected_pages (${expected_pages_struct})"; exit 21
   fi
 fi

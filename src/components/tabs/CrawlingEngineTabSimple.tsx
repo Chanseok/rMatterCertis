@@ -322,13 +322,14 @@ export default function CrawlingEngineTabSimple() {
   let syncStartSeq = 0;
   onMount(async () => {
     try {
-      const un1 = await listen("actor-sync-started", () => {
-        syncStartSeq++;
+      const un1 = await tauriApi.subscribeToUnifiedActorEvents({
+        variants: ['SyncStarted'],
+        onEvent: () => {
+          syncStartSeq++;
+        },
       });
       onCleanup(() => {
-        try {
-          (un1 as any)();
-        } catch {}
+        try { un1(); } catch {}
       });
     } catch {}
   });
@@ -630,7 +631,8 @@ export default function CrawlingEngineTabSimple() {
 
     // Listen to unified Actor session lifecycle to toggle buttons/status
     tauriApi
-      .subscribeToActorBridgeEvents((name, payload) => {
+      .subscribeToUnifiedActorEvents({ onEvent: (payload) => {
+  const name = String(payload?.event_name || '');
   // Debug: track live event stream
   setActorEventCount((n) => n + 1);
   setLastActorEvent(name);
@@ -1124,11 +1126,11 @@ export default function CrawlingEngineTabSimple() {
             setTimeout(() => setPersistFlash(false), 500);
           }
         }
-      })
+  } })
       .then((un) => unsubs.push(un))
       .catch((e) =>
         console.warn(
-          "[CrawlingEngineTabSimple] actor bridge subscribe failed",
+          "[CrawlingEngineTabSimple] unified actor subscribe failed",
           e
         )
       );

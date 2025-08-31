@@ -792,11 +792,13 @@ const CrawlingProgressDashboard: Component = () => {
     initializeSVG();
   };
 
-  // 실제 이벤트 리스너: actor-event 브리지 구독으로 대체
+  // 실제 이벤트 리스너: unified actor-event 구독
   const setupEventListeners = async () => {
     try {
-      const un = await tauriApi.subscribeToActorBridgeEvents((name, payload) => {
-        switch (name) {
+  const un = await tauriApi.subscribeToUnifiedActorEvents({
+        onEvent: (payload) => {
+          const name = payload?.event_name as string | undefined;
+          switch (name) {
           case 'actor-batch-started': {
             const data: CrawlingEventData = {
               batchId: String(payload?.batch_id ?? payload?.id ?? ''),
@@ -846,7 +848,7 @@ const CrawlingProgressDashboard: Component = () => {
             break;
           }
         }
-      });
+      }});
       // 정리 시 해제
       onCleanup(() => { try { un(); } catch {} });
     } catch (error) {

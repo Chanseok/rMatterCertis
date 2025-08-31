@@ -5,7 +5,6 @@
 //! 낮은 복잡성의 구현으로도 모든 경우를 다 커버할 수 있도록 함
 
 use crate::crawl_engine::actors::types::{AppEvent, SimpleMetrics};
-use crate::infrastructure::features::feature_events_generalized_only;
 use std::collections::VecDeque;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -109,158 +108,74 @@ impl ActorEventBridge {
             }
             v
         };
-        // Generalized-only 모드: 단일 채널로 통일된 이벤트를 방출하고 종료
-        if feature_events_generalized_only() {
-            let unified_name = "actor-event";
-            self.app_handle
-                .emit(unified_name, &enriched)
-                .map_err(|e| format!("Tauri emit failed: {}", e))?;
-            // Also write a concise info-level line to events.log so stage/page/detail events are visible
-            if let Some(obj) = enriched.as_object() {
-                let variant = obj.get("variant").and_then(|v| v.as_str()).unwrap_or("?");
-                let seq_val = obj.get("seq").and_then(serde_json::Value::as_u64).unwrap_or(0);
-                let session_id = obj.get("session_id").and_then(|v| v.as_str());
-                let batch_id = obj.get("batch_id").and_then(|v| v.as_str());
-                tracing::info!(target: "actor-event",
-                    "🌉 actor-event seq={} name={} variant={} session_id={:?} batch_id={:?}",
-                    seq_val, unified_name, variant, session_id, batch_id
-                );
-            } else {
-                tracing::info!(target: "actor-event",
-                    "🌉 actor-event name={} (unstructured)", unified_name
-                );
-            }
-            // Specialized concise lines per important variants to improve ProductDetail visibility
-            match &actor_event {
-                // Native TaskLifecycle is now emitted directly by actors; no synthetic re-emit needed
-                AppEvent::ProductLifecycle { .. } => {}
-                AppEvent::TaskLifecycle {
-                    session_id,
-                    batch_id,
-                    task_kind,
-                    page_number,
-                    product_ref,
-                    status,
-                    duration_ms,
-                    ..
-                } => {
-                    tracing::info!(target: "actor-event",
-                        "[TaskLifecycle] kind={:?} status={} page={:?} ref={:?} dur_ms={:?} batch={:?} session={}",
-                        task_kind, status, page_number, product_ref, duration_ms, batch_id, session_id
-                    );
-                }
-                // ProductLifecycle logging is covered by synthetic TaskLifecycle above; keep concise log via that path
-                AppEvent::ProductLifecycleGroup {
-                    session_id,
-                    batch_id,
-                    page_number,
-                    group_size,
-                    started,
-                    succeeded,
-                    failed,
-                    duplicates,
-                    duration_ms,
-                    phase,
-                    ..
-                } => {
-                    tracing::info!(target: "actor-event",
-                        "[ProductLifecycleGroup] phase={} size={} started={} ok={} fail={} dup={} page={:?} batch={:?} dur_ms={} session={}",
-                        phase, group_size, started, succeeded, failed, duplicates, page_number, batch_id, duration_ms, session_id
-                    );
-                }
-                // DetailTask* events deprecated and no longer emitted
-                AppEvent::DatabaseStats {
-                    session_id,
-                    batch_id,
-                    total_product_details,
-                    min_page,
-                    max_page,
-                    note,
-                    ..
-                } => {
-                    tracing::info!(target: "actor-event",
-                        "[DatabaseStats] total={} range={:?}-{:?} note={:?} batch={:?} session={}",
-                        total_product_details, min_page, max_page, note, batch_id, session_id
-                    );
-                }
-                AppEvent::PageLifecycle {
-                    session_id,
-                    batch_id,
-                    page_number,
-                    status,
-                    metrics,
-                    ..
-                } => {
-                    // Record native PageLifecycle key in recent cache
-                    self.push_recent_page(session_id, batch_id.as_ref(), *page_number).await;
-                    // Extract a couple key metrics if available
-                    let (urls, scheduled, err) = match metrics {
-                        Some(SimpleMetrics::Page {
-                            url_count,
-                            scheduled_details,
-                            error,
-                        }) => (
-                            url_count.unwrap_or(0),
-                            scheduled_details.unwrap_or(0),
-                            error.as_deref().unwrap_or(""),
-                        ),
-                        _ => (0, 0, ""),
-                    };
-                    tracing::info!(target: "actor-event",
-                        "[PageLifecycle] status={} page={} urls={} scheduled={} err='{}' batch={:?} session={}",
-                        status, page_number, urls, scheduled, err, batch_id, session_id
-                    );
-                }
-                AppEvent::StageStarted {
-                    stage_type,
-                    session_id,
-                    batch_id,
-                    items_count,
-                    ..
-                } => {
-                    tracing::info!(target: "actor-event",
-                        "[Stage] started stage={} items={} batch={:?} session={}",
-                        stage_type.as_str(), items_count, batch_id, session_id
-                    );
-                }
-                AppEvent::StageCompleted {
-                    stage_type,
-                    session_id,
-                    batch_id,
-                    result,
-                    ..
-                } => {
-                    tracing::info!(target: "actor-event",
-                        "[Stage] completed stage={} processed={} ok={} fail={} dur_ms={} batch={:?} session={}",
-                        stage_type.as_str(), result.processed_items, result.successful_items, result.failed_items, result.duration_ms, batch_id, session_id
-                    );
-                }
-                _ => {}
-            }
-            debug!(
-                "✅ Forwarded generalized Actor event '{}' (original={})",
-                unified_name, event_name
-            );
-            return Ok(());
-        }
-
-        // 레거시 호환: 기존 이벤트명으로 전송
+        // Always emit unified actor-event
+        let unified_name = "actor-event";
         self.app_handle
-            .emit(&event_name, &enriched)
+            .emit(unified_name, &enriched)
             .map_err(|e| format!("Tauri emit failed: {}", e))?;
-
-        debug!("✅ Forwarded Actor event '{}' to Frontend", event_name);
-        // Always emit a concise info-level line so users see forwarding even if debug is filtered.
+        // Concise info line to events.log for visibility
         if let Some(obj) = enriched.as_object() {
             let variant = obj.get("variant").and_then(|v| v.as_str()).unwrap_or("?");
             let seq_val = obj.get("seq").and_then(serde_json::Value::as_u64).unwrap_or(0);
             let session_id = obj.get("session_id").and_then(|v| v.as_str());
             let batch_id = obj.get("batch_id").and_then(|v| v.as_str());
-            // Route this concise line to events.log by using the dedicated target
             tracing::info!(target: "actor-event",
                 "🌉 actor-event seq={} name={} variant={} session_id={:?} batch_id={:?}",
-                seq_val, event_name, variant, session_id, batch_id
+                seq_val, unified_name, variant, session_id, batch_id
             );
+        } else {
+            tracing::info!(target: "actor-event",
+                "🌉 actor-event name={} (unstructured)", unified_name
+            );
+        }
+        // Helpful concise logs by variant
+        match &actor_event {
+            AppEvent::TaskLifecycle { session_id, batch_id, task_kind, page_number, product_ref, status, duration_ms, .. } => {
+                tracing::info!(target: "actor-event",
+                    "[TaskLifecycle] kind={:?} status={} page={:?} ref={:?} dur_ms={:?} batch={:?} session={}",
+                    task_kind, status, page_number, product_ref, duration_ms, batch_id, session_id
+                );
+            }
+            AppEvent::ProductLifecycleGroup { session_id, batch_id, page_number, group_size, started, succeeded, failed, duplicates, duration_ms, phase, .. } => {
+                tracing::info!(target: "actor-event",
+                    "[ProductLifecycleGroup] phase={} size={} started={} ok={} fail={} dup={} page={:?} batch={:?} dur_ms={} session={}",
+                    phase, group_size, started, succeeded, failed, duplicates, page_number, batch_id, duration_ms, session_id
+                );
+            }
+            AppEvent::DatabaseStats { session_id, batch_id, total_product_details, min_page, max_page, note, .. } => {
+                tracing::info!(target: "actor-event",
+                    "[DatabaseStats] total={} range={:?}-{:?} note={:?} batch={:?} session={}",
+                    total_product_details, min_page, max_page, note, batch_id, session_id
+                );
+            }
+            AppEvent::PageLifecycle { session_id, batch_id, page_number, status, metrics, .. } => {
+                self.push_recent_page(session_id, batch_id.as_ref(), *page_number).await;
+                let (urls, scheduled, err) = match metrics {
+                    Some(SimpleMetrics::Page { url_count, scheduled_details, error }) => (
+                        url_count.unwrap_or(0),
+                        scheduled_details.unwrap_or(0),
+                        error.as_deref().unwrap_or("")
+                    ),
+                    _ => (0, 0, ""),
+                };
+                tracing::info!(target: "actor-event",
+                    "[PageLifecycle] status={} page={} urls={} scheduled={} err='{}' batch={:?} session={}",
+                    status, page_number, urls, scheduled, err, batch_id, session_id
+                );
+            }
+            AppEvent::StageStarted { stage_type, session_id, batch_id, items_count, .. } => {
+                tracing::info!(target: "actor-event",
+                    "[Stage] started stage={} items={} batch={:?} session={}",
+                    stage_type.as_str(), items_count, batch_id, session_id
+                );
+            }
+            AppEvent::StageCompleted { stage_type, session_id, batch_id, result, .. } => {
+                tracing::info!(target: "actor-event",
+                    "[Stage] completed stage={} processed={} ok={} fail={} dur_ms={} batch={:?} session={}",
+                    stage_type.as_str(), result.processed_items, result.successful_items, result.failed_items, result.duration_ms, batch_id, session_id
+                );
+            }
+            _ => {}
         }
         // 추가: 세션 단위 최종 보고가 들어오면 일반 로그에도 요약을 남겨 back_front.log에서 확인 가능하게 함
         if let AppEvent::CrawlReportSession {
@@ -291,8 +206,7 @@ impl ActorEventBridge {
             );
         }
 
-        // 보강: CrawlReportSession 이 없고 SessionCompleted 로만 종료되는 경로(레거시 오케스트레이션 포함)를 위해
-        // SessionCompleted(summary) 수신 시에도 메인 로그에 인간 친화적 요약을 남긴다.
+    // 보강: SessionCompleted(summary) 수신 시에도 메인 로그에 인간 친화적 요약을 남긴다.
         if let AppEvent::SessionCompleted { summary, .. } = &actor_event {
             info!(
                 "📊 Session Final Summary | session_id={} state={} duration_ms={} batches={} pages_processed={} success={} failed={} retries={} inserted={} updated={} duplicates={} ts={}",
@@ -311,40 +225,11 @@ impl ActorEventBridge {
             );
         }
 
-        // 레거시 PageTask* 이벤트를 사용하는 경로(구 actor_system_commands 기반)에서도
-        // UI가 통합된 actor-page-lifecycle 스트림을 받을 수 있도록 합성 이벤트 생성
-        // 단, 새로운 파이프라인(StageActor)이 PageLifecycle을 직접 방출하는 경우에는 합성하지 않음
-        if matches!(actor_event, AppEvent::PageLifecycle { .. }) {
-            return Ok(());
-        }
-        if let Some((derived_name, mut derived_payload)) =
-            self.create_synthetic_page_lifecycle(&actor_event).await
-        {
-            if let Some(obj) = derived_payload.as_object_mut() {
-                obj.insert(
-                    "seq".into(),
-                    serde_json::Value::from(self.seq.fetch_add(1, Ordering::SeqCst)),
-                );
-                obj.insert(
-                    "backend_ts".into(),
-                    serde_json::Value::from(chrono::Utc::now().to_rfc3339()),
-                );
-                obj.insert(
-                    "event_name".into(),
-                    serde_json::Value::from(derived_name.clone()),
-                );
-            }
-            if let Err(e) = self.app_handle.emit(&derived_name, &derived_payload) {
-                warn!("Failed to emit synthetic page lifecycle event: {}", e);
-            } else {
-                debug!(
-                    "✅ Emitted synthetic page lifecycle event '{}': {:?}",
-                    derived_name, derived_payload
-                );
-            }
-        }
-
-        Ok(())
+        debug!(
+            "✅ Forwarded generalized Actor event '{}' (original={})",
+            unified_name, event_name
+        );
+    return Ok(());
     }
 
     /// `AppEvent를` 프론트엔드 이벤트로 변환
@@ -368,13 +253,7 @@ impl ActorEventBridge {
         self.is_active.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    // PageTask* removed; synthetic conversion no longer needed. If needed later, we could synthesize TaskLifecycle from Page/Product lifecycles.
-    async fn create_synthetic_page_lifecycle(
-        &self,
-        _event: &AppEvent,
-    ) -> Option<(String, serde_json::Value)> {
-        None
-    }
+    // PageTask* removed; synthetic conversion no longer needed.
 
     // Build synthetic TaskLifecycle payload from PageLifecycle/ProductLifecycle
     // (previously had an experimental helper to synthesize TaskLifecycle from Page/Product lifecycles)

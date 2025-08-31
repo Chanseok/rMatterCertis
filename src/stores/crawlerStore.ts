@@ -308,14 +308,12 @@ class CrawlerStore {
   }
 
   private async subscribeToEvents(): Promise<void> {
-    console.log('📡 Subscribing to unified actor bridge events...');
-    const unlisten = await tauriApi.subscribeToActorBridgeEvents((_eventName, payload) => {
-        this.handleActorEvent(payload);
+    console.log('📡 Subscribing to unified actor events...');
+    const unlisten = await tauriApi.subscribeToUnifiedActorEvents({
+      onEvent: (payload) => this.handleActorEvent(payload),
     });
-    eventSubscriptions()[0] = () => {
-        unlisten();
-    };
-    console.log('✅ Subscribed to unified actor bridge events.');
+    eventSubscriptions()[0] = () => { try { unlisten(); } catch {} };
+    console.log('✅ Subscribed to unified actor events.');
   }
 
   private handleActorEvent(payload: any): void {

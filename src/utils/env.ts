@@ -10,6 +10,5 @@ export function getEnvFlag(name: string, defaultValue = false): boolean {
 }
 
 export const FLAGS = {
-  DISABLE_LEGACY_EVENTS: () => getEnvFlag('VITE_DISABLE_LEGACY_EVENTS', false),
   EVENT_SUMMARY_SILENT: () => getEnvFlag('VITE_EVENT_SUMMARY_SILENT', false),
 };

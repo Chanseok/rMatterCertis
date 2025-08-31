@@ -113,6 +113,8 @@ mod channel_factory_tests {
 #[cfg(test)]
 mod actor_integration_tests {
     use super::*;
+    use crate::crawl_engine::actors::types::{ExecutionPlan, PageRange, PlanInputSnapshot};
+    use chrono::Utc;
     
     #[tokio::test]
     async fn test_session_actor_lifecycle() {
@@ -210,6 +212,63 @@ mod actor_integration_tests {
             let processed_count = result.unwrap();
             assert_eq!(processed_count, items.len() as u32);
         }
+    }
+
+    #[tokio::test]
+    async fn test_sequential_batch_execution_order() {
+        // Build a tiny preplanned execution: two ranges newest->oldest
+        let plan = ExecutionPlan {
+            plan_id: "plan_seq".into(),
+            session_id: "session_seq".into(),
+            crawling_ranges: vec![
+                PageRange { start_page: 10, end_page: 9, estimated_products: 24, reverse_order: true },
+                PageRange { start_page: 8, end_page: 8, estimated_products: 12, reverse_order: true },
+            ],
+            batch_size: 2,
+            concurrency_limit: 2,
+            estimated_duration_secs: 0,
+            created_at: Utc::now(),
+            analysis_summary: "seq test".into(),
+            original_strategy: "Manual".into(),
+            input_snapshot: PlanInputSnapshot { total_pages: 20, products_on_last_page: 12, db_max_page_id: None, db_max_index_in_page: None, db_total_products: 0, page_range_limit: 100, batch_size: 2, concurrency_limit: 2, created_at: Utc::now() },
+            plan_hash: "h_seq".into(),
+            skip_duplicate_urls: true,
+            kpi_meta: None,
+            contract_version: 1,
+            page_slots: vec![],
+        };
+
+        // Wire minimal session context
+        let config = Arc::new(SystemConfig::default());
+        let (control_tx, control_rx) = mpsc::channel(10);
+        let (event_tx, mut event_rx) = mpsc::channel(100);
+        let mut session = SessionActor::new(config, control_rx, event_tx);
+
+        // Spawn session
+        let handle = tokio::spawn(async move { session.run_preplanned(plan).await });
+
+        // Observe that two batch started/completed arrive in order
+        let mut saw_first_complete = false;
+        let mut order_ok = true;
+        let mut completes = 0u32;
+        while let Some(ev) = tokio::time::timeout(Duration::from_secs(5), event_rx.recv()).await.ok().flatten() {
+            match ev {
+                AppEvent::BatchStarted { meta, .. } => {
+                    if saw_first_complete { order_ok = false; break; }
+                    assert!(meta.batch_index <= 1);
+                }
+                AppEvent::BatchCompleted { .. } => {
+                    completes += 1;
+                    if completes == 1 { saw_first_complete = true; }
+                    if completes >= 2 { break; }
+                }
+                _ => {}
+            }
+        }
+        drop(control_tx);
+        let _ = handle.await;
+        assert!(order_ok, "batches should complete sequentially in order");
+        assert_eq!(completes, 2);
     }
     
     #[tokio::test]
