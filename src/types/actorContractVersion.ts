@@ -1,5 +1,5 @@
 // Auto-synced Actor Contract Version (Rust <-> TS)
-// DO NOT EDIT MANUALLY without updating `src-tauri/src/new_architecture/actors/contract.rs`
+// DO NOT EDIT MANUALLY without updating `src-tauri/src/crawl_engine/actors/contract.rs`
 // ActorContractVersion: v1
 export const ACTOR_CONTRACT_VERSION = 1 as const;
 
