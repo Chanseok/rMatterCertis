@@ -26,7 +26,7 @@ use crate::infrastructure::simple_http_client::HttpClient;
 use tauri::State; // For accessing managed state
 // 실제 CrawlingPlanner에서 사용
 use crate::crawl_engine::runtime::session_registry::{
-    SessionEntry, SessionStatus, failure_threshold, session_registry,
+    SessionStatus, failure_threshold, session_registry,
     update_global_failure_policy_from_config,
 };
 use crate::infrastructure::config::ConfigManager; // 설정 관리자 추가
@@ -138,110 +138,7 @@ async fn bootstrap_and_spawn_session(
         .await
         .map_err(|e| format!("failed to send ExecutePrePlanned: {e}"))?;
 
-    // Initialize session registry entry
-    let total_pages_planned: u64 = execution_plan
-        .crawling_ranges
-        .iter()
-        .map(|r| {
-            if r.start_page >= r.end_page {
-                (r.start_page - r.end_page + 1) as u64
-            } else {
-                (r.end_page - r.start_page + 1) as u64
-            }
-        })
-        .sum();
-    let batch_unit = execution_plan.batch_size.max(1) as usize;
-    let total_batches_planned: u64 = execution_plan
-        .crawling_ranges
-        .iter()
-        .map(|r| {
-            let pages = if r.start_page >= r.end_page {
-                (r.start_page - r.end_page + 1) as usize
-            } else {
-                (r.end_page - r.start_page + 1) as usize
-            };
-            (pages.div_ceil(batch_unit)) as u64
-        })
-        .sum();
-    // Build pages list for remaining (physical)
-    let mut remaining_pages: Vec<u32> = Vec::new();
-    for r in &execution_plan.crawling_ranges {
-        if r.start_page <= r.end_page {
-            remaining_pages.extend(r.start_page..=r.end_page);
-        } else {
-            remaining_pages.extend((r.end_page..=r.start_page).rev());
-        }
-    }
-    let (pause_tx, _pause_rx) = watch::channel(false);
-    {
-        let reg = session_registry();
-        let mut g = reg.write().await;
-        g.insert(
-            session_id.clone(),
-            SessionEntry {
-                status: SessionStatus::Running,
-                pause_tx,
-                started_at: Utc::now(),
-                completed_at: None,
-                total_pages_planned,
-                processed_pages: 0,
-                total_batches_planned,
-                completed_batches: 0,
-                batch_size: execution_plan.batch_size,
-                concurrency_limit: execution_plan.concurrency_limit,
-                last_error: None,
-                error_count: 0,
-                resume_token,
-                remaining_page_slots: Some(remaining_pages),
-                plan_hash: Some(execution_plan.plan_hash.clone()),
-                removal_deadline: None,
-                failed_emitted: false,
-                retries_per_page: retries_per_page.unwrap_or_default(),
-                failed_pages: failed_pages.unwrap_or_default(),
-                retrying_pages: retrying_pages.unwrap_or_default(),
-                product_list_max_retries: app_config.advanced.retry_attempts,
-                error_type_stats: HashMap::new(),
-                detail_tasks_total: 0,
-                detail_tasks_completed: 0,
-                detail_tasks_failed: 0,
-                detail_retry_counts: HashMap::new(),
-                detail_retries_total: 0,
-                detail_retry_histogram: HashMap::new(),
-                remaining_detail_ids: None,
-                detail_failed_ids: Vec::new(),
-                page_failure_threshold: failure_threshold(),
-                detail_failure_threshold: app_config.advanced.failure_policy.failure_threshold,
-                detail_downshifted: false,
-                detail_downshift_timestamp: None,
-                detail_downshift_old_limit: None,
-                detail_downshift_new_limit: None,
-                detail_downshift_trigger: None,
-            },
-        );
-    }
-
-    // Emit initial SessionStarted event (best-effort)
-    let _ = actor_event_tx.send(AppEvent::SessionStarted {
-        session_id: session_id.clone(),
-        config: CrawlingConfig {
-            site_url: "https://csa-iot.org/csa-iot_products/".to_string(),
-            start_page: execution_plan
-                .crawling_ranges
-                .first()
-                .map_or(1, |r| r.start_page),
-            end_page: execution_plan
-                .crawling_ranges
-                .last()
-                .map_or(1, |r| r.end_page),
-            concurrency_limit: execution_plan.concurrency_limit,
-            batch_size: execution_plan.batch_size,
-            request_delay_ms: app_config.user.request_delay_ms,
-            timeout_secs: app_config.advanced.request_timeout_seconds,
-            max_retries: app_config.advanced.retry_attempts,
-            strategy: crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst,
-        },
-        timestamp: Utc::now(),
-    });
+    // Registry initialization and initial SessionStarted will be handled by SessionActor upon ExecutePrePlanned.
 
     Ok((session_id, execution_plan))
 }
@@ -312,7 +209,7 @@ pub async fn request_graceful_shutdown(app: AppHandle) -> Result<ActorSystemResp
             let _ = state;
         }
         let now = Utc::now();
-        // We don't hold a broadcast handle here; Session loop will emit PhaseAborted + SessionCompleted/Failed
+    // We don't hold a broadcast handle here; Session loop will emit shutdown/session completion events
         info!("🛑 Graceful shutdown requested at {}", now);
         // 레지스트리 상태 ShuttingDown 으로 변경
         {

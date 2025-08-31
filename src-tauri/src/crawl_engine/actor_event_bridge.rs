@@ -245,7 +245,7 @@ impl ActorEventBridge {
         convert_actor_event_to_frontend_value(event)
     }
 
-    // NOTE: Legacy `CrawlingEvent` conversion removed. Frontend should consume unified `actor-event` only.
+    // Frontend consumes unified `actor-event` only.
 
     /// 브릿지 상태 확인
     #[must_use]
@@ -253,11 +253,7 @@ impl ActorEventBridge {
         self.is_active.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    // PageTask* removed; synthetic conversion no longer needed.
-
-    // Build synthetic TaskLifecycle payload from PageLifecycle/ProductLifecycle
-    // (previously had an experimental helper to synthesize TaskLifecycle from Page/Product lifecycles)
-    // Removed as native TaskLifecycle is now emitted directly by actors.
+    // Native TaskLifecycle/PageLifecycle/ProductLifecycle only. No legacy PageTask* synthesis.
 
     async fn push_recent_page(&self, session_id: &str, batch_id: Option<&String>, page: u32) {
         use std::time::{Duration, Instant};

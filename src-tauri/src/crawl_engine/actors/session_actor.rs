@@ -1054,6 +1054,96 @@ impl Actor for SessionActor {
                                     self.preplanned_mode = true;
                                     self.active_plan_hash = Some(plan.plan_hash.clone());
                                     info!("🔐 SessionActor {} executing pre-planned ExecutionPlan (hash={})", self.actor_id, plan.plan_hash);
+                                    // Initialize session registry entry and emit initial SessionStarted
+                                    {
+                                        use crate::crawl_engine::runtime::session_registry::{session_registry, SessionEntry, SessionStatus, failure_threshold};
+                                        use chrono::Utc;
+                                        use tokio::sync::watch;
+                                        let total_pages_planned: u64 = plan
+                                            .crawling_ranges
+                                            .iter()
+                                            .map(|r| if r.start_page >= r.end_page { (r.start_page - r.end_page + 1) as u64 } else { (r.end_page - r.start_page + 1) as u64 })
+                                            .sum();
+                                        let batch_unit = plan.batch_size.max(1) as usize;
+                                        let total_batches_planned: u64 = plan
+                                            .crawling_ranges
+                                            .iter()
+                                            .map(|r| {
+                                                let pages = if r.start_page >= r.end_page { (r.start_page - r.end_page + 1) as usize } else { (r.end_page - r.start_page + 1) as usize };
+                                                (pages.div_ceil(batch_unit)) as u64
+                                            })
+                                            .sum();
+                                        let mut remaining_pages: Vec<u32> = Vec::new();
+                                        for r in &plan.crawling_ranges {
+                                            if r.start_page <= r.end_page {
+                                                remaining_pages.extend(r.start_page..=r.end_page);
+                                            } else {
+                                                remaining_pages.extend((r.end_page..=r.start_page).rev());
+                                            }
+                                        }
+                                        let (pause_tx, _pause_rx) = watch::channel(false);
+                                        {
+                                            let reg = session_registry();
+                                            let mut g = reg.write().await;
+                                            g.insert(
+                                                session_id.clone(),
+                                                SessionEntry {
+                                                    status: SessionStatus::Running,
+                                                    pause_tx,
+                                                    started_at: Utc::now(),
+                                                    completed_at: None,
+                                                    total_pages_planned,
+                                                    processed_pages: 0,
+                                                    total_batches_planned,
+                                                    completed_batches: 0,
+                                                    batch_size: plan.batch_size,
+                                                    concurrency_limit: plan.concurrency_limit,
+                                                    last_error: None,
+                                                    error_count: 0,
+                                                    resume_token: None,
+                                                    remaining_page_slots: Some(remaining_pages),
+                                                    plan_hash: Some(plan.plan_hash.clone()),
+                                                    removal_deadline: None,
+                                                    failed_emitted: false,
+                                                    retries_per_page: std::collections::HashMap::new(),
+                                                    failed_pages: Vec::new(),
+                                                    retrying_pages: Vec::new(),
+                                                    product_list_max_retries: 0,
+                                                    error_type_stats: std::collections::HashMap::new(),
+                                                    detail_tasks_total: 0,
+                                                    detail_tasks_completed: 0,
+                                                    detail_tasks_failed: 0,
+                                                    detail_retry_counts: std::collections::HashMap::new(),
+                                                    detail_retries_total: 0,
+                                                    detail_retry_histogram: std::collections::HashMap::new(),
+                                                    remaining_detail_ids: None,
+                                                    detail_failed_ids: Vec::new(),
+                                                    page_failure_threshold: failure_threshold(),
+                                                    detail_failure_threshold:  plan.concurrency_limit, // placeholder until config available
+                                                    detail_downshifted: false,
+                                                    detail_downshift_timestamp: None,
+                                                    detail_downshift_old_limit: None,
+                                                    detail_downshift_new_limit: None,
+                                                    detail_downshift_trigger: None,
+                                                },
+                                            );
+                                        }
+                                        // Emit SessionStarted with minimal config derived from plan
+                                        let start_cfg = CrawlingConfig {
+                                            site_url: "preplanned".into(),
+                                            start_page: plan.crawling_ranges.first().map_or(1, |r| r.start_page),
+                                            end_page: plan.crawling_ranges.last().map_or(1, |r| r.end_page),
+                                            concurrency_limit: plan.concurrency_limit,
+                                            batch_size: plan.batch_size,
+                                            request_delay_ms: 0,
+                                            timeout_secs: 300,
+                                            max_retries: 3,
+                                            strategy: crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst,
+                                        };
+                                        if let Err(e) = context.emit_event(AppEvent::SessionStarted { session_id: session_id.clone(), config: start_cfg, timestamp: Utc::now() }) {
+                                            error!("Failed to emit SessionStarted: {}", e);
+                                        }
+                                    }
                                     // 서비스 준비 (실패 시 중단)
                                     match crate::infrastructure::database_connection::get_or_init_global_pool().await {
                                         Ok(db_pool) => {

@@ -100,6 +100,7 @@ pub enum ActorCommand {
 /// - Persistence diagnostics: `ProductLifecycle` { status, metrics? }, `PersistenceAnomaly` { kind, detail }
 /// - Metrics snapshots: `DatabaseStats` { `total_product_details`, `min_page`, `max_page` }
 /// UI 소비자는 최소 `session_id` + timestamp 조합을 키로 사용하고, 선택적으로 `batch_id` / `stage_type` 으로 세분화 렌더링.
+/// Legacy Phase*/PageTask*/*Lifecycle 이벤트는 제거/대체되었습니다. (Stage*/TaskLifecycle/PageLifecycle/ProductLifecycle 만 유지)
 ///
 /// 버전 관리 원칙:
 /// 1. Additive-only (새 이벤트/필드 추가는 허용)
