@@ -2092,11 +2092,9 @@ export default function CrawlingEngineTabSimple() {
                 class="progress-fill rounded-full"
                 style={{
                   width: `${(() => {
-                    const denom =
-                      (crawlingRange()?.crawling_info
-                        ?.estimated_new_products as number) ||
-                      detailStats().started ||
-                      0;
+                    const est = (crawlingRange()?.crawling_info?.estimated_new_products ?? 0) as number;
+                    const observed = Math.max(detailStats().started || 0, detailStats().completed || 0);
+                    const denom = est > 0 ? Math.max(est, observed) : observed;
                     return denom > 0
                       ? Math.min(100, (detailStats().completed / denom) * 100)
                       : 0;
