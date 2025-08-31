@@ -43,8 +43,8 @@ export default function CrawlingEngineTabSimple() {
   // Auto re-plan from backend after a session completes
   const [nextPlan, setNextPlan] = createSignal<any | null>(null);
   // Lightweight live actor-event telemetry (debug aid)
-  const [actorEventCount, setActorEventCount] = createSignal(0);
   const [lastActorEvent, setLastActorEvent] = createSignal<string>("");
+  const [actorEventCount, setActorEventCount] = createSignal<number>(0);
 
   // Dramatic transition for Calculated Crawling Range
   const [rangeFxKey, setRangeFxKey] = createSignal(0);
@@ -308,10 +308,12 @@ export default function CrawlingEngineTabSimple() {
   const [persistStats, setPersistStats] = createSignal<{
     attempted: number;
     succeeded: number;
-    failed: number;
+    failed: number; // backend-reported (may include duplicates/unchanged)
     duplicates: number;
+    unchanged: number; // derived on FE: attempted - (succeeded + duplicates)
+    failedTrue: number; // derived on FE: failed - duplicates - unchanged
     durationMs: number;
-  }>({ attempted: 0, succeeded: 0, failed: 0, duplicates: 0, durationMs: 0 });
+  }>({ attempted: 0, succeeded: 0, failed: 0, duplicates: 0, unchanged: 0, failedTrue: 0, durationMs: 0 });
   // Stage 4: DB snapshot animation toggle
   const [dbFlash, setDbFlash] = createSignal(false);
   // Global effects toggle
@@ -773,6 +775,8 @@ export default function CrawlingEngineTabSimple() {
             succeeded: 0,
             failed: 0,
             duplicates: 0,
+            unchanged: 0,
+            failedTrue: 0,
             durationMs: 0,
           });
         }
@@ -893,6 +897,20 @@ export default function CrawlingEngineTabSimple() {
           const status = String(payload?.status || "").toLowerCase();
           const pageNum = Number(payload?.page_number ?? NaN);
           if (!Number.isFinite(pageNum)) return;
+          // Stage 2 start accounting from mapping/schedule signals
+          if (status === "detail_scheduled" || status === "detail_mapping_emitted") {
+            // If backend provided scheduled_details via metrics, use it; otherwise fallback to url_count
+            const scheduled = Number((payload?.metrics && payload.metrics?.data?.scheduled_details) ?? 0) ||
+                               Number((payload?.metrics && payload.metrics?.data?.url_count) ?? 0) || 0;
+            if (scheduled > 0) {
+              setDetailStats((prev) => {
+                const started = (prev.started || 0) + scheduled;
+                const inflight = Math.max(0, started - ((prev.completed || 0) + (prev.failed || 0)));
+                return { ...prev, started, inflight };
+              });
+              if (effectsOn()) triggerStage2Pulse();
+            }
+          }
           if (status === "fetch_started") {
             const prevAttempts = pageAttempts.get(pageNum) ?? 0;
             pageAttempts.set(pageNum, prevAttempts + 1);
@@ -936,16 +954,15 @@ export default function CrawlingEngineTabSimple() {
           name === "actor-product-lifecycle-group" &&
           payload?.phase === "fetch"
         ) {
-          const group =
-            Number(payload?.group_size ?? payload?.started ?? 0) || 0;
-          const succeeded = Number(payload?.succeeded ?? 0) || group; // default: success when not provided
+          // Grouped completion snapshot: only update completions/failures here.
+          // 'started' is accounted from PageLifecycle detail_* mapping events to show inflight correctly.
+          const succeeded = Number(payload?.succeeded ?? 0) || 0;
           const failed = Number(payload?.failed ?? 0) || 0;
           setDetailStats((prev) => {
-            const started = (prev.started || 0) + group;
             const completed = (prev.completed || 0) + succeeded;
             const failedCt = (prev.failed || 0) + failed;
-            const inflight = Math.max(0, started - (completed + failedCt));
-            return { ...prev, started, completed, failed: failedCt, inflight };
+            const inflight = Math.max(0, (prev.started || 0) - (completed + failedCt));
+            return { ...prev, completed, failed: failedCt, inflight };
           });
           if (effectsOn()) triggerStage2Pulse();
         }
@@ -971,18 +988,20 @@ export default function CrawlingEngineTabSimple() {
         // Stage 3 (Validation) events
         if (name === "actor-validation-started") {
           const target = Number(payload?.scan_pages ?? 0) || 0;
-          setValidationStats({
+          setValidationStats((prev) => ({
+            ...(prev || {}),
             started: true,
             completed: false,
-            targetPages: target,
-            pagesScanned: 0,
-            divergences: 0,
-            anomalies: 0,
-            productsChecked: 0,
-            lastPage: null,
-            lastAssignedStart: null,
-            lastAssignedEnd: null,
-          });
+            targetPages: (prev?.targetPages || 0) + target,
+            // keep running tallies across short validation bursts
+            pagesScanned: prev?.pagesScanned || 0,
+            divergences: prev?.divergences || 0,
+            anomalies: prev?.anomalies || 0,
+            productsChecked: prev?.productsChecked || 0,
+            lastPage: prev?.lastPage ?? null,
+            lastAssignedStart: prev?.lastAssignedStart ?? null,
+            lastAssignedEnd: prev?.lastAssignedEnd ?? null,
+          }));
         }
         if (name === "actor-validation-page-scanned") {
           setValidationStats((prev) => ({
@@ -1026,9 +1045,7 @@ export default function CrawlingEngineTabSimple() {
           setValidationStats((prev) => ({
             ...prev,
             completed: true,
-            pagesScanned:
-              Number(payload?.pages_scanned ?? prev.pagesScanned) ||
-              prev.pagesScanned,
+            // Do not override pagesScanned; we increment on page-scanned events.
             productsChecked:
               Number(payload?.products_checked ?? prev.productsChecked) ||
               prev.productsChecked,
@@ -1078,7 +1095,7 @@ export default function CrawlingEngineTabSimple() {
         }
 
         // Stage 4 (DB) snapshots and session summary
-        if (name === "actor-database-stats") {
+  if (name === "actor-database-stats") {
           setDbSnapshot((prev) => ({
             ...prev,
             total:
@@ -1110,16 +1127,26 @@ export default function CrawlingEngineTabSimple() {
         ) {
           const attempted = Number(payload?.group_size ?? 0) || 0;
           const succeeded = Number(payload?.succeeded ?? 0) || 0;
+          // Backend's 'failed' may include unchanged; compute derived fields for UI clarity
           const failed = Number(payload?.failed ?? 0) || 0;
           const duplicates = Number(payload?.duplicates ?? 0) || 0;
+          const unchanged = Math.max(0, attempted - (succeeded + duplicates));
+          const failedTrue = Math.max(0, failed - duplicates - unchanged);
           const durationMs = Number(payload?.duration_ms ?? 0) || 0;
           setPersistStats({
             attempted,
             succeeded,
             failed,
             duplicates,
+            unchanged,
+            failedTrue,
             durationMs,
           });
+          // Also surface cumulative DB change counts when session report lags
+          setDbSnapshot((prev) => ({
+            ...prev,
+            updated: (Number(prev.updated ?? 0) || 0) + succeeded,
+          }));
           // flash Stage 5 panel
           if (effectsOn()) {
             setPersistFlash(true);
@@ -2020,9 +2047,11 @@ export default function CrawlingEngineTabSimple() {
               </Show>
               <span class="text-xs text-gray-500">
                 {(() => {
-                  const est = (crawlingRange()?.crawling_info
-                    ?.estimated_new_products ?? 0) as number;
-                  return est > 0 ? `예상 ${est}` : "";
+                  const est = (crawlingRange()?.crawling_info?.estimated_new_products ?? 0) as number;
+                  const observed = Math.max(detailStats().started || 0, detailStats().completed || 0);
+                  // If est exists but is suspiciously smaller than observed, trust observed
+                  const val = est > 0 ? Math.max(est, observed) : observed;
+                  return val > 0 ? `예상 ${val}` : "";
                 })()}
               </span>
             </div>
@@ -2084,7 +2113,7 @@ export default function CrawlingEngineTabSimple() {
           <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
             <div class="flex items-center justify-between mb-2">
               <h3 class="text-md font-semibold text-gray-800">
-                Stage 3: Validation
+                Stage 3: 검증(집계)
               </h3>
               <span class="text-xs text-gray-500">
                 {validationStats().started
@@ -2113,7 +2142,7 @@ export default function CrawlingEngineTabSimple() {
                     validationStats().pagesScanned
                   )}
                 </div>
-                <div class="text-xs text-gray-600">스캔</div>
+                <div class="text-xs text-gray-600">스캔 완료</div>
               </div>
               <div class="bg-amber-50 rounded p-2">
                 <div class="text-xl font-bold text-amber-600">
@@ -2168,7 +2197,7 @@ export default function CrawlingEngineTabSimple() {
               </h3>
               <span class="text-xs text-gray-500">최근 보고 기준</span>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-center">
               <div class="bg-sky-50 rounded p-2">
                 <div class="text-xl font-bold text-sky-600">
                   {effectsOn() && typeof dbSnapshot().total === "number" ? (
@@ -2230,7 +2259,7 @@ export default function CrawlingEngineTabSimple() {
               </h3>
               <span class="text-xs text-gray-500">그룹 이벤트</span>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-center">
               <div class="bg-blue-50 rounded p-2">
                 <div class="text-xl font-bold text-blue-600">
                   {effectsOn() ? (
@@ -2254,9 +2283,9 @@ export default function CrawlingEngineTabSimple() {
               <div class="bg-rose-50 rounded p-2">
                 <div class="text-xl font-bold text-rose-600">
                   {effectsOn() ? (
-                    <CountUp value={persistStats().failed} />
+                    <CountUp value={persistStats().failedTrue} />
                   ) : (
-                    persistStats().failed
+                    persistStats().failedTrue
                   )}
                 </div>
                 <div class="text-xs text-gray-600">실패</div>
@@ -2270,6 +2299,16 @@ export default function CrawlingEngineTabSimple() {
                   )}
                 </div>
                 <div class="text-xs text-gray-600">중복</div>
+              </div>
+              <div class="bg-slate-50 rounded p-2">
+                <div class="text-xl font-bold text-slate-600">
+                  {effectsOn() ? (
+                    <CountUp value={persistStats().unchanged} />
+                  ) : (
+                    persistStats().unchanged
+                  )}
+                </div>
+                <div class="text-xs text-gray-600">미변경</div>
               </div>
             </div>
             <div class="mt-2 text-xs text-gray-500">
