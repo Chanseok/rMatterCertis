@@ -43,8 +43,8 @@
   - [ ] PlanningService/Strategy 패턴 정착(자동/수동/재개 전략 확장 용이)
   - [ ] CrawlingPolicy 명시화: 재시도/중복/성능 옵션을 구조체로 관리하고 ExecutionPlan에 포함
 - 타입/프론트 연동
-  - [ ] ts-rs 기반 타입 자동 생성 재검증(`scripts/generate_types.sh`)
-  - [ ] 타입 변경 시 생성물 갱신 및 FE 타입 정합성 확인
+  - [x] ts-rs 기반 타입 자동 생성 재검증(`scripts/generate_types.sh`)
+  - [x] 타입 변경 시 생성물 갱신 및 FE 타입 정합성 확인(프로젝트 TS 타입체크 실행)
 - 품질 게이트
   - [ ] cargo check
   - [ ] cargo test --all-features
