@@ -255,7 +255,7 @@ impl SessionActor {
         } else {
             let mut agg: Vec<u32> = planned_list_batches
                 .iter()
-                .flat_map(|p| p.pages.clone())
+                .flat_map(|p| p.pages.iter().copied())
                 .collect();
             agg.sort_unstable();
             agg.dedup();
@@ -267,6 +267,7 @@ impl SessionActor {
             );
         }
         let planned_batches_count = planned_list_batches.len();
+        let total_steps = plan.phases.len() as u32;
         let mut batch_idx = 0u32;
         for phase in &planned_list_batches {
             if context.is_cancelled() {
@@ -274,7 +275,7 @@ impl SessionActor {
                 break;
             }
             batch_idx += 1;
-            let pages = phase.pages.clone();
+            let pages = &phase.pages;
             if pages.is_empty() { continue; }
             let batch_id = format!("{session_id}-batch-{batch_idx}");
             info!(
@@ -289,9 +290,9 @@ impl SessionActor {
             let start_evt = AppEvent::Progress {
                 session_id: session_id.to_string(),
                 current_step: 1,
-                total_steps: plan.phases.len() as u32,
+                total_steps,
                 message: format!("Starting batch {} with {} pages", batch_id, pages.len()),
-                percentage: (f64::from(batch_idx - 1) / plan.phases.len() as f64) * 100.0,
+                percentage: (f64::from(batch_idx - 1) / f64::from(total_steps)) * 100.0,
                 timestamp: Utc::now(),
             };
             context
@@ -325,9 +326,9 @@ impl SessionActor {
             let done_evt = AppEvent::Progress {
                 session_id: session_id.to_string(),
                 current_step: 2,
-                total_steps: plan.phases.len() as u32,
+                total_steps,
                 message: format!("Completed batch {} ({} pages)", batch_id, pages.len()),
-                percentage: (f64::from(batch_idx) / plan.phases.len() as f64) * 100.0,
+                percentage: (f64::from(batch_idx) / f64::from(total_steps)) * 100.0,
                 timestamp: Utc::now(),
             };
             context
@@ -347,7 +348,7 @@ impl SessionActor {
         site_status: &crate::domain::services::SiteStatus,
     ) -> Result<usize, SessionError> {
         let planned_batches = plan.crawling_ranges.len();
-        for (idx, range) in plan.crawling_ranges.iter().enumerate() {
+    for (idx, range) in plan.crawling_ranges.iter().enumerate() {
             // Build physical pages respecting reverse_order flag
             let pages: Vec<u32> = if range.reverse_order {
                 (range.end_page..=range.start_page).rev().collect()
