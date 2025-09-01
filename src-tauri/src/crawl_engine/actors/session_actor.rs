@@ -173,7 +173,7 @@ impl SessionActor {
         ));
         let db_analyzer: Arc<dyn DatabaseAnalyzer> =
             Arc::new(DatabaseAnalyzerImpl::new(Arc::clone(&deps.product_repo)));
-        let planner = CrawlingPlanner::new(status_checker.clone(), db_analyzer, Arc::clone(&context.config))
+    let planner = CrawlingPlanner::new(Arc::clone(&status_checker), db_analyzer, Arc::clone(&context.config))
             .with_repository(Arc::clone(&deps.product_repo));
 
         // TTL 5m cache for site status
@@ -421,7 +421,7 @@ impl SessionActor {
         let db_analyzer: Arc<dyn DatabaseAnalyzer> =
             Arc::new(DatabaseAnalyzerImpl::new(Arc::clone(&product_repo)));
         let planner = CrawlingPlanner::new(
-            status_checker.clone(),
+            Arc::clone(&status_checker),
             db_analyzer,
             Arc::clone(&context.config),
         )
