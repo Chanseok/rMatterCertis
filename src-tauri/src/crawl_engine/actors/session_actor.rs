@@ -116,6 +116,14 @@ pub enum SessionError {
 }
 
 impl SessionActor {
+    /// Small helper to emit an AppEvent with unified error mapping
+    fn emit(&self, context: &AppContext, evt: AppEvent) -> Result<(), SessionError> {
+        context
+            .emit_event(evt)
+            .map(|_| ())
+            .map_err(|e| SessionError::ContextError(e.to_string()))
+    }
+
     /// Transition helper (kept permissive for now; hook for future guards)
     fn transition(&mut self, to: SessionState) -> Result<(), SessionError> {
         self.state = to;
@@ -223,10 +231,7 @@ impl SessionActor {
             percentage: 0.0,
             timestamp: Utc::now(),
         };
-        context
-            .emit_event(evt)
-            .map(|_| ())
-            .map_err(|e| SessionError::ContextError(e.to_string()))
+    self.emit(context, evt)
     }
 
     /// Run all list-page batches in the plan sequentially, honoring cancellation.
@@ -295,9 +300,7 @@ impl SessionActor {
                 percentage: (f64::from(batch_idx - 1) / f64::from(total_steps)) * 100.0,
                 timestamp: Utc::now(),
             };
-            context
-                .emit_event(start_evt)
-                .map_err(|e| SessionError::ContextError(e.to_string()))?;
+            self.emit(context, start_evt)?;
 
             if let Err(e) = self
                 .run_batch_with_services(
@@ -314,9 +317,7 @@ impl SessionActor {
                 error!("❌ Batch {} failed: {}", batch_id, e);
                 self.errors.push(format!("batch {batch_id}: {e}"));
                 let fail_event = AppEvent::SessionFailed { session_id: session_id.to_string(), error: format!("Batch {batch_id} failed: {e}"), final_failure: false, timestamp: Utc::now() };
-                context
-                    .emit_event(fail_event)
-                    .map_err(|er| SessionError::ContextError(er.to_string()))?;
+                self.emit(context, fail_event)?;
                 continue;
             }
 
@@ -331,9 +332,7 @@ impl SessionActor {
                 percentage: (f64::from(batch_idx) / f64::from(total_steps)) * 100.0,
                 timestamp: Utc::now(),
             };
-            context
-                .emit_event(done_evt)
-                .map_err(|e| SessionError::ContextError(e.to_string()))?;
+            self.emit(context, done_evt)?;
         }
         Ok(planned_batches_count)
     }
