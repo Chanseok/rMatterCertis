@@ -13,7 +13,8 @@ impl StageLogic for DataValidationLogic {
         if !matches!(st, ActorStageType::DataValidation) {
             return Err(StageLogicError::Unsupported(st));
         }
-        use crate::crawl_engine::services::data_quality_analyzer::DataQualityAnalyzer;
+    use crate::crawl_engine::services::data_quality_analyzer::DataQualityAnalyzer;
+    let start = std::time::Instant::now();
         let details_vec: Vec<crate::domain::product::ProductDetail> = match item {
             ch::StageItem::ProductDetails(pd) => pd.products,
             other => {
@@ -28,12 +29,13 @@ impl StageLogic for DataValidationLogic {
             .validate_before_storage(&details_vec)
             .map_err(|e| StageLogicError::Internal(format!("Validation failed: {}", e)))?;
         let json = serde_json::to_string(&validated).map_err(|e| StageLogicError::Internal(e.to_string()))?;
+        let duration_ms = start.elapsed().as_millis() as u64;
         let result = StageItemResult {
             item_id: format!("validated_products_{}", validated.len()),
             item_type: StageItemType::Url { url_type: "validated_products".into() },
             success: true,
             error: None,
-            duration_ms: 0,
+            duration_ms,
             retry_count: 0,
             collected_data: Some(json),
         };

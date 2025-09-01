@@ -16,7 +16,8 @@ impl StageLogic for StatusCheckLogic {
         if !matches!(st, ActorStageType::StatusCheck) {
             return Err(StageLogicError::Unsupported(st));
         }
-        let status_checker = Arc::new(
+    let start = std::time::Instant::now();
+    let status_checker = Arc::new(
             crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
                 (*deps.http).clone(),
                 (*deps.extractor).clone(),
@@ -29,6 +30,7 @@ impl StageLogic for StatusCheckLogic {
             .await
             .map_err(|e| StageLogicError::Internal(format!("Status check failed: {}", e)))?;
         let json = serde_json::to_string(&status).map_err(|e| StageLogicError::Internal(e.to_string()))?;
+        let duration_ms = start.elapsed().as_millis() as u64;
         let result = StageItemResult {
             item_id: match item {
                 StageItem::Page(n) => format!("page_{}", n),
@@ -38,7 +40,7 @@ impl StageLogic for StatusCheckLogic {
             item_type: StageItemType::Url { url_type: "site_check".into() },
             success: true,
             error: None,
-            duration_ms: 0,
+            duration_ms,
             retry_count: 0,
             collected_data: Some(json),
         };

@@ -9,7 +9,8 @@ impl StageLogic for DataSavingLogic {
     fn name(&self) -> &'static str { "DataSavingLogic" }
 
     async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
-        let StageInput { stage_type: st, item, deps, .. } = input;
+    let start = std::time::Instant::now();
+    let StageInput { stage_type: st, item, deps, .. } = input;
         if !matches!(st, ActorStageType::DataSaving) {
             return Err(StageLogicError::Unsupported(st));
         }
@@ -63,12 +64,13 @@ impl StageLogic for DataSavingLogic {
             "products_inserted": inserted,
             "products_updated": updated
         });
+        let duration_ms = start.elapsed().as_millis() as u64;
         let result = StageItemResult {
             item_id,
             item_type,
             success: true,
             error: None,
-            duration_ms: 0,
+            duration_ms,
             retry_count: 0,
             collected_data: Some(payload.to_string()),
         };
