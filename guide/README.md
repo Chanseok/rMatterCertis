@@ -51,6 +51,7 @@
 1. `re-arch-plan.md` - 새 아키텍처 구현 계획
 2. `matter-certis-v2-core-domain-knowledge.md` - 도메인 지식
 3. `matter-certis-v2-development-guide.md` - 개발 가이드
+4. `crawl-engine-cleanup-plan.md` - crawl_engine 정리/리팩토링 실행 계획(진행 중 문서)
 
 ### 2순위 (기능 구현 시 참조)
 1. `DATABASE_SCHEMA.md` - DB 작업 시
