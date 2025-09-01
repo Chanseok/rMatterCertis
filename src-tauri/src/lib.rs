@@ -173,6 +173,10 @@ pub mod utils;
 // moved: test_page_id_calculator -> tests/ (integration test)
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Start the application runtime and initialize subsystems.
+///
+/// # Panics
+/// Panics if a Tokio runtime cannot be created.
 pub fn run() {
     // Initialize runtime for async operations first
     let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
@@ -213,10 +217,9 @@ pub fn run() {
     {
         let http_unified = crate::infrastructure::features::feature_http_client_unified();
         let stage_exec = crate::infrastructure::features::feature_stage_executor_template();
-        let ev_general = crate::infrastructure::features::feature_events_generalized_only();
         info!(
-            "⚙️ Features -> http_unified={}, stage_executor_template={}, events_generalized_only={}",
-            http_unified, stage_exec, ev_general
+            "⚙️ Features -> http_unified={}, stage_executor_template={}",
+            http_unified, stage_exec
         );
     }
 

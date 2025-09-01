@@ -1,95 +1,68 @@
-//! `BatchActor`: 배치 단위 크롤링 처리 Actor
-//!
-//! Phase 3: Actor 구현 - 배치 레벨 작업 관리 및 실행
-//! Modern Rust 2024 준수: 함수형 원칙, 명시적 의존성, 상태 최소화
-
-#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
-#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+// Removed an unused pipeline-oriented execute_stage variant in BatchActor; the active flow uses StageActor::execute_stage.
 
 use chrono::Utc;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Instant;
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::{mpsc, Semaphore};
 use tracing::{debug, error, info, warn};
 
-use super::traits::{Actor, ActorHealth, ActorStatus, ActorType};
-use super::types::{ActorCommand, ActorError, BatchConfig, StageResult, StageType};
-use crate::crawl_engine::actors::StageActor;
-use crate::crawl_engine::actors::types::AppEvent;
+use crate::crawl_engine::actors::traits::{Actor, ActorHealth, ActorStatus, ActorType};
+use crate::crawl_engine::actors::types::{ActorCommand, ActorError, AppEvent, StageResult, StageType, BatchConfig};
 use crate::crawl_engine::channels::types::{ProductUrls, StageItem};
-// use crate::new_architecture::{
-//     actor_system as actor_sys,
-//     channels::types as ch_types,
-// };
-use crate::crawl_engine::context::AppContext;
-// Bring real crawling bridge extensions into scope
-// real_crawling_integration provides inherent methods on BatchActor via extension impl; no direct import needed here.
-
-// 실제 서비스 imports 추가
-use crate::domain::services::SiteStatus;
+use crate::crawl_engine::integrated_context::AppContext;
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
+use crate::domain::services::SiteStatus;
+use crate::crawl_engine::actors::stage_actor::StageActor;
 
-// Architecture note: StageActor is the single canonical execution path.
+/// 배치 상태 열거형
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BatchState {
+    Idle,
+    Starting,
+    Processing,
+    Paused,
+    Completing,
+    Completed,
+    Failed { error: String },
+}
 
-/// `BatchActor`: 배치 단위의 크롤링 작업 관리
-///
-/// 책임:
-/// - 배치 내 페이지들의 병렬 처리 관리
-/// - `StageActor들의` 조정 및 스케줄링
-/// - 배치 레벨 이벤트 발행
-/// - 동시성 제어 및 리소스 관리
+/// 배치 실행을 담당하는 Actor
+#[allow(clippy::struct_excessive_bools)]
 pub struct BatchActor {
-    /// Actor 고유 식별자
-    actor_id: String,
-    /// 현재 처리 중인 배치 ID (`OneShot` 호환성)
-    pub batch_id: Option<String>,
-    /// 배치 상태
-    state: BatchState,
-    /// 배치 시작 시간
-    start_time: Option<Instant>,
-    /// 총 페이지 수
-    total_pages: u32,
-    /// 처리 완료된 페이지 수
-    completed_pages: u32,
-    /// 성공한 아이템 수
-    success_count: u32,
-    /// 실패한 아이템 수
-    failure_count: u32,
-    /// 동시성 제어용 세마포어
-    concurrency_limiter: Option<Arc<Semaphore>>,
-    /// 설정 (`OneShot` 호환성)
-    pub config: Option<Arc<crate::crawl_engine::config::SystemConfig>>,
+    pub(crate) actor_id: String,
+    pub(crate) batch_id: Option<String>,
+    pub(crate) state: BatchState,
+    pub(crate) start_time: Option<Instant>,
+    pub(crate) total_pages: u32,
+    pub(crate) completed_pages: u32,
+    pub(crate) success_count: u32,
+    pub(crate) failure_count: u32,
+    pub(crate) concurrency_limiter: Option<Arc<Semaphore>>,
+    pub(crate) config: Option<Arc<crate::crawl_engine::config::SystemConfig>>,
+    // Real service dependencies (DI)
+    pub(crate) http_client: Option<Arc<HttpClient>>,
+    pub(crate) data_extractor: Option<Arc<MatterDataExtractor>>,
+    pub(crate) product_repo: Option<Arc<IntegratedProductRepository>>,
+    pub(crate) app_config: Option<AppConfig>,
 
-    // 🔥 Phase 1: 실제 서비스 의존성 추가
-    /// HTTP 클라이언트
-    http_client: Option<Arc<HttpClient>>,
-    /// 데이터 추출기
-    data_extractor: Option<Arc<MatterDataExtractor>>,
-    /// 제품 레포지토리
-    product_repo: Option<Arc<IntegratedProductRepository>>,
-    /// 앱 설정
-    app_config: Option<AppConfig>,
+    // Batch-scoped tracking
+    pub(crate) failed_list_pages: Vec<u32>,
+    pub(crate) recent_product_urls: VecDeque<String>,
+    pub(crate) recent_product_set: HashSet<String>,
+    pub(crate) recent_capacity: usize,
+    pub(crate) skip_duplicate_urls: bool,
+    pub(crate) duplicates_skipped: u32,
 
-    /// Stage 2(ListPageCrawling)에서 재시도 후에도 실패한 페이지 번호 목록
-    failed_list_pages: Vec<u32>,
-    // 최근 처리한 Product URL LRU 캐시 (경량 dedupe 1단계)
-    recent_product_urls: VecDeque<String>,
-    recent_product_set: HashSet<String>,
-    recent_capacity: usize,
-    /// URL 중복 제거 사용 여부 (`ExecutionPlan에서` 전달)
-    skip_duplicate_urls: bool,
-    /// 누적 중복 스킵 수 (배치 단위)
-    duplicates_skipped: u32,
-    products_inserted: u32,
-    products_updated: u32,
-    /// 외부에서 읽을 수 있는 메트릭 공유 상태 (옵션)
-    pub shared_metrics: Option<Arc<Mutex<(u32, u32)>>>, // (inserted, updated)
-    // Unified detail crawling accumulation
-    collected_product_urls: Vec<crate::domain::product_url::ProductUrl>,
-    defer_detail_crawling: bool,
+    // Insert/Update accounting shared back to SessionActor
+    pub(crate) products_inserted: u32,
+    pub(crate) products_updated: u32,
+    pub(crate) shared_metrics: Option<Arc<std::sync::Mutex<(u32, u32)>>>,
+
+    // Deferred detail crawling accumulation
+    pub(crate) collected_product_urls: Vec<crate::domain::product_url::ProductUrl>,
+    pub(crate) defer_detail_crawling: bool,
 }
 
 // Debug 수동 구현 (의존성들이 Debug를 구현하지 않아서)
@@ -113,17 +86,7 @@ impl std::fmt::Debug for BatchActor {
     }
 }
 
-/// 배치 상태 열거형
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BatchState {
-    Idle,
-    Starting,
-    Processing,
-    Paused,
-    Completing,
-    Completed,
-    Failed { error: String },
-}
+// NOTE: BatchState moved above struct for early visibility in this module
 
 /// 배치 관련 에러 타입
 #[derive(Debug, thiserror::Error)]
@@ -370,6 +333,7 @@ impl BatchActor {
         let start_event = AppEvent::BatchStarted {
             batch_id: batch_id.clone(),
             session_id: context.session_id.clone(),
+            plan_id: context.plan_id.clone(),
             pages_count: pages.len() as u32,
             timestamp: Utc::now(),
         };
@@ -379,10 +343,12 @@ impl BatchActor {
             .map_err(|e| BatchError::ContextError(e.to_string()))?;
 
         // KPI: 배치 시작 (구조화 로그)
+        let plan_id_json = if let Some(pid) = &context.plan_id { format!("\"{}\"", pid) } else { "null".to_string() };
         info!(target: "kpi.batch",
-            "{{\"event\":\"batch_started\",\"session_id\":\"{}\",\"batch_id\":\"{}\",\"pages_count\":{},\"ts\":\"{}\"}}",
+            "{{\"event\":\"batch_started\",\"session_id\":\"{}\",\"batch_id\":\"{}\",\"plan_id\":{},\"pages_count\":{},\"ts\":\"{}\"}}",
             context.session_id,
             batch_id,
+            plan_id_json,
             pages.len(),
             chrono::Utc::now()
         );
@@ -441,6 +407,7 @@ impl BatchActor {
                 let fail_event = AppEvent::BatchFailed {
                     batch_id: batch_id.clone(),
                     session_id: context.session_id.clone(),
+                    plan_id: context.plan_id.clone(),
                     error: "StatusCheck stage failed - no status check performed".to_string(),
                     final_failure: true,
                     timestamp: Utc::now(),
@@ -462,6 +429,7 @@ impl BatchActor {
                 let fail_event = AppEvent::BatchFailed {
                     batch_id: batch_id.clone(),
                     session_id: context.session_id.clone(),
+                    plan_id: context.plan_id.clone(),
                     error: "StatusCheck stage failed - site is not accessible".to_string(),
                     final_failure: true,
                     timestamp: Utc::now(),
@@ -578,6 +546,7 @@ impl BatchActor {
             let fail_event = AppEvent::BatchFailed {
                 batch_id: batch_id.clone(),
                 session_id: context.session_id.clone(),
+                plan_id: context.plan_id.clone(),
                 error: "ListPageCrawling stage failed completely".to_string(),
                 final_failure: true,
                 timestamp: Utc::now(),
@@ -626,6 +595,7 @@ impl BatchActor {
                     let fail_event = AppEvent::BatchFailed {
                         batch_id: batch_id.clone(),
                         session_id: context.session_id.clone(),
+                        plan_id: context.plan_id.clone(),
                         error: format!("Stage 3 failed: {e}"),
                         final_failure: true,
                         timestamp: Utc::now(),
@@ -772,6 +742,7 @@ impl BatchActor {
                 let fail_event = AppEvent::BatchFailed {
                     batch_id: batch_id.clone(),
                     session_id: context.session_id.clone(),
+                    plan_id: context.plan_id.clone(),
                     error: format!("Stage 4 failed: {e}"),
                     final_failure: true,
                     timestamp: Utc::now(),
@@ -820,6 +791,7 @@ impl BatchActor {
                 let fail_event = AppEvent::BatchFailed {
                     batch_id: batch_id.clone(),
                     session_id: context.session_id.clone(),
+                    plan_id: context.plan_id.clone(),
                     error: format!("Stage 5 failed: {e}"),
                     final_failure: true,
                     timestamp: Utc::now(),
@@ -916,6 +888,7 @@ impl BatchActor {
         let completion_event = AppEvent::BatchCompleted {
             batch_id: batch_id.clone(),
             session_id: context.session_id.clone(),
+            plan_id: context.plan_id.clone(),
             success_count: self.success_count,
             failed_count: saving_result.failed_items,
             duration: self
@@ -929,10 +902,12 @@ impl BatchActor {
             .map_err(|e| BatchError::ContextError(e.to_string()))?;
 
         // KPI: 배치 완료 (구조화 로그)
+        let plan_id_json = if let Some(pid) = &context.plan_id { format!("\"{}\"", pid) } else { "null".to_string() };
         info!(target: "kpi.batch",
-            "{{\"event\":\"batch_completed\",\"session_id\":\"{}\",\"batch_id\":\"{}\",\"pages_total\":{},\"pages_success\":{},\"pages_failed\":{},\"duration_ms\":{},\"products_inserted\":{},\"products_updated\":{},\"ts\":\"{}\"}}",
+            "{{\"event\":\"batch_completed\",\"session_id\":\"{}\",\"batch_id\":\"{}\",\"plan_id\":{},\"pages_total\":{},\"pages_success\":{},\"pages_failed\":{},\"duration_ms\":{},\"products_inserted\":{},\"products_updated\":{},\"ts\":\"{}\"}}",
             context.session_id,
             batch_id,
+            plan_id_json,
             self.total_pages,
             self.success_count.max(list_page_result.successful_items),
             list_page_result.failed_items,
@@ -969,6 +944,7 @@ impl BatchActor {
         let report_event = AppEvent::BatchReport {
             session_id: context.session_id.clone(),
             batch_id: batch_id.clone(),
+            plan_id: context.plan_id.clone(),
             pages_total,
             pages_success,
             pages_failed,
@@ -1022,20 +998,7 @@ impl BatchActor {
         Ok(())
     }
 
-    /// 배치 ID 검증
-    ///
-    /// # Arguments
-    /// * `batch_id` - 검증할 배치 ID
-    #[allow(dead_code)]
-    fn validate_batch(&self, batch_id: &str) -> Result<(), BatchError> {
-        match &self.batch_id {
-            Some(current_id) if current_id == batch_id => Ok(()),
-            Some(current_id) => Err(BatchError::BatchNotFound(format!(
-                "Expected {current_id}, got {batch_id}"
-            ))),
-            None => Err(BatchError::BatchNotFound("No active batch".to_string())),
-        }
-    }
+    // Removed unused validate_batch helper; validation happens via state checks at call sites.
 
     /// 배치 정리
     fn cleanup_batch(&mut self) {
@@ -1262,67 +1225,6 @@ impl BatchActor {
 
         // StageActor 생성 (DI 경로: StageDeps + StrategyFactory)
         let deps = {
-            use crate::infrastructure::crawling_service_impls as impls;
-            // StatusChecker
-            let status_checker: Arc<dyn crate::domain::services::StatusChecker> =
-                Arc::new(impls::StatusCheckerImpl::with_product_repo(
-                    (**http_client).clone(),
-                    (**data_extractor).clone(),
-                    app_config.clone(),
-                    Arc::clone(product_repo),
-                ));
-            // List collector (needs its own StatusCheckerImpl concrete)
-            let list_cfg = impls::CollectorConfig {
-                max_concurrent: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-                concurrency: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-                delay_between_requests: std::time::Duration::from_millis(
-                    app_config.user.request_delay_ms,
-                ),
-                delay_ms: app_config.user.request_delay_ms,
-                batch_size: app_config.user.batch.batch_size,
-                retry_attempts: app_config.user.crawling.workers.max_retries,
-                retry_max: app_config.user.crawling.workers.max_retries,
-            };
-            let status_checker_for_list = Arc::new(impls::StatusCheckerImpl::with_product_repo(
-                (**http_client).clone(),
-                (**data_extractor).clone(),
-                app_config.clone(),
-                Arc::clone(product_repo),
-            ));
-            let product_list_collector: Arc<dyn crate::domain::services::ProductListCollector> =
-                Arc::new(impls::ProductListCollectorImpl::new(
-                    Arc::clone(http_client),
-                    Arc::clone(data_extractor),
-                    list_cfg,
-                    status_checker_for_list,
-                ));
-            // Detail collector
-            let detail_cfg = impls::CollectorConfig {
-                max_concurrent: app_config
-                    .user
-                    .crawling
-                    .workers
-                    .product_detail_max_concurrent as u32,
-                concurrency: app_config
-                    .user
-                    .crawling
-                    .workers
-                    .product_detail_max_concurrent as u32,
-                delay_between_requests: std::time::Duration::from_millis(
-                    app_config.user.request_delay_ms,
-                ),
-                delay_ms: app_config.user.request_delay_ms,
-                batch_size: app_config.user.batch.batch_size,
-                retry_attempts: app_config.user.crawling.workers.max_retries,
-                retry_max: app_config.user.crawling.workers.max_retries,
-            };
-            let product_detail_collector: Arc<dyn crate::domain::services::ProductDetailCollector> =
-                Arc::new(impls::ProductDetailCollectorImpl::new(
-                    Arc::clone(http_client),
-                    Arc::clone(data_extractor),
-                    detail_cfg,
-                ));
-
             // 중복 정책: 환경 변수 힌트(MC_DUPLICATE_POLICY)로 제어 (manual 경로에서 설정)
             let dup_policy = match std::env::var("MC_DUPLICATE_POLICY").ok().as_deref() {
                 Some("UpdateIdIndexOnly") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::UpdateIdIndexOnly,
@@ -1333,9 +1235,6 @@ impl BatchActor {
                 http_client: Arc::clone(http_client),
                 data_extractor: Arc::clone(data_extractor),
                 product_repo: Arc::clone(product_repo),
-                status_checker,
-                product_list_collector,
-                product_detail_collector,
                 app_config: app_config.clone(),
                 duplicate_policy: dup_policy,
             }
@@ -1391,63 +1290,6 @@ impl BatchActor {
 
         // canonical StageActor path below
         let deps = {
-            use crate::infrastructure::crawling_service_impls as impls;
-            let status_checker: Arc<dyn crate::domain::services::StatusChecker> =
-                Arc::new(impls::StatusCheckerImpl::with_product_repo(
-                    (**http_client).clone(),
-                    (**data_extractor).clone(),
-                    app_config.clone(),
-                    Arc::clone(product_repo),
-                ));
-            let list_cfg = impls::CollectorConfig {
-                max_concurrent: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-                concurrency: app_config.user.crawling.workers.list_page_max_concurrent as u32,
-                delay_between_requests: std::time::Duration::from_millis(
-                    app_config.user.request_delay_ms,
-                ),
-                delay_ms: app_config.user.request_delay_ms,
-                batch_size: app_config.user.batch.batch_size,
-                retry_attempts: app_config.user.crawling.workers.max_retries,
-                retry_max: app_config.user.crawling.workers.max_retries,
-            };
-            let status_checker_for_list = Arc::new(impls::StatusCheckerImpl::with_product_repo(
-                (**http_client).clone(),
-                (**data_extractor).clone(),
-                app_config.clone(),
-                Arc::clone(product_repo),
-            ));
-            let product_list_collector: Arc<dyn crate::domain::services::ProductListCollector> =
-                Arc::new(impls::ProductListCollectorImpl::new(
-                    Arc::clone(http_client),
-                    Arc::clone(data_extractor),
-                    list_cfg,
-                    status_checker_for_list,
-                ));
-            let detail_cfg = impls::CollectorConfig {
-                max_concurrent: app_config
-                    .user
-                    .crawling
-                    .workers
-                    .product_detail_max_concurrent as u32,
-                concurrency: app_config
-                    .user
-                    .crawling
-                    .workers
-                    .product_detail_max_concurrent as u32,
-                delay_between_requests: std::time::Duration::from_millis(
-                    app_config.user.request_delay_ms,
-                ),
-                delay_ms: app_config.user.request_delay_ms,
-                batch_size: app_config.user.batch.batch_size,
-                retry_attempts: app_config.user.crawling.workers.max_retries,
-                retry_max: app_config.user.crawling.workers.max_retries,
-            };
-            let product_detail_collector: Arc<dyn crate::domain::services::ProductDetailCollector> =
-                Arc::new(impls::ProductDetailCollectorImpl::new(
-                    Arc::clone(http_client),
-                    Arc::clone(data_extractor),
-                    detail_cfg,
-                ));
             let dup_policy = match std::env::var("MC_DUPLICATE_POLICY").ok().as_deref() {
                 Some("UpdateIdIndexOnly") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::UpdateIdIndexOnly,
                 Some("FullUpdate") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::FullUpdate,
@@ -1457,9 +1299,6 @@ impl BatchActor {
                 http_client: Arc::clone(http_client),
                 data_extractor: Arc::clone(data_extractor),
                 product_repo: Arc::clone(product_repo),
-                status_checker,
-                product_list_collector,
-                product_detail_collector,
                 app_config: app_config.clone(),
                 duplicate_policy: dup_policy,
             }
@@ -1487,229 +1326,8 @@ impl BatchActor {
         Ok(stage_result)
     }
 
-    /// Stage 파이프라인 실행 - Stage 간 데이터 전달 구현
-    ///
-    /// # Arguments
-    /// * `stage_type` - 실행할 스테이지 타입 (현재는 사용하지 않음 - 순차 실행)
-    /// * `pages` - 처리할 페이지들
-    /// * `context` - Actor 컨텍스트
-    #[allow(dead_code)]
-    async fn execute_stage(
-        &mut self,
-        _stage_type: StageType, // 파이프라인에서는 모든 Stage 순차 실행
-        pages: Vec<u32>,
-        context: &AppContext,
-    ) -> Result<StageResult, BatchError> {
-        use crate::crawl_engine::actors::StageActor;
-        use crate::crawl_engine::channels::types::StageItem;
-
-        info!(
-            "Starting Stage pipeline processing for {} pages",
-            pages.len()
-        );
-
-        // Stage 실행 순서 정의
-        let stages = [
-            StageType::StatusCheck,
-            StageType::ListPageCrawling,
-            StageType::ProductDetailCrawling,
-            StageType::DataSaving,
-        ];
-
-        // 초기 입력: 페이지들을 StageItem으로 변환
-        let mut current_items: Vec<StageItem> = pages
-            .into_iter()
-            .map(StageItem::Page)
-            .collect();
-
-        let mut final_result = StageResult {
-            processed_items: 0,
-            successful_items: 0,
-            failed_items: 0,
-            duration_ms: 0,
-            details: vec![],
-        };
-
-        // Stage 파이프라인 실행
-        for (stage_idx, stage_type) in stages.iter().enumerate() {
-            info!(
-                "🎯 Executing stage {} for {} items",
-                stage_type.as_str(),
-                current_items.len()
-            );
-
-            // 🔥 Phase 1: 실제 서비스와 함께 StageActor 생성
-            let mut stage_actor = if let (
-                Some(http_client),
-                Some(data_extractor),
-                Some(product_repo),
-                Some(app_config),
-            ) = (
-                &self.http_client,
-                &self.data_extractor,
-                &self.product_repo,
-                &self.app_config,
-            ) {
-                info!("✅ Creating StageActor with DI dependencies");
-                let deps = {
-                    use crate::infrastructure::crawling_service_impls as impls;
-                    let status_checker: Arc<dyn crate::domain::services::StatusChecker> =
-                        Arc::new(impls::StatusCheckerImpl::with_product_repo(
-                            (**http_client).clone(),
-                            (**data_extractor).clone(),
-                            app_config.clone(),
-                            Arc::clone(product_repo),
-                        ));
-                    let list_cfg = impls::CollectorConfig {
-                        max_concurrent: app_config.user.crawling.workers.list_page_max_concurrent
-                            as u32,
-                        concurrency: app_config.user.crawling.workers.list_page_max_concurrent
-                            as u32,
-                        delay_between_requests: std::time::Duration::from_millis(
-                            app_config.user.request_delay_ms,
-                        ),
-                        delay_ms: app_config.user.request_delay_ms,
-                        batch_size: app_config.user.batch.batch_size,
-                        retry_attempts: app_config.user.crawling.workers.max_retries,
-                        retry_max: app_config.user.crawling.workers.max_retries,
-                    };
-                    let status_checker_for_list =
-                        Arc::new(impls::StatusCheckerImpl::with_product_repo(
-                            (**http_client).clone(),
-                            (**data_extractor).clone(),
-                            app_config.clone(),
-                            Arc::clone(product_repo),
-                        ));
-                    let product_list_collector: Arc<
-                        dyn crate::domain::services::ProductListCollector,
-                    > = Arc::new(impls::ProductListCollectorImpl::new(
-                        Arc::clone(http_client),
-                        Arc::clone(data_extractor),
-                        list_cfg,
-                        status_checker_for_list,
-                    ));
-                    let detail_cfg = impls::CollectorConfig {
-                        max_concurrent: app_config
-                            .user
-                            .crawling
-                            .workers
-                            .product_detail_max_concurrent
-                            as u32,
-                        concurrency: app_config
-                            .user
-                            .crawling
-                            .workers
-                            .product_detail_max_concurrent
-                            as u32,
-                        delay_between_requests: std::time::Duration::from_millis(
-                            app_config.user.request_delay_ms,
-                        ),
-                        delay_ms: app_config.user.request_delay_ms,
-                        batch_size: app_config.user.batch.batch_size,
-                        retry_attempts: app_config.user.crawling.workers.max_retries,
-                        retry_max: app_config.user.crawling.workers.max_retries,
-                    };
-                    let product_detail_collector: Arc<
-                        dyn crate::domain::services::ProductDetailCollector,
-                    > = Arc::new(impls::ProductDetailCollectorImpl::new(
-                        Arc::clone(http_client),
-                        Arc::clone(data_extractor),
-                        detail_cfg,
-                    ));
-                    let dup_policy = match std::env::var("MC_DUPLICATE_POLICY").ok().as_deref() {
-                        Some("UpdateIdIndexOnly") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::UpdateIdIndexOnly,
-                        Some("FullUpdate") => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::FullUpdate,
-                        _ => crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
-                    };
-                    crate::crawl_engine::actors::stage_actor::StageDeps {
-                        http_client: Arc::clone(http_client),
-                        data_extractor: Arc::clone(data_extractor),
-                        product_repo: Arc::clone(product_repo),
-                        status_checker,
-                        product_list_collector,
-                        product_detail_collector,
-                        app_config: app_config.clone(),
-                        duplicate_policy: dup_policy,
-                    }
-                };
-                StageActor::new_with_deps(
-                    format!(
-                        "stage_{}_{}",
-                        stage_type.as_str().to_lowercase(),
-                        self.actor_id
-                    ),
-                    self.batch_id.clone().unwrap_or_default(),
-                    deps,
-                    Arc::new(crate::crawl_engine::stages::DefaultStageLogicFactory),
-                )
-            } else {
-                // No DI deps available on self → cannot safely construct services here
-                return Err(BatchError::ServiceNotAvailable(
-                    "Missing DI services (http_client/data_extractor/product_repo/app_config)"
-                        .into(),
-                ));
-            };
-
-            // Stage 실행 (실제 current_items 전달)
-            // Use config when available, fall back to sensible defaults
-            let (concurrency_limit, timeout_secs) = if let Some(app_config) = &self.app_config {
-                let stage_concurrency = match stage_type {
-                    StageType::ListPageCrawling => {
-                        app_config.user.crawling.workers.list_page_max_concurrent as u32
-                    }
-                    StageType::ProductDetailCrawling => {
-                        app_config
-                            .user
-                            .crawling
-                            .workers
-                            .product_detail_max_concurrent as u32
-                    }
-                    _ => app_config.user.max_concurrent_requests,
-                };
-                (
-                    stage_concurrency,
-                    app_config.user.crawling.timing.operation_timeout_seconds,
-                )
-            } else {
-                (5, 300)
-            };
-
-            let stage_result = stage_actor
-                .execute_stage(
-                    stage_type.clone(),
-                    current_items.clone(),
-                    concurrency_limit,
-                    timeout_secs,
-                    context,
-                )
-                .await
-                .map_err(|e| BatchError::StageProcessingFailed {
-                    stage: stage_type.as_str().to_string(),
-                    error: format!("Stage execution failed: {e:?}"),
-                })?;
-
-            info!(
-                "✅ Stage {} ({}) completed: {} success, {} failed",
-                stage_idx + 1,
-                stage_type.as_str(),
-                stage_result.successful_items,
-                stage_result.failed_items
-            );
-
-            // 최종 결과 누적
-            final_result.processed_items += stage_result.processed_items;
-            final_result.successful_items += stage_result.successful_items;
-            final_result.failed_items += stage_result.failed_items;
-            final_result.duration_ms += stage_result.duration_ms;
-
-            // 다음 Stage를 위한 입력 데이터 변환
-            current_items =
-                self.transform_stage_output(stage_type.clone(), current_items, &stage_result)?;
-        }
-
-        info!("✅ All stages completed in pipeline");
-        Ok(final_result)
-    }
+    // Removed: Unused pipeline-oriented execute_stage method. The canonical path runs individual
+    // stages via execute_stage_with_actor, driven by process_list_page_batch.
 
     /// Stage 출력을 다음 Stage 입력으로 변환
     fn transform_stage_output(

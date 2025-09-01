@@ -28,6 +28,8 @@ pub type EventEmitter = ApplicationEventEmitter;
 pub struct IntegratedContext {
     /// 세션 식별자
     pub session_id: String,
+    /// 실행 계획 ID (선택적, Preplanned 실행 시 설정)
+    pub plan_id: Option<String>,
     /// 배치 식별자 (선택적)
     pub batch_id: Option<String>,
     /// 스테이지 식별자 (선택적)
@@ -60,6 +62,7 @@ impl IntegratedContext {
     ) -> Self {
         Self {
             session_id,
+            plan_id: None,
             batch_id: None,
             stage_id: None,
             task_id: None,
@@ -69,6 +72,13 @@ impl IntegratedContext {
             cancellation_token: cancellation_rx,
             config,
         }
+    }
+
+    /// 실행 계획 ID 주입
+    #[must_use] pub fn with_plan(&self, plan_id: String) -> Self {
+        let mut context = self.clone();
+        context.plan_id = Some(plan_id);
+        context
     }
 
     /// 배치 컨텍스트로 확장

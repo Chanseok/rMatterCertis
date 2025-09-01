@@ -5,6 +5,7 @@ use crate::infrastructure::{
 }; // uses ConfigManager (no AppConfigManager)
 use chrono::Utc;
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 use sqlx::Row;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, State};
@@ -29,7 +30,6 @@ fn detect_page_anomalies(
 ) -> Vec<DetectedAnomaly> {
     let mut anomalies = Vec::new();
     // 1. duplicate_index (duplicate URL occurrences)
-    use std::collections::HashMap;
     let mut counts = HashMap::new();
     for u in product_urls {
         *counts.entry(u).or_insert(0usize) += 1;
@@ -142,7 +142,11 @@ pub struct GapRange {
 }
 
 /// Emit an `AppEvent` directly to the frontend (lightweight bridge clone)
-pub(crate) fn emit_actor_event(app: &AppHandle, event: AppEvent) {
+pub(crate) fn emit_actor_event<E>(app: &AppHandle, event: E)
+where
+    E: std::borrow::Borrow<AppEvent>,
+{
+    let event = event.borrow();
     // Map variant -> event name (keep in sync with actor_event_bridge.rs)
     let event_name = match &event {
         // Validation event stream
@@ -164,7 +168,7 @@ pub(crate) fn emit_actor_event(app: &AppHandle, event: AppEvent) {
         _ => return,
     };
     // Serialize & flatten
-    if let Ok(raw) = serde_json::to_value(&event) {
+    if let Ok(raw) = serde_json::to_value(event) {
         let flat = if let Value::Object(map) = raw {
             if map.len() == 1 {
                 let mut out = Map::new();
@@ -224,6 +228,8 @@ pub async fn start_validation(
     // If provided and explicit numeric args are missing, we'll parse the first range.
     ranges_expr: Option<String>,
 ) -> Result<ValidationSummary, String> {
+    // Errors
+    // - Returns Err(String) when HTTP fetch/parse fails, DB access fails, or arguments are invalid.
     // Preserve user-provided scan_pages separately; dynamic default may override if None
     let user_scan_pages = scan_pages.filter(|v| *v > 0);
     info!(
@@ -467,8 +473,8 @@ pub async fn start_validation(
             .flatten();
             if total_products <= 360 {
                 // Use max_page_id span (max_page_id inclusive means +1 pages), fallback to count-derived
-                let pages_from_max = max_page_id.map_or(1, |v| (v as u32) + 1);
-                let pages_from_count = (total_products as u32).div_ceil(12).max(1);
+                let pages_from_max = max_page_id.map_or(1, |v| u32::try_from(v).unwrap_or(0) + 1);
+                let pages_from_count = u32::try_from(total_products).unwrap_or(0).div_ceil(12).max(1);
                 pages_from_max.max(pages_from_count)
             } else {
                 30u32
@@ -532,8 +538,7 @@ pub async fn start_validation(
     let mut lowest_divergence_physical_page: Option<u32> = None;
     let mut gap_ranges: Vec<GapRange> = Vec::new();
     let mut last_end_offset: Option<u64> = None; // for gap detection across pages
-    use std::collections::HashSet;
-    let mut seen_urls: HashSet<String> = HashSet::new();
+    let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut cross_page_duplicate_urls: u32 = 0;
 
     for physical_page in (physical_range_end_newest..=physical_range_start_oldest).rev() {
@@ -640,7 +645,8 @@ pub async fn start_validation(
         let mut mismatch_coord = 0u32;
         for (i, url) in product_urls.iter().enumerate() {
             let calc_res = calculator.calculate(physical_page, i); // i: newest-first within physical page
-            let expected_offset = (calc_res.page_id as u64) * 12 + (calc_res.index_in_page as u64);
+            let expected_offset = (u64::try_from(calc_res.page_id).unwrap_or(0)) * 12
+                + u64::try_from(calc_res.index_in_page).unwrap_or(0);
             if min_offset.is_none_or(|m| expected_offset < m) {
                 min_offset = Some(expected_offset);
             }
@@ -716,8 +722,8 @@ pub async fn start_validation(
                     let db_idx: Option<i64> = r.get("index_in_page");
                     match (db_pid, db_idx) {
                         (Some(p), Some(idx))
-                            if p as i32 == calc_res.page_id
-                                && idx as i32 == calc_res.index_in_page =>
+                            if i32::try_from(p).ok() == Some(calc_res.page_id)
+                                && i32::try_from(idx).ok() == Some(calc_res.index_in_page) =>
                         {
                             products_checked += 1;
                         }
@@ -726,7 +732,9 @@ pub async fn start_validation(
                             page_divergences += 1;
                             mismatch_coord += 1;
                             if let (Some(_), Some(iv)) = (p, idx) {
-                                shift_values.push(iv as i32 - calc_res.index_in_page);
+                                if let Ok(iv32) = i32::try_from(iv) {
+                                    shift_values.push(iv32 - calc_res.index_in_page);
+                                }
                             }
                             emit_actor_event(
                                 &app,
@@ -749,8 +757,8 @@ pub async fn start_validation(
                                     kind: "coord_mismatch".into(),
                                     expected_page_id: calc_res.page_id,
                                     expected_index_in_page: calc_res.index_in_page,
-                                    db_page_id: p.map(|v| v as i32),
-                                    db_index_in_page: idx.map(|v| v as i32),
+                                    db_page_id: p.and_then(|v| i32::try_from(v).ok()),
+                                    db_index_in_page: idx.and_then(|v| i32::try_from(v).ok()),
                                     detail: format!(
                                         "db=({:?},{:?}) expected=({}, {})",
                                         p, idx, calc_res.page_id, calc_res.index_in_page
@@ -775,7 +783,7 @@ pub async fn start_validation(
             AppEvent::ValidationPageScanned {
                 session_id: session_id.clone(),
                 physical_page,
-                products_found: product_urls.len() as u32,
+                products_found: u32::try_from(product_urls.len()).unwrap_or(u32::MAX),
                 assigned_start_offset: min_offset.unwrap_or(0),
                 assigned_end_offset: max_offset.unwrap_or(0),
                 timestamp: Utc::now(),
@@ -790,7 +798,7 @@ pub async fn start_validation(
             };
         per_page_stats.push(PerPageStat {
             physical_page,
-            products_found: product_urls.len() as u32,
+            products_found: u32::try_from(product_urls.len()).unwrap_or(u32::MAX),
             divergences: page_divergences,
             anomalies: page_anomaly_count,
             mismatch_shift_pattern,
@@ -829,7 +837,7 @@ pub async fn start_validation(
         pages_scanned += 1;
     }
 
-    let duration_ms = started.elapsed().as_millis() as u64;
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let summary = ValidationSummary {
         pages_scanned,
         products_checked,
@@ -844,7 +852,7 @@ pub async fn start_validation(
         cross_page_duplicate_urls,
         pages_attempted,
         total_pages_site: total_pages,
-        items_on_last_page: items_on_last_page as u32,
+        items_on_last_page: u32::try_from(items_on_last_page).unwrap_or(u32::MAX),
         resolved_start_oldest: physical_range_start_oldest,
         resolved_end_newest: physical_range_end_newest,
     };

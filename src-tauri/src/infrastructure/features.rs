@@ -3,8 +3,7 @@
 //! Source of truth: environment variables (no config coupling for now).
 //! - `MC_FEATURE_HTTP_CLIENT_UNIFIED` (default: false)
 //! - `MC_FEATURE_STAGE_EXECUTOR_TEMPLATE` (deprecated, permanently enabled)
-//! - `MC_FEATURE_EVENTS_GENERALIZED_ONLY` (default: false)
-//! - `MC_FEATURE_LEGACY_DOMAIN_EVENTS` (default: false) — emits legacy `domain::events::CrawlingEvent` payloads
+//! - Legacy event emission has been removed. Backend always emits unified `actor-event` only.
 //! - `MC_FEATURE_EMIT_PAGETASK_LEGACY` (removed) — PageTask* variants were deleted; always use PageLifecycle
 //!
 //!
@@ -58,18 +57,7 @@ fn read_flag(name: &str, default: bool) -> bool {
     true
 }
 
-/// Emit only generalized events (and optionally deprecate stage-specific ones)
-#[must_use] pub fn feature_events_generalized_only() -> bool {
-    // Default to false to maintain backward compatibility with FE listeners
-    read_flag("MC_FEATURE_EVENTS_GENERALIZED_ONLY", false)
-}
-
-/// Emit legacy domain::events::CrawlingEvent payloads (for backward compatibility)
-/// Default: false (prefer unified actor events). Enable only if FE still relies on legacy channels.
-#[must_use]
-pub fn feature_legacy_domain_events() -> bool {
-    read_flag("MC_FEATURE_LEGACY_DOMAIN_EVENTS", false)
-}
+// Unified event emission is now permanent. No feature flag remains for legacy/generalized events.
 
 // Phase* events removed; obsolete flag deleted.
 
@@ -78,35 +66,39 @@ pub fn feature_legacy_domain_events() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex;
+
+    // Serialize tests in this module to avoid races on TEST_ENV
+    static TEST_GUARD: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
     #[test]
     fn defaults_are_sane() {
+        let _g = TEST_GUARD.lock().unwrap();
         // Clear test env map
         #[allow(clippy::unwrap_used)]
         super::test_env::TEST_ENV.lock().unwrap().clear();
 
         assert!(!feature_http_client_unified());
         assert!(feature_stage_executor_template());
-    assert!(!feature_events_generalized_only());
-    assert!(!feature_legacy_domain_events());
+    // unified actor-event emission is always on (no flag)
     // pagetask legacy removed
     }
 
     #[test]
     fn explicit_values_parse() {
+    let _g = TEST_GUARD.lock().unwrap();
         // Set values in test env map
         let mut map = super::test_env::TEST_ENV.lock().unwrap();
         map.insert("MC_FEATURE_HTTP_CLIENT_UNIFIED".into(), "1".into());
         map.insert("MC_FEATURE_STAGE_EXECUTOR_TEMPLATE".into(), "false".into()); // ignored now
-        map.insert("MC_FEATURE_EVENTS_GENERALIZED_ONLY".into(), "0".into());
-    map.insert("MC_FEATURE_LEGACY_DOMAIN_EVENTS".into(), "true".into());
+    // unified actor-event emission has no flag anymore
     // pagetask legacy removed
         drop(map);
 
     assert!(feature_http_client_unified());
     assert!(feature_stage_executor_template());
-    assert!(!feature_events_generalized_only());
-    assert!(feature_legacy_domain_events());
+    // unified actor-event emission is always on (no flag)
     // pagetask legacy removed
     }
 }

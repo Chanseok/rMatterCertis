@@ -17,8 +17,8 @@ use crate::crawl_engine::config::SystemConfig;
 use crate::domain::product::ProductDetail;
 use crate::domain::product_url::ProductUrl;
 use crate::domain::services::crawling_services::{
-    CrawlingRangeRecommendation, DatabaseAnalyzer, FieldAnalysis, ProductDetailCollector,
-    ProductListCollector, SiteStatus, StatusChecker,
+    CrawlingRangeRecommendation, FieldAnalysis, ProductDetailCollector, ProductListCollector,
+    SiteStatus, StatusChecker,
 };
 use crate::infrastructure::config::AppConfig;
 use crate::infrastructure::crawling_service_impls::{
@@ -27,15 +27,12 @@ use crate::infrastructure::crawling_service_impls::{
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
 
 /// 실제 크롤링 서비스와 `OneShot` Actor 시스템을 연결하는 통합 서비스
-#[allow(dead_code)] // Phase2: allow unused fields temporarily – evaluate in Phase3
 pub struct CrawlingIntegrationService {
     status_checker: Arc<dyn StatusChecker>,
     list_collector: Arc<dyn ProductListCollector>,
     detail_collector: Arc<dyn ProductDetailCollector>,
-    database_analyzer: Arc<dyn DatabaseAnalyzer>, // REMOVE_CANDIDATE(if still unused)
     product_repository: Arc<IntegratedProductRepository>,
     config: Arc<SystemConfig>, // REMOVE_CANDIDATE(if still unused)
-    app_config: AppConfig,     // REMOVE_CANDIDATE(if still unused)
 }
 
 impl CrawlingIntegrationService {
@@ -66,9 +63,6 @@ impl CrawlingIntegrationService {
             product_repository.clone(),
         ));
         let status_checker: Arc<dyn StatusChecker> = status_checker_impl.clone();
-
-        // DatabaseAnalyzer는 StatusCheckerImpl 재사용
-        let database_analyzer: Arc<dyn DatabaseAnalyzer> = status_checker_impl.clone();
 
         // ProductListCollector 생성
         let collector_config = CollectorConfig {
@@ -116,14 +110,12 @@ impl CrawlingIntegrationService {
             ),
         );
 
-        Ok(Self {
+    Ok(Self {
             status_checker,
             list_collector,
             detail_collector,
-            database_analyzer,
             product_repository,
             config,
-            app_config,
         })
     }
 

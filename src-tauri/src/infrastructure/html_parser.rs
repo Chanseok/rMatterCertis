@@ -833,7 +833,7 @@ impl PaginationContext {
 
     /// Canonical 계산 방식 (Phase2): `domain::pagination::CanonicalPageIdCalculator` 사용
     /// `current_page`: 1-based, `zero_based_index`: 0-based
-    #[must_use] pub const fn calculate_page_index_canonical(
+    #[must_use] pub fn calculate_page_index_canonical(
         &self,
         current_page: u32,
         zero_based_index: u32,

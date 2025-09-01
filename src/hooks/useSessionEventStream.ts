@@ -1,6 +1,6 @@
 import { createSignal, onCleanup, Accessor } from 'solid-js';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { FLAGS } from '../utils/env';
+import { tauriApi } from '../services/tauri-api';
 
 // Simple throttle to batch rapid progress updates
 function createThrottler(delayMs: number, fn: (...args: any[]) => void) {
@@ -36,7 +36,9 @@ export function useSessionEventStream(
   mergeStatus: (updater: (prev: StatusLike | null) => StatusLike | null) => void,
   opts: UseSessionEventStreamOptions = {}
 ) {
-  const throttleMs = opts.throttleMs ?? 250;
+  // Lower default throttle for snappier UI; allow override via env
+  const envThrottle = Number((import.meta as any).env?.VITE_EVENT_THROTTLE_MS ?? '0');
+  const throttleMs = opts.throttleMs ?? (envThrottle > 0 ? envThrottle : 80);
   const liveWindowMs = opts.liveWindowMs ?? 5000;
   const debug = opts.debug ?? false;
   const [lastEventTs, setLastEventTs] = createSignal<number | null>(null);
@@ -75,40 +77,6 @@ export function useSessionEventStream(
   const incrementEvent = (name: string) => setEventCounts(c => ({ ...c, [name]: (c[name] ?? 0) + 1 }));
 
   const listeners: UnlistenFn[] = [];
-  // Legacy + new actor-system event names we care about.
-  // Only actor streams going forward
-  const eventNames = [
-    // === Actor Session lifecycle ===
-    'actor-session-started',
-    'actor-session-paused',
-    'actor-session-resumed',
-    'actor-session-completed',
-    'actor-session-failed',
-    'actor-session-timeout',
-  // === Stage === (Phase* removed)
-    'actor-stage-started',
-    'actor-stage-completed',
-    'actor-stage-failed',
-    // === Batch ===
-    'actor-batch-started',
-    'actor-batch-completed',
-    'actor-batch-failed',
-    // === Progress & metrics ===
-    'actor-progress',
-    'actor-performance-metrics',
-    'actor-batch-report',
-    'actor-session-report',
-    // unified stream
-    'actor-event',
-  // === Page & product lifecycle ===
-    'actor-page-lifecycle',
-    'actor-product-lifecycle',
-    'actor-product-lifecycle-group',
-    // Optional: keep if backend still emits downshift notifications
-    'actor-detail-concurrency-downshifted',
-    // New unified task lifecycle
-    'actor-task-lifecycle',
-  ];
 
   const markLive = (ev: string, payload: any) => {
     const now = Date.now();
@@ -174,129 +142,94 @@ export function useSessionEventStream(
     } catch { /* ignore */ }
   };
 
-  Promise.all(eventNames.map(ev => listen(ev, (evt) => {
-    const payload: any = (evt as any).payload;
-    incrementEvent(ev);
-    markLive(ev, payload);
-    summaryLog(ev, payload);
-  if (ev === 'actor-progress') {
-      applyProgress(payload);
-      return;
-    }
-  // Unified stream progress
-    if (ev === 'actor-event') {
-      if (payload?.variant === 'Progress') { applyProgress(payload); return; }
-      // Unified stream lifecycle routing
-      const sid = sessionId();
-      if (!sid || !payload || payload.session_id !== sid) return;
-      const variant = payload?.variant;
-      if (variant === 'TaskLifecycle' || variant === 'ProductLifecycle' || variant === 'ProductLifecycleGroup' || variant === 'PageLifecycle') {
-        mergeStatus(prev => {
-          if (!prev) return prev;
-          const details = { ...(prev.details || { total: 0, completed: 0, failed: 0 }) } as any;
+  // Unified-only subscription via Tauri API helper
+  (async () => {
+    try {
+      // Progress updates directly from unified stream
+      const unProgress = await tauriApi.subscribeToUnifiedActorEvents({
+        variants: ['Progress'],
+        onEvent: (payload) => {
+          incrementEvent('actor-progress');
+          markLive('actor-progress', payload);
+          summaryLog('actor-progress', payload);
+          applyProgress(payload);
+        },
+      });
+      listeners.push(unProgress);
+
+      // Detail/page lifecycle aggregated counters
+      const unLifecycle = await tauriApi.subscribeToUnifiedActorEvents({
+        variants: ['TaskLifecycle', 'ProductLifecycle', 'ProductLifecycleGroup', 'PageLifecycle', 'DetailConcurrencyDownshifted'],
+        onEvent: (payload) => {
+          const sid = sessionId();
+          if (!sid || !payload || payload.session_id !== sid) return;
+          const variant = payload?.variant as string | undefined;
+          incrementEvent(variant || 'actor-event');
+          markLive('actor-event', payload);
+          summaryLog('actor-event', payload);
           if (variant === 'TaskLifecycle') {
-            const status = String(payload?.status || '').toLowerCase();
-            const kind = payload?.task_kind;
-            if (kind === 'Product') {
-              if (status === 'succeeded' || status === 'completed' || status === 'persisted') {
-                details.total = (details.total ?? 0) + 1;
-                details.completed = (details.completed ?? 0) + 1;
-              } else if (status === 'failed') {
-                details.total = (details.total ?? 0) + 1;
-                details.failed = (details.failed ?? 0) + 1;
+            mergeStatus(prev => {
+              if (!prev) return prev;
+              const details = { ...(prev.details || { total: 0, completed: 0, failed: 0 }) } as any;
+              const status = String(payload?.status || '').toLowerCase();
+              if (payload?.task_kind === 'Product') {
+                if (status === 'succeeded' || status === 'completed' || status === 'persisted') {
+                  details.total = (details.total ?? 0) + 1;
+                  details.completed = (details.completed ?? 0) + 1;
+                } else if (status === 'failed') {
+                  details.total = (details.total ?? 0) + 1;
+                  details.failed = (details.failed ?? 0) + 1;
+                }
               }
-            }
+              return { ...prev, details } as StatusLike;
+            });
           } else if (variant === 'ProductLifecycleGroup') {
-            if (payload?.phase === 'fetch') {
-              const group = Number(payload?.group_size ?? payload?.started ?? 0) || 0;
-              const succeeded = Number(payload?.succeeded ?? 0) || 0;
-              const failed = Number(payload?.failed ?? 0) || 0;
-              details.total = (typeof details.total === 'number' ? details.total : 0) + group;
-              details.completed = (typeof details.completed === 'number' ? details.completed : 0) + succeeded;
-              details.failed = (typeof details.failed === 'number' ? details.failed : 0) + failed;
-            }
+            mergeStatus(prev => {
+              if (!prev) return prev;
+              const details = { ...(prev.details || { total: 0, completed: 0, failed: 0 }) } as any;
+              if (payload?.phase === 'fetch') {
+                const group = Number(payload?.group_size ?? payload?.started ?? 0) || 0;
+                const succeeded = Number(payload?.succeeded ?? 0) || 0;
+                const failed = Number(payload?.failed ?? 0) || 0;
+                details.total = (typeof details.total === 'number' ? details.total : 0) + group;
+                details.completed = (typeof details.completed === 'number' ? details.completed : 0) + succeeded;
+                details.failed = (typeof details.failed === 'number' ? details.failed : 0) + failed;
+              }
+              return { ...prev, details } as StatusLike;
+            });
           } else if (variant === 'ProductLifecycle') {
-            const status = String(payload?.status || '').toLowerCase();
-            if (status === 'failed') { details.failed = (details.failed ?? 0) + 1; details.total = (details.total ?? 0) + 1; }
-            if (status === 'product_inserted' || status === 'product_updated' || status === 'succeeded' || status === 'completed') {
-              details.completed = (details.completed ?? 0) + 1; details.total = (details.total ?? 0) + 1;
-            }
+            mergeStatus(prev => {
+              if (!prev) return prev;
+              const details = { ...(prev.details || { total: 0, completed: 0, failed: 0 }) } as any;
+              const status = String(payload?.status || '').toLowerCase();
+              if (status === 'failed') { details.failed = (details.failed ?? 0) + 1; details.total = (details.total ?? 0) + 1; }
+              if (status === 'product_inserted' || status === 'product_updated' || status === 'succeeded' || status === 'completed') {
+                details.completed = (details.completed ?? 0) + 1; details.total = (details.total ?? 0) + 1;
+              }
+              return { ...prev, details } as StatusLike;
+            });
+          } else if (variant === 'DetailConcurrencyDownshifted') {
+            mergeStatus(prev => {
+              if (!prev) return prev;
+              const details = { ...(prev.details || { total: 0, completed: 0, failed: 0 }) } as any;
+              details.downshifted = true;
+              details.downshift_meta = {
+                timestamp: payload.timestamp,
+                old_limit: payload.old_limit,
+                new_limit: payload.new_limit,
+                trigger: payload.trigger,
+              };
+              return { ...prev, details } as StatusLike;
+            });
           }
-          return { ...prev, details } as StatusLike;
-        });
-        return;
-      }
-    }
-    // New unified TaskLifecycle event
-    if (ev === 'actor-task-lifecycle') {
-      const sid = sessionId();
-      if (!sid || !payload || payload.session_id !== sid) return;
-      mergeStatus(prev => {
-        if (!prev) return prev;
-        const details = { ...(prev.details || { total: 0, completed: 0, failed: 0 }) } as any;
-        const status = String(payload?.status || '').toLowerCase();
-        if (payload?.task_kind === 'Product') {
-          // Count per-product outcomes
-          if (status === 'succeeded' || status === 'completed' || status === 'persisted') {
-            details.total = (details.total ?? 0) + 1;
-            details.completed = (details.completed ?? 0) + 1;
-          } else if (status === 'failed') {
-            details.total = (details.total ?? 0) + 1;
-            details.failed = (details.failed ?? 0) + 1;
-          }
-        }
-        return { ...prev, details } as StatusLike;
+        },
       });
-      return;
+      listeners.push(unLifecycle);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to register unified actor-event listeners', err);
     }
-    // Stage 2 detail progress via product lifecycle events (group + per-product failures)
-    if (ev === 'actor-product-lifecycle' || ev === 'actor-product-lifecycle-group' || ev === 'actor-detail-concurrency-downshifted' || ev === 'actor-page-lifecycle') {
-      const payload: any = (evt as any).payload;
-      const sid = sessionId();
-      if (!sid || !payload || payload.session_id !== sid) return;
-      mergeStatus(prev => {
-        if (!prev) return prev;
-        const details = { ...(prev.details || { total: 0, completed: 0, failed: 0 }) } as any;
-        // map page lifecycle to detail totals heuristically (optional)
-        if (ev === 'actor-page-lifecycle') {
-          const status = String(payload?.status || '').toLowerCase();
-          if (status === 'fetch_started') {
-            // no-op for totals; Stage 1 handled elsewhere
-          } else if (status === 'fetch_completed' || status === 'urls_extracted') {
-            // could update a separate page progress channel if needed
-          } else if (status === 'failed') {
-            // treat as page failure; no detail counter impact here
-          }
-        }
-        if (ev === 'actor-product-lifecycle-group' && payload?.phase === 'fetch') {
-          const group = Number(payload?.group_size ?? payload?.started ?? 0) || 0;
-          const succeeded = Number(payload?.succeeded ?? 0) || 0;
-          const failed = Number(payload?.failed ?? 0) || 0;
-          details.total = (typeof details.total === 'number' ? details.total : 0) + group;
-          details.completed = (typeof details.completed === 'number' ? details.completed : 0) + succeeded;
-          details.failed = (typeof details.failed === 'number' ? details.failed : 0) + failed;
-        }
-        if (ev === 'actor-product-lifecycle') {
-          const status = String(payload?.status || '').toLowerCase();
-          if (status === 'failed') {
-            details.failed = (typeof details.failed === 'number' ? details.failed : 0) + 1;
-          }
-        }
-        if (ev === 'actor-detail-concurrency-downshifted') {
-          details.downshifted = true;
-          details.downshift_meta = {
-            timestamp: payload.timestamp,
-            old_limit: payload.old_limit,
-            new_limit: payload.new_limit,
-            trigger: payload.trigger
-          };
-        }
-        return { ...prev, details } as StatusLike;
-      });
-      return;
-    }
-  }).then(un => listeners.push(un))))
-    .catch(err => console.error('Failed to register event listeners', err));
+  })();
 
   onCleanup(() => listeners.forEach(u => { try { u(); } catch {} }));
 

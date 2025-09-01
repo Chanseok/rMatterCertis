@@ -1,6 +1,6 @@
 Generalized Actor Events (Backend → Frontend)
 
-- When `MC_FEATURE_EVENTS_GENERALIZED_ONLY=true`, backend emits a single unified channel:
+- Backend emits a single unified channel:
   - Event name: `actor-event`
   - Payload is enriched with `seq`, `backend_ts`, `event_name` (original), and flattened `variant` + fields of AppEvent.
 - When the flag is false (default), backend keeps legacy behavior for backward compatibility:

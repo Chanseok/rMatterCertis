@@ -561,91 +561,18 @@ export class TauriApiService {
 
   /**
    * Subscribe to all Actor bridge events emitted by the Rust ActorEventBridge.
-   * This listens to a curated set of 'actor-*' event names and invokes the callback with (eventName, payload).
+   * Unified-only: listens to 'actor-event' and fans out using payload.event_name.
    */
   async subscribeToActorBridgeEvents(
     callback: (eventName: string, payload: any) => void
   ): Promise<() => void> {
-  const names = [
-      // Session
-      'actor-session-started',
-      'actor-session-paused',
-      'actor-session-resumed',
-      'actor-session-completed',
-      'actor-session-failed',
-      'actor-session-timeout',
-      // Batch/Stage
-      'actor-batch-started',
-      'actor-batch-completed',
-      'actor-batch-failed',
-      'actor-stage-started',
-      'actor-stage-completed',
-      'actor-stage-failed',
-      // Progress / Metrics / Reports
-      'actor-progress',
-      'actor-performance-metrics',
-      'actor-batch-report',
-      'actor-session-report',
-  'actor-next-plan-ready',
-  // Shutdown only (Phase* removed)
-      'actor-shutdown-requested',
-      'actor-shutdown-completed',
-  // Page & Detail lifecycle (Stage2/3)
-  // page-task-* removed in favor of consolidated page-lifecycle events
-      'actor-detail-concurrency-downshifted',
-      'actor-stage-item-started',
-      'actor-stage-item-completed',
-      // High-level lifecycle and timing
-      'actor-page-lifecycle',
-      'actor-product-lifecycle',
-      'actor-product-lifecycle-group',
-      'actor-http-request-timing',
-      // Validation / Persistence / DB
-      'actor-preflight-diagnostics',
-      'actor-persistence-anomaly',
-      'actor-database-stats',
-      'actor-validation-started',
-      'actor-validation-page-scanned',
-      'actor-validation-divergence',
-      'actor-validation-anomaly',
-      'actor-validation-completed',
-      // Sync (optional)
-      'actor-sync-started',
-      'actor-sync-page-started',
-      'actor-sync-upsert-progress',
-      'actor-sync-page-completed',
-      'actor-sync-warning',
-      'actor-sync-completed',
-    ];
-
-    const unsubs: UnlistenFn[] = [];
-    // Prefer unified stream if backend emits generalized-only 'actor-event'.
-    // When present, we map enriched.payload.event_name back to the legacy name
-    // so existing UI callbacks keep working without changes.
-    try {
-      const unUnified = await listen<any>('actor-event', (evt) => {
-        const p = evt?.payload ?? {};
-        const originalName = typeof p.event_name === 'string' ? p.event_name : 'actor-event';
-        callback(originalName, p);
-      });
-      unsubs.push(unUnified);
-      this.eventListeners.set('actor-event', unUnified);
-    } catch (e) {
-      // If the channel doesn't exist, ignore.
-      console.debug('[ActorBridge] unified channel not available yet:', e);
-    }
-
-    for (const name of names) {
-      try {
-        const un = await listen<any>(name, (evt) => callback(name, evt.payload));
-        this.eventListeners.set(name, un);
-        unsubs.push(un);
-      } catch (e) {
-        // If some names are not emitted in a build, ignore subscription failures.
-        console.warn(`[ActorBridge] Failed to subscribe '${name}':`, e);
-      }
-    }
-    return () => unsubs.forEach((u) => u());
+    const un = await listen<any>('actor-event', (evt) => {
+      const p = evt?.payload ?? {};
+      const originalName = typeof p.event_name === 'string' ? p.event_name : 'actor-event';
+      callback(originalName, p);
+    });
+    this.eventListeners.set('actor-event', un);
+    return () => un();
   }
 
   /**
@@ -667,50 +594,46 @@ export class TauriApiService {
 
   /**
    * Subscribe to unified actor-event stream optionally filtering by variant.
-   * Falls back to actor-* names if unified stream isn't present.
    */
   async subscribeToUnifiedActorEvents(options: {
     variants?: string[];
     onEvent: (payload: any) => void;
   }): Promise<() => void> {
-    const unsubs: UnlistenFn[] = [];
-    try {
-      const un = await listen<any>('actor-event', (evt) => {
-        const p = evt?.payload ?? {};
-        if (options.variants && options.variants.length) {
-          if (typeof p.variant === 'string' && options.variants.includes(p.variant)) {
-            options.onEvent(p);
-          }
-        } else {
+    const un = await listen<any>('actor-event', (evt) => {
+      const p = evt?.payload ?? {};
+      if (options.variants && options.variants.length) {
+        if (typeof p.variant === 'string' && options.variants.includes(p.variant)) {
           options.onEvent(p);
         }
-      });
-      unsubs.push(un);
-    } catch (e) {
-      // ignore if unified not available
-    }
-    return () => unsubs.forEach((u) => u());
+      } else {
+        options.onEvent(p);
+      }
+    });
+    return () => un();
   }
 
-  /** Subscribe to actor-page-lifecycle events */
+  /** Subscribe to page lifecycle via unified stream */
   async subscribeToPageLifecycle(callback: (payload: any) => void): Promise<UnlistenFn> {
-    const un = await listen<any>('actor-page-lifecycle', (evt) => callback(evt.payload));
-    this.eventListeners.set('actor-page-lifecycle', un);
-    return un;
+    return this.subscribeToUnifiedActorEvents({
+      variants: ['PageLifecycle'],
+      onEvent: callback,
+    });
   }
 
-  /** Subscribe to actor-product-lifecycle events */
+  /** Subscribe to product lifecycle via unified stream */
   async subscribeToProductLifecycle(callback: (payload: any) => void): Promise<UnlistenFn> {
-    const un = await listen<any>('actor-product-lifecycle', (evt) => callback(evt.payload));
-    this.eventListeners.set('actor-product-lifecycle', un);
-    return un;
+    return this.subscribeToUnifiedActorEvents({
+      variants: ['ProductLifecycle', 'ProductLifecycleGroup'],
+      onEvent: callback,
+    });
   }
 
-  /** Subscribe to actor-progress events */
+  /** Subscribe to Progress via unified stream */
   async subscribeToActorProgress(callback: (payload: any) => void): Promise<UnlistenFn> {
-    const un = await listen<any>('actor-progress', (evt) => callback(evt.payload));
-    this.eventListeners.set('actor-progress', un);
-    return un;
+    return this.subscribeToUnifiedActorEvents({
+      variants: ['Progress'],
+      onEvent: callback,
+    });
   }
 
   /**
@@ -719,27 +642,18 @@ export class TauriApiService {
   async subscribeToErrorsUnified(
     callback: (error: any) => void
   ): Promise<() => void> {
-    const unsubs: UnlistenFn[] = [];
-    // Actor bridge: anomalies or error/failed variants
-    try {
-      const unActor = await this.subscribeToActorBridgeEvents((name, payload) => {
-        const variant = payload?.variant as string | undefined;
-        if (
-          name === 'actor-persistence-anomaly' ||
-          name === 'actor-validation-anomaly' ||
-          name === 'actor-preflight-diagnostics' ||
-          name === 'actor-session-failed' ||
-          name === 'actor-batch-failed' ||
-          name === 'actor-stage-failed' ||
-          (variant && /anomaly|error|failed/i.test(variant))
-        ) {
-          callback(payload);
-        }
-      });
-      unsubs.push(unActor);
-    } catch {}
-
-    return () => unsubs.forEach((u) => u());
+    return this.subscribeToUnifiedActorEvents({
+      variants: [
+        'PersistenceAnomaly',
+        'ValidationAnomaly',
+        'PreflightDiagnostics',
+        'SessionFailed',
+        'BatchFailed',
+        'StageFailed',
+        'SyncWarning',
+      ],
+      onEvent: callback,
+    });
   }
 
   /**
@@ -1057,14 +971,17 @@ export class TauriApiService {
     concurrencyLimit?: number;
   }): Promise<string> {
     try {
-      console.log('🎭 Starting Actor-based crawling (simulated)...', config);
-      
-      // For now, simulate actor system by calling existing crawling with enhanced events
+      const enableSim = (import.meta as any).env?.VITE_ENABLE_ACTOR_SIM === 'true';
+      console.log('🎭 Starting Actor-based crawling...', { config, enableSim });
+
+      // Always call real backend entry (if wired); simulation only when explicitly enabled
       const result = await this.startCrawling(config.startPage, config.endPage);
-      
-      // Emit simulated actor events to demonstrate UI integration
-      this.simulateActorSystemEvents(config);
-      
+
+      if (enableSim) {
+        // Emit simulated actor events to demonstrate UI integration (dev only)
+        this.simulateActorSystemEvents(config);
+      }
+
       return result;
     } catch (error) {
       throw new Error(`Failed to start actor-based crawling: ${error}`);
@@ -1076,6 +993,11 @@ export class TauriApiService {
    * This demonstrates how the real Actor system would emit events
    */
   private simulateActorSystemEvents(config: any): void {
+    const enableSim = (import.meta as any).env?.VITE_ENABLE_ACTOR_SIM === 'true';
+    if (!enableSim) {
+      console.debug('🎭 Actor System simulation disabled (VITE_ENABLE_ACTOR_SIM!=true)');
+      return;
+    }
     console.log('🎭 Simulating Actor System events for UI integration...');
     
     // Simulate session start
@@ -1170,7 +1092,13 @@ export class TauriApiService {
     onBatchCompleted?: (data: any) => void;
     onSessionCompleted?: (data: any) => void;
   }): Promise<() => void> {
+    const enableSim = (import.meta as any).env?.VITE_ENABLE_ACTOR_SIM === 'true';
     const eventListeners: Array<() => void> = [];
+
+    if (!enableSim) {
+      console.debug('[ActorSim] subscribeToActorSystemEvents ignored (simulation disabled)');
+      return () => {};
+    }
 
     if (callbacks.onSessionStarted) {
       const handler = (event: any) => callbacks.onSessionStarted!(event.detail);

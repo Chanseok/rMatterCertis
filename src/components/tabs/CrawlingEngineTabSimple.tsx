@@ -43,8 +43,8 @@ export default function CrawlingEngineTabSimple() {
   // Auto re-plan from backend after a session completes
   const [nextPlan, setNextPlan] = createSignal<any | null>(null);
   // Lightweight live actor-event telemetry (debug aid)
-  const [actorEventCount, setActorEventCount] = createSignal(0);
   const [lastActorEvent, setLastActorEvent] = createSignal<string>("");
+  const [actorEventCount, setActorEventCount] = createSignal<number>(0);
 
   // Dramatic transition for Calculated Crawling Range
   const [rangeFxKey, setRangeFxKey] = createSignal(0);
@@ -308,12 +308,16 @@ export default function CrawlingEngineTabSimple() {
   const [persistStats, setPersistStats] = createSignal<{
     attempted: number;
     succeeded: number;
-    failed: number;
+    failed: number; // backend-reported (may include duplicates/unchanged)
     duplicates: number;
+    unchanged: number; // derived on FE: attempted - (succeeded + duplicates)
+    failedTrue: number; // derived on FE: failed - duplicates - unchanged
     durationMs: number;
-  }>({ attempted: 0, succeeded: 0, failed: 0, duplicates: 0, durationMs: 0 });
+  }>({ attempted: 0, succeeded: 0, failed: 0, duplicates: 0, unchanged: 0, failedTrue: 0, durationMs: 0 });
   // Stage 4: DB snapshot animation toggle
   const [dbFlash, setDbFlash] = createSignal(false);
+  // Preflight diagnostics (site totals) to improve expected counts
+  const [preflight, setPreflight] = createSignal<{ site_total_pages?: number } | null>(null);
   // Global effects toggle
   const [effectsOn, setEffectsOn] = createSignal(true);
   // Sync input pulse highlight
@@ -322,13 +326,14 @@ export default function CrawlingEngineTabSimple() {
   let syncStartSeq = 0;
   onMount(async () => {
     try {
-      const un1 = await listen("actor-sync-started", () => {
-        syncStartSeq++;
+      const un1 = await tauriApi.subscribeToUnifiedActorEvents({
+        variants: ['SyncStarted'],
+        onEvent: () => {
+          syncStartSeq++;
+        },
       });
       onCleanup(() => {
-        try {
-          (un1 as any)();
-        } catch {}
+        try { un1(); } catch {}
       });
     } catch {}
   });
@@ -630,10 +635,29 @@ export default function CrawlingEngineTabSimple() {
 
     // Listen to unified Actor session lifecycle to toggle buttons/status
     tauriApi
-      .subscribeToActorBridgeEvents((name, payload) => {
+      .subscribeToUnifiedActorEvents({ onEvent: (payload) => {
+  // Normalize event name: prefer event_name, fallback to variant -> kebab case
+  let name = String(payload?.event_name || "");
+  if (!name) {
+    const variantStr = String(payload?.variant || "");
+    if (variantStr) {
+      const kebab = variantStr
+        .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+        .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
+        .toLowerCase();
+      name = `actor-${kebab}`;
+    }
+  }
   // Debug: track live event stream
   setActorEventCount((n) => n + 1);
   setLastActorEvent(name);
+  
+  // Debug: log all events to console
+  if (name.includes("database-stats") || name.includes("product-lifecycle-group") || 
+      name.includes("batch-completed") || name.includes("session-report") ||
+      (name.includes("product-lifecycle") && payload?.status?.includes("persist"))) {
+    console.log("[DEBUG] Event received:", name, payload);
+  }
         // === Sync events → compact Sync panel ===
         if (name === "actor-sync-started") {
           try {
@@ -771,6 +795,8 @@ export default function CrawlingEngineTabSimple() {
             succeeded: 0,
             failed: 0,
             duplicates: 0,
+            unchanged: 0,
+            failedTrue: 0,
             durationMs: 0,
           });
         }
@@ -891,6 +917,46 @@ export default function CrawlingEngineTabSimple() {
           const status = String(payload?.status || "").toLowerCase();
           const pageNum = Number(payload?.page_number ?? NaN);
           if (!Number.isFinite(pageNum)) return;
+          // Stage 2 start accounting from mapping/schedule signals
+          if (status === "detail_scheduled" || status === "detail_mapping_emitted") {
+            // Robustly extract scheduled_details or url_count from enum-serialized metrics
+            const m = payload?.metrics;
+            let scheduled = 0;
+            let urlCount = 0;
+            try {
+              // Shape A: { metrics: { Page: { url_count, scheduled_details } } }
+              if (m && typeof m === 'object' && !Array.isArray(m)) {
+                const k = Object.keys(m)[0];
+                if (k && typeof (m as any)[k] === 'object') {
+                  const inner = (m as any)[k];
+                  scheduled = Number(inner?.scheduled_details ?? 0) || 0;
+                  urlCount = Number(inner?.url_count ?? 0) || 0;
+                }
+                // Shape B: { metrics: { type: 'Page', data: { url_count, scheduled_details } } }
+                const typeStr = String((m as any)?.type || '').toLowerCase();
+                const dataObj = (m as any)?.data;
+                if (typeStr === 'page' && dataObj && typeof dataObj === 'object') {
+                  scheduled = Number(dataObj?.scheduled_details ?? scheduled) || scheduled;
+                  urlCount = Number(dataObj?.url_count ?? urlCount) || urlCount;
+                }
+                // Shape C: direct: { metrics: { url_count, scheduled_details } }
+                if ((m as any)?.url_count != null || (m as any)?.scheduled_details != null) {
+                  scheduled = Number((m as any)?.scheduled_details ?? scheduled) || scheduled;
+                  urlCount = Number((m as any)?.url_count ?? urlCount) || urlCount;
+                }
+              }
+            } catch {}
+            // Backend reports scheduled=0 but urls=12, so prefer url_count when available
+            const toAdd = urlCount > 0 ? urlCount : (scheduled > 0 ? scheduled : 0);
+            if (toAdd > 0) {
+              setDetailStats((prev) => {
+                const started = (prev.started || 0) + toAdd;
+                const inflight = Math.max(0, started - ((prev.completed || 0) + (prev.failed || 0)));
+                return { ...prev, started, inflight };
+              });
+              if (effectsOn()) triggerStage2Pulse();
+            }
+          }
           if (status === "fetch_started") {
             const prevAttempts = pageAttempts.get(pageNum) ?? 0;
             pageAttempts.set(pageNum, prevAttempts + 1);
@@ -934,16 +1000,15 @@ export default function CrawlingEngineTabSimple() {
           name === "actor-product-lifecycle-group" &&
           payload?.phase === "fetch"
         ) {
-          const group =
-            Number(payload?.group_size ?? payload?.started ?? 0) || 0;
-          const succeeded = Number(payload?.succeeded ?? 0) || group; // default: success when not provided
+          // Grouped completion snapshot: only update completions/failures here.
+          // 'started' is accounted from PageLifecycle detail_* mapping events to show inflight correctly.
+          const succeeded = Number(payload?.succeeded ?? 0) || 0;
           const failed = Number(payload?.failed ?? 0) || 0;
           setDetailStats((prev) => {
-            const started = (prev.started || 0) + group;
             const completed = (prev.completed || 0) + succeeded;
             const failedCt = (prev.failed || 0) + failed;
-            const inflight = Math.max(0, started - (completed + failedCt));
-            return { ...prev, started, completed, failed: failedCt, inflight };
+            const inflight = Math.max(0, (prev.started || 0) - (completed + failedCt));
+            return { ...prev, completed, failed: failedCt, inflight };
           });
           if (effectsOn()) triggerStage2Pulse();
         }
@@ -969,18 +1034,20 @@ export default function CrawlingEngineTabSimple() {
         // Stage 3 (Validation) events
         if (name === "actor-validation-started") {
           const target = Number(payload?.scan_pages ?? 0) || 0;
-          setValidationStats({
+          setValidationStats((prev) => ({
+            ...(prev || {}),
             started: true,
             completed: false,
-            targetPages: target,
-            pagesScanned: 0,
-            divergences: 0,
-            anomalies: 0,
-            productsChecked: 0,
-            lastPage: null,
-            lastAssignedStart: null,
-            lastAssignedEnd: null,
-          });
+            targetPages: (prev?.targetPages || 0) + target,
+            // keep running tallies across short validation bursts
+            pagesScanned: prev?.pagesScanned || 0,
+            divergences: prev?.divergences || 0,
+            anomalies: prev?.anomalies || 0,
+            productsChecked: prev?.productsChecked || 0,
+            lastPage: prev?.lastPage ?? null,
+            lastAssignedStart: prev?.lastAssignedStart ?? null,
+            lastAssignedEnd: prev?.lastAssignedEnd ?? null,
+          }));
         }
         if (name === "actor-validation-page-scanned") {
           setValidationStats((prev) => ({
@@ -1024,9 +1091,7 @@ export default function CrawlingEngineTabSimple() {
           setValidationStats((prev) => ({
             ...prev,
             completed: true,
-            pagesScanned:
-              Number(payload?.pages_scanned ?? prev.pagesScanned) ||
-              prev.pagesScanned,
+            // Do not override pagesScanned; we increment on page-scanned events.
             productsChecked:
               Number(payload?.products_checked ?? prev.productsChecked) ||
               prev.productsChecked,
@@ -1073,24 +1138,39 @@ export default function CrawlingEngineTabSimple() {
               pagesScanned: processed > 0 ? processed : prev.pagesScanned,
             }));
           }
+          // Mark Stage 1 as complete when list_page_crawling completes
+          if (t.includes("listpage") || t.includes("list_page")) {
+            setPageStats((prev) => ({
+              ...prev,
+              completed: prev.started, // Mark all started as completed
+              inflight: 0,
+            }));
+            if (effectsOn()) triggerStage1Pulse();
+          }
         }
 
         // Stage 4 (DB) snapshots and session summary
         if (name === "actor-database-stats") {
+          console.log("[DEBUG] DatabaseStats event received:", payload);
+          // Extract total from the correct field name
+          const totalFromPayload = Number(payload?.total_product_details ?? 0) || 0;
+          
+          // Extract page range information
+          const minPageFromPayload = payload?.min_page ?? null;
+          const maxPageFromPayload = payload?.max_page ?? null;
+          
           setDbSnapshot((prev) => ({
             ...prev,
-            total:
-              Number(payload?.total_product_details ?? prev.total ?? 0) ||
-              prev.total,
-            minPage: payload?.min_page ?? prev.minPage ?? null,
-            maxPage: payload?.max_page ?? prev.maxPage ?? null,
+            total: totalFromPayload > 0 ? totalFromPayload : prev.total,
+            minPage: minPageFromPayload !== null ? Number(minPageFromPayload) : prev.minPage,
+            maxPage: maxPageFromPayload !== null ? Number(maxPageFromPayload) : prev.maxPage,
           }));
           if (effectsOn()) {
             setDbFlash(true);
             setTimeout(() => setDbFlash(false), 500);
           }
         }
-        if (name === "actor-session-report") {
+  if (name === "actor-session-report") {
           setDbSnapshot((prev) => ({
             ...prev,
             inserted:
@@ -1101,34 +1181,162 @@ export default function CrawlingEngineTabSimple() {
               prev.updated,
           }));
         }
+        
+        // Handle batch completed event to extract DB stats when persist events are missing
+        if (name === "actor-batch-completed") {
+          console.log("[DEBUG] BatchCompleted event received:", payload);
+          // Try to extract products_inserted/updated from the payload
+          const insertedFromBatch = Number(payload?.products_inserted ?? 0) || 0;
+          const updatedFromBatch = Number(payload?.products_updated ?? 0) || 0;
+          
+          if (insertedFromBatch > 0 || updatedFromBatch > 0) {
+            setDbSnapshot((prev) => ({
+              ...prev,
+              inserted: insertedFromBatch,
+              updated: updatedFromBatch,
+            }));
+            
+            // If we don't get persist events, simulate persist stats
+            setPersistStats((prev) => ({
+              ...prev,
+              attempted: insertedFromBatch + updatedFromBatch,
+              succeeded: insertedFromBatch + updatedFromBatch,
+              failed: 0,
+              duplicates: 0,
+              unchanged: 0,
+              failedTrue: 0,
+              durationMs: 0,
+            }));
+            
+            if (effectsOn()) {
+              setDbFlash(true);
+              setPersistFlash(true);
+              setTimeout(() => {
+                setDbFlash(false);
+                setPersistFlash(false);
+              }, 500);
+            }
+          }
+        }
+        if (name === "actor-preflight-diagnostics") {
+          // Capture site totals for Stage 1 expected denominator
+          const site_total_pages = Number(payload?.site_total_pages ?? 0) || undefined;
+          setPreflight({ site_total_pages });
+        }
         // Stage 5 (Persist) grouped lifecycle snapshot
         if (
           name === "actor-product-lifecycle-group" &&
           payload?.phase === "persist"
         ) {
+          console.log("[DEBUG] ProductLifecycleGroup persist event received:", payload);
           const attempted = Number(payload?.group_size ?? 0) || 0;
           const succeeded = Number(payload?.succeeded ?? 0) || 0;
+          // Backend's 'failed' may include unchanged; compute derived fields for UI clarity
           const failed = Number(payload?.failed ?? 0) || 0;
           const duplicates = Number(payload?.duplicates ?? 0) || 0;
+          const unchanged = Math.max(0, attempted - (succeeded + duplicates));
+          const failedTrue = Math.max(0, failed - duplicates - unchanged);
           const durationMs = Number(payload?.duration_ms ?? 0) || 0;
+          
           setPersistStats({
             attempted,
             succeeded,
             failed,
             duplicates,
+            unchanged,
+            failedTrue,
             durationMs,
           });
+          
+          // Also surface cumulative DB change counts when session report lags
+          setDbSnapshot((prev) => ({
+            ...prev,
+            updated: (Number(prev.updated ?? 0) || 0) + succeeded,
+          }));
           // flash Stage 5 panel
           if (effectsOn()) {
             setPersistFlash(true);
             setTimeout(() => setPersistFlash(false), 500);
           }
         }
-      })
+        
+        // Handle persist_empty case - when no products to persist
+        if (name === "actor-product-lifecycle" && payload?.status === "persist_empty") {
+          console.log("[DEBUG] ProductLifecycle persist_empty event received:", payload);
+          setPersistStats({
+            attempted: 0,
+            succeeded: 0,
+            failed: 0,
+            duplicates: 0,
+            unchanged: 0,
+            failedTrue: 0,
+            durationMs: 0,
+          });
+          
+          if (effectsOn()) {
+            setPersistFlash(true);
+            setTimeout(() => setPersistFlash(false), 500);
+          }
+        }
+
+        // Fallback: parse generic ProductLifecycle persist_* with metrics.persist_result
+        if (name === "actor-product-lifecycle" && typeof payload?.status === "string" && payload.status.startsWith("persist_")) {
+          try {
+            const m = payload?.metrics;
+            let key: string | undefined;
+            let value: string | undefined;
+            // Shape A: { metrics: { Generic: { key, value } } }
+            if (m && typeof m === 'object' && !Array.isArray(m)) {
+              const k1 = Object.keys(m)[0];
+              if (k1 && typeof (m as any)[k1] === 'object') {
+                key = (m as any)[k1]?.key;
+                value = (m as any)[k1]?.value;
+              }
+              // Shape B: { metrics: { type: 'Generic', data: { key, value } } }
+              const t = String((m as any)?.type || '').toLowerCase();
+              const d = (m as any)?.data;
+              if (t === 'generic' && d && typeof d === 'object') {
+                key = (d as any)?.key ?? key;
+                value = (d as any)?.value ?? value;
+              }
+              // Shape C: direct: { metrics: { key, value } }
+              if ((m as any)?.key != null || (m as any)?.value != null) {
+                key = (m as any)?.key ?? key;
+                value = (m as any)?.value ?? value;
+              }
+            }
+            if ((key || '').toLowerCase() === 'persist_result' && typeof value === 'string') {
+              // value format: attempted=..,inserted=..,updated=..,duplicates=..,unchanged=..
+              const parts = Object.fromEntries(
+                value.split(',').map((p) => {
+                  const [k, v] = p.split('=');
+                  return [k?.trim() || '', Number(v) || 0];
+                })
+              ) as Record<string, number>;
+              const attempted = parts.attempted ?? 0;
+              const inserted = parts.inserted ?? 0;
+              const updated = parts.updated ?? 0;
+              const duplicates = parts.duplicates ?? 0;
+              const unchanged = parts.unchanged ?? Math.max(0, attempted - (inserted + updated + duplicates));
+              const succeeded = inserted + updated;
+              const failed = Math.max(0, attempted - succeeded);
+              const failedTrue = Math.max(0, failed - duplicates - unchanged);
+              const durationMs = Number(payload?.duration_ms ?? 0) || 0;
+              setPersistStats({ attempted, succeeded, failed, duplicates, unchanged, failedTrue, durationMs });
+              if (effectsOn()) {
+                setPersistFlash(true);
+                setTimeout(() => setPersistFlash(false), 500);
+              }
+            }
+          } catch (e) {
+            console.warn('[CrawlingEngineTabSimple] persist_result parse failed', e);
+          }
+        }
+  } })
       .then((un) => unsubs.push(un))
       .catch((e) =>
         console.warn(
-          "[CrawlingEngineTabSimple] actor bridge subscribe failed",
+          "[CrawlingEngineTabSimple] unified actor subscribe failed",
           e
         )
       );
@@ -1940,10 +2148,12 @@ export default function CrawlingEngineTabSimple() {
               <span class="text-xs text-gray-500">
                 {(() => {
                   const cr = crawlingRange();
-                  const fallback = (cr?.crawling_info?.pages_to_crawl ??
-                    ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 ||
-                      0)) as number;
-                  const est = pageStats().totalEstimated || fallback || 0;
+                  const pre = preflight();
+                  const siteTotal = Number(pre?.site_total_pages ?? 0) || 0;
+                  const planned = (cr?.crawling_info?.pages_to_crawl ??
+                    ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 || 0)) as number;
+                  const batchEst = pageStats().totalEstimated || 0;
+                  const est = batchEst > 0 ? batchEst : (planned > 0 ? planned : siteTotal);
                   return est > 0 ? `예상 ${est}p` : "";
                 })()}
               </span>
@@ -1986,10 +2196,12 @@ export default function CrawlingEngineTabSimple() {
                 style={{
                   width: `${(() => {
                     const cr = crawlingRange();
-                    const fallback = (cr?.crawling_info?.pages_to_crawl ??
-                      ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 ||
-                        0)) as number;
-                    const denom = pageStats().totalEstimated || fallback || 0;
+                    const pre = preflight();
+                    const siteTotal = Number(pre?.site_total_pages ?? 0) || 0;
+                    const planned = (cr?.crawling_info?.pages_to_crawl ??
+                      ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 || 0)) as number;
+                    const batchEst = pageStats().totalEstimated || 0;
+                    const denom = batchEst > 0 ? batchEst : (planned > 0 ? planned : siteTotal);
                     return denom > 0
                       ? Math.min(100, (pageStats().completed / denom) * 100)
                       : 0;
@@ -2018,9 +2230,11 @@ export default function CrawlingEngineTabSimple() {
               </Show>
               <span class="text-xs text-gray-500">
                 {(() => {
-                  const est = (crawlingRange()?.crawling_info
-                    ?.estimated_new_products ?? 0) as number;
-                  return est > 0 ? `예상 ${est}` : "";
+                  const est = (crawlingRange()?.crawling_info?.estimated_new_products ?? 0) as number;
+                  const observed = Math.max(detailStats().started || 0, detailStats().completed || 0);
+                  // Prefer observed (session-scoped) to avoid overestimation from global plan during manual runs
+                  const val = observed > 0 ? observed : (est > 0 ? est : 0);
+                  return val > 0 ? `예상 ${val}` : "";
                 })()}
               </span>
             </div>
@@ -2061,11 +2275,10 @@ export default function CrawlingEngineTabSimple() {
                 class="progress-fill rounded-full"
                 style={{
                   width: `${(() => {
-                    const denom =
-                      (crawlingRange()?.crawling_info
-                        ?.estimated_new_products as number) ||
-                      detailStats().started ||
-                      0;
+                    const est = (crawlingRange()?.crawling_info?.estimated_new_products ?? 0) as number;
+                    const observed = Math.max(detailStats().started || 0, detailStats().completed || 0);
+                    // Prefer observed when available; fallback to estimate only if no observed yet
+                    const denom = observed > 0 ? observed : (est > 0 ? est : 0);
                     return denom > 0
                       ? Math.min(100, (detailStats().completed / denom) * 100)
                       : 0;
@@ -2082,7 +2295,7 @@ export default function CrawlingEngineTabSimple() {
           <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
             <div class="flex items-center justify-between mb-2">
               <h3 class="text-md font-semibold text-gray-800">
-                Stage 3: Validation
+                Stage 3: 검증(집계)
               </h3>
               <span class="text-xs text-gray-500">
                 {validationStats().started
@@ -2111,7 +2324,7 @@ export default function CrawlingEngineTabSimple() {
                     validationStats().pagesScanned
                   )}
                 </div>
-                <div class="text-xs text-gray-600">스캔</div>
+                <div class="text-xs text-gray-600">스캔 완료</div>
               </div>
               <div class="bg-amber-50 rounded p-2">
                 <div class="text-xl font-bold text-amber-600">
@@ -2166,7 +2379,7 @@ export default function CrawlingEngineTabSimple() {
               </h3>
               <span class="text-xs text-gray-500">최근 보고 기준</span>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-center">
               <div class="bg-sky-50 rounded p-2">
                 <div class="text-xl font-bold text-sky-600">
                   {effectsOn() && typeof dbSnapshot().total === "number" ? (
@@ -2228,7 +2441,7 @@ export default function CrawlingEngineTabSimple() {
               </h3>
               <span class="text-xs text-gray-500">그룹 이벤트</span>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-center">
               <div class="bg-blue-50 rounded p-2">
                 <div class="text-xl font-bold text-blue-600">
                   {effectsOn() ? (
@@ -2252,9 +2465,9 @@ export default function CrawlingEngineTabSimple() {
               <div class="bg-rose-50 rounded p-2">
                 <div class="text-xl font-bold text-rose-600">
                   {effectsOn() ? (
-                    <CountUp value={persistStats().failed} />
+                    <CountUp value={persistStats().failedTrue} />
                   ) : (
-                    persistStats().failed
+                    persistStats().failedTrue
                   )}
                 </div>
                 <div class="text-xs text-gray-600">실패</div>
@@ -2268,6 +2481,16 @@ export default function CrawlingEngineTabSimple() {
                   )}
                 </div>
                 <div class="text-xs text-gray-600">중복</div>
+              </div>
+              <div class="bg-slate-50 rounded p-2">
+                <div class="text-xl font-bold text-slate-600">
+                  {effectsOn() ? (
+                    <CountUp value={persistStats().unchanged} />
+                  ) : (
+                    persistStats().unchanged
+                  )}
+                </div>
+                <div class="text-xs text-gray-600">미변경</div>
               </div>
             </div>
             <div class="mt-2 text-xs text-gray-500">

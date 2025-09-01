@@ -39,3 +39,25 @@ impl StageLogicFactory for DefaultStageLogicFactory {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crawl_engine::actors::types::StageType;
+
+    #[test]
+    fn test_factory_returns_all_strategies() {
+        let f = DefaultStageLogicFactory;
+        let cases = vec![
+            (StageType::StatusCheck, "StatusCheckLogic"),
+            (StageType::ListPageCrawling, "ListPageLogic"),
+            (StageType::ProductDetailCrawling, "ProductDetailLogic"),
+            (StageType::DataValidation, "DataValidationLogic"),
+            (StageType::DataSaving, "DataSavingLogic"),
+        ];
+        for (st, expected_name) in cases {
+            let logic = f.logic_for(&st).expect("strategy must exist");
+            assert_eq!(logic.name(), expected_name);
+        }
+    }
+}

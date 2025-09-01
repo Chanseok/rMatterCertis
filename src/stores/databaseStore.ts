@@ -357,17 +357,16 @@ class DatabaseStore {
 
   private async subscribeToEvents(): Promise<void> {
     try {
-  // actor-event 브리지 구독 (actor-database-stats 또는 variant=DatabaseStats)
-      const unsubActor = await tauriApi.subscribeToActorBridgeEvents((_name, payload) => {
-        const name = payload?.event_name || _name;
-        const variant = payload?.variant;
-        if (name === 'actor-database-stats' || variant === 'DatabaseStats') {
+      // unified actor-event 구독 (variant=DatabaseStats)
+      const unsubActor = await tauriApi.subscribeToUnifiedActorEvents({
+        variants: ['DatabaseStats'],
+        onEvent: (payload) => {
           const stats = payload?.stats ?? payload; // tolerate wrapped or flat shapes
           if (stats) {
             console.log('📊 [actor] DatabaseStats 업데이트:', stats);
             this.setStats(stats);
           }
-        }
+        },
       });
   eventSubscriptions()[0] = unsubActor;
       

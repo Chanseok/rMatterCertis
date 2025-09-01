@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::crawl_engine::services::performance_optimizer::CrawlingPerformanceOptimizer;
 use crate::types::dashboard_types::{DashboardState, ActiveCrawlingSession, CompletedSession, RealtimeChartData, DashboardAlert, DashboardEvent, DashboardConfig, SystemStatus, ServerStatus, DatabaseStatus, SiteStatus, AlertLevel, RealtimePerformanceMetrics, ChartDataPoint};
+use crate::crawl_engine::actors::types::{AppEvent, StageType};
 
 /// 실시간 대시보드 서비스
 pub struct RealtimeDashboardService {
@@ -31,7 +32,6 @@ pub struct RealtimeDashboardService {
     performance_optimizer: Option<Arc<CrawlingPerformanceOptimizer>>,
 }
 
-#[allow(dead_code)] // Phase2: some methods temporarily unused
 impl RealtimeDashboardService {
     /// 새 대시보드 서비스 생성
     #[must_use] pub fn new(config: DashboardConfig) -> Self {
@@ -378,6 +378,7 @@ impl RealtimeDashboardService {
 
     /// 성능 메트릭 업데이트
     // REMOVE_CANDIDATE(Phase3): currently unused aggregation routine
+    #[allow(dead_code)]
     async fn update_performance_metrics(
         state: &Arc<RwLock<DashboardState>>,
         chart_data: &Arc<RwLock<RealtimeChartData>>,
@@ -467,6 +468,7 @@ impl RealtimeDashboardService {
 
     /// 차트 데이터 정리
     // REMOVE_CANDIDATE(Phase3): currently unused retention routine
+    #[allow(dead_code)]
     async fn cleanup_chart_data(
         chart_data: &Arc<RwLock<RealtimeChartData>>,
         max_points: usize,
@@ -510,12 +512,9 @@ impl RealtimeDashboardService {
     }
 
     /// Actor 시스템 이벤트 처리 - 실제 크롤링 활동만 차트에 반영
-    pub async fn handle_actor_event(
-        &self,
-        event: crate::crawl_engine::actors::types::AppEvent,
-    ) -> Result<(), String> {
+    pub async fn handle_actor_event(&self, event: AppEvent) -> Result<(), String> {
         match event {
-            crate::crawl_engine::actors::types::AppEvent::SessionStarted {
+            AppEvent::SessionStarted {
                 session_id,
                 config,
                 timestamp,
@@ -537,7 +536,7 @@ impl RealtimeDashboardService {
                     .await
             }
 
-            crate::crawl_engine::actors::types::AppEvent::Progress {
+            AppEvent::Progress {
                 session_id,
                 current_step,
                 total_steps,
@@ -549,42 +548,42 @@ impl RealtimeDashboardService {
                     "📊 Dashboard: Progress update - {}% ({}/{})",
                     percentage, current_step, total_steps
                 );
-
-                let now = timestamp.timestamp();
-                let speed = if current_step > 0 {
-                    f64::from(current_step) / (now as f64 / 60.0) // pages per minute estimate
-                } else {
-                    0.0
+                // Estimate processed pages from percentage and known total_pages
+                let (processed_est, started_at_ts) = {
+                    let sessions = self.active_sessions.read().await;
+                    if let Some(s) = sessions.get(&session_id) {
+                        let total_pages = s.total_pages.max(1);
+                        let est = ((percentage / 100.0) * f64::from(total_pages)).floor() as u32;
+                        (est, s.started_at.timestamp())
+                    } else {
+                        (current_step, timestamp.timestamp())
+                    }
                 };
 
+                // Push charts with a sensible speed based on elapsed from session start
+                let now = timestamp.timestamp();
+                let elapsed_minutes = ((now - started_at_ts) as f64 / 60.0).max(1e-6);
+                let speed_ppm = f64::from(processed_est) / elapsed_minutes;
                 {
                     let mut chart = self.chart_data.write().await;
-                    chart.processing_speed.push(ChartDataPoint {
-                        timestamp: now,
-                        value: speed,
-                        label: None,
-                    });
-
-                    chart.pages_processed.push(ChartDataPoint {
-                        timestamp: now,
-                        value: f64::from(current_step),
-                        label: None,
-                    });
+                    chart.processing_speed.push(ChartDataPoint { timestamp: now, value: speed_ppm, label: None });
+                    chart.pages_processed.push(ChartDataPoint { timestamp: now, value: f64::from(processed_est), label: None });
                 }
 
-                self.update_crawling_progress(
-                    session_id,
-                    "Processing".to_string(),
-                    percentage / 100.0,
-                    percentage / 100.0,
-                    current_step,
-                    0, // URL count will be updated separately
-                    format!("Processing step {} of {}", current_step, total_steps),
-                )
-                .await
+                self
+                    .update_crawling_progress(
+                        session_id,
+                        "Processing".to_string(),
+                        percentage / 100.0,
+                        percentage / 100.0,
+                        processed_est,
+                        0,
+                        format!("Processing ~{}% ({} of {} steps)", percentage, current_step, total_steps),
+                    )
+                    .await
             }
 
-            crate::crawl_engine::actors::types::AppEvent::SessionCompleted {
+            AppEvent::SessionCompleted {
                 session_id,
                 summary,
                 timestamp,
@@ -616,7 +615,7 @@ impl RealtimeDashboardService {
                 .await
             }
 
-            crate::crawl_engine::actors::types::AppEvent::SessionFailed {
+            AppEvent::SessionFailed {
                 session_id,
                 error,
                 timestamp,
@@ -636,6 +635,95 @@ impl RealtimeDashboardService {
 
                 self.complete_crawling_session(session_id, false, 1, Some(error))
                     .await
+            }
+
+            // Update stage and counts with Stage* and report events
+            AppEvent::StageStarted { stage_type, session_id, .. } => {
+                let stage_name = match stage_type {
+                    StageType::StatusCheck => "진단".to_string(),
+                    StageType::ListPageCrawling => "제품 목록 수집".to_string(),
+                    StageType::ProductDetailCrawling => "세부 정보 수집".to_string(),
+                    StageType::DataValidation => "검증".to_string(),
+                    StageType::DataSaving => "저장".to_string(),
+                };
+                self
+                    .update_crawling_progress(
+                        session_id,
+                        stage_name,
+                        0.0,
+                        0.0,
+                        0,
+                        0,
+                        "Stage started".to_string(),
+                    )
+                    .await
+            }
+
+            AppEvent::StageCompleted { stage_type, session_id, result, .. } => {
+                // Use processed items to bump counters; keep overall unchanged
+                let stage_name = match stage_type {
+                    StageType::StatusCheck => "진단".to_string(),
+                    StageType::ListPageCrawling => "제품 목록 수집".to_string(),
+                    StageType::ProductDetailCrawling => "세부 정보 수집".to_string(),
+                    StageType::DataValidation => "검증".to_string(),
+                    StageType::DataSaving => "저장".to_string(),
+                };
+                // Compute new processed_pages as previous + successful_items when applicable
+                let processed_pages = {
+                    let sessions = self.active_sessions.read().await;
+                    sessions
+                        .get(&session_id)
+                        .map(|s| s.processed_pages)
+                        .unwrap_or(0)
+                        .saturating_add(result.successful_items)
+                };
+                self
+                    .update_crawling_progress(
+                        session_id,
+                        stage_name,
+                        0.0,
+                        1.0,
+                        processed_pages,
+                        0,
+                        format!("Stage completed, processed {} items", result.processed_items),
+                    )
+                    .await
+            }
+
+            AppEvent::BatchReport { session_id, pages_success, pages_failed, details_success, .. } => {
+                let processed_pages_delta = pages_success.saturating_add(pages_failed);
+                // Update processed_pages and collected_urls cumulatively
+                let (processed_pages, collected_urls) = {
+                    let sessions = self.active_sessions.read().await;
+                    if let Some(s) = sessions.get(&session_id) {
+                        (s.processed_pages.saturating_add(processed_pages_delta), s.collected_urls.saturating_add(details_success))
+                    } else { (processed_pages_delta, details_success) }
+                };
+                self
+                    .update_crawling_progress(
+                        session_id,
+                        "배치 처리".to_string(),
+                        0.0,
+                        0.0,
+                        processed_pages,
+                        collected_urls,
+                        format!("Batch processed: +{} pages, +{} details", processed_pages_delta, details_success),
+                    )
+                    .await
+            }
+
+            AppEvent::PreflightDiagnostics { session_id, site_total_pages, .. } => {
+                // Update known total_pages so percentage/estimates are correct
+                if let Some(tp) = site_total_pages {
+                    let mut sessions = self.active_sessions.write().await;
+                    if let Some(s) = sessions.get_mut(&session_id) {
+                        s.total_pages = tp;
+                        let mut state = self.state.write().await;
+                        state.active_session = Some(s.clone());
+                        state.last_updated = Utc::now();
+                    }
+                }
+                Ok(())
             }
 
             _ => {

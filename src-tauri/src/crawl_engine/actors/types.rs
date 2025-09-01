@@ -81,31 +81,11 @@ pub enum ActorCommand {
     HealthCheck,
 }
 
-/// Actor 간 전달되는 이벤트
-///
-/// 시스템 상태 변화를 알리는 이벤트들입니다.
-/// 이벤트 드리븐 아키텍처의 핵심 구성 요소입니다.
-/// `ActorContractVersion`: v1
-///
-/// Field policy (timestamps/durations):
-/// - Every Started/Completed/Failed event includes `timestamp`.
-/// - Durations are milliseconds; prefer `duration_ms` for new events.
-/// - Legacy exceptions: `BatchCompleted.duration` (ms), `SyncPageCompleted.ms` (ms).
-///
-/// Core field groups (v2 clarification - additive only):
-/// - Session lifecycle: SessionStarted/Completed/Failed { `session_id`, timestamp }
-/// - Progress: Progress { `session_id`, `current_step`, `total_steps`, percentage }
-/// - Batch: BatchStarted/Completed/Failed { `batch_id`, `session_id`, timestamp }
-/// - Stage: StageStarted/Completed/Failed { `stage_type`, `session_id`, `batch_id`? }
-/// - Persistence diagnostics: `ProductLifecycle` { status, metrics? }, `PersistenceAnomaly` { kind, detail }
-/// - Metrics snapshots: `DatabaseStats` { `total_product_details`, `min_page`, `max_page` }
-/// UI 소비자는 최소 `session_id` + timestamp 조합을 키로 사용하고, 선택적으로 `batch_id` / `stage_type` 으로 세분화 렌더링.
-///
-/// 버전 관리 원칙:
-/// 1. Additive-only (새 이벤트/필드 추가는 허용)
-/// 2. 필드 제거/의미 변경 금지 → 새 필드/이벤트로 교체 후 기존 Deprecated 유지
-/// 3. 버전 증가 조건: UI 분기 필수 스키마 변화(추가 필드가 breaking semantic) 또는 요약(summary) 구조 확장
-/// 4. TS `actorContractVersion.ts` 와 값 동기화 필요
+/// AppEvent: backend actor-to-actor/front-end events (contract v1, additive-only).
+/// - All lifecycle events include `timestamp`.
+/// - Durations use milliseconds; prefer `duration_ms` for new fields.
+/// - Known legacy exceptions exist for compatibility.
+/// For full schema and rationale, see docs/events/events.md.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub enum AppEvent {
@@ -194,6 +174,8 @@ pub enum AppEvent {
     BatchStarted {
         batch_id: String,
         session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_id: Option<String>,
         pages_count: u32,
         timestamp: DateTime<Utc>,
     },
@@ -201,6 +183,8 @@ pub enum AppEvent {
     BatchCompleted {
         batch_id: String,
         session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_id: Option<String>,
         success_count: u32,
         failed_count: u32,
         duration: u64, // Duration을 milliseconds로 변경
@@ -210,6 +194,8 @@ pub enum AppEvent {
     BatchFailed {
         batch_id: String,
         session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_id: Option<String>,
         error: String,
         final_failure: bool,
         timestamp: DateTime<Utc>,
@@ -307,6 +293,8 @@ pub enum AppEvent {
     BatchReport {
         session_id: String,
         batch_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_id: Option<String>,
         pages_total: u32,
         pages_success: u32,
         pages_failed: u32,
@@ -1470,6 +1458,7 @@ mod tests {
         let batch_completed = AppEvent::BatchCompleted {
             batch_id: "b1".to_string(),
             session_id: "s1".to_string(),
+            plan_id: None,
             success_count: 10,
             failed_count: 2,
             duration: 1234,
@@ -1484,6 +1473,7 @@ mod tests {
         let batch_report = AppEvent::BatchReport {
             session_id: "s1".to_string(),
             batch_id: "b1".to_string(),
+            plan_id: None,
             pages_total: 5,
             pages_success: 5,
             pages_failed: 0,
@@ -1516,6 +1506,35 @@ mod tests {
     let payload3 = get_variant_payload(&v3);
     assert!(payload3.get("ms").is_some(), "SyncPageCompleted must have legacy `ms` field");
     assert!(payload3.get("duration_ms").is_none(), "SyncPageCompleted must not rename to duration_ms");
+    }
+
+    #[test]
+    fn test_batch_events_optionally_carry_plan_id() {
+        // BatchStarted with plan_id
+        let ev = AppEvent::BatchStarted {
+            batch_id: "b1".into(),
+            session_id: "s1".into(),
+            plan_id: Some("plan_123".into()),
+            pages_count: 3,
+            timestamp: Utc::now(),
+        };
+        let v: Value = serde_json::to_value(&ev).unwrap();
+        let payload = get_variant_payload(&v);
+        assert_eq!(payload.get("plan_id").and_then(|v| v.as_str()), Some("plan_123"));
+
+        // BatchCompleted without plan_id (None)
+        let ev2 = AppEvent::BatchCompleted {
+            batch_id: "b2".into(),
+            session_id: "s1".into(),
+            plan_id: None,
+            success_count: 2,
+            failed_count: 1,
+            duration: 100,
+            timestamp: Utc::now(),
+        };
+        let v2: Value = serde_json::to_value(&ev2).unwrap();
+        let payload2 = get_variant_payload(&v2);
+        assert!(payload2.get("plan_id").is_none(), "plan_id should be omitted when None");
     }
 
     #[test]
