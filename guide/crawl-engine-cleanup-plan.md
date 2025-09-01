@@ -15,7 +15,6 @@
 
 ## 진행 체크리스트 (살아있는 문서)
 
-- 준비
   - [x] 작업 브랜치 생성: `crawl-engine-cleanup`
   - [x] 최신 main에 변경 반영 및 푸시
   - [ ] 안전망 확인: 기본 빌드/테스트/린트 그린 상태 확인
@@ -26,31 +25,24 @@
     - stages/: mod.rs, strategies/default/*, traits.rs
     - services/: crawling_integration.rs, crawling_planner.rs, data_consistency_checker.rs, data_quality_analyzer.rs, performance_optimizer.rs, planning_service.rs, real_crawling_commands.rs, real_crawling_integration.rs, mod.rs
   - [x] 빈/미사용 스텁 제거: channels/channels.rs, services/services.rs 삭제
-- 얇은 사전 정리(삭제 전용, API 영향 없음)
   - [ ] 명백한 죽은 파일/폴더 제거(주석만, 실험/백업 잔재, 완전히 미사용 테스트 등)
   - [ ] 아카이브 폴더는 유지하되 프로덕션 경로 의존성 차단 확인
   - [ ] 중복 구현/이름만 다른 파일 통합 계획 수립
-- 구조 정리(mod.rs 제거 및 게이트 파일화)
   - [ ] crawl_engine 루트: `src-tauri/src/crawl_engine.rs`에서 하위 모듈 선언 및 재익스포트 정리
   - [ ] 각 디렉토리에서 `mod.rs` 제거, `모듈명.rs`/게이트 파일로 통일
   - [ ] 파일/모듈 이름을 역할 기반으로 정리(예: `actor_system.rs` → `system.rs`)
-- 코드 정리(모듈 단위 반복)
   - [ ] dead_code/unused_imports 제거(도구: rust-analyzer, clippy)
   - [ ] 불필요한 `clone()` 제거: `&T`, `&str`, `&[T]`, `Arc<T>`, `Cow<'_ , T>` 적용
   - [ ] 함수 시그니처 정리: 입력→출력(가능하면 stateless), 명확한 에러 타입
   - [ ] 명확한 네이밍/단일 책임: 거대 파일 분리 또는 공통부 통합
-- 횡단 관심사 정리
   - [ ] PlanningService/Strategy 패턴 정착(자동/수동/재개 전략 확장 용이)
   - [ ] CrawlingPolicy 명시화: 재시도/중복/성능 옵션을 구조체로 관리하고 ExecutionPlan에 포함
-- 타입/프론트 연동
   - [x] ts-rs 기반 타입 자동 생성 재검증(`scripts/generate_types.sh`)
   - [x] 타입 변경 시 생성물 갱신 및 FE 타입 정합성 확인(프로젝트 TS 타입체크 실행)
 - 품질 게이트
   - [ ] cargo check
   - [ ] cargo test --all-features
   - [ ] cargo clippy --all-targets -- -D warnings
-    - 현 상태: clippy 경고 다수 존재(범위: commands/*, bin/* 중심). crawl_engine 모듈 리팩토링 중 단계적으로 해결 예정.
-  - [ ] (선택) cargo +nightly udeps — 미사용 의존성 제거
 
 ## 제안 구조(타깃)
 

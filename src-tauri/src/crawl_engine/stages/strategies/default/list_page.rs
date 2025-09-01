@@ -15,12 +15,20 @@ impl StageLogic for ListPageLogic {
 
     async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
         let start = std::time::Instant::now();
-        let st = input.stage_type.clone();
+        // Destructure to move owned fields we need without cloning
+        let StageInput {
+            stage_type: st,
+            item,
+            config,
+            deps,
+            total_pages_hint,
+            products_on_last_page_hint,
+        } = input;
         if !matches!(st, ActorStageType::ListPageCrawling) {
             return Err(StageLogicError::Unsupported(st));
         }
-        let page_number = match &input.item {
-            StageItem::Page(p) => *p,
+        let page_number = match item {
+            StageItem::Page(p) => p,
             other => {
                 return Err(StageLogicError::Internal(format!(
                     "ListPageLogic received unexpected item: {:?}",
@@ -30,29 +38,29 @@ impl StageLogic for ListPageLogic {
         };
 
         let cfg = crate::infrastructure::crawling_service_impls::CollectorConfig {
-            max_concurrent: input.config.user.crawling.workers.list_page_max_concurrent as u32,
-            concurrency: input.config.user.crawling.workers.list_page_max_concurrent as u32,
-            delay_between_requests: std::time::Duration::from_millis(input.config.user.request_delay_ms),
-            delay_ms: input.config.user.request_delay_ms,
-            batch_size: input.config.user.batch.batch_size,
-            retry_attempts: input.config.user.crawling.workers.max_retries,
-            retry_max: input.config.user.crawling.workers.max_retries,
+            max_concurrent: config.user.crawling.workers.list_page_max_concurrent as u32,
+            concurrency: config.user.crawling.workers.list_page_max_concurrent as u32,
+            delay_between_requests: std::time::Duration::from_millis(config.user.request_delay_ms),
+            delay_ms: config.user.request_delay_ms,
+            batch_size: config.user.batch.batch_size,
+            retry_attempts: config.user.crawling.workers.max_retries,
+            retry_max: config.user.crawling.workers.max_retries,
         };
-        let collector: Arc<dyn ProductListCollector> = if let Some(fake) = &input.deps.list_collector {
+        let collector: Arc<dyn ProductListCollector> = if let Some(fake) = &deps.list_collector {
             Arc::clone(fake)
         } else {
             Arc::new(
                 crate::infrastructure::crawling_service_impls::ProductListCollectorImpl::new(
-                    Arc::clone(&input.deps.http),
-                    Arc::clone(&input.deps.extractor),
+                    Arc::clone(&deps.http),
+                    Arc::clone(&deps.extractor),
                     cfg,
                     // Provide a lightweight StatusChecker if needed internally by collector
                     Arc::new(
                         crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
-                            (*input.deps.http).clone(),
-                            (*input.deps.extractor).clone(),
-                            input.config.clone(),
-                            Arc::clone(&input.deps.repo),
+                            (*deps.http).clone(),
+                            (*deps.extractor).clone(),
+                            config.clone(),
+                            Arc::clone(&deps.repo),
                         ),
                     ),
                 ),
@@ -60,10 +68,10 @@ impl StageLogic for ListPageLogic {
         };
 
         // Prefer hints to avoid extra status calls
-        let (total_pages, products_on_last_page) = match (input.total_pages_hint, input.products_on_last_page_hint) {
+    let (total_pages, products_on_last_page) = match (total_pages_hint, products_on_last_page_hint) {
             (Some(tp), Some(plp)) => (tp, plp),
             _ => (
-                input.config.user.crawling.page_range_limit.max(1),
+        config.user.crawling.page_range_limit.max(1),
                 12u32.min(crate::domain::constants::site::PRODUCTS_PER_PAGE as u32),
             ),
         };
@@ -77,7 +85,7 @@ impl StageLogic for ListPageLogic {
         }
         let json = serde_json::to_string(&urls).map_err(|e| StageLogicError::Internal(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
-        let result = StageItemResult {
+    let result = StageItemResult {
             item_id: format!("page_{}", page_number),
             item_type: StageItemType::Page { page_number },
             success: true,

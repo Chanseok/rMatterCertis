@@ -9,13 +9,13 @@ impl StageLogic for DataValidationLogic {
     fn name(&self) -> &'static str { "DataValidationLogic" }
 
     async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
-        let st = input.stage_type.clone();
+        let StageInput { stage_type: st, item, .. } = input;
         if !matches!(st, ActorStageType::DataValidation) {
             return Err(StageLogicError::Unsupported(st));
         }
         use crate::crawl_engine::services::data_quality_analyzer::DataQualityAnalyzer;
-        let details_vec: Vec<crate::domain::product::ProductDetail> = match &input.item {
-            ch::StageItem::ProductDetails(pd) => pd.products.clone(),
+        let details_vec: Vec<crate::domain::product::ProductDetail> = match item {
+            ch::StageItem::ProductDetails(pd) => pd.products,
             other => {
                 return Err(StageLogicError::Internal(format!(
                     "DataValidation expected ProductDetails, got {:?}",

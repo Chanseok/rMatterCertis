@@ -12,12 +12,12 @@ impl StageLogic for ProductDetailLogic {
     fn name(&self) -> &'static str { "ProductDetailLogic" }
 
     async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
-        let st = input.stage_type.clone();
+        let StageInput { stage_type: st, item, config, deps, .. } = input;
         if !matches!(st, ActorStageType::ProductDetailCrawling) {
             return Err(StageLogicError::Unsupported(st));
         }
-        let urls = match &input.item {
-            ch::StageItem::ProductUrls(u) => u.clone(),
+        let urls = match item {
+            ch::StageItem::ProductUrls(u) => u,
             other => {
                 return Err(StageLogicError::Internal(format!(
                     "ProductDetailLogic expected ProductUrls, got {:?}",
@@ -25,21 +25,21 @@ impl StageLogic for ProductDetailLogic {
                 )));
             }
         };
-        let collector: Arc<dyn ProductDetailCollector> = if let Some(fake) = &input.deps.detail_collector {
+        let collector: Arc<dyn ProductDetailCollector> = if let Some(fake) = &deps.detail_collector {
             Arc::clone(fake)
         } else {
             Arc::new(
                 crate::infrastructure::crawling_service_impls::ProductDetailCollectorImpl::new(
-                    Arc::clone(&input.deps.http),
-                    Arc::clone(&input.deps.extractor),
+                    Arc::clone(&deps.http),
+                    Arc::clone(&deps.extractor),
                     crate::infrastructure::crawling_service_impls::CollectorConfig {
-                        max_concurrent: input.config.user.crawling.workers.product_detail_max_concurrent as u32,
-                        concurrency: input.config.user.crawling.workers.product_detail_max_concurrent as u32,
-                        delay_between_requests: std::time::Duration::from_millis(input.config.user.request_delay_ms),
-                        delay_ms: input.config.user.request_delay_ms,
-                        batch_size: input.config.user.batch.batch_size,
-                        retry_attempts: input.config.user.crawling.workers.max_retries,
-                        retry_max: input.config.user.crawling.workers.max_retries,
+                        max_concurrent: config.user.crawling.workers.product_detail_max_concurrent as u32,
+                        concurrency: config.user.crawling.workers.product_detail_max_concurrent as u32,
+                        delay_between_requests: std::time::Duration::from_millis(config.user.request_delay_ms),
+                        delay_ms: config.user.request_delay_ms,
+                        batch_size: config.user.batch.batch_size,
+                        retry_attempts: config.user.crawling.workers.max_retries,
+                        retry_max: config.user.crawling.workers.max_retries,
                     },
                 ),
             )

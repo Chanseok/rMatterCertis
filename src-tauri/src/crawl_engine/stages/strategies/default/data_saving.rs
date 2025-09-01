@@ -9,12 +9,12 @@ impl StageLogic for DataSavingLogic {
     fn name(&self) -> &'static str { "DataSavingLogic" }
 
     async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
-        let st = input.stage_type.clone();
+        let StageInput { stage_type: st, item, deps, .. } = input;
         if !matches!(st, ActorStageType::DataSaving) {
             return Err(StageLogicError::Unsupported(st));
         }
         // Select products vector based on item type
-        let (products, item_id, item_type) = match &input.item {
+        let (products, item_id, item_type) = match &item {
             ch::StageItem::ProductDetails(pd) => (
                 &pd.products,
                 format!("persist_product_details_{}", pd.products.len()),
@@ -34,8 +34,8 @@ impl StageLogic for DataSavingLogic {
         };
 
         // Persist each product detail; count inserts/updates using repository helpers
-        let repo = input.deps.repo;
-        let policy = input.deps.duplicate_policy.clone();
+    let repo = deps.repo;
+    let policy = deps.duplicate_policy.clone();
         let mut inserted: u32 = 0;
         let mut updated: u32 = 0;
         for detail in products {
