@@ -8,12 +8,17 @@ use crate::application::shared_state::SharedStateCache;
 use crate::application::state::AppState;
 use crate::infrastructure::IntegratedProductRepository;
 use crate::types::frontend_api::{ApiResponse, SiteStatusInfo, ProductPage, ProductInfo, DatabaseStats}; // trait import for check_site_status
+use crate::application::shared_state::SiteAnalysisResult;
+use crate::domain::constants::site;
 
 /// Advanced Crawling Engine 사이트 상태 확인 (실제 구현)
 #[command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if configuration, HTTP, or database operations fail during site status check.
 pub async fn check_advanced_site_status(
     app: AppHandle,
-    _app_state: State<'_, AppState>,
+    #[allow(clippy::used_underscore_binding)] _app_state: State<'_, AppState>,
     shared_state: State<'_, SharedStateCache>,
 ) -> Result<ApiResponse<SiteStatusInfo>, String> {
     info!("🌐 Advanced site status check requested");
@@ -49,8 +54,6 @@ pub async fn check_advanced_site_status(
     // 진행 로그만 남깁니다 (actor-event 브릿지가 진짜 진행 이벤트를 처리합니다)
 
     // 실제 사이트 상태 분석 (system_analysis 로직 재사용 경량 버전)
-    use crate::application::shared_state::SiteAnalysisResult;
-    use crate::domain::constants::site;
     // 1. 구성 로드 및 의존성 생성
     let config_manager = crate::infrastructure::config::ConfigManager::new()
         .map_err(|e| format!("Config init failed: {}", e))?;
@@ -127,11 +130,14 @@ pub async fn check_advanced_site_status(
 
 /// 최근 제품 목록 조회 (실제 데이터베이스)
 #[command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if database queries fail.
 pub async fn get_recent_products(
     page: Option<u32>,
     limit: Option<u32>,
     app_state: State<'_, AppState>,
-    _shared_state: State<'_, SharedStateCache>,
+    #[allow(clippy::used_underscore_binding)] _shared_state: State<'_, SharedStateCache>,
 ) -> Result<ApiResponse<ProductPage>, String> {
     let page = page.unwrap_or(1);
     let limit = limit.unwrap_or(20);
@@ -154,8 +160,10 @@ pub async fn get_recent_products(
     let product_repo = IntegratedProductRepository::new(database_pool);
 
     // 실제 데이터베이스에서 제품 목록 조회
+    let page_i32 = i32::try_from(page).unwrap_or(i32::MAX);
+    let limit_i32 = i32::try_from(limit).unwrap_or(i32::MAX);
     match product_repo
-        .get_products_paginated(page as i32, limit as i32)
+        .get_products_paginated(page_i32, limit_i32)
         .await
     {
         Ok(products) => {
@@ -184,7 +192,7 @@ pub async fn get_recent_products(
 
             // 총 제품 수 조회
             let total_items = match product_repo.get_product_count().await {
-                Ok(count) => count as u32,
+                Ok(count) => u32::try_from(count).unwrap_or(0),
                 Err(e) => {
                     warn!("Failed to get total product count: {}", e);
                     0
@@ -216,9 +224,12 @@ pub async fn get_recent_products(
 
 /// 데이터베이스 통계 조회 (실제 데이터베이스)
 #[command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if database queries fail.
 pub async fn get_database_stats(
     app_state: State<'_, AppState>,
-    _shared_state: State<'_, SharedStateCache>,
+    #[allow(clippy::used_underscore_binding)] _shared_state: State<'_, SharedStateCache>,
 ) -> Result<ApiResponse<DatabaseStats>, String> {
     info!("📊 Fetching real database statistics");
 
@@ -239,7 +250,7 @@ pub async fn get_database_stats(
         Ok(_db_stats) => {
             // 총 제품 수 조회
             let total_products = match product_repo.get_product_count().await {
-                Ok(count) => count as u32,
+                Ok(count) => u32::try_from(count).unwrap_or(0),
                 Err(e) => {
                     warn!("Failed to get product count: {}", e);
                     0

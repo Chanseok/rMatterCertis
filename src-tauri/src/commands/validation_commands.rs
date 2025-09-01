@@ -218,6 +218,9 @@ where
 /// 5. Cross-check DB (url, page_id, index_in_page) -> record divergences
 /// 6. Emit AppEvent stream reflecting progress & findings
 #[tauri::command(async)]
+/// # Errors
+/// Returns an error string if HTTP operations, parsing, or database interactions fail.
+#[allow(clippy::used_underscore_binding)]
 pub async fn start_validation(
     app: AppHandle,
     app_state: State<'_, crate::application::AppState>,
@@ -252,64 +255,68 @@ pub async fn start_validation(
         Some((start_physical_page, end_physical_page))
     } else {
         // If numeric args missing, try parsing from ranges_expr as a fallback for robustness
-        if let Some(expr_raw) = ranges_expr
+        ranges_expr
             .as_ref()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-        {
-            // Parse first valid token from comma-separated list. Accept "a-b", "a~b", or single number "n".
-            let tokens: Vec<String> = expr_raw
-                .split(',')
-                .map(str::trim)
-                .filter(|t| !t.is_empty())
-                .map(|t| {
-                    let s = t.replace(char::is_whitespace, "");
-                    // Normalize unicode dashes to '-'
-                    let s = s
-                        .replace(['–', '—', '−', '﹣', '－'], "-");
-                    // Normalize unicode tildes to '~'
-                    
-                    s.replace(['〜', '～'], "~")
-                })
-                .collect();
-            debug!("ranges_expr tokens(normalized)={:?}", tokens);
-            let mut parsed: Option<(u32, u32)> = None;
-            for norm in tokens {
-                let (sep_dash, sep_tilde) = (norm.contains('-'), norm.contains('~'));
-                if sep_dash || sep_tilde {
-                    let parts: Vec<&str> = norm.split(if sep_tilde { '~' } else { '-' }).collect();
-                    if parts.len() == 2 {
-                        if let (Ok(a), Ok(b)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
-                            let start = a.max(b);
-                            let end = a.min(b);
-                            parsed = Some((start, end));
+            .map_or_else(
+                || {
+                    info!(
+                        "No explicit range provided; will compute dynamic default window after site discovery"
+                    );
+                    None
+                },
+                |expr_raw| {
+                    // Parse first valid token from comma-separated list. Accept "a-b", "a~b", or single number "n".
+                    let tokens: Vec<String> = expr_raw
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                        .map(|t| {
+                            let s = t.replace(char::is_whitespace, "");
+                            // Normalize unicode dashes to '-'
+                            let s = s.replace(['–', '—', '−', '﹣', '－'], "-");
+                            // Normalize unicode tildes to '~'
+                            s.replace(['〜', '～'], "~")
+                        })
+                        .collect();
+                    debug!("ranges_expr tokens(normalized)={:?}", tokens);
+                    let mut parsed: Option<(u32, u32)> = None;
+                    for norm in tokens {
+                        let (sep_dash, sep_tilde) = (norm.contains('-'), norm.contains('~'));
+                        if sep_dash || sep_tilde {
+                            let parts: Vec<&str> =
+                                norm.split(if sep_tilde { '~' } else { '-' }).collect();
+                            if parts.len() == 2 {
+                                if let (Ok(a), Ok(b)) =
+                                    (parts[0].parse::<u32>(), parts[1].parse::<u32>())
+                                {
+                                    let start = a.max(b);
+                                    let end = a.min(b);
+                                    parsed = Some((start, end));
+                                    break;
+                                }
+                            }
+                        } else if let Ok(n) = norm.parse::<u32>() {
+                            // single page token
+                            parsed = Some((n, n));
                             break;
                         }
                     }
-                } else if let Ok(n) = norm.parse::<u32>() {
-                    // single page token
-                    parsed = Some((n, n));
-                    break;
-                }
-            }
-            if let Some((s, e)) = parsed {
-                info!(
-                    "Parsed explicit range from ranges_expr fallback: {} -> {}",
-                    s, e
-                );
-                Some((Some(s), Some(e)))
-            } else {
-                info!(
-                    "No explicit range provided (ranges_expr parse failed or empty); will compute dynamic default window after site discovery"
-                );
-                None
-            }
-        } else {
-            info!(
-                "No explicit range provided; will compute dynamic default window after site discovery"
-            );
-            None
-        }
+                    if let Some((s, e)) = parsed {
+                        info!(
+                            "Parsed explicit range from ranges_expr fallback: {} -> {}",
+                            s, e
+                        );
+                        Some((Some(s), Some(e)))
+                    } else {
+                        info!(
+                            "No explicit range provided (ranges_expr parse failed or empty); will compute dynamic default window after site discovery"
+                        );
+                        None
+                    }
+                },
+            )
     };
     let session_id = format!("validation-{}", Utc::now().format("%Y%m%d%H%M%S"));
     let started = std::time::Instant::now();

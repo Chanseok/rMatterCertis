@@ -26,6 +26,8 @@ impl Default for PerformanceOptimizerState {
 
 /// 🔧 성능 최적화 서비스 초기화
 #[tauri::command]
+/// # Errors
+/// Returns an error string if initialization fails unexpectedly.
 pub async fn init_performance_optimizer(app: AppHandle) -> Result<String, String> {
     info!("🔧 Initializing performance optimizer");
 
@@ -37,8 +39,10 @@ pub async fn init_performance_optimizer(app: AppHandle) -> Result<String, String
 
     // 상태에 저장
     let optimizer_state = app.state::<PerformanceOptimizerState>();
-    let mut optimizer_lock = optimizer_state.optimizer.write().await;
-    *optimizer_lock = Some(optimizer);
+    {
+        let mut guard = optimizer_state.optimizer.write().await;
+        *guard = Some(optimizer);
+    }
 
     info!("✅ Performance optimizer initialized successfully");
     Ok("Performance optimizer initialized".to_string())
@@ -46,12 +50,13 @@ pub async fn init_performance_optimizer(app: AppHandle) -> Result<String, String
 
 /// 📊 현재 성능 메트릭 조회
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the performance optimizer hasn't been initialized.
 pub async fn get_current_performance_metrics(
     optimizer_state: State<'_, PerformanceOptimizerState>,
 ) -> Result<Option<CrawlingPerformanceMetrics>, String> {
-    let optimizer_lock = optimizer_state.optimizer.read().await;
-
-    if let Some(optimizer) = optimizer_lock.as_ref() {
+    if let Some(optimizer) = optimizer_state.optimizer.read().await.as_ref() {
         return Ok(optimizer.get_current_metrics().await);
     }
     Err("Performance optimizer not initialized".to_string())
@@ -59,12 +64,13 @@ pub async fn get_current_performance_metrics(
 
 /// 💡 최적화 추천사항 조회
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the performance optimizer hasn't been initialized.
 pub async fn get_optimization_recommendation(
     optimizer_state: State<'_, PerformanceOptimizerState>,
 ) -> Result<Option<OptimizationRecommendation>, String> {
-    let optimizer_lock = optimizer_state.optimizer.read().await;
-
-    if let Some(optimizer) = optimizer_lock.as_ref() {
+    if let Some(optimizer) = optimizer_state.optimizer.read().await.as_ref() {
         return Ok(optimizer.get_optimization_recommendation().await);
     }
     Err("Performance optimizer not initialized".to_string())
@@ -72,12 +78,13 @@ pub async fn get_optimization_recommendation(
 
 /// 📈 성능 히스토리 조회
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the performance optimizer hasn't been initialized.
 pub async fn get_performance_history(
     optimizer_state: State<'_, PerformanceOptimizerState>,
 ) -> Result<Vec<CrawlingPerformanceMetrics>, String> {
-    let optimizer_lock = optimizer_state.optimizer.read().await;
-
-    if let Some(optimizer) = optimizer_lock.as_ref() {
+    if let Some(optimizer) = optimizer_state.optimizer.read().await.as_ref() {
         return Ok(optimizer.get_performance_history().await);
     }
     Err("Performance optimizer not initialized".to_string())
@@ -85,12 +92,13 @@ pub async fn get_performance_history(
 
 /// 🧹 성능 히스토리 초기화
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the performance optimizer hasn't been initialized.
 pub async fn clear_performance_history(
     optimizer_state: State<'_, PerformanceOptimizerState>,
 ) -> Result<String, String> {
-    let optimizer_lock = optimizer_state.optimizer.read().await;
-
-    if let Some(optimizer) = optimizer_lock.as_ref() {
+    if let Some(optimizer) = optimizer_state.optimizer.read().await.as_ref() {
         optimizer.clear_performance_history().await;
         return Ok("Performance history cleared".to_string());
     }
@@ -99,13 +107,14 @@ pub async fn clear_performance_history(
 
 /// 🔄 성능 최적화 세션 시작
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the performance optimizer hasn't been initialized.
 pub async fn start_performance_session(
     session_id: String,
     optimizer_state: State<'_, PerformanceOptimizerState>,
 ) -> Result<String, String> {
-    let optimizer_lock = optimizer_state.optimizer.read().await;
-
-    if let Some(optimizer) = optimizer_lock.as_ref() {
+    if let Some(optimizer) = optimizer_state.optimizer.read().await.as_ref() {
         optimizer.start_session(session_id.clone()).await;
         info!(session_id = %session_id, "🔄 Performance optimization session started");
         return Ok(format!("Performance session started: {}", session_id));
@@ -115,12 +124,13 @@ pub async fn start_performance_session(
 
 /// ⏹️ 성능 최적화 세션 종료
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the performance optimizer hasn't been initialized.
 pub async fn end_performance_session(
     optimizer_state: State<'_, PerformanceOptimizerState>,
 ) -> Result<String, String> {
-    let optimizer_lock = optimizer_state.optimizer.read().await;
-
-    if let Some(optimizer) = optimizer_lock.as_ref() {
+    if let Some(optimizer) = optimizer_state.optimizer.read().await.as_ref() {
         optimizer.end_session().await;
         info!("⏹️ Performance optimization session ended");
         return Ok("Performance session ended".to_string());
@@ -129,6 +139,8 @@ pub async fn end_performance_session(
 }
 
 /// 📊 성능 메트릭 기록 (내부용)
+/// # Errors
+/// Returns an error string if the performance optimizer hasn't been initialized.
 pub async fn record_performance_metrics(
     app: &AppHandle,
     response_time_ms: u64,
@@ -138,9 +150,7 @@ pub async fn record_performance_metrics(
     network_error: bool,
 ) -> Result<(), String> {
     let optimizer_state = app.state::<PerformanceOptimizerState>();
-    let optimizer_lock = optimizer_state.optimizer.read().await;
-
-    if let Some(optimizer) = optimizer_lock.as_ref() {
+    if let Some(optimizer) = optimizer_state.optimizer.read().await.as_ref() {
         optimizer
             .record_metrics(
                 response_time_ms,

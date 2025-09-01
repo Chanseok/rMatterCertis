@@ -67,7 +67,6 @@ impl ActorEventBridge {
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
                     warn!("Actor event bridge lagged, skipped {} events", skipped);
-                    continue;
                 }
             }
         }

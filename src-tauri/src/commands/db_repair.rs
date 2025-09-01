@@ -21,10 +21,14 @@ pub struct ProductsToDetailsSyncReport {
 /// - Updates coordinates when they differ or are NULL
 /// - Regenerates id as p%04di%02d when page_id/index_in_page are set and id is NULL or mismatched
 #[tauri::command(async)]
+/// # Errors
+/// Returns an error string if database operations fail.
+#[allow(clippy::used_underscore_binding)]
 pub async fn sync_product_details_coordinates(
-    _app: AppHandle,
+    app: AppHandle,
     app_state: State<'_, AppState>,
 ) -> Result<ProductsToDetailsSyncReport, String> {
+    let _ = app;
     let pool = app_state
         .get_database_pool()
         .await
@@ -176,15 +180,16 @@ pub async fn sync_product_details_coordinates(
     tx.commit().await.map_err(|e| e.to_string())?;
 
     Ok(ProductsToDetailsSyncReport {
-        total_products: total_products as u64,
-        total_details: total_details as u64,
+        total_products: u64::try_from(total_products).unwrap_or_default(),
+        total_details: u64::try_from(total_details).unwrap_or_default(),
         updated_product_ids,
         inserted_details,
         updated_coordinates,
         updated_ids,
         duplicates_neutralized: Some(duplicates_neutralized),
-        details_align_skipped_due_to_slot_taken: Some(
-            details_align_skipped_due_to_slot_taken as u64,
-        ),
+        details_align_skipped_due_to_slot_taken: Some(u64::try_from(
+            details_align_skipped_due_to_slot_taken,
+        )
+        .unwrap_or_default()),
     })
 }

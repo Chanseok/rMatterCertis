@@ -27,6 +27,8 @@ impl Default for DashboardServiceState {
 
 /// 🎨 대시보드 서비스 초기화
 #[tauri::command]
+/// # Errors
+/// Returns an error string if initialization fails.
 pub async fn init_dashboard_service(app: AppHandle) -> Result<String, String> {
     // 이미 초기화되었는지 확인
     let dashboard_state = app.state::<DashboardServiceState>();
@@ -88,8 +90,10 @@ pub async fn init_dashboard_service(app: AppHandle) -> Result<String, String> {
 
     // 상태에 저장
     let dashboard_state = app.state::<DashboardServiceState>();
-    let mut service_lock = dashboard_state.service.write().await;
-    *service_lock = Some(dashboard_service.clone());
+    {
+        let mut guard = dashboard_state.service.write().await;
+        *guard = Some(dashboard_service.clone());
+    }
 
     // 이벤트 리스너 시작
     start_dashboard_event_listener(app.clone(), dashboard_service.clone()).await;
@@ -100,12 +104,13 @@ pub async fn init_dashboard_service(app: AppHandle) -> Result<String, String> {
 
 /// 📊 대시보드 상태 조회
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the dashboard service hasn't been initialized.
 pub async fn get_dashboard_state(
     dashboard_state: State<'_, DashboardServiceState>,
 ) -> Result<DashboardState, String> {
-    let service_lock = dashboard_state.service.read().await;
-
-    if let Some(service) = service_lock.as_ref() {
+    if let Some(service) = dashboard_state.service.read().await.as_ref() {
         Ok(service.get_dashboard_state().await)
     } else {
         Err("Dashboard service not initialized".to_string())
@@ -114,13 +119,14 @@ pub async fn get_dashboard_state(
 
 /// 📈 실시간 차트 데이터 조회
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the dashboard service hasn't been initialized.
 pub async fn get_chart_data(
     metric_type: String,
     dashboard_state: State<'_, DashboardServiceState>,
 ) -> Result<Vec<ChartDataPoint>, String> {
-    let service_lock = dashboard_state.service.read().await;
-
-    if let Some(service) = service_lock.as_ref() {
+    if let Some(service) = dashboard_state.service.read().await.as_ref() {
         let chart_data = service.get_chart_data().await;
 
         // 메트릭 타입에 따라 해당 데이터 반환
@@ -152,9 +158,7 @@ pub async fn start_dashboard_crawling_session(
     total_pages: u32,
     dashboard_state: State<'_, DashboardServiceState>,
 ) -> Result<String, String> {
-    let service_lock = dashboard_state.service.read().await;
-
-    if let Some(service) = service_lock.as_ref() {
+    if let Some(service) = dashboard_state.service.read().await.as_ref() {
         // 대시보드 추적만 시작 (실제 크롤링은 통합 명령 사용)
         service
             .start_crawling_session(session_id.clone(), total_pages)
@@ -170,6 +174,10 @@ pub async fn start_dashboard_crawling_session(
 
 /// 📊 크롤링 진행 상황 업데이트 (대시보드 연동)
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+#[allow(clippy::too_many_arguments)]
+/// # Errors
+/// Returns an error string if the dashboard service hasn't been initialized.
 pub async fn update_dashboard_progress(
     session_id: String,
     stage: String,
@@ -180,9 +188,7 @@ pub async fn update_dashboard_progress(
     status_message: String,
     dashboard_state: State<'_, DashboardServiceState>,
 ) -> Result<String, String> {
-    let service_lock = dashboard_state.service.read().await;
-
-    if let Some(service) = service_lock.as_ref() {
+    if let Some(service) = dashboard_state.service.read().await.as_ref() {
         service
             .update_crawling_progress(
                 session_id,
@@ -202,6 +208,9 @@ pub async fn update_dashboard_progress(
 
 /// ✅ 크롤링 세션 완료 (대시보드 연동)
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the dashboard service hasn't been initialized.
 pub async fn complete_dashboard_crawling_session(
     session_id: String,
     success: bool,
@@ -209,9 +218,7 @@ pub async fn complete_dashboard_crawling_session(
     final_message: Option<String>,
     dashboard_state: State<'_, DashboardServiceState>,
 ) -> Result<String, String> {
-    let service_lock = dashboard_state.service.read().await;
-
-    if let Some(service) = service_lock.as_ref() {
+    if let Some(service) = dashboard_state.service.read().await.as_ref() {
         service
             .complete_crawling_session(session_id.clone(), success, error_count, final_message)
             .await?;
@@ -223,6 +230,8 @@ pub async fn complete_dashboard_crawling_session(
 
 /// 🔄 대시보드와 실제 크롤링 통합 테스트
 #[tauri::command]
+/// # Errors
+/// Returns an error string if the dashboard service isn't initialized or operations fail.
 pub async fn test_dashboard_integration(
     app: AppHandle,
     test_pages: Option<u32>,
@@ -336,6 +345,8 @@ async fn start_dashboard_event_listener(
 
 /// 🎯 통합 대시보드 데모 (모든 기능 시연)
 #[tauri::command]
+/// # Errors
+/// Returns an error string if initialization fails.
 pub async fn run_dashboard_demo(app: AppHandle) -> Result<String, String> {
     info!("🎯 Starting comprehensive dashboard demo");
 

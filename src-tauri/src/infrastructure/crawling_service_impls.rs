@@ -1929,7 +1929,6 @@ impl ProductListCollector for ProductListCollectorImpl {
                 }
                 Err(e) => {
                     error!("❌ Failed to collect page {}: {}", page, e);
-                    continue;
                 }
             }
         }
@@ -3021,7 +3020,6 @@ impl ProductDetailCollectorImpl {
                             if attempts < max_retries {
                                 tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts)))
                                     .await;
-                                continue;
                             } else {
                                 let _ = event_tx.send(ProductDetailEvent::TaskFailed {
                                     product_url: url.clone(),
@@ -3036,7 +3034,6 @@ impl ProductDetailCollectorImpl {
                     Err(e) => {
                         if attempts < max_retries {
                             tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts))).await;
-                            continue;
                         } else {
                             let _ = event_tx.send(ProductDetailEvent::TaskFailed {
                                 product_url: url.clone(),

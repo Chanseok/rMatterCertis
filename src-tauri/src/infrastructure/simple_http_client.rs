@@ -684,7 +684,6 @@ impl HttpClient {
                                 return Err(anyhow!("Request cancelled during backoff"));
                             }
                         }
-                        continue;
                     }
                 }
             }
@@ -797,7 +796,6 @@ impl HttpClient {
                             attempt, self.config.max_retries, delay_secs, jitter_ms, url
                         );
                         tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
-                        continue;
                     }
                 }
             }
@@ -1078,7 +1076,7 @@ mod tests {
         let results = futures::future::join_all(handles).await;
         let duration = start.elapsed();
 
-        let successful_requests = results.into_iter().filter(std::result::Result::is_ok).count();
+    let successful_requests = results.into_iter().flatten().count();
 
         println!("Rate Limiter Test ({} RPS):", rps);
         println!(
@@ -1088,9 +1086,11 @@ mod tests {
         );
         println!("- {} requests were successful.", successful_requests);
 
-        let expected_duration_min = (num_requests as f32 / rps as f32) * 0.8; // Allow some bursting
+    #[allow(clippy::cast_precision_loss)]
+    let expected_duration_min = (num_requests as f32 / rps as f32) * 0.8; // Allow some bursting
         // CI/network variability can be high; allow a generous upper bound
-        let expected_duration_max = (num_requests as f32 / rps as f32) * 2.5; // Allow for higher latency
+    #[allow(clippy::cast_precision_loss)]
+    let expected_duration_max = (num_requests as f32 / rps as f32) * 2.5; // Allow for higher latency
 
         assert!(successful_requests > 0);
         if duration.as_secs_f32() <= expected_duration_min {

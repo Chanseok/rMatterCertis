@@ -74,7 +74,6 @@ impl IntegratedContext {
     }
 
     /// 설정 기반 유틸리티 메서드들
-
     /// 현재 컨텍스트의 재시도 정책 가져오기
     #[must_use] pub fn get_retry_policy(&self, stage_type: &str) -> &RetryPolicy {
         match stage_type {

@@ -58,8 +58,12 @@ pub struct PrepassSummary {
 /// - For terminal group (page_id == max_page_id_db): indices must be contiguous starting from 0 (0..count-1)
 /// - index_in_page must be within [0, 11]
 #[tauri::command(async)]
+/// # Errors
+/// Returns an error string if the database pool cannot be obtained or a query fails.
+/// # Panics
+/// Panics if internal aggregation assumes at least one page group while `by_pid` is empty; guarded by early return.
 pub async fn scan_db_pagination_mismatches(
-    _app: AppHandle,
+    app: AppHandle,
     app_state: State<'_, AppState>,
 ) -> Result<DbPaginationMismatchReport, String> {
     info!(target: "db_diagnostics", "scan_db_pagination_mismatches: start");
@@ -135,7 +139,7 @@ pub async fn scan_db_pagination_mismatches(
                 .await
                 .map_err(|e| format!("Prepass alignment failed: {e}"))?;
         prepass.details_aligned = res1.rows_affected();
-        prepass.details_align_skipped_due_to_slot_taken = Some(res0 as u64);
+    prepass.details_align_skipped_due_to_slot_taken = Some(u64::try_from(res0).unwrap_or_default());
         debug!(target: "db_diagnostics", details_aligned = prepass.details_aligned, "prepass: details aligned");
 
         // 2) Backfill products.id from product_details.id when NULL/empty
@@ -167,7 +171,7 @@ pub async fn scan_db_pagination_mismatches(
     let mut total_pages_site: Option<u32> = None;
     let mut items_on_last_page: Option<u32> = None;
 
-    if let Some(cache_state) = _app.try_state::<SharedStateCache>() {
+    if let Some(cache_state) = app.try_state::<SharedStateCache>() {
         if let Some(site) = cache_state.get_valid_site_analysis_async(Some(10)).await {
             total_pages_site = Some(site.total_pages);
             items_on_last_page = Some(site.products_on_last_page);
@@ -186,7 +190,7 @@ pub async fn scan_db_pagination_mismatches(
         .fetch_one(&pool)
         .await
     {
-        total_products = c as u64;
+        total_products = u64::try_from(c).unwrap_or_default();
     }
 
     // Fetch url, page_id, index_in_page; ignore rows with NULL url
@@ -203,8 +207,10 @@ pub async fn scan_db_pagination_mismatches(
         let url: String = r.try_get("url").unwrap_or_default();
         let pid_opt: Option<i64> = r.try_get("page_id").ok();
         let idx_opt: Option<i64> = r.try_get("index_in_page").ok();
-        let pid = pid_opt.unwrap_or(-1) as i32;
-        let idx = idx_opt.map(|v| v as i32);
+        let pid = pid_opt
+            .and_then(|v| i32::try_from(v).ok())
+            .unwrap_or(-1);
+        let idx = idx_opt.and_then(|v| i32::try_from(v).ok());
         let entry = by_pid.entry(pid).or_default();
         entry.push((url, idx));
         // track out-of-range
@@ -232,18 +238,22 @@ pub async fn scan_db_pagination_mismatches(
     let max_page_id_db = *by_pid.keys().max().unwrap();
     // If no site meta available from cache/config, fall back to DB-derived total pages
     if total_pages_site.is_none() {
-        total_pages_site = Some((max_page_id_db as u32).saturating_add(1));
+        total_pages_site = u32::try_from(max_page_id_db)
+            .ok()
+            .map(|v| v.saturating_add(1));
     }
     let mut group_summaries: Vec<GroupSummary> = Vec::new();
     let mut duplicate_positions: Vec<DuplicatePosition> = Vec::new();
 
     for (pid, items) in &by_pid {
-        let count = items.len() as u32;
+        let count = u32::try_from(items.len()).unwrap_or(u32::MAX);
         let terminal = *pid == max_page_id_db;
         let expected_count = if terminal { count } else { 12 };
         let expected_full = !terminal;
         let current_page_number = if *pid >= 0 {
-            total_pages_site.map(|tp| tp.saturating_sub(*pid as u32))
+            total_pages_site.and_then(|tp| {
+                u32::try_from(*pid).ok().map(|pp| tp.saturating_sub(pp))
+            })
         } else {
             None
         };
@@ -257,7 +267,7 @@ pub async fn scan_db_pagination_mismatches(
                 index_map.entry(ix).or_default().push(url.as_str());
             }
         }
-        let distinct_indices = index_map.len() as u32;
+    let distinct_indices = u32::try_from(index_map.len()).unwrap_or(u32::MAX);
         let min_index = indices.iter().min().copied();
         let max_index = indices.iter().max().copied();
 
@@ -279,7 +289,11 @@ pub async fn scan_db_pagination_mismatches(
             (0..12).filter(|ix| !index_map.contains_key(ix)).collect()
         } else {
             // terminal group expected contiguous from 0..(distinct_indices-1)
-            (0..(distinct_indices as i32))
+            {
+            #[allow(clippy::used_underscore_binding)]
+                let upper: i32 = i32::try_from(distinct_indices).unwrap_or(i32::MAX);
+                0..upper
+            }
                 .filter(|ix| !index_map.contains_key(ix))
                 .collect()
         };

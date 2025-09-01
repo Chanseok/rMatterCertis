@@ -107,6 +107,8 @@ pub struct StageResultSummary {
 
 /// 🚀 실제 크롤링 실행 (Phase C 핵심 기능)
 #[tauri::command]
+/// # Errors
+/// Returns an error string if initialization or any stage execution fails.
 pub async fn execute_real_crawling(
     app: AppHandle,
     request: RealCrawlingRequest,
@@ -204,7 +206,7 @@ pub async fn execute_real_crawling(
             } => *partial_results,
             _ => 0,
         },
-        duration_ms: list_duration.as_millis() as u64,
+    duration_ms: u64::try_from(list_duration.as_millis()).unwrap_or(u64::MAX),
         error_message: if list_success {
             None
         } else {
@@ -243,8 +245,10 @@ pub async fn execute_real_crawling(
                 StageResult::FatalError { .. } => total_pages,
                 _ => 0,
             },
-            elapsed_ms: start_time.elapsed().as_millis() as u64,
-            estimated_remaining_ms: Some(start_time.elapsed().as_millis() as u64), // 대략적 추정
+            elapsed_ms: u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX),
+            estimated_remaining_ms: Some(
+                u64::try_from(start_time.elapsed().as_millis()).unwrap_or(u64::MAX),
+            ), // 대략적 추정
             status_message: "상세 정보 수집 시작".to_string(),
             timestamp: Utc::now(),
         },
@@ -275,7 +279,7 @@ pub async fn execute_real_crawling(
             } => *processed_items,
             _ => 0,
         },
-        duration_ms: detail_duration.as_millis() as u64,
+    duration_ms: u64::try_from(detail_duration.as_millis()).unwrap_or(u64::MAX),
         error_message: if detail_success {
             None
         } else {
@@ -309,7 +313,7 @@ pub async fn execute_real_crawling(
             } => *processed_items,
             _ => 0,
         },
-        total_duration_ms: total_duration.as_millis() as u64,
+    total_duration_ms: u64::try_from(total_duration.as_millis()).unwrap_or(u64::MAX),
         error_message: if overall_success {
             None
         } else {
@@ -334,6 +338,8 @@ pub async fn execute_real_crawling(
 
 /// 🔍 실제 크롤링 상태 확인
 #[tauri::command]
+/// # Errors
+/// Returns an error string if the session lookup fails.
 pub async fn get_real_crawling_status(
     session_id: String,
 ) -> Result<Option<RealCrawlingProgress>, String> {
@@ -346,6 +352,8 @@ pub async fn get_real_crawling_status(
 
 /// ⏹️ 실제 크롤링 취소
 #[tauri::command]
+/// # Errors
+/// Returns an error string if cancellation fails.
 pub async fn cancel_real_crawling(session_id: String) -> Result<bool, String> {
     // TODO: 취소 토큰 시스템 구현
     info!(session_id = %session_id, "🛑 Cancelling real crawling");

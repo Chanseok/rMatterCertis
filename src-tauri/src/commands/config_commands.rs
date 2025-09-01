@@ -6,10 +6,39 @@
 
 use crate::domain::services::crawling_services::StatusChecker;
 use crate::infrastructure::MatterDataExtractor;
+use crate::types::frontend_api::DatabaseStats;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
 use tracing::{debug, info};
+
+// Local helpers for explicit numeric conversions where truncation is acceptable and bounded
+#[inline]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn f64_to_u32_saturating_floor(v: f64) -> u32 {
+    if !v.is_finite() {
+        return 0;
+    }
+    if v <= 0.0 {
+        0
+    } else if v >= f64::from(u32::MAX) {
+        u32::MAX
+    } else {
+        v.floor() as u32
+    }
+}
+
+#[inline]
+#[allow(clippy::cast_possible_truncation)]
+const fn f64_to_f32_lossy(v: f64) -> f32 {
+    v as f32
+}
+
+#[inline]
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+fn u64_kb_to_f32_mb(kb: u64) -> f32 {
+    (kb as f64 / 1024.0) as f32
+}
 
 use crate::{
     application::state::AppState,
@@ -155,6 +184,7 @@ pub struct AppMetadata {
 /// Comprehensive Crawler Configuration - Single Source of Truth
 /// This structure includes all configuration options from both simple and advanced crawling
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ComprehensiveCrawlerConfig {
     // === Core Crawling Settings ===
     pub start_page: u32,
@@ -256,7 +286,7 @@ impl Default for ComprehensiveCrawlerConfig {
             max_request_delay_ms: 2200,
             retry_start: 2,
             retry_max: 10,
-            cache_ttl_ms: 300000,
+            cache_ttl_ms: 300_000,
 
             // Browser settings
             headless_browser: true,
@@ -280,6 +310,8 @@ impl Default for ComprehensiveCrawlerConfig {
 
 /// Get only the site configuration (URLs and domains)
 #[tauri::command]
+/// # Errors
+/// Returns an error string if configuration values cannot be constructed.
 pub fn get_site_config() -> Result<SiteConfig, String> {
     info!("Frontend requesting site configuration");
 
@@ -312,15 +344,18 @@ pub fn get_site_config() -> Result<SiteConfig, String> {
 
 /// Update logging configuration settings
 #[tauri::command]
-pub async fn update_logging_settings(
+#[allow(clippy::too_many_arguments)]
+/// # Errors
+/// Returns an error if reading or updating the logging configuration fails.
+pub async fn update_logging_settings<S: ::std::hash::BuildHasher>(
     level: String,
     separate_frontend_backend: bool,
     max_file_size_mb: u64,
     max_files: u32,
     auto_cleanup_logs: bool,
     keep_only_latest: bool,
-    module_filters: HashMap<String, String>,
-    state: State<'_, AppState>,
+    module_filters: HashMap<String, String, S>,
+    #[allow(clippy::used_underscore_binding)] state: State<'_, AppState>,
 ) -> Result<(), String> {
     info!(
         "Frontend updating logging settings: level={}, separate={}, modules={:?}",
@@ -338,7 +373,7 @@ pub async fn update_logging_settings(
             user_config.logging.max_files = max_files;
             user_config.logging.auto_cleanup_logs = auto_cleanup_logs;
             user_config.logging.keep_only_latest = keep_only_latest;
-            user_config.logging.module_filters = module_filters;
+            user_config.logging.module_filters = module_filters.into_iter().collect();
         })
         .await
         .map_err(|e| format!("Failed to update logging settings: {}", e))?;
@@ -356,12 +391,14 @@ pub async fn update_logging_settings(
 
 /// Update batch processing configuration settings
 #[tauri::command]
+/// # Errors
+/// Returns an error if reading or updating the batch configuration fails.
 pub async fn update_batch_settings(
     batch_size: u32,
     batch_delay_ms: u64,
     enable_batch_processing: bool,
     batch_retry_limit: u32,
-    state: State<'_, AppState>,
+    #[allow(clippy::used_underscore_binding)] state: State<'_, AppState>,
 ) -> Result<(), String> {
     info!(
         "Frontend updating batch settings: size={}, delay={}ms, enabled={}, retry_limit={}",
@@ -394,13 +431,15 @@ pub async fn update_batch_settings(
 
 /// Update crawling configuration settings
 #[tauri::command]
+/// # Errors
+/// Returns an error if reading or updating the crawling configuration fails.
 pub async fn update_crawling_settings(
     page_range_limit: u32,
     #[allow(unused_variables)] validation_page_limit: Option<u32>,
     product_list_retry_count: u32,
     product_detail_retry_count: u32,
     auto_add_to_local_db: bool,
-    state: State<'_, AppState>,
+    #[allow(clippy::used_underscore_binding)] state: State<'_, AppState>,
 ) -> Result<(), String> {
     info!(
         "Frontend updating crawling settings: page_limit={}, validation_page_limit={:?}, list_retry={}, detail_retry={}, auto_add={}",
@@ -438,6 +477,8 @@ pub async fn update_crawling_settings(
 
 /// Build a URL for a specific page number using the site configuration
 #[tauri::command]
+/// # Errors
+/// Returns an error string if URL construction fails.
 pub fn build_page_url(page: u32) -> Result<String, String> {
     let url = utils::matter_products_page_url(page);
     Ok(url)
@@ -445,6 +486,9 @@ pub fn build_page_url(page: u32) -> Result<String, String> {
 
 /// Resolve a relative URL to an absolute URL
 #[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+/// # Errors
+/// Returns an error string if URL resolution fails.
 pub fn resolve_url(relative_url: String) -> Result<String, String> {
     let absolute_url = utils::resolve_url(&relative_url);
     Ok(absolute_url)
@@ -452,6 +496,8 @@ pub fn resolve_url(relative_url: String) -> Result<String, String> {
 
 /// Get default crawling configuration
 #[tauri::command]
+/// # Errors
+/// Returns an error string if default configuration cannot be created.
 pub fn get_default_crawling_config() -> Result<CrawlingSettings, String> {
     info!("Frontend requesting default crawling configuration");
 
@@ -477,6 +523,8 @@ pub fn get_default_crawling_config() -> Result<CrawlingSettings, String> {
 
 /// Get comprehensive crawler configuration including all advanced settings
 #[tauri::command]
+/// # Errors
+/// Returns an error string if configuration cannot be created.
 pub fn get_comprehensive_crawler_config() -> Result<ComprehensiveCrawlerConfig, String> {
     info!("Frontend requesting comprehensive crawler configuration");
 
@@ -495,6 +543,8 @@ pub fn get_comprehensive_crawler_config() -> Result<ComprehensiveCrawlerConfig, 
 
 /// Frontend settingsStore compatibility: expose full AppConfig (mirrors legacy crawling_v4 commands)
 #[tauri::command]
+/// # Errors
+/// Returns an error message if reading or serializing the configuration fails.
 pub async fn get_app_settings() -> Result<serde_json::Value, String> {
     use crate::infrastructure::config::ConfigManager;
     tracing::info!("⚙️ [config_commands] get_app_settings invoked");
@@ -508,6 +558,8 @@ pub async fn get_app_settings() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
+/// # Errors
+/// Returns an error message if parsing or saving the configuration fails.
 pub async fn save_app_settings(settings: serde_json::Value) -> Result<String, String> {
     use crate::infrastructure::config::ConfigManager;
     tracing::info!("⚙️ [config_commands] save_app_settings invoked");
@@ -582,6 +634,8 @@ fn convert_to_frontend_config(app_config: &AppConfig) -> FrontendConfig {
 
 /// Initialize configuration system on first run
 #[tauri::command]
+/// # Errors
+/// Returns an error string if the configuration manager fails to initialize or read/write config.
 pub async fn initialize_app_config() -> Result<FrontendConfig, String> {
     info!("Frontend requesting app config initialization");
 
@@ -601,6 +655,8 @@ pub async fn initialize_app_config() -> Result<FrontendConfig, String> {
 
 /// Reset configuration to defaults
 #[tauri::command]
+/// # Errors
+/// Returns an error string if the configuration manager fails to reset or save the config.
 pub async fn reset_config_to_defaults() -> Result<FrontendConfig, String> {
     info!("Frontend requesting config reset to defaults");
 
@@ -620,6 +676,8 @@ pub async fn reset_config_to_defaults() -> Result<FrontendConfig, String> {
 
 /// Get application data directories info
 #[tauri::command]
+/// # Errors
+/// Returns an error string if accessing the configuration or data directories fails.
 pub fn get_app_directories() -> Result<AppDirectoriesInfo, String> {
     info!("Frontend requesting app directories info");
 
@@ -659,6 +717,8 @@ pub struct AppDirectoriesInfo {
 
 /// Check if this is the first run of the application
 #[tauri::command]
+/// # Errors
+/// Returns an error string if accessing the configuration manager or file system fails.
 pub fn is_first_run() -> Result<bool, String> {
     let config_manager =
         ConfigManager::new().map_err(|e| format!("Failed to create config manager: {}", e))?;
@@ -682,6 +742,9 @@ pub struct LogEntry {
 
 /// Write frontend log entry to the appropriate log file based on configuration
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the log directory cannot be created or the log file cannot be written.
 pub async fn write_frontend_log(entry: LogEntry, state: State<'_, AppState>) -> Result<(), String> {
     use crate::infrastructure::logging::get_log_directory;
     use chrono::{FixedOffset, Utc};
@@ -706,17 +769,26 @@ pub async fn write_frontend_log(entry: LogEntry, state: State<'_, AppState>) -> 
         // Use unified log file
         match logging_config.file_naming_strategy.as_str() {
             "timestamped" => {
-                let now = Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
-                log_dir.join(format!("back_front-{}.log", now.format("%Y%m%d")))
+                let date_str = FixedOffset::east_opt(9 * 3600).map_or_else(
+                    || Utc::now().format("%Y%m%d").to_string(),
+                    |offset| Utc::now().with_timezone(&offset).format("%Y%m%d").to_string(),
+                );
+                log_dir.join(format!("back_front-{}.log", date_str))
             }
             _ => log_dir.join("back_front.log"), // Default unified log
         }
     };
 
     // Format timestamp in KST
-    let kst_offset = FixedOffset::east_opt(9 * 3600).unwrap();
-    let kst_time = Utc::now().with_timezone(&kst_offset);
-    let formatted_time = kst_time.format("%Y-%m-%d %H:%M:%S%.3f %Z");
+    let formatted_time = FixedOffset::east_opt(9 * 3600).map_or_else(
+        || Utc::now().format("%Y-%m-%d %H:%M:%S%.3f UTC").to_string(),
+        |offset| {
+            Utc::now()
+                .with_timezone(&offset)
+                .format("%Y-%m-%d %H:%M:%S%.3f %Z")
+                .to_string()
+        },
+    );
 
     // Format log entry
     let component_str = entry
@@ -753,6 +825,8 @@ pub async fn write_frontend_log(entry: LogEntry, state: State<'_, AppState>) -> 
 
 /// Clean up old log files and keep only the latest
 #[tauri::command]
+/// # Errors
+/// Returns an error string if log cleanup fails.
 pub fn cleanup_logs() -> Result<String, String> {
     use crate::infrastructure::logging::cleanup_logs_keep_latest;
 
@@ -764,6 +838,8 @@ pub fn cleanup_logs() -> Result<String, String> {
 
 /// Get the current log directory path for frontend reference
 #[tauri::command]
+/// # Errors
+/// Returns an error string if resolving the log directory fails.
 pub fn get_log_directory_path() -> Result<String, String> {
     use crate::infrastructure::logging::get_log_directory;
     let log_dir = get_log_directory();
@@ -826,31 +902,36 @@ pub struct CrawlingStatusCheck {
 
 /// Get current crawling status and recommendations
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if database access, HTTP fetching, or site analysis fails.
 pub async fn get_crawling_status_check(
     state: State<'_, AppState>,
 ) -> Result<CrawlingStatusCheck, String> {
     info!("Frontend requesting crawling status check");
 
-    // Get database stats (frontend-friendly type)
-    use crate::types::frontend_api::DatabaseStats;
-    let db_stats = {
+    // Get database stats (frontend-friendly type) while holding the pool handle safely
+    let pool = {
         let pool_guard = state.database_pool.read().await;
-        let pool = pool_guard.as_ref().ok_or("Database pool not initialized")?;
-        let total_products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
-            .fetch_one(pool)
+        pool_guard
+            .as_ref()
+            .cloned()
+            .ok_or("Database pool not initialized")?
+    };
+    let total_products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| format!("Failed to count products: {}", e))?;
+    let _latest_product_time: Option<String> =
+        sqlx::query_scalar("SELECT created_at FROM products ORDER BY id DESC LIMIT 1")
+            .fetch_one(&pool)
             .await
-            .map_err(|e| format!("Failed to count products: {}", e))?;
-        let _latest_product_time: Option<String> =
-            sqlx::query_scalar("SELECT created_at FROM products ORDER BY id DESC LIMIT 1")
-                .fetch_one(pool)
-                .await
-                .ok();
-        DatabaseStats {
-            total_products: total_products as u32,
-            products_added_today: 0,
-            last_updated: None,
-            database_size_bytes: 0,
-        }
+            .ok();
+    let db_stats = DatabaseStats {
+        total_products: u32::try_from(total_products).unwrap_or(u32::MAX),
+        products_added_today: 0,
+        last_updated: None,
+        database_size_bytes: 0,
     };
 
     // Get current configuration
@@ -864,9 +945,18 @@ pub async fn get_crawling_status_check(
     let last_crawl_time = config.app_managed.last_successful_crawl.clone();
 
     // Calculate local DB page range (estimate)
-    let avg_products_per_page = config.app_managed.avg_products_per_page.unwrap_or(12.0) as f32;
-    let estimated_max_local_page = if avg_products_per_page > 0.0 {
-        (local_product_count as f32 / avg_products_per_page).ceil() as u32
+    let avg_products_per_page_f64: f64 = config
+        .app_managed
+        .avg_products_per_page
+        .unwrap_or(12.0);
+    let estimated_max_local_page = if avg_products_per_page_f64 > 0.0 {
+        let estimate = (f64::from(local_product_count) / avg_products_per_page_f64).ceil();
+        // Clamp to u32 range
+        if estimate.is_finite() {
+            f64_to_u32_saturating_floor(estimate)
+        } else {
+            0
+        }
     } else {
         0
     };
@@ -900,7 +990,8 @@ pub async fn get_crawling_status_check(
 
     // Calculate estimated total products from real site data
     let estimated_total_products = if site_status.total_pages > 0 {
-        Some((site_status.total_pages as f32 * avg_products_per_page) as u32)
+        let total = f64::from(site_status.total_pages) * avg_products_per_page_f64;
+        Some(f64_to_u32_saturating_floor(total))
     } else {
         None
     };
@@ -921,7 +1012,10 @@ pub async fn get_crawling_status_check(
     .unwrap_or((None, None));
 
     let local_db_page_range = if let (Some(min), Some(max)) = (min_page, max_page) {
-        [min as u32, max as u32]
+        [
+            u32::try_from(min).unwrap_or(0),
+            u32::try_from(max).unwrap_or(estimated_max_local_page),
+        ]
     } else {
         [0, estimated_max_local_page]
     };
@@ -950,29 +1044,43 @@ pub async fn get_crawling_status_check(
     let recommended_end_page = effective_max_page;
 
     // 예상 신규 제품 수 계산 (설정 제한 고려)
-    let estimated_new_products = if let Some(total) = estimated_total_products {
-        let limited_total = std::cmp::min(
-            total,
-            (effective_max_page as f32 * avg_products_per_page) as u32,
-        );
-        limited_total.saturating_sub(local_product_count)
-    } else {
-        let pages_to_crawl = recommended_end_page.saturating_sub(recommended_start_page) + 1;
-        (pages_to_crawl as f32 * avg_products_per_page) as u32
-    };
+    let estimated_new_products = estimated_total_products.map_or_else(
+        || {
+            let pages_to_crawl = recommended_end_page.saturating_sub(recommended_start_page) + 1;
+        let v = f64::from(pages_to_crawl) * avg_products_per_page_f64;
+        f64_to_u32_saturating_floor(v)
+        },
+        |total| {
+            let limited_total = std::cmp::min(
+                total,
+                {
+            let v = f64::from(effective_max_page) * avg_products_per_page_f64;
+            f64_to_u32_saturating_floor(v)
+                },
+            );
+            limited_total.saturating_sub(local_product_count)
+        },
+    );
 
     // Calculate efficiency score considering user settings
     let efficiency_score = if estimated_new_products > 0 {
         let pages_to_crawl = recommended_end_page.saturating_sub(recommended_start_page) + 1;
-        let efficiency =
-            estimated_new_products as f32 / (pages_to_crawl as f32 * avg_products_per_page);
-        efficiency.min(1.0)
+        let denom = f64::from(pages_to_crawl) * avg_products_per_page_f64;
+        let efficiency = if denom > 0.0 {
+            f64::from(estimated_new_products) / denom
+        } else {
+            0.0
+        };
+    f64_to_f32_lossy(efficiency.min(1.0))
     } else {
         // 신규 제품이 없어도 데이터 신선도에 따라 점수 부여
         if estimated_max_local_page > 0 && local_product_count > 0 {
-            let freshness = (local_product_count as f32
-                / estimated_total_products.unwrap_or(1) as f32)
-                .min(1.0);
+            let denom = f64::from(estimated_total_products.unwrap_or(1));
+            let freshness = if denom > 0.0 {
+        f64_to_f32_lossy((f64::from(local_product_count) / denom).min(1.0))
+            } else {
+                0.0
+            };
             freshness * 0.5 // 최대 50% 효율성
         } else {
             0.0
@@ -1052,13 +1160,18 @@ pub async fn get_crawling_status_check(
     };
 
     // Calculate database size (estimate)
-    let avg_record_size_kb = 2.0; // Estimate 2KB per product record
-    let db_size_mb = (local_product_count as f32 * avg_record_size_kb) / 1024.0;
+    let avg_record_size_kb: u64 = 2; // Estimate 2KB per product record
+    let db_size_mb: f32 = {
+        let bytes_kb = u64::from(local_product_count).saturating_mul(avg_record_size_kb);
+        u64_kb_to_f32_mb(bytes_kb)
+    };
 
     // Calculate sync percentage
     let site_estimated_total = estimated_total_products.unwrap_or(0);
     let sync_percentage = if site_estimated_total > 0 {
-        (local_product_count as f32 / site_estimated_total as f32 * 100.0).min(100.0)
+        let numerator = f64::from(local_product_count);
+        let denominator = f64::from(site_estimated_total);
+    f64_to_f32_lossy(((numerator / denominator) * 100.0).min(100.0))
     } else {
         0.0
     };
@@ -1067,18 +1180,19 @@ pub async fn get_crawling_status_check(
         database_status: DatabaseStatus {
             total_products: local_product_count,
             last_crawl_time: last_crawl_time.clone(),
-            page_range: (local_db_page_range[0], local_db_page_range[1]),
+            page_range: <(u32, u32)>::from(local_db_page_range),
             health: db_health,
             size_mb: db_size_mb,
             last_updated: current_time.clone(),
         },
         site_status: SiteStatus {
             is_accessible: site_status.is_accessible,
-            response_time_ms: site_status.response_time_ms as u32,
+            response_time_ms: u32::try_from(site_status.response_time_ms).unwrap_or(u32::MAX),
             total_pages: site_status.total_pages,
             estimated_products: estimated_total_products.unwrap_or(0),
             products_on_last_page: site_status.products_on_last_page,
             last_check_time: current_time.clone(),
+            #[allow(clippy::cast_possible_truncation)]
             health_score: site_status.health_score as f32,
             data_change_status: "Stable".to_string(), // Simplified for now
         },
@@ -1138,6 +1252,9 @@ pub struct WindowSize {
 
 /// Save window state to config file
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if saving the configuration fails.
 pub async fn save_window_state(
     state: WindowState,
     app_state: State<'_, AppState>,
@@ -1174,6 +1291,9 @@ pub async fn save_window_state(
 
 /// Load window state from config file
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if loading or deserializing config fails.
 pub async fn load_window_state(
     app_state: State<'_, AppState>,
 ) -> Result<Option<WindowState>, String> {
@@ -1195,6 +1315,9 @@ pub async fn load_window_state(
 
 /// Set window position (Tauri command)
 #[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+/// # Errors
+/// Returns an error string if the window position cannot be updated.
 pub fn set_window_position(window: tauri::Window, x: i32, y: i32) -> Result<(), String> {
     window
         .set_position(tauri::LogicalPosition::new(x, y))
@@ -1204,6 +1327,9 @@ pub fn set_window_position(window: tauri::Window, x: i32, y: i32) -> Result<(), 
 
 /// Set window size (Tauri command)
 #[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+/// # Errors
+/// Returns an error string if the window size cannot be updated.
 pub fn set_window_size(window: tauri::Window, width: i32, height: i32) -> Result<(), String> {
     window
         .set_size(tauri::LogicalSize::new(width, height))
@@ -1213,6 +1339,9 @@ pub fn set_window_size(window: tauri::Window, width: i32, height: i32) -> Result
 
 /// Maximize window (Tauri command)
 #[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+/// # Errors
+/// Returns an error string if the window cannot be maximized.
 pub fn maximize_window(window: tauri::Window) -> Result<(), String> {
     window
         .maximize()
@@ -1222,6 +1351,9 @@ pub fn maximize_window(window: tauri::Window) -> Result<(), String> {
 
 /// Show window (Tauri command)
 #[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+/// # Errors
+/// Returns an error string if the window cannot be shown.
 pub fn show_window(window: tauri::Window) -> Result<(), String> {
     window
         .show()

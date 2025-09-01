@@ -123,6 +123,18 @@ pub enum BatchError {
 }
 
 impl BatchActor {
+    /// Small helper to emit an AppEvent with unified error mapping
+    fn emit(
+        &self,
+        context: &AppContext,
+        evt: AppEvent,
+    ) -> Result<(), BatchError> {
+        context
+            .emit_event(evt)
+            .map(|_| ())
+            .map_err(|e| BatchError::ContextError(e.to_string()))
+    }
+
     /// Configure whether to skip duplicate product URLs within this batch.
     pub const fn set_skip_duplicate_urls(&mut self, flag: bool) {
         self.skip_duplicate_urls = flag;
@@ -338,9 +350,7 @@ impl BatchActor {
             timestamp: Utc::now(),
         };
 
-        context
-            .emit_event(start_event)
-            .map_err(|e| BatchError::ContextError(e.to_string()))?;
+    self.emit(context, start_event)?;
 
         // KPI: 배치 시작 (구조화 로그)
         let plan_id_json = if let Some(pid) = &context.plan_id { format!("\"{}\"", pid) } else { "null".to_string() };
@@ -412,9 +422,7 @@ impl BatchActor {
                     final_failure: true,
                     timestamp: Utc::now(),
                 };
-                context
-                    .emit_event(fail_event)
-                    .map_err(|e| BatchError::ContextError(e.to_string()))?;
+                self.emit(context, fail_event)?;
                 return Err(BatchError::StageExecutionFailed(
                     "StatusCheck stage failed - no status check performed".to_string(),
                 ));
@@ -434,9 +442,7 @@ impl BatchActor {
                     final_failure: true,
                     timestamp: Utc::now(),
                 };
-                context
-                    .emit_event(fail_event)
-                    .map_err(|e| BatchError::ContextError(e.to_string()))?;
+                self.emit(context, fail_event)?;
                 return Err(BatchError::StageExecutionFailed(
                     "StatusCheck stage failed - site is not accessible".to_string(),
                 ));
@@ -522,9 +528,7 @@ impl BatchActor {
                 percentage: 40.0,
                 timestamp: Utc::now(),
             };
-            context
-                .emit_event(progress_event)
-                .map_err(|e| BatchError::ContextError(e.to_string()))?;
+            self.emit(context, progress_event)?;
         }
 
         // Stage 실패 시 파이프라인 중단 검증
@@ -551,9 +555,7 @@ impl BatchActor {
                 final_failure: true,
                 timestamp: Utc::now(),
             };
-            context
-                .emit_event(fail_event)
-                .map_err(|e| BatchError::ContextError(e.to_string()))?;
+            self.emit(context, fail_event)?;
             return Err(BatchError::StageExecutionFailed(
                 "ListPageCrawling stage failed completely".to_string(),
             ));
@@ -581,7 +583,7 @@ impl BatchActor {
         } else {
             // 즉시 상세 수집
             info!("🔍 Starting Stage 3: ProductDetailCrawling");
-            let detail_result = match self
+        let detail_result = match self
                 .execute_stage_with_actor(
                     StageType::ProductDetailCrawling,
                     product_detail_items.clone(),
@@ -600,9 +602,7 @@ impl BatchActor {
                         final_failure: true,
                         timestamp: Utc::now(),
                     };
-                    context
-                        .emit_event(fail_event)
-                        .map_err(|er| BatchError::ContextError(er.to_string()))?;
+            self.emit(context, fail_event)?;
                     self.state = BatchState::Failed {
                         error: format!("Stage 3 failed: {e}"),
                     };
@@ -728,7 +728,7 @@ impl BatchActor {
 
         // Stage 4: DataValidation - 데이터 품질 분석
         info!("🔍 Starting Stage 4: DataValidation");
-        let validation_result = match self
+    let validation_result = match self
             .execute_stage_with_actor(
                 StageType::DataValidation,
                 data_validation_items.clone(),
@@ -747,9 +747,7 @@ impl BatchActor {
                     final_failure: true,
                     timestamp: Utc::now(),
                 };
-                context
-                    .emit_event(fail_event)
-                    .map_err(|er| BatchError::ContextError(er.to_string()))?;
+        self.emit(context, fail_event)?;
                 self.state = BatchState::Failed {
                     error: format!("Stage 4 failed: {e}"),
                 };
@@ -777,7 +775,7 @@ impl BatchActor {
 
         // Stage 5: DataSaving - 데이터 저장
         info!("🔍 Starting Stage 5: DataSaving");
-        let saving_result = match self
+    let saving_result = match self
             .execute_stage_with_actor(
                 StageType::DataSaving,
                 data_saving_items,
@@ -796,9 +794,7 @@ impl BatchActor {
                     final_failure: true,
                     timestamp: Utc::now(),
                 };
-                context
-                    .emit_event(fail_event)
-                    .map_err(|er| BatchError::ContextError(er.to_string()))?;
+        self.emit(context, fail_event)?;
                 self.state = BatchState::Failed {
                     error: format!("Stage 5 failed: {e}"),
                 };
@@ -897,9 +893,7 @@ impl BatchActor {
             timestamp: Utc::now(),
         };
 
-        context
-            .emit_event(completion_event)
-            .map_err(|e| BatchError::ContextError(e.to_string()))?;
+    self.emit(context, completion_event)?;
 
         // KPI: 배치 완료 (구조화 로그)
         let plan_id_json = if let Some(pid) = &context.plan_id { format!("\"{}\"", pid) } else { "null".to_string() };
@@ -958,9 +952,7 @@ impl BatchActor {
             products_updated: self.products_updated,
             timestamp: Utc::now(),
         };
-        context
-            .emit_event(report_event)
-            .map_err(|e| BatchError::ContextError(e.to_string()))?;
+    self.emit(context, report_event)?;
 
         Ok(())
     }

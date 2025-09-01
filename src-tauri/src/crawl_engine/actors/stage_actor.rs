@@ -90,7 +90,7 @@ struct GuardOutcome {
 impl TaskExecutionGuard {
     fn new(ctx: AppContext, session_id: String, batch_id: Option<String>, stage_type: StageType, item_id: String, item_type: StageItemType) -> Self {
         // 시작 이벤트 발행 (best-effort)
-        let _ = ctx.emit_event(AppEvent::StageItemStarted {
+        StageActor::emit_best_effort(&ctx, AppEvent::StageItemStarted {
             session_id: session_id.clone(),
             batch_id: batch_id.clone(),
             stage_type: stage_type.clone(),
@@ -137,7 +137,7 @@ impl Drop for TaskExecutionGuard {
         } else {
             (false, Some("unknown_error_or_early_drop".into()), self.started_at.elapsed().as_millis() as u64, 0, None)
         };
-        let _ = self.ctx.emit_event(AppEvent::StageItemCompleted {
+        StageActor::emit_best_effort(&self.ctx, AppEvent::StageItemCompleted {
             session_id: self.session_id.clone(),
             batch_id: self.batch_id.clone(),
             stage_type: self.stage_type.clone(),
@@ -230,6 +230,19 @@ impl StageItemExt for StageItem {
 }
 
 impl StageActor {
+    /// Helper to emit AppEvent with StageError mapping.
+    #[inline]
+    fn emit(&self, context: &AppContext, evt: AppEvent) -> Result<(), StageError> {
+        context
+            .emit_event(evt)
+            .map(|_| ())
+            .map_err(|e| StageError::GenericError { message: e.to_string() })
+    }
+    /// Helper to emit AppEvent best-effort (ignore errors). Used in per-item paths and RAII.
+    #[inline]
+    fn emit_best_effort(context: &AppContext, evt: AppEvent) {
+        let _ = context.emit_event(evt);
+    }
     // 개별 태스크 실행 헬퍼 (spawn 대상)
     async fn execute_single_item_task(
         sem: Arc<tokio::sync::Semaphore>,
@@ -266,7 +279,7 @@ impl StageActor {
         let lifecycle_item = item.clone();
         match (&stage_type, &item) {
             (StageType::ListPageCrawling, StageItem::Page(pn)) => {
-                let _ = ctx.emit_event(AppEvent::PageLifecycle {
+                Self::emit_best_effort(&ctx, AppEvent::PageLifecycle {
                     session_id: session_id.clone(),
                     batch_id: batch_id.clone(),
                     page_number: *pn,
@@ -288,7 +301,7 @@ impl StageActor {
                     }
                 }
                 if let Some(first) = urls_wrapper.urls.first() {
-                    let _ = ctx.emit_event(AppEvent::PageLifecycle {
+                    Self::emit_best_effort(&ctx, AppEvent::PageLifecycle {
                         session_id: session_id.clone(),
                         batch_id: batch_id.clone(),
                         page_number: first.page_id as u32,
@@ -373,13 +386,13 @@ impl StageActor {
                         }
                         (0, 0, 0, 0)
                     })();
-                    let _ = ctx.emit_event(AppEvent::ValidationStarted {
+                    Self::emit_best_effort(&ctx, AppEvent::ValidationStarted {
                         session_id: session_id.clone(),
                         scan_pages: 1,
                         total_pages_site: None,
                         timestamp: Utc::now(),
                     });
-                    let _ = ctx.emit_event(AppEvent::ValidationPageScanned {
+                    Self::emit_best_effort(&ctx, AppEvent::ValidationPageScanned {
                         session_id: session_id.clone(),
                         physical_page: 0,
                         products_found,
@@ -387,7 +400,7 @@ impl StageActor {
                         assigned_end_offset: u64::from(products_found.saturating_sub(1)),
                         timestamp: Utc::now(),
                     });
-                    let _ = ctx.emit_event(AppEvent::ValidationCompleted {
+                    Self::emit_best_effort(&ctx, AppEvent::ValidationCompleted {
                         session_id: session_id.clone(),
                         pages_scanned: 1,
                         products_checked,
@@ -404,7 +417,7 @@ impl StageActor {
                         let page_hint = urls.urls.first().map_or(0u32, |u| u.page_id as u32);
                         let total = urls.urls.len() as u32;
                         let duration_ms = item_start.elapsed().as_millis() as u64;
-                        let _ = ctx.emit_event(AppEvent::ProductLifecycleGroup {
+                        Self::emit_best_effort(&ctx, AppEvent::ProductLifecycleGroup {
                             session_id: session_id.clone(),
                             batch_id: batch_id.clone(),
                             page_number: Some(page_hint),
@@ -448,7 +461,7 @@ impl StageActor {
                             .ok()
                             .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
                         if skip_save {
-                            let _ = ctx.emit_event(AppEvent::ProductLifecycle {
+                            Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle {
                                 session_id: session_id.clone(),
                                 batch_id: batch_id.clone(),
                                 page_number: None,
@@ -465,7 +478,7 @@ impl StageActor {
                                 StageItem::ProductDetails(d) => d.products.len() as u32,
                                 _ => 0,
                             };
-                            let _ = ctx.emit_event(AppEvent::ProductLifecycle {
+                            Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle {
                                 session_id: session_id.clone(),
                                 batch_id: batch_id.clone(),
                                 page_number: None,
@@ -477,7 +490,7 @@ impl StageActor {
                                 timestamp: Utc::now(),
                             });
                             if attempted_count == 0 {
-                                let _ = ctx.emit_event(AppEvent::ProductLifecycle {
+                                Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle {
                                     session_id: session_id.clone(),
                                     batch_id: batch_id.clone(),
                                     page_number: None,
@@ -501,10 +514,10 @@ impl StageActor {
                                         else if inserted == 0 && updated == 0 { if duplicates_ct == attempted { "persist_noop_all_duplicate" } else { "persist_noop" } }
                                         else { "persist_mixed" };
                                     let metrics = SimpleMetrics::Generic { key: "persist_result".into(), value: format!("attempted={},inserted={},updated={},duplicates={},unchanged={}", attempted, inserted, updated, duplicates_ct, unchanged) };
-                                    let _ = ctx.emit_event(AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: None, product_ref: "_batch_persist".into(), status: status.into(), retry: None, duration_ms: Some(persist_start.elapsed().as_millis() as u64), metrics: Some(metrics), timestamp: Utc::now() });
+                                    Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: None, product_ref: "_batch_persist".into(), status: status.into(), retry: None, duration_ms: Some(persist_start.elapsed().as_millis() as u64), metrics: Some(metrics), timestamp: Utc::now() });
                                 }
                                 Err(e) => {
-                                    let _ = ctx.emit_event(AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: None, product_ref: "_batch_persist".into(), status: "persist_failed".into(), retry: None, duration_ms: Some(persist_start.elapsed().as_millis() as u64), metrics: Some(SimpleMetrics::Generic { key: "error".into(), value: e }), timestamp: Utc::now() });
+                                    Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: None, product_ref: "_batch_persist".into(), status: "persist_failed".into(), retry: None, duration_ms: Some(persist_start.elapsed().as_millis() as u64), metrics: Some(SimpleMetrics::Generic { key: "error".into(), value: e }), timestamp: Utc::now() });
                                 }
                             }
                         }
@@ -519,11 +532,11 @@ impl StageActor {
             Err(err) => {
                 guard.record_err(format!("{:?}", err));
                 if let (StageType::ListPageCrawling, StageItem::Page(pn)) = (&stage_type, &lifecycle_item) {
-                    let _ = ctx.emit_event(AppEvent::PageLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: *pn, status: "failed".into(), metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: Some(format!("{:?}", err)) }), timestamp: Utc::now() });
+                    Self::emit_best_effort(&ctx, AppEvent::PageLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: *pn, status: "failed".into(), metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: Some(format!("{:?}", err)) }), timestamp: Utc::now() });
                 }
                 if let (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) = (&stage_type, &lifecycle_item) {
                     for pu in &urls.urls {
-                        let _ = ctx.emit_event(AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: Some(pu.page_id as u32), product_ref: pu.url.clone(), status: "failed".into(), retry: None, duration_ms: Some(item_start.elapsed().as_millis() as u64), metrics: Some(SimpleMetrics::Product { fields: None, size_bytes: None, error: Some(format!("{:?}", err)) }), timestamp: Utc::now() });
+                        Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: Some(pu.page_id as u32), product_ref: pu.url.clone(), status: "failed".into(), retry: None, duration_ms: Some(item_start.elapsed().as_millis() as u64), metrics: Some(SimpleMetrics::Product { fields: None, size_bytes: None, error: Some(format!("{:?}", err)) }), timestamp: Utc::now() });
                     }
                 }
             }
@@ -577,7 +590,7 @@ impl StageActor {
                     throughput_per_second: throughput,
                 };
                 // Emit as AppEvent::PerformanceMetrics (additive, consumed by UI)
-                let _ = context.emit_event(AppEvent::PerformanceMetrics {
+                StageActor::emit_best_effort(context, AppEvent::PerformanceMetrics {
                     session_id: key,
                     metrics: snapshot,
                     timestamp: Utc::now(),
@@ -636,6 +649,10 @@ impl StageActor {
 
     /// 크롤링 엔진 초기화 (임시 구현)
     /// 현재는 시뮬레이션 모드이므로 실제 엔진 초기화는 건너뛰기
+    ///
+    /// # Errors
+    /// 현재 구현은 항상 `Ok(())`를 반환합니다. 실제 엔진 초기화가 도입되면
+    /// 초기화 실패 사유를 `StageError`로 반환해야 합니다.
     pub fn initialize_default_engines(&mut self) -> Result<(), StageError> {
     // No-op in production. Historical simulation path removed.
         Ok(())
@@ -649,6 +666,11 @@ impl StageActor {
     /// * `concurrency_limit` - 동시성 제한
     /// * `timeout_secs` - 타임아웃 (초)
     /// * `context` - Actor 컨텍스트
+    ///
+    /// # Errors
+    /// - 스테이지가 이미 실행 중인 경우(상태 불일치)
+    /// - 내부 처리에서 타임아웃이 발생한 경우
+    /// - 전략 실행 실패 혹은 이벤트 발행 실패가 `StageError`로 매핑된 경우
     pub async fn execute_stage(
         &mut self,
         stage_type: StageType,
@@ -679,6 +701,11 @@ impl StageActor {
     /// * `concurrency_limit` - 동시성 제한
     /// * `timeout_secs` - 타임아웃 (초)
     /// * `context` - Actor 컨텍스트
+    ///
+    /// # Errors
+    /// - 상태가 `Idle`이 아닌 경우(중복 실행 시도)
+    /// - 아이템 처리 중 타임아웃 발생
+    /// - 스테이지 완료/실패 이벤트 발행 실패(컨텍스트 브로드캐스트 오류 등)
     async fn handle_execute_stage(
         &mut self,
         stage_type: StageType,
@@ -728,11 +755,7 @@ impl StageActor {
             timestamp: Utc::now(),
         };
 
-        context
-            .emit_event(start_event)
-            .map_err(|e| StageError::GenericError {
-                message: e.to_string(),
-            })?;
+    self.emit(context, start_event)?;
 
         // 상태를 Processing으로 전환
         self.state = StageState::Processing;
@@ -759,11 +782,7 @@ impl StageActor {
                     result: stage_result,
                     timestamp: Utc::now(),
                 };
-                context
-                    .emit_event(completion_event)
-                    .map_err(|e| StageError::GenericError {
-                        message: e.to_string(),
-                    })?;
+                self.emit(context, completion_event)?;
                 info!(
                     "✅ Stage {:?} completed successfully: {}/{} items processed",
                     stage_type, self.success_count, self.total_items
@@ -782,11 +801,7 @@ impl StageActor {
                     error: format!("{:?}", error),
                     timestamp: Utc::now(),
                 };
-                context
-                    .emit_event(timeout_event)
-                    .map_err(|e| StageError::GenericError {
-                        message: e.to_string(),
-                    })?;
+                self.emit(context, timeout_event)?;
                 Err(error)
             }
             Err(e) => {
@@ -801,11 +816,7 @@ impl StageActor {
                     error: error_msg,
                     timestamp: Utc::now(),
                 };
-                context
-                    .emit_event(failure_event)
-                    .map_err(|er| StageError::GenericError {
-                        message: er.to_string(),
-                    })?;
+                self.emit(context, failure_event)?;
                 Err(e)
             }
         }
@@ -818,6 +829,11 @@ impl StageActor {
     /// * `items` - 처리할 아이템들
     /// * `concurrency_limit` - 동시성 제한
     /// * `context` - Actor 컨텍스트
+    /// * `overall_timeout` - 전체 처리 타임아웃
+    ///
+    /// # Errors
+    /// - 전체 타임아웃 초과 시 `StageError::TimeoutError`
+    /// - 태스크 조인 오류/전략 실행 오류는 실패 아이템으로 집계되어 반환 결과에 포함됩니다.
     async fn process_stage_items(
         &mut self,
         stage_type: StageType,
@@ -859,7 +875,7 @@ impl StageActor {
                 strategy_factory: strategy_factory_clone.clone(),
                 deps: deps_arc.clone(),
                 total_pages_hint: site_total_pages_hint,
-                products_on_last_page_hint: products_on_last_page_hint,
+                products_on_last_page_hint,
             };
             join_set.spawn(Self::execute_single_item_task(sem, input));
         }
@@ -891,7 +907,6 @@ impl StageActor {
                 Ok(None) => break, // all done
                 Err(_elapsed) => {
                     // timed out waiting for next; loop checks deadline and exits with timeout handling above
-                    continue;
                 }
             }
         }
@@ -924,6 +939,9 @@ impl StageActor {
     // live under new_architecture/actors/stage_actor.rs.
 
     /// 실제 데이터베이스 저장 처리
+    ///
+    /// # Errors
+    /// - 데이터베이스에 저장/업데이트 중 오류가 발생하면 `Err(String)`으로 상세 메시지가 반환됩니다.
     async fn execute_real_database_storage(
         item: &StageItem,
         product_repo: Arc<IntegratedProductRepository>,

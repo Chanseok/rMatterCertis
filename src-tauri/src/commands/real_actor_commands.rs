@@ -43,6 +43,8 @@ pub struct RealActorCrawlingRequest {
 /// 이 커맨드는 순수 ServiceBasedBatchCrawlingEngine만 사용하는 레거시 구현입니다.
 /// NOTE: Deprecated – use unified Analysis-Plan-Execute (ExecutionPlan + SessionActor) instead.
 #[command]
+/// # Errors
+/// Returns an error string if the legacy crawling pipeline fails to initialize or execute.
 pub async fn start_legacy_service_based_crawling(
     app: AppHandle,
     request: RealActorCrawlingRequest,
@@ -225,7 +227,7 @@ pub async fn start_legacy_service_based_crawling(
     // 📢 Session 시작 이벤트 발송
     let _ = event_tx.send(FrontendEvent::SessionStarted {
         session_id: session_id.clone(),
-        total_batches: batch_configs.len() as u32,
+        total_batches: u32::try_from(batch_configs.len()).unwrap_or(u32::MAX),
         timestamp: Utc::now(),
     });
 
@@ -249,7 +251,7 @@ pub async fn start_legacy_service_based_crawling(
             // 📢 Session 완료 이벤트 발송
             let _ = event_tx.send(FrontendEvent::SessionCompleted {
                 session_id: session_id.clone(),
-                duration_ms: duration.as_millis() as u64,
+                duration_ms: u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
                 timestamp: Utc::now(),
             });
 
@@ -271,6 +273,7 @@ pub async fn start_legacy_service_based_crawling(
 /// - 이유: 메모리 과부하 및 DB 저장 실패 방지
 /// - Batch1 완료 → Batch2 시작 → Batch3 시작
 /// - 각 배치 내부에서만 HTTP 요청을 concurrent하게 처리
+#[allow(clippy::too_many_arguments)]
 async fn execute_session_with_parallel_batches(
     session_id: String,
     batches: Vec<crate::crawl_engine::actors::types::BatchConfig>,
@@ -304,7 +307,7 @@ async fn execute_session_with_parallel_batches(
         let _ = event_tx.send(FrontendEvent::BatchStarted {
             session_id: session_id.clone(),
             batch_id: batch_id.clone(),
-            batch_index: batch_index as u32,
+            batch_index: u32::try_from(batch_index).unwrap_or(u32::MAX),
             timestamp: Utc::now(),
         });
 
@@ -322,7 +325,7 @@ async fn execute_session_with_parallel_batches(
         let _ = event_tx.send(FrontendEvent::BatchCompleted {
             session_id: session_id.clone(),
             batch_id: batch_id.clone(),
-            batch_index: batch_index as u32,
+            batch_index: u32::try_from(batch_index).unwrap_or(u32::MAX),
             success: batch_success,
             timestamp: Utc::now(),
         });
@@ -583,7 +586,7 @@ async fn execute_real_stage_3_detail_collection(
                 url_clone,
                 task_id,
                 field_count,
-                elapsed.as_millis()
+                (elapsed.as_secs_f64() * 1000.0)
             );
 
             Ok::<serde_json::Value, ActorError>(product_data_json)
@@ -627,11 +630,9 @@ async fn execute_real_stage_3_detail_collection(
 
 /// 추출된 필드 수 계산 (JSON용)
 fn count_extracted_json_fields(product_json: &serde_json::Value) -> u32 {
-    if let Some(obj) = product_json.as_object() {
-        obj.len() as u32
-    } else {
-        0
-    }
+    product_json
+        .as_object()
+        .map_or(0, |obj| u32::try_from(obj.len()).unwrap_or(u32::MAX))
 }
 
 /// Stage 4: 실제 Database Storage 구현
@@ -711,6 +712,9 @@ async fn execute_real_stage_4_storage(
 }
 
 /// 🔄 JSON을 `ProductDetail로` 변환하는 헬퍼 함수
+/// # Errors
+/// 현재는 항상 Ok를 반환하지만, 향후 스키마 검증을 도입할 수 있어 Result 형태를 유지합니다.
+#[allow(clippy::unnecessary_wraps)]
 fn convert_json_to_product_detail(
     json: &serde_json::Value,
 ) -> Result<ProductDetail, serde_json::Error> {

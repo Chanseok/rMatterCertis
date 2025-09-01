@@ -540,11 +540,11 @@ mod tests {
         );
         assert_eq!(
             parser.parse_numeric_field(Some(&"12345678".to_string())),
-            Some(0x12345678)
+            Some(0x1234_5678)
         ); // 8자리까지 hex
         assert_eq!(
             parser.parse_numeric_field(Some(&"123456789".to_string())),
-            Some(123456789)
+            Some(123_456_789)
         ); // 9자리는 decimal
         assert_eq!(
             parser.parse_numeric_field(Some(&"invalid".to_string())),

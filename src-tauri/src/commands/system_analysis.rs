@@ -41,6 +41,7 @@ struct BreakInfo {
 ///
 /// # Errors
 /// Returns `Err(String)` if site or database analysis fails, or cache update encounters issues.
+#[allow(clippy::used_underscore_binding)]
 pub async fn analyze_system_status(
     _app: AppHandle,
     shared_state: State<'_, SharedStateCache>,

@@ -119,8 +119,11 @@ async fn create_product_repo() -> Result<IntegratedProductRepository, String> {
 
 /// Calculate the next crawling range based on current DB state
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if configuration or database access fails.
 pub async fn calculate_crawling_range(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     request: CrawlingRangeRequest,
 ) -> Result<CrawlingRangeResponse, String> {
     info!(
@@ -172,7 +175,11 @@ pub async fn calculate_crawling_range(
             request.products_on_last_page as usize,
         );
 
-        let max_page_id = progress.current_batch.unwrap_or(0) as i32;
+        let max_page_id = progress
+            .current_batch
+            .unwrap_or(0)
+            .try_into()
+            .unwrap_or(i32::MAX);
         let max_index_in_page = 0; // 간단히 0으로 가정 (정확한 값은 DB에서 가져와야 함)
 
         if let Some((actual_page, _)) = calculator.reverse_calculate(max_page_id, max_index_in_page)
@@ -317,7 +324,7 @@ async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
         (start_page..=end_page).collect()
     };
 
-    let total_pages = pages.len() as u32;
+    let total_pages = u32::try_from(pages.len()).unwrap_or(u32::MAX);
     let total_batches = total_pages.div_ceil(batch_size); // 올림 계산
 
     info!(
@@ -329,9 +336,9 @@ async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
     let mut batches = Vec::new();
     for (batch_id, chunk) in pages.chunks(batch_size as usize).enumerate() {
         let batch_info = BatchInfo {
-            batch_id: batch_id as u32,
+            batch_id: u32::try_from(batch_id).unwrap_or(u32::MAX),
             pages: chunk.to_vec(),
-            estimated_products: chunk.len() as u32 * 12, // 평균 12개/페이지
+            estimated_products: u32::try_from(chunk.len()).unwrap_or(u32::MAX).saturating_mul(12), // 평균 12개/페이지
         };
         info!(
             "🔢 Batch {}: pages={:?}, estimated_products={}",
@@ -363,8 +370,10 @@ async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
 
 /// Get current crawling progress
 #[tauri::command]
+/// # Errors
+/// Returns an error string if progress calculation fails.
 pub async fn get_crawling_progress(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     total_pages_on_site: u32,
     products_on_last_page: u32,
 ) -> Result<CrawlingProgressInfo, String> {
@@ -396,8 +405,10 @@ pub async fn get_crawling_progress(
 
 /// Get database state for range calculation
 #[tauri::command]
+/// # Errors
+/// Returns an error string if database queries fail.
 pub async fn get_database_state_for_range_calculation(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
 ) -> Result<DatabaseStateInfo, String> {
     info!("📊 Getting database state for range calculation");
 
@@ -419,7 +430,7 @@ pub async fn get_database_state_for_range_calculation(
     let info = DatabaseStateInfo {
         max_page_id,
         max_index_in_page,
-        total_products: total_products as u32,
+        total_products: u32::try_from(total_products).unwrap_or(u32::MAX),
         has_data: max_page_id.is_some() && max_index_in_page.is_some(),
     };
 
@@ -442,6 +453,8 @@ pub struct DatabaseStateInfo {
 
 /// Demo function to show the prompts6 example calculation
 #[tauri::command]
+/// # Errors
+/// Returns Ok always; kept for consistency with command interface.
 pub async fn demo_prompts6_calculation() -> Result<String, String> {
     info!("🎯 Running prompts6 example calculation demo");
 
@@ -456,50 +469,73 @@ pub async fn demo_prompts6_calculation() -> Result<String, String> {
     let mut result = String::new();
     result.push_str("📊 prompts6 Example Calculation Demo\n\n");
     result.push_str("Input data:\n");
-    result.push_str(&format!("  max_page_id: {}\n", max_page_id));
-    result.push_str(&format!("  max_index_in_page: {}\n", max_index_in_page));
-    result.push_str(&format!("  total_pages_on_site: {}\n", total_pages_on_site));
-    result.push_str(&format!(
-        "  products_on_last_page: {}\n",
-        products_on_last_page
-    ));
-    result.push_str(&format!("  crawl_page_limit: {}\n", crawl_page_limit));
-    result.push_str(&format!("  products_per_page: {}\n\n", products_per_page));
+    {
+        use std::fmt::Write as _;
+        let _ = writeln!(result, "  max_page_id: {}", max_page_id);
+        let _ = writeln!(result, "  max_index_in_page: {}", max_index_in_page);
+        let _ = writeln!(result, "  total_pages_on_site: {}", total_pages_on_site);
+        let _ = writeln!(result, "  products_on_last_page: {}", products_on_last_page);
+        let _ = writeln!(result, "  crawl_page_limit: {}", crawl_page_limit);
+        let _ = writeln!(result, "  products_per_page: {}\n", products_per_page);
+    }
 
     // Step 1: Calculate last saved index
-    let last_saved_index = (max_page_id as u32 * products_per_page) + max_index_in_page as u32;
-    result.push_str(&format!(
-        "Step 1: lastSavedIndex = ({} * {}) + {} = {}\n",
-        max_page_id, products_per_page, max_index_in_page, last_saved_index
-    ));
+    let last_saved_index = u32::try_from(max_page_id)
+        .unwrap_or(0)
+        .saturating_mul(products_per_page)
+        .saturating_add(u32::try_from(max_index_in_page).unwrap_or(0));
+    {
+        use std::fmt::Write as _;
+        let _ = writeln!(
+            result,
+            "Step 1: lastSavedIndex = ({} * {}) + {} = {}",
+            max_page_id, products_per_page, max_index_in_page, last_saved_index
+        );
+    }
 
     // Step 2: Calculate next product index
     let next_product_index = last_saved_index + 1;
-    result.push_str(&format!(
-        "Step 2: nextProductIndex = {} + 1 = {}\n",
-        last_saved_index, next_product_index
-    ));
+    {
+        use std::fmt::Write as _;
+        let _ = writeln!(
+            result,
+            "Step 2: nextProductIndex = {} + 1 = {}",
+            last_saved_index, next_product_index
+        );
+    }
 
     // Step 3: Calculate total products
     let total_products = ((total_pages_on_site - 1) * products_per_page) + products_on_last_page;
-    result.push_str(&format!(
-        "Step 3: totalProducts = (({} - 1) * {}) + {} = {}\n",
-        total_pages_on_site, products_per_page, products_on_last_page, total_products
-    ));
+    {
+        use std::fmt::Write as _;
+        let _ = writeln!(
+            result,
+            "Step 3: totalProducts = (({} - 1) * {}) + {} = {}",
+            total_pages_on_site, products_per_page, products_on_last_page, total_products
+        );
+    }
 
     // Step 4: Convert to forward index
     let forward_index = (total_products - 1) - next_product_index;
-    result.push_str(&format!(
-        "Step 4: forwardIndex = ({} - 1) - {} = {}\n",
-        total_products, next_product_index, forward_index
-    ));
+    {
+        use std::fmt::Write as _;
+        let _ = writeln!(
+            result,
+            "Step 4: forwardIndex = ({} - 1) - {} = {}",
+            total_products, next_product_index, forward_index
+        );
+    }
 
     // Step 5: Calculate target page number
     let target_page_number = (forward_index / products_per_page) + 1;
-    result.push_str(&format!(
-        "Step 5: targetPageNumber = ({} / {}) + 1 = {}\n",
-        forward_index, products_per_page, target_page_number
-    ));
+    {
+        use std::fmt::Write as _;
+        let _ = writeln!(
+            result,
+            "Step 5: targetPageNumber = ({} / {}) + 1 = {}",
+            forward_index, products_per_page, target_page_number
+        );
+    }
 
     // Step 6: Apply crawl page limit
     let start_page = target_page_number;
@@ -508,15 +544,19 @@ pub async fn demo_prompts6_calculation() -> Result<String, String> {
     } else {
         1
     };
-    result.push_str(&format!(
-        "Step 6: startPage = {}, endPage = {} - {} + 1 = {}\n",
-        start_page, start_page, crawl_page_limit, end_page
-    ));
+    {
+        use std::fmt::Write as _;
+        let _ = writeln!(
+            result,
+            "Step 6: startPage = {}, endPage = {} - {} + 1 = {}",
+            start_page, start_page, crawl_page_limit, end_page
+        );
+    }
 
-    result.push_str(&format!(
-        "\n✅ Final result: crawl pages {} to {}\n",
-        start_page, end_page
-    ));
+    {
+        use std::fmt::Write as _;
+        let _ = writeln!(result, "\n✅ Final result: crawl pages {} to {}", start_page, end_page);
+    }
     result.push_str("🎯 This matches the prompts6 specification exactly!\n");
 
     Ok(result)
@@ -528,8 +568,8 @@ fn convert_progress(progress: &RangeSimpleProgress) -> CrawlingProgressInfo {
     total_products: progress.total,
     saved_products: progress.current,
     progress_percentage: progress.percentage,
-    max_page_id: progress.current_batch.map(|b| b as i32),
-    max_index_in_page: progress.total_batches.map(|b| b as i32),
+    max_page_id: progress.current_batch.and_then(|b| i32::try_from(b).ok()),
+    max_index_in_page: progress.total_batches.and_then(|b| i32::try_from(b).ok()),
     is_completed: progress.is_completed,
     }
 }

@@ -40,6 +40,9 @@ use tokio::sync::{broadcast, mpsc, watch};
 // use tokio::time::Duration; // for sleep & timing
 use tracing::{error, info, warn};
 use crate::crawl_engine::services::planning_service::PlanningStrategy;
+use crate::domain::pagination::PaginationCalculator;
+use crate::crawl_engine::actors::types::PageSlot;
+use crate::application::shared_state::{SiteAnalysisResult, DbAnalysisResult};
 
 // Graceful shutdown channel (single active session assumption)
 static PHASE_SHUTDOWN_TX: OnceCell<watch::Sender<bool>> = OnceCell::new();
@@ -139,6 +142,10 @@ async fn bootstrap_and_spawn_session(
 
 /// Public command: start actor system crawling (refactored to use bootstrap helper)
 #[tauri::command]
+/// Bootstrap common wiring and spawn `SessionActor` to execute a pre-planned plan
+///
+/// # Errors
+/// Returns an error string if configuration, repository, or actor spawning fails.
 pub async fn start_actor_system_crawling(
     app: AppHandle,
     request: ActorCrawlingRequest,
@@ -187,6 +194,10 @@ pub async fn start_actor_system_crawling(
 
 /// 요청: 현재 실행 중인 세션에 Graceful Shutdown 신호 전송
 #[tauri::command]
+/// Request a graceful shutdown signal for the running session.
+///
+/// # Errors
+/// Returns an error if sending the shutdown signal fails or no session is active.
 pub async fn request_graceful_shutdown(app: AppHandle) -> Result<ActorSystemResponse, String> {
     if let Some(tx) = PHASE_SHUTDOWN_TX.get() {
         if tx.send(true).is_err() {
@@ -222,6 +233,10 @@ pub async fn request_graceful_shutdown(app: AppHandle) -> Result<ActorSystemResp
 
 /// 실행 중인 세션을 일시정지 (상태: Running -> Paused)
 #[tauri::command]
+/// Pause a running session by session_id.
+///
+/// # Errors
+/// Returns an error string if the session is not found.
 pub async fn pause_session(
     _app: AppHandle,
     session_id: String,
@@ -246,6 +261,10 @@ pub async fn pause_session(
 
 /// 일시정지된 세션 재개 (상태: Paused -> Running)
 #[tauri::command]
+/// Resume a paused session by session_id.
+///
+/// # Errors
+/// Returns an error string if the session is not found.
 pub async fn resume_session(
     _app: AppHandle,
     session_id: String,
@@ -270,11 +289,16 @@ pub async fn resume_session(
 
 /// 현재 레지스트리에 존재하는 세션 ID 목록 (신규 -> 오래된 순 정렬)
 #[tauri::command]
+/// List session IDs in newest-first order.
+///
+/// # Errors
+/// Returns an error string if registry access fails (unlikely).
 pub async fn list_actor_sessions(_app: AppHandle) -> Result<ActorSystemResponse, String> {
     let registry = session_registry();
-    let g = registry.read().await;
-    let mut sessions: Vec<(String, chrono::DateTime<chrono::Utc>)> =
-        g.iter().map(|(k, v)| (k.clone(), v.started_at)).collect();
+    let mut sessions: Vec<(String, chrono::DateTime<chrono::Utc>)> = {
+        let g = registry.read().await;
+        g.iter().map(|(k, v)| (k.clone(), v.started_at)).collect()
+    };
     sessions.sort_by(|a, b| b.1.cmp(&a.1));
     let ids: Vec<String> = sessions.into_iter().map(|(id, _s)| id).collect();
     Ok(ActorSystemResponse {
@@ -287,6 +311,13 @@ pub async fn list_actor_sessions(_app: AppHandle) -> Result<ActorSystemResponse,
 
 /// 세션 상태 조회 (Running / Paused / Completed 등)
 #[tauri::command]
+/// Get the current session status and metrics.
+///
+/// # Panics
+/// Panics if the constructed payload session_id is missing (should not happen).
+///
+/// # Errors
+/// Returns an error string if the session is not found.
 pub async fn get_session_status(
     _app: AppHandle,
     session_id: String,
@@ -305,10 +336,13 @@ pub async fn get_session_status(
             0.0
         };
         let now = Utc::now();
-        let elapsed_ms = now
-            .signed_duration_since(entry.started_at)
-            .num_milliseconds()
-            .max(0) as u64;
+        let elapsed_ms = u64::try_from(
+            now.signed_duration_since(entry.started_at)
+                .num_milliseconds()
+                .max(0),
+        )
+        .unwrap_or(0);
+        #[allow(clippy::cast_precision_loss)]
         let throughput_ppm = if elapsed_ms > 0 {
             (entry.processed_pages as f64) / (elapsed_ms as f64 / 60000.0)
         } else {
@@ -317,16 +351,23 @@ pub async fn get_session_status(
         let remaining_pages = entry
             .total_pages_planned
             .saturating_sub(entry.processed_pages);
+        #[allow(clippy::cast_precision_loss)]
         let eta_ms = if throughput_ppm > 0.0 {
             ((remaining_pages as f64) / throughput_ppm) * 60000.0
         } else {
             0.0
         };
+        #[allow(clippy::cast_precision_loss)]
         let error_rate = if entry.processed_pages > 0 {
             f64::from(entry.error_count) / entry.processed_pages as f64
         } else {
             0.0
         };
+        #[allow(clippy::cast_precision_loss)]
+        let failed_rate = if entry.processed_pages > 0 {
+            entry.failed_pages.len() as f64 / entry.processed_pages as f64
+        } else { 0.0 };
+
         let payload = serde_json::json!({
             "session_id": session_id,
             "status": format!("{:?}", entry.status),
@@ -338,7 +379,7 @@ pub async fn get_session_status(
                 "total": entry.total_pages_planned,
                 "percent": pct_pages,
                 "failed": entry.failed_pages.len(),
-                "failed_rate": if entry.processed_pages>0 { entry.failed_pages.len() as f64 / entry.processed_pages as f64 } else { 0.0 },
+                "failed_rate": failed_rate,
                 "retrying": entry.retrying_pages.len(),
                 "failure_threshold": entry.page_failure_threshold,
             },
@@ -380,7 +421,7 @@ pub async fn get_session_status(
         Ok(ActorSystemResponse {
             success: true,
             message: "session status".into(),
-            session_id: Some(payload["session_id"].as_str().unwrap().to_string()),
+            session_id: Some(session_id),
             data: Some(payload),
         })
     } else {
@@ -392,40 +433,58 @@ pub async fn get_session_status(
 pub async fn test_build_session_status_payload(session_id: &str) -> Option<serde_json::Value> {
     let registry = session_registry();
     let g = registry.read().await;
-    if let Some(entry) = g.get(session_id) {
-        let pct_pages = if entry.total_pages_planned > 0 {
-            (entry.processed_pages as f64 / entry.total_pages_planned as f64) * 100.0
-        } else {
-            0.0
-        };
-        let pct_batches = if entry.total_batches_planned > 0 {
-            (entry.completed_batches as f64 / entry.total_batches_planned as f64) * 100.0
-        } else {
-            0.0
+    g.get(session_id).map(|entry| {
+        // Display-only metrics; allow precision loss for f64 conversions in this scoped block.
+        #[allow(clippy::cast_precision_loss)]
+        let (pct_pages, pct_batches, throughput_ppm, eta_ms, error_rate) = {
+            let pct_pages = if entry.total_pages_planned > 0 {
+                (entry.processed_pages as f64 / entry.total_pages_planned as f64) * 100.0
+            } else {
+                0.0
+            };
+            let pct_batches = if entry.total_batches_planned > 0 {
+                (entry.completed_batches as f64 / entry.total_batches_planned as f64) * 100.0
+            } else {
+                0.0
+            };
+            let now = Utc::now();
+            let elapsed_ms = u64::try_from(
+                now.signed_duration_since(entry.started_at)
+                    .num_milliseconds()
+                    .max(0),
+            )
+            .unwrap_or(0);
+            let throughput_ppm = if elapsed_ms > 0 {
+                (entry.processed_pages as f64) / (elapsed_ms as f64 / 60000.0)
+            } else {
+                0.0
+            };
+            let remaining_pages = entry
+                .total_pages_planned
+                .saturating_sub(entry.processed_pages);
+            let eta_ms = if throughput_ppm > 0.0 {
+                ((remaining_pages as f64) / throughput_ppm) * 60000.0
+            } else {
+                0.0
+            };
+            let error_rate = if entry.processed_pages > 0 {
+                f64::from(entry.error_count) / entry.processed_pages as f64
+            } else {
+                0.0
+            };
+            (pct_pages, pct_batches, throughput_ppm, eta_ms, error_rate)
         };
         let now = Utc::now();
-        let elapsed_ms = now
-            .signed_duration_since(entry.started_at)
-            .num_milliseconds()
-            .max(0) as u64;
-        let throughput_ppm = if elapsed_ms > 0 {
-            (entry.processed_pages as f64) / (elapsed_ms as f64 / 60000.0)
-        } else {
-            0.0
-        };
-        let remaining_pages = entry
-            .total_pages_planned
-            .saturating_sub(entry.processed_pages);
-        let eta_ms = if throughput_ppm > 0.0 {
-            ((remaining_pages as f64) / throughput_ppm) * 60000.0
-        } else {
-            0.0
-        };
-        let error_rate = if entry.processed_pages > 0 {
-            f64::from(entry.error_count) / entry.processed_pages as f64
-        } else {
-            0.0
-        };
+        let elapsed_ms = u64::try_from(
+            now.signed_duration_since(entry.started_at)
+                .num_milliseconds()
+                .max(0),
+        )
+        .unwrap_or(0);
+        #[allow(clippy::cast_precision_loss)]
+        let failed_rate = if entry.processed_pages > 0 {
+            entry.failed_pages.len() as f64 / entry.processed_pages as f64
+        } else { 0.0 };
         let payload = serde_json::json!({
             "session_id": session_id,
             "status": format!("{:?}", entry.status),
@@ -437,7 +496,7 @@ pub async fn test_build_session_status_payload(session_id: &str) -> Option<serde
                 "total": entry.total_pages_planned,
                 "percent": pct_pages,
                 "failed": entry.failed_pages.len(),
-                "failed_rate": if entry.processed_pages>0 { entry.failed_pages.len() as f64 / entry.processed_pages as f64 } else { 0.0 },
+                "failed_rate": failed_rate,
                 "retrying": entry.retrying_pages.len(),
                 "failure_threshold": entry.page_failure_threshold,
             },
@@ -471,10 +530,8 @@ pub async fn test_build_session_status_payload(session_id: &str) -> Option<serde
                 }) } else { serde_json::Value::Null },
             },
         });
-        Some(payload)
-    } else {
-        None
-    }
+        payload
+    })
 }
 
 /// 재시작 토큰을 이용해 새로운 세션을 생성 (v1 최소 구현)
@@ -483,6 +540,13 @@ pub async fn test_build_session_status_payload(session_id: &str) -> Option<serde
 /// - resume_token 은 JSON: { plan_hash, remaining_pages[], generated_at, processed_pages, total_pages }
 /// - plan_hash 무결성: 신규 ExecutionPlan 생성 후 해시 일치 여부 검사 (현재는 입력 토큰의 plan_hash 를 그대로 복제하여 Skip, Phase3에서 실제 재계산)
 #[tauri::command]
+/// Resume an actor crawling session from a previously saved token.
+///
+/// # Panics
+/// Panics if the resume token is invalid and contains no pages.
+///
+/// # Errors
+/// Returns an error string if parsing the token, loading config, or starting the actor system fails.
 pub async fn resume_from_token(
     app: AppHandle,
     resume_token: String,
@@ -500,7 +564,7 @@ pub async fn resume_from_token(
         .and_then(|v| v.as_array())
         .ok_or("missing remaining_pages")?
         .iter()
-        .filter_map(|x| x.as_u64().map(|n| n as u32))
+        .filter_map(|x| x.as_u64().and_then(|n| u32::try_from(n).ok()))
         .collect();
     if remaining_pages.is_empty() {
         return Err("no remaining pages to resume".into());
@@ -524,7 +588,7 @@ pub async fn resume_from_token(
                     item.get(0).and_then(|x| x.as_str()),
                     item.get(1).and_then(serde_json::Value::as_u64),
                 ) {
-                    map.insert(id.to_string(), count as u32);
+                    if let Ok(c) = u32::try_from(count) { map.insert(id.to_string(), c); }
                 }
             }
             map
@@ -535,7 +599,7 @@ pub async fn resume_from_token(
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
     // 2. 간단한 ExecutionPlan 재구성 (Phase3에서 CrawlingPlanner 부분 재사용으로 대체 예정)
-    use crate::crawl_engine::actors::types::{ExecutionPlan, PageRange, PageSlot};
+    // use moved to module scope
     let new_session_id = format!("resume_{}", uuid::Uuid::new_v4());
     // 단순화: remaining_pages 를 연속 구간으로 그룹핑 (현재는 페이지 정렬 후 하나의 range 로 묶음)
     let mut pages_sorted = remaining_pages.clone();
@@ -575,7 +639,7 @@ pub async fn resume_from_token(
     let inferred_total_pages = *pages_sorted.iter().max().unwrap_or(&last);
     // 2) 각 물리 페이지의 제품 슬롯을 보수적으로 0..(products_per_page-1) 로 가정하되 실제 마지막(오래된) 페이지 용량은 알 수 없어 full 로 가정.
     //    재개 시 정확성보다 안정적 page_id 재현성이 더 중요: old mapping 과의 drift 는 이후 PersistenceAnomaly 로 감지.
-    use crate::domain::pagination::PaginationCalculator;
+    // use moved to module scope
     let calc = PaginationCalculator::default();
     let mut page_slots: Vec<PageSlot> = Vec::new();
     for &physical_page in &pages_sorted {
@@ -586,7 +650,7 @@ pub async fn resume_from_token(
             page_slots.push(PageSlot {
                 physical_page,
                 page_id: i64::from(pos.page_id),
-                index_in_page: pos.index_in_page as i16,
+                index_in_page: i16::try_from(pos.index_in_page).unwrap_or(i16::MAX),
             });
         }
     }
@@ -641,11 +705,11 @@ pub async fn resume_from_token(
     let batch_size_from_token = token_v
         .get("batch_size")
         .and_then(serde_json::Value::as_u64)
-        .map_or(20, |v| v as u32);
+        .map_or(20, |v| u32::try_from(v).unwrap_or(u32::MAX));
     let concurrency_from_token = token_v
         .get("concurrency_limit")
         .and_then(serde_json::Value::as_u64)
-        .map_or(5, |v| v as u32);
+        .map_or(5, |v| u32::try_from(v).unwrap_or(u32::MAX));
     // Retry state parsing (v1 token extensions)
     let retries_per_page: HashMap<u32, u32> = token_v
         .get("retries_per_page")
@@ -657,7 +721,7 @@ pub async fn resume_from_token(
                     item.get(0).and_then(serde_json::Value::as_u64),
                     item.get(1).and_then(serde_json::Value::as_u64),
                 ) {
-                    map.insert(page as u32, count as u32);
+                    map.insert(u32::try_from(page).unwrap_or(u32::MAX), u32::try_from(count).unwrap_or(u32::MAX));
                 }
             }
             map
@@ -668,7 +732,7 @@ pub async fn resume_from_token(
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|x| x.as_u64().map(|n| n as u32))
+                .filter_map(|x| x.as_u64().map(|n| u32::try_from(n).unwrap_or(u32::MAX)))
                 .collect()
         })
         .unwrap_or_default();
@@ -677,7 +741,7 @@ pub async fn resume_from_token(
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|x| x.as_u64().map(|n| n as u32))
+                .filter_map(|x| x.as_u64().map(|n| u32::try_from(n).unwrap_or(u32::MAX)))
                 .collect()
         })
         .unwrap_or_default();
@@ -743,6 +807,9 @@ pub async fn resume_from_token(
 // (Removed deprecated ServiceBasedBatchCrawlingEngine command block)
 
 /// Test SessionActor functionality
+///
+/// # Errors
+/// Returns an error string if the actor initialization or test flow fails.
 #[tauri::command]
 pub async fn test_session_actor_basic(_app: AppHandle) -> Result<ActorSystemResponse, String> {
     info!("🧪 Testing SessionActor...");
@@ -1242,7 +1309,7 @@ async fn create_execution_plan(
     // Persist fresh site status & db analysis if newly fetched
     if let Some(cache_state_ref) = shared_cache.as_ref() {
         if cache_was_none {
-            use crate::application::shared_state::SiteAnalysisResult;
+            // use moved to module scope
             let site_analysis = SiteAnalysisResult::new(
                 site_status.total_pages,
                 site_status.products_on_last_page,
@@ -1253,13 +1320,10 @@ async fn create_execution_plan(
             cache_state_ref.set_site_analysis(site_analysis).await;
         }
         if !db_cache_hit {
-            use crate::application::shared_state::DbAnalysisResult;
+            // use moved to module scope
             // First attempt to read precise page/index BEFORE caching to avoid placeholder None persistence
-            let (precise_page_id, precise_index_in_page) =
-                match product_repo.get_max_page_id_and_index().await {
-                    Ok(v) => v,
-                    Err(_) => (None, None),
-                };
+            let (precise_page_id, precise_index_in_page): (Option<i32>, Option<i32>) =
+                product_repo.get_max_page_id_and_index().await.unwrap_or_default();
             let db_cached = DbAnalysisResult::new(
                 db_analysis_used.total_products,
                 precise_page_id,
@@ -1314,7 +1378,7 @@ async fn create_execution_plan(
                 crate::crawl_engine::services::crawling_planner::PhaseType::ListPageCrawling
             )
         })
-        .map(|p| p.pages.len() as u32)
+    .map(|p| u32::try_from(p.pages.len()).unwrap_or(u32::MAX))
         .sum();
     // plan_created KPI는 ExecutionPlan hash 확정 후 한 번만 출력하도록 변경 (중복 제거)
 
@@ -1364,11 +1428,9 @@ async fn create_execution_plan(
                         r.end_page = new_end;
                         let new_pages = r.start_page.saturating_sub(r.end_page) + 1;
                         r.estimated_products = new_pages * 12;
-                        trim_index = Some(idx + 1); // 이후 range 제거
-                    } else {
-                        // fallback: 유지 (이상 상황)
-                        trim_index = Some(idx + 1);
                     }
+                    // 이후 range 제거 (정상/이상 모두 동일 처리)
+                    trim_index = Some(idx + 1);
                 }
                 break;
             }
@@ -1469,7 +1531,6 @@ async fn create_execution_plan(
     let ranges_len = crawling_ranges.len();
     let strategy_string = format!("{:?}", crawling_plan.optimization_strategy);
     // Precompute page_slots using canonical PaginationCalculator to avoid drift.
-    use crate::domain::pagination::PaginationCalculator;
     let calc = PaginationCalculator::default();
     let mut page_slots: Vec<crate::crawl_engine::actors::types::PageSlot> = Vec::new();
     for range in &crawling_ranges {
@@ -1490,7 +1551,7 @@ async fn create_execution_plan(
                 page_slots.push(crate::crawl_engine::actors::types::PageSlot {
                     physical_page,
                     page_id: i64::from(pos.page_id),
-                    index_in_page: pos.index_in_page as i16,
+                    index_in_page: i16::try_from(pos.index_in_page).unwrap_or(i16::MAX),
                 });
             }
         }
@@ -1667,7 +1728,7 @@ async fn build_execution_plan_from_explicit_pages(
                 page_slots.push(crate::crawl_engine::actors::types::PageSlot {
                     physical_page,
                     page_id: i64::from(pos.page_id),
-                    index_in_page: pos.index_in_page as i16,
+                    index_in_page: i16::try_from(pos.index_in_page).unwrap_or(i16::MAX),
                 });
             }
         }
@@ -1739,6 +1800,10 @@ async fn build_execution_plan_from_explicit_pages(
 
 /// Start manual crawl via Actor pipeline from explicit pages (async, full parity; no validation phase).
 #[tauri::command(async)]
+/// Start a manual crawl for given pages using the Actor system.
+///
+/// # Errors
+/// Returns an error string if the actor system cannot be started.
 pub async fn start_manual_crawl_pages_actor(
     app: AppHandle,
     pages: Vec<u32>,
@@ -1780,6 +1845,10 @@ pub async fn start_manual_crawl_pages_actor(
 //  Data Consistency Check Command (page_id / index_in_page)
 // =====================================================
 #[tauri::command]
+/// Check that computed page/index pairs match canonical pagination rules.
+///
+/// # Errors
+/// Returns an error string if database queries or calculations fail.
 pub async fn check_page_index_consistency() -> Result<String, String> {
     use crate::crawl_engine::services::data_consistency_checker::DataConsistencyChecker;
     use crate::infrastructure::config::AppConfig;

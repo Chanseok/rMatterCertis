@@ -17,7 +17,7 @@
 
   - [x] 작업 브랜치 생성: `crawl-engine-cleanup`
   - [x] 최신 main에 변경 반영 및 푸시
-  - [ ] 안전망 확인: 기본 빌드/테스트/린트 그린 상태 확인
+  - [x] 안전망 확인: 기본 빌드/테스트 그린 상태 확인(cargo test 238/238)
   - [x] 인벤토리 1차 스냅샷 생성(구조 파악):
     - crawl_engine 루트: actor_event_bridge.rs, actor_system.rs, actors.rs, channels.rs, config/, context/, events/, integrated_context.rs, runtime/, services/, stages/, system_config.rs, ts_gen.rs, validation/
     - actors/: batch_actor.rs, contract.rs, session_actor.rs, stage_actor.rs, traits.rs, types.rs
@@ -29,19 +29,20 @@
   - [ ] 아카이브 폴더는 유지하되 프로덕션 경로 의존성 차단 확인
   - [ ] 중복 구현/이름만 다른 파일 통합 계획 수립
   - [ ] crawl_engine 루트: `src-tauri/src/crawl_engine.rs`에서 하위 모듈 선언 및 재익스포트 정리
-  - [ ] 각 디렉토리에서 `mod.rs` 제거, `모듈명.rs`/게이트 파일로 통일
+  - [x] 각 디렉토리에서 `mod.rs` 제거, `모듈명.rs`/게이트 파일로 통일(충돌 제거)
   - [ ] 파일/모듈 이름을 역할 기반으로 정리(예: `actor_system.rs` → `system.rs`)
   - [ ] dead_code/unused_imports 제거(도구: rust-analyzer, clippy)
-  - [ ] 불필요한 `clone()` 제거: `&T`, `&str`, `&[T]`, `Arc<T>`, `Cow<'_ , T>` 적용
+  - [x] 불필요한 `clone()` 제거(1차): 전략 단계와 Actor 경로에서 참조 우선 적용
   - [ ] 함수 시그니처 정리: 입력→출력(가능하면 stateless), 명확한 에러 타입
   - [ ] 명확한 네이밍/단일 책임: 거대 파일 분리 또는 공통부 통합
-  - [ ] PlanningService/Strategy 패턴 정착(자동/수동/재개 전략 확장 용이)
+  - [x] Strategy 패턴 경로 고정: stages/strategies/default/* 경량화 및 일관화
   - [ ] CrawlingPolicy 명시화: 재시도/중복/성능 옵션을 구조체로 관리하고 ExecutionPlan에 포함
   - [x] ts-rs 기반 타입 자동 생성 재검증(`scripts/generate_types.sh`)
   - [x] 타입 변경 시 생성물 갱신 및 FE 타입 정합성 확인(프로젝트 TS 타입체크 실행)
+  - [x] 이벤트 발행 경로 정리: SessionActor/BatchActor/StageActor(스테이지 레벨) `emit` 헬퍼 도입
 - 품질 게이트
-  - [ ] cargo check
-  - [ ] cargo test --all-features
+  - [x] cargo check (테스트와 함께 검증)
+  - [x] cargo test --all-features
   - [ ] cargo clippy --all-targets -- -D warnings
 
 ## 제안 구조(타깃)
@@ -118,3 +119,20 @@ src-tauri/src/
 ---
 
 문서 버전: v0.1 (초안) — 브랜치: `crawl-engine-cleanup`
+
+---
+
+## 변경 로그(요약)
+
+- 2025-09-01
+  - StageActor: `emit` 헬퍼 추가(`AppContext::emit_event` -> `Result<usize, _>`를 무시하고 `Result<(), StageError>`로 매핑), stage 수명주기 이벤트 경로 통일(StageStarted/Completed/Failed/Timeout)
+  - BatchActor: `emit` 헬퍼 도입 및 배치 이벤트 경로 통합(시작/진행/실패/완료/리포트)
+  - SessionActor: `emit` 헬퍼 도입 및 호출 경로 통합(진단/플래닝/루프/완료)
+  - stages/strategies/default/*: clone 최소화 및 duration_ms 수집 일관화
+  - 전체 테스트 통과(238/238)
+
+## 다음 단계(제안)
+
+- StageActor per-item 경로 중 오류 전파가 의미 있는 지점은 `emit`로 통일하고, RAII/Drop 기반 베스트에포트 경로는 유지
+- clippy 경고와 문서 주석(# Errors 등) 보강
+- 선택: 공통 이벤트 생성 유틸(팩토리/빌더) 도입으로 중복 포맷 정리

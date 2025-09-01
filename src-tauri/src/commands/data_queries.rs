@@ -42,6 +42,9 @@ pub struct SystemStatus {
 
 /// 제품 데이터 페이지별 조회 (Backend-Only CRUD)
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the database pool cannot be obtained or queries fail.
 pub async fn get_products_page(
     state: State<'_, AppState>,
     page: u32,
@@ -50,16 +53,18 @@ pub async fn get_products_page(
     let pool = state.get_database_pool().await?;
     let repo = IntegratedProductRepository::new(pool);
 
-    match repo.get_products_paginated(page as i32, size as i32).await {
+    let page_i32 = i32::try_from(page).unwrap_or(i32::MAX);
+    let size_i32 = i32::try_from(size).unwrap_or(i32::MAX);
+    match repo.get_products_paginated(page_i32, size_i32).await {
         Ok(products) => {
             // 전체 개수 조회 (향후 최적화 가능)
-            let total_count = match repo.count_products().await {
-                Ok(count) => count as u32,
-                Err(e) => {
+            let total_count = repo.count_products().await.map_or_else(
+                |e| {
                     error!("Failed to count products: {}", e);
                     0
-                }
-            };
+                },
+                |count| u32::try_from(count).unwrap_or(u32::MAX),
+            );
 
             let has_next = (page + 1) * size < total_count;
 
@@ -87,6 +92,9 @@ pub async fn get_products_page(
 
 /// 최근 업데이트된 제품 조회 (Backend-Only CRUD)
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the database pool cannot be obtained or queries fail.
 pub async fn get_latest_products(
     state: State<'_, AppState>,
     limit: u32,
@@ -108,6 +116,9 @@ pub async fn get_latest_products(
 
 /// 크롤링 상태 조회 (Backend-Only CRUD)
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if shared state cannot be accessed.
 pub async fn get_crawling_status_v2(
     state: State<'_, AppState>,
 ) -> Result<CrawlingStatusInfo, String> {
@@ -122,15 +133,18 @@ pub async fn get_crawling_status_v2(
         session_id: current_session.as_ref().map(|s| s.id.clone()),
     };
 
-    info!(
-        "✅ Retrieved crawling status: running={}",
-        status.is_running
-    );
+    let running = status.is_running;
+    drop(current_session);
+    drop(current_progress);
+    info!("✅ Retrieved crawling status: running={}", running);
     Ok(status)
 }
 
 /// 시스템 전체 상태 조회 (Backend-Only CRUD)
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the database pool cannot be obtained or queries fail.
 pub async fn get_system_status(state: State<'_, AppState>) -> Result<SystemStatus, String> {
     // 데이터베이스 연결 확인
     let database_connected = state.get_database_pool().await.is_ok();
@@ -139,10 +153,11 @@ pub async fn get_system_status(state: State<'_, AppState>) -> Result<SystemStatu
         let pool = state.get_database_pool().await?;
         let repo = IntegratedProductRepository::new(pool);
 
-        let total = match repo.count_products().await {
-            Ok(count) => count as u32,
-            Err(_) => 0,
-        };
+        let total = repo
+            .count_products()
+            .await
+            .map(|count| u32::try_from(count).unwrap_or(u32::MAX))
+            .unwrap_or(0);
 
         let last_updated = match repo.get_latest_updated_product().await {
             Ok(Some(product)) => Some(product.updated_at),

@@ -581,7 +581,7 @@ impl PlanningStrategy for ManualPlanningStrategy {
             db_max_index_in_page: None,
             db_total_products: 0,
             page_range_limit: app_config.user.crawling.page_range_limit,
-            batch_size: batch_size,
+            batch_size,
             concurrency_limit: app_config.user.max_concurrent_requests,
             created_at: Utc::now(),
         };

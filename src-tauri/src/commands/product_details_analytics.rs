@@ -3,87 +3,144 @@ use serde_json::json;
 use sqlx::Row;
 use tauri::State;
 use tracing::info;
+use std::fmt::Write as _;
+
+// Helper utilities moved top-level to avoid items_after_statements lint
+fn build_where_clause(
+    start_date: Option<&String>,
+    end_date: Option<&String>,
+    manufacturers: Option<&Vec<String>>,
+    spec_versions: Option<&Vec<String>>,
+    transport_interfaces: Option<&Vec<String>>,
+) -> (String, Vec<String>) {
+    let mut where_sql = String::from("WHERE 1=1");
+    let mut params: Vec<String> = Vec::new();
+
+    if let (Some(s), Some(e)) = (start_date, end_date) {
+        where_sql.push_str(" AND substr(certification_date,1,10) >= ? AND substr(certification_date,1,10) <= ?");
+        params.push(s.clone());
+        params.push(e.clone());
+    }
+
+    if let Some(list) = manufacturers {
+        if !list.is_empty() {
+            where_sql.push_str(" AND manufacturer IN (");
+            where_sql.push_str(&vec!["?"; list.len()].join(","));
+            where_sql.push(')');
+            params.extend(list.iter().cloned());
+        }
+    }
+
+    if let Some(list) = spec_versions {
+        if !list.is_empty() {
+            where_sql.push_str(" AND specification_version IN (");
+            where_sql.push_str(&vec!["?"; list.len()].join(","));
+            where_sql.push(')');
+            params.extend(list.iter().cloned());
+        }
+    }
+
+    if let Some(list) = transport_interfaces {
+        if !list.is_empty() {
+            where_sql.push_str(" AND transport_interface IN (");
+            where_sql.push_str(&vec!["?"; list.len()].join(","));
+            where_sql.push(')');
+            params.extend(list.iter().cloned());
+        }
+    }
+
+    (where_sql, params)
+}
+
+fn bind_all<'a>(
+    mut q: sqlx::query::Query<'a, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'a>>,
+    params: &'a [String],
+) -> sqlx::query::Query<'a, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'a>> {
+    for p in params {
+        q = q.bind(p);
+    }
+    q
+}
+
+async fn group_by_with_filters(
+    pool: &sqlx::SqlitePool,
+    column: &str,
+    where_sql: &str,
+    where_params: &[String],
+    limit: Option<i64>,
+) -> Result<Vec<(Option<String>, i64)>, sqlx::Error> {
+    let mut sql = format!(
+        "SELECT {col} AS k, COUNT(*) AS c FROM product_details {where_sql} GROUP BY {col} ORDER BY c DESC",
+        col = column,
+        where_sql = where_sql
+    );
+    if let Some(lim) = limit {
+        let _ = write!(sql, " LIMIT {}", lim);
+    }
+    let q = sqlx::query(&sql);
+    let rows = bind_all(q, where_params).fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let v: Option<String> = r.try_get::<Option<String>, _>("k").ok().flatten();
+            (v, r.get::<i64, _>("c"))
+        })
+        .collect())
+}
+
+async fn group_by_i32_with_filters(
+    pool: &sqlx::SqlitePool,
+    column: &str,
+    where_sql: &str,
+    where_params: &[String],
+    limit: Option<i64>,
+) -> Result<Vec<(Option<i64>, i64)>, sqlx::Error> {
+    let mut sql = format!(
+        "SELECT {col} AS k, COUNT(*) AS c FROM product_details {where_sql} GROUP BY {col} ORDER BY c DESC",
+        col = column,
+        where_sql = where_sql
+    );
+    if let Some(lim) = limit {
+        let _ = write!(sql, " LIMIT {}", lim);
+    }
+    let q = sqlx::query(&sql);
+    let rows = bind_all(q, where_params).fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let v: Option<i64> = r.try_get::<Option<i64>, _>("k").ok().flatten();
+            (v, r.get::<i64, _>("c"))
+        })
+        .collect())
+}
 
 /// Return aggregated analytics for product_details to power charts.
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the database pool cannot be obtained or queries fail.
 pub async fn get_product_details_analytics(
-    state: State<'_, AppState>,
+    app_state: State<'_, AppState>,
     start_date: Option<String>,
     end_date: Option<String>,
     manufacturers: Option<Vec<String>>,
     spec_versions: Option<Vec<String>>,
     transport_interfaces: Option<Vec<String>>,
 ) -> Result<serde_json::Value, String> {
-    let pool = state
+    let pool = app_state
         .get_database_pool()
         .await
         .map_err(|e| format!("DB pool unavailable: {e}"))?;
 
     // (kept placeholder for potential reuse)
 
-    // Build shared WHERE clause and a helper to bind values in the same order for each query
-    fn build_where_clause(
-        start_date: &Option<String>,
-        end_date: &Option<String>,
-        manufacturers: &Option<Vec<String>>,
-        spec_versions: &Option<Vec<String>>,
-        transport_interfaces: &Option<Vec<String>>,
-    ) -> (String, Vec<String>) {
-        let mut where_sql = String::from("WHERE 1=1");
-        let mut params: Vec<String> = Vec::new();
-
-        if let (Some(s), Some(e)) = (start_date, end_date) {
-            where_sql.push_str(" AND substr(certification_date,1,10) >= ? AND substr(certification_date,1,10) <= ?");
-            params.push(s.clone());
-            params.push(e.clone());
-        }
-
-        if let Some(list) = manufacturers {
-            if !list.is_empty() {
-                where_sql.push_str(" AND manufacturer IN (");
-                where_sql.push_str(&vec!["?"; list.len()].join(","));
-                where_sql.push(')');
-                params.extend(list.iter().cloned());
-            }
-        }
-
-        if let Some(list) = spec_versions {
-            if !list.is_empty() {
-                where_sql.push_str(" AND specification_version IN (");
-                where_sql.push_str(&vec!["?"; list.len()].join(","));
-                where_sql.push(')');
-                params.extend(list.iter().cloned());
-            }
-        }
-
-        if let Some(list) = transport_interfaces {
-            if !list.is_empty() {
-                where_sql.push_str(" AND transport_interface IN (");
-                where_sql.push_str(&vec!["?"; list.len()].join(","));
-                where_sql.push(')');
-                params.extend(list.iter().cloned());
-            }
-        }
-
-        (where_sql, params)
-    }
-
-    fn bind_all<'a>(
-        mut q: sqlx::query::Query<'a, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'a>>,
-        params: &'a [String],
-    ) -> sqlx::query::Query<'a, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'a>> {
-        for p in params {
-            q = q.bind(p);
-        }
-        q
-    }
-
+    // Build shared WHERE clause and parameters once using top-level helper
     let (where_sql, where_params) = build_where_clause(
-        &start_date,
-        &end_date,
-        &manufacturers,
-        &spec_versions,
-        &transport_interfaces,
+        start_date.as_ref(),
+        end_date.as_ref(),
+        manufacturers.as_ref(),
+        spec_versions.as_ref(),
+        transport_interfaces.as_ref(),
     );
 
     // Totals
@@ -303,71 +360,19 @@ pub async fn get_product_details_analytics(
 
     // Grouped distributions
     // Group-by helpers with filters
-    async fn group_by_with_filters(
-        pool: &sqlx::SqlitePool,
-        column: &str,
-        where_sql: &str,
-        where_params: &Vec<String>,
-        limit: Option<i64>,
-    ) -> Result<Vec<(Option<String>, i64)>, sqlx::Error> {
-        let mut sql = format!(
-            "SELECT {col} AS k, COUNT(*) AS c FROM product_details {where_sql} GROUP BY {col} ORDER BY c DESC",
-            col = column,
-            where_sql = where_sql
-        );
-        if let Some(lim) = limit {
-            sql.push_str(&format!(" LIMIT {}", lim));
-        }
-        let q = sqlx::query(&sql);
-        let rows = bind_all(q, where_params).fetch_all(pool).await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                let v: Option<String> = r.try_get::<Option<String>, _>("k").ok().flatten();
-                (v, r.get::<i64, _>("c"))
-            })
-            .collect())
-    }
-
-    async fn group_by_i32_with_filters(
-        pool: &sqlx::SqlitePool,
-        column: &str,
-        where_sql: &str,
-        where_params: &Vec<String>,
-        limit: Option<i64>,
-    ) -> Result<Vec<(Option<i64>, i64)>, sqlx::Error> {
-        let mut sql = format!(
-            "SELECT {col} AS k, COUNT(*) AS c FROM product_details {where_sql} GROUP BY {col} ORDER BY c DESC",
-            col = column,
-            where_sql = where_sql
-        );
-        if let Some(lim) = limit {
-            sql.push_str(&format!(" LIMIT {}", lim));
-        }
-        let q = sqlx::query(&sql);
-        let rows = bind_all(q, where_params).fetch_all(pool).await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                let v: Option<i64> = r.try_get::<Option<i64>, _>("k").ok().flatten();
-                (v, r.get::<i64, _>("c"))
-            })
-            .collect())
-    }
-
     let manufacturers =
-        group_by_with_filters(&pool, "manufacturer", &where_sql, &where_params, Some(100))
+        group_by_with_filters(&pool, "manufacturer", &where_sql, where_params.as_slice(), Some(100))
             .await
             .unwrap_or_default();
     let device_types =
-        group_by_with_filters(&pool, "device_type", &where_sql, &where_params, Some(100))
+        group_by_with_filters(&pool, "device_type", &where_sql, where_params.as_slice(), Some(100))
             .await
             .unwrap_or_default();
     let spec_versions_dist = group_by_with_filters(
         &pool,
         "specification_version",
         &where_sql,
-        &where_params,
+        where_params.as_slice(),
         None,
     )
     .await
@@ -376,16 +381,16 @@ pub async fn get_product_details_analytics(
         &pool,
         "transport_interface",
         &where_sql,
-        &where_params,
+        where_params.as_slice(),
         None,
     )
     .await
     .unwrap_or_default();
     let tis_trp_tested =
-        group_by_with_filters(&pool, "tis_trp_tested", &where_sql, &where_params, None)
+        group_by_with_filters(&pool, "tis_trp_tested", &where_sql, where_params.as_slice(), None)
             .await
             .unwrap_or_default();
-    let vids = group_by_i32_with_filters(&pool, "vid", &where_sql, &where_params, Some(50))
+    let vids = group_by_i32_with_filters(&pool, "vid", &where_sql, where_params.as_slice(), Some(50))
         .await
         .unwrap_or_default();
 

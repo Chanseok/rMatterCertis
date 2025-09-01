@@ -485,16 +485,13 @@ pub async fn start_basic_sync_pages(
                         .await;
 
                         // If details missing, try fetch with retries
-                        let details_missing = match sqlx::query_scalar::<_, i64>(
+                        let details_missing = (sqlx::query_scalar::<_, i64>(
                             "SELECT 1 FROM product_details WHERE url = ? LIMIT 1",
                         )
                         .bind(url)
                         .fetch_optional(&mut *tx)
-                        .await
-                        {
-                            Ok(opt) => opt.is_none(),
-                            Err(_) => false,
-                        };
+                        .await)
+                            .map_or(false, |opt| opt.is_none());
                         if details_missing && !is_dry_run {
                             let mut success = false;
                             for attempt in 1..=max_detail_retries_cfg {
@@ -873,12 +870,10 @@ pub async fn start_repair_sync(
     let products_has_id_column: bool = sqlx::query("PRAGMA table_info(products)")
         .fetch_all(&pool)
         .await
-        .map_or(false, |cols| {
-            cols.iter().any(|r| {
-                let name: String = r.try_get("name").unwrap_or_default();
-                name == "id"
-            })
-        });
+        .is_ok_and(|cols| cols.iter().any(|col| {
+            let name: &str = col.get("name");
+            name == "id"
+        }));
     // (deduped id-column detection)
 
     let newest_url = csa_iot::PRODUCTS_PAGE_MATTER_ONLY.to_string();
@@ -1558,27 +1553,19 @@ pub async fn start_partial_sync(
             let mut missing_first: Vec<usize> = Vec::new();
             let mut remaining: Vec<usize> = Vec::new();
             for (i, url) in product_urls.iter().enumerate() {
-                let has_product = match sqlx::query_scalar::<_, i64>(
+                let has_product = (sqlx::query_scalar::<_, i64>(
                     "SELECT 1 FROM products WHERE url = ? LIMIT 1",
                 )
                 .bind(url)
                 .fetch_optional(&mut *tx)
-                .await
-                {
-                    Ok(opt) => opt.is_some(),
-                    Err(_) => false,
-                };
+                .await).map_or(false, |opt| opt.is_some());
                 if has_product {
-                    let has_details = match sqlx::query_scalar::<_, i64>(
+                    let has_details = (sqlx::query_scalar::<_, i64>(
                         "SELECT 1 FROM product_details WHERE url = ? LIMIT 1",
                     )
                     .bind(url)
                     .fetch_optional(&mut *tx)
-                    .await
-                    {
-                        Ok(opt) => opt.is_some(),
-                        Err(_) => false,
-                    };
+                    .await).map_or(false, |opt| opt.is_some());
                     if has_details {
                         remaining.push(i);
                     } else {
@@ -1906,16 +1893,12 @@ pub async fn start_partial_sync(
                             }
                         }
                         // 추가: 기존 제품이지만 product_details에 미존재한 경우에 한해 상세 수집/업서트 수행 (우선순위 처리됨)
-                        let details_missing = match sqlx::query_scalar::<_, i64>(
+                        let details_missing = (sqlx::query_scalar::<_, i64>(
                             "SELECT 1 FROM product_details WHERE url = ? LIMIT 1",
                         )
                         .bind(url)
                         .fetch_optional(&mut *tx)
-                        .await
-                        {
-                            Ok(opt) => opt.is_none(),
-                            Err(_) => false,
-                        };
+                        .await).map_or(false, |opt| opt.is_none());
                         if details_missing {
                             let max_detail_retries = max_detail_retries_cfg;
                             let mut success = false;
@@ -2475,11 +2458,8 @@ pub async fn start_partial_sync(
                                 );
 
                                 // Persist details and backfill
-                                let mut tx2 = match pool.begin().await {
-                                    Ok(t) => t,
-                                    Err(_) => {
-                                        break;
-                                    }
+                                let Ok(mut tx2) = pool.begin().await else {
+                                    break;
                                 };
                                 let _ = sqlx::query(
                                     r"INSERT INTO product_details (
@@ -2706,16 +2686,12 @@ pub async fn start_partial_sync(
     if !dry_run.unwrap_or(false) && pages_processed > 0 {
         // Merge and normalize ranges again for safety
         let mut sweep_ranges: Vec<(u32, u32)> = Vec::new();
-        if let Ok(parsed) = parse_ranges(&match sqlx::query_scalar::<_, String>(
+        if let Ok(parsed) = parse_ranges(&(sqlx::query_scalar::<_, String>(
             "SELECT coverage_text FROM sync_sessions WHERE session_id = ?",
         )
         .bind(&session_id)
         .fetch_one(&pool)
-        .await
-        {
-            Ok(s) => s,
-            Err(_) => String::new(),
-        }) {
+        .await).unwrap_or_default()) {
             sweep_ranges = parsed;
         }
 

@@ -61,7 +61,7 @@ async fn count_remaining_dupes(pool: &sqlx::SqlitePool, table: &str) -> Result<u
         .await
         .map_err(|e| e.to_string())
         .unwrap_or(0);
-    Ok(remain as u64)
+    Ok(u64::try_from(remain).unwrap_or_default())
 }
 
 async fn delete_slot_dupes_in_table(pool: &sqlx::SqlitePool, table: &str) -> Result<u64, String> {
@@ -107,14 +107,17 @@ async fn count_remaining_slot_dupes(pool: &sqlx::SqlitePool, table: &str) -> Res
         .await
         .map_err(|e| e.to_string())
         .unwrap_or(0);
-    Ok(remain as u64)
+    Ok(u64::try_from(remain).unwrap_or_default())
 }
 
 /// Remove duplicate rows by exact URL for both products and product_details.
 /// Keeps the first inserted row (by rowid) and deletes the rest.
 #[tauri::command(async)]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Returns an error string if the database pool cannot be obtained or a query fails.
 pub async fn cleanup_duplicate_urls(
-    _app: AppHandle,
+    app: AppHandle,
     app_state: State<'_, AppState>,
 ) -> Result<UrlDedupCleanupReport, String> {
     let pool = app_state

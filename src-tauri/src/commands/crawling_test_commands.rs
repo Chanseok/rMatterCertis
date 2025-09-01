@@ -84,6 +84,8 @@ pub struct PerformanceMetrics {
 
 /// 🧪 빠른 크롤링 테스트 (개발자용)
 #[tauri::command]
+/// # Errors
+/// Returns an error string if test execution fails.
 pub async fn quick_crawling_test(
     app: AppHandle,
     test_request: QuickCrawlingTest,
@@ -224,7 +226,7 @@ pub async fn quick_crawling_test(
     // 9. 성능 메트릭 계산
     let total_duration = start_time.elapsed();
     let avg_time_per_page = if test_pages > 0 {
-        total_duration.as_millis() as u64 / u64::from(test_pages)
+        u64::try_from(total_duration.as_millis()).unwrap_or(u64::MAX) / u64::from(test_pages)
     } else {
         0
     };
@@ -245,7 +247,7 @@ pub async fn quick_crawling_test(
         tested_pages: test_pages,
         collected_urls,
         collected_details,
-        total_duration_ms: total_duration.as_millis() as u64,
+    total_duration_ms: u64::try_from(total_duration.as_millis()).unwrap_or(u64::MAX),
         avg_time_per_page_ms: avg_time_per_page,
         error_message,
         site_status,
@@ -264,6 +266,8 @@ pub async fn quick_crawling_test(
 
 /// 🔍 사이트 상태만 확인 (가장 빠른 테스트)
 #[tauri::command]
+/// # Errors
+/// Returns an error string if site status check fails.
 pub async fn check_site_status_only(app: AppHandle) -> Result<SiteStatusInfo, String> {
     info!("🔍 사이트 상태 확인 시작");
 
@@ -312,6 +316,8 @@ pub async fn check_site_status_only(app: AppHandle) -> Result<SiteStatusInfo, St
 
 /// 📊 크롤링 성능 벤치마크 테스트
 #[tauri::command]
+/// # Errors
+/// Returns an error string if benchmark execution fails.
 pub async fn crawling_performance_benchmark(
     app: AppHandle,
 ) -> Result<Vec<CrawlingTestResult>, String> {

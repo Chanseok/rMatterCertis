@@ -24,9 +24,12 @@ pub struct ActorSystemResponse {
 
 /// Test SessionActor functionality
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Always returns Ok in this test command. Included to satisfy lint requirements.
 pub async fn test_new_arch_session_actor(
-    _app: AppHandle,
-    _state: State<'_, ActorSystemState>,
+    app: AppHandle,
+    state: State<'_, ActorSystemState>,
 ) -> Result<ActorSystemResponse, String> {
     info!("🧪 Testing SessionActor...");
 
@@ -44,9 +47,12 @@ pub async fn test_new_arch_session_actor(
 
 /// Test BatchActor functionality
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Always returns Ok in this test command. Included to satisfy lint requirements.
 pub async fn test_new_arch_batch_actor(
-    _app: AppHandle,
-    _state: State<'_, ActorSystemState>,
+    app: AppHandle,
+    state: State<'_, ActorSystemState>,
 ) -> Result<ActorSystemResponse, String> {
     info!("🧪 Testing BatchActor...");
 
@@ -65,9 +71,12 @@ pub async fn test_new_arch_batch_actor(
 
 /// Test Actor integration
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Always returns Ok in this test command. Included to satisfy lint requirements.
 pub async fn test_new_arch_integration(
-    _app: AppHandle,
-    _state: State<'_, ActorSystemState>,
+    app: AppHandle,
+    state: State<'_, ActorSystemState>,
 ) -> Result<ActorSystemResponse, String> {
     info!("🧪 Testing Actor system integration...");
 
@@ -87,9 +96,12 @@ pub async fn test_new_arch_integration(
 
 /// Test channel system
 #[tauri::command]
+#[allow(clippy::used_underscore_binding)]
+/// # Errors
+/// Always returns Ok in this test command. Included to satisfy lint requirements.
 pub async fn test_new_arch_channels(
-    _app: AppHandle,
-    _state: State<'_, ActorSystemState>,
+    app: AppHandle,
+    state: State<'_, ActorSystemState>,
 ) -> Result<ActorSystemResponse, String> {
     info!("🧪 Testing triple channel system...");
 
@@ -109,9 +121,11 @@ pub async fn test_new_arch_channels(
 
 /// Test performance
 #[tauri::command]
+/// # Errors
+/// Always returns Ok in this test command. Included to satisfy lint requirements.
 pub async fn test_new_arch_performance(
-    _app: AppHandle,
-    _state: State<'_, ActorSystemState>,
+    app: AppHandle,
+    state: State<'_, ActorSystemState>,
 ) -> Result<ActorSystemResponse, String> {
     info!("🧪 Testing Actor system performance...");
 
@@ -130,7 +144,7 @@ pub async fn test_new_arch_performance(
         data: Some(serde_json::json!({
             "test": "Performance",
             "status": "passed",
-            "elapsed_ms": elapsed.as_millis(),
+            "elapsed_ms": u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
             "simulation": "50ms sleep test",
             "result": "successful"
         })),

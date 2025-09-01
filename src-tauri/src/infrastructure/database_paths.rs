@@ -171,7 +171,6 @@ impl DatabasePathManager {
 }
 
 /// 편의 함수들 - 전역에서 쉽게 사용할 수 있도록
-
 /// 메인 데이터베이스 URL 가져오기 (가장 자주 사용)
 #[must_use] pub fn get_main_database_url() -> String {
     DatabasePathManager::global().get_main_database_url()

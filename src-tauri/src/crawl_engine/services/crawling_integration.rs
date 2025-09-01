@@ -718,7 +718,6 @@ impl CrawlingIntegrationService {
                             "Retrying detail collection (meta)"
                         );
                         tokio::time::sleep(delay).await;
-                        continue;
                     }
                 }
             }
