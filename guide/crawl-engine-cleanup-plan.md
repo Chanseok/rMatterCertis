@@ -19,6 +19,13 @@
   - [x] 작업 브랜치 생성: `crawl-engine-cleanup`
   - [x] 최신 main에 변경 반영 및 푸시
   - [ ] 안전망 확인: 기본 빌드/테스트/린트 그린 상태 확인
+  - [x] 인벤토리 1차 스냅샷 생성(구조 파악):
+    - crawl_engine 루트: actor_event_bridge.rs, actor_system.rs, actors.rs, channels.rs, config/, context/, events/, integrated_context.rs, runtime/, services/, stages/, system_config.rs, ts_gen.rs, validation/
+    - actors/: batch_actor.rs, contract.rs, session_actor.rs, stage_actor.rs, traits.rs, types.rs
+    - channels/: types.rs (게이트: channels.rs)
+    - stages/: mod.rs, strategies/default/*, traits.rs
+    - services/: crawling_integration.rs, crawling_planner.rs, data_consistency_checker.rs, data_quality_analyzer.rs, performance_optimizer.rs, planning_service.rs, real_crawling_commands.rs, real_crawling_integration.rs, mod.rs
+  - [x] 빈/미사용 스텁 제거: channels/channels.rs, services/services.rs 삭제
 - 얇은 사전 정리(삭제 전용, API 영향 없음)
   - [ ] 명백한 죽은 파일/폴더 제거(주석만, 실험/백업 잔재, 완전히 미사용 테스트 등)
   - [ ] 아카이브 폴더는 유지하되 프로덕션 경로 의존성 차단 확인
@@ -42,6 +49,7 @@
   - [ ] cargo check
   - [ ] cargo test --all-features
   - [ ] cargo clippy --all-targets -- -D warnings
+    - 현 상태: clippy 경고 다수 존재(범위: commands/*, bin/* 중심). crawl_engine 모듈 리팩토링 중 단계적으로 해결 예정.
   - [ ] (선택) cargo +nightly udeps — 미사용 의존성 제거
 
 ## 제안 구조(타깃)
