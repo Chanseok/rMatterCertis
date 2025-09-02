@@ -1,3 +1,4 @@
+#![allow(clippy::used_underscore_binding)]
 //! Simple Actor System Test Commands for Tauri Integration
 //!
 //! Minimal test commands to verify Actor system functionality in the UI

@@ -1,3 +1,4 @@
+#![allow(clippy::used_underscore_binding)]
 use crate::crawl_engine::actors::types::AppEvent;
 use crate::domain::pagination::CanonicalPageIdCalculator;
 use crate::infrastructure::{

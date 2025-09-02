@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
+# Strict mode for reliability in CI and local runs
 set -euo pipefail
+IFS=$'\n\t'
+
+# Helpful error context
+trap 'echo "Error on line $LINENO" >&2' ERR
 
 # Quick checker: For a given URL, verify page_id/index_in_page ↔ id (p####i##) consistency
 # - If URL not provided, auto-pick the latest updated product_details row with non-null coordinates.
 # - Also prints counts of mismatches across tables.
 
 DB_PATH="$HOME/Library/Application Support/matter-certis-v2/database/matter_certis.db"
+
+# Ensure sqlite3 is available
+if ! command -v sqlite3 >/dev/null 2>&1; then
+  echo "❌ sqlite3 not found. Install SQLite CLI (brew install sqlite)" >&2
+  exit 1
+fi
 
 if [[ ! -f "$DB_PATH" ]]; then
   echo "❌ Database not found at: $DB_PATH" >&2
@@ -16,7 +27,8 @@ fi
 URL_INPUT=${1:-}
 
 if [[ -z "$URL_INPUT" ]]; then
-  URL_INPUT=$(sqlite3 "$DB_PATH" <<'SQL'
+  # Avoid premature exit on query failure; we handle empty result below
+  URL_INPUT=$(sqlite3 "$DB_PATH" <<'SQL' || true
 .timeout 2000
 SELECT url
 FROM product_details
@@ -29,16 +41,19 @@ SQL
     echo "❌ No candidate rows found in product_details." >&2
     exit 2
   fi
-  echo "ℹ️ No URL provided. Using most recently updated candidate: $URL_INPUT"
+  printf 'ℹ️ No URL provided. Using most recently updated candidate: %s\n' "$URL_INPUT"
 fi
 
-printf "\n== URL slot/id consistency check ==\n"
-echo "URL: $URL_INPUT"
+printf '\n== URL slot/id consistency check ==\n'
+printf 'URL: %s\n' "$URL_INPUT"
 
 # Check if products has an 'id' column
-HAS_PROD_ID=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM pragma_table_info('products') WHERE name='id';")
+HAS_PROD_ID=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM pragma_table_info('products') WHERE name='id';" || true)
+# Keep only digits; default to 0 if empty
+HAS_PROD_ID=${HAS_PROD_ID//[^0-9]/}
+HAS_PROD_ID=${HAS_PROD_ID:-0}
 
-echo "\n-- product_details --"
+printf '\n-- product_details --\n'
 # Escape single quotes for SQL literal
 ESCAPED_URL=${URL_INPUT//\'/''}
 sqlite3 "$DB_PATH" <<SQL
@@ -64,7 +79,7 @@ SELECT * FROM rows;
 SQL
 
 if [[ "$HAS_PROD_ID" -gt 0 ]]; then
-  echo "\n-- products (includes id column) --"
+  printf '\n-- products (includes id column) --\n'
   sqlite3 "$DB_PATH" <<SQL
 .headers on
 .mode column
@@ -87,7 +102,7 @@ WITH rows AS (
 SELECT * FROM rows;
 SQL
 else
-  echo "\n-- products --"
+  printf '\n-- products --\n'
   echo "(No 'id' column present. Showing coordinates only.)"
   sqlite3 "$DB_PATH" <<SQL
 .headers on
@@ -98,7 +113,7 @@ WHERE url = '$ESCAPED_URL';
 SQL
 fi
 
-printf "\n== Global mismatch summary ==\n"
+printf '\n== Global mismatch summary ==\n'
 sqlite3 "$DB_PATH" <<'SQL'
 .headers on
 .mode column
@@ -136,4 +151,4 @@ FROM (
 );
 SQL
 
-printf "\n✅ Check complete.\n"
+printf '\n✅ Check complete.\n'

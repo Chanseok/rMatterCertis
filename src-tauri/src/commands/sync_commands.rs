@@ -1,3 +1,7 @@
+#![allow(
+    clippy::used_underscore_binding,
+    clippy::unnecessary_map_or
+)]
 use crate::application::AppState;
 use crate::crawl_engine::actors::types::{AppEvent, SyncAnomalyEntry};
 use crate::domain::pagination::CanonicalPageIdCalculator;

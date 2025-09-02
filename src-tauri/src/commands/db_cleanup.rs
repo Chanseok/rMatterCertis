@@ -1,3 +1,4 @@
+#![cfg(feature = "dev-tools")]
 use crate::application::AppState;
 use serde::Serialize;
 use sqlx::sqlite::SqliteQueryResult;

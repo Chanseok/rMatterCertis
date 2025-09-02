@@ -1,3 +1,4 @@
+#![cfg(feature = "dev-tools")]
 use tauri::AppHandle;
 use tracing::info;
 

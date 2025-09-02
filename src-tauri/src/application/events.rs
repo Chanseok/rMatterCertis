@@ -150,7 +150,10 @@ impl EventEmitter {
     // =========================================================================
 
     /// Emit an atomic task event immediately (high-frequency, lightweight)
-    pub async fn emit_atomic_task_event(&self, event: AtomicTaskEvent) -> EventResult {
+    ///
+    /// # Errors
+    /// Returns an error if event emission is disabled or if the Tauri emitter fails.
+    pub async fn emit_atomic_task_event(&self, event: &AtomicTaskEvent) -> EventResult {
         // 빠른 경로: 비활성화 검사
         if !self.is_enabled().await {
             return Err(EventEmissionError::Disabled);
@@ -158,7 +161,7 @@ impl EventEmitter {
 
         let event_name = AtomicTaskEvent::event_name();
 
-        match self.app_handle.emit(event_name, &event) {
+    match self.app_handle.emit(event_name, &event) {
             Ok(()) => {
                 debug!(
                     "Successfully emitted atomic task event: {} for task {}",
@@ -180,8 +183,8 @@ impl EventEmitter {
         task_id: crate::domain::atomic_events::TaskId,
         task_type: String,
     ) -> EventResult {
-        let event = AtomicTaskEvent::started(task_id, task_type);
-        self.emit_atomic_task_event(event).await
+    let event = AtomicTaskEvent::started(task_id, task_type);
+    self.emit_atomic_task_event(&event).await
     }
 
     /// Emit task completed event
@@ -191,8 +194,8 @@ impl EventEmitter {
         task_type: String,
         duration_ms: u64,
     ) -> EventResult {
-        let event = AtomicTaskEvent::completed(task_id, task_type, duration_ms);
-        self.emit_atomic_task_event(event).await
+    let event = AtomicTaskEvent::completed(task_id, task_type, duration_ms);
+    self.emit_atomic_task_event(&event).await
     }
 
     /// Emit task failed event
@@ -203,8 +206,8 @@ impl EventEmitter {
         error_message: String,
         retry_count: u32,
     ) -> EventResult {
-        let event = AtomicTaskEvent::failed(task_id, task_type, error_message, retry_count);
-        self.emit_atomic_task_event(event).await
+    let event = AtomicTaskEvent::failed(task_id, task_type, error_message, retry_count);
+    self.emit_atomic_task_event(&event).await
     }
 
     /// Emit task retrying event
@@ -215,8 +218,8 @@ impl EventEmitter {
         retry_count: u32,
         delay_ms: u64,
     ) -> EventResult {
-        let event = AtomicTaskEvent::retrying(task_id, task_type, retry_count, delay_ms);
-        self.emit_atomic_task_event(event).await
+    let event = AtomicTaskEvent::retrying(task_id, task_type, retry_count, delay_ms);
+    self.emit_atomic_task_event(&event).await
     }
 
     // =========================================================================

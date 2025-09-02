@@ -1,3 +1,4 @@
+#![allow(clippy::used_underscore_binding)]
 //! Advanced Crawling Engine 관련 status / 조회 전용 명령어 모듈
 //! NOTE: `start_advanced_crawling(실행` 엔트리포인트)는 통합 Actor 진입점으로 완전히 이관되어 제거되었습니다.
 

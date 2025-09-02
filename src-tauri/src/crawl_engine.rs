@@ -18,7 +18,8 @@ pub mod system_config; // 🔧 SystemConfig 중앙 관리 // Actor 이벤트 프
 pub mod config;
 pub mod events;
 pub mod runtime;
-pub mod services; // session registry & runtime helpers
+#[path = "crawl_engine/services.rs"]
+pub mod services; // session registry & runtime helpers (explicit gate file)
 pub mod stages; // Phase 3: StageLogic strategies
 
 // 🔄 Phase 4: 타입 동기화 및 ts-rs 통합 (새로 추가)

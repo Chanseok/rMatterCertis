@@ -1,3 +1,4 @@
+#![allow(clippy::used_underscore_binding)]
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use tauri::State;

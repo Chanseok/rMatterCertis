@@ -2,6 +2,11 @@
 //!
 //! This module provides a configurable HTTP client optimized for web crawling
 //! with built-in retry logic, rate limiting, and user agent management.
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::unnecessary_wraps,
+    clippy::manual_let_else
+)]
 
 use crate::infrastructure::config::WorkerConfig;
 use anyhow::{Result, anyhow};
@@ -897,10 +902,7 @@ mod tests {
         let cnt_clone = counter.clone();
         tokio::spawn(async move {
             loop {
-                let (mut socket, _) = match listener.accept().await {
-                    Ok(s) => s,
-                    Err(_) => break,
-                };
+                let Ok((mut socket, _)) = listener.accept().await else { break };
 
                 let mut buf = vec![0u8; 1024];
                 let _ = socket.read(&mut buf).await; // best-effort
@@ -908,15 +910,11 @@ mod tests {
                 let first_line = req.lines().next().unwrap_or("");
 
                 // naive path detection
-                let path = if let Some(start) = first_line.find(' ') {
-                    if let Some(end) = first_line[start + 1..].find(' ') {
-                        &first_line[start + 1..start + 1 + end]
-                    } else {
-                        "/"
-                    }
-                } else {
-                    "/"
-                };
+                let path = first_line.find(' ').map_or("/", |start| {
+                    first_line[start + 1..]
+                        .find(' ')
+                        .map_or("/", |end| &first_line[start + 1..start + 1 + end])
+                });
 
                 match path {
                     "/retry2ok" => {

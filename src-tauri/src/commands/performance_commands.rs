@@ -1,3 +1,4 @@
+#![allow(clippy::used_underscore_binding)]
 //! 성능 최적화 관련 Tauri Commands
 //! Phase C: 실시간 성능 모니터링 및 최적화 제어
 

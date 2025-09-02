@@ -1,3 +1,7 @@
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::or_fun_call
+)]
 use crate::application::shared_state::SharedStateCache;
 use crate::events::{
     AtomicTaskEvent, BatchInfo, DbCursor, LiveSystemState, StageInfo, SystemStatePayload,
@@ -140,6 +144,9 @@ impl SystemStateBroadcaster {
     }
 
     /// 시스템 상태 스냅샷 생성
+    ///
+    /// # Errors
+    /// 데이터베이스 접근 또는 상태 조회에 실패하면 오류를 반환합니다.
     pub async fn create_system_state_snapshot(&self) -> anyhow::Result<SystemStatePayload> {
         let state_cache = self.app_handle.state::<SharedStateCache>();
         let site_analysis = state_cache.site_analysis.read().await;
@@ -162,10 +169,10 @@ impl SystemStateBroadcaster {
         let db_repo = IntegratedProductRepository::new(db_pool);
 
         // 최근 제품의 page_id, index_in_page 정보 가져오기
-        let last_cursor = if let Some(last_product) = db_repo.get_latest_updated_product().await? {
+    let last_cursor = if let Some(last_product) = db_repo.get_latest_updated_product().await? {
             Some(DbCursor {
-                page: last_product.page_id.unwrap_or(0) as u32,
-                index: last_product.index_in_page.unwrap_or(0) as u32,
+        page: u32::try_from(last_product.page_id.unwrap_or(0)).unwrap_or(0),
+        index: u32::try_from(last_product.index_in_page.unwrap_or(0)).unwrap_or(0),
             })
         } else {
             None
@@ -177,7 +184,7 @@ impl SystemStateBroadcaster {
         Ok(SystemStatePayload {
             is_running, // 🔥 더 엄격한 조건으로 수정됨
             total_pages: site_analysis.as_ref().map_or(0, |s| s.total_pages),
-            db_total_products: total_products as u64,
+            db_total_products: u64::try_from(total_products).unwrap_or(0),
             last_db_cursor: last_cursor,
             session_target_items: runtime_state.session_target_items.unwrap_or(0),
             session_collected_items: runtime_state.session_collected_items.unwrap_or(0),
@@ -189,6 +196,10 @@ impl SystemStateBroadcaster {
     }
 
     /// 시스템 상태 브로드캐스트
+    /// 시스템 상태 브로드캐스트
+    ///
+    /// # Errors
+    /// 스냅샷 생성 또는 이벤트 전송에 실패하면 오류를 반환합니다.
     pub async fn broadcast_system_state(&mut self) -> anyhow::Result<()> {
         let now = Instant::now();
 
@@ -210,12 +221,20 @@ impl SystemStateBroadcaster {
     }
 
     /// 원자적 작업 이벤트 발송
-    pub fn emit_atomic_task_event(&self, event: AtomicTaskEvent) -> anyhow::Result<()> {
+    /// 원자적 작업 이벤트 발송
+    ///
+    /// # Errors
+    /// 이벤트 전송 실패 시 오류를 반환합니다.
+    pub fn emit_atomic_task_event(&self, event: &AtomicTaskEvent) -> anyhow::Result<()> {
         self.app_handle.emit("atomic-task-update", &event)?;
         Ok(())
     }
 
     /// Live Production Line 상태 브로드캐스트
+    /// Live Production Line 상태 브로드캐스트
+    ///
+    /// # Errors
+    /// 스냅샷 생성 또는 이벤트 전송 실패 시 오류를 반환합니다.
     pub async fn broadcast_live_state(&mut self) -> anyhow::Result<()> {
         let basic_state = self.create_system_state_snapshot().await?;
 
@@ -315,9 +334,8 @@ impl SystemStateBroadcaster {
         let payload = PageCrawledPayload {
             batch_id: self
                 .current_batch_id
-                .as_ref()
-                .unwrap_or(&"unknown".to_string())
-                .clone(),
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
             page_id,
             url,
             product_count,
@@ -340,9 +358,8 @@ impl SystemStateBroadcaster {
         let payload = ProductCollectedPayload {
             batch_id: self
                 .current_batch_id
-                .as_ref()
-                .unwrap_or(&"unknown".to_string())
-                .clone(),
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
             page_id,
             product_id,
             url,
@@ -408,9 +425,8 @@ impl SystemStateBroadcaster {
         let payload = RetryAttemptPayload {
             batch_id: self
                 .current_batch_id
-                .as_ref()
-                .unwrap_or(&"unknown".to_string())
-                .clone(),
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
             item_id,
             item_type,
             url,
@@ -435,9 +451,8 @@ impl SystemStateBroadcaster {
         let payload = RetrySuccessPayload {
             batch_id: self
                 .current_batch_id
-                .as_ref()
-                .unwrap_or(&"unknown".to_string())
-                .clone(),
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
             item_id,
             item_type,
             url,
@@ -461,9 +476,8 @@ impl SystemStateBroadcaster {
         let payload = RetryFailedPayload {
             batch_id: self
                 .current_batch_id
-                .as_ref()
-                .unwrap_or(&"unknown".to_string())
-                .clone(),
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
             item_id,
             item_type,
             url,
@@ -487,9 +501,8 @@ impl SystemStateBroadcaster {
         let payload = DatabaseSaveAttemptPayload {
             batch_id: self
                 .current_batch_id
-                .as_ref()
-                .unwrap_or(&"unknown".to_string())
-                .clone(),
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
             item_id,
             item_type,
             url,
@@ -511,9 +524,8 @@ impl SystemStateBroadcaster {
         let payload = DatabaseSaveSuccessPayload {
             batch_id: self
                 .current_batch_id
-                .as_ref()
-                .unwrap_or(&"unknown".to_string())
-                .clone(),
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
             item_id,
             item_type,
             url,
@@ -536,9 +548,8 @@ impl SystemStateBroadcaster {
         let payload = DatabaseSaveFailedPayload {
             batch_id: self
                 .current_batch_id
-                .as_ref()
-                .unwrap_or(&"unknown".to_string())
-                .clone(),
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
             item_id,
             item_type,
             url,

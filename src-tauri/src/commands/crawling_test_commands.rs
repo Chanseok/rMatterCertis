@@ -109,7 +109,7 @@ pub async fn quick_crawling_test(
     let system_config = Arc::new(SystemConfig::default());
 
     // 3. 크롤링 통합 서비스 생성
-    let integration_service =
+    let integration_service: Arc<CrawlingIntegrationService> =
         match CrawlingIntegrationService::new(system_config.clone(), app_config).await {
             Ok(service) => Arc::new(service),
             Err(e) => {

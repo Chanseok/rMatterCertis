@@ -1,3 +1,7 @@
+#![allow(
+    clippy::used_underscore_binding,
+    clippy::missing_errors_doc
+)]
 //! 시스템 상태 분석 커맨드
 //!
 //! proposal6.md의 워크플로우 재정의에 따라 `StatusTab에서` 사용하는

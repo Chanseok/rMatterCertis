@@ -237,6 +237,8 @@ telemetry = []          # Telemetry and observability
 minimal = []            # Minimal build for CI/CD
 test-utils = []         # Testing utilities
 live_crawl_test = []    # Enable real async main for src/bin/live_crawl_test.rs
+legacy-ui = []          # Legacy UI-related commands (dashboard)
+dev-tools = []          # Developer/diagnostics command set (db utils, debug, analytics)
 
 [[bench]]
 name = "shared_service_benchmark"

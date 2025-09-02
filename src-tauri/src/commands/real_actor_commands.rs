@@ -1,3 +1,4 @@
+#![cfg(feature = "dev-tools")]
 //! 🎭 Real Actor System Commands
 //!
 //! `SessionActor` → `BatchActor` → `StageActor` 계층 구조로 병렬 크롤링 실행

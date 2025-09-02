@@ -1,3 +1,4 @@
+#![allow(clippy::used_underscore_binding)]
 //! Smart crawling commands - uses the range calculation logic from prompts6
 //!
 //! This module provides commands for smart crawling that automatically calculates

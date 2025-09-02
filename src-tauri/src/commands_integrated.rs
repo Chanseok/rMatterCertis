@@ -1,3 +1,7 @@
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::used_underscore_binding
+)]
 use crate::application::integrated_use_cases::IntegratedProductUseCases;
 use crate::domain::integrated_product::DatabaseStatistics;
 use crate::domain::product::ProductSearchCriteria;
@@ -14,6 +18,7 @@ use tracing::info;
 pub async fn get_integrated_database_statistics(
     db: State<'_, DatabaseConnection>,
 ) -> Result<DatabaseStatistics, String> {
+    #[allow(clippy::used_underscore_binding)]
     let repo = IntegratedProductRepository::new(db.pool().clone());
     let use_cases = IntegratedProductUseCases::new(Arc::new(repo));
 
@@ -36,6 +41,7 @@ pub async fn search_integrated_products_simple(
     manufacturer: Option<String>,
     limit: Option<i32>,
 ) -> Result<crate::domain::product::ProductSearchResult, String> {
+    #[allow(clippy::used_underscore_binding)]
     let repo = IntegratedProductRepository::new(db.pool().clone());
     let use_cases = IntegratedProductUseCases::new(Arc::new(repo));
 
@@ -67,6 +73,7 @@ pub async fn get_integrated_products_without_details(
     db: State<'_, DatabaseConnection>,
     limit: Option<i32>,
 ) -> Result<Vec<crate::domain::product::Product>, String> {
+    #[allow(clippy::used_underscore_binding)]
     let repo = IntegratedProductRepository::new(db.pool().clone());
     let use_cases = IntegratedProductUseCases::new(Arc::new(repo));
 
@@ -89,6 +96,7 @@ pub async fn get_integrated_products_without_details(
 pub async fn validate_integrated_database_integrity(
     db: State<'_, DatabaseConnection>,
 ) -> Result<DatabaseStatistics, String> {
+    #[allow(clippy::used_underscore_binding)]
     let repo = IntegratedProductRepository::new(db.pool().clone());
     let use_cases = IntegratedProductUseCases::new(Arc::new(repo));
 
@@ -109,6 +117,7 @@ pub async fn validate_integrated_database_integrity(
 pub async fn reset_product_storage(
     db: State<'_, DatabaseConnection>,
 ) -> Result<(u64, u64), String> {
+    #[allow(clippy::used_underscore_binding)]
     let repo = IntegratedProductRepository::new(db.pool().clone());
     match repo.clear_all_products_and_details().await {
         Ok((p, d)) => {

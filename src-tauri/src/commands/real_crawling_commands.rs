@@ -134,7 +134,7 @@ pub async fn execute_real_crawling(
     let system_config = Arc::new(SystemConfig::default());
 
     // 3. 크롤링 통합 서비스 생성
-    let integration_service = match CrawlingIntegrationService::new(
+    let integration_service: Arc<CrawlingIntegrationService> = match CrawlingIntegrationService::new(
         system_config.clone(),
         app_config,
     )

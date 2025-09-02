@@ -42,8 +42,10 @@ fn u64_kb_to_f32_mb(kb: u64) -> f32 {
 
 use crate::{
     application::state::AppState,
-    infrastructure::config::{AppConfig, ConfigManager, LoggingConfig, csa_iot, utils},
+    infrastructure::config::{AppConfig, ConfigManager, LoggingConfig, csa_iot},
 };
+#[cfg(feature = "dev-tools")]
+use crate::infrastructure::config::utils;
 
 /// Frontend-friendly configuration structure
 /// This is what gets exposed to the frontend via IPC
@@ -309,6 +311,7 @@ impl Default for ComprehensiveCrawlerConfig {
 // 백엔드는 matter_certis_config.json 파일만 읽고, 프론트엔드로 설정을 전송하지 않음
 
 /// Get only the site configuration (URLs and domains)
+#[cfg(feature = "dev-tools")]
 #[tauri::command]
 /// # Errors
 /// Returns an error string if configuration values cannot be constructed.
@@ -476,6 +479,7 @@ pub async fn update_crawling_settings(
 }
 
 /// Build a URL for a specific page number using the site configuration
+#[cfg(feature = "dev-tools")]
 #[tauri::command]
 /// # Errors
 /// Returns an error string if URL construction fails.
@@ -485,6 +489,7 @@ pub fn build_page_url(page: u32) -> Result<String, String> {
 }
 
 /// Resolve a relative URL to an absolute URL
+#[cfg(feature = "dev-tools")]
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 /// # Errors
@@ -495,6 +500,7 @@ pub fn resolve_url(relative_url: String) -> Result<String, String> {
 }
 
 /// Get default crawling configuration
+#[cfg(feature = "dev-tools")]
 #[tauri::command]
 /// # Errors
 /// Returns an error string if default configuration cannot be created.
@@ -522,6 +528,7 @@ pub fn get_default_crawling_config() -> Result<CrawlingSettings, String> {
 }
 
 /// Get comprehensive crawler configuration including all advanced settings
+#[cfg(feature = "dev-tools")]
 #[tauri::command]
 /// # Errors
 /// Returns an error string if configuration cannot be created.
@@ -824,6 +831,7 @@ pub async fn write_frontend_log(entry: LogEntry, state: State<'_, AppState>) -> 
 }
 
 /// Clean up old log files and keep only the latest
+#[cfg(feature = "dev-tools")]
 #[tauri::command]
 /// # Errors
 /// Returns an error string if log cleanup fails.
@@ -837,6 +845,7 @@ pub fn cleanup_logs() -> Result<String, String> {
 }
 
 /// Get the current log directory path for frontend reference
+#[cfg(feature = "dev-tools")]
 #[tauri::command]
 /// # Errors
 /// Returns an error string if resolving the log directory fails.

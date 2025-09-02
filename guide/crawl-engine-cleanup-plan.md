@@ -136,3 +136,58 @@ src-tauri/src/
 - StageActor per-item 경로 중 오류 전파가 의미 있는 지점은 `emit`로 통일하고, RAII/Drop 기반 베스트에포트 경로는 유지
 - clippy 경고와 문서 주석(# Errors 등) 보강
 - 선택: 공통 이벤트 생성 유틸(팩토리/빌더) 도입으로 중복 포맷 정리
+
+## Commands 정리(Actor 기반 이행에 따른 레거시 정돈)
+
+배경: `src-tauri/src/commands` 하위에 Actor 기반 통합 진입점(`unified_crawling`) 도입 전의 명령들이 혼재합니다. 현재 `src-tauri/src/lib.rs`의 `generate_handler!`에 등록된 커맨드와 디렉터리 목록을 비교하여 다음과 같이 정리합니다.
+
+### 현재 사용 중(핵심/보조)
+- unified: `unified_crawling.rs`
+- actor system: `actor_system_commands.rs`, `simple_actor_test.rs`
+- crawling: `real_crawling_commands.rs`, `crawling_test_commands.rs`, `smart_crawling.rs`
+- 분석/동기화: `system_analysis.rs`, `validation_commands.rs`, `sync_commands.rs`
+- 데이터 조회: `data_queries.rs`, `advanced_engine_api.rs`(status/info 전용)
+- 성능: `performance_commands.rs`
+- 설정/윈도우: `config_commands.rs` 중 아래 API만 FE 노출
+  - settings store: `get_app_settings`, `save_app_settings`
+  - window/log: `save_window_state`, `load_window_state`, `set_window_position`, `set_window_size`, `maximize_window`, `show_window`, `write_frontend_log`
+
+### 사용 중단/레거시(등록되지 않음 또는 주석 처리)
+- UI/대시보드: `dashboard_commands.rs`(lib.rs에서 주석 처리)
+- 모니터링: `actor_system_monitoring.rs`(등록 없음)
+- DB 유틸: `db_cleanup.rs`, `db_diagnostics.rs`, `db_repair.rs`(등록 없음)
+- 기타: `debug_commands.rs`, `product_details_analytics.rs`(등록 없음)
+- 서비스 기반 레거시: `real_actor_commands.rs`(등록 없음/주석 코멘트에 의거 비활성)
+- config_commands.rs 내 미사용 Tauri 커맨드(등록되지 않음):
+  - `get_site_config`, `build_page_url`, `resolve_url`,
+  - `get_default_crawling_config`, `get_comprehensive_crawler_config`,
+  - `cleanup_logs`, `get_log_directory_path`
+
+### 실행 계획(안전한 정리 단계)
+1) Archive 또는 feature-gate 도입
+   - 파일 이동: 위 “사용 중단/레거시” 목록을 `src-tauri/src/commands/archive/`로 이동하거나
+     `#[cfg(feature = "legacy-ui")]`/`#[cfg(feature = "dev-tools")]`로 가드합니다.
+   - lib.rs에는 등록하지 않습니다(현 상태 유지). 빌드 영향 최소화.
+
+2) config_commands API 표면 축소
+   - FE에 노출하지 않는 미사용 `#[tauri::command]`는 아래 중 하나로 처리
+     - (권장) 내부 유틸 함수로 전환(annot 제거) 혹은 모듈 분리 `commands/internal/`
+     - (대안) `#[cfg(feature = "dev-tools")]`로 가드하여 기본 빌드에서 제외
+
+3) 네이밍/역할 기반 모듈 정리
+   - `actor_system_commands.rs` → `actor_system.rs` 등 역할 중심 이름으로 조정(선택)
+   - `advanced_engine_api.rs`는 status/info 전용임을 주석과 타입으로 명시
+
+4) 빌드/품질 게이트
+   - 단계별 커밋: 이동/가드 후 `cargo clippy --all-targets -- -D warnings`와 테스트 실행
+   - FE 타입 생성 영향 없음 확인(`scripts/generate_types.sh`)
+
+### 체크리스트(Commands 정리)
+- [x] 레거시 커맨드 파일 아카이브 또는 feature-gate 적용
+  - 파일 레벨 cfg 추가: dashboard_commands(legacy-ui), actor_system_monitoring/dev DB 유틸/디버그/애널리틱스/real_actor_commands(dev-tools)
+- [x] config_commands 미사용 커맨드 비노출화(annot 제거 또는 가드)
+- [x] lib.rs 등록 커맨드 목록과 문서 싱크
+- [ ] 네이밍 조정(선택) 및 모듈 경로 정리
+- [ ] clippy/테스트 그린 확인 및 문서 갱신
+
+참고: 사용자가 남긴 `.local/prompts7` 노트는 워크스페이스에서 찾을 수 없어 반영하지 못했습니다. 경로를 공유해 주시면 해당 메모의 세부 항목까지 본 섹션에 병합하겠습니다.

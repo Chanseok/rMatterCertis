@@ -1,3 +1,4 @@
+#![cfg(any(feature = "dev-tools", debug_assertions))]
 use crate::application::AppState;
 use crate::application::shared_state::SharedStateCache;
 // (no additional infrastructure imports needed)

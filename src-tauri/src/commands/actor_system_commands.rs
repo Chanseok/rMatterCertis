@@ -88,7 +88,7 @@ pub struct ActorSystemResponse {
     pub data: Option<serde_json::Value>,
 }
 
-/// Bootstrap common wiring and spawn SessionActor to execute a pre-planned plan
+/// Bootstrap common wiring and spawn `SessionActor` to execute a pre-planned plan
 async fn bootstrap_and_spawn_session(
     app: &AppHandle,
     execution_plan: ExecutionPlan,
@@ -325,11 +325,13 @@ pub async fn get_session_status(
     let registry = session_registry();
     let g = registry.read().await;
     if let Some(entry) = g.get(&session_id) {
+        #[allow(clippy::cast_precision_loss)]
         let pct_pages = if entry.total_pages_planned > 0 {
             (entry.processed_pages as f64 / entry.total_pages_planned as f64) * 100.0
         } else {
             0.0
         };
+        #[allow(clippy::cast_precision_loss)]
         let pct_batches = if entry.total_batches_planned > 0 {
             (entry.completed_batches as f64 / entry.total_batches_planned as f64) * 100.0
         } else {

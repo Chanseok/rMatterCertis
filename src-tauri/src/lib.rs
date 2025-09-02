@@ -126,18 +126,26 @@ pub mod commands {
     //! Command handlers for Tauri frontend integration
     // Removed legacy modules: modern_crawling, crawling_v4, service_based_reference
     pub mod actor_system_commands; // 🎭 NEW: Actor System commands
+    #[cfg(feature = "dev-tools")]
     pub mod actor_system_monitoring;
     pub mod advanced_engine_api; // 새로운 Advanced Engine API 추가
     pub mod config_commands;
     pub mod crawling_test_commands; // 🧪 Phase C: 크롤링 테스트 도구
-    pub mod dashboard_commands; // 🎨 Phase C: 실시간 대시보드
+    #[cfg(feature = "legacy-ui")]
+    pub mod dashboard_commands; // 🎨 Phase C: 실시간 대시보드 (legacy gated)
     pub mod data_queries; // Backend-Only CRUD commands (Modern Rust 2024)
+    #[cfg(feature = "dev-tools")]
     pub mod db_cleanup;
+    #[cfg(any(feature = "dev-tools", debug_assertions))]
     pub mod db_diagnostics; // 🧪 DB pagination mismatch scan
+    #[cfg(feature = "dev-tools")]
     pub mod db_repair; // 🔧 DB repair/sync between products and product_details
+    #[cfg(feature = "dev-tools")]
     pub mod debug_commands; // 🔎 UI debug logging helpers
     pub mod performance_commands; // 🔧 Phase C: 성능 최적화 도구
+    #[cfg(feature = "dev-tools")]
     pub mod product_details_analytics; // 📊 product_details analytics endpoints
+    #[cfg(feature = "dev-tools")]
     pub mod real_actor_commands; // 🎭 진짜 Actor 시스템 명령어
     pub mod real_crawling_commands; // 🚀 Phase C: 실제 크롤링 기능
     pub mod simple_actor_test;
@@ -152,13 +160,19 @@ pub mod commands {
     pub use advanced_engine_api::*; // Advanced Engine 명령어 export
     pub use config_commands::*; // Config and window management 명령어 export
     pub use crawling_test_commands::*; // Phase C 테스트 명령어 export
+    #[cfg(feature = "legacy-ui")]
     pub use dashboard_commands::*; // Phase C 대시보드 명령어 export
     pub use data_queries::*; // Backend-Only CRUD 명령어 export
+    #[cfg(feature = "dev-tools")]
     pub use db_cleanup::*;
+    #[cfg(any(feature = "dev-tools", debug_assertions))]
     pub use db_diagnostics::*; // DB diagnostics 명령어 export
+    #[cfg(feature = "dev-tools")]
     pub use db_repair::*; // DB repair/sync 명령어 export
+    #[cfg(feature = "dev-tools")]
     pub use debug_commands::*; // UI debug logger export
     pub use performance_commands::*; // Phase C 성능 최적화 명령어 export
+    #[cfg(feature = "dev-tools")]
     pub use product_details_analytics::*;
     pub use real_crawling_commands::*; // Phase C 실제 크롤링 명령어 export
     pub use sync_commands::*; // Partial Sync 명령어 export // DB cleanup 명령어 export // Export analytics command
@@ -343,8 +357,21 @@ pub fn run() {
         .manage(session_manager) // CrawlingSessionManager 추가
         // Legacy CrawlingEngineState (crawling_v4) removed – unified actor-based path only
         .manage(commands::simple_actor_test::ActorSystemState::default())
-        .manage(commands::performance_commands::PerformanceOptimizerState::default())
-        .manage(commands::dashboard_commands::DashboardServiceState::default())
+        .manage(commands::performance_commands::PerformanceOptimizerState::default());
+
+    // Conditionally add legacy dashboard state without shadowing the outer builder
+    let builder = {
+        #[cfg(feature = "legacy-ui")]
+        {
+            builder.manage(commands::dashboard_commands::DashboardServiceState::default())
+        }
+        #[cfg(not(feature = "legacy-ui"))]
+        {
+            builder
+        }
+    };
+
+    let builder = builder
         .setup(|app| {
             let app_handle = app.handle().clone();
 
@@ -483,10 +510,15 @@ pub fn run() {
             commands::sync_commands::retry_failed_details,
             commands::sync_commands::start_diagnostic_sync,
             commands::actor_system_commands::start_manual_crawl_pages_actor,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::db_diagnostics::scan_db_pagination_mismatches,
+            #[cfg(feature = "dev-tools")]
             commands::debug_commands::ui_debug_log,
+            #[cfg(feature = "dev-tools")]
             commands::db_repair::sync_product_details_coordinates,
+            #[cfg(feature = "dev-tools")]
             commands::db_cleanup::cleanup_duplicate_urls,
+            #[cfg(feature = "dev-tools")]
             commands::get_product_details_analytics // Most commands are temporarily disabled for compilation
         ]);
 

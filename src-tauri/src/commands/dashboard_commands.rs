@@ -1,3 +1,4 @@
+#![cfg(feature = "legacy-ui")]
 //! 실시간 대시보드 Tauri Commands
 //! Phase C - Option A: Frontend와 Backend 실시간 연동
 

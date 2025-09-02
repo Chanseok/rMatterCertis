@@ -110,6 +110,9 @@ impl RealtimeDashboardService {
     }
 
     /// 새 크롤링 세션 시작
+    ///
+    /// # Errors
+    /// 내부 상태 업데이트 또는 이벤트 전송 중 오류가 발생하면 오류를 반환합니다.
     pub async fn start_crawling_session(
         &self,
         session_id: String,
@@ -154,6 +157,10 @@ impl RealtimeDashboardService {
     }
 
     /// 크롤링 진행 상황 업데이트
+    ///
+    /// # Errors
+    /// 세션이 존재하지 않으면 오류를 반환합니다.
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_crawling_progress(
         &self,
         session_id: String,
@@ -171,6 +178,7 @@ impl RealtimeDashboardService {
             let mut sessions = self.active_sessions.write().await;
             if let Some(session) = sessions.get_mut(&session_id) {
                 let elapsed = now.signed_duration_since(session.started_at);
+                #[allow(clippy::cast_precision_loss)]
                 let elapsed_minutes = elapsed.num_minutes() as f64;
 
                 // 처리 속도 계산
@@ -184,6 +192,7 @@ impl RealtimeDashboardService {
                 let estimated_completion = if current_speed_ppm > 0.0 {
                     let remaining_pages = session.total_pages.saturating_sub(processed_pages);
                     let remaining_minutes = f64::from(remaining_pages) / current_speed_ppm;
+                    #[allow(clippy::cast_possible_truncation)]
                     Some(now + chrono::Duration::minutes(remaining_minutes as i64))
                 } else {
                     None
@@ -226,6 +235,9 @@ impl RealtimeDashboardService {
     }
 
     /// 크롤링 세션 완료
+    ///
+    /// # Errors
+    /// 활성 세션을 찾지 못하면 오류를 반환합니다.
     pub async fn complete_crawling_session(
         &self,
         session_id: String,
@@ -238,10 +250,15 @@ impl RealtimeDashboardService {
             if let Some(active_session) = sessions.remove(&session_id) {
                 let now = Utc::now();
                 let duration = now.signed_duration_since(active_session.started_at);
-                let duration_seconds = duration.num_seconds() as u64;
+                // Avoid sign-loss on cast; negative durations are clamped to 0
+                let secs = duration.num_seconds().max(0);
+                let duration_seconds = u64::try_from(secs).unwrap_or(0);
 
+                // Display metric; precision loss is acceptable for UI reporting
+                #[allow(clippy::cast_precision_loss)]
                 let avg_speed_ppm = if duration_seconds > 0 {
-                    (f64::from(active_session.processed_pages) * 60.0) / duration_seconds as f64
+                    (f64::from(active_session.processed_pages) * 60.0)
+                        / (duration_seconds as f64)
                 } else {
                     0.0
                 };
@@ -271,6 +288,7 @@ impl RealtimeDashboardService {
             while completed.len() > self.config.max_recent_sessions as usize {
                 completed.pop_front();
             }
+            drop(completed);
         }
 
         // 대시보드 상태 업데이트
@@ -373,6 +391,8 @@ impl RealtimeDashboardService {
         let mut state_lock = state.write().await;
         state_lock.system_status.last_health_check = Utc::now();
         state_lock.last_updated = Utc::now();
+    // Tighten lock scope explicitly
+    drop(state_lock);
         Ok(())
     }
 
@@ -386,8 +406,10 @@ impl RealtimeDashboardService {
         optimizer: &Arc<CrawlingPerformanceOptimizer>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 타임스탬프 기반 의사-랜덤 값 생성 (메트릭 생성과 UI 추정에 모두 사용)
-        let timestamp_seed = Utc::now().timestamp_millis() as f64;
-        let random_factor = (timestamp_seed % 1000.0) / 1000.0; // 0.0-1.0 범위
+    // Display-only randomness; allow precision loss on cast
+    #[allow(clippy::cast_precision_loss)]
+    let timestamp_seed = Utc::now().timestamp_millis() as f64;
+    let random_factor = (timestamp_seed % 1000.0) / 1000.0; // 0.0-1.0 범위
 
         // 옵티마이저에서 메트릭 가져오기, 없으면 기본값 생성
         let metrics = optimizer.get_current_metrics().await.unwrap_or_else(|| {
@@ -396,9 +418,14 @@ impl RealtimeDashboardService {
                 throughput_rps: random_factor.mul_add(5.0, 10.0), // 10-15 RPS
                 avg_response_time_ms: random_factor.mul_add(200.0, 500.0), // 500-700ms
                 success_rate: random_factor.mul_add(0.04, 0.95), // 95-99%
-                current_concurrency: random_factor.mul_add(4.0, 3.0) as u32, // 3-7 동시 연결
-                recommended_concurrency: random_factor.mul_add(3.0, 5.0) as u32, // 5-8 권장 동시성
-                memory_usage_kb: random_factor.mul_add(128.0, 256.0) as u64 * 1024, // 256-384 MB를 KB로 변환
+                // Counts are small and for display; clamp and allow truncation/sign-loss
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                current_concurrency: random_factor.mul_add(4.0, 3.0).max(0.0).round() as u32, // 3-7 동시 연결
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                recommended_concurrency: random_factor.mul_add(3.0, 5.0).max(0.0).round() as u32, // 5-8 권장 동시성
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                memory_usage_kb: (random_factor.mul_add(128.0, 256.0).max(0.0).round() as u64)
+                    * 1024, // 256-384 MB를 KB로 변환
                 network_error_rate: random_factor.mul_add(0.04, 0.01), // 1-5% 에러율
                 optimization_status: crate::crawl_engine::services::performance_optimizer::OptimizationStatus::Optimal,
             }
@@ -406,6 +433,8 @@ impl RealtimeDashboardService {
 
         let realtime_metrics = RealtimePerformanceMetrics {
             cpu_usage_percent: random_factor.mul_add(40.0, 30.0), // CPU 사용률 추정
+            // Display metric; allow precision loss
+            #[allow(clippy::cast_precision_loss)]
             memory_usage_mb: (metrics.memory_usage_kb as f64) / 1024.0, // KB를 MB로 변환
             network_throughput_kbps: metrics.throughput_rps * 2.0, // 추정치
             avg_response_time_ms: metrics.avg_response_time_ms,
@@ -473,7 +502,7 @@ impl RealtimeDashboardService {
         chart_data: &Arc<RwLock<RealtimeChartData>>,
         max_points: usize,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut chart = chart_data.write().await;
+    let mut chart = chart_data.write().await;
 
         if chart.processing_speed.len() > max_points {
             let excess_count = chart.processing_speed.len() - max_points;
@@ -508,10 +537,16 @@ impl RealtimeDashboardService {
             chart.concurrent_connections.drain(0..excess_count);
         }
 
+        // Tighten lock scope explicitly
+        drop(chart);
+
         Ok(())
     }
 
     /// Actor 시스템 이벤트 처리 - 실제 크롤링 활동만 차트에 반영
+    ///
+    /// # Errors
+    /// 이벤트 처리 중 내부 상태 접근에 실패하거나 세션이 존재하지 않을 경우 오류 문자열을 반환합니다.
     pub async fn handle_actor_event(&self, event: AppEvent) -> Result<(), String> {
         match event {
             AppEvent::SessionStarted {
@@ -551,18 +586,23 @@ impl RealtimeDashboardService {
                 // Estimate processed pages from percentage and known total_pages
                 let (processed_est, started_at_ts) = {
                     let sessions = self.active_sessions.read().await;
-                    if let Some(s) = sessions.get(&session_id) {
-                        let total_pages = s.total_pages.max(1);
-                        let est = ((percentage / 100.0) * f64::from(total_pages)).floor() as u32;
-                        (est, s.started_at.timestamp())
-                    } else {
-                        (current_step, timestamp.timestamp())
-                    }
+                    sessions.get(&session_id).map_or_else(
+                        || (current_step, timestamp.timestamp()),
+                        |s| {
+                            let total_pages = s.total_pages.max(1);
+                            let est_f = ((percentage / 100.0) * f64::from(total_pages)).floor();
+                            // Clamp to [0, total_pages] and cast
+                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                            let est = est_f.clamp(0.0, f64::from(total_pages)) as u32;
+                            (est, s.started_at.timestamp())
+                        },
+                    )
                 };
 
                 // Push charts with a sensible speed based on elapsed from session start
                 let now = timestamp.timestamp();
-                let elapsed_minutes = ((now - started_at_ts) as f64 / 60.0).max(1e-6);
+                #[allow(clippy::cast_precision_loss)]
+                let elapsed_minutes = (((now - started_at_ts).max(0)) as f64 / 60.0).max(1e-6);
                 let speed_ppm = f64::from(processed_est) / elapsed_minutes;
                 {
                     let mut chart = self.chart_data.write().await;
@@ -673,8 +713,7 @@ impl RealtimeDashboardService {
                     let sessions = self.active_sessions.read().await;
                     sessions
                         .get(&session_id)
-                        .map(|s| s.processed_pages)
-                        .unwrap_or(0)
+                        .map_or(0, |s| s.processed_pages)
                         .saturating_add(result.successful_items)
                 };
                 self
@@ -695,9 +734,13 @@ impl RealtimeDashboardService {
                 // Update processed_pages and collected_urls cumulatively
                 let (processed_pages, collected_urls) = {
                     let sessions = self.active_sessions.read().await;
-                    if let Some(s) = sessions.get(&session_id) {
-                        (s.processed_pages.saturating_add(processed_pages_delta), s.collected_urls.saturating_add(details_success))
-                    } else { (processed_pages_delta, details_success) }
+                    sessions.get(&session_id).map_or(
+                        (processed_pages_delta, details_success),
+                        |s| (
+                            s.processed_pages.saturating_add(processed_pages_delta),
+                            s.collected_urls.saturating_add(details_success),
+                        ),
+                    )
                 };
                 self
                     .update_crawling_progress(

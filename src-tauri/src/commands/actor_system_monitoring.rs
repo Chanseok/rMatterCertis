@@ -1,3 +1,4 @@
+#![cfg(feature = "dev-tools")]
 use crate::application::AppState;
 use tauri::Emitter;
 use tauri::State;
