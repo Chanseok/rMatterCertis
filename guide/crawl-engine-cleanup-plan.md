@@ -64,6 +64,27 @@ src/
         └── crawling_types.rs
 ```
 
+### 상세 실행 가이드 (Phase 0)
+
+- Step-by-step 작업 순서 (권장 커밋 쪼개기)
+  1) `_archive` 폴더 전량 삭제 (실제 삭제 전: 잔여 참조 grep → 미참조 확인)
+  2) `types` → `api` 이름 변경 및 경로 변경
+     - `lib.rs` 내 `pub mod types` → `pub mod api`로 변경
+     - TypeScript 생성 스크립트(`scripts/generate_types.sh`)가 참조하는 경로 업데이트
+     - Frontend import 경로에 영향 여부 점검 (생성 산출물 경로 유지 시 영향 없음)
+  3) `services` 이동: `src-tauri/src/services/*` → `src-tauri/src/application/services/*`
+     - `lib.rs` 재배치된 경로로 re-export 정리
+  4) `utils.rs` 기능 분산: 파싱, 로깅, 경로 등 관련 모듈로 이전 후 파일 제거
+  5) `mod.rs` 일괄 제거: 남아있는 `mod.rs`를 파일/디렉토리 기반 모듈로 전환 (Rust 2024)
+
+- Definition of Done (Phase 0)
+  - cargo check, npm run type-check 통과
+  - `_archive` 디렉토리 미존재, 미참조
+  - `lib.rs`의 최상위 모듈 선언이 제안 구조와 합치
+  - Frontend 타입 생성 및 사용 정상 동작 (scripts/generate_types.sh → PASS)
+
+---
+
 ---
 
 ## Phase 1: `crawl_engine` 모듈 정제
@@ -94,6 +115,27 @@ src/
   - [x] cargo check, cargo test --all-features
   - [ ] cargo clippy --all-targets -- -D warnings
 
+### 상세 실행 가이드 (Phase 1)
+
+- 정합성 있는 공개 API 표면 정리
+  - `crawl_engine.rs`에서 하위 모듈을 명시적으로 선언하고, 외부에서 필요한 타입/함수만 `pub use`로 노출
+  - Session/Stage/Worker 단위의 기본 계약(Contract) 주석 업데이트 및 안정화
+
+- 파일 분할·통합 기준
+  - 500~800라인 초과 파일은 역할별 하위 파일로 분할 (예: planning, session_registry, event_bridge)
+  - 중복 기능은 단일 서비스로 통합 (예: 통일된 Pagination 유틸)
+
+- 함수 시그니처 정리
+  - 입력은 명시적 구조체(옵션 세트) 사용, 출력은 Result<T, E> 통일
+  - 에러 타입은 도메인 에러 enum으로 수렴, anyhow는 경계(최상위 API)에서만 사용
+
+- Definition of Done (Phase 1)
+  - 공개 API 목록(문서/주석)과 실제 `pub use`가 일치
+  - 거대 파일 분할/통합 커밋 포함, 불필요한 clone 제거, dead_code/unused_imports 제거
+  - `cargo clippy --all-targets -- -D warnings` 그린
+
+---
+
 ---
 
 ## Phase 2: `commands` 모듈 리팩토링
@@ -101,8 +143,10 @@ src/
 **목표**: Phase 0에서 구조화된 `commands` 모듈 내부의 레거시 코드를 정리하고, feature-gate를 활용하여 빌드를 최적화합니다.
 
 ### 현재 상태 분석
-- **사용 중**: `unified_crawling`, `actor_system_commands`, `real_crawling_commands`, `system_analysis`, `data_queries`, `config_commands` 등
-- **사용 중단/레거시**: `dashboard_commands`, `actor_system_monitoring`, `db_cleanup`, `db_diagnostics`, `debug_commands` 등
+- 사용 중: `unified_crawling`, `actor_system`(이전: `actor_system_commands`), `real_crawling_commands`, `system_analysis`, `data_queries`, `config_commands` 등
+- 사용 중단/레거시: `dashboard_commands`, `actor_system_monitoring`, `db_cleanup`, `debug_commands` 등
+- 개발·진단: `db_diagnostics`는 dev 전용이나, 현재 debug 빌드(`debug_assertions`)에서도 활성화되어 개발 편의 보장
+- 이행 현황: `actor_system_commands.rs` → `actor_system.rs`로 구현 본체 이전 완료, 레거시 파일은 얇은 re-export shim으로 유지 (호환성)
 
 ### 실행 계획 (Phase 2)
 1.  **(Phase 0에서 처리)** 기능별 하위 디렉토리 생성 및 파일 이동.
@@ -111,7 +155,46 @@ src/
 3.  **API 표면 축소**:
     - `config_commands.rs` 등에서 `#[tauri::command]` 어노테이션이 있지만 실제 사용되지 않는 함수는 어노테이션을 제거하여 내부 유틸리티 함수로 전환.
 4.  **네이밍/역할 기반 모듈 정리**:
-    - `actor_system_commands.rs` → `actor_system.rs`와 같이 역할 중심 이름으로 실제 파일명 변경.
+  - `actor_system_commands.rs` → `actor_system.rs` (이미 완료). 다음 PR에서 shim 제거 및 참조 전환 진행.
+
+#### 디렉토리 구조안 (commands)
+
+```
+src-tauri/src/commands/
+├── crawling/
+│   ├── actor_system.rs        # 메인 Actor 시스템 명령
+│   ├── unified_crawling.rs
+│   └── real_crawling_commands.rs
+├── database/
+│   ├── data_queries.rs
+│   ├── db_repair.rs           # [dev-tools]
+│   └── db_cleanup.rs          # [dev-tools]
+├── analysis/
+│   ├── system_analysis.rs
+│   └── performance_commands.rs
+├── devtools/
+│   ├── db_diagnostics.rs      # [dev-tools or debug_assertions]
+│   └── debug_commands.rs      # [dev-tools]
+├── legacy/
+│   └── dashboard_commands.rs  # [legacy-ui]
+└── config_commands.rs
+```
+
+#### 마이그레이션/정리 작업 항목
+
+- [x] `lib.rs`의 generate_handler 등록을 `commands::actor_system::*`로 직접 참조하도록 교체 (shim 경유 제거)
+- [x] 워크스페이스 전역에서 `commands::actor_system_commands::` 경로를 `commands::actor_system::`로 변경 (테스트/바이너리 포함)
+- [x] 변경 후 shim 파일(`actor_system_commands.rs`) 제거
+- [ ] 위 디렉토리 구조에 맞춰 파일 이동 및 `lib.rs`/re-export 정리
+- [ ] 사용 빈도가 낮고 미노출 가능 함수의 `#[tauri::command]` 제거 → 내부 util로 전환
+- [ ] dev-only 모듈의 gate 확인: 기본 빌드에서 제외, dev/CI에서만 활성화
+
+#### Definition of Done (Phase 2)
+
+- `commands` 하위가 기능 폴더로 재구성되고, `lib.rs` 등록과 일치
+- 레거시 shim 제거, 모든 참조가 `commands::actor_system::`로 수렴
+- 불필요한 `#[tauri::command]` 제거 및 API 표면 축소 완료
+- cargo check / npm type-check / (선택) 간단 E2E 버튼 동작 스모크 테스트 통과
 
 ### 체크리스트 (Phase 2)
 - [x] 레거시 커맨드 파일에 feature-gate 적용 완료
@@ -119,6 +202,29 @@ src/
 - [x] `lib.rs` 등록 커맨드 목록과 문서 동기화
 - [ ] **(진행 중)** 네이밍 조정 및 모듈 경로 정리
 - [ ] clippy/테스트 그린 확인 및 문서 갱신
+
+---
+
+## 실행·검증 가이드 (공통)
+
+- 자주 사용하는 로컬 체크
+  - Rust
+    - 빌드 확인: `cargo check`
+    - 테스트: `cargo test --all-features`
+    - 린트: `cargo clippy --all-targets -- -D warnings`
+  - TypeScript
+    - 타입 재생성: 워크스페이스 task "regen types" 또는 `bash scripts/generate_types.sh`
+    - 타입 체크: 워크스페이스 task "typecheck"
+
+- 리그레션 방지 스모크
+  - FE 진단 버튼(“진단 실행”) → `scan_db_pagination_mismatches` 호출 성공 (dev 또는 debug 빌드)
+  - 기본 Actor 시작/정지/목록 명령이 에러 없이 처리되는지 확인
+
+## 리스크/완화
+
+- 대규모 경로 이동에 따른 import 붕괴 → grep/검색 기반 일괄 수정 + 컴파일러 에러 드리븐 수정
+- dev-tools 게이트 누락으로 기능 비노출 → `#[cfg(any(feature = "dev-tools", debug_assertions))]` 패턴 재사용
+- Frontend 타입 경로 변동 → 타입 산출물 경로는 유지, Rust 내부 모듈명만 변경하도록 설계
 
 ---
 
@@ -131,3 +237,8 @@ src/
 ## 변경 로그(요약)
 - **2025-09-03**: Gemini 제안에 따라 `src` 전체 리팩토링 계획으로 확장. Phase 0, 1, 2로 구조화. `_archive` 삭제 및 계층형 아키텍처 적용을 최우선 과제로 설정.
 - **2025-09-01**: Stage/Batch/Session Actor의 `emit` 헬퍼 도입 및 이벤트 경로 통일. clone 최소화 적용.
+
+### 진행 스냅샷 (2025-09-03)
+- Diagnostics 가시성 개선: dev 실행 스크립트에 `dev-tools` 적용 + `db_diagnostics`를 debug 빌드에서도 활성화
+- Actor System 명령: 구현 본체를 `actor_system.rs`로 이전, 레거시 파일은 shim으로 유지
+- Build/TS 타입 체크 그린 확인

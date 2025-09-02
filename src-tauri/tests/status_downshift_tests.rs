@@ -56,7 +56,7 @@ async fn status_includes_downshift_metadata_when_set() {
         );
     }
     let payload =
-        matter_certis_v2_lib::commands::actor_system_commands::test_build_session_status_payload(
+        matter_certis_v2_lib::commands::actor_system::test_build_session_status_payload(
             &sid,
         )
         .await

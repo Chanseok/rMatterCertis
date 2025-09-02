@@ -3,7 +3,7 @@ use tauri::AppHandle;
 use tracing::info;
 // chrono is not used directly in this module
 
-use crate::commands::actor_system_commands::{
+use crate::commands::actor_system::{
     ActorCrawlingRequest, CrawlingMode, start_actor_system_crawling,
 };
 

@@ -125,7 +125,7 @@ pub mod commands_integrated;
 pub mod commands {
     //! Command handlers for Tauri frontend integration
     // Removed legacy modules: modern_crawling, crawling_v4, service_based_reference
-    pub mod actor_system_commands; // legacy filename kept during transition
+    // legacy shim removed after full migration
     pub mod actor_system; // 🎭 NEW: Role-based alias facade
     #[cfg(feature = "dev-tools")]
     pub mod actor_system_monitoring;
@@ -511,7 +511,7 @@ pub fn run() {
             commands::sync_commands::start_basic_sync_pages,
             commands::sync_commands::retry_failed_details,
             commands::sync_commands::start_diagnostic_sync,
-            commands::actor_system_commands::start_manual_crawl_pages_actor,
+            commands::actor_system::start_manual_crawl_pages_actor,
             #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::db_diagnostics::scan_db_pagination_mismatches,
             #[cfg(feature = "dev-tools")]

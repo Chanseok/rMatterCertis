@@ -87,9 +87,9 @@ async fn execute_crawling_with_state(app_handle: &tauri::AppHandle) -> Result<()
     info!("🔄 Starting real Actor-based crawling via monitoring");
 
     // 실제 Actor 크롤링 실행 (설정 기반)
-    match crate::commands::actor_system_commands::start_actor_system_crawling(
+    match crate::commands::actor_system::start_actor_system_crawling(
         app_handle.clone(),
-        crate::commands::actor_system_commands::ActorCrawlingRequest {
+        crate::commands::actor_system::ActorCrawlingRequest {
             // CrawlingPlanner가 모든 설정을 자동 계산하므로 None 으로 설정
             site_url: None,
             start_page: Some(0),
