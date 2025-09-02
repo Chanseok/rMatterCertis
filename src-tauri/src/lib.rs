@@ -125,7 +125,8 @@ pub mod commands_integrated;
 pub mod commands {
     //! Command handlers for Tauri frontend integration
     // Removed legacy modules: modern_crawling, crawling_v4, service_based_reference
-    pub mod actor_system_commands; // 🎭 NEW: Actor System commands
+    pub mod actor_system_commands; // legacy filename kept during transition
+    pub mod actor_system; // 🎭 NEW: Role-based alias facade
     #[cfg(feature = "dev-tools")]
     pub mod actor_system_monitoring;
     pub mod advanced_engine_api; // 새로운 Advanced Engine API 추가
@@ -160,6 +161,7 @@ pub mod commands {
     pub use advanced_engine_api::*; // Advanced Engine 명령어 export
     pub use config_commands::*; // Config and window management 명령어 export
     pub use crawling_test_commands::*; // Phase C 테스트 명령어 export
+    pub use actor_system::*; // prefer role-based alias
     #[cfg(feature = "legacy-ui")]
     pub use dashboard_commands::*; // Phase C 대시보드 명령어 export
     pub use data_queries::*; // Backend-Only CRUD 명령어 export
@@ -458,14 +460,14 @@ pub fn run() {
             commands::simple_actor_test::test_new_arch_channels,
             commands::simple_actor_test::test_new_arch_performance,
             // 🎭 Actor System 크롤링 (직접 호출 허용: FE 통합)
-            commands::actor_system_commands::start_actor_system_crawling,
-            commands::actor_system_commands::pause_session,
-            commands::actor_system_commands::resume_session,
-            commands::actor_system_commands::get_session_status,
-            commands::actor_system_commands::request_graceful_shutdown,
-            commands::actor_system_commands::test_session_actor_basic,
-            commands::actor_system_commands::list_actor_sessions,
-            commands::actor_system_commands::check_page_index_consistency,
+            commands::actor_system::start_actor_system_crawling,
+            commands::actor_system::pause_session,
+            commands::actor_system::resume_session,
+            commands::actor_system::get_session_status,
+            commands::actor_system::request_graceful_shutdown,
+            commands::actor_system::test_session_actor_basic,
+            commands::actor_system::list_actor_sessions,
+            commands::actor_system::check_page_index_consistency,
             // Real Crawling Integration commands (Option B implementation)
             // Note: These commands are temporarily disabled due to module restructuring
             // They will be re-enabled after Phase 2 completion

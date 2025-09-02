@@ -190,4 +190,13 @@ src-tauri/src/
 - [ ] 네이밍 조정(선택) 및 모듈 경로 정리
 - [ ] clippy/테스트 그린 확인 및 문서 갱신
 
+### 진행 업데이트 (2025-09-03)
+- `commands/actor_system.rs` 추가: 기존 `actor_system_commands.rs`를 임시 re-export하는 역할 기반 별칭 모듈 도입. `lib.rs`의 커맨드 등록도 새 별칭을 사용하도록 변경. 이후 실제 파일 이동은 단계적으로 진행.
+- `db_diagnostics`는 dev-tools 기능 플래그 또는 debug 빌드에서 사용 가능하도록 게이트 조정. 개발 중 “진단 실행” 버튼이 동작하도록 dev 스크립트에 `--features dev-tools` 추가.
+
+다음 단계:
+- `actor_system_commands.rs` → `actor_system.rs`로 실제 소스 이동 및 내부 import 경로 정리
+- gate 파일 주석/공개 표면 보강(crawl_engine.rs, services/mod.rs)
+- dead_code/unused_imports 추가 제거 및 clippy 경고 축소
+
 참고: 사용자가 남긴 `.local/prompts7` 노트는 워크스페이스에서 찾을 수 없어 반영하지 못했습니다. 경로를 공유해 주시면 해당 메모의 세부 항목까지 본 섹션에 병합하겠습니다.

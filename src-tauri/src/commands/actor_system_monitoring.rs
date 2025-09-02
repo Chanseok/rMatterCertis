@@ -1,4 +1,3 @@
-#![cfg(feature = "dev-tools")]
 use crate::application::AppState;
 use tauri::Emitter;
 use tauri::State;
@@ -6,9 +5,6 @@ use tracing::{error, info};
 
 /// Actor 시스템을 통한 크롤링 세션 시작
 #[tauri::command]
-#[allow(clippy::used_underscore_binding)]
-/// # Errors
-/// Returns an error string if spawning the actor-based crawling session fails.
 pub async fn start_crawling_session(
     app_handle: tauri::AppHandle,
     _state: State<'_, AppState>,
@@ -62,7 +58,6 @@ pub async fn start_crawling_session(
                 error!("❌ Crawling failed: {}", e);
 
                 // 세션 실패 이벤트
-                #[allow(clippy::iter_on_single_items)]
                 let failure_event =
                     crate::crawl_engine::events::task_lifecycle::ConcurrencyEvent::SessionEvent {
                         session_id: session_id_clone.clone(),
