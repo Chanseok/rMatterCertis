@@ -108,11 +108,17 @@ pub struct MatterDataExtractor {
 
 impl MatterDataExtractor {
     /// Create a new data extractor with default configuration
+    ///
+    /// # Errors
+    /// Returns an error if constructing the default config fails.
     pub fn new() -> Result<Self> {
         Self::with_config(MatterExtractorConfig::default())
     }
 
     /// Create a new data extractor with custom configuration
+    ///
+    /// # Errors
+    /// Returns an error if initialization fails.
     pub fn with_config(config: MatterExtractorConfig) -> Result<Self> {
         Ok(Self {
             config,
@@ -120,22 +126,34 @@ impl MatterDataExtractor {
         })
     }
     /// Set pagination context for proper pageId and indexInPage calculation
+    ///
+    /// # Errors
+    /// Returns an error if the write lock cannot be acquired.
     pub fn set_pagination_context(&self, context: PaginationContext) -> Result<()> {
-        let mut pagination_context = self
+        // Merge temporary with usage to avoid holding the write lock longer than needed.
+        *self
             .pagination_context
             .write()
-            .map_err(|e| anyhow!("Failed to acquire write lock: {}", e))?;
+            .map_err(|e| anyhow!("Failed to acquire write lock: {}", e))? = Some(context);
 
         debug!(
             "📊 Pagination context updated: total_pages={}, items_on_last_page={}",
-            context.total_pages, context.items_on_last_page
+            self.pagination_context
+                .read()
+                .map(|g| g.as_ref().map_or(0, |c| c.total_pages))
+                .unwrap_or(0),
+            self.pagination_context
+                .read()
+                .map(|g| g.as_ref().map_or(0, |c| c.items_on_last_page))
+                .unwrap_or(0)
         );
-
-        *pagination_context = Some(context);
         Ok(())
     }
 
     /// Extract product URLs from a product listing page (guide-based approach)
+    ///
+    /// # Errors
+    /// Returns an error if selector parsing fails.
     pub fn extract_product_urls(&self, html: &Html, base_url: &str) -> Result<Vec<String>> {
         debug!("Extracting product URLs from listing page");
 
@@ -203,9 +221,8 @@ impl MatterDataExtractor {
                             }
                         }
                         if let Some(u) = chosen {
-                            if !seen.contains(&u) {
-                                fb_urls.push(u.clone());
-                                seen.insert(u);
+                            if seen.insert(u.clone()) {
+                                fb_urls.push(u);
                             }
                         }
                     }
@@ -222,12 +239,20 @@ impl MatterDataExtractor {
     }
 
     /// Extract product URLs from a product listing page (string input version)
+    /// # Errors
+    /// Returns an error if parsing the HTML fails.
     pub fn extract_product_urls_from_content(&self, html_content: &str) -> Result<Vec<String>> {
         let html = Html::parse_document(html_content);
         self.extract_product_urls(&html, &self.config.base_url)
     }
 
     /// Extract total number of pages from pagination
+    ///
+    /// # Panics
+    /// This may panic if the embedded pagination regex fails to compile (should never happen).
+    ///
+    /// # Errors
+    /// Returns an error if parsing fails unexpectedly.
     pub fn extract_total_pages(&self, html_content: &str) -> Result<u32> {
         let html = Html::parse_document(html_content);
 
@@ -264,7 +289,7 @@ impl MatterDataExtractor {
         // "Page X of Y" 형태의 텍스트에서 총 페이지 수 추출
         let page_info_selectors = vec![".pagination-info", ".page-info", ".showing-info"];
 
-        let re = regex::Regex::new(r"(?i)page\s+\d+\s+of\s+(\d+)").unwrap();
+    let re = regex::Regex::new(r"(?i)page\s+\d+\s+of\s+(\d+)").unwrap();
 
         for selector_str in page_info_selectors {
             if let Ok(selector) = Selector::parse(selector_str) {
@@ -286,6 +311,9 @@ impl MatterDataExtractor {
     }
 
     /// Extract product data from a detail page (returns JSON for flexibility)
+    ///
+    /// # Errors
+    /// Returns an error if parsing the HTML or serializing the result fails.
     pub fn extract_product_data(&self, html_content: &str) -> Result<serde_json::Value> {
         let html = Html::parse_document(html_content);
 
@@ -298,6 +326,9 @@ impl MatterDataExtractor {
     }
 
     /// Extract basic product information from a page (guide-based main entry point)
+    ///
+    /// # Errors
+    /// Returns an error if extraction from listing or detail page fails.
     pub fn extract_basic_product_info(
         &self,
         html_content: &str,
@@ -316,6 +347,7 @@ impl MatterDataExtractor {
     }
 
     /// Check if the given HTML represents a listing page
+    #[allow(clippy::unused_self)]
     fn is_listing_page(&self, html: &Html, url: &str) -> bool {
         if url.contains("page=") || url.contains("products") && !url.contains("csa_product") {
             return true;
@@ -330,6 +362,7 @@ impl MatterDataExtractor {
     }
 
     /// Extract page ID from URL (for listing pages)
+    #[allow(clippy::unused_self)]
     fn extract_page_id_from_url(&self, url: &str) -> i32 {
         if let Some(page_param) = url.split("page=").nth(1) {
             if let Some(page_str) = page_param.split('&').next() {
@@ -342,6 +375,7 @@ impl MatterDataExtractor {
     }
 
     /// Extract a single product from a detail page (guide-based approach)
+    #[allow(clippy::unnecessary_wraps)]
     fn extract_single_product_from_detail_page(&self, html: &Html, url: &str) -> Result<Product> {
         debug!("Extracting single product from detail page: {}", url);
         let now = chrono::Utc::now();
@@ -372,6 +406,9 @@ impl MatterDataExtractor {
     }
 
     /// Extract basic product information from listing page (guide-based approach)
+    ///
+    /// # Errors
+    /// Returns an error if CSS selector parsing fails.
     pub fn extract_products_from_list(&self, html: &Html, page_id: i32) -> Result<Vec<Product>> {
         debug!("Extracting products from listing page {}", page_id);
 
@@ -386,8 +423,9 @@ impl MatterDataExtractor {
 
         // Process articles in reverse order to match expected index order (guide approach)
         for (index, article) in articles.iter().rev().enumerate() {
+            let safe_index = i32::try_from(index).unwrap_or(i32::MAX);
             if let Ok(product) =
-                self.extract_single_product_from_list(*article, page_id, index as i32)
+                self.extract_single_product_from_list(*article, page_id, safe_index)
             {
                 products.push(product);
             }
@@ -398,6 +436,9 @@ impl MatterDataExtractor {
     }
 
     /// Extract detailed product information from a product detail page (guide-based approach)
+    ///
+    /// # Errors
+    /// Returns an error if parsing selectors fails or underlying extraction steps fail.
     pub fn extract_product_detail(&self, html: &Html, url: String) -> Result<ProductDetail> {
         debug!("Extracting product detail from: {}", url);
 
@@ -472,13 +513,18 @@ impl MatterDataExtractor {
                 .pagination_context
                 .read()
                 .map_err(|e| anyhow!("Failed to acquire read lock: {}", e))?;
-            if let Some(ref context) = *pagination_context {
-                // TODO(PaginationRefactor): context 내부 구현이 PaginationCalculator 사용하도록 교체
-                context.calculate_page_index_canonical(source_page_id as u32, source_index as u32)
-            } else {
-                debug!("⚠️  No pagination context set, using original page_id and index");
-                (source_page_id, source_index)
-            }
+            pagination_context.as_ref().map_or_else(
+                || {
+                    debug!("⚠️  No pagination context set, using original page_id and index");
+                    (source_page_id, source_index)
+                },
+                |context| {
+                    let sp = u32::try_from(source_page_id).unwrap_or(0);
+                    let si = u32::try_from(source_index).unwrap_or(0);
+                    // TODO(PaginationRefactor): context 내부 구현이 PaginationCalculator 사용하도록 교체
+                    context.calculate_page_index_canonical(sp, si)
+                },
+            )
         };
 
         // Extract URL - simple and direct approach
@@ -533,6 +579,7 @@ impl MatterDataExtractor {
     }
 
     /// Extract certificate ID from article element following the guide's approach
+    #[allow(clippy::unused_self)]
     fn extract_certificate_id_from_article(&self, article: &ElementRef) -> Option<String> {
         // Try p.entry-certificate-id first (guide approach)
         let cert_id_p_selector = Selector::parse("p.entry-certificate-id").unwrap();
@@ -766,6 +813,7 @@ impl MatterDataExtractor {
     }
 
     /// Parse numeric ID from string (guide approach for hex/decimal handling)
+    #[allow(clippy::unused_self)]
     fn parse_numeric_id(&self, text: &str) -> Option<i32> {
         if text.starts_with("0x") || text.starts_with("0X") {
             i32::from_str_radix(&text[2..], 16).ok()
@@ -775,6 +823,7 @@ impl MatterDataExtractor {
     }
 
     /// Extract text content from an element using a CSS selector
+    #[allow(clippy::unused_self)]
     fn extract_field_text(&self, html: &Html, selector: &str) -> Option<String> {
         let selector_parsed = Selector::parse(selector).ok()?;
         html.select(&selector_parsed)
@@ -784,6 +833,7 @@ impl MatterDataExtractor {
     }
 
     /// Resolve relative URLs to absolute URLs
+    #[allow(clippy::unused_self)]
     fn resolve_url(&self, href: &str, base_url: &str) -> String {
         if href.starts_with("http") {
             href.to_string()
@@ -828,7 +878,10 @@ impl PaginationContext {
         let page_id = total_index / self.target_page_size;
         let index_in_page = total_index % self.target_page_size;
 
-        (page_id as i32, index_in_page as i32)
+        #[allow(clippy::cast_possible_wrap)]
+        {
+            (page_id as i32, index_in_page as i32)
+        }
     }
 
     /// Canonical 계산 방식 (Phase2): `domain::pagination::CanonicalPageIdCalculator` 사용

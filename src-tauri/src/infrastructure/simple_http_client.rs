@@ -124,23 +124,25 @@ impl GlobalRateLimiter {
     }
 
     async fn update_rate_limit(&self, max_requests_per_second: u32) {
-        let mut current_rate = self.current_rate.lock().await;
-        let changed = *current_rate != max_requests_per_second;
-        if changed {
-            *current_rate = max_requests_per_second;
-            info!(
-                "🔄 Updated global rate limit to {} RPS",
-                max_requests_per_second
-            );
-        }
+        let changed = {
+            let mut current_rate = self.current_rate.lock().await;
+            let changed = *current_rate != max_requests_per_second;
+            if changed {
+                *current_rate = max_requests_per_second;
+                info!(
+                    "🔄 Updated global rate limit to {} RPS",
+                    max_requests_per_second
+                );
+            }
+            // Explicitly drop lock to reduce contention before next section
+            drop(current_rate);
+            changed
+        };
 
         // Ensure refill is running. If rate changed, restart. If unchanged but no task, start.
         let need_start = {
             let handle = self.refill_handle.lock().await;
-            match &*handle {
-                None => true,
-                Some(h) => h.is_finished(),
-            }
+            (*handle).as_ref().is_none_or(tauri::async_runtime::TokioJoinHandle::is_finished)
         };
         if changed || need_start {
             self.start_refill_task(max_requests_per_second).await;

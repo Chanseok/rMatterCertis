@@ -25,6 +25,9 @@ pub trait HtmlParser {
     type Config;
 
     /// Parse HTML content with given configuration
+    ///
+    /// # Errors
+    /// Implementations should return an error when selector compilation or extraction fails.
     fn parse(&self, html: &str, config: &Self::Config) -> Result<Self::Output>;
 }
 
@@ -34,6 +37,9 @@ pub trait ContextualParser {
     type Context;
 
     /// Parse HTML with contextual information
+    ///
+    /// # Errors
+    /// Returns an error when required fields are missing or URL resolution fails.
     fn parse_with_context(
         &self,
         html: &Html,
@@ -44,5 +50,8 @@ pub trait ContextualParser {
 /// Validation trait for parsed results
 pub trait Validator<T> {
     /// Validate parsed data for completeness and correctness
+    ///
+    /// # Errors
+    /// Returns an error when validation detects missing or malformed required fields.
     fn validate(&self, data: &T) -> ParsingResult<()>;
 }

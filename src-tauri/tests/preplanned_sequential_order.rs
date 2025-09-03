@@ -1,4 +1,4 @@
-//! Integration test: preplanned ExecutionPlan runs batches sequentially in order.
+//! Integration test: preplanned `ExecutionPlan` runs batches sequentially in order.
 //!
 //! Note: This test uses the real pipeline (HTTP/DB). It is marked ignored by default
 //! because it requires network access and a local DB setup. Unignore to run locally.
@@ -84,8 +84,8 @@ async fn preplanned_batches_run_sequentially_in_order() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     loop {
         if tokio::time::Instant::now() > deadline { break; }
-        match tokio::time::timeout(Duration::from_secs(5), event_rx.recv()).await {
-            Ok(Ok(ev)) => match ev {
+        if let Ok(Ok(ev)) = tokio::time::timeout(Duration::from_secs(5), event_rx.recv()).await {
+            match ev {
                 AppEvent::BatchStarted { batch_id, plan_id, .. } => {
                     if plan_id.is_some() { saw_plan_id = true; }
                     if batch_id.ends_with("-pre-1") {
@@ -107,8 +107,7 @@ async fn preplanned_batches_run_sequentially_in_order() {
                     }
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
     }
 

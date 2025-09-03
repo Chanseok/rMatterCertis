@@ -56,7 +56,7 @@ mod tests {
                     matter_certis_v2_lib::domain::constants::site::PRODUCTS_PER_PAGE as u32
                 };
                 for offset in 0..capacity {
-                    let reverse_index = (capacity - 1 - offset) as i16;
+                    let reverse_index = i16::try_from(capacity - 1 - offset).unwrap_or(i16::MAX);
                     page_slots.push(PageSlot {
                         physical_page,
                         page_id,

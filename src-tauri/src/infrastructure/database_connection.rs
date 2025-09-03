@@ -17,6 +17,11 @@ pub struct DatabaseConnection {
 }
 
 impl DatabaseConnection {
+    /// Create a new database connection pool.
+    ///
+    /// # Errors
+    /// Returns an error if the database directory cannot be created, the file cannot be
+    /// created, or the `SQLx` connection fails.
     pub async fn new(database_url: &str) -> Result<Self> {
         // Create database file directory if it doesn't exist
         let db_path = if database_url.starts_with("sqlite://") {
@@ -51,6 +56,10 @@ impl DatabaseConnection {
         &self.pool
     }
 
+    /// Run idempotent migrations and ensure required indices and tables exist.
+    ///
+    /// # Errors
+    /// Returns an error if reading migration files fails or executing SQL statements fails.
     pub async fn migrate(&self) -> Result<()> {
         use std::fs;
         let concise_all = std::env::var("MC_CONCISE_ALL")
@@ -250,6 +259,10 @@ static GLOBAL_SQLITE_POOL: OnceLock<SqlitePool> = OnceLock::new();
 
 /// Get the global Sqlite pool if initialized, or initialize it on first use.
 /// Uses the centralized database URL and standard pool options.
+/// Initialize and/or retrieve the global Sqlite pool.
+///
+/// # Errors
+/// Returns an error if establishing the `SQLx` connection fails.
 pub async fn get_or_init_global_pool() -> Result<SqlitePool> {
     if let Some(pool) = GLOBAL_SQLITE_POOL.get() {
         return Ok(pool.clone());

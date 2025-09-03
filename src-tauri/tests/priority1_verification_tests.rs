@@ -6,5 +6,5 @@
 #[test]
 fn priority_smoke() {
     // Placeholder to ensure test target exists; real checks live in other tests.
-    assert!(true);
+    // Intentionally empty: basic harness loads and links.
 }

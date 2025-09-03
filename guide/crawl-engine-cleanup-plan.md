@@ -25,8 +25,10 @@
   - [ ] `services` 모듈을 `application/services`로 이동: UI 로직 및 Use Case를 담당하는 애플리케이션 계층으로 통합.
   - [ ] `utils.rs` 기능 분산 및 파일 삭제: 관련된 모듈(주로 `infrastructure`)로 유틸리티 함수를 이전하고 최종적으로 파일을 삭제.
 
-- [ ] **`commands` 모듈 구조화**
-  - [ ] 기능별 하위 디렉토리(`crawling`, `database`, `analysis` 등)를 생성하여 20개 이상의 커맨드 파일을 그룹화.
+- [x] **`commands` 모듈 구조화**
+  - [x] 기능별 하위 디렉토리(`crawling`, `database`, `analysis`, `devtools`, `legacy`) 생성 및 물리 이동 완료
+  - [x] `lib.rs`의 invoke_handler 경로와 re-export를 nested 구조에 맞게 정리
+  - [x] 상위(legacy) `commands/*.rs` 중복 파일 제거(혼동 방지)
 
 - [ ] **프로젝트 전반의 모듈 시스템 현대화**
   - [ ] 남아있는 모든 `mod.rs` 파일을 제거하고, `module_name.rs`와 `module_name/` 디렉토리 구조로 통일.
@@ -182,12 +184,12 @@ src-tauri/src/commands/
 
 #### 마이그레이션/정리 작업 항목
 
-- [ ] `lib.rs`의 generate_handler 등록을 `commands::actor_system::*`로 직접 참조하도록 교체 (shim 경유 제거)
-- [ ] 워크스페이스 전역에서 `commands::actor_system_commands::` 경로를 `commands::actor_system::`로 변경 (테스트/바이너리 포함)
-- [ ] 변경 후 shim 파일(`actor_system_commands.rs`) 제거
-- [ ] 위 디렉토리 구조에 맞춰 파일 이동 및 `lib.rs`/re-export 정리
+- [x] `lib.rs`의 generate_handler 등록을 nested 경로로 교체(예: `commands::crawling::*`, `commands::analysis::*`, `commands::database::*`, `commands::devtools::*`)
+- [x] 워크스페이스 전역 경로 정리: 레거시 `commands::<top-level>` 참조를 nested로 수렴(필요 경로는 re-export 유지)
+- [x] 레거시 shim 및 상위 중복 파일 제거
+- [x] 디렉토리 구조에 맞춰 파일 이동 및 `lib.rs`/re-export 정리
+- [x] dev 전용 커맨드에 feature-gate 적용(`dev-tools` 또는 `any(dev-tools, debug_assertions)`)
 - [ ] 사용 빈도가 낮고 미노출 가능 함수의 `#[tauri::command]` 제거 → 내부 util로 전환
-- [ ] dev-only 모듈의 gate 확인: 기본 빌드에서 제외, dev/CI에서만 활성화
 
 #### Definition of Done (Phase 2)
 
@@ -200,8 +202,10 @@ src-tauri/src/commands/
 - [x] 레거시 커맨드 파일에 feature-gate 적용 완료
 - [x] `config_commands` 미사용 커맨드 비노출화 완료
 - [x] `lib.rs` 등록 커맨드 목록과 문서 동기화
-- [ ] **(진행 중)** 네이밍 조정 및 모듈 경로 정리
-- [ ] clippy/테스트 그린 확인 및 문서 갱신
+- [x] 네이밍 조정 및 모듈 경로 정리(Commands 그룹화 및 상위 중복 제거)
+- [x] simple_actor_test 전체 게이팅 적용(모듈 선언, re-export, manage, invoke 등록)
+- [x] 초기 clippy 정리(중복 match arm 제거, 문서 주석 markdown 수정, 락 스코프 축소, Option 처리 간소화)
+- [ ] clippy/테스트 그린 확인 및 문서 갱신(남은 경고 처리: parsing/*, retry_manager 추가 개선, unnecessary_wraps 등)
 
 ---
 
@@ -236,9 +240,38 @@ src-tauri/src/commands/
 
 ## 변경 로그(요약)
 - **2025-09-03**: Gemini 제안에 따라 `src` 전체 리팩토링 계획으로 확장. Phase 0, 1, 2로 구조화. `_archive` 삭제 및 계층형 아키텍처 적용을 최우선 과제로 설정.
+- **2025-09-03(2)**: Commands 도메인 그룹화(\`crawling\`, \`database\`, \`analysis\`, \`devtools\`, \`legacy\`) 완료. `lib.rs` invoke_handler 및 re-export 정리. 상위 중복 파일 제거. `analysis::system_analysis`/`performance_commands` 이관 및 보완. `database::{data_queries, db_cleanup, db_repair}`와 `devtools::{db_diagnostics, debug_commands, product_details_analytics}` 정리. 빌드/타입체크 그린.
 - **2025-09-01**: Stage/Batch/Session Actor의 `emit` 헬퍼 도입 및 이벤트 경로 통일. clone 최소화 적용.
 
 ### 진행 스냅샷 (2025-09-03)
-- Diagnostics 가시성 개선: dev 실행 스크립트에 `dev-tools` 적용 + `db_diagnostics`를 debug 빌드에서도 활성화
-- Actor System 명령: 구현 본체를 `actor_system.rs`로 이전, 레거시 파일은 shim으로 유지
+- Diagnostics 가시성 개선: dev 빌드에서 진단 명령(feature-gate) 활성화, `db_diagnostics`는 `any(dev-tools, debug_assertions)`로 개발 편의 보장
+- Commands 그룹화: `commands/{crawling,database,analysis,devtools,legacy}` 구조 확립 및 이관 완료
+- Analysis 이관: `analysis::system_analysis` 누락 커맨드 보강, 실제 상태/리포지토리 기반 분석으로 교체, 로그 ASCII 정리
+- Database/Devtools 정리: `data_queries`, `db_cleanup`, `db_repair`, `db_diagnostics`, `debug_commands(ui_debug_log)`, `product_details_analytics` 정비
+- 상위 중복 파일 제거 및 `lib.rs` 등록/재수출 일치화
 - Build/TS 타입 체크 그린 확인
+
+### 진행 스냅샷 (2025-09-03 2차)
+- dev-tools 게이팅 일관화: simple_actor_test를 모듈/재노출/상태 manage/핸들러 등록 전반에 적용
+- retry_manager: 락 스코프 축소 및 `as u32` 캐스팅을 `u32::try_from`으로 치환, Result 반환 함수에 `# Errors` 문서화 추가
+- parsing_error: 동일 match arm 병합으로 clippy 경고 감소
+- simple_http_client: 락 스코프 축소 및 Option 처리 개선(is_none_or)
+
+---
+
+## 다음 작업 계획 (Next Steps)
+
+단기(Phase 2 마무리)
+- [ ] `simple_actor_test`를 `#[cfg(feature = "dev-tools")]`로 제한하고, lib.rs의 manage/invoke 등록도 동일 게이트 적용
+- [ ] 남은 dev-only 커맨드 중 FE 미사용 함수의 `#[tauri::command]` 제거(내부 util로 전환)
+- [ ] cargo clippy --all-targets -- -D warnings 그린 달성(ASCII 로그, 불필요 allow 정리, dead_code 잔여 제거)
+- [ ] 최소 단위 테스트 추가: system_analysis happy path + db_diagnostics gate 동작
+
+중기(Phase 0 보완 및 품질 게이트 강화)
+- [ ] `_archive` 디렉터리 완전 삭제 전 최종 참조 점검 후 제거
+- [ ] `mod.rs` 잔여 제거 및 모듈 시스템 통일
+- [ ] 통합 문서/README 업데이트(Commands 경로 변경 사항과 FE invoke 경로 안내)
+
+장기(Phase 1/엔진 정제)
+- [ ] crawl_engine 공개 API 표면 정리 및 에러 타입 일관화
+- [ ] 정책/전략 타입(CrawlingPolicy 등) 명시화 및 ExecutionPlan 포함

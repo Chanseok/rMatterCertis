@@ -20,6 +20,7 @@ use matter_certis_v2_lib::infrastructure::{
     HttpClient, IntegratedProductRepository, MatterDataExtractor,
 };
 
+#[allow(clippy::too_many_lines)]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Use infrastructure logging so concise_startup and ENV overrides apply
@@ -92,32 +93,37 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Optionally force a specific page via env to simulate failures (e.g., MC_FAIL_PAGE=9999)
-    let pages: Vec<u32> = if let Ok(forced_page_str) = std::env::var("MC_FAIL_PAGE") {
-        if let Ok(forced_page) = forced_page_str.parse::<u32>() {
-            info!(
-                "⚠️ Forcing sanity run to request page {} (may simulate failures)",
-                forced_page
-            );
-            vec![forced_page]
-        } else {
-            warn!(
-                "Invalid MC_FAIL_PAGE value '{}', falling back to default pages",
-                forced_page_str
-            );
+    let pages: Vec<u32> = std::env::var("MC_FAIL_PAGE").map_or_else(
+        |_| {
             if total_pages >= 2 {
                 vec![total_pages, total_pages - 1]
             } else {
                 vec![total_pages]
             }
-        }
-    } else {
-        // Plan a tiny newest-first page slice: last 2 pages
-        if total_pages >= 2 {
-            vec![total_pages, total_pages - 1]
-        } else {
-            vec![total_pages]
-        }
-    };
+        },
+        |forced_page_str| {
+            forced_page_str.parse::<u32>().map_or_else(
+                |_| {
+                    warn!(
+                        "Invalid MC_FAIL_PAGE value '{}', falling back to default pages",
+                        forced_page_str
+                    );
+                    if total_pages >= 2 {
+                        vec![total_pages, total_pages - 1]
+                    } else {
+                        vec![total_pages]
+                    }
+                },
+                |forced_page| {
+                    info!(
+                        "⚠️ Forcing sanity run to request page {} (may simulate failures)",
+                        forced_page
+                    );
+                    vec![forced_page]
+                },
+            )
+        },
+    );
     info!("📄 Target pages: {:?}", pages);
 
     // Wire BatchActor with real services
@@ -140,7 +146,7 @@ async fn main() -> anyhow::Result<()> {
     // Send ProcessBatch with hints and capped concurrency
     let concurrency_limit = 5u32;
     let batch_config = actor_types::BatchConfig {
-        batch_size: pages.len() as u32,
+        batch_size: u32::try_from(pages.len()).unwrap_or(u32::MAX),
         concurrency_limit,
         batch_delay_ms: 250,
         retry_on_failure: true,
@@ -151,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
         batch_id: "sanity-batch".to_string(),
         pages: pages.clone(),
         config: batch_config,
-        batch_size: pages.len() as u32,
+    batch_size: u32::try_from(pages.len()).unwrap_or(u32::MAX),
         concurrency_limit,
         total_pages,
         products_on_last_page,

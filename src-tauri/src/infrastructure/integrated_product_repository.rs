@@ -20,6 +20,13 @@ use sqlx::{Row, sqlite::SqlitePool};
 use std::sync::Arc;
 use tracing::{debug, info};
 
+// Helper enum for heterogeneous SQL binds in update operations
+enum BindValue<'a> {
+    OptStr(&'a Option<String>),
+    OptI32(&'a Option<i32>),
+    OwnedStr(String),
+}
+
 /// Repository for the integrated schema (products + `product_details` + vendors + `crawling_results`)
 #[derive(Clone)]
 pub struct IntegratedProductRepository {
@@ -98,6 +105,8 @@ impl IntegratedProductRepository {
     }
     /// 강제 위치 업데이트: URL이 존재하면 products, `product_details에` 대해
     /// `page_id`, `index_in_page`, id 세 필드만 업데이트합니다. 존재하지 않으면 0 리턴.
+    /// # Errors
+    /// Returns an error if database updates fail or the vacate operation errors.
     pub async fn force_update_position_by_url(
         &self,
         url: &str,
@@ -127,7 +136,7 @@ impl IntegratedProductRepository {
         .bind(&normalized)
         .execute(&*self.pool)
         .await?;
-        let prod_rows = prod_res.rows_affected() as u32;
+    let prod_rows = u32::try_from(prod_res.rows_affected()).unwrap_or(u32::MAX);
 
         // product_details 테이블 업데이트 (id 포함)
         let det_res = sqlx::query(
@@ -142,7 +151,7 @@ impl IntegratedProductRepository {
         .bind(&normalized)
         .execute(&*self.pool)
         .await?;
-        let det_rows = det_res.rows_affected() as u32;
+    let det_rows = u32::try_from(det_res.rows_affected()).unwrap_or(u32::MAX);
 
         Ok((prod_rows, det_rows))
     }
@@ -152,20 +161,15 @@ impl IntegratedProductRepository {
     /// - Leaves path/query as-is (CSA URLs are case-sensitive there)
     fn normalize_url(url: &str) -> String {
         let trimmed = url.trim();
-        if let Ok(mut parsed) = url::Url::parse(trimmed) {
+        url::Url::parse(trimmed).map_or_else(|_| trimmed.to_string(), |mut parsed| {
             if let Some(host) = parsed.host_str() {
                 let lower = host.to_ascii_lowercase();
-                // Only replace host if changed
                 if lower != host {
-                    // Rebuild with lowercased host
                     let _ = parsed.set_host(Some(&lower));
                 }
             }
             parsed.to_string()
-        } else {
-            // Fallback to trimmed original
-            trimmed.to_string()
-        }
+        })
     }
     /// Expose underlying pool reference (read-only operations convenience)
     #[must_use] pub fn pool(&self) -> &sqlx::SqlitePool {
@@ -181,6 +185,8 @@ impl IntegratedProductRepository {
     /// indexing semantics (Plan B). This is intentionally explicit and NOT called
     /// automatically; the frontend must invoke the dedicated reset command.
     /// Returns (`products_deleted`, `product_details_deleted`).
+    /// # Errors
+    /// Returns an error if deletion queries fail unexpectedly.
     pub async fn clear_all_products_and_details(&self) -> Result<(u64, u64)> {
         // Foreign key constraints: ensure ON DELETE CASCADE or delete child first.
         // We optimistically attempt child table deletion then parent.
@@ -195,7 +201,7 @@ impl IntegratedProductRepository {
         {
             details_deleted = res.rows_affected();
         }
-        if let Ok(res) = sqlx::query("DELETE FROM products")
+    if let Ok(res) = sqlx::query("DELETE FROM products")
             .execute(&*self.pool)
             .await
         {
@@ -217,6 +223,8 @@ impl IntegratedProductRepository {
     /// Insert or update basic product information from listing page
     /// 🎯 지능적 비교: 실제로 변경된 필드가 있을 때만 업데이트
     /// Returns: (`was_updated`: bool, `was_created`: bool)
+    /// # Errors
+    /// Returns an error if database access fails during read or write.
     pub async fn create_or_update_product(&self, product: &Product) -> Result<(bool, bool)> {
         let now = chrono::Utc::now();
         // Normalize URL to ensure consistent storage and matching
@@ -353,8 +361,12 @@ impl IntegratedProductRepository {
     }
 
     /// Insert or update detailed product specifications
-    /// 🎯 지능적 비교: 빈 필드 채움 및 실제 변경사항만 업데이트
+    /// � 지능적 비교: 빈 필드 채움 및 실제 변경사항만 업데이트
     /// Returns: (`was_updated`: bool, `was_created`: bool)
+    ///
+    /// # Errors
+    /// Returns an error if database operations fail or if serialization of update statements
+    /// encounters an error.
     pub async fn create_or_update_product_detail(
         &self,
         detail: &ProductDetail,
@@ -373,11 +385,6 @@ impl IntegratedProductRepository {
             // 🔍 지능적 비교: 빈 필드 채우기 + 실제 변경사항 확인
             let mut updates = Vec::new();
             // Heterogeneous bind values (different Option<T> types) captured via enum to avoid type mismatch
-            enum BindValue<'a> {
-                OptStr(&'a Option<String>),
-                OptI32(&'a Option<i32>),
-                OwnedStr(String),
-            }
             let mut binds: Vec<BindValue> = Vec::new();
             let mut change_kinds: Vec<String> = Vec::new(); // human readable change descriptors
             let verbose = std::env::var("MC_PERSIST_VERBOSE")
@@ -512,105 +519,108 @@ impl IntegratedProductRepository {
                 // Optional verbose diff logging before executing update
                 if verbose {
                     // helper closures for formatting
-                    fn fmt_opt_str(v: &Option<String>) -> String {
-                        v.as_deref()
-                            .map_or("∅", |s| if s.is_empty() { "" } else { s })
-                            .to_string()
+                    fn fmt_opt_str(v: Option<&String>) -> String {
+                        v.map_or_else(|| "∅".to_string(), |s| {
+                            if s.is_empty() { String::new() } else { s.clone() }
+                        })
                     }
-                    fn fmt_opt_i32(v: &Option<i32>) -> String {
-                        v.map(|n| n.to_string()).unwrap_or_else(|| "∅".to_string())
+                    fn fmt_opt_i32(v: Option<i32>) -> String {
+                        v.map_or_else(|| "∅".to_string(), |n| n.to_string())
                     }
                     let mut diffs: Vec<String> = Vec::new();
                     for kind in &change_kinds {
                         if let Some((k, col)) = kind.split_once(':') {
                             let (old_v, new_v) = match col {
                                 "device_type" => (
-                                    fmt_opt_str(&existing_detail.device_type),
-                                    fmt_opt_str(&detail.device_type),
+                                    fmt_opt_str(existing_detail.device_type.as_ref()),
+                                    fmt_opt_str(detail.device_type.as_ref()),
                                 ),
                                 "certification_date" => (
-                                    fmt_opt_str(&existing_detail.certification_date),
-                                    fmt_opt_str(&detail.certification_date),
+                                    fmt_opt_str(existing_detail.certification_date.as_ref()),
+                                    fmt_opt_str(detail.certification_date.as_ref()),
                                 ),
                                 "software_version" => (
-                                    fmt_opt_str(&existing_detail.software_version),
-                                    fmt_opt_str(&detail.software_version),
+                                    fmt_opt_str(existing_detail.software_version.as_ref()),
+                                    fmt_opt_str(detail.software_version.as_ref()),
                                 ),
                                 "hardware_version" => (
-                                    fmt_opt_str(&existing_detail.hardware_version),
-                                    fmt_opt_str(&detail.hardware_version),
+                                    fmt_opt_str(existing_detail.hardware_version.as_ref()),
+                                    fmt_opt_str(detail.hardware_version.as_ref()),
                                 ),
                                 "description" => (
-                                    fmt_opt_str(&existing_detail.description),
-                                    fmt_opt_str(&detail.description),
+                                    fmt_opt_str(existing_detail.description.as_ref()),
+                                    fmt_opt_str(detail.description.as_ref()),
                                 ),
                                 "firmware_version" => (
-                                    fmt_opt_str(&existing_detail.firmware_version),
-                                    fmt_opt_str(&detail.firmware_version),
+                                    fmt_opt_str(existing_detail.firmware_version.as_ref()),
+                                    fmt_opt_str(detail.firmware_version.as_ref()),
                                 ),
                                 "specification_version" => (
-                                    fmt_opt_str(&existing_detail.specification_version),
-                                    fmt_opt_str(&detail.specification_version),
+                                    fmt_opt_str(existing_detail.specification_version.as_ref()),
+                                    fmt_opt_str(detail.specification_version.as_ref()),
                                 ),
                                 "transport_interface" => (
-                                    fmt_opt_str(&existing_detail.transport_interface),
-                                    fmt_opt_str(&detail.transport_interface),
+                                    fmt_opt_str(existing_detail.transport_interface.as_ref()),
+                                    fmt_opt_str(detail.transport_interface.as_ref()),
                                 ),
                                 "application_categories" => (
-                                    fmt_opt_str(&existing_detail.application_categories),
-                                    fmt_opt_str(&detail.application_categories),
+                                    fmt_opt_str(existing_detail.application_categories.as_ref()),
+                                    fmt_opt_str(detail.application_categories.as_ref()),
                                 ),
                                 "compliance_document_url" => (
-                                    fmt_opt_str(&existing_detail.compliance_document_url),
-                                    fmt_opt_str(&detail.compliance_document_url),
+                                    fmt_opt_str(existing_detail.compliance_document_url.as_ref()),
+                                    fmt_opt_str(detail.compliance_document_url.as_ref()),
                                 ),
                                 "program_type" => (
-                                    fmt_opt_str(&existing_detail.program_type),
-                                    fmt_opt_str(&detail.program_type),
+                                    fmt_opt_str(existing_detail.program_type.as_ref()),
+                                    fmt_opt_str(detail.program_type.as_ref()),
                                 ),
                                 "family_sku" => (
-                                    fmt_opt_str(&existing_detail.family_sku),
-                                    fmt_opt_str(&detail.family_sku),
+                                    fmt_opt_str(existing_detail.family_sku.as_ref()),
+                                    fmt_opt_str(detail.family_sku.as_ref()),
                                 ),
                                 "family_variant_sku" => (
-                                    fmt_opt_str(&existing_detail.family_variant_sku),
-                                    fmt_opt_str(&detail.family_variant_sku),
+                                    fmt_opt_str(existing_detail.family_variant_sku.as_ref()),
+                                    fmt_opt_str(detail.family_variant_sku.as_ref()),
                                 ),
                                 "family_id" => (
-                                    fmt_opt_str(&existing_detail.family_id),
-                                    fmt_opt_str(&detail.family_id),
+                                    fmt_opt_str(existing_detail.family_id.as_ref()),
+                                    fmt_opt_str(detail.family_id.as_ref()),
                                 ),
                                 "tis_trp_tested" => (
-                                    fmt_opt_str(&existing_detail.tis_trp_tested),
-                                    fmt_opt_str(&detail.tis_trp_tested),
+                                    fmt_opt_str(existing_detail.tis_trp_tested.as_ref()),
+                                    fmt_opt_str(detail.tis_trp_tested.as_ref()),
                                 ),
                                 "primary_device_type_id" => (
-                                    fmt_opt_str(&existing_detail.primary_device_type_id),
-                                    fmt_opt_str(&detail.primary_device_type_id),
+                                    fmt_opt_str(existing_detail.primary_device_type_id.as_ref()),
+                                    fmt_opt_str(detail.primary_device_type_id.as_ref()),
                                 ),
                                 "certificate_id" => (
-                                    fmt_opt_str(&existing_detail.certificate_id),
-                                    fmt_opt_str(&detail.certificate_id),
+                                    fmt_opt_str(existing_detail.certificate_id.as_ref()),
+                                    fmt_opt_str(detail.certificate_id.as_ref()),
                                 ),
-                                "vid" => {
-                                    (fmt_opt_i32(&existing_detail.vid), fmt_opt_i32(&detail.vid))
-                                }
-                                "pid" => {
-                                    (fmt_opt_i32(&existing_detail.pid), fmt_opt_i32(&detail.pid))
-                                }
+                                "vid" => (
+                                    fmt_opt_i32(existing_detail.vid),
+                                    fmt_opt_i32(detail.vid),
+                                ),
+                                "pid" => (
+                                    fmt_opt_i32(existing_detail.pid),
+                                    fmt_opt_i32(detail.pid),
+                                ),
                                 "manufacturer" => (
-                                    fmt_opt_str(&existing_detail.manufacturer),
-                                    fmt_opt_str(&detail.manufacturer),
+                                    fmt_opt_str(existing_detail.manufacturer.as_ref()),
+                                    fmt_opt_str(detail.manufacturer.as_ref()),
                                 ),
                                 "model" => (
-                                    fmt_opt_str(&existing_detail.model),
-                                    fmt_opt_str(&detail.model),
+                                    fmt_opt_str(existing_detail.model.as_ref()),
+                                    fmt_opt_str(detail.model.as_ref()),
                                 ),
                                 other => ("?".to_string(), format!("(unmapped:{})", other)),
                             };
                             diffs.push(format!("{} {}: '{}' -> '{}'", k, col, old_v, new_v));
                         }
                     }
+
                     if !diffs.is_empty() {
                         info!(
                             "[PersistDiff] ProductDetail url={} changes: {}",
@@ -619,14 +629,6 @@ impl IntegratedProductRepository {
                         );
                     }
                 }
-                // If position present in the target detail and we haven't already added an id assignment, set id accordingly
-                if detail.page_id.is_some() && detail.index_in_page.is_some()
-                    && !updates.iter().any(|u| *u == "id = NULL" || *u == "id = ?") {
-                        if let Some(ref forced) = derived_id {
-                            updates.push("id = ?");
-                            binds.push(BindValue::OwnedStr(forced.clone()));
-                        }
-                    }
 
                 let query = format!(
                     "UPDATE product_details SET {}, updated_at = ? WHERE url = ?",
@@ -849,6 +851,8 @@ impl IntegratedProductRepository {
     }
 
     /// 빠른 통계: `product_details` 전체 개수, `page_id` 범위, 마지막 업데이트 시각
+    /// # Errors
+    /// Returns an error if the query fails.
     pub async fn get_product_detail_stats(
         &self,
     ) -> Result<(i64, Option<i32>, Option<i32>, Option<DateTime<Utc>>)> {
@@ -863,6 +867,8 @@ impl IntegratedProductRepository {
     }
 
     /// Get all products with pagination
+    /// # Errors
+    /// Returns an error if the query or row decoding fails.
     pub async fn get_products_paginated(&self, page: i32, limit: i32) -> Result<Vec<Product>> {
         let offset = (page - 1) * limit;
         let rows = sqlx::query(
@@ -897,6 +903,8 @@ impl IntegratedProductRepository {
     }
 
     /// Get product by URL
+    /// # Errors
+    /// Returns an error if the query fails.
     pub async fn get_product_by_url(&self, url: &str) -> Result<Option<Product>> {
         let normalized_url = Self::normalize_url(url);
         let row = sqlx::query(
@@ -909,8 +917,9 @@ impl IntegratedProductRepository {
         .fetch_optional(&*self.pool)
         .await?;
 
-        match row {
-            Some(row) => Ok(Some(Product {
+        row.map_or_else(
+            || Ok(None),
+            |row| Ok(Some(Product {
                 id: None, // products 테이블에는 id 컬럼이 없음
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
@@ -921,11 +930,12 @@ impl IntegratedProductRepository {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
             })),
-            None => Ok(None),
-        }
+        )
     }
 
     /// Get product with details by URL
+    /// # Errors
+    /// Returns an error if either underlying product/detail retrieval fails.
     pub async fn get_product_with_details(&self, url: &str) -> Result<Option<ProductWithDetails>> {
         let product = self.get_product_by_url(url).await?;
 
@@ -941,6 +951,8 @@ impl IntegratedProductRepository {
     }
 
     /// Get product detail by URL
+    /// # Errors
+    /// Returns an error if the query fails.
     pub async fn get_product_detail_by_url(&self, url: &str) -> Result<Option<ProductDetail>> {
         let normalized_url = Self::normalize_url(url);
         let row = sqlx::query(
@@ -958,8 +970,9 @@ impl IntegratedProductRepository {
         .fetch_optional(&*self.pool)
         .await?;
 
-        match row {
-            Some(row) => Ok(Some(ProductDetail {
+        row.map_or_else(
+            || Ok(None),
+            |row| Ok(Some(ProductDetail {
                 url: row.get("url"),
                 page_id: row.get("page_id"),
                 index_in_page: row.get("index_in_page"),
@@ -988,11 +1001,12 @@ impl IntegratedProductRepository {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
             })),
-            None => Ok(None),
-        }
+        )
     }
 
     /// Search products with criteria and pagination
+    /// # Errors
+    /// Returns an error if counting or data queries fail.
     pub async fn search_products(
         &self,
         criteria: &ProductSearchCriteria,
@@ -1147,6 +1161,8 @@ impl IntegratedProductRepository {
     /// JSON 형식의 제품 데이터를 DB에 추가 또는 업데이트
     ///
     /// 새로운 제품인 경우 true, 기존 제품 업데이트인 경우 false 반환
+    /// # Errors
+    /// Returns an error if required fields are missing or DB upserts fail.
     pub async fn upsert_product(&self, product_json: serde_json::Value) -> Result<bool> {
         let url = product_json["url"]
             .as_str()
@@ -1166,8 +1182,8 @@ impl IntegratedProductRepository {
             certificate_id: product_json["certification_id"]
                 .as_str()
                 .map(std::string::ToString::to_string),
-            page_id: product_json["page_id"].as_i64().map(|i| i as i32),
-            index_in_page: product_json["index_in_page"].as_i64().map(|i| i as i32),
+            page_id: product_json["page_id"].as_i64().and_then(|i| i32::try_from(i).ok()),
+            index_in_page: product_json["index_in_page"].as_i64().and_then(|i| i32::try_from(i).ok()),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1182,8 +1198,8 @@ impl IntegratedProductRepository {
         if product_json.get("device_type").is_some()
             || product_json.get("hardware_version").is_some()
         {
-            let vid = product_json["vid"].as_i64().map(|i| i as i32);
-            let pid = product_json["pid"].as_i64().map(|i| i as i32);
+            let vid = product_json["vid"].as_i64().and_then(|i| i32::try_from(i).ok());
+            let pid = product_json["pid"].as_i64().and_then(|i| i32::try_from(i).ok());
 
             let detail = ProductDetail {
                 url: url.clone(),
@@ -1248,6 +1264,8 @@ impl IntegratedProductRepository {
     }
 
     /// Get all vendors
+    /// # Errors
+    /// Returns an error if the query fails.
     pub async fn get_vendors(&self) -> Result<Vec<Vendor>> {
         let rows = sqlx::query(
             "SELECT vendor_id, vendor_number, vendor_name, company_legal_name, created_at, updated_at FROM vendors ORDER BY vendor_name"
@@ -1271,6 +1289,8 @@ impl IntegratedProductRepository {
     }
 
     /// Create a new vendor
+    /// # Errors
+    /// Returns an error if insert or id retrieval fails.
     pub async fn create_vendor(&self, vendor: &crate::domain::product::Vendor) -> Result<i32> {
         let vendor_id = vendor.vendor_id.max(0); // 새 ID인 경우 자동 생성
 
@@ -1308,6 +1328,8 @@ impl IntegratedProductRepository {
     // ===============================
 
     /// Save crawling result
+    /// # Errors
+    /// Returns an error if the upsert query fails.
     pub async fn save_crawling_result(&self, result: &CrawlingResult) -> Result<()> {
         sqlx::query(
             r"
@@ -1336,6 +1358,8 @@ impl IntegratedProductRepository {
     }
 
     /// Get crawling results with pagination
+    /// # Errors
+    /// Returns an error if the query or row decoding fails.
     pub async fn get_crawling_results(&self, page: i32, limit: i32) -> Result<Vec<CrawlingResult>> {
         let offset = (page - 1) * limit;
         let rows = sqlx::query(
@@ -1379,6 +1403,9 @@ impl IntegratedProductRepository {
     // ===============================
 
     /// Get database statistics
+    ///
+    /// # Errors
+    /// Returns an error if any of the required queries fail.
     pub async fn get_database_statistics(&self) -> Result<DatabaseStatistics> {
         let total_products: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
             .fetch_one(&*self.pool)
@@ -1410,7 +1437,10 @@ impl IntegratedProductRepository {
             .await?;
 
         let completion_rate = if total_products > 0 {
-            (total_details as f32 / total_products as f32) * 100.0
+            #[allow(clippy::cast_precision_loss)]
+            {
+                (total_details as f32 / total_products as f32) * 100.0
+            }
         } else {
             0.0
         };
@@ -1441,6 +1471,9 @@ impl IntegratedProductRepository {
     }
 
     /// Get products without details (for crawling prioritization)
+    ///
+    /// # Errors
+    /// Returns an error if the query or decoding fails.
     pub async fn get_products_without_details(&self, limit: i32) -> Result<Vec<Product>> {
         let rows = sqlx::query(
             r"
@@ -1476,6 +1509,10 @@ impl IntegratedProductRepository {
 
     /// Get only product URLs (no details yet) within a specific set of `page_ids`
     /// Returns at most `limit` URLs. If `pages` is empty returns empty Vec.
+    /// Get product URLs without details in specific pages
+    ///
+    /// # Errors
+    /// Returns an error if the query fails.
     pub async fn get_product_urls_without_details_in_pages(
         &self,
         pages: &[u32],
@@ -1499,7 +1536,8 @@ impl IntegratedProductRepository {
         );
         let mut q = sqlx::query(&query);
         for p in pages {
-            q = q.bind(*p as i32);
+            let p_i32 = i32::try_from(*p).unwrap_or(i32::MAX);
+            q = q.bind(p_i32);
         }
         q = q.bind(limit);
         let rows = q.fetch_all(&*self.pool).await?;
@@ -1510,6 +1548,9 @@ impl IntegratedProductRepository {
     }
 
     /// Get all products from the database
+    ///
+    /// # Errors
+    /// Returns an error if the query or decoding fails.
     pub async fn get_all_products(&self) -> Result<Vec<Product>> {
         let rows = sqlx::query(
             r"
@@ -1541,6 +1582,9 @@ impl IntegratedProductRepository {
     }
 
     /// Get the latest updated product
+    ///
+    /// # Errors
+    /// Returns an error if the query fails.
     pub async fn get_latest_updated_product(&self) -> Result<Option<Product>> {
         let row = sqlx::query(
             r"
@@ -1554,8 +1598,9 @@ impl IntegratedProductRepository {
         .fetch_optional(&*self.pool)
         .await?;
 
-        if let Some(row) = row {
-            Ok(Some(Product {
+        row.map_or_else(
+            || Ok(None),
+            |row| Ok(Some(Product {
                 id: None, // products 테이블에는 id 컬럼이 없음
                 url: row.get("url"),
                 manufacturer: row.get("manufacturer"),
@@ -1565,10 +1610,8 @@ impl IntegratedProductRepository {
                 index_in_page: row.get("index_in_page"),
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
-            }))
-        } else {
-            Ok(None)
-        }
+            })),
+        )
     }
 
     // ===============================
@@ -1581,6 +1624,10 @@ impl IntegratedProductRepository {
     /// This finds the product with the highest `page_id`, and among those products,
     /// the one with the highest `index_in_page`. This represents the "last" product
     /// we've crawled in the reverse chronological order.
+    /// Get the maximum `page_id` and `index_in_page`
+    ///
+    /// # Errors
+    /// Returns an error if the query fails.
     pub async fn get_max_page_id_and_index(&self) -> Result<(Option<i32>, Option<i32>)> {
         let row = sqlx::query(
             r"
@@ -1594,22 +1641,28 @@ impl IntegratedProductRepository {
         .fetch_optional(&*self.pool)
         .await?;
 
-        if let Some(row) = row {
-            let max_page_id: Option<i32> = row.get("page_id");
-            let max_index_in_page: Option<i32> = row.get("index_in_page");
-            tracing::debug!(
-                "📊 Found last saved product: page_id={:?}, index_in_page={:?}",
-                max_page_id,
-                max_index_in_page
-            );
-            Ok((max_page_id, max_index_in_page))
-        } else {
-            tracing::debug!("📊 No products found with page_id and index_in_page");
-            Ok((None, None))
-        }
+        row.map_or_else(
+            || {
+                tracing::debug!("📊 No products found with page_id and index_in_page");
+                Ok((None, None))
+            },
+            |row| {
+                let max_page_id: Option<i32> = row.get("page_id");
+                let max_index_in_page: Option<i32> = row.get("index_in_page");
+                tracing::debug!(
+                    "📊 Found last saved product: page_id={:?}, index_in_page={:?}",
+                    max_page_id,
+                    max_index_in_page
+                );
+                Ok((max_page_id, max_index_in_page))
+            },
+        )
     }
 
     /// Get the count of products stored in the database
+    ///
+    /// # Errors
+    /// Returns an error if the query fails.
     pub async fn get_product_count(&self) -> Result<i32> {
         let count: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
             .fetch_one(&*self.pool)
@@ -1625,6 +1678,14 @@ impl IntegratedProductRepository {
     /// 2. Calculate the next product index to crawl
     /// 3. Convert to website page numbers
     /// 4. Apply crawl page limit (respecting user settings)
+    ///    Calculate the next crawling page range based on DB state and site info
+    ///
+    /// # Errors
+    /// Returns an error if database access or range analysis fails.
+    ///
+    /// # Panics
+    /// Panics if internal DB state is inconsistent and `max_page_id`/`max_index_in_page` are `None`
+    /// after earlier checks. This should not occur in normal operation.
     pub async fn calculate_next_crawling_range(
         &self,
         total_pages_on_site: u32,
@@ -1703,7 +1764,18 @@ impl IntegratedProductRepository {
 
         // Step 2: Calculate the last saved product's reverse absolute index
         // Formula: lastSavedIndex = (max_page_id * productsPerPage) + max_index_in_page
-        let last_saved_index = (max_page_id as u32 * products_per_page) + max_index_in_page as u32;
+        let safe_page_id = u32::try_from(max_page_id).unwrap_or_else(|_| {
+            tracing::warn!("negative page_id detected ({}), clamping to 0", max_page_id);
+            0
+        });
+        let safe_index = u32::try_from(max_index_in_page).unwrap_or_else(|_| {
+            tracing::warn!(
+                "negative index_in_page detected ({}), clamping to 0",
+                max_index_in_page
+            );
+            0
+        });
+        let last_saved_index = (safe_page_id * products_per_page) + safe_index;
 
         // Step 3: Calculate the next product index to crawl
         // Formula: nextProductIndex = lastSavedIndex + 1
@@ -1788,6 +1860,10 @@ impl IntegratedProductRepository {
 
     /// Check if a given site page (`1..=total_pages_on_site`) is fully stored in `product_details`
     /// Uses `product_details` table as source of truth for deduplication decisions.
+    /// Check if a given site page (`1..=total_pages_on_site`) is fully stored in `product_details`.
+    ///
+    /// # Errors
+    /// Returns an error if database access fails while counting details.
     pub async fn is_site_page_fully_detailed(
         &self,
         site_page: u32,
@@ -1798,10 +1874,11 @@ impl IntegratedProductRepository {
             return Ok(true);
         }
         // Convert site page (1=newest, total_pages_on_site=oldest) to our 0-based page_id
-        let page_id: i32 = (total_pages_on_site - site_page) as i32;
+        let page_id: i32 = i32::try_from(total_pages_on_site.saturating_sub(site_page))
+            .unwrap_or(i32::MAX);
         // Expected count
         let expected: i32 = if site_page == total_pages_on_site {
-            products_on_last_page as i32
+            i32::try_from(products_on_last_page).unwrap_or(i32::MAX)
         } else {
             crate::domain::constants::site::PRODUCTS_PER_PAGE
         };
@@ -1823,6 +1900,10 @@ impl IntegratedProductRepository {
     }
 
     /// Check if a specific page range has already been crawled
+    /// Check if a specific page range has already been crawled
+    ///
+    /// # Errors
+    /// Returns an error if database access fails while counting products.
     pub async fn is_page_range_crawled(&self, start_page: u32, end_page: u32) -> Result<bool> {
         // Use site constants instead of parameter
         let products_per_page = crate::domain::constants::site::PRODUCTS_PER_PAGE as u32;
@@ -1850,9 +1931,9 @@ impl IntegratedProductRepository {
             FROM products 
             WHERE page_id >= ? AND page_id <= ?
             ",
-        )
-        .bind(start_page_id as i32)
-        .bind(end_page_id as i32)
+    )
+    .bind(i32::try_from(start_page_id).unwrap_or(i32::MAX))
+    .bind(i32::try_from(end_page_id).unwrap_or(i32::MAX))
         .fetch_one(&*self.pool)
         .await?;
 
@@ -1867,10 +1948,14 @@ impl IntegratedProductRepository {
             expected_products
         );
 
-        Ok(count >= expected_products as i32)
+        let expected_i32 = i32::try_from(expected_products).unwrap_or(i32::MAX);
+        Ok(count >= expected_i32)
     }
 
     /// Analyze database state for system diagnostics
+    ///
+    /// # Errors
+    /// Returns an error if database statistics retrieval fails.
     pub async fn analyze_database_state(
         &self,
     ) -> Result<crate::application::shared_state::DbAnalysisResult> {
@@ -1880,8 +1965,8 @@ impl IntegratedProductRepository {
         let quality_score = if stats.total_products > 0 { 0.8 } else { 0.0 };
 
         Ok(crate::application::shared_state::DbAnalysisResult {
-            total_products: stats.total_products as u32,
-            max_page_id: Some(stats.total_products as i32 / 12), // Assuming 12 products per page
+            total_products: u32::try_from(stats.total_products).unwrap_or(u32::MAX),
+            max_page_id: Some(i32::try_from(stats.total_products).unwrap_or(i32::MAX) / 12), // Assuming 12 products per page
             max_index_in_page: Some(11),                         // 0-indexed, so max is 11
             quality_score,
             analyzed_at: chrono::Utc::now(),
@@ -1892,6 +1977,9 @@ impl IntegratedProductRepository {
     }
 
     /// 제품 총 개수 조회 (Backend-Only CRUD 패턴)
+    ///
+    /// # Errors
+    /// Returns an error if the query fails.
     pub async fn count_products(&self) -> Result<i64> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
             .fetch_one(&*self.pool)
@@ -1900,8 +1988,10 @@ impl IntegratedProductRepository {
     }
 
     /// 최근 업데이트된 제품들 조회 (Backend-Only CRUD 패턴)
+    ///
+    /// # Errors
+    /// Returns an error if the query or row decoding fails.
     pub async fn get_latest_updated_products(&self, limit: u32) -> Result<Vec<Product>> {
-        let _offset = 0;
         let rows = sqlx::query(
             r"
             SELECT url, manufacturer, model, certificate_id, page_id, index_in_page, 
@@ -1911,7 +2001,7 @@ impl IntegratedProductRepository {
             LIMIT ?
             ",
         )
-        .bind(limit as i32)
+        .bind(i32::try_from(limit).unwrap_or(i32::MAX))
         .fetch_all(&*self.pool)
         .await?;
 

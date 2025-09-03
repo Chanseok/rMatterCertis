@@ -421,7 +421,7 @@ pub async fn get_session_status(
 	}
 }
 
-/// Helper (primarily for tests) to obtain status payload without needing a real AppHandle.
+/// Helper (primarily for tests) to obtain status payload without needing a real `AppHandle`.
 pub async fn test_build_session_status_payload(session_id: &str) -> Option<serde_json::Value> {
 	let registry = session_registry();
 	let g = registry.read().await;

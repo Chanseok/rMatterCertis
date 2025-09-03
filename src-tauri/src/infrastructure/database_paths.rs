@@ -39,6 +39,10 @@ impl DatabasePathManager {
     }
 
     /// 앱 데이터 디렉토리 결정 (Modern Rust 2024 방식)
+    ///
+    /// # Errors
+    /// Returns an error if the OS data directory cannot be determined or if creating the
+    /// directory fails.
     pub fn get_app_data_directory() -> Result<PathBuf> {
         let data_dir = dirs::data_local_dir()
             .ok_or_else(|| anyhow::anyhow!("Data directory not found"))?
@@ -54,6 +58,10 @@ impl DatabasePathManager {
     }
 
     /// 전역 인스턴스 초기화 (앱 시작 시 한 번만 호출)
+    ///
+    /// # Errors
+    /// Returns an error if the path manager cannot be constructed or the global instance is
+    /// already initialized.
     pub fn initialize() -> Result<()> {
         let manager = Self::new()?;
         DATABASE_PATH_MANAGER
@@ -63,6 +71,9 @@ impl DatabasePathManager {
     }
 
     /// 전역 인스턴스 가져오기
+    ///
+    /// # Panics
+    /// Panics if called before `initialize()` has successfully been invoked.
     pub fn global() -> &'static Self {
         DATABASE_PATH_MANAGER
             .get()
@@ -75,6 +86,10 @@ impl DatabasePathManager {
     }
 
     /// 필요한 디렉토리 생성 (메인 DB만)
+    /// 필요한 디렉토리 생성 (메인 DB만)
+    ///
+    /// # Errors
+    /// Returns an error if creating the directory fails.
     pub async fn ensure_directories_exist(&self) -> Result<()> {
         // 메인 데이터베이스 디렉토리
         if let Some(parent) = self.main_database_path.parent() {
@@ -92,6 +107,10 @@ impl DatabasePathManager {
     }
 
     /// 데이터베이스 파일 생성 (존재하지 않는 경우)
+    /// 데이터베이스 파일 생성 (존재하지 않는 경우)
+    ///
+    /// # Errors
+    /// Returns an error if creating the parent directory or file fails.
     pub async fn ensure_database_file_exists(&self) -> Result<()> {
         if !self.database_exists() {
             // 디렉토리부터 생성
@@ -126,6 +145,11 @@ impl DatabasePathManager {
     }
 
     /// 완전한 데이터베이스 초기화 (경로 + 파일 + 권한)
+    /// 완전한 데이터베이스 초기화 (경로 + 파일 + 권한)
+    ///
+    /// # Errors
+    /// Returns an error if any of the initialization steps fail (directory or file creation,
+    /// or permissions verification).
     pub async fn full_initialization(&self) -> Result<()> {
         let concise_all = std::env::var("MC_CONCISE_ALL")
             .ok()
@@ -177,6 +201,10 @@ impl DatabasePathManager {
 }
 
 /// 데이터베이스 전체 초기화 (앱 시작 시 호출)
+/// 데이터베이스 전체 초기화 (앱 시작 시 호출)
+///
+/// # Errors
+/// Returns an error if initializing the manager or running full initialization fails.
 pub async fn initialize_database_paths() -> Result<()> {
     // 1. 경로 관리자 초기화
     DatabasePathManager::initialize().context("DatabasePathManager 초기화 실패")?;

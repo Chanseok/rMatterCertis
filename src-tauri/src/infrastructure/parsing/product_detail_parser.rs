@@ -41,17 +41,24 @@ pub struct ProductDetailParser {
 
 impl ProductDetailParser {
     /// Create a new product detail parser with default configuration
+    ///
+    /// # Errors
+    /// Returns an error if selector compilation fails for all provided defaults.
     pub fn new() -> Result<Self> {
         let config = super::config::ParsingConfig::default();
         Self::with_config(&config.product_detail_selectors)
     }
 
     /// Create parser with custom selector configuration
+    /// Create parser with custom selector configuration
+    ///
+    /// # Errors
+    /// Returns an error if none of the provided selectors can be compiled.
     pub fn with_config(selectors: &super::config::ProductDetailSelectors) -> Result<Self> {
         let mut regex_patterns = HashMap::new();
 
         // Compile regex patterns for fallback extraction
-        Self::compile_regex_patterns(&mut regex_patterns)?;
+    Self::compile_regex_patterns(&mut regex_patterns);
 
         Ok(Self {
             title_selectors: Self::compile_selectors(&selectors.title)?,
@@ -103,7 +110,7 @@ impl ProductDetailParser {
     }
 
     /// Compile regex patterns for fallback data extraction
-    fn compile_regex_patterns(patterns: &mut HashMap<String, Regex>) -> Result<()> {
+    fn compile_regex_patterns(patterns: &mut HashMap<String, Regex>) {
         let pattern_definitions = vec![
             ("vid", r"(?i)(?:vid|vendor\s*id)[:\s]*([0-9a-fx]+)"),
             ("pid", r"(?i)(?:pid|product\s*id)[:\s]*([0-9a-fx]+)"),
@@ -128,7 +135,7 @@ impl ProductDetailParser {
             }
         }
 
-        Ok(())
+    // no error path; best-effort compilation
     }
 }
 
@@ -157,7 +164,7 @@ impl ContextualParser for ProductDetailParser {
         let device_type = self.extract_basic_info(html, "category", &self.category_selectors);
 
         // Extract Matter-specific certification data using multiple strategies
-        let certification_data = self.extract_matter_certification_data(html)?;
+    let certification_data = self.extract_matter_certification_data(html);
 
         // Extract additional fields
         let description = self.extract_product_description(html);
@@ -166,8 +173,12 @@ impl ContextualParser for ProductDetailParser {
 
         let product_detail = ProductDetail {
             url: context.url.clone(),
-            page_id: context.source_page_id.map(|p| p as i32),
-            index_in_page: context.source_index.map(|i| i as i32),
+            page_id: context
+                .source_page_id
+                .and_then(|p| i32::try_from(p).ok()),
+            index_in_page: context
+                .source_index
+                .and_then(|i| i32::try_from(i).ok()),
             id: certification_data.get("certification_id").cloned(),
             manufacturer,
             model: Some(model),
@@ -194,13 +205,11 @@ impl ContextualParser for ProductDetailParser {
             updated_at: now,
         };
 
-        debug!(
-            "Extracted Matter product details for: {}",
-            product_detail
-                .model
-                .as_ref()
-                .unwrap_or(&"Unknown".to_string())
-        );
+        let model_name = product_detail
+            .model
+            .clone()
+            .unwrap_or_else(|| "Unknown".to_string());
+        debug!("Extracted Matter product details for: {}", model_name);
         Ok(product_detail)
     }
 }
@@ -235,7 +244,7 @@ impl ProductDetailParser {
     fn extract_matter_certification_data(
         &self,
         html: &Html,
-    ) -> ParsingResult<HashMap<String, String>> {
+    ) -> HashMap<String, String> {
         let mut certification_data = HashMap::new();
 
         // Strategy 0: Direct extraction using configured field-specific selectors
@@ -308,7 +317,7 @@ impl ProductDetailParser {
             debug!("Total extracted fields: {}", certification_data.len());
         }
 
-        Ok(certification_data)
+    certification_data
     }
 
     /// Extract data from HTML tables - Most reliable method for Matter data

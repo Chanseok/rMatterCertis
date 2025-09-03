@@ -4,7 +4,7 @@
 //! - `MC_FEATURE_HTTP_CLIENT_UNIFIED` (default: false)
 //! - `MC_FEATURE_STAGE_EXECUTOR_TEMPLATE` (deprecated, permanently enabled)
 //! - Legacy event emission has been removed. Backend always emits unified `actor-event` only.
-//! - `MC_FEATURE_EMIT_PAGETASK_LEGACY` (removed) — PageTask* variants were deleted; always use PageLifecycle
+//! - `MC_FEATURE_EMIT_PAGETASK_LEGACY` (removed) — `PageTask`* variants were deleted; always use `PageLifecycle`
 //!
 //!
 //! Values: "1"/"true" enable, "0"/"false" disable (case-insensitive)
@@ -36,14 +36,11 @@ fn env_var(name: &str) -> Option<String> {
 }
 
 fn read_flag(name: &str, default: bool) -> bool {
-    match env_var(name) {
-        Some(val) => match val.trim() {
-            v if v.eq_ignore_ascii_case("1") || v.eq_ignore_ascii_case("true") => true,
-            v if v.eq_ignore_ascii_case("0") || v.eq_ignore_ascii_case("false") => false,
-            _ => default,
-        },
-        None => default,
-    }
+    env_var(name).map_or(default, |val| match val.trim() {
+        v if v.eq_ignore_ascii_case("1") || v.eq_ignore_ascii_case("true") => true,
+        v if v.eq_ignore_ascii_case("0") || v.eq_ignore_ascii_case("false") => false,
+        _ => default,
+    })
 }
 
 /// Use unified HTTP client implementation path

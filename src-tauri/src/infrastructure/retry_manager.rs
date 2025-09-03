@@ -120,6 +120,9 @@ impl RetryManager {
     }
 
     /// 실패한 작업을 재시도 큐에 추가
+    ///
+    /// # Errors
+    /// `backoff` 값을 `chrono::Duration`으로 변환할 수 없는 드문 경우(범위를 벗어나는 값) 에러를 반환합니다.
     pub async fn add_failed_item(
         &self,
         item_id: String,
@@ -197,8 +200,11 @@ impl RetryManager {
     }
 
     /// 재시도 가능한 아이템 가져오기
+    ///
+    /// # Errors
+    /// 현재 구현에서는 오류를 반환하지 않습니다. 반환 타입은 향후 확장을 위한 것입니다.
     pub async fn get_ready_items(&self) -> Result<Vec<RetryItem>> {
-        let mut queue = self.retry_queue.lock().await;
+    let mut queue = self.retry_queue.lock().await;
         let now = chrono::Utc::now();
         let mut ready_items = Vec::new();
         let mut remaining_items = VecDeque::new();
@@ -212,7 +218,9 @@ impl RetryManager {
             }
         }
 
-        *queue = remaining_items;
+    *queue = remaining_items;
+    // Explicitly release the queue lock before logging to reduce contention
+    drop(queue);
 
         if !ready_items.is_empty() {
             info!("📤 Retrieved {} items ready for retry", ready_items.len());
@@ -222,6 +230,9 @@ impl RetryManager {
     }
 
     /// 재시도 성공 기록
+    ///
+    /// # Errors
+    /// 현재 구현에서는 오류를 반환하지 않습니다. 호출은 항상 `Ok(())`를 반환합니다.
     pub async fn mark_retry_success(&self, item_id: &str) -> Result<()> {
         info!("✅ Retry succeeded for item: {}", item_id);
         self.record_retry_attempt(
@@ -245,16 +256,19 @@ impl RetryManager {
         backoff: Duration,
         success: bool,
     ) {
-        let mut history = self.retry_history.write().await;
-        let attempts = history.entry(item_id.to_string()).or_insert_with(Vec::new);
+    let mut history = self.retry_history.write().await;
+    let attempts = history.entry(item_id.to_string()).or_insert_with(Vec::new);
 
         attempts.push(RetryAttempt {
-            attempt_number: attempts.len() as u32 + 1,
+            // Use fallible conversion to avoid lossy cast warnings; saturate on overflow
+            attempt_number: u32::try_from(attempts.len()).unwrap_or(u32::MAX).saturating_add(1),
             attempted_at: chrono::Utc::now(),
             error_type: classification,
             backoff_duration: backoff,
             success,
         });
+    // Release the write lock as early as possible
+    drop(history);
     }
 
     /// 아이템의 재시도 횟수 조회
@@ -262,26 +276,34 @@ impl RetryManager {
         let history = self.retry_history.read().await;
         history
             .get(item_id)
-            .map_or(0, |attempts| attempts.len() as u32)
+            .map_or(0, |attempts| u32::try_from(attempts.len()).unwrap_or(u32::MAX))
     }
 
     /// 재시도 통계 조회
     pub async fn get_retry_stats(&self) -> RetryStats {
-        let history = self.retry_history.read().await;
-        let queue = self.retry_queue.lock().await;
+        // Tighten lock scopes to minimize contention: compute history-derived stats first,
+        // then drop the read lock before locking the queue.
+        let (total_items, successful_retries, failed_retries) = {
+            let history = self.retry_history.read().await;
+            let total_items = history.len();
+            let successful_retries = history
+                .values()
+                .flatten()
+                .filter(|attempt| attempt.success)
+                .count();
+            let failed_retries = history
+                .values()
+                .flatten()
+                .filter(|attempt| !attempt.success)
+                .count();
+            drop(history);
+            (total_items, successful_retries, failed_retries)
+        };
 
-        let total_items = history.len();
-        let pending_retries = queue.len();
-        let successful_retries = history
-            .values()
-            .flatten()
-            .filter(|attempt| attempt.success)
-            .count();
-        let failed_retries = history
-            .values()
-            .flatten()
-            .filter(|attempt| !attempt.success)
-            .count();
+        let pending_retries = {
+            let queue = self.retry_queue.lock().await;
+            queue.len()
+        };
 
         RetryStats {
             total_items,

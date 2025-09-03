@@ -446,8 +446,8 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
 
     let mut matrix = vec![vec![0; len2 + 1]; len1 + 1];
 
-    for i in 0..=len1 {
-        matrix[i][0] = i;
+    for (i, row) in matrix.iter_mut().enumerate().take(len1 + 1) {
+        row[0] = i;
     }
     for j in 0..=len2 {
         matrix[0][j] = j;
@@ -574,13 +574,22 @@ impl ConflictResolver for ConflictResolverImpl {
                 let mut merged = existing.clone();
 
                 if new.manufacturer.is_some() && existing.manufacturer.is_none() {
-                    merged.manufacturer = new.manufacturer.clone();
+                    if let Some(val) = &new.manufacturer {
+                        merged.manufacturer.get_or_insert_with(Default::default).clone_from(val);
+                    }
                 }
                 if new.model.is_some() && existing.model.is_none() {
-                    merged.model = new.model.clone();
+                    if let Some(val) = &new.model {
+                        merged.model.get_or_insert_with(Default::default).clone_from(val);
+                    }
                 }
                 if new.certificate_id.is_some() && existing.certificate_id.is_none() {
-                    merged.certificate_id = new.certificate_id.clone();
+                    if let Some(val) = &new.certificate_id {
+                        merged
+                            .certificate_id
+                            .get_or_insert_with(Default::default)
+                            .clone_from(val);
+                    }
                 }
 
                 Ok(merged)
@@ -927,19 +936,18 @@ impl ErrorClassifier for ErrorClassifierImpl {
         severity: ErrorSeverity,
     ) -> Result<ErrorAction> {
         let action = match (error_type, severity) {
-            (ErrorType::Network, ErrorSeverity::Low | ErrorSeverity::Medium) => ErrorAction::Retry,
+            (ErrorType::Network, ErrorSeverity::Low | ErrorSeverity::Medium)
+            | (ErrorType::Parsing, _)
+            | (ErrorType::RateLimit, _)
+            | (ErrorType::Timeout, _) => ErrorAction::Retry,
             (ErrorType::Network, ErrorSeverity::High | ErrorSeverity::Critical) => {
                 ErrorAction::Skip
             }
-            (ErrorType::Parsing, _) => ErrorAction::Retry,
-            (ErrorType::Database, ErrorSeverity::Critical) => ErrorAction::Abort,
-            (ErrorType::Database, _) => ErrorAction::Skip,
-            (ErrorType::RateLimit, _) => ErrorAction::Retry,
-            (ErrorType::Authentication, _) => ErrorAction::Abort,
-            (ErrorType::Timeout, ErrorSeverity::Critical) => ErrorAction::Abort,
-            (ErrorType::Timeout, _) => ErrorAction::Retry,
-            (ErrorType::Unknown, ErrorSeverity::Critical) => ErrorAction::Abort,
-            (ErrorType::Unknown, _) => ErrorAction::Skip,
+            (ErrorType::Database, ErrorSeverity::Critical)
+            | (ErrorType::Authentication, _)
+            | (ErrorType::Timeout, ErrorSeverity::Critical)
+            | (ErrorType::Unknown, ErrorSeverity::Critical) => ErrorAction::Abort,
+            (ErrorType::Database, _) | (ErrorType::Unknown, _) => ErrorAction::Skip,
         };
 
         info!(

@@ -31,6 +31,8 @@ pub struct RealCrawlingResult { pub session_id: String, pub success: bool, pub p
 pub struct StageResultSummary { pub stage_name: String, pub success: bool, pub processed_items: u32, pub duration_ms: u64, pub error_message: Option<String> }
 
 #[tauri::command]
+/// # Errors
+/// Returns an error string if initialization or any stage execution fails.
 pub async fn execute_real_crawling(app: AppHandle, request: RealCrawlingRequest) -> Result<RealCrawlingResult, String> {
 	let session_id = format!("real_crawling_{}", Utc::now().timestamp());
 	info!(session_id = %session_id, start_page = request.start_page, end_page = request.end_page, "🚀 [PHASE C] Starting REAL crawling execution");
@@ -69,7 +71,11 @@ pub async fn execute_real_crawling(app: AppHandle, request: RealCrawlingRequest)
 }
 
 #[tauri::command]
+/// # Errors
+/// Returns an error string if status retrieval fails.
 pub async fn get_real_crawling_status(_session_id: String) -> Result<Option<RealCrawlingProgress>, String> { Ok(None) }
 
 #[tauri::command]
+/// # Errors
+/// Returns an error string if cancellation fails.
 pub async fn cancel_real_crawling(_session_id: String) -> Result<bool, String> { Ok(true) }

@@ -22,6 +22,8 @@ pub struct StartCrawlingResponse {
 }
 
 #[tauri::command]
+/// # Errors
+/// Returns an error string if the actor system fails to start.
 pub async fn start_unified_crawling(
 	app: AppHandle,
 	request: StartCrawlingRequest,

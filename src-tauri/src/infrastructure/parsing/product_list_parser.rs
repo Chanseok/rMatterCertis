@@ -26,12 +26,18 @@ pub struct ProductListParser {
 
 impl ProductListParser {
     /// Create a new product list parser with default selectors
+    ///
+    /// # Errors
+    /// Returns an error if none of the default selectors can be compiled.
     pub fn new() -> Result<Self> {
         let config = super::config::ParsingConfig::default();
         Self::with_config(&config.product_list_selectors)
     }
 
     /// Create parser with custom selector configuration
+    ///
+    /// # Errors
+    /// Returns an error if none of the provided selectors can be compiled.
     pub fn with_config(selectors: &super::config::ProductListSelectors) -> Result<Self> {
         Ok(Self {
             product_container_selectors: Self::compile_selectors(&selectors.product_container)?,
@@ -104,7 +110,7 @@ impl ContextualParser for ProductListParser {
 
                 // Extract data from each product element
                 for (index, element) in product_elements.iter().enumerate() {
-                    match self.extract_product_from_element(element, index as u32, context) {
+                    match self.extract_product_from_element(element, u32::try_from(index).unwrap_or(u32::MAX), context) {
                         Ok(product) => {
                             if self.validate_product(&product)? {
                                 products.push(product);
@@ -187,8 +193,8 @@ impl ProductListParser {
             model: Some(model_name.trim().to_string()).filter(|s| !s.is_empty()),
             certificate_id: Some(category.trim().to_string())
                 .filter(|s| s != "Unknown" && !s.is_empty()),
-            page_id: Some(context.page_id as i32),
-            index_in_page: Some(index as i32),
+            page_id: i32::try_from(context.page_id).ok(),
+            index_in_page: i32::try_from(index).ok(),
             created_at: now,
             updated_at: now,
         })
@@ -280,7 +286,7 @@ impl ProductListParser {
             });
         }
 
-        Ok(resolved_url)
+    Ok(resolved_url)
     }
 
     /// Validate extracted product data

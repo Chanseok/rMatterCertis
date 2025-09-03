@@ -73,6 +73,8 @@ async fn create_product_repo() -> Result<IntegratedProductRepository, String> {
 }
 
 #[tauri::command]
+/// # Errors
+/// Returns an error string if configuration or repository access fails.
 pub async fn calculate_crawling_range(
 	state: State<'_, AppState>,
 	request: CrawlingRangeRequest,
@@ -140,6 +142,8 @@ async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
 }
 
 #[tauri::command]
+/// # Errors
+/// Returns an error string if progress analysis fails.
 pub async fn get_crawling_progress(
 	state: State<'_, AppState>,
 	total_pages_on_site: u32,
@@ -154,6 +158,8 @@ pub async fn get_crawling_progress(
 }
 
 #[tauri::command]
+/// # Errors
+/// Returns an error string if database state retrieval fails.
 pub async fn get_database_state_for_range_calculation(
 	state: State<'_, AppState>,
 ) -> Result<DatabaseStateInfo, String> {
@@ -167,6 +173,8 @@ pub async fn get_database_state_for_range_calculation(
 pub struct DatabaseStateInfo { pub max_page_id: Option<i32>, pub max_index_in_page: Option<i32>, pub total_products: u32, pub has_data: bool }
 
 #[tauri::command]
+/// # Errors
+/// Returns an error string if the demo pipeline fails.
 pub async fn demo_prompts6_calculation() -> Result<String, String> { Ok("prompts6 demo".to_string()) }
 
 fn convert_progress(progress: &RangeSimpleProgress) -> CrawlingProgressInfo {

@@ -1,5 +1,5 @@
 #![allow(clippy::used_underscore_binding)]
-//! 성능 최적화 관련 Tauri Commands (nested under commands::analysis)
+//! 성능 최적화 관련 Tauri Commands (nested under `commands::analysis`)
 
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};

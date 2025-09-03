@@ -20,9 +20,8 @@
 
 use anyhow::{Result, anyhow};
 use chrono::{FixedOffset, Utc};
-use lazy_static::lazy_static;
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 use tracing::{debug, info, warn};
 use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::filter::filter_fn;
@@ -37,10 +36,8 @@ use tracing_subscriber::{
 pub use crate::infrastructure::config::LoggingConfig;
 
 // Global guard to keep the log file writer alive
-lazy_static! {
-    static ref LOG_GUARDS: Mutex<Vec<tracing_appender::non_blocking::WorkerGuard>> =
-        Mutex::new(Vec::new());
-}
+static LOG_GUARDS: LazyLock<Mutex<Vec<tracing_appender::non_blocking::WorkerGuard>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// Custom time formatter for KST (Korea Standard Time, UTC+9)
 struct KstTimeFormatter;
@@ -66,13 +63,17 @@ impl FormatTime for KstTimeFormatter {
 }
 
 /// Initialize the logging system with default configuration
+/// Initialize the logging system with default configuration
+///
+/// # Errors
+/// Returns an error if the logging sinks or filters cannot be initialized.
 pub fn init_logging() -> Result<()> {
     let config = LoggingConfig::default();
-    init_logging_with_config(config)
+    init_logging_with_config(&config)
 }
 
 /// Rotate existing log file by renaming it with timestamp
-fn rotate_existing_log_file(log_dir: &PathBuf, log_file_name: &str) -> Result<()> {
+fn rotate_existing_log_file(log_dir: &Path, log_file_name: &str) -> Result<()> {
     let log_file_path = log_dir.join(log_file_name);
 
     // Check if the log file exists
@@ -116,7 +117,7 @@ fn rotate_existing_log_file(log_dir: &PathBuf, log_file_name: &str) -> Result<()
 }
 
 /// Rotate all existing log files (including legacy ones) by renaming them with timestamp
-fn rotate_all_existing_log_files(log_dir: &PathBuf) -> Result<()> {
+fn rotate_all_existing_log_files(log_dir: &Path) -> Result<()> {
     if !log_dir.exists() {
         return Ok(());
     }
@@ -141,7 +142,7 @@ fn rotate_all_existing_log_files(log_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// Initialize logging with custom configuration
+///   Initialize logging with custom configuration
 ///
 /// This function sets up optimized logging filters to reduce verbose output from dependencies.
 ///
@@ -168,7 +169,14 @@ fn rotate_all_existing_log_files(log_dir: &PathBuf) -> Result<()> {
 /// - `reqwest`: HTTP client request/response details
 /// - `tokio`: Async runtime task scheduling
 /// - `tauri`: Desktop framework internals
-pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
+///   Initialize logging with custom configuration
+///
+/// # Panics
+/// Panics if a fixed timezone offset cannot be constructed.
+///
+/// # Errors
+/// Returns an error if the logging sinks or filters cannot be initialized.
+pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
     let log_dir = get_log_directory();
 
     // Create log directory if it doesn't exist
@@ -177,13 +185,6 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
 
     // Determine log file name based on configuration
     let _log_file_name = match config.file_naming_strategy.as_str() {
-        "separated" => {
-            if config.separate_frontend_backend {
-                "back.log" // Backend log file, frontend will have its own file
-            } else {
-                "back_front.log" // Unified backend + frontend log
-            }
-        }
         "timestamped" => {
             let now = chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
             if config.separate_frontend_backend {
@@ -193,11 +194,7 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
             }
         }
         _ => {
-            if config.separate_frontend_backend {
-                "back.log" // Backend log file
-            } else {
-                "back_front.log" // Default unified log
-            }
+            if config.separate_frontend_backend { "back.log" } else { "back_front.log" }
         }
     };
 
@@ -206,7 +203,7 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
 
     // Perform log cleanup if enabled
     if config.auto_cleanup_logs {
-        cleanup_old_logs(&log_dir, &config)?;
+        cleanup_old_logs(&log_dir, config)?;
     }
 
     // Concise startup mode (config or ENV override)
@@ -235,7 +232,7 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
         }
 
         // Fallback for backwards compatibility - apply default suppression if no module_filters
-        if config.module_filters.is_empty() && !config.level.to_lowercase().contains("trace") {
+    if config.module_filters.is_empty() && !config.level.to_lowercase().contains("trace") {
             filter = filter
                 // SQLx query logs (migrations, prepared statements) - strongly suppress
                 .add_directive("sqlx::query=error".parse().unwrap())
@@ -306,13 +303,6 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
 
     // Determine log file name based on configuration
     let log_file_name = match config.file_naming_strategy.as_str() {
-        "separated" => {
-            if config.separate_frontend_backend {
-                "back.log" // Backend log file, frontend will have its own file
-            } else {
-                "back_front.log" // Unified backend + frontend log
-            }
-        }
         "timestamped" => {
             let now = chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
             if config.separate_frontend_backend {
@@ -572,7 +562,7 @@ pub fn init_logging_with_config(config: LoggingConfig) -> Result<()> {
 
     // Handle frontend logging setup
     if config.file_output {
-        setup_frontend_logging(&log_dir, &config)?;
+    setup_frontend_logging(&log_dir, config)?;
     }
 
     Ok(())
@@ -596,7 +586,7 @@ pub fn log_system_info() {
 // Tests are placed at the end of the file to avoid clippy's items-after-test-module lint
 
 /// Setup frontend logging based on configuration
-fn setup_frontend_logging(log_dir: &PathBuf, config: &LoggingConfig) -> Result<()> {
+fn setup_frontend_logging(log_dir: &Path, config: &LoggingConfig) -> Result<()> {
     if config.separate_frontend_backend {
         // Only create separate frontend log file if we're using separate logs
         let frontend_log_path = log_dir.join("front.log");
@@ -633,7 +623,7 @@ fn setup_frontend_logging(log_dir: &PathBuf, config: &LoggingConfig) -> Result<(
 }
 
 /// Clean up old log files based on configuration
-fn cleanup_old_logs(log_dir: &PathBuf, config: &LoggingConfig) -> Result<()> {
+fn cleanup_old_logs(log_dir: &Path, config: &LoggingConfig) -> Result<()> {
     if !log_dir.exists() {
         return Ok(());
     }
@@ -647,7 +637,11 @@ fn cleanup_old_logs(log_dir: &PathBuf, config: &LoggingConfig) -> Result<()> {
 
         if path.is_file() {
             if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                if filename.ends_with(".log") {
+                // Case-insensitive check for .log extension
+                if Path::new(filename)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("log"))
+                {
                     if let Ok(metadata) = entry.metadata() {
                         if let Ok(modified) = metadata.modified() {
                             log_files.push((path, modified));
@@ -697,6 +691,10 @@ fn cleanup_old_logs(log_dir: &PathBuf, config: &LoggingConfig) -> Result<()> {
 }
 
 /// Manually clean up all log files except the latest one
+/// Remove all log files except the latest one and return a short summary.
+///
+/// # Errors
+/// Returns an error if reading the log directory entries fails.
 pub fn cleanup_logs_keep_latest() -> Result<String> {
     let log_dir = get_log_directory();
 
@@ -714,7 +712,10 @@ pub fn cleanup_logs_keep_latest() -> Result<String> {
 
         if path.is_file() {
             if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                if filename.ends_with(".log") {
+                if Path::new(filename)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("log"))
+                {
                     if let Ok(metadata) = entry.metadata() {
                         if let Ok(modified) = metadata.modified() {
                             log_files.push((path, modified));

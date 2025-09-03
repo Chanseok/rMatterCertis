@@ -118,17 +118,15 @@ impl ParsingError {
     /// Check if this error is recoverable
     #[must_use] pub const fn is_recoverable(&self) -> bool {
         match self {
-            Self::RequiredFieldMissing { .. } => true,
-            Self::InvalidSelector { .. } => true,
-            Self::NoProductsFound { .. } => false,
-            Self::ProductValidationFailed { .. } => true,
-            Self::UrlResolutionFailed { .. } => true,
-            Self::MatterFieldExtractionFailed { .. } => true,
+            Self::NoProductsFound { .. } | Self::ConfigurationError { .. } | Self::HtmlParsingFailed { .. } => false,
             Self::HttpRequestFailed { status, .. } => *status < 500,
-            Self::ContentValidationFailed { .. } => true,
-            Self::RateLimitExceeded { .. } => true,
-            Self::ConfigurationError { .. } => false,
-            Self::HtmlParsingFailed { .. } => false,
+            Self::RequiredFieldMissing { .. }
+            | Self::InvalidSelector { .. }
+            | Self::ProductValidationFailed { .. }
+            | Self::UrlResolutionFailed { .. }
+            | Self::MatterFieldExtractionFailed { .. }
+            | Self::ContentValidationFailed { .. }
+            | Self::RateLimitExceeded { .. } => true,
         }
     }
 

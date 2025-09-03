@@ -131,7 +131,8 @@ pub mod commands {
         pub mod actor_system; // moved here physically
         pub mod real_crawling_commands;
         pub mod smart_crawling;
-        pub mod simple_actor_test;
+    #[cfg(feature = "dev-tools")]
+    pub mod simple_actor_test;
         pub mod unified_crawling;
     }
     pub mod advanced_engine_api; // 새로운 Advanced Engine API 추가
@@ -186,7 +187,9 @@ pub mod commands {
     pub use crawling::real_crawling_commands::*;
     pub use crawling::smart_crawling as smart_crawling;
     pub use crawling::smart_crawling::*;
+    #[cfg(feature = "dev-tools")]
     pub use crawling::simple_actor_test as simple_actor_test;
+    #[cfg(feature = "dev-tools")]
     pub use crawling::simple_actor_test::*;
     pub use crawling::unified_crawling as unified_crawling;
     pub use crawling::unified_crawling::*;
@@ -271,7 +274,7 @@ pub fn run() {
     });
 
     // Initialize logging system with config-based settings
-    if let Err(e) = init_logging_with_config(config.user.logging.clone()) {
+    if let Err(e) = init_logging_with_config(&config.user.logging) {
         eprintln!("❌ Failed to initialize logging system: {}", e);
         std::process::exit(1);
     }
@@ -408,8 +411,19 @@ pub fn run() {
         .manage(shared_state) // SharedState 추가
         .manage(session_manager) // CrawlingSessionManager 추가
         // Legacy CrawlingEngineState (crawling_v4) removed – unified actor-based path only
-    .manage(commands::crawling::simple_actor_test::ActorSystemState::default())
         .manage(commands::analysis::performance_commands::PerformanceOptimizerState::default());
+
+    // Conditionally add dev-only simple_actor_test state
+    let builder = {
+        #[cfg(feature = "dev-tools")]
+        {
+            builder.manage(commands::crawling::simple_actor_test::ActorSystemState::default())
+        }
+        #[cfg(not(feature = "dev-tools"))]
+        {
+            builder
+        }
+    };
 
     // Conditionally add legacy dashboard state without shadowing the outer builder
     let builder = {
@@ -507,7 +521,9 @@ pub fn run() {
             commands::config_commands::show_window,
             commands::config_commands::write_frontend_log,
             // New Architecture Actor System commands (OneShot integration 완료)
+            #[cfg(feature = "dev-tools")]
             commands::crawling::simple_actor_test::test_new_arch_channels,
+            #[cfg(feature = "dev-tools")]
             commands::crawling::simple_actor_test::test_new_arch_performance,
             // 🎭 Actor System 크롤링 (직접 호출 허용: FE 통합)
             commands::actor_system::start_actor_system_crawling,
