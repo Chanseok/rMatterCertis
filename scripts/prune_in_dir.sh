@@ -12,7 +12,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 
 STAMP=$(date +%Y%m%dT%H%M%S)
-ARCHIVE_DIR="src-tauri/src/_archive/dir_sweep_${STAMP}"
+ARCHIVE_DIR="scripts/_backups/dir_sweep_${STAMP}"
 mkdir -p "$ARCHIVE_DIR"
 
 TMP_CANDIDATES=$(mktemp)

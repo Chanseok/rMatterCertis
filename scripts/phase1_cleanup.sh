@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 SRC_DIR="$ROOT_DIR/src-tauri/src/commands"
-ARCH_DIR="$ROOT_DIR/src-tauri/src/_archive/commands"
+ARCH_DIR="$ROOT_DIR/scripts/_backups/commands"
 
 mkdir -p "$ARCH_DIR"
 

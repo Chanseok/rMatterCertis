@@ -4,7 +4,7 @@
 set -eu
 REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
-ARCHIVE_DIR="src-tauri/src/_archive/src_root_$(date +%Y%m%dT%H%M%S)"
+ARCHIVE_DIR="scripts/_backups/src_root_$(date +%Y%m%dT%H%M%S)"
 mkdir -p "$ARCHIVE_DIR"
 
 TMP_CANDIDATES=$(mktemp)

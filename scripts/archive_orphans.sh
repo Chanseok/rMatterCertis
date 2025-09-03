@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Move cargo-modules orphans to _archive/ (dry-run by default)
+# Move cargo-modules orphans to scripts/_backups/ (dry-run by default)
 # Usage:
 #   bash scripts/archive_orphans.sh [--apply] [--bin NAME]
 # Notes:
@@ -68,7 +68,7 @@ if [[ ${#files[@]} -eq 0 ]]; then
   exit 0
 fi
 
-ARCHIVE_DIR="$SRC_TAURI_DIR/src/_archive/orphans_$(date +%Y%m%d_%H%M%S)"
+ARCHIVE_DIR="$ROOT_DIR/scripts/_backups/orphans_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$ARCHIVE_DIR"
 
 echo "[plan] Orphan files to archive (dry-run=$((1-APPLY))):"

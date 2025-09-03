@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT_DIR"
 
-ARCHIVE_DIR="_archive/backups_$(date +%Y%m%dT%H%M%S)"
+ARCHIVE_DIR="scripts/_backups/backups_$(date +%Y%m%dT%H%M%S)"
 mkdir -p "$ARCHIVE_DIR"
 
 echo "[archive] moving backup-like files to $ARCHIVE_DIR"
