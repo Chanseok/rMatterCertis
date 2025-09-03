@@ -16,7 +16,7 @@
 
 ### 체크리스트 (Phase 0)
 
-- [ ] **`_archive` 디렉토리 완전 삭제**
+- [x] **`_archive` 디렉토리 완전 삭제**
   - 설명: 레거시 코드는 Git 히스토리로 충분합니다. 소스 트리의 노이즈를 제거하여 코드베이스의 명확성을 확보합니다.
   - 기존 계획의 "아카이브 폴더 유지" 항목을 "완전 삭제"로 변경합니다.
 
@@ -69,7 +69,7 @@ src/
 ### 상세 실행 가이드 (Phase 0)
 
 - Step-by-step 작업 순서 (권장 커밋 쪼개기)
-  1) `_archive` 폴더 전량 삭제 (실제 삭제 전: 잔여 참조 grep → 미참조 확인)
+   1) `_archive` 폴더 전량 삭제 (완료: 2025-09-04, 사전 grep 및 스크립트 경로 전환 후 삭제)
   2) `types` → `api` 이름 변경 및 경로 변경
      - `lib.rs` 내 `pub mod types` → `pub mod api`로 변경
      - TypeScript 생성 스크립트(`scripts/generate_types.sh`)가 참조하는 경로 업데이트
@@ -268,7 +268,7 @@ src-tauri/src/commands/
 - [ ] 최소 단위 테스트 추가: system_analysis happy path + db_diagnostics gate 동작
 
 중기(Phase 0 보완 및 품질 게이트 강화)
-- [ ] `_archive` 디렉터리 완전 삭제 전 최종 참조 점검 후 제거
+- [x] `_archive` 디렉터리 완전 삭제 전 최종 참조 점검 후 제거 (완료: 2025-09-04)
 - [ ] `mod.rs` 잔여 제거 및 모듈 시스템 통일
 - [ ] 통합 문서/README 업데이트(Commands 경로 변경 사항과 FE invoke 경로 안내)
 
