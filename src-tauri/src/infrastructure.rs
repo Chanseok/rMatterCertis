@@ -3,7 +3,7 @@
 //! This module provides database connections, session management, HTML parsing,
 //! web crawling, and external service integrations following the guide's architecture.
 
-// Legacy engines archived (_archive/infrastructure)
+// Legacy engines were previously archived under _archive/infrastructure; historical snapshots now live under scripts/_backups
 pub mod config; // Configuration constants and helpers
 // (legacy crawling modules removed)
 pub mod crawling_service_impls; // Service implementations

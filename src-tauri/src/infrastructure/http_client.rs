@@ -6,7 +6,7 @@
 // `infrastructure.rs` as `crate::infrastructure::HttpClient`.
 //!
 // Historical source (for reference) has been copied to:
-// `src-tauri/src/_archive/infrastructure/http_client.rs`
+// Historical note: earlier archived variant lived at src-tauri/src/_archive/infrastructure/http_client.rs (now removed). See scripts/_backups for snapshots.
 //!
 // If you think you need this, prefer migrating callers to the unified client.
 // To avoid accidental re-introduction, this file is excluded via cfg(any()).

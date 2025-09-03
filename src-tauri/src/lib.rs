@@ -232,7 +232,7 @@ pub mod commands {
     // real_crawling_commands re-exported above via crawling:: alias
     pub use sync_commands::*; // Partial Sync 명령어 export // DB cleanup 명령어 export // Export analytics command
 } // Modern Rust 2024 - 명시적 모듈 선언
-// Deprecated legacy crawling engine module (disabled). See _archive for reference.
+// Deprecated legacy crawling engine module (disabled). Historical snapshots were under _archive; see scripts/_backups now.
 // pub mod crawling;
 
 // Utilities module
