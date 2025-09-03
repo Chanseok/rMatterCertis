@@ -134,25 +134,35 @@ pub mod commands {
         pub mod simple_actor_test;
         pub mod unified_crawling;
     }
-    #[cfg(feature = "dev-tools")]
-    pub mod actor_system_monitoring;
     pub mod advanced_engine_api; // 새로운 Advanced Engine API 추가
     pub mod config_commands;
     pub mod crawling_test_commands; // 🧪 Phase C: 크롤링 테스트 도구
-    #[cfg(feature = "legacy-ui")]
-    pub mod dashboard_commands; // 🎨 Phase C: 실시간 대시보드 (legacy gated)
-    pub mod data_queries; // Backend-Only CRUD commands (Modern Rust 2024)
-    #[cfg(feature = "dev-tools")]
-    pub mod db_cleanup;
-    #[cfg(any(feature = "dev-tools", debug_assertions))]
-    pub mod db_diagnostics; // 🧪 DB pagination mismatch scan
-    #[cfg(feature = "dev-tools")]
-    pub mod db_repair; // 🔧 DB repair/sync between products and product_details
-    #[cfg(feature = "dev-tools")]
-    pub mod debug_commands; // 🔎 UI debug logging helpers
-    pub mod performance_commands; // 🔧 Phase C: 성능 최적화 도구
-    #[cfg(feature = "dev-tools")]
-    pub mod product_details_analytics; // 📊 product_details analytics endpoints
+    // Grouped domain modules
+    pub mod database {
+        pub mod data_queries; // Backend-Only CRUD commands (Modern Rust 2024)
+        #[cfg(feature = "dev-tools")]
+        pub mod db_cleanup;
+        #[cfg(feature = "dev-tools")]
+        pub mod db_repair; // 🔧 DB repair/sync between products and product_details
+    }
+    pub mod analysis {
+        pub mod performance_commands; // 🔧 Phase C: 성능 최적화 도구
+        pub mod system_analysis; // 시스템 분석 명령어
+    }
+    pub mod devtools {
+        #[cfg(feature = "dev-tools")]
+        pub mod actor_system_monitoring;
+        #[cfg(any(feature = "dev-tools", debug_assertions))]
+        pub mod db_diagnostics; // 🧪 DB pagination mismatch scan
+        #[cfg(feature = "dev-tools")]
+        pub mod debug_commands; // 🔎 UI debug logging helpers
+        #[cfg(feature = "dev-tools")]
+        pub mod product_details_analytics; // 📊 product_details analytics endpoints
+    }
+    pub mod legacy {
+        #[cfg(feature = "legacy-ui")]
+        pub mod dashboard_commands; // 🎨 Phase C: 실시간 대시보드 (legacy gated)
+    }
     #[cfg(feature = "dev-tools")]
     pub mod real_actor_commands; // 🎭 진짜 Actor 시스템 명령어
     // moved under crawling/ with alias re-exports below
@@ -160,7 +170,6 @@ pub mod commands {
     // pub mod simple_actor_test;
     // pub mod smart_crawling;
     pub mod sync_commands;
-    pub mod system_analysis; // 시스템 분석 명령어
     // pub mod unified_crawling; // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
     pub mod validation_commands; // ✅ Validation pass commands (page/index integrity) // 🔄 Partial Sync (recrawl + DB upsert) // 🧹 DB URL duplicate cleanup
 
@@ -181,20 +190,42 @@ pub mod commands {
     pub use crawling::simple_actor_test::*;
     pub use crawling::unified_crawling as unified_crawling;
     pub use crawling::unified_crawling::*;
-    #[cfg(feature = "legacy-ui")]
-    pub use dashboard_commands::*; // Phase C 대시보드 명령어 export
-    pub use data_queries::*; // Backend-Only CRUD 명령어 export
+    // Database exports (preserve commands::data_queries path)
+    pub use database::data_queries as data_queries;
+    pub use database::data_queries::*;
     #[cfg(feature = "dev-tools")]
-    pub use db_cleanup::*;
+    pub use database::db_cleanup as db_cleanup;
+    #[cfg(feature = "dev-tools")]
+    pub use database::db_cleanup::*;
+    #[cfg(feature = "dev-tools")]
+    pub use database::db_repair as db_repair;
+    #[cfg(feature = "dev-tools")]
+    pub use database::db_repair::*; // DB repair/sync 명령어 export
+    // Analysis exports
+    pub use analysis::performance_commands as performance_commands;
+    pub use analysis::performance_commands::*; // Phase C 성능 최적화 명령어 export
+    pub use analysis::system_analysis as system_analysis;
+    pub use analysis::system_analysis::*; // 시스템 분석 명령어 export
+    // Devtools exports
+    #[cfg(feature = "dev-tools")]
+    pub use devtools::actor_system_monitoring as actor_system_monitoring;
     #[cfg(any(feature = "dev-tools", debug_assertions))]
-    pub use db_diagnostics::*; // DB diagnostics 명령어 export
+    pub use devtools::db_diagnostics as db_diagnostics;
+    #[cfg(any(feature = "dev-tools", debug_assertions))]
+    pub use devtools::db_diagnostics::*; // DB diagnostics 명령어 export
     #[cfg(feature = "dev-tools")]
-    pub use db_repair::*; // DB repair/sync 명령어 export
+    pub use devtools::debug_commands as debug_commands;
     #[cfg(feature = "dev-tools")]
-    pub use debug_commands::*; // UI debug logger export
-    pub use performance_commands::*; // Phase C 성능 최적화 명령어 export
+    pub use devtools::debug_commands::*; // UI debug logger export
     #[cfg(feature = "dev-tools")]
-    pub use product_details_analytics::*;
+    pub use devtools::product_details_analytics as product_details_analytics;
+    #[cfg(feature = "dev-tools")]
+    pub use devtools::product_details_analytics::*;
+    // Legacy exports
+    #[cfg(feature = "legacy-ui")]
+    pub use legacy::dashboard_commands as dashboard_commands;
+    #[cfg(feature = "legacy-ui")]
+    pub use legacy::dashboard_commands::*; // Phase C 대시보드 명령어 export
     // real_crawling_commands re-exported above via crawling:: alias
     pub use sync_commands::*; // Partial Sync 명령어 export // DB cleanup 명령어 export // Export analytics command
 } // Modern Rust 2024 - 명시적 모듈 선언
@@ -378,13 +409,13 @@ pub fn run() {
         .manage(session_manager) // CrawlingSessionManager 추가
         // Legacy CrawlingEngineState (crawling_v4) removed – unified actor-based path only
     .manage(commands::crawling::simple_actor_test::ActorSystemState::default())
-        .manage(commands::performance_commands::PerformanceOptimizerState::default());
+        .manage(commands::analysis::performance_commands::PerformanceOptimizerState::default());
 
     // Conditionally add legacy dashboard state without shadowing the outer builder
     let builder = {
         #[cfg(feature = "legacy-ui")]
         {
-            builder.manage(commands::dashboard_commands::DashboardServiceState::default())
+            builder.manage(commands::legacy::dashboard_commands::DashboardServiceState::default())
         }
         #[cfg(not(feature = "legacy-ui"))]
         {
@@ -450,10 +481,10 @@ pub fn run() {
             commands::advanced_engine_api::get_recent_products,
             commands::advanced_engine_api::get_database_stats,
             // System Analysis commands (proposal6.md Phase 3)
-            commands::system_analysis::analyze_system_status,
-            commands::system_analysis::diagnose_and_repair_data,
-            commands::system_analysis::get_analysis_cache_status,
-            commands::system_analysis::clear_analysis_cache,
+            commands::analysis::system_analysis::analyze_system_status,
+            commands::analysis::system_analysis::diagnose_and_repair_data,
+            commands::analysis::system_analysis::get_analysis_cache_status,
+            commands::analysis::system_analysis::clear_analysis_cache,
             // Smart crawling commands
             commands::crawling::smart_crawling::calculate_crawling_range,
             commands::crawling::smart_crawling::get_crawling_progress,
@@ -463,10 +494,10 @@ pub fn run() {
             // Removed start_smart_crawling (use start_unified_crawling)
 
             // Backend-Only CRUD commands (Modern Rust 2024 Architecture)
-            commands::data_queries::get_products_page,
-            commands::data_queries::get_latest_products,
-            commands::data_queries::get_crawling_status_v2,
-            commands::data_queries::get_system_status,
+            commands::database::data_queries::get_products_page,
+            commands::database::data_queries::get_latest_products,
+            commands::database::data_queries::get_crawling_status_v2,
+            commands::database::data_queries::get_system_status,
             // Window Management commands (이미 config_commands에 구현됨)
             commands::config_commands::save_window_state,
             commands::config_commands::load_window_state,
@@ -503,13 +534,13 @@ pub fn run() {
             commands::crawling_test_commands::check_site_status_only,
             commands::crawling_test_commands::crawling_performance_benchmark,
             // 🔧 Phase C: Performance Optimization Tools
-            commands::performance_commands::init_performance_optimizer,
-            commands::performance_commands::get_current_performance_metrics,
-            commands::performance_commands::get_optimization_recommendation,
-            commands::performance_commands::get_performance_history,
-            commands::performance_commands::clear_performance_history,
-            commands::performance_commands::start_performance_session,
-            commands::performance_commands::end_performance_session,
+            commands::analysis::performance_commands::init_performance_optimizer,
+            commands::analysis::performance_commands::get_current_performance_metrics,
+            commands::analysis::performance_commands::get_optimization_recommendation,
+            commands::analysis::performance_commands::get_performance_history,
+            commands::analysis::performance_commands::clear_performance_history,
+            commands::analysis::performance_commands::start_performance_session,
+            commands::analysis::performance_commands::end_performance_session,
             // 🎨 Phase C: Realtime Dashboard Tools (temporarily disabled while UI is archived)
             // commands::dashboard_commands::init_dashboard_service,
             // commands::dashboard_commands::get_dashboard_state,
@@ -532,15 +563,15 @@ pub fn run() {
             commands::sync_commands::start_diagnostic_sync,
             commands::actor_system::start_manual_crawl_pages_actor,
             #[cfg(any(feature = "dev-tools", debug_assertions))]
-            commands::db_diagnostics::scan_db_pagination_mismatches,
+            commands::devtools::db_diagnostics::scan_db_pagination_mismatches,
             #[cfg(feature = "dev-tools")]
-            commands::debug_commands::ui_debug_log,
+            commands::devtools::debug_commands::ui_debug_log,
             #[cfg(feature = "dev-tools")]
-            commands::db_repair::sync_product_details_coordinates,
+            commands::database::db_repair::sync_product_details_coordinates,
             #[cfg(feature = "dev-tools")]
-            commands::db_cleanup::cleanup_duplicate_urls,
+            commands::database::db_cleanup::cleanup_duplicate_urls,
             #[cfg(feature = "dev-tools")]
-            commands::get_product_details_analytics // Most commands are temporarily disabled for compilation
+            commands::devtools::product_details_analytics::get_product_details_analytics // dev-tools only
         ]);
 
     info!("✅ Tauri application built successfully, starting...");

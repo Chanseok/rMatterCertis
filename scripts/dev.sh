@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Fast Development Script for rMatterCertis
 # 빠른 개발/테스트를 위한 스크립트

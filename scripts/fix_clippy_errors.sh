@@ -1,10 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Modern Rust 2024 Clippy Fix Script
 # 
 # 이 스크립트는 1767개의 clippy 에러를 단계적으로 해결합니다.
 # re-arch-plan-final2.md 기준으로 Modern Rust 2024 준수를 목표로 합니다.
 
-set -e
+if [[ -n "${CI:-}" ]]; then
+    set -euo pipefail
+else
+    set -e
+fi
 
 echo "🦀 Modern Rust 2024 Clippy Fix Script v2.0"
 echo "================================================"

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Fast Rust test runner script
 # Usage: ./scripts/test-fast.sh [test_name]

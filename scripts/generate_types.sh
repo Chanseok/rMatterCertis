@@ -1,9 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # TypeScript 타입 자동 생성 스크립트
 # Phase 4: ts-rs 기반 타입 동기화
 
-set -e
+# Fail fast in CI; keep interactive runs resilient
+if [[ -n "${CI:-}" ]]; then
+    set -euo pipefail
+else
+    set -e
+fi
 
 echo "🎯 Phase 4: TypeScript 타입 생성 시작..."
 
