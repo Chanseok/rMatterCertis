@@ -182,9 +182,9 @@ src-tauri/src/commands/
 
 #### 마이그레이션/정리 작업 항목
 
-- [x] `lib.rs`의 generate_handler 등록을 `commands::actor_system::*`로 직접 참조하도록 교체 (shim 경유 제거)
-- [x] 워크스페이스 전역에서 `commands::actor_system_commands::` 경로를 `commands::actor_system::`로 변경 (테스트/바이너리 포함)
-- [x] 변경 후 shim 파일(`actor_system_commands.rs`) 제거
+- [ ] `lib.rs`의 generate_handler 등록을 `commands::actor_system::*`로 직접 참조하도록 교체 (shim 경유 제거)
+- [ ] 워크스페이스 전역에서 `commands::actor_system_commands::` 경로를 `commands::actor_system::`로 변경 (테스트/바이너리 포함)
+- [ ] 변경 후 shim 파일(`actor_system_commands.rs`) 제거
 - [ ] 위 디렉토리 구조에 맞춰 파일 이동 및 `lib.rs`/re-export 정리
 - [ ] 사용 빈도가 낮고 미노출 가능 함수의 `#[tauri::command]` 제거 → 내부 util로 전환
 - [ ] dev-only 모듈의 gate 확인: 기본 빌드에서 제외, dev/CI에서만 활성화

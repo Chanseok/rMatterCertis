@@ -125,8 +125,15 @@ pub mod commands_integrated;
 pub mod commands {
     //! Command handlers for Tauri frontend integration
     // Removed legacy modules: modern_crawling, crawling_v4, service_based_reference
-    // legacy shim removed after full migration
-    pub mod actor_system; // 🎭 NEW: Role-based alias facade
+    // legacy shim removed after migration
+    // Grouped submodules (progressively migrated)
+    pub mod crawling {
+        pub mod actor_system; // moved here physically
+        pub mod real_crawling_commands;
+        pub mod smart_crawling;
+        pub mod simple_actor_test;
+        pub mod unified_crawling;
+    }
     #[cfg(feature = "dev-tools")]
     pub mod actor_system_monitoring;
     pub mod advanced_engine_api; // 새로운 Advanced Engine API 추가
@@ -148,12 +155,13 @@ pub mod commands {
     pub mod product_details_analytics; // 📊 product_details analytics endpoints
     #[cfg(feature = "dev-tools")]
     pub mod real_actor_commands; // 🎭 진짜 Actor 시스템 명령어
-    pub mod real_crawling_commands; // 🚀 Phase C: 실제 크롤링 기능
-    pub mod simple_actor_test;
-    pub mod smart_crawling;
+    // moved under crawling/ with alias re-exports below
+    // pub mod real_crawling_commands; // 🚀 Phase C: 실제 크롤링 기능
+    // pub mod simple_actor_test;
+    // pub mod smart_crawling;
     pub mod sync_commands;
     pub mod system_analysis; // 시스템 분석 명령어
-    pub mod unified_crawling; // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
+    // pub mod unified_crawling; // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
     pub mod validation_commands; // ✅ Validation pass commands (page/index integrity) // 🔄 Partial Sync (recrawl + DB upsert) // 🧹 DB URL duplicate cleanup
 
     // Re-export commonly used commands
@@ -161,7 +169,18 @@ pub mod commands {
     pub use advanced_engine_api::*; // Advanced Engine 명령어 export
     pub use config_commands::*; // Config and window management 명령어 export
     pub use crawling_test_commands::*; // Phase C 테스트 명령어 export
-    pub use actor_system::*; // prefer role-based alias
+    // Preserve original path commands::actor_system via alias re-export
+    pub use crawling::actor_system as actor_system;
+    pub use crawling::actor_system::*; // prefer role-based alias (star)
+    // Preserve original paths for other crawling commands via alias re-exports
+    pub use crawling::real_crawling_commands as real_crawling_commands;
+    pub use crawling::real_crawling_commands::*;
+    pub use crawling::smart_crawling as smart_crawling;
+    pub use crawling::smart_crawling::*;
+    pub use crawling::simple_actor_test as simple_actor_test;
+    pub use crawling::simple_actor_test::*;
+    pub use crawling::unified_crawling as unified_crawling;
+    pub use crawling::unified_crawling::*;
     #[cfg(feature = "legacy-ui")]
     pub use dashboard_commands::*; // Phase C 대시보드 명령어 export
     pub use data_queries::*; // Backend-Only CRUD 명령어 export
@@ -176,7 +195,7 @@ pub mod commands {
     pub use performance_commands::*; // Phase C 성능 최적화 명령어 export
     #[cfg(feature = "dev-tools")]
     pub use product_details_analytics::*;
-    pub use real_crawling_commands::*; // Phase C 실제 크롤링 명령어 export
+    // real_crawling_commands re-exported above via crawling:: alias
     pub use sync_commands::*; // Partial Sync 명령어 export // DB cleanup 명령어 export // Export analytics command
 } // Modern Rust 2024 - 명시적 모듈 선언
 // Deprecated legacy crawling engine module (disabled). See _archive for reference.
@@ -358,7 +377,7 @@ pub fn run() {
         .manage(shared_state) // SharedState 추가
         .manage(session_manager) // CrawlingSessionManager 추가
         // Legacy CrawlingEngineState (crawling_v4) removed – unified actor-based path only
-        .manage(commands::simple_actor_test::ActorSystemState::default())
+    .manage(commands::crawling::simple_actor_test::ActorSystemState::default())
         .manage(commands::performance_commands::PerformanceOptimizerState::default());
 
     // Conditionally add legacy dashboard state without shadowing the outer builder
@@ -418,7 +437,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
-            commands::unified_crawling::start_unified_crawling,
+            commands::crawling::unified_crawling::start_unified_crawling,
             // 🔧 참조/레거시 ServiceBased 명령어는 노출 중단 (엔트리포인트 통일)
             // commands::service_based_reference::start_service_based_crawling_reference,
             // commands::real_actor_commands::start_legacy_service_based_crawling,
@@ -436,10 +455,10 @@ pub fn run() {
             commands::system_analysis::get_analysis_cache_status,
             commands::system_analysis::clear_analysis_cache,
             // Smart crawling commands
-            commands::smart_crawling::calculate_crawling_range,
-            commands::smart_crawling::get_crawling_progress,
-            commands::smart_crawling::get_database_state_for_range_calculation,
-            commands::smart_crawling::demo_prompts6_calculation,
+            commands::crawling::smart_crawling::calculate_crawling_range,
+            commands::crawling::smart_crawling::get_crawling_progress,
+            commands::crawling::smart_crawling::get_database_state_for_range_calculation,
+            commands::crawling::smart_crawling::demo_prompts6_calculation,
             // Simple crawling commands (Phase 1 - 즉시 안정화)
             // Removed start_smart_crawling (use start_unified_crawling)
 
@@ -457,8 +476,8 @@ pub fn run() {
             commands::config_commands::show_window,
             commands::config_commands::write_frontend_log,
             // New Architecture Actor System commands (OneShot integration 완료)
-            commands::simple_actor_test::test_new_arch_channels,
-            commands::simple_actor_test::test_new_arch_performance,
+            commands::crawling::simple_actor_test::test_new_arch_channels,
+            commands::crawling::simple_actor_test::test_new_arch_performance,
             // 🎭 Actor System 크롤링 (직접 호출 허용: FE 통합)
             commands::actor_system::start_actor_system_crawling,
             commands::actor_system::pause_session,
@@ -476,9 +495,9 @@ pub fn run() {
             // Removed start_crawling_session (unified entrypoint)
 
             // 🚀 Phase C: Real Crawling Commands (PRODUCTION-READY)
-            commands::real_crawling_commands::execute_real_crawling,
-            commands::real_crawling_commands::get_real_crawling_status,
-            commands::real_crawling_commands::cancel_real_crawling,
+            commands::crawling::real_crawling_commands::execute_real_crawling,
+            commands::crawling::real_crawling_commands::get_real_crawling_status,
+            commands::crawling::real_crawling_commands::cancel_real_crawling,
             // 🧪 Phase C: Crawling Test & Development Tools
             commands::crawling_test_commands::quick_crawling_test,
             commands::crawling_test_commands::check_site_status_only,
