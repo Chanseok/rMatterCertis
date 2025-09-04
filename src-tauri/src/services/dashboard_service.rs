@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::crawl_engine::services::performance_optimizer::CrawlingPerformanceOptimizer;
-use crate::types::dashboard_types::{DashboardState, ActiveCrawlingSession, CompletedSession, RealtimeChartData, DashboardAlert, DashboardEvent, DashboardConfig, SystemStatus, ServerStatus, DatabaseStatus, SiteStatus, AlertLevel, RealtimePerformanceMetrics, ChartDataPoint};
+use crate::api::dashboard_types::{DashboardState, ActiveCrawlingSession, CompletedSession, RealtimeChartData, DashboardAlert, DashboardEvent, DashboardConfig, SystemStatus, ServerStatus, DatabaseStatus, SiteStatus, AlertLevel, RealtimePerformanceMetrics, ChartDataPoint};
 use crate::crawl_engine::actors::types::{AppEvent, StageType};
 
 /// 실시간 대시보드 서비스

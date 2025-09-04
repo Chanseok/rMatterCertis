@@ -10,8 +10,8 @@ use tracing::{error, info, warn};
 use crate::crawl_engine::config::SystemConfig;
 use crate::crawl_engine::services::performance_optimizer::CrawlingPerformanceOptimizer;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
-use crate::services::dashboard_service::RealtimeDashboardService;
-use crate::types::dashboard_types::{DashboardConfig, PerformanceThresholds, DashboardState, ChartDataPoint, DashboardEvent};
+use crate::application::services::dashboard_service::RealtimeDashboardService;
+use crate::api::dashboard_types::{DashboardConfig, PerformanceThresholds, DashboardState, ChartDataPoint, DashboardEvent};
 
 /// 대시보드 서비스 상태 관리
 pub struct DashboardServiceState {

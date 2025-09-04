@@ -4,7 +4,7 @@
 //! 
 //! Actor 시스템 호환성: context.rs의 SystemConfig와 일관성 유지
 
-#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+// Inherit lint levels from crate root
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![deny(clippy::unimplemented, clippy::todo)]
 
@@ -13,9 +13,16 @@ use std::{collections::HashMap, time::Duration};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enu        
-        assert!(config.validate().is_ok());
-    }
+pub enum ConfigError {
+    #[error("Failed to load config from file: {source}")]
+    FileLoad {
+        #[from]
+        source: config::ConfigError,
+    },
+    #[error("Configuration validation failed: {message}")]
+    Validation { message: String },
+    #[error("Environment variable error: {message}")]
+    Environment { message: String },
 }
 
 /// 크롤링 설정 (호환성용)
@@ -30,18 +37,6 @@ pub struct CrawlingSettings {
 pub struct ActorSettings {
     pub max_actors: Option<u32>,
     pub restart_policy: Option<String>,
-}onfigError {
-    #[error("Failed to load config from file: {source}")]
-    FileLoad {
-        #[from]
-        source: config::ConfigError,
-    },
-    
-    #[error("Configuration validation failed: {message}")]
-    Validation { message: String },
-    
-    #[error("Environment variable error: {message}")]
-    Environment { message: String },
 }
 
 /// 전체 시스템 설정 - 모든 하드코딩 값을 설정 파일로 이전

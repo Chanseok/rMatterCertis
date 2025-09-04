@@ -1,7 +1,7 @@
 //! 통합 채널 컨텍스트 - 삼중 채널 시스템의 중앙 관리
 //! Modern Rust 2024 준수: 설정 기반 채널 통합 관리
 
-#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+// Inherit lint levels from crate root
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 

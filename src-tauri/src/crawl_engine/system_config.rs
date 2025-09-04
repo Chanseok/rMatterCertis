@@ -1,7 +1,7 @@
 //! 전체 시스템 설정 통합 관리
 //! Modern Rust 2024: serde, config crate 활용한 설정 시스템
 
-#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+// Inherit lint levels from crate root
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use serde::{Deserialize, Serialize};

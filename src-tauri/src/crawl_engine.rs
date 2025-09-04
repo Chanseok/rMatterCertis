@@ -10,13 +10,17 @@ pub mod actor_system; // 호환성을 위해 활성화
 pub mod actors;
 #[path = "crawl_engine/channels.rs"]
 pub mod channels;
+#[path = "crawl_engine/context.rs"]
 pub mod context;
 pub mod integrated_context; // AppContext와 EventEmitter 제공
 pub mod system_config; // 🔧 SystemConfig 중앙 관리 // Actor 이벤트 프론트엔드 브릿지
 
 // 📋 Phase 2: 브릿지 및 검증 (새로 구축됨)
+#[path = "crawl_engine/config.rs"]
 pub mod config;
+#[path = "crawl_engine/events.rs"]
 pub mod events;
+#[path = "crawl_engine/runtime.rs"]
 pub mod runtime;
 #[path = "crawl_engine/services.rs"]
 pub mod services; // session registry & runtime helpers (explicit gate file)
@@ -24,6 +28,7 @@ pub mod stages; // Phase 3: StageLogic strategies
 
 // 🔄 Phase 4: 타입 동기화 및 ts-rs 통합 (새로 추가)
 pub mod ts_gen;
+#[path = "crawl_engine/validation.rs"]
 pub mod validation; // MI-2 Validation skeleton
 
 // Re-exports for compatibility - 명시적 export로 ambiguous glob 문제 해결

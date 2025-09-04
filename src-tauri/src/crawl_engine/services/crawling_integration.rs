@@ -1,7 +1,7 @@
 //! 실제 크롤링 서비스와 `OneShot` Actor 시스템 통합
 //! Modern Rust 2024 준수: 기존 크롤링 서비스를 `OneShot` Actor 패턴으로 연동
 
-#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+// Inherit lint levels from crate root; avoid overriding with per-module warns
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::sync::Arc;

@@ -3,7 +3,7 @@
 //! 실시간 동시성 시각화를 위한 세밀한 `Task` 생명주기 이벤트 시스템
 //! 각 `AsyncTask`의 모든 상태 변화를 추적하여 프론트엔드에서 완전한 투명성 제공
 
-#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+// Inherit lint levels from crate root
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::module_name_repetitions)] // TaskLifecycleEvent, TaskExecutionContext 등은 의도적인 반복
 

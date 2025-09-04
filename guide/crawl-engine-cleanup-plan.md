@@ -20,18 +20,18 @@
   - 설명: 레거시 코드는 Git 히스토리로 충분합니다. 소스 트리의 노이즈를 제거하여 코드베이스의 명확성을 확보합니다.
   - 기존 계획의 "아카이브 폴더 유지" 항목을 "완전 삭제"로 변경합니다.
 
-- [ ] **최상위 모듈 계층 재정의**
-  - [ ] `types` 모듈을 `api`로 이름 변경: 프론트엔드와의 데이터 계약(DTO) 책임 명시.
-  - [ ] `services` 모듈을 `application/services`로 이동: UI 로직 및 Use Case를 담당하는 애플리케이션 계층으로 통합.
-  - [ ] `utils.rs` 기능 분산 및 파일 삭제: 관련된 모듈(주로 `infrastructure`)로 유틸리티 함수를 이전하고 최종적으로 파일을 삭제.
+- [x] **최상위 모듈 계층 재정의**
+  - [x] `types` 모듈을 `api`로 이름 변경: 프론트엔드와의 데이터 계약(DTO) 책임 명시.
+  - [x] `services` 모듈을 `application/services`로 이동: UI 로직 및 Use Case를 담당하는 애플리케이션 계층으로 통합.
+  - [x] `utils.rs` 기능 분산 및 파일 삭제: 관련된 모듈(주로 `infrastructure`)로 유틸리티 함수를 이전하고 최종적으로 파일을 삭제.
 
 - [x] **`commands` 모듈 구조화**
   - [x] 기능별 하위 디렉토리(`crawling`, `database`, `analysis`, `devtools`, `legacy`) 생성 및 물리 이동 완료
   - [x] `lib.rs`의 invoke_handler 경로와 re-export를 nested 구조에 맞게 정리
   - [x] 상위(legacy) `commands/*.rs` 중복 파일 제거(혼동 방지)
 
-- [ ] **프로젝트 전반의 모듈 시스템 현대화**
-  - [ ] 남아있는 모든 `mod.rs` 파일을 제거하고, `module_name.rs`와 `module_name/` 디렉토리 구조로 통일.
+- [x] **프로젝트 전반의 모듈 시스템 현대화**
+  - [x] 남아있는 모든 `mod.rs` 파일을 제거하고, `module_name.rs`와 `module_name/` 디렉토리 구조로 통일. (필요 위치는 #[path]로 명시)
 
 ### 제안 구조 (최종 목표)
 
@@ -98,7 +98,7 @@ src/
   - [x] 작업 브랜치 생성: `crawl-engine-cleanup`
   - [x] 최신 main에 변경 반영 및 푸시
   - [x] 안전망 확인: 기본 빌드/테스트 그린 상태 확인(cargo test 238/238)
-  - [ ] **(Phase 0에서 처리)** `mod.rs` 제거 및 모듈 시스템 통일
+  - [x] **(Phase 0에서 처리)** `mod.rs` 제거 및 모듈 시스템 통일
   - [ ] `ts_gen.rs` 로직을 빌드 스크립트(`build.rs`) 또는 별도 스크립트로 이전.
   - [ ] `test_utils.rs`를 `#[cfg(test)]`로 격리하거나 `tests/common`으로 이동.
   - [ ] 명백한 죽은 파일/폴더 제거(주석만, 실험/백업 잔재 등)

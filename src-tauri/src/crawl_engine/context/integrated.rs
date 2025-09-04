@@ -2,7 +2,7 @@
 //! Modern Rust 2024: 모든 컴포넌트가 설정 기반으로 동작하도록 지원
 //! Arc를 통한 효율적인 설정 공유 및 계층적 컨텍스트 구성
 
-#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+// Inherit lint levels from crate root
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crate::crawl_engine::{

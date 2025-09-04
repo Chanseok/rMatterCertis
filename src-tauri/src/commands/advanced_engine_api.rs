@@ -8,7 +8,7 @@ use tracing::{error, info, warn};
 use crate::application::shared_state::SharedStateCache;
 use crate::application::state::AppState;
 use crate::infrastructure::IntegratedProductRepository;
-use crate::types::frontend_api::{ApiResponse, SiteStatusInfo, ProductPage, ProductInfo, DatabaseStats}; // trait import for check_site_status
+use crate::api::frontend_api::{ApiResponse, SiteStatusInfo, ProductPage, ProductInfo, DatabaseStats}; // trait import for check_site_status
 use crate::application::shared_state::SiteAnalysisResult;
 use crate::domain::constants::site;
 

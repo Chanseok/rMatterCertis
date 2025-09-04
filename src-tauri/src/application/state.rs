@@ -8,8 +8,8 @@ use crate::application::events::EventEmitter;
 // use crate::application::crawler_manager::CrawlerManager; // 임시 비활성화
 use crate::domain::entities::CrawlingSession;
 // Use frontend-facing progress/info types to avoid legacy domain::events coupling
-use crate::types::frontend_api as fe_types;
-use crate::types::frontend_api::DatabaseStats;
+use crate::api::frontend_api as fe_types;
+use crate::api::frontend_api::DatabaseStats;
 use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;

@@ -937,17 +937,15 @@ impl ErrorClassifier for ErrorClassifierImpl {
     ) -> Result<ErrorAction> {
         let action = match (error_type, severity) {
             (ErrorType::Network, ErrorSeverity::Low | ErrorSeverity::Medium)
-            | (ErrorType::Parsing, _)
-            | (ErrorType::RateLimit, _)
-            | (ErrorType::Timeout, _) => ErrorAction::Retry,
+            | (ErrorType::Parsing | ErrorType::RateLimit | ErrorType::Timeout, _) => {
+                ErrorAction::Retry
+            }
             (ErrorType::Network, ErrorSeverity::High | ErrorSeverity::Critical) => {
                 ErrorAction::Skip
             }
-            (ErrorType::Database, ErrorSeverity::Critical)
-            | (ErrorType::Authentication, _)
-            | (ErrorType::Timeout, ErrorSeverity::Critical)
-            | (ErrorType::Unknown, ErrorSeverity::Critical) => ErrorAction::Abort,
-            (ErrorType::Database, _) | (ErrorType::Unknown, _) => ErrorAction::Skip,
+            (ErrorType::Database | ErrorType::Unknown, ErrorSeverity::Critical)
+            | (ErrorType::Authentication, _) => ErrorAction::Abort,
+            (ErrorType::Database | ErrorType::Unknown, _) => ErrorAction::Skip,
         };
 
         info!(

@@ -6,7 +6,7 @@
 
 use crate::domain::services::crawling_services::StatusChecker;
 use crate::infrastructure::MatterDataExtractor;
-use crate::types::frontend_api::DatabaseStats;
+use crate::api::frontend_api::DatabaseStats;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
@@ -484,7 +484,7 @@ pub async fn update_crawling_settings(
 /// # Errors
 /// Returns an error string if URL construction fails.
 pub fn build_page_url(page: u32) -> Result<String, String> {
-    let url = utils::matter_products_page_url(page);
+    let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
     Ok(url)
 }
 
@@ -495,7 +495,7 @@ pub fn build_page_url(page: u32) -> Result<String, String> {
 /// # Errors
 /// Returns an error string if URL resolution fails.
 pub fn resolve_url(relative_url: String) -> Result<String, String> {
-    let absolute_url = utils::resolve_url(&relative_url);
+    let absolute_url = crate::infrastructure::config::utils::resolve_url(&relative_url);
     Ok(absolute_url)
 }
 

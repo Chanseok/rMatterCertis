@@ -6,6 +6,55 @@
 //! - 향후 batch 계획에서 사용될 수 있는 보조 함수
 
 const PRODUCTS_PER_PAGE: usize = 12; // TODO: 설정 연동 필요 시 주입 고려
+#[derive(Debug, Clone)]
+pub struct PageIdCalculator {
+    last_page_number: u32,
+    products_in_last_page: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct PageIdCalculation {
+    pub page_id: i32,
+    pub index_in_page: i32,
+}
+
+impl PageIdCalculator {
+    #[must_use]
+    pub const fn new(last_page_number: u32, products_in_last_page: usize) -> Self {
+        Self { last_page_number, products_in_last_page }
+    }
+
+    #[must_use]
+    pub fn calculate(
+        &self,
+        actual_page_number: u32,
+        product_index_in_actual_page: usize,
+    ) -> PageIdCalculation {
+        let p: u32 = PRODUCTS_PER_PAGE as u32;
+        if self.last_page_number == 0 {
+            return PageIdCalculation { page_id: 0, index_in_page: 0 };
+        }
+        let total_products = if self.last_page_number > 0 {
+            (self.last_page_number - 1) * p + u32::try_from(self.products_in_last_page).unwrap_or(p)
+        } else { 0 };
+        if total_products == 0 {
+            return PageIdCalculation { page_id: 0, index_in_page: 0 };
+        }
+        let index_from_newest = (actual_page_number - 1) * p
+            + u32::try_from(product_index_in_actual_page).unwrap_or(p);
+        let index_from_oldest = (total_products - 1).saturating_sub(index_from_newest);
+        let page_id = i32::try_from(index_from_oldest / p).unwrap_or(i32::MAX);
+        let index_in_page = i32::try_from(index_from_oldest % p).unwrap_or(i32::MAX);
+        PageIdCalculation { page_id, index_in_page }
+    }
+
+    #[must_use]
+    pub fn reverse_calculate(&self, page_id: i32, index_in_page: i32) -> Option<(u32, usize)> {
+        let calc = PaginationCalculator::default();
+        calc.reverse(page_id, index_in_page, self.last_page_number)
+            .map(|(phys, idx)| (phys, idx as usize))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PagePosition {
@@ -94,7 +143,7 @@ impl PaginationCalculator {
 /// Transitional alias exposing the legacy `PageIdCalculator` implementation
 /// through the domain module so that all future references converge here
 /// before we physically migrate the logic (Phase1 -> Phase2).
-pub type CanonicalPageIdCalculator = crate::utils::PageIdCalculator;
+pub type CanonicalPageIdCalculator = PageIdCalculator;
 
 // 간단 테스트 (통합 이전 임시) - 향후 tests/pagination_tests.rs 로 이동
 #[cfg(test)]

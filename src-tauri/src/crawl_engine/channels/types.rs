@@ -2,7 +2,7 @@
 //! Modern Rust 2024 준수: mod.rs 사용 금지, 명확한 파일 단위 분리
 //! 모든 채널 크기는 설정 기반으로 동적 조정 가능
 
-#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+// Inherit lint levels from crate root
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
@@ -150,7 +150,7 @@ pub use crate::crawl_engine::actors::types::AppEvent;
 pub use crate::crawl_engine::actors::types::{
     CollectionMetrics, ProcessingMetrics, StageSuccessResult,
 };
-pub use crate::types::frontend_api::ProductInfo;
+pub use crate::api::frontend_api::ProductInfo;
 
 /// 채널 팩토리 - 설정 기반 채널 생성
 pub struct ChannelFactory {

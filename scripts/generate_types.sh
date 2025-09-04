@@ -20,32 +20,9 @@ mkdir -p ../src/types
 echo "🦀 Generating TypeScript types from Rust..."
 cd /Users/chanseok/Codes/rMatterCertis/src-tauri
 
-# 먼저 타입 생성을 위한 더미 바이너리 실행
-cargo run --bin type_generator 2>/dev/null || {
-    echo "📝 Creating type generator binary..."
-    
-    # 타입 생성 전용 바이너리 생성
-    cat > src/bin/type_generator.rs << 'EOF'
-//! TypeScript 타입 생성 전용 바이너리
-//! 
-//! Phase 4: ts-rs 기반 자동 타입 생성
-
-use matter_certis_v2_lib::new_architecture::ts_gen;
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🎯 Starting TypeScript type generation...");
-    
-    // 타입 생성 실행
-    ts_gen::generate_typescript_types()?;
-    
-    println!("✅ All TypeScript types generated successfully!");
-    Ok(())
-}
-EOF
-    
-    echo "🚀 Running type generator..."
-    cargo run --bin type_generator || echo "⚠️  Type generation encountered issues, but continuing..."
-}
+# 테스트 헬퍼를 통해 TS 바인딩 생성 수행 (crawl_engine::ts_gen)
+echo "� Running TS binding generation via tests..."
+cargo test -q --lib crawl_engine::ts_gen::tests::test_typescript_type_generation || echo "⚠️ Type generation test failed; continuing"
 
 # 생성된 타입 파일들 확인
 echo "📋 Checking generated TypeScript files..."

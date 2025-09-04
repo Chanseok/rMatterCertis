@@ -1,13 +1,13 @@
 //! 실제 크롤링 서비스 테스트 명령
 //! Option B: 실제 크롤링 연동 구현 테스트
 
-#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+// Inherit lint levels from crate root
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crate::crawl_engine::actor_system::StageResult;
 use anyhow::Result;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::crawl_engine::services::crawling_integration::CrawlingIntegrationService;
 use crate::crawl_engine::system_config::SystemConfig;

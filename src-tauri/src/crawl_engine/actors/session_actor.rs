@@ -3,7 +3,7 @@
 //! Phase 3: Actor 구현 - 세션 레벨 제어 및 모니터링
 //! Modern Rust 2024 준수: 함수형 원칙, 명시적 의존성, 상태 최소화
 
-#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+// Inherit lint levels from crate root; avoid per-module overrides
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use chrono::Utc;
