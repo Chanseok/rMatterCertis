@@ -1,8 +1,13 @@
-// Default strategy implementations for each Stage are split into dedicated files
+// Default strategy implementations for each Stage are split into dedicated files (pinned paths)
+#[path = "default/list_page.rs"]
 pub mod list_page;
+#[path = "default/status_check.rs"]
 pub mod status_check;
+#[path = "default/product_detail.rs"]
 pub mod product_detail;
+#[path = "default/data_validation.rs"]
 pub mod data_validation;
+#[path = "default/data_saving.rs"]
 pub mod data_saving;
 
 // Re-exports for factory binding and tests
@@ -18,7 +23,6 @@ mod tests {
     use crate::crawl_engine::channels::types as ch;
     use crate::crawl_engine::stages::traits::{Deps, StageInput, StageLogic};
     use std::sync::Arc;
-    use crate::domain::services::crawling_services as svc;
 
     fn deps_stub() -> Deps {
         // Use default config paths; these dependencies may still do real work. For unit scope, we won't invoke network.

@@ -90,9 +90,9 @@ use tracing::{debug, error, info, warn};
 
 // Modern Rust 2024 module declarations - no mod.rs files needed
 
-// 🎯 TypeScript 연동 타입 (ts-rs 기반)
-#[path = "api/mod.rs"]
-pub mod api; // renamed from `types`, pinned to directory module
+// 🎯 TypeScript 연동 타입 (ts-rs 기반) - file-based gate (disambiguate from legacy mod.rs)
+#[path = "api.rs"]
+pub mod api;
 
 // 🚀 새로운 아키텍처 모듈 (Phase 1 구현 완료) - Modern Rust 2024
 pub mod crawl_engine; // renamed from new_architecture
@@ -148,8 +148,9 @@ pub mod application {
     pub mod shared_state; // 새로 추가된 공유 상태 관리
     pub mod state;
     pub mod validated_crawling_config; // 검증된 크롤링 설정
+    // File-based gate (resolved by services.rs) - path relative to this module
     #[path = "services.rs"]
-    pub mod services; // application services via shim
+    pub mod services;
     // pub mod crawler_manager;  // 🚧 임시 비활성화 - 컴파일 문제로 인해
 
     // Re-export commonly used items
@@ -191,7 +192,8 @@ pub mod commands {
     }
     pub mod advanced_engine_api; // 새로운 Advanced Engine API 추가
     pub mod config_commands;
-    pub mod crawling_test_commands; // 🧪 Phase C: 크롤링 테스트 도구
+    // Moved under devtools; keep alias re-exports below
+    // moved under devtools/crawling_test_commands.rs; don't declare as module here
     // Grouped domain modules
     pub mod database {
         pub mod data_queries; // Backend-Only CRUD commands (Modern Rust 2024)
@@ -213,13 +215,16 @@ pub mod commands {
         pub mod debug_commands; // 🔎 UI debug logging helpers
         #[cfg(feature = "dev-tools")]
         pub mod product_details_analytics; // 📊 product_details analytics endpoints
+    // Relocated from commands::crawling_test_commands
+    pub mod crawling_test_commands; // 🧪 Crawling test utilities
+    #[cfg(feature = "dev-tools")]
+    pub mod real_actor_commands; // 🎭 Real Actor 시스템 명령어 (moved here)
     }
     pub mod legacy {
         #[cfg(feature = "legacy-ui")]
         pub mod dashboard_commands; // 🎨 Phase C: 실시간 대시보드 (legacy gated)
     }
-    #[cfg(feature = "dev-tools")]
-    pub mod real_actor_commands; // 🎭 진짜 Actor 시스템 명령어
+    // moved under devtools::real_actor_commands
     // moved under crawling/ with alias re-exports below
     // pub mod real_crawling_commands; // 🚀 Phase C: 실제 크롤링 기능
     // pub mod simple_actor_test;
@@ -232,7 +237,13 @@ pub mod commands {
     // simple_crawling removed
     pub use advanced_engine_api::*; // Advanced Engine 명령어 export
     pub use config_commands::*; // Config and window management 명령어 export
-    pub use crawling_test_commands::*; // Phase C 테스트 명령어 export
+    // New: relocated crawling_test_commands under devtools; preserve legacy path
+    pub use self::devtools::crawling_test_commands as crawling_test_commands;
+    pub use self::devtools::crawling_test_commands::*;
+    #[cfg(feature = "dev-tools")]
+    pub use self::devtools::real_actor_commands as real_actor_commands;
+    #[cfg(feature = "dev-tools")]
+    pub use self::devtools::real_actor_commands::*;
     // Preserve original path commands::actor_system via alias re-export
     pub use crawling::actor_system as actor_system;
     pub use crawling::actor_system::*; // prefer role-based alias (star)

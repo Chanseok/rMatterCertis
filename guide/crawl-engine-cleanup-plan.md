@@ -103,13 +103,14 @@ src/
   - [ ] `test_utils.rs`를 `#[cfg(test)]`로 격리하거나 `tests/common`으로 이동.
   - [ ] 명백한 죽은 파일/폴더 제거(주석만, 실험/백업 잔재 등)
   - [ ] 중복 구현/이름만 다른 파일 통합 계획 수립 (`crawling_integration.rs` vs `real_crawling_integration.rs`)
-  - [ ] `crawl_engine` 루트(`crawl_engine.rs`)에서 하위 모듈 선언 및 `pub use`를 통한 API 표면 정리.
+  - [x] `crawl_engine` 루트(`crawl_engine.rs`)에서 하위 모듈 선언 및 `pub use`를 통한 API 표면 정리.
   - [ ] 파일/모듈 이름을 역할 기반으로 정리(예: `actor_system.rs` → `system.rs`)
   - [ ] dead_code/unused_imports 제거(도구: rust-analyzer, clippy)
   - [x] 불필요한 `clone()` 제거(1차)
   - [ ] 함수 시그니처 정리: 입력→출력(가능하면 stateless), 명확한 에러 타입
   - [ ] 거대 파일 분리 또는 공통부 통합
   - [x] Strategy 패턴 경로 고정: `stages/strategies/default/*` 경량화 및 일관화
+  - [ ] dead_code/unused_imports 제거(1차 정리 일부 완료; 점진적으로 축소 예정)
   - [ ] CrawlingPolicy 명시화: 재시도/중복/성능 옵션을 구조체로 관리하고 ExecutionPlan에 포함
   - [x] ts-rs 기반 타입 자동 생성 재검증(`scripts/generate_types.sh`)
   - [x] 이벤트 발행 경로 정리
@@ -258,6 +259,39 @@ src-tauri/src/commands/
 - simple_http_client: 락 스코프 축소 및 Option 처리 개선(is_none_or)
 
 ---
+
+### 진행 스냅샷 (2025-09-05)
+
+- Rust 2024 모듈 정리 마무리
+  - 남아있던 `mod.rs` 전량 제거: `api/`, `application/services/`, `crawl_engine/{config,context,events,runtime,validation}/`, `crawl_engine/services/`, `crawl_engine/stages/strategies/default/` 등
+  - 게이트 파일로 경로 고정: `api.rs`, `application/services.rs`, `crawl_engine/services.rs`, `crawl_engine/stages/strategies.rs`, `crawl_engine/stages/strategies/default.rs`에서 `#[path = "..."]` 명시
+  - 최상위 `services/` 디렉터리 제거(중복) 및 `application/services/`로 일원화
+
+- Crawling Integration 단일화
+  - `crawl_engine/services/crawling_integration.rs`를 캐노니컬로 유지
+  - `real_crawling_integration.rs` 삭제 및 관련 re-export 제거
+  - StageActor의 실제 크롤링 연동 메서드(oneshot 실행 등)를 `crawling_integration.rs`로 통합
+
+- Commands 구조 정리(호환성 유지)
+  - `commands/devtools/` 하위로 개발/테스트 명령 이동: `crawling_test_commands.rs`, `real_actor_commands.rs`
+  - `lib.rs`에서 alias re-export로 기존 경로 호환성 유지(`commands::crawling_test_commands` 등)
+  - dev-tools feature gate 재확인
+
+- 검증
+  - Backend: `cargo check` PASS
+  - Type bindings: `scripts/generate_types.sh` PASS (생성 인덱스 109 exports)
+  - Frontend: `npm run type-check` PASS
+  - 데이터 정합성 퀵체크: `scripts/check_url_slot_id_consistency.sh` PASS (불일치 0)
+
+---
+
+### 다음 작업 제안 (구체화)
+
+- ts-rs 타입 생성 파이프라인 개선: `ts_gen.rs`를 `build.rs` 또는 독립 러너로 이전하여 test 기반 실행 의존성 제거, 생성 타겟/경로 명확화
+- `test_utils.rs`를 `#[cfg(test)]`로 격리하거나 `tests/common`으로 이동하여 공개 표면 축소
+- `BatchActor`의 임시 `#[allow(dead_code)]` 필드 처리: 실제 사용 경로 연결 또는 제거/feature-gate로 축소
+- CI 파이프라인에 `cargo check`, `npm run type-check`, 슬롯/ID 컨시스턴시 스크립트 추가(프리-머지 검증)
+- `cargo clippy --all-targets -- -D warnings` 목표로, 광범위 `#![allow(...)]` 축소(문서화된 리스트 기준으로 단계적 제거)
 
 ## 다음 작업 계획 (Next Steps)
 

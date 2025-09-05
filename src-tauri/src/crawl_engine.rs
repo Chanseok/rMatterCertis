@@ -44,7 +44,7 @@ pub use actors::{
 pub use channels::types::{AppEvent, StageItem as ChannelStageItem};
 pub use config::SystemConfig;
 pub use events::*;
-pub use services::{CrawlingPlanner, PerformanceOptimizer, RealCrawlingIntegration};
+pub use services::{CrawlingPlanner, PerformanceOptimizer};
 
 // Test helpers (only available in test builds)
 #[cfg(test)]

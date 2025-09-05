@@ -40,6 +40,7 @@ pub struct BatchActor {
     pub(crate) success_count: u32,
     pub(crate) failure_count: u32,
     pub(crate) concurrency_limiter: Option<Arc<Semaphore>>,
+    #[allow(dead_code)]
     pub(crate) config: Option<Arc<crate::crawl_engine::config::SystemConfig>>,
     // Real service dependencies (DI)
     pub(crate) http_client: Option<Arc<HttpClient>>,

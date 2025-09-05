@@ -13,12 +13,9 @@ pub mod data_quality_analyzer;
 pub mod performance_optimizer; // 🔧 Phase C: 성능 최적화 서비스
 #[path = "services/real_crawling_commands.rs"]
 pub mod real_crawling_commands;
-#[path = "services/real_crawling_integration.rs"]
-pub mod real_crawling_integration; // 🔍 데이터 품질 분석 서비스
 #[path = "services/data_consistency_checker.rs"]
 pub mod data_consistency_checker;
 
 // Maintain prior public surface
 pub use crawling_planner::CrawlingPlanner;
 pub use performance_optimizer::PerformanceOptimizer;
-pub use real_crawling_integration::RealCrawlingIntegration;

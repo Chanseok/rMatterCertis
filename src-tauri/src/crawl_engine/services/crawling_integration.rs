@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
+use tokio::sync::oneshot;
 
 use crate::crawl_engine::actor_system::{StageError, StageResult};
 use crate::crawl_engine::channels::types::{StageItem, StageType};
@@ -787,5 +788,195 @@ impl RealCrawlingStageExecutor {
                 }
             }
         }
+    }
+}
+
+/// Extensions on StageActor to run real crawling via CrawlingIntegrationService
+impl crate::crawl_engine::actors::StageActor {
+    /// Create a StageActor configured to use the real crawling service
+    pub async fn new_with_real_crawling_service(
+        batch_id: String,
+        config: Arc<crate::crawl_engine::system_config::SystemConfig>,
+        app_config: AppConfig,
+        total_pages: u32,
+        products_on_last_page: u32,
+    ) -> anyhow::Result<Self> {
+        // Initialize integration service
+        let app_cfg = app_config.clone();
+        let integration_service = Arc::new(
+            CrawlingIntegrationService::new(config.clone(), app_cfg.clone()).await?,
+        );
+
+        // Create executor
+        let crawling_executor = Arc::new(RealCrawlingStageExecutor::new(integration_service));
+
+        // Build minimal deps for StageActor
+        let http_client = Arc::new(app_cfg.create_http_client()?);
+        let extractor = Arc::new(crate::infrastructure::MatterDataExtractor::new()?);
+        let pool = crate::infrastructure::database_connection::get_or_init_global_pool().await?;
+        let repo = Arc::new(crate::infrastructure::IntegratedProductRepository::new(pool));
+        let status_checker_impl = Arc::new(
+            crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
+                (*http_client).clone(),
+                (*extractor).clone(),
+                app_cfg.clone(),
+                Arc::clone(&repo),
+            ),
+        );
+        let _product_list_collector = Arc::new(
+            crate::infrastructure::crawling_service_impls::ProductListCollectorImpl::new(
+                Arc::clone(&http_client),
+                Arc::clone(&extractor),
+                crate::infrastructure::crawling_service_impls::CollectorConfig {
+                    max_concurrent: app_cfg.user.crawling.workers.list_page_max_concurrent as u32,
+                    concurrency: app_cfg.user.crawling.workers.list_page_max_concurrent as u32,
+                    delay_between_requests: std::time::Duration::from_millis(
+                        app_cfg.user.request_delay_ms,
+                    ),
+                    delay_ms: app_cfg.user.request_delay_ms,
+                    batch_size: app_cfg.user.batch.batch_size,
+                    retry_attempts: app_cfg.user.crawling.workers.max_retries,
+                    retry_max: app_cfg.user.crawling.workers.max_retries,
+                },
+                status_checker_impl.clone(),
+            ),
+        );
+        let _product_detail_collector = Arc::new(
+            crate::infrastructure::crawling_service_impls::ProductDetailCollectorImpl::new(
+                Arc::clone(&http_client),
+                Arc::clone(&extractor),
+                crate::infrastructure::crawling_service_impls::CollectorConfig {
+                    max_concurrent: app_cfg
+                        .user
+                        .crawling
+                        .workers
+                        .product_detail_max_concurrent as u32,
+                    concurrency: app_cfg
+                        .user
+                        .crawling
+                        .workers
+                        .product_detail_max_concurrent as u32,
+                    delay_between_requests: std::time::Duration::from_millis(
+                        app_cfg.user.request_delay_ms,
+                    ),
+                    delay_ms: app_cfg.user.request_delay_ms,
+                    batch_size: app_cfg.user.batch.batch_size,
+                    retry_attempts: app_cfg.user.crawling.workers.max_retries,
+                    retry_max: app_cfg.user.crawling.workers.max_retries,
+                },
+            ),
+        );
+        let deps = crate::crawl_engine::actors::stage_actor::StageDeps {
+            http_client,
+            data_extractor: extractor,
+            product_repo: repo,
+            app_config: app_cfg.clone(),
+            duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
+        };
+        let mut stage_actor = Self::new_with_deps(
+            "stage_real_crawling".into(),
+            batch_id,
+            deps,
+            Arc::new(crate::crawl_engine::stages::DefaultStageLogicFactory),
+        );
+        stage_actor.set_crawling_executor(crawling_executor);
+        stage_actor.set_site_pagination_hints(total_pages, products_on_last_page);
+
+        info!(
+            total_pages = total_pages,
+            products_on_last_page = products_on_last_page,
+            "StageActor created with meaningful ID context"
+        );
+
+        Ok(stage_actor)
+    }
+
+    /// Attach the real crawling executor (no-op for now, reserved for future)
+    pub fn set_crawling_executor(&mut self, _executor: Arc<RealCrawlingStageExecutor>) {
+        info!("Real crawling executor set for StageActor");
+    }
+
+    /// Run StageActor with real crawling service and return StageResult via oneshot
+    pub async fn run_with_real_crawling(
+        self,
+        mut control_rx: tokio::sync::mpsc::Receiver<
+            crate::crawl_engine::channels::types::ActorCommand,
+        >,
+        result_tx: oneshot::Sender<StageResult>,
+        crawling_executor: Arc<RealCrawlingStageExecutor>,
+    ) -> Result<(), crate::crawl_engine::actors::ActorError> {
+        info!(batch_id = ?self.batch_id, "StageActor started with real crawling service");
+
+        let mut final_result = StageResult::FatalError {
+            error: StageError::ValidationError {
+                message: "No commands received".to_string(),
+            },
+            stage_id: self.batch_id.clone(),
+            context: "StageActor initialization".to_string(),
+        };
+
+        while let Some(command) = control_rx.recv().await {
+            match command {
+                crate::crawl_engine::channels::types::ActorCommand::ExecuteStage {
+                    stage_type,
+                    items,
+                    concurrency_limit,
+                    timeout_secs: _,
+                } => {
+                    final_result = self
+                        .execute_stage_with_real_crawling(
+                            stage_type,
+                            items,
+                            concurrency_limit,
+                            crawling_executor.clone(),
+                        )
+                        .await;
+                    break;
+                }
+                crate::crawl_engine::channels::types::ActorCommand::CancelSession { reason, .. } => {
+                    final_result = StageResult::FatalError {
+                        error: StageError::ValidationError {
+                            message: format!("Session cancelled: {}", reason),
+                        },
+                        stage_id: self.batch_id.clone(),
+                        context: "User cancellation".to_string(),
+                    };
+                    break;
+                }
+                _ => {
+                    warn!(batch_id = ?self.batch_id, "Unsupported command in stage actor");
+                }
+            }
+        }
+
+        if result_tx.send(final_result).is_err() {
+            error!(batch_id = ?self.batch_id, "Failed to send stage result");
+        }
+
+        info!(batch_id = ?self.batch_id, "StageActor with real crawling completed");
+        Ok(())
+    }
+
+    /// Execute a stage using the real crawling executor
+    pub async fn execute_stage_with_real_crawling(
+        &self,
+        stage_type: StageType,
+        items: Vec<StageItem>,
+        concurrency_limit: u32,
+        crawling_executor: Arc<RealCrawlingStageExecutor>,
+    ) -> StageResult {
+        info!(
+            batch_id = ?self.batch_id,
+            stage = ?stage_type,
+            items_count = items.len(),
+            concurrency_limit = concurrency_limit,
+            "Executing stage with real crawling service"
+        );
+
+        let cancellation_token = CancellationToken::new();
+
+        crawling_executor
+            .execute_stage(stage_type, items, concurrency_limit, cancellation_token)
+            .await
     }
 }
