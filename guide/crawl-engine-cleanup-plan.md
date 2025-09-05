@@ -99,8 +99,8 @@ src/
   - [x] 최신 main에 변경 반영 및 푸시
   - [x] 안전망 확인: 기본 빌드/테스트 그린 상태 확인(cargo test 238/238)
   - [x] **(Phase 0에서 처리)** `mod.rs` 제거 및 모듈 시스템 통일
-  - [ ] `ts_gen.rs` 로직을 빌드 스크립트(`build.rs`) 또는 별도 스크립트로 이전.
-  - [ ] `test_utils.rs`를 `#[cfg(test)]`로 격리하거나 `tests/common`으로 이동.
+  - [x] `ts_gen.rs` 로직을 별도 러너로 이전: 전용 bin(`src-tauri/src/bin/gen_ts_types.rs`) + 스크립트 호출로 테스트 의존성 제거.
+  - [x] `test_utils.rs`를 테스트 전용으로 격리: `crawl_engine.rs`에서 `#[cfg(test)]`로 모듈 게이팅(파일은 테스트 전용 유틸 최소화 유지).
   - [ ] 명백한 죽은 파일/폴더 제거(주석만, 실험/백업 잔재 등)
   - [ ] 중복 구현/이름만 다른 파일 통합 계획 수립 (`crawling_integration.rs` vs `real_crawling_integration.rs`)
   - [x] `crawl_engine` 루트(`crawl_engine.rs`)에서 하위 모듈 선언 및 `pub use`를 통한 API 표면 정리.
@@ -287,8 +287,8 @@ src-tauri/src/commands/
 
 ### 다음 작업 제안 (구체화)
 
-- ts-rs 타입 생성 파이프라인 개선: `ts_gen.rs`를 `build.rs` 또는 독립 러너로 이전하여 test 기반 실행 의존성 제거, 생성 타겟/경로 명확화
-- `test_utils.rs`를 `#[cfg(test)]`로 격리하거나 `tests/common`으로 이동하여 공개 표면 축소
+- ts-rs 타입 생성 파이프라인 개선: 전용 러너(bin)로 이전 완료. `scripts/generate_types.sh`가 `cargo run --bin gen_ts_types`를 호출하도록 변경
+- `test_utils.rs`를 `#[cfg(test)]`로 격리 완료(공개 표면 축소)
 - `BatchActor`의 임시 `#[allow(dead_code)]` 필드 처리: 실제 사용 경로 연결 또는 제거/feature-gate로 축소
 - CI 파이프라인에 `cargo check`, `npm run type-check`, 슬롯/ID 컨시스턴시 스크립트 추가(프리-머지 검증)
 - `cargo clippy --all-targets -- -D warnings` 목표로, 광범위 `#![allow(...)]` 축소(문서화된 리스트 기준으로 단계적 제거)
@@ -296,7 +296,7 @@ src-tauri/src/commands/
 ## 다음 작업 계획 (Next Steps)
 
 단기(Phase 2 마무리)
-- [ ] `simple_actor_test`를 `#[cfg(feature = "dev-tools")]`로 제한하고, lib.rs의 manage/invoke 등록도 동일 게이트 적용
+- [x] `simple_actor_test`를 `#[cfg(feature = "dev-tools")]`로 제한하고, lib.rs의 manage/invoke 등록도 동일 게이트 적용
 - [ ] 남은 dev-only 커맨드 중 FE 미사용 함수의 `#[tauri::command]` 제거(내부 util로 전환)
 - [ ] cargo clippy --all-targets -- -D warnings 그린 달성(ASCII 로그, 불필요 allow 정리, dead_code 잔여 제거)
 - [ ] 최소 단위 테스트 추가: system_analysis happy path + db_diagnostics gate 동작

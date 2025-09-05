@@ -14,7 +14,6 @@ use crate::crawl_engine::system_config::SystemConfig;
 use crate::infrastructure::config::AppConfig;
 
 /// 실제 크롤링 서비스 초기화 테스트
-#[tauri::command]
 pub async fn test_real_crawling_init() -> Result<String, String> {
     info!("🔧 실제 크롤링 서비스 초기화 테스트 시작");
 
@@ -31,7 +30,6 @@ pub async fn test_real_crawling_init() -> Result<String, String> {
 }
 
 /// 실제 사이트 상태 확인 테스트
-#[tauri::command]
 pub async fn test_real_site_status() -> Result<String, String> {
     info!("🌐 실제 사이트 상태 확인 테스트 시작");
 
@@ -48,7 +46,6 @@ pub async fn test_real_site_status() -> Result<String, String> {
 }
 
 /// 실제 크롤링 범위 분석 테스트
-#[tauri::command]
 pub async fn test_real_crawling_analysis() -> Result<String, String> {
     info!("📊 실제 크롤링 범위 분석 테스트 시작");
 
@@ -65,7 +62,6 @@ pub async fn test_real_crawling_analysis() -> Result<String, String> {
 }
 
 /// 실제 소량 페이지 크롤링 테스트
-#[tauri::command]
 pub async fn test_real_page_crawling() -> Result<String, String> {
     info!("📄 실제 소량 페이지 크롤링 테스트 시작");
 
@@ -82,7 +78,6 @@ pub async fn test_real_page_crawling() -> Result<String, String> {
 }
 
 /// 실제 OneShot Actor 통합 테스트
-#[tauri::command]
 pub async fn test_real_oneshot_integration() -> Result<String, String> {
     info!("🔗 실제 OneShot Actor 통합 테스트 시작");
 

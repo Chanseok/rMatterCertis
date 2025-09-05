@@ -216,6 +216,7 @@ pub mod commands {
         #[cfg(feature = "dev-tools")]
         pub mod product_details_analytics; // 📊 product_details analytics endpoints
     // Relocated from commands::crawling_test_commands
+    #[cfg(feature = "dev-tools")]
     pub mod crawling_test_commands; // 🧪 Crawling test utilities
     #[cfg(feature = "dev-tools")]
     pub mod real_actor_commands; // 🎭 Real Actor 시스템 명령어 (moved here)
@@ -230,6 +231,8 @@ pub mod commands {
     // pub mod simple_actor_test;
     // pub mod smart_crawling;
     pub mod sync_commands;
+    // Legacy compatibility wrappers for FE invokes
+    pub mod compat_commands;
     // pub mod unified_crawling; // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
     pub mod validation_commands; // ✅ Validation pass commands (page/index integrity) // 🔄 Partial Sync (recrawl + DB upsert) // 🧹 DB URL duplicate cleanup
 
@@ -238,7 +241,9 @@ pub mod commands {
     pub use advanced_engine_api::*; // Advanced Engine 명령어 export
     pub use config_commands::*; // Config and window management 명령어 export
     // New: relocated crawling_test_commands under devtools; preserve legacy path
+    #[cfg(feature = "dev-tools")]
     pub use self::devtools::crawling_test_commands as crawling_test_commands;
+    #[cfg(feature = "dev-tools")]
     pub use self::devtools::crawling_test_commands::*;
     #[cfg(feature = "dev-tools")]
     pub use self::devtools::real_actor_commands as real_actor_commands;
@@ -610,8 +615,11 @@ pub fn run() {
             commands::crawling::real_crawling_commands::get_real_crawling_status,
             commands::crawling::real_crawling_commands::cancel_real_crawling,
             // 🧪 Phase C: Crawling Test & Development Tools
+            #[cfg(feature = "dev-tools")]
             commands::crawling_test_commands::quick_crawling_test,
+            #[cfg(feature = "dev-tools")]
             commands::crawling_test_commands::check_site_status_only,
+            #[cfg(feature = "dev-tools")]
             commands::crawling_test_commands::crawling_performance_benchmark,
             // 🔧 Phase C: Performance Optimization Tools
             commands::analysis::performance_commands::init_performance_optimizer,
@@ -642,6 +650,12 @@ pub fn run() {
             commands::sync_commands::retry_failed_details,
             commands::sync_commands::start_diagnostic_sync,
             commands::actor_system::start_manual_crawl_pages_actor,
+            // Legacy invoke compatibility wrappers (kept minimal)
+            commands::compat_commands::get_crawling_status,
+            commands::compat_commands::pause_crawling,
+            commands::compat_commands::resume_crawling,
+            commands::compat_commands::stop_crawling,
+            commands::compat_commands::resume_from_token_compat,
             #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::devtools::db_diagnostics::scan_db_pagination_mismatches,
             #[cfg(feature = "dev-tools")]

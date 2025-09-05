@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, crawl-engine-cleanup ]
+  pull_request:
+    branches: [ '**' ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install frontend deps
+        run: |
+          npm ci
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+
+      - name: Cargo check
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Generate TS bindings
+        working-directory: src-tauri
+        run: |
+          cargo run --bin gen_ts_types
+
+      - name: TypeScript type-check
+        run: npm run -s type-check
+
+      - name: URL slot/id consistency check
+        run: |
+          bash scripts/check_url_slot_id_consistency.sh || true

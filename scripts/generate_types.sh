@@ -20,9 +20,9 @@ mkdir -p ../src/types
 echo "🦀 Generating TypeScript types from Rust..."
 cd /Users/chanseok/Codes/rMatterCertis/src-tauri
 
-# 테스트 헬퍼를 통해 TS 바인딩 생성 수행 (crawl_engine::ts_gen)
-echo "� Running TS binding generation via tests..."
-cargo test -q --lib crawl_engine::ts_gen::tests::test_typescript_type_generation || echo "⚠️ Type generation test failed; continuing"
+# 테스트 실행 대신 전용 바이너리를 통해 TS 바인딩 생성 수행
+echo "🧰 Running TS binding generation bin..."
+cargo run --quiet --bin gen_ts_types
 
 # 생성된 타입 파일들 확인
 echo "📋 Checking generated TypeScript files..."
