@@ -827,7 +827,7 @@ impl SessionActor {
         use crate::crawl_engine::actors::traits::Actor;
         let app_config = AppConfig::for_development();
         let config_concurrency = app_config.user.crawling.workers.list_page_max_concurrent as u32;
-        let shared_metrics = Arc::new(std::sync::Mutex::new((0u32, 0u32)));
+    let shared_metrics = Arc::new(std::sync::Mutex::new((0u32, 0u32)));
         let mut batch_actor = BatchActor::new_with_services(
             batch_id.to_string(),
             batch_id.to_string(),
@@ -844,7 +844,8 @@ impl SessionActor {
                 flag, batch_id
             );
         }
-        batch_actor.shared_metrics = Some(shared_metrics.clone());
+    // shared_metrics wiring to BatchActor removed (BatchActor no longer exposes this);
+    // we keep local shared_metrics for future use if reintroduced.
         let (tx, rx) = mpsc::channel::<super::types::ActorCommand>(100);
         let actor_context = match plan_id {
             Some(pid) => context.with_plan(pid),

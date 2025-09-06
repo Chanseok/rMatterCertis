@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use crate::crawl_engine::actors::types::{StageItemResult, StageItemType, StageType as ActorStageType};
+use crate::crawl_engine::actors::types::{
+    EnhancedStageItemResult, StageItemResult, StageItemType, StageResultData,
+    StageType as ActorStageType,
+};
 use crate::crawl_engine::channels::types as ch;
 use crate::crawl_engine::stages::traits::{StageInput, StageLogic, StageLogicError, StageOutput};
 use crate::domain::services::crawling_services::ProductDetailCollector;
@@ -12,8 +15,8 @@ impl StageLogic for ProductDetailLogic {
     fn name(&self) -> &'static str { "ProductDetailLogic" }
 
     async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
-    let start = std::time::Instant::now();
-    let StageInput { stage_type: st, item, config, deps, .. } = input;
+        let start = std::time::Instant::now();
+        let StageInput { stage_type: st, item, config, deps, .. } = input;
         if !matches!(st, ActorStageType::ProductDetailCrawling) {
             return Err(StageLogicError::Unsupported(st));
         }
@@ -52,22 +55,26 @@ impl StageLogic for ProductDetailLogic {
         let attempted = urls.urls.len() as u32;
         let successful = details.len() as u32;
         let failed = attempted.saturating_sub(successful);
-        let wrapper = ch::ProductDetails {
-            products: details,
-            source_urls: urls.urls,
-            extraction_stats: ch::ExtractionStats { attempted, successful, failed, empty_responses: 0 },
-        };
-        let json = serde_json::to_string(&wrapper).map_err(|e| StageLogicError::Internal(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
-        let result = StageItemResult {
-            item_id: format!("product_urls_{}", wrapper.source_urls.len()),
-            item_type: StageItemType::ProductUrls { urls: wrapper.source_urls.iter().map(|u| u.url.clone()).collect() },
+        // Emit typed StageResultData and bridge to legacy JSON at the boundary
+        let enhanced = EnhancedStageItemResult {
+            item_id: format!("product_urls_{}", attempted),
+            item_type: StageItemType::ProductUrls { urls: urls
+                .urls
+                .iter()
+                .map(|u| u.url.clone())
+                .collect() },
             success: true,
             error: None,
             duration_ms,
             retry_count: 0,
-            collected_data: Some(json),
+            collected_data: Some(StageResultData::ProductDetails {
+                details,
+                successful_count: successful,
+                failed_count: failed,
+            }),
         };
+        let result: StageItemResult = enhanced.into();
         Ok(StageOutput { result })
     }
 }

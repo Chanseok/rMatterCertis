@@ -1,4 +1,7 @@
-use crate::crawl_engine::actors::types::{DuplicatePersistencePolicy, StageItemResult, StageItemType, StageType as ActorStageType};
+use crate::crawl_engine::actors::types::{
+    DuplicatePersistencePolicy, EnhancedStageItemResult, StageItemResult, StageItemType,
+    StageResultData, StageType as ActorStageType,
+};
 use crate::crawl_engine::channels::types as ch;
 use crate::crawl_engine::stages::traits::{StageInput, StageLogic, StageLogicError, StageOutput};
 
@@ -59,21 +62,21 @@ impl StageLogic for DataSavingLogic {
             }
         }
         let attempted = products.len() as u32;
-        let payload = serde_json::json!({
-            "attempted": attempted,
-            "products_inserted": inserted,
-            "products_updated": updated
-        });
         let duration_ms = start.elapsed().as_millis() as u64;
-        let result = StageItemResult {
+        let enhanced = EnhancedStageItemResult {
             item_id,
             item_type,
             success: true,
             error: None,
             duration_ms,
             retry_count: 0,
-            collected_data: Some(payload.to_string()),
+            collected_data: Some(StageResultData::SavingResult {
+                saved_count: inserted + updated,
+                duplicates_found: attempted.saturating_sub(inserted + updated),
+                database_id_range: None,
+            }),
         };
+        let result: StageItemResult = enhanced.into();
         Ok(StageOutput { result })
     }
 }

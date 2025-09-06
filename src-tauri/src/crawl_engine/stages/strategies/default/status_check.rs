@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use crate::crawl_engine::actors::types::{StageItemResult, StageItemType, StageType as ActorStageType};
+use crate::crawl_engine::actors::types::{
+    EnhancedStageItemResult, StageItemResult, StageItemType, StageResultData,
+    StageType as ActorStageType,
+};
 use crate::crawl_engine::channels::types::StageItem;
 use crate::crawl_engine::stages::traits::{StageInput, StageLogic, StageLogicError, StageOutput};
 use crate::domain::services::crawling_services::StatusChecker;
@@ -29,21 +32,27 @@ impl StageLogic for StatusCheckLogic {
             .check_site_status()
             .await
             .map_err(|e| StageLogicError::Internal(format!("Status check failed: {}", e)))?;
-        let json = serde_json::to_string(&status).map_err(|e| StageLogicError::Internal(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
-        let result = StageItemResult {
-            item_id: match item {
-                StageItem::Page(n) => format!("page_{}", n),
-                StageItem::Url(u) => u,
-                _ => "unknown".into(),
-            },
-            item_type: StageItemType::Url { url_type: "site_check".into() },
+        let (item_id, item_type) = match item {
+            StageItem::Page(n) => (format!("page_{}", n), StageItemType::Page { page_number: n }),
+            StageItem::Url(u) => (u, StageItemType::Url { url_type: "site_check".into() }),
+            _ => ("unknown".into(), StageItemType::SiteCheck),
+        };
+        let enhanced = EnhancedStageItemResult {
+            item_id,
+            item_type,
             success: true,
             error: None,
             duration_ms,
             retry_count: 0,
-            collected_data: Some(json),
+            collected_data: Some(StageResultData::StatusCheck {
+                site_available: status.is_accessible,
+                total_pages: Some(status.total_pages),
+                last_page_products: Some(status.products_on_last_page),
+                response_time_ms: status.response_time_ms,
+            }),
         };
+        let result: StageItemResult = enhanced.into();
         Ok(StageOutput { result })
     }
 }

@@ -885,6 +885,42 @@ pub struct EnhancedStageItemResult {
     pub collected_data: Option<StageResultData>,
 }
 
+// === Compatibility conversions between legacy and enhanced results ===
+impl From<EnhancedStageItemResult> for StageItemResult {
+    fn from(v2: EnhancedStageItemResult) -> Self {
+        let collected_data = v2
+            .collected_data
+            .and_then(|d| serde_json::to_string(&d).ok());
+        StageItemResult {
+            item_id: v2.item_id,
+            item_type: v2.item_type,
+            success: v2.success,
+            error: v2.error,
+            duration_ms: v2.duration_ms,
+            retry_count: v2.retry_count,
+            collected_data,
+        }
+    }
+}
+
+impl From<StageItemResult> for EnhancedStageItemResult {
+    fn from(v1: StageItemResult) -> Self {
+        // Best-effort: if the legacy JSON already matches StageResultData, parse it; otherwise None
+        let collected_data = v1
+            .collected_data
+            .and_then(|s| serde_json::from_str::<StageResultData>(&s).ok());
+        EnhancedStageItemResult {
+            item_id: v1.item_id,
+            item_type: v1.item_type,
+            success: v1.success,
+            error: v1.error,
+            duration_ms: v1.duration_ms,
+            retry_count: v1.retry_count,
+            collected_data,
+        }
+    }
+}
+
 /// 세션 요약
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]

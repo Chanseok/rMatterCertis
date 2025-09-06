@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use crate::crawl_engine::actors::types::{StageItemResult, StageItemType, StageType as ActorStageType};
+use crate::crawl_engine::actors::types::{
+    EnhancedStageItemResult, StageItemResult, StageItemType, StageResultData,
+    StageType as ActorStageType,
+};
 use crate::crawl_engine::channels::types::StageItem;
 use crate::crawl_engine::stages::traits::{StageInput, StageLogic, StageLogicError, StageOutput};
 use crate::domain::services::crawling_services::ProductListCollector;
@@ -83,17 +86,19 @@ impl StageLogic for ListPageLogic {
         if urls.is_empty() {
             return Err(StageLogicError::Internal("Empty result from list page".into()));
         }
-        let json = serde_json::to_string(&urls).map_err(|e| StageLogicError::Internal(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
-    let result = StageItemResult {
+        let total_found = urls.len() as u32;
+        // Produce typed result and bridge back to legacy at the boundary for now
+        let enhanced = EnhancedStageItemResult {
             item_id: format!("page_{}", page_number),
             item_type: StageItemType::Page { page_number },
             success: true,
             error: None,
             duration_ms,
             retry_count: 0,
-            collected_data: Some(json),
+            collected_data: Some(StageResultData::ProductUrls { urls, page_number, total_found }),
         };
+        let result: StageItemResult = enhanced.into();
         Ok(StageOutput { result })
     }
 }

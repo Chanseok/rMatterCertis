@@ -194,10 +194,15 @@ mod tests {
         };
         let res = logic.execute(input).await.expect("happy path");
         assert!(res.result.success);
-        // Should serialize validated list
+        // Should serialize typed validation result
         let json = res.result.collected_data.expect("validated json");
-        let parsed: Vec<crate::domain::product::ProductDetail> = serde_json::from_str(&json).expect("parse");
-        assert_eq!(parsed.len(), 2);
+        let parsed: crate::crawl_engine::actors::types::StageResultData = serde_json::from_str(&json).expect("parse typed");
+        match parsed {
+            crate::crawl_engine::actors::types::StageResultData::ValidationResult { validated_count, .. } => {
+                assert_eq!(validated_count, 2);
+            }
+            other => panic!("unexpected variant: {:?}", other),
+        }
     }
 
     #[tokio::test]

@@ -1,4 +1,7 @@
-use crate::crawl_engine::actors::types::{StageItemResult, StageItemType, StageType as ActorStageType};
+use crate::crawl_engine::actors::types::{
+    EnhancedStageItemResult, StageItemResult, StageItemType, StageResultData,
+    StageType as ActorStageType,
+};
 use crate::crawl_engine::channels::types as ch;
 use crate::crawl_engine::stages::traits::{StageInput, StageLogic, StageLogicError, StageOutput};
 
@@ -28,17 +31,21 @@ impl StageLogic for DataValidationLogic {
         let validated = analyzer
             .validate_before_storage(&details_vec)
             .map_err(|e| StageLogicError::Internal(format!("Validation failed: {}", e)))?;
-        let json = serde_json::to_string(&validated).map_err(|e| StageLogicError::Internal(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
-        let result = StageItemResult {
+        let enhanced = EnhancedStageItemResult {
             item_id: format!("validated_products_{}", validated.len()),
             item_type: StageItemType::Url { url_type: "validated_products".into() },
             success: true,
             error: None,
             duration_ms,
             retry_count: 0,
-            collected_data: Some(json),
+            collected_data: Some(StageResultData::ValidationResult {
+                validated_count: validated.len() as u32,
+                error_count: 0,
+                warnings: vec![],
+            }),
         };
+        let result: StageItemResult = enhanced.into();
         Ok(StageOutput { result })
     }
 }
