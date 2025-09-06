@@ -215,11 +215,9 @@ pub mod commands {
         pub mod debug_commands; // 🔎 UI debug logging helpers
         #[cfg(feature = "dev-tools")]
         pub mod product_details_analytics; // 📊 product_details analytics endpoints
-    // Relocated from commands::crawling_test_commands
-    #[cfg(feature = "dev-tools")]
-    pub mod crawling_test_commands; // 🧪 Crawling test utilities
-    #[cfg(feature = "dev-tools")]
-    pub mod real_actor_commands; // 🎭 Real Actor 시스템 명령어 (moved here)
+    // Relocated from commands::crawling_test_commands (pruned from public build)
+    // pub mod crawling_test_commands; // 🧪 Crawling test utilities
+    // pub mod real_actor_commands; // 🎭 Real Actor 시스템 명령어 (moved here)
     }
     pub mod legacy {
     // dashboard UI removed (Option B); legacy module deleted
@@ -237,15 +235,11 @@ pub mod commands {
     // simple_crawling removed
     pub use advanced_engine_api::*; // Advanced Engine 명령어 export
     pub use config_commands::*; // Config and window management 명령어 export
-    // Dev-only crawling test utilities (no legacy path shim)
-    #[cfg(feature = "dev-tools")]
-    pub use self::devtools::crawling_test_commands;
-    #[cfg(feature = "dev-tools")]
-    pub use self::devtools::crawling_test_commands::*;
-    #[cfg(feature = "dev-tools")]
-    pub use self::devtools::real_actor_commands as real_actor_commands;
-    #[cfg(feature = "dev-tools")]
-    pub use self::devtools::real_actor_commands::*;
+    // Dev-only crawling test utilities (pruned from public surface)
+    // pub use self::devtools::crawling_test_commands;
+    // pub use self::devtools::crawling_test_commands::*;
+    // pub use self::devtools::real_actor_commands as real_actor_commands;
+    // pub use self::devtools::real_actor_commands::*;
     // Preserve original path commands::actor_system via alias re-export
     pub use crawling::actor_system as actor_system;
     pub use crawling::actor_system::*; // prefer role-based alias (star)
@@ -615,33 +609,27 @@ pub fn run() {
             // Removed start_crawling_session (unified entrypoint)
 
             // 🚀 Phase C: Real Crawling Commands (temporarily gated; not used by FE)
-            #[cfg(any(feature = "dev-tools", debug_assertions))]
+            #[cfg(feature = "dev-tools")]
             commands::crawling::real_crawling_commands::execute_real_crawling,
-            #[cfg(any(feature = "dev-tools", debug_assertions))]
+            #[cfg(feature = "dev-tools")]
             commands::crawling::real_crawling_commands::get_real_crawling_status,
-            #[cfg(any(feature = "dev-tools", debug_assertions))]
+            #[cfg(feature = "dev-tools")]
             commands::crawling::real_crawling_commands::cancel_real_crawling,
-            // 🧪 Phase C: Crawling Test & Development Tools
-            #[cfg(feature = "dev-tools")]
-            commands::devtools::crawling_test_commands::quick_crawling_test,
-            #[cfg(feature = "dev-tools")]
-            commands::devtools::crawling_test_commands::check_site_status_only,
-            #[cfg(feature = "dev-tools")]
-            commands::devtools::crawling_test_commands::crawling_performance_benchmark,
+            // 🧪 Phase C: Crawling Test & Development Tools (not registered to FE)
             // 🔧 Phase C: Performance Optimization Tools
-            #[cfg(any(feature = "dev-tools", debug_assertions))]
+            #[cfg(feature = "dev-tools")]
             commands::analysis::performance_commands::init_performance_optimizer,
-            #[cfg(any(feature = "dev-tools", debug_assertions))]
+            #[cfg(feature = "dev-tools")]
             commands::analysis::performance_commands::get_current_performance_metrics,
-            #[cfg(any(feature = "dev-tools", debug_assertions))]
+            #[cfg(feature = "dev-tools")]
             commands::analysis::performance_commands::get_optimization_recommendation,
-            #[cfg(any(feature = "dev-tools", debug_assertions))]
+            #[cfg(feature = "dev-tools")]
             commands::analysis::performance_commands::get_performance_history,
-            #[cfg(any(feature = "dev-tools", debug_assertions))]
+            #[cfg(feature = "dev-tools")]
             commands::analysis::performance_commands::clear_performance_history,
-            #[cfg(any(feature = "dev-tools", debug_assertions))]
+            #[cfg(feature = "dev-tools")]
             commands::analysis::performance_commands::start_performance_session,
-            #[cfg(any(feature = "dev-tools", debug_assertions))]
+            #[cfg(feature = "dev-tools")]
             commands::analysis::performance_commands::end_performance_session,
             // 🎨 Phase C: Realtime Dashboard Tools (temporarily disabled while UI is archived)
             // commands::dashboard_commands::init_dashboard_service,

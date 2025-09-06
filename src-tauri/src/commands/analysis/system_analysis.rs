@@ -9,7 +9,7 @@
 
 use serde_json;
 use sqlx::Row;
-use tauri::{AppHandle, State};
+use tauri::State;
 use tracing::info;
 
 // Legacy CrawlingEngineState/CrawlingResponse removed – define minimal local response
@@ -40,22 +40,24 @@ struct BreakInfo {
 /// 2. 결과를 SharedStateCache에 업데이트합니다  
 /// 3. 분석 결과를 UI에 전송하여 화면에 표시합니다
 /// 4. 백엔드가 total_pages, DB 커서 위치를 "기억"하게 됩니다
-#[tauri::command]
-/// Analyze site and database status and update shared state caches.
+/// Core implementation of system analysis, separated for testability.
 ///
-/// # Errors
-/// Returns `Err(String)` if site or database analysis fails, or cache update encounters issues.
-#[allow(clippy::used_underscore_binding)]
-pub async fn analyze_system_status(
-	_app: AppHandle,
-	shared_state: State<'_, SharedStateCache>,
+/// This function executes without requiring a Tauri `AppHandle`, enabling
+/// lightweight unit/integration tests without linking full Tauri app context.
+pub async fn analyze_system_status_core(
+	shared_state: &SharedStateCache,
 ) -> Result<CrawlingResponse, String> {
 	info!("🔍 Starting comprehensive system analysis...");
+
+	// Ensure database paths are initialized when running outside full app bootstrap (e.g., tests)
+	if let Err(e) = crate::infrastructure::initialize_database_paths().await {
+		return Err(format!("Failed to initialize database paths: {}", e));
+	}
 
 	// Phase 1 & 2: Perform Site and Database Analysis in Parallel
 	info!("📊 Phase 1 & 2: Performing site and database analysis in parallel...");
 	let (site_analysis, db_analysis) = tokio::try_join!(
-		perform_site_analysis(Some(&*shared_state)),
+		perform_site_analysis(Some(shared_state)),
 		perform_database_analysis()
 	)
 	.map_err(|e| format!("System analysis failed: {}", e))?;
@@ -121,6 +123,17 @@ pub async fn analyze_system_status(
 		message: "System analysis completed successfully".to_string(),
 		data: Some(analysis_data),
 	})
+}
+
+#[tauri::command]
+/// Analyze site and database status and update shared state caches.
+///
+/// # Errors
+/// Returns `Err(String)` if site or database analysis fails, or cache update encounters issues.
+pub async fn analyze_system_status(
+	shared_state: State<'_, SharedStateCache>,
+) -> Result<CrawlingResponse, String> {
+	analyze_system_status_core(&shared_state).await
 }
 
 /// 진단: products / product_details 간 미스매치 및 이상치 탐지/정리

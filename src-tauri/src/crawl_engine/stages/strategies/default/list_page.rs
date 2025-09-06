@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use crate::crawl_engine::actors::types::{
-    EnhancedStageItemResult, StageItemResult, StageItemType, StageResultData,
-    StageType as ActorStageType,
+    StageItemResult, StageItemType, StageResultData, StageType as ActorStageType,
 };
 use crate::crawl_engine::channels::types::StageItem;
 use crate::crawl_engine::stages::traits::{StageInput, StageLogic, StageLogicError, StageOutput};
@@ -89,7 +88,7 @@ impl StageLogic for ListPageLogic {
         let duration_ms = start.elapsed().as_millis() as u64;
         let total_found = urls.len() as u32;
         // Produce typed result and bridge back to legacy at the boundary for now
-        let enhanced = EnhancedStageItemResult {
+    let enhanced = StageItemResult {
             item_id: format!("page_{}", page_number),
             item_type: StageItemType::Page { page_number },
             success: true,
@@ -98,7 +97,6 @@ impl StageLogic for ListPageLogic {
             retry_count: 0,
             collected_data: Some(StageResultData::ProductUrls { urls, page_number, total_found }),
         };
-        let result: StageItemResult = enhanced.into();
-        Ok(StageOutput { result })
+    Ok(StageOutput { result: enhanced })
     }
 }

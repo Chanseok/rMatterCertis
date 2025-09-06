@@ -762,36 +762,8 @@ pub struct StageResult {
     /// 처리 시간
     pub duration_ms: u64,
 
-    /// 상세 결과
+    /// 상세 결과 (타입드 형태)
     pub details: Vec<StageItemResult>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct StageItemResult {
-    /// 아이템 ID
-    pub item_id: String,
-
-    /// 아이템 타입
-    pub item_type: StageItemType,
-
-    /// 성공 여부
-    pub success: bool,
-
-    /// 에러 메시지 (실패 시)
-    pub error: Option<String>,
-
-    /// 처리 시간
-    pub duration_ms: u64,
-
-    /// 재시도 횟수
-    pub retry_count: u32,
-
-    /// 수집된 데이터 (JSON 문자열)
-    /// `ListPageCrawling`: `ProductURL들의` JSON 배열
-    /// `ProductDetailCrawling`: `ProductDetail들의` JSON 배열
-    /// `DataSaving`: 저장된 데이터의 메타정보
-    pub collected_data: Option<String>,
 }
 
 // =============================================================================
@@ -857,12 +829,12 @@ pub enum StageResultData {
     Empty,
 }
 
-/// 개선된 스테이지 아이템 결과
+/// 개선된 스테이지 아이템 결과 (타입 안전)
 ///
 /// `collected_data를` `StageResultData로` 교체하여 타입 안전성 향상
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct EnhancedStageItemResult {
+pub struct StageItemResult {
     /// 아이템 ID
     pub item_id: String,
 
@@ -885,41 +857,7 @@ pub struct EnhancedStageItemResult {
     pub collected_data: Option<StageResultData>,
 }
 
-// === Compatibility conversions between legacy and enhanced results ===
-impl From<EnhancedStageItemResult> for StageItemResult {
-    fn from(v2: EnhancedStageItemResult) -> Self {
-        let collected_data = v2
-            .collected_data
-            .and_then(|d| serde_json::to_string(&d).ok());
-        StageItemResult {
-            item_id: v2.item_id,
-            item_type: v2.item_type,
-            success: v2.success,
-            error: v2.error,
-            duration_ms: v2.duration_ms,
-            retry_count: v2.retry_count,
-            collected_data,
-        }
-    }
-}
-
-impl From<StageItemResult> for EnhancedStageItemResult {
-    fn from(v1: StageItemResult) -> Self {
-        // Best-effort: if the legacy JSON already matches StageResultData, parse it; otherwise None
-        let collected_data = v1
-            .collected_data
-            .and_then(|s| serde_json::from_str::<StageResultData>(&s).ok());
-        EnhancedStageItemResult {
-            item_id: v1.item_id,
-            item_type: v1.item_type,
-            success: v1.success,
-            error: v1.error,
-            duration_ms: v1.duration_ms,
-            retry_count: v1.retry_count,
-            collected_data,
-        }
-    }
-}
+// (LegacyStageItemResult compatibility conversions removed in Phase 3)
 
 /// 세션 요약
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -928,42 +866,6 @@ pub struct SessionSummary {
     /// 세션 ID
     pub session_id: String,
 
-    /// 총 처리 시간
-    pub total_duration_ms: u64,
-
-    /// 총 처리된 페이지 수
-    pub total_pages_processed: u32,
-
-    /// 총 처리된 상품 수
-    pub total_products_processed: u32,
-
-    /// 성공률
-    pub success_rate: f64,
-
-    /// 평균 처리 시간 (페이지당, 밀리초)
-    pub avg_page_processing_time: u64,
-
-    /// 에러 요약
-    pub error_summary: Vec<ErrorSummary>,
-
-    /// 재시도 관련 통계 (추가 필드)
-    #[serde(default)]
-    pub total_retry_events: u32,
-    #[serde(default)]
-    pub max_retries_single_page: u32,
-    #[serde(default)]
-    pub pages_retried: u32,
-    #[serde(default)]
-    pub retry_histogram: Vec<(u32, u32)>, // (retry_count, pages_with_that_count)
-
-    /// 처리된 배치 수
-    pub processed_batches: u32,
-
-    /// 총 성공 수
-    pub total_success_count: u32,
-
-    /// 세션 전체에서 중복 제거로 스킵된 Product URL 수 (`BatchReport` 합산)
-    #[serde(default)]
     pub duplicates_skipped: u32,
     #[serde(default)]
     pub products_inserted: u32,

@@ -1,4 +1,4 @@
-# `src-tauri/src` 전체 구조 리팩토링 계획 (v2, 2025-09-03)
+# `src-tauri/src` 전체 구조 리팩토링 계획 (v2, 2025-09-06)
 
 **문서 목적**: `src-tauri/src`의 전체 소스 트리를 Modern Rust 2024, Clean Code 원칙에 맞춰 체계적으로 리팩토링하기 위한 실행 계획과 체크리스트를 제공합니다. 이 문서는 살아있는 문서로, 진행 상황에 따라 계속 업데이트됩니다.
 
@@ -210,6 +210,51 @@ src-tauri/src/commands/
 
 ---
 
+## Phase 2.5: Typed Results 전환(완료)
+
+목표: 레거시 중심의 비정형 결과(JSON/문자열 기반)에서, 타입 안정성이 보장되는 Typed 모델로 엔진 전반을 전환합니다.
+
+핵심 변경 사항
+- StageItemResult 네이밍 통일
+  - 기존 EnhancedStageItemResult → 최종 명칭 StageItemResult(typed, Canonical)
+  - 기존 레거시 StageItemResult → LegacyStageItemResult로 개명(일시 호환용)
+- StageResult.details 타입 전환: Vec<LegacyStageItemResult> → Vec<StageItemResult>
+- BatchActor 변환 로직: collected_data를 JSON 파싱하지 않고 StageResultData enum 매칭으로 직접 처리
+- 서비스/전략: 모든 결과를 StageResultData/StageItemResult(typed)로 생성
+- TS 바인딩 생성(ts-rs): typed StageItemResult → TS 이름 "StageItemResult" (legacy export는 Phase 3에서 제거)
+- 상태: 백엔드 테스트 그린(최종 226/226), 타입 생성 및 FE type-check PASS.
+
+FE 마이그레이션 노트
+- 신규 권장 타입: StageResultData, StageItemResult(typed)
+- 수집 데이터(collected_data)를 문자열/JSON으로 재파싱하지 말고, enum variant로 안전하게 분기 처리
+- 기존에 StageItemResult(레거시)를 참조하던 코드 → TS에서 LegacyStageItemResult로 명시 변경 후 점진 제거
+
+Definition of Done(Phase 2.5)
+- [x] StageResult.details를 typed로 전환하고 모든 호출부/테스트가 반영됨
+- [x] BatchActor 변환 경로가 enum 매칭으로 대체됨(serde_json 제거)
+- [x] ts-rs 산출물에 typed 모델이 최상위로 노출됨
+- [x] cargo test / npm run type-check 그린 유지
+
+---
+
+## Phase 3: 레거시 타입/브리지 정리(완료)
+
+목표: Typed 모델 전환 완료에 따라, 남아있는 레거시 타입과 브리지를 제거하고 경고 없는 상태로 수렴합니다.
+
+체크리스트(Phase 3)
+- [x] LegacyStageItemResult 타입과 모든 변환(From/Into) 제거(백엔드)
+- [x] ts_gen.rs에서 LegacyStageItemResult TS export 제거
+- [x] 레거시 타입 관련 로깅/브리지 코드 정리
+- [x] SessionSummary 사용처 정합화(필드 스키마에 맞게 bridge/actor 로그 보정)
+- [x] cargo clippy --all-targets -- -D warnings 그린 달성
+
+결과
+- Rust tests: PASS (226/226)
+- TS types regen + type-check: PASS
+- 빌드 로그의 deprecation 경고 제거
+
+---
+
 ## 실행·검증 가이드 (공통)
 
 - 자주 사용하는 로컬 체크
@@ -241,6 +286,8 @@ src-tauri/src/commands/
 
 ## 변경 로그(요약)
 - **2025-09-05**: Rust 2024 모듈 전환 완료(`mod.rs` 전량 제거) 및 서비스 레이어 일원화(`application/services` 기준, 레거시 `src-tauri/src/services/dashboard_service.rs` 제거). 빌드/타입 생성/TS 타입체크 모두 그린.
+- **2025-09-06**: Typed Results 전환 마무리(Phase 2.5). StageResult.details를 typed(Vec<StageItemResult>)로 전환, BatchActor 변환 로직을 enum 매칭으로 재작성, 서비스/전략/테스트 업데이트. ts-rs 생성물에서 typed/legacy 이름을 명확히 분리. 백엔드 테스트·FE type-check 그린 유지. 레거시 타입은 Deprecated로 일시 유지(Phase 3에서 제거 예정).
+- **2025-09-06(2)**: Phase 3 완료. LegacyStageItemResult 및 변환/TS export 제거, SessionSummary 로그/브리지 정합화, clippy -D warnings 그린 달성, 테스트 226/226 통과.
 - **2025-09-03**: Gemini 제안에 따라 `src` 전체 리팩토링 계획으로 확장. Phase 0, 1, 2로 구조화. `_archive` 삭제 및 계층형 아키텍처 적용을 최우선 과제로 설정.
 - **2025-09-03(2)**: Commands 도메인 그룹화(\`crawling\`, \`database\`, \`analysis\`, \`devtools\`, \`legacy\`) 완료. `lib.rs` invoke_handler 및 re-export 정리. 상위 중복 파일 제거. `analysis::system_analysis`/`performance_commands` 이관 및 보완. `database::{data_queries, db_cleanup, db_repair}`와 `devtools::{db_diagnostics, debug_commands, product_details_analytics}` 정리. 빌드/타입체크 그린.
 - **2025-09-01**: Stage/Batch/Session Actor의 `emit` 헬퍼 도입 및 이벤트 경로 통일. clone 최소화 적용.
@@ -268,10 +315,10 @@ src-tauri/src/commands/
   - 게이트 파일로 경로 고정: `api.rs`, `application/services.rs`, `crawl_engine/services.rs`, `crawl_engine/stages/strategies.rs`, `crawl_engine/stages/strategies/default.rs`에서 `#[path = "..."]` 명시
   - 최상위 `services/` 디렉터리 제거(중복) 및 `application/services/`로 일원화
 
-- Crawling Integration 단일화
-  - `crawl_engine/services/crawling_integration.rs`를 캐노니컬로 유지
-  - `real_crawling_integration.rs` 삭제 및 관련 re-export 제거
-  - StageActor의 실제 크롤링 연동 메서드(oneshot 실행 등)를 `crawling_integration.rs`로 통합
+- Crawling Integration 현황(정정)
+  - `crawl_engine/services/real_crawling_integration.rs` 유지 및 Typed-First로 업데이트
+  - `crawl_engine/services/crawling_integration.rs`와의 통합은 추후(Phase 1/장기 과제)로 보류
+  - StageActor 경로는 typed 결과를 직접 사용하도록 정비 완료
 
 - Commands 구조 정리(호환성 유지)
   - `commands/devtools/` 하위로 개발/테스트 명령 이동: `crawling_test_commands.rs`, `real_actor_commands.rs`
@@ -294,14 +341,17 @@ src-tauri/src/commands/
 - CI 파이프라인에 `cargo check`, `npm run type-check`, 슬롯/ID 컨시스턴시 스크립트 추가(프리-머지 검증)
 - `cargo clippy --all-targets -- -D warnings` 목표로, 광범위 `#![allow(...)]` 축소(문서화된 리스트 기준으로 단계적 제거)
 
+보완 사항
+- dev 전용 크롤링 테스트 명령(`commands::devtools::crawling_test_commands`)은 공개 invoke 등록에서 제외하여 API 표면을 축소했습니다. 내부 개발용 유틸로 유지됩니다.
+
 ## 다음 작업 계획 (Next Steps)
 
 단기(Phase 2 마무리)
 - [x] `simple_actor_test`를 `#[cfg(feature = "dev-tools")]`로 제한하고, lib.rs의 manage/invoke 등록도 동일 게이트 적용
 - [ ] 남은 dev-only 커맨드 중 FE 미사용 함수의 `#[tauri::command]` 제거(내부 util로 전환)
-- [ ] cargo clippy --all-targets -- -D warnings 그린 달성(ASCII 로그, 불필요 allow 정리, dead_code 잔여 제거)
-- [ ] 최소 단위 테스트 추가: system_analysis happy path + db_diagnostics gate 동작
- - [ ] FE invoke 이름을 actor_system 기반으로 일괄 전환하고, 전환 완료 후 호환 래퍼 제거
+- [x] cargo clippy --all-targets -- -D warnings 그린 달성(ASCII 로그, 불필요 allow 정리, dead_code 잔여 제거)
+- [x] 최소 단위 테스트 추가: system_analysis happy path + db_diagnostics gate 동작
+- [ ] FE invoke 이름을 actor_system 기반으로 일괄 전환하고, 전환 완료 후 호환 래퍼 제거
 
 중기(Phase 0 보완 및 품질 게이트 강화)
 - [x] `_archive` 디렉터리 완전 삭제 전 최종 참조 점검 후 제거 (완료: 2025-09-04)

@@ -1,6 +1,6 @@
 use crate::crawl_engine::actors::types::{
-    DuplicatePersistencePolicy, EnhancedStageItemResult, StageItemResult, StageItemType,
-    StageResultData, StageType as ActorStageType,
+    DuplicatePersistencePolicy, StageItemResult, StageItemType, StageResultData,
+    StageType as ActorStageType,
 };
 use crate::crawl_engine::channels::types as ch;
 use crate::crawl_engine::stages::traits::{StageInput, StageLogic, StageLogicError, StageOutput};
@@ -63,7 +63,7 @@ impl StageLogic for DataSavingLogic {
         }
         let attempted = products.len() as u32;
         let duration_ms = start.elapsed().as_millis() as u64;
-        let enhanced = EnhancedStageItemResult {
+    let enhanced = StageItemResult {
             item_id,
             item_type,
             success: true,
@@ -76,7 +76,6 @@ impl StageLogic for DataSavingLogic {
                 database_id_range: None,
             }),
         };
-        let result: StageItemResult = enhanced.into();
-        Ok(StageOutput { result })
+    Ok(StageOutput { result: enhanced })
     }
 }

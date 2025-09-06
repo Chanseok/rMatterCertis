@@ -208,15 +208,12 @@ impl ActorEventBridge {
     // 보강: SessionCompleted(summary) 수신 시에도 메인 로그에 인간 친화적 요약을 남긴다.
         if let AppEvent::SessionCompleted { summary, .. } = &actor_event {
             info!(
-                "📊 Session Final Summary | session_id={} state={} duration_ms={} batches={} pages_processed={} success={} failed={} retries={} inserted={} updated={} duplicates={} ts={}",
+                "📊 Session Final Summary | session_id={} state={} batches(planned/executed)={}/{} failed_pages={} inserted={} updated={} duplicates={} ts={}",
                 summary.session_id,
                 summary.final_state,
-                summary.total_duration_ms,
-                summary.processed_batches,
-                summary.total_pages_processed,
-                summary.total_success_count,
+                summary.planned_list_batches,
+                summary.executed_list_batches,
                 summary.failed_pages_count,
-                summary.total_retry_events,
                 summary.products_inserted,
                 summary.products_updated,
                 summary.duplicates_skipped,

@@ -1,6 +1,5 @@
 use crate::crawl_engine::actors::types::{
-    EnhancedStageItemResult, StageItemResult, StageItemType, StageResultData,
-    StageType as ActorStageType,
+    StageItemResult, StageItemType, StageResultData, StageType as ActorStageType,
 };
 use crate::crawl_engine::channels::types as ch;
 use crate::crawl_engine::stages::traits::{StageInput, StageLogic, StageLogicError, StageOutput};
@@ -32,7 +31,7 @@ impl StageLogic for DataValidationLogic {
             .validate_before_storage(&details_vec)
             .map_err(|e| StageLogicError::Internal(format!("Validation failed: {}", e)))?;
         let duration_ms = start.elapsed().as_millis() as u64;
-        let enhanced = EnhancedStageItemResult {
+    let enhanced = StageItemResult {
             item_id: format!("validated_products_{}", validated.len()),
             item_type: StageItemType::Url { url_type: "validated_products".into() },
             success: true,
@@ -45,7 +44,6 @@ impl StageLogic for DataValidationLogic {
                 warnings: vec![],
             }),
         };
-        let result: StageItemResult = enhanced.into();
-        Ok(StageOutput { result })
+    Ok(StageOutput { result: enhanced })
     }
 }

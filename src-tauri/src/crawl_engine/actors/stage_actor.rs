@@ -358,15 +358,18 @@ impl StageActor {
             Ok(r) => {
                 // Validation 집계 이벤트
                 if matches!(stage_type, StageType::DataValidation) {
-                    let (products_found, products_checked, divergences, anomalies) = (|| {
-                        if let Some(json) = &r.collected_data {
-                            if let Ok(validated) = serde_json::from_str::<
-                                Vec<crate::domain::product::ProductDetail>,
-                            >(json)
-                            {
-                                let found = validated.len() as u32;
+                    let (products_found, products_checked, divergences, anomalies) = {
+                        use crate::crawl_engine::actors::types::StageResultData as SRD;
+                        match &r.collected_data {
+                            Some(SRD::ValidationResult { validated_count, .. }) => {
+                                let found = *validated_count;
+                                (found, u64::from(found), 0, 0)
+                            }
+                            Some(SRD::ProductDetails { details, .. }) => {
+                                let found = details.len() as u32;
+                                // Optional: light analysis
                                 let report = crate::crawl_engine::services::data_quality_analyzer::DataQualityAnalyzer::new()
-                                    .analyze_product_quality(&validated)
+                                    .analyze_product_quality(details)
                                     .ok();
                                 let (div_ct, anom_ct) = if let Some(rep) = report {
                                     let dup = rep
@@ -381,11 +384,11 @@ impl StageActor {
                                         .count() as u32;
                                     (dup, anom)
                                 } else { (0, 0) };
-                                return (found, u64::from(found), div_ct, anom_ct);
+                                (found, u64::from(found), div_ct, anom_ct)
                             }
+                            _ => (0, 0, 0, 0),
                         }
-                        (0, 0, 0, 0)
-                    })();
+                    };
                     Self::emit_best_effort(&ctx, AppEvent::ValidationStarted {
                         session_id: session_id.clone(),
                         scan_pages: 1,
@@ -524,10 +527,21 @@ impl StageActor {
                     }
                 }
 
-                guard.record_ok(
-                    r.retry_count,
-                    r.collected_data.as_ref().map(|d| if d.starts_with('[') { d.matches('"').count() as u32 / 2 } else { 1 }),
-                );
+                // Estimate collected count from typed result data for telemetry
+                let collected_count = {
+                    use crate::crawl_engine::actors::types::StageResultData as SRD;
+                    match &r.collected_data {
+                        Some(SRD::ProductUrls { urls, .. }) => Some(urls.len() as u32),
+                        Some(SRD::ProductDetails { details, .. }) => Some(details.len() as u32),
+                        Some(SRD::ValidationResult { validated_count, .. }) => Some(*validated_count),
+                        Some(SRD::SavingResult { saved_count, .. }) => Some(*saved_count),
+                        Some(SRD::StatusCheck { .. }) => Some(1),
+                        Some(SRD::QualityAnalysis { total_analyzed, .. }) => Some(*total_analyzed),
+                        Some(SRD::Empty) => Some(0),
+                        None => None,
+                    }
+                };
+                guard.record_ok(r.retry_count, collected_count);
             }
             Err(err) => {
                 guard.record_err(format!("{:?}", err));
@@ -689,6 +703,7 @@ impl StageActor {
             duration_ms: self
                 .start_time
                 .map_or(0, |start| start.elapsed().as_millis() as u64),
+            // Now StageResult.details is typed; return as-is
             details: self.item_results.clone(),
         })
     }

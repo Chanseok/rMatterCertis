@@ -656,12 +656,11 @@ impl BatchActor {
                         if let Some(stage_item_result) = stage_result.details.get(item_index) {
                             if stage_item_result.success {
                                 // 실제 수집된 데이터가 있는지 확인
-                                if let Some(collected_data_json) = &stage_item_result.collected_data {
-                                    // Try typed StageResultData first; fall back to legacy Vec<ProductUrl>
-                                    let parsed_urls: Option<Vec<crate::domain::product_url::ProductUrl>> = match serde_json::from_str::<crate::crawl_engine::actors::types::StageResultData>(collected_data_json) {
-                                        Ok(crate::crawl_engine::actors::types::StageResultData::ProductUrls { urls, .. }) => Some(urls),
-                                        Ok(_) => None,
-                                        Err(_) => serde_json::from_str::<Vec<crate::domain::product_url::ProductUrl>>(collected_data_json).ok(),
+                                if let Some(collected) = &stage_item_result.collected_data {
+                                    // Typed path: extract directly from StageResultData
+                                    let parsed_urls: Option<Vec<crate::domain::product_url::ProductUrl>> = match collected {
+                                        crate::crawl_engine::actors::types::StageResultData::ProductUrls { urls, .. } => Some(urls.clone()),
+                                        _ => None,
                                     };
 
                                     if let Some(product_urls_vec) = parsed_urls {
@@ -723,10 +722,10 @@ impl BatchActor {
                                         }
                                     } else {
                                         warn!(
-                                            "⚠️  Could not parse collected_data for page {} as ProductUrls (typed or legacy)",
+                                            "⚠️  Could not use collected_data for page {} as ProductUrls (unexpected variant)",
                                             page_number
                                         );
-                                        warn!("⚠️  Raw collected data: {}", collected_data_json);
+                                        warn!("⚠️  Raw collected data: {:?}", collected);
                                     }
                                 } else {
                                     warn!(
@@ -820,22 +819,21 @@ impl BatchActor {
                             );
                             if stage_item_result.success {
                                 // 실제 수집된 ProductDetails 데이터가 있는지 확인
-                                if let Some(collected_data_json) = &stage_item_result.collected_data {
-                                    // 1) 먼저 타입드 StageResultData 시도
-                                    match serde_json::from_str::<crate::crawl_engine::actors::types::StageResultData>(collected_data_json) {
-                                        Ok(crate::crawl_engine::actors::types::StageResultData::ProductDetails { details, successful_count, failed_count: _ }) => {
+                                if let Some(collected) = &stage_item_result.collected_data {
+                                    match collected {
+                                        crate::crawl_engine::actors::types::StageResultData::ProductDetails { details, successful_count, failed_count: _ } => {
                                             if details.is_empty() {
                                                 warn!("⚠️  ProductDetailCrawling succeeded but no typed ProductDetails were collected");
                                             } else {
                                                 let product_count = details.len();
                                                 total_products_collected += product_count;
                                                 let wrapper = crate::crawl_engine::channels::types::ProductDetails {
-                                                    products: details,
+                                                products: details.clone(),
                                                     // typed 경로에서는 source_urls를 보존하지 못할 수 있음
                                                     source_urls: vec![],
                                                     extraction_stats: crate::crawl_engine::channels::types::ExtractionStats {
-                                                        attempted: successful_count + 0, // best-effort
-                                                        successful: successful_count,
+                                                        attempted: *successful_count, // best-effort
+                                                        successful: *successful_count,
                                                         failed: 0,
                                                         empty_responses: 0,
                                                     },
@@ -844,43 +842,11 @@ impl BatchActor {
                                                 info!("✅ Parsed typed ProductDetails: {} products", product_count);
                                             }
                                         }
-                                        Ok(_) => {
-                                            // 2) 기대한 variant가 아니면 레거시 wrapper 파싱으로 폴백
-                                            match serde_json::from_str::<crate::crawl_engine::channels::types::ProductDetails>(collected_data_json) {
-                                                Ok(product_details_wrapper) => {
-                                                    if product_details_wrapper.products.is_empty() {
-                                                        warn!("⚠️  ProductDetailCrawling succeeded but no ProductDetails were collected");
-                                                    } else {
-                                                        let product_count = product_details_wrapper.products.len();
-                                                        total_products_collected += product_count;
-                                                        transformed_items.push(StageItem::ProductDetails(product_details_wrapper));
-                                                        info!("✅ Extracted {} ProductDetails from ProductUrls (legacy)", product_count);
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    warn!("⚠️  Failed to parse ProductDetails (typed alt/legacy) for item {}: {}", item_index, e);
-                                                    warn!("⚠️  Raw collected data: {}", collected_data_json);
-                                                }
-                                            }
-                                        }
-                                        Err(_) => {
-                                            // 3) 타입드 파싱 실패 시 레거시 wrapper 시도
-                                            match serde_json::from_str::<crate::crawl_engine::channels::types::ProductDetails>(collected_data_json) {
-                                                Ok(product_details_wrapper) => {
-                                                    if product_details_wrapper.products.is_empty() {
-                                                        warn!("⚠️  ProductDetailCrawling succeeded but no ProductDetails were collected");
-                                                    } else {
-                                                        let product_count = product_details_wrapper.products.len();
-                                                        total_products_collected += product_count;
-                                                        transformed_items.push(StageItem::ProductDetails(product_details_wrapper));
-                                                        info!("✅ Extracted {} ProductDetails from ProductUrls (legacy)", product_count);
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    warn!("⚠️  Failed to parse ProductDetails (typed or legacy) for item {}: {}", item_index, e);
-                                                    warn!("⚠️  Raw collected data: {}", collected_data_json);
-                                                }
-                                            }
+                                        other => {
+                                            warn!(
+                                                "⚠️  Unexpected collected_data variant for ProductDetailCrawling item {}: {:?}",
+                                                item_index, other
+                                            );
                                         }
                                     }
                                 } else {
@@ -1018,7 +984,7 @@ mod batch_actor_metrics_tests {
             error: None,
             duration_ms,
             retry_count,
-            collected_data: None,
+            collected_data: Some(crate::crawl_engine::actors::types::StageResultData::Empty),
         }
     }
 
@@ -1028,6 +994,7 @@ mod batch_actor_metrics_tests {
             successful_items: items.iter().filter(|(_, _, s)| *s).count() as u32,
             failed_items: items.iter().filter(|(_, _, s)| !*s).count() as u32,
             duration_ms: items.iter().map(|(d, _, _)| *d).sum(),
+            // StageResult.details is typed in Phase 2
             details: items.iter().map(|(d, r, s)| mk_item(*d, *r, *s)).collect(),
         }
     }

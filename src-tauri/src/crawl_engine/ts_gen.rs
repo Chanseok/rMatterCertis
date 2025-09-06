@@ -14,10 +14,10 @@ pub fn generate_ts_bindings() -> Result<(), Box<dyn std::error::Error>> {
     crate::crawl_engine::actors::types::AppEvent::export_all_to(out_dir)?;
     crate::crawl_engine::actors::types::ActorCommand::export_all_to(out_dir)?;
     crate::crawl_engine::actors::types::StageResult::export_all_to(out_dir)?;
-    crate::crawl_engine::actors::types::StageItemResult::export_all_to(out_dir)?;
     // New typed result model (additive, keep legacy too)
     crate::crawl_engine::actors::types::StageResultData::export_all_to(out_dir)?;
-    crate::crawl_engine::actors::types::EnhancedStageItemResult::export_all_to(out_dir)?;
+    // Typed result is exported as StageItemResult (finalized name)
+    crate::crawl_engine::actors::types::StageItemResult::export_all_to(out_dir)?;
     crate::crawl_engine::actors::types::CrawlingConfig::export_all_to(out_dir)?;
     crate::crawl_engine::actors::types::BatchConfig::export_all_to(out_dir)?;
     crate::crawl_engine::actors::types::StageType::export_all_to(out_dir)?;

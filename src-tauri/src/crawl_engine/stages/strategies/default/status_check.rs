@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use crate::crawl_engine::actors::types::{
-    EnhancedStageItemResult, StageItemResult, StageItemType, StageResultData,
-    StageType as ActorStageType,
+    StageItemResult, StageItemType, StageResultData, StageType as ActorStageType,
 };
 use crate::crawl_engine::channels::types::StageItem;
 use crate::crawl_engine::stages::traits::{StageInput, StageLogic, StageLogicError, StageOutput};
@@ -38,7 +37,7 @@ impl StageLogic for StatusCheckLogic {
             StageItem::Url(u) => (u, StageItemType::Url { url_type: "site_check".into() }),
             _ => ("unknown".into(), StageItemType::SiteCheck),
         };
-        let enhanced = EnhancedStageItemResult {
+    let enhanced = StageItemResult {
             item_id,
             item_type,
             success: true,
@@ -52,7 +51,6 @@ impl StageLogic for StatusCheckLogic {
                 response_time_ms: status.response_time_ms,
             }),
         };
-        let result: StageItemResult = enhanced.into();
-        Ok(StageOutput { result })
+    Ok(StageOutput { result: enhanced })
     }
 }

@@ -59,11 +59,16 @@ impl crate::crawl_engine::actors::BatchActor {
             };
 
         let started = std::time::Instant::now();
-        let mut details: Vec<crate::crawl_engine::actors::types::StageItemResult> = Vec::new();
+    let mut details: Vec<crate::crawl_engine::actors::types::StageItemResult> = Vec::new();
 
         match integration_service.execute_site_analysis().await {
             Ok(site_status) => {
-                let collected_data = serde_json::to_string(&site_status).ok();
+                let collected_data = Some(crate::crawl_engine::actors::types::StageResultData::StatusCheck {
+                    site_available: site_status.is_accessible,
+                    total_pages: Some(site_status.total_pages),
+                    last_page_products: Some(site_status.products_on_last_page),
+                    response_time_ms: started.elapsed().as_millis() as u64,
+                });
                 details.push(crate::crawl_engine::actors::types::StageItemResult {
                     item_id: "site_status_check:0".to_string(),
                     item_type: crate::crawl_engine::actors::types::StageItemType::SiteCheck,
@@ -145,7 +150,7 @@ impl crate::crawl_engine::actors::BatchActor {
 
         let mut successful = 0u32;
         let mut failed = 0u32;
-        let mut details: Vec<crate::crawl_engine::actors::types::StageItemResult> = Vec::new();
+    let mut details: Vec<crate::crawl_engine::actors::types::StageItemResult> = Vec::new();
 
         for (idx, urls_wrapper) in product_urls_items.into_iter().enumerate() {
             // Collect details for this item
@@ -165,25 +170,15 @@ impl crate::crawl_engine::actors::BatchActor {
                         failed += 1;
                     }
                     let collected_data = if success {
-                        // Wrap into channels::types::ProductDetails for downstream transforms
                         let attempted = urls.len() as u32;
                         let successful_count = collected_details.len() as u32;
                         let failed_count = attempted.saturating_sub(successful_count);
-                        let wrapper = crate::crawl_engine::channels::types::ProductDetails {
-                            products: collected_details,
-                            source_urls: urls,
-                            extraction_stats:
-                                crate::crawl_engine::channels::types::ExtractionStats {
-                                    attempted,
-                                    successful: successful_count,
-                                    failed: failed_count,
-                                    empty_responses: 0,
-                                },
-                        };
-                        serde_json::to_string(&wrapper).ok()
-                    } else {
-                        None
-                    };
+                        Some(crate::crawl_engine::actors::types::StageResultData::ProductDetails {
+                            details: collected_details,
+                            successful_count,
+                            failed_count,
+                        })
+                    } else { None };
 
                     details.push(crate::crawl_engine::actors::types::StageItemResult {
                         item_id: format!("product_urls:{}", idx),
@@ -286,7 +281,7 @@ impl crate::crawl_engine::actors::BatchActor {
         // Map into legacy StageResult with per-item details
         let mut successful = 0u32;
         let mut failed = 0u32;
-        let mut details: Vec<crate::crawl_engine::actors::types::StageItemResult> = Vec::new();
+    let mut details: Vec<crate::crawl_engine::actors::types::StageItemResult> = Vec::new();
         for (page, urls, retry_count, duration_ms) in page_results {
             let success = !urls.is_empty();
             if success {
@@ -295,10 +290,12 @@ impl crate::crawl_engine::actors::BatchActor {
                 failed += 1;
             }
             let collected_data = if success {
-                serde_json::to_string(&urls).ok()
-            } else {
-                None
-            };
+                Some(crate::crawl_engine::actors::types::StageResultData::ProductUrls {
+                    urls: urls.clone(),
+                    page_number: page,
+                    total_found: urls.len() as u32,
+                })
+            } else { None };
             details.push(crate::crawl_engine::actors::types::StageItemResult {
                 item_id: format!("page:{}", page),
                 item_type: crate::crawl_engine::actors::types::StageItemType::Page {

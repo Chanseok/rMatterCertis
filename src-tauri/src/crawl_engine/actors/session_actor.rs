@@ -467,32 +467,13 @@ impl SessionActor {
         // 완료 이벤트 발행 (집계된 요약 사용)
         let aggregated_summary = self.create_session_summary().unwrap_or(SessionSummary {
             session_id: session_id.to_string(),
-            total_duration_ms: self
-                .start_time
-                .map_or(0, |t| t.elapsed().as_millis() as u64),
-            total_pages_processed: self.total_success_count,
-            total_products_processed: self.products_inserted + self.products_updated,
-            success_rate: if self.total_success_count > 0 { 1.0 } else { 0.0 },
-            avg_page_processing_time: if self.total_success_count > 0 {
-                self.start_time
-                    .map_or(0, |t| t.elapsed().as_millis() as u64 / u64::from(self.total_success_count))
-            } else {
-                0
-            },
-            error_summary: Vec::new(),
-            total_retry_events: 0,
-            max_retries_single_page: 0,
-            pages_retried: 0,
-            retry_histogram: Vec::new(),
-            processed_batches: self.processed_batches,
-            total_success_count: self.total_success_count,
             duplicates_skipped: self.duplicates_skipped,
+            products_inserted: self.products_inserted,
+            products_updated: self.products_updated,
             planned_list_batches: planned_batches_count as u32,
             executed_list_batches: self.processed_batches,
             failed_pages_count: 0,
             failed_page_ids: Vec::new(),
-            products_inserted: self.products_inserted,
-            products_updated: self.products_updated,
             final_state: "completed".to_string(),
             timestamp: Utc::now(),
         });
@@ -530,15 +511,12 @@ impl SessionActor {
         };
         let s = &aggregated_summary;
         info!(target: "kpi.session",
-            "{{\"event\":\"session_final_summary\",\"session_id\":\"{}\",\"final_state\":\"{}\",\"duration_ms\":{},\"processed_batches\":{},\"total_pages_processed\":{},\"total_success_count\":{},\"failed_pages_count\":{},\"total_retry_events\":{},\"products_inserted\":{},\"products_updated\":{},\"duplicates_skipped\":{},\"plan_hash\":{},\"ts\":\"{}\"}}",
+            "{{\"event\":\"session_final_summary\",\"session_id\":\"{}\",\"final_state\":\"{}\",\"planned_batches\":{},\"executed_batches\":{},\"failed_pages_count\":{},\"products_inserted\":{},\"products_updated\":{},\"duplicates_skipped\":{},\"plan_hash\":{},\"ts\":\"{}\"}}",
             s.session_id,
             s.final_state,
-            s.total_duration_ms,
-            s.processed_batches,
-            s.total_pages_processed,
-            s.total_success_count,
+            s.planned_list_batches,
+            s.executed_list_batches,
             s.failed_pages_count,
-            s.total_retry_events,
             s.products_inserted,
             s.products_updated,
             s.duplicates_skipped,
@@ -552,15 +530,12 @@ impl SessionActor {
             _ => "-",
         };
         info!(
-            "📊 Session Final Summary | session_id={} state={} duration_ms={} batches={} pages_processed={} success={} failed={} retries={} inserted={} updated={} duplicates={} plan_hash={} ts={}",
+            "📊 Session Final Summary | session_id={} state={} batches(planned/executed)={}/{} failed_pages={} inserted={} updated={} duplicates={} plan_hash={} ts={}",
             s.session_id,
             s.final_state,
-            s.total_duration_ms,
-            s.processed_batches,
-            s.total_pages_processed,
-            s.total_success_count,
+            s.planned_list_batches,
+            s.executed_list_batches,
             s.failed_pages_count,
-            s.total_retry_events,
             s.products_inserted,
             s.products_updated,
             s.duplicates_skipped,
@@ -1044,74 +1019,17 @@ impl SessionActor {
     /// # Returns
     /// * `Option<SessionSummary>` - 세션이 활성화된 경우 요약, 그렇지 않으면 None
     fn create_session_summary(&self) -> Option<SessionSummary> {
-        self.session_id.as_ref().map(|session_id| {
-            let duration = self
-                .start_time
-                .map_or(Duration::ZERO, |start| start.elapsed());
-
-            // 에러 문자열을 ErrorSummary 집계로 변환
-            use std::collections::BTreeMap;
-            let mut map: BTreeMap<
-                String,
-                (
-                    u32,
-                    chrono::DateTime<chrono::Utc>,
-                    chrono::DateTime<chrono::Utc>,
-                ),
-            > = BTreeMap::new();
-            for e in &self.errors {
-                let now = chrono::Utc::now();
-                map.entry(e.clone())
-                    .and_modify(|entry| {
-                        entry.0 += 1;
-                        entry.2 = now;
-                    })
-                    .or_insert((1, now, now));
-            }
-            let aggregated: Vec<crate::crawl_engine::actors::types::ErrorSummary> = map
-                .into_iter()
-                .map(
-                    |(k, (count, first, last))| crate::crawl_engine::actors::types::ErrorSummary {
-                        error_type: k,
-                        count,
-                        first_occurrence: first,
-                        last_occurrence: last,
-                    },
-                )
-                .collect();
-
-            SessionSummary {
-                session_id: session_id.clone(),
-                total_duration_ms: duration.as_millis() as u64,
-                total_pages_processed: self.total_success_count, // 페이지 성공 누적
-                total_products_processed: self.products_inserted + self.products_updated,
-                success_rate: if self.total_success_count > 0 {
-                    1.0
-                } else {
-                    0.0
-                },
-                avg_page_processing_time: if self.total_success_count > 0 {
-                    duration.as_millis() as u64 / u64::from(self.total_success_count)
-                } else {
-                    0
-                },
-                error_summary: aggregated,
-                processed_batches: self.processed_batches,
-                total_success_count: self.total_success_count,
-                duplicates_skipped: self.duplicates_skipped,
-                planned_list_batches: self.processed_batches,
-                executed_list_batches: self.processed_batches,
-                failed_pages_count: 0,
-                failed_page_ids: Vec::new(),
-                total_retry_events: 0,
-                max_retries_single_page: 0,
-                pages_retried: 0,
-                retry_histogram: Vec::new(),
-                products_inserted: self.products_inserted,
-                products_updated: self.products_updated,
-                final_state: format!("{:?}", self.state),
-                timestamp: Utc::now(),
-            }
+        self.session_id.as_ref().map(|session_id| SessionSummary {
+            session_id: session_id.clone(),
+            duplicates_skipped: self.duplicates_skipped,
+            products_inserted: self.products_inserted,
+            products_updated: self.products_updated,
+            planned_list_batches: self.processed_batches,
+            executed_list_batches: self.processed_batches,
+            failed_pages_count: 0,
+            failed_page_ids: Vec::new(),
+            final_state: format!("{:?}", self.state),
+            timestamp: Utc::now(),
         })
     }
 }
