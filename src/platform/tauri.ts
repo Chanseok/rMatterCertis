@@ -286,6 +286,43 @@ export class TauriApiAdapter {
   async getEnhancedCrawlingStats(sessionId?: string): Promise<any> {
     return this.invoke('get_enhanced_crawling_stats', sessionId ? { session_id: sessionId } : undefined);
   }
+
+  // ========================================================================
+  // Actor System (new API) - Optional migration helpers
+  // ========================================================================
+
+  /**
+   * Start crawling using the new Actor System API (migration path).
+   * request shape follows backend ActorCrawlingRequest; kept as any for gradual adoption.
+   */
+  async startActorSystemCrawling(request: any): Promise<any> {
+    return invoke('start_actor_system_crawling', { request });
+  }
+
+  /** Pause a running actor-system session by id */
+  async pauseSession(sessionId: string): Promise<any> {
+    return invoke('pause_session', { session_id: sessionId });
+  }
+
+  /** Resume a paused actor-system session by id */
+  async resumeSession(sessionId: string): Promise<any> {
+    return invoke('resume_session', { session_id: sessionId });
+  }
+
+  /** Request a graceful shutdown for the current actor-system session */
+  async requestGracefulShutdown(): Promise<any> {
+    return invoke('request_graceful_shutdown');
+  }
+
+  /** Get actor-system session status by id */
+  async getSessionStatus(sessionId: string): Promise<any> {
+    return invoke('get_session_status', { session_id: sessionId });
+  }
+
+  /** List existing actor-system session ids (newest first) */
+  async listActorSessions(): Promise<any> {
+    return invoke('list_actor_sessions');
+  }
 }
 
 // ============================================================================

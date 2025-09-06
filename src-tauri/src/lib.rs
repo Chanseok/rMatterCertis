@@ -312,6 +312,7 @@ pub mod commands {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Start the application runtime and initialize subsystems.
+#[allow(deprecated)] // temporary: allow deprecated compat_commands in invoke handler until FE migration completes
 ///
 /// # Panics
 /// Panics if a Tokio runtime cannot be created.
@@ -570,16 +571,23 @@ pub fn run() {
             commands::analysis::system_analysis::clear_analysis_cache,
             // Smart crawling commands
             commands::crawling::smart_crawling::calculate_crawling_range,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::crawling::smart_crawling::get_crawling_progress,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::crawling::smart_crawling::get_database_state_for_range_calculation,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::crawling::smart_crawling::demo_prompts6_calculation,
             // Simple crawling commands (Phase 1 - 즉시 안정화)
             // Removed start_smart_crawling (use start_unified_crawling)
 
             // Backend-Only CRUD commands (Modern Rust 2024 Architecture)
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::database::data_queries::get_products_page,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::database::data_queries::get_latest_products,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::database::data_queries::get_crawling_status_v2,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::database::data_queries::get_system_status,
             // Window Management commands (이미 config_commands에 구현됨)
             commands::config_commands::save_window_state,
@@ -600,6 +608,7 @@ pub fn run() {
             commands::actor_system::resume_session,
             commands::actor_system::get_session_status,
             commands::actor_system::request_graceful_shutdown,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::actor_system::test_session_actor_basic,
             commands::actor_system::list_actor_sessions,
             commands::actor_system::check_page_index_consistency,
@@ -610,9 +619,12 @@ pub fn run() {
             // Actor System Monitoring commands (Phase C: UI 개선)
             // Removed start_crawling_session (unified entrypoint)
 
-            // 🚀 Phase C: Real Crawling Commands (PRODUCTION-READY)
+            // 🚀 Phase C: Real Crawling Commands (temporarily gated; not used by FE)
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::crawling::real_crawling_commands::execute_real_crawling,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::crawling::real_crawling_commands::get_real_crawling_status,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::crawling::real_crawling_commands::cancel_real_crawling,
             // 🧪 Phase C: Crawling Test & Development Tools
             #[cfg(feature = "dev-tools")]
@@ -622,12 +634,18 @@ pub fn run() {
             #[cfg(feature = "dev-tools")]
             commands::crawling_test_commands::crawling_performance_benchmark,
             // 🔧 Phase C: Performance Optimization Tools
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::analysis::performance_commands::init_performance_optimizer,
             commands::analysis::performance_commands::get_current_performance_metrics,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::analysis::performance_commands::get_optimization_recommendation,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::analysis::performance_commands::get_performance_history,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::analysis::performance_commands::clear_performance_history,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::analysis::performance_commands::start_performance_session,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::analysis::performance_commands::end_performance_session,
             // 🎨 Phase C: Realtime Dashboard Tools (temporarily disabled while UI is archived)
             // commands::dashboard_commands::init_dashboard_service,
@@ -660,6 +678,10 @@ pub fn run() {
             commands::devtools::db_diagnostics::scan_db_pagination_mismatches,
             #[cfg(feature = "dev-tools")]
             commands::devtools::debug_commands::ui_debug_log,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
+            commands::analysis::system_analysis::get_analysis_cache_status,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
+            commands::analysis::system_analysis::clear_analysis_cache,
             #[cfg(feature = "dev-tools")]
             commands::database::db_repair::sync_product_details_coordinates,
             #[cfg(feature = "dev-tools")]

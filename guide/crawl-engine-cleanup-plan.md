@@ -240,6 +240,7 @@ src-tauri/src/commands/
 - **문서**: 이 문서는 모든 리팩토링 작업의 중심. 작업 시작 전 계획을 업데이트하고, 완료 후 체크리스트를 갱신.
 
 ## 변경 로그(요약)
+- **2025-09-05**: Rust 2024 모듈 전환 완료(`mod.rs` 전량 제거) 및 서비스 레이어 일원화(`application/services` 기준, 레거시 `src-tauri/src/services/dashboard_service.rs` 제거). 빌드/타입 생성/TS 타입체크 모두 그린.
 - **2025-09-03**: Gemini 제안에 따라 `src` 전체 리팩토링 계획으로 확장. Phase 0, 1, 2로 구조화. `_archive` 삭제 및 계층형 아키텍처 적용을 최우선 과제로 설정.
 - **2025-09-03(2)**: Commands 도메인 그룹화(\`crawling\`, \`database\`, \`analysis\`, \`devtools\`, \`legacy\`) 완료. `lib.rs` invoke_handler 및 re-export 정리. 상위 중복 파일 제거. `analysis::system_analysis`/`performance_commands` 이관 및 보완. `database::{data_queries, db_cleanup, db_repair}`와 `devtools::{db_diagnostics, debug_commands, product_details_analytics}` 정리. 빌드/타입체크 그린.
 - **2025-09-01**: Stage/Batch/Session Actor의 `emit` 헬퍼 도입 및 이벤트 경로 통일. clone 최소화 적용.
@@ -300,10 +301,11 @@ src-tauri/src/commands/
 - [ ] 남은 dev-only 커맨드 중 FE 미사용 함수의 `#[tauri::command]` 제거(내부 util로 전환)
 - [ ] cargo clippy --all-targets -- -D warnings 그린 달성(ASCII 로그, 불필요 allow 정리, dead_code 잔여 제거)
 - [ ] 최소 단위 테스트 추가: system_analysis happy path + db_diagnostics gate 동작
+ - [ ] FE invoke 이름을 actor_system 기반으로 일괄 전환하고, 전환 완료 후 호환 래퍼 제거
 
 중기(Phase 0 보완 및 품질 게이트 강화)
 - [x] `_archive` 디렉터리 완전 삭제 전 최종 참조 점검 후 제거 (완료: 2025-09-04)
-- [ ] `mod.rs` 잔여 제거 및 모듈 시스템 통일
+ - [x] `mod.rs` 잔여 제거 및 모듈 시스템 통일 (완료: 2025-09-05)
 - [ ] 통합 문서/README 업데이트(Commands 경로 변경 사항과 FE invoke 경로 안내)
 
 장기(Phase 1/엔진 정제)
