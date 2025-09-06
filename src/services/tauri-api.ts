@@ -22,6 +22,8 @@ import type {
   SystemStatePayload,
   LiveSystemState
 } from '../types/events';
+// Import concrete generated type file to avoid directory barrel resolution issues in bundler mode
+import type { StageBatcherSettings } from '../types/generated/StageBatcherSettings';
 
 /**
  * Service class for communicating with the Rust backend
@@ -1159,6 +1161,12 @@ export class TauriApiService {
     return () => {
       eventListeners.forEach(cleanup => cleanup());
     };
+  }
+
+  /** Fetch StageBatcher policy settings (read-only). */
+  async getStageBatcherSettings(): Promise<StageBatcherSettings> {
+    const res = await invoke<StageBatcherSettings>('get_stage_batcher_settings');
+    return res;
   }
 }
 

@@ -104,6 +104,7 @@ src/
   - [ ] 명백한 죽은 파일/폴더 제거(주석만, 실험/백업 잔재 등)
   - [ ] 중복 구현/이름만 다른 파일 통합 계획 수립 (`crawling_integration.rs` vs `real_crawling_integration.rs`)
   - [x] `crawl_engine` 루트(`crawl_engine.rs`)에서 하위 모듈 선언 및 `pub use`를 통한 API 표면 정리.
+  - [x] StageBatcher 헬퍼 도입 및 StageActor 적용(기본 no-op, 정책 훅 제공)
   - [ ] 파일/모듈 이름을 역할 기반으로 정리(예: `actor_system.rs` → `system.rs`)
   - [ ] dead_code/unused_imports 제거(도구: rust-analyzer, clippy)
   - [x] 불필요한 `clone()` 제거(1차)
@@ -288,6 +289,10 @@ Definition of Done(Phase 2.5)
 - **2025-09-05**: Rust 2024 모듈 전환 완료(`mod.rs` 전량 제거) 및 서비스 레이어 일원화(`application/services` 기준, 레거시 `src-tauri/src/services/dashboard_service.rs` 제거). 빌드/타입 생성/TS 타입체크 모두 그린.
 - **2025-09-06**: Typed Results 전환 마무리(Phase 2.5). StageResult.details를 typed(Vec<StageItemResult>)로 전환, BatchActor 변환 로직을 enum 매칭으로 재작성, 서비스/전략/테스트 업데이트. ts-rs 생성물에서 typed/legacy 이름을 명확히 분리. 백엔드 테스트·FE type-check 그린 유지. 레거시 타입은 Deprecated로 일시 유지(Phase 3에서 제거 예정).
 - **2025-09-06(2)**: Phase 3 완료. LegacyStageItemResult 및 변환/TS export 제거, SessionSummary 로그/브리지 정합화, clippy -D warnings 그린 달성, 테스트 226/226 통과.
+- **2025-09-06(3)**: StageBatcher 헬퍼 추가 및 StageActor에 배치 계획 훅 적용(기본 no-op). 배치 전 동시성/타임아웃/청크 정책을 외부화할 수 있는 주입 포인트(`set_batcher`/`with_batcher`) 제공. BatchActor는 `#[deprecated]`로 표시하여 단계적 제거 계획 시작(호환성 유지).
+- **2025-09-06(4)**: SessionActor에 StageActor 직행 토글 도입. 기본 정책 업데이트: debug/release 모두 기본적으로 StageActor 경로 사용(환경변수 `MC_USE_STAGE_DIRECT=0`으로 해제 가능). `legacy-batch` feature 도입(default on)으로 BatchActor 모듈을 기능 게이트 뒤로 이동(향후 기본 feature에서 제외 예정). `tests/stage_vs_batch_parity.rs`를 이벤트 구독 집계 기반으로 확장(ignored, 수동/CI 로그 비교용).
+- **2025-09-06(5)**: CI 파이프라인 정리 및 파리티 비교를 기본 엄격 모드로 승격. `scripts/ci_parity_compare.sh --strict`를 기본으로 실행하고, `workflow_dispatch.inputs.allowParityFailure=true`일 때만 비차단으로 전환. 파리티 요약(log artifacts) 업로드 유지.
+- **2025-09-06(6)**: Cargo feature 기본값에서 `legacy-batch` 제거(비활성). 기본 런타임은 StageActor 경로로 고정되며, 레거시 경로는 명시적으로 `--features legacy-batch` 빌드에서만 사용 가능. CI는 여전히 no-legacy 모드와 stage 모드를 병행 테스트.
 - **2025-09-03**: Gemini 제안에 따라 `src` 전체 리팩토링 계획으로 확장. Phase 0, 1, 2로 구조화. `_archive` 삭제 및 계층형 아키텍처 적용을 최우선 과제로 설정.
 - **2025-09-03(2)**: Commands 도메인 그룹화(\`crawling\`, \`database\`, \`analysis\`, \`devtools\`, \`legacy\`) 완료. `lib.rs` invoke_handler 및 re-export 정리. 상위 중복 파일 제거. `analysis::system_analysis`/`performance_commands` 이관 및 보완. `database::{data_queries, db_cleanup, db_repair}`와 `devtools::{db_diagnostics, debug_commands, product_details_analytics}` 정리. 빌드/타입체크 그린.
 - **2025-09-01**: Stage/Batch/Session Actor의 `emit` 헬퍼 도입 및 이벤트 경로 통일. clone 최소화 적용.
@@ -352,6 +357,14 @@ Definition of Done(Phase 2.5)
 - [x] cargo clippy --all-targets -- -D warnings 그린 달성(ASCII 로그, 불필요 allow 정리, dead_code 잔여 제거)
 - [x] 최소 단위 테스트 추가: system_analysis happy path + db_diagnostics gate 동작
 - [ ] FE invoke 이름을 actor_system 기반으로 일괄 전환하고, 전환 완료 후 호환 래퍼 제거
+
+단기(배치 경로 단순화)
+- [x] StageBatcher 주입 훅 추가 및 기본 no-op 배치 계획 적용
+- [ ] SessionActor가 BatchActor 경유 없이 StageActor(+StageBatcher)로 직접 라우팅하도록 점진 전환(기능 동등성 확인 후)
+- [x] BatchActor를 feature-gate(`legacy-batch`)로 축소(기본 on → 추후 off 전환 예정)
+- [x] Release 기본 경로를 StageActor로 전환(환경변수로 옵트아웃 가능)
+- [x] Parity 테스트: 이벤트 기반 집계 출력(로그 비교) 추가 및 CI 잡 마련
+- [ ] parity 스모크 테스트 확장: 이벤트 기반 요약 비교로 동등성 검증 강화(현재는 스캐폴드)
 
 중기(Phase 0 보완 및 품질 게이트 강화)
 - [x] `_archive` 디렉터리 완전 삭제 전 최종 참조 점검 후 제거 (완료: 2025-09-04)

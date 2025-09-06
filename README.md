@@ -81,6 +81,8 @@ npm run dev:unified
 - `bash scripts/generate_types.sh`: Rust 타입으로부터 TypeScript 타입을 다시 생성합니다.
 - `bash scripts/lint_rust.sh`: Rust 코드의 린트를 실행합니다.
 
+추가 가이드: 실행 모드 및 파리티 비교 방법은 `guide/runtime-modes-and-parity.md`를 참고하세요.
+
 ---
 
 ## 🔄 최근 변경 사항 (요약)

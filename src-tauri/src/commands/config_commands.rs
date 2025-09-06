@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
 use tracing::{debug, info};
+// For exposing StageBatcher settings (read-only UI)
+use crate::crawl_engine::system_config::{SystemConfig, StageBatcherSettings};
 
 // Local helpers for explicit numeric conversions where truncation is acceptable and bounded
 #[inline]
@@ -546,6 +548,19 @@ pub fn get_comprehensive_crawler_config() -> Result<ComprehensiveCrawlerConfig, 
     );
 
     Ok(config)
+}
+
+/// Get StageBatcher policy settings (read-only)
+#[tauri::command]
+/// # Errors
+/// This command currently cannot fail; it returns default SystemConfig values.
+/// In future when loading from files/environments, errors in parsing or validation
+/// will be surfaced here.
+pub fn get_stage_batcher_settings() -> Result<StageBatcherSettings, String> {
+    // For now, expose defaults to UI. When config files are present, switch to
+    // SystemConfig::for_environment or SystemConfig::from_file.
+    let cfg = SystemConfig::default();
+    Ok(cfg.performance.stage_batcher)
 }
 
 /// Frontend settingsStore compatibility: expose full AppConfig (mirrors legacy crawling_v4 commands)

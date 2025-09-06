@@ -71,6 +71,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [[bin]]
 name = "batch_actor_sanity"
 path = "src/bin/batch_actor_sanity.rs"
+required-features = ["legacy-batch"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -239,6 +240,7 @@ test-utils = []         # Testing utilities
 live_crawl_test = []    # Enable real async main for src/bin/live_crawl_test.rs
 legacy-ui = []          # Legacy UI-related commands (dashboard)
 dev-tools = []          # Developer/diagnostics command set (db utils, debug, analytics)
+legacy-batch = []       # Temporary: include legacy BatchActor (will be disabled by default later)
 
 [[bench]]
 name = "shared_service_benchmark"

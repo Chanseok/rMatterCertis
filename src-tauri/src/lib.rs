@@ -586,6 +586,8 @@ pub fn run() {
             commands::config_commands::maximize_window,
             commands::config_commands::show_window,
             commands::config_commands::write_frontend_log,
+            // Read-only StageBatcher settings exposure
+            commands::config_commands::get_stage_batcher_settings,
             // New Architecture Actor System commands (OneShot integration 완료)
             #[cfg(feature = "dev-tools")]
             commands::crawling::simple_actor_test::test_new_arch_channels,

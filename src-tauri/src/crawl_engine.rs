@@ -38,9 +38,10 @@ pub use integrated_context::IntegratedContext;
 pub use actor_event_bridge::ActorEventBridge; // Actor Event Bridge export
 pub use actor_system::ActorSystem;
 pub use actors::{
-    ActorCommand, ActorError, BatchActor, BatchConfig, SessionActor, StageActor, StageResult,
-    StageType,
+    ActorCommand, ActorError, BatchConfig, SessionActor, StageActor, StageResult, StageType,
 };
+#[cfg(feature = "legacy-batch")]
+pub use actors::BatchActor;
 pub use channels::types::{AppEvent, StageItem as ChannelStageItem};
 pub use config::SystemConfig;
 pub use events::*;

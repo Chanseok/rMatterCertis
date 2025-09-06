@@ -8,7 +8,9 @@ fn db_diagnostics_command_gating_compiles() {
     {
     // If this use resolves, the symbol is present under the gate.
     use matter_certis_v2_lib::commands::devtools::db_diagnostics::scan_db_pagination_mismatches as _sym;
-    let present = true; // presence check by successful import
+    // Reference the symbol so it's considered used without invoking it
+    let _ = &_sym;
+    let present = true; // presence check by successful import and reference
     assert!(present);
     }
 

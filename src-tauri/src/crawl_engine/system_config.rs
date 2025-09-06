@@ -5,6 +5,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use std::{collections::HashMap, time::Duration};
 use thiserror::Error;
 
@@ -83,6 +84,29 @@ pub struct PerformanceSettings {
     pub batch_sizes: BatchSizeSettings,
     pub concurrency: ConcurrencySettings,
     pub buffers: BufferSettings,
+    /// Stage batcher policy knobs (optional, defaults applied if missing)
+    #[serde(default)]
+    pub stage_batcher: StageBatcherSettings,
+}
+
+/// Policy knobs for StageBatcher (read-only for now; behavior remains pass-through)
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct StageBatcherSettings {
+    /// Optional maximum items per chunk when pre-planning batches (0 = disabled)
+    #[serde(default)]
+    pub max_chunk_size: u32,
+    /// Prefer reverse ordering for page-based stages when true
+    #[serde(default)]
+    pub prefer_reverse_order: bool,
+    /// Enforce an overall timeout per planned batch in milliseconds (None = use actor defaults)
+    #[serde(default)]
+    pub enforce_timeout_ms: Option<u64>,
+}
+
+impl Default for StageBatcherSettings {
+    fn default() -> Self {
+        Self { max_chunk_size: 0, prefer_reverse_order: false, enforce_timeout_ms: None }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -283,6 +307,7 @@ impl SystemConfig {
                     response_buffer_size: 16384,
                     temp_storage_limit_mb: 256,
                 },
+                stage_batcher: StageBatcherSettings::default(),
             },
             monitoring: MonitoringSettings {
                 metrics_interval_secs: 30,
@@ -326,7 +351,7 @@ impl SystemConfig {
         Ok(Self::default())
     }
 }
-
+ 
 /// 크롤링 설정 (호환성용)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlingSettings {

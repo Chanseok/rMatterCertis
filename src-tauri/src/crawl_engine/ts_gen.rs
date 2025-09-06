@@ -27,6 +27,8 @@ pub fn generate_ts_bindings() -> Result<(), Box<dyn std::error::Error>> {
     crate::crawl_engine::actors::types::PerformanceMetrics::export_all_to(out_dir)?;
     crate::crawl_engine::actors::types::SimpleMetrics::export_all_to(out_dir)?;
     crate::crawl_engine::actors::types::TaskKind::export_all_to(out_dir)?;
+    // Config types
+    crate::crawl_engine::system_config::StageBatcherSettings::export_all_to(out_dir)?;
 
     println!("TypeScript bindings generated successfully!");
     Ok(())

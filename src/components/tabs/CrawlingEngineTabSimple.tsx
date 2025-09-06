@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 // Types are relaxed locally to avoid tight coupling during integration
 import { tauriApi } from "../../services/tauri-api";
 import EventConsole from "../dev/EventConsole";
+import StageBatcherSettingsPanel from "../dev/StageBatcherSettingsPanel";
 import { usePulse } from "../../hooks/usePulse";
 import CountUp from "../common/CountUp";
 
@@ -2533,6 +2534,9 @@ export default function CrawlingEngineTabSimple() {
             </button>
             <Show when={consoleExpanded()}>
               <div class="animate-in slide-in-from-top duration-300">
+                <div class="p-4">
+                  <StageBatcherSettingsPanel />
+                </div>
                 <EventConsole />
               </div>
             </Show>

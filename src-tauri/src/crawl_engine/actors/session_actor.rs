@@ -19,8 +19,9 @@ use crate::crawl_engine::channels::types::AppEvent;
 use crate::crawl_engine::context::AppContext;
 use std::sync::Arc;
 
+#[cfg(feature = "legacy-batch")]
 use crate::crawl_engine::actors::BatchActor;
-use crate::crawl_engine::actors::types::BatchConfig;
+use crate::crawl_engine::actors::StageActor;
 use crate::crawl_engine::services::CrawlingPlanner;
 use crate::domain::services::{DatabaseAnalyzer, StatusChecker};
 use crate::infrastructure::config::AppConfig;
@@ -302,18 +303,61 @@ impl SessionActor {
             };
             self.emit(&context, start_evt)?;
 
-            if let Err(e) = self
-                .run_batch_with_services(
-                    &batch_id,
-                    &pages,
-                    context,
-                    deps,
-                    site_status,
-                    None,
-                    None,
-                )
-                .await
-            {
+            // Toggle between legacy BatchActor and direct StageActor path.
+            // Policy:
+            // - In debug builds, default to StageActor unless MC_USE_STAGE_DIRECT=0 explicitly set.
+            // - In release builds, now also default to StageActor unless MC_USE_STAGE_DIRECT=0 set.
+            // - If legacy-batch feature is disabled, always use StageActor path.
+            let env_pref = std::env::var("MC_USE_STAGE_DIRECT").ok().map(|v| {
+                let t = v.trim();
+                (t == "1") || t.eq_ignore_ascii_case("true")
+            });
+            // Compute once with feature gating to avoid unused assignment warnings.
+            let use_stage_direct: bool = {
+                #[cfg(not(feature = "legacy-batch"))]
+                { true }
+                #[cfg(feature = "legacy-batch")]
+                {
+                    match env_pref {
+                        Some(b) => b,
+                        None => {
+                            // Default to StageActor in both debug and release builds unless explicitly disabled.
+                            true
+                        }
+                    }
+                }
+            };
+
+            let run_result = if use_stage_direct {
+                self
+                    .run_batch_with_stage_actor(
+                        &batch_id,
+                        &pages,
+                        context,
+                        deps,
+                        site_status,
+                    )
+                    .await
+            } else {
+                #[cfg(feature = "legacy-batch")]
+                {
+                    self
+                        .run_batch_with_services(
+                            &batch_id,
+                            &pages,
+                            context,
+                            deps,
+                            site_status,
+                            None,
+                            None,
+                        )
+                        .await
+                }
+                #[cfg(not(feature = "legacy-batch"))]
+                { Ok(()) }
+            };
+
+            if let Err(e) = run_result {
                 error!("❌ Batch {} failed: {}", batch_id, e);
                 self.errors.push(format!("batch {batch_id}: {e}"));
                 let fail_event = AppEvent::SessionFailed { session_id: session_id.to_string(), error: format!("Batch {batch_id} failed: {e}"), final_failure: false, timestamp: Utc::now() };
@@ -347,7 +391,7 @@ impl SessionActor {
         site_status: &crate::domain::services::SiteStatus,
     ) -> Result<usize, SessionError> {
         let planned_batches = plan.crawling_ranges.len();
-    for (idx, range) in plan.crawling_ranges.iter().enumerate() {
+        for (idx, range) in plan.crawling_ranges.iter().enumerate() {
             // Build physical pages respecting reverse_order flag
             let pages: Vec<u32> = if range.reverse_order {
                 (range.end_page..=range.start_page).rev().collect()
@@ -356,18 +400,38 @@ impl SessionActor {
             };
             if pages.is_empty() { continue; }
             let batch_id = format!("{}-pre-{}", session_id, idx + 1);
-            if let Err(e) = self
-                .run_batch_with_services(
-                    &batch_id,
-                    &pages,
-                    context,
-                    deps,
-                    site_status,
-                    Some(plan.skip_duplicate_urls),
-                    Some(plan.plan_id.clone()),
-                )
-                .await
-            {
+            // Choose execution path based on feature flags. If legacy-batch is disabled,
+            // fall back to direct StageActor execution so preplanned runs actually process pages.
+            let run_result: Result<(), SessionError> = {
+                #[cfg(feature = "legacy-batch")]
+                {
+                    self
+                        .run_batch_with_services(
+                            &batch_id,
+                            &pages,
+                            context,
+                            deps,
+                            site_status,
+                            Some(plan.skip_duplicate_urls),
+                            Some(plan.plan_id.clone()),
+                        )
+                        .await
+                }
+                #[cfg(not(feature = "legacy-batch"))]
+                {
+                    self
+                        .run_batch_with_stage_actor(
+                            &batch_id,
+                            &pages,
+                            context,
+                            deps,
+                            site_status,
+                        )
+                        .await
+                }
+            };
+
+            if let Err(e) = run_result {
                 error!("Batch {} failed: {}", batch_id, e);
                 self.errors.push(format!("batch {batch_id}: {e}"));
                 let fail_event = AppEvent::SessionFailed {
@@ -379,11 +443,13 @@ impl SessionActor {
                 if let Err(er) = self.emit(&context, fail_event) {
                     error!("emit batch fail event error: {}", er);
                 }
+            } else {
+                // Count only on successful execution
+                self.processed_batches = self.processed_batches.saturating_add(1);
+                self.total_success_count = self
+                    .total_success_count
+                    .saturating_add(pages.len() as u32);
             }
-            self.processed_batches = self.processed_batches.saturating_add(1);
-            self.total_success_count = self
-                .total_success_count
-                .saturating_add(pages.len() as u32);
         }
         Ok(planned_batches)
     }
@@ -789,6 +855,7 @@ impl SessionActor {
     // (Removed misplaced unified detail crawling block)
 
     /// 실서비스가 주입된 `BatchActor를` 생성해 주어진 페이지들을 처리
+    #[cfg(feature = "legacy-batch")]
     async fn run_batch_with_services(
         &mut self,
         batch_id: &str,
@@ -859,6 +926,64 @@ impl SessionActor {
             self.products_inserted = self.products_inserted.saturating_add(g.0);
             self.products_updated = self.products_updated.saturating_add(g.1);
         }
+        Ok(())
+    }
+
+    /// Run a list-page batch directly via StageActor, bypassing BatchActor.
+    async fn run_batch_with_stage_actor(
+        &mut self,
+        batch_id: &str,
+        pages: &[u32],
+        context: &AppContext,
+        deps: &SessionDeps,
+        site_status: &crate::domain::services::SiteStatus,
+    ) -> Result<(), SessionError> {
+        use crate::crawl_engine::actors::types::StageType;
+        use crate::crawl_engine::channels::types::StageItem;
+        use std::sync::Arc;
+
+        let app_config = AppConfig::for_development();
+        let config_concurrency = app_config.user.crawling.workers.list_page_max_concurrent as u32;
+        let timeout_secs = app_config.user.crawling.timing.operation_timeout_seconds;
+
+        // Build StageDeps and StageActor
+        let deps_stage = crate::crawl_engine::actors::stage_actor::StageDeps {
+            http_client: Arc::clone(&deps.http_client),
+            data_extractor: Arc::clone(&deps.data_extractor),
+            product_repo: Arc::clone(&deps.product_repo),
+            app_config: app_config.clone(),
+            duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
+        };
+        let mut stage_actor = StageActor::new_with_deps(
+            format!("stage_list_{}", batch_id),
+            batch_id.to_string(),
+            deps_stage,
+            Arc::new(crate::crawl_engine::stages::DefaultStageLogicFactory),
+        );
+        // 설정 기반 정책 배처 주입 (현재 no-op 설정)
+        {
+            use crate::crawl_engine::actors::stage_batcher::ConfigurableStageBatcher;
+            let cfg = context.config.performance.stage_batcher.clone();
+            let batcher = Arc::new(ConfigurableStageBatcher::from_settings(cfg));
+            stage_actor.set_batcher(batcher);
+        }
+        stage_actor.set_site_pagination_hints(site_status.total_pages, site_status.products_on_last_page);
+
+        // Map pages to StageItems
+        let items: Vec<StageItem> = pages.iter().copied().map(StageItem::Page).collect();
+
+        // Execute list-page stage
+        let _res = stage_actor
+            .execute_stage(
+                StageType::ListPageCrawling,
+                items,
+                config_concurrency,
+                timeout_secs,
+                context,
+            )
+            .await
+            .map_err(|e| SessionError::ContextError(format!("StageActor list run failed: {e:?}")))?;
+
         Ok(())
     }
 

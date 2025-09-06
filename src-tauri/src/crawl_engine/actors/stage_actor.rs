@@ -18,6 +18,7 @@ use crate::crawl_engine::actors::types::{
     ActorCommand, ActorError, AppEvent, SimpleMetrics, StageError, StageItemResult, StageItemType,
     StageResult, StageType,
 };
+use crate::crawl_engine::actors::stage_batcher::{DefaultStageBatcher, StageBatcher};
 use crate::crawl_engine::channels::types::StageItem;
 use crate::crawl_engine::integrated_context::AppContext;
 use crate::crawl_engine::stages::traits::StageLogicFactory;
@@ -192,6 +193,9 @@ pub struct StageActor {
 
     // 전략 분기 (Phase 3)
     strategy_factory: Arc<dyn StageLogicFactory + Send + Sync>,
+
+    // 배치 정책 헬퍼(액터 아님) - 기본은 no-op
+    batcher: Arc<dyn StageBatcher>,
 }
 
 // Extension trait to restore helper methods expected by per-item task logic
@@ -646,7 +650,21 @@ impl StageActor {
             site_total_pages_hint: None,
             products_on_last_page_hint: None,
             strategy_factory,
+            // Default to a no-op batcher; callers can replace via a setter in the future if needed
+            batcher: Arc::new(DefaultStageBatcher),
         }
+    }
+
+    /// Optionally replace the batch planning helper. This allows custom chunking/concurrency policies.
+    pub fn set_batcher(&mut self, batcher: Arc<dyn StageBatcher>) {
+        self.batcher = batcher;
+    }
+
+    /// Builder-style API to replace the batcher and return self for chaining.
+    #[must_use]
+    pub fn with_batcher(mut self, batcher: Arc<dyn StageBatcher>) -> Self {
+        self.batcher = batcher;
+        self
     }
 
 
@@ -852,16 +870,24 @@ impl StageActor {
     async fn process_stage_items(
         &mut self,
         stage_type: StageType,
-        items: Vec<StageItem>,
-        concurrency_limit: u32,
+    raw_items: Vec<StageItem>,
+    raw_concurrency_limit: u32,
         _context: &AppContext,
-        overall_timeout: Duration,
+    raw_overall_timeout: Duration,
     ) -> Result<StageResult, StageError> {
         debug!(
-            "Processing {} items for stage {:?}",
-            items.len(),
+            "Processing {} raw items for stage {:?}",
+            raw_items.len(),
             stage_type
         );
+
+    // 배치 정책 적용 (현재는 no-op 계획)
+    let plan = self
+        .batcher
+        .plan(&stage_type, raw_items, raw_concurrency_limit, raw_overall_timeout);
+    let items = plan.items;
+    let concurrency_limit = plan.concurrency_limit;
+    let overall_timeout = plan.overall_timeout;
 
     // 의존성/설정 클론 (Arc 복사)
     let deps_arc = self.deps.clone();

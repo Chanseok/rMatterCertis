@@ -29,6 +29,7 @@ pub enum BatchState {
 
 /// 배치 실행을 담당하는 Actor
 #[allow(clippy::struct_excessive_bools)]
+#[deprecated(since = "0.2.0", note = "BatchActor will be phased out; prefer SessionActor + StageActor with StageBatcher policy helper.")]
 pub struct BatchActor {
     pub(crate) actor_id: String,
     pub(crate) batch_id: Option<String>,
@@ -542,6 +543,13 @@ impl BatchActor {
             deps,
             Arc::new(crate::crawl_engine::stages::DefaultStageLogicFactory),
         );
+        // 설정 기반 정책 배처 주입 (현재는 pass-through)
+        {
+            use crate::crawl_engine::actors::stage_batcher::ConfigurableStageBatcher;
+            let cfg = context.config.performance.stage_batcher.clone();
+            let batcher = std::sync::Arc::new(ConfigurableStageBatcher::from_settings(cfg));
+            stage_actor.set_batcher(batcher);
+        }
 
         // StageActor로 Stage 실행 (실제 items 전달)
         // Use configurable operation timeout instead of hard-coded 30s
@@ -605,6 +613,13 @@ impl BatchActor {
             deps,
             Arc::new(crate::crawl_engine::stages::DefaultStageLogicFactory),
         );
+        // 설정 기반 정책 배처 주입 (현재는 pass-through)
+        {
+            use crate::crawl_engine::actors::stage_batcher::ConfigurableStageBatcher;
+            let cfg = context.config.performance.stage_batcher.clone();
+            let batcher = std::sync::Arc::new(ConfigurableStageBatcher::from_settings(cfg));
+            stage_actor.set_batcher(batcher);
+        }
 
         if let (Some(tp), Some(plp)) = (total_pages_hint, products_on_last_page_hint) {
             stage_actor.set_site_pagination_hints(tp, plp);
