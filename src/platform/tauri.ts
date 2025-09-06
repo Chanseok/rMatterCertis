@@ -38,12 +38,8 @@ export interface MethodParamsMapping {
   search_matter_products: MatterProductFilterDto;
   delete_product: { product_url: string };
   
-  // Crawling commands
+  // Crawling commands (legacy names kept only at method layer; core mapping uses actor-system)
   start_crawling: StartCrawlingDto;
-  get_crawling_status: { session_id?: string };
-  stop_crawling: { session_id: string };
-  pause_crawling: { session_id: string };
-  resume_crawling: { session_id: string };
   get_crawling_stats: { session_id?: string };
   get_active_crawling_sessions: void;
   get_crawling_session_history: { limit?: number };
@@ -76,10 +72,6 @@ export interface MethodReturnMapping {
   
   // Crawling commands
   start_crawling: SessionStatusDto;
-  get_crawling_status: SessionStatusDto;
-  stop_crawling: SessionStatusDto;
-  pause_crawling: SessionStatusDto;
-  resume_crawling: SessionStatusDto;
   get_crawling_stats: CrawlingStats;
   get_active_crawling_sessions: SessionStatusDto[];
   get_crawling_session_history: SessionStatusDto[];
@@ -256,19 +248,24 @@ export class TauriApiAdapter {
   }
 
   async getCrawlingStatus(sessionId?: string): Promise<SessionStatusDto> {
-    return this.invoke('get_crawling_status', sessionId ? { session_id: sessionId } : undefined);
+    // Route to new actor-system API (compat shim retained for old command name)
+    if (!sessionId) {
+      throw new Error('sessionId is required for getCrawlingStatus with actor-system API');
+    }
+    return invoke('get_session_status', { session_id: sessionId });
   }
 
   async stopCrawling(sessionId: string): Promise<SessionStatusDto> {
-    return this.invoke('stop_crawling', { session_id: sessionId });
+  // Actor-system graceful shutdown does not require session_id currently
+  return invoke('request_graceful_shutdown');
   }
 
   async pauseCrawling(sessionId: string): Promise<SessionStatusDto> {
-    return this.invoke('pause_crawling', { session_id: sessionId });
+  return invoke('pause_session', { session_id: sessionId });
   }
 
   async resumeCrawling(sessionId: string): Promise<SessionStatusDto> {
-    return this.invoke('resume_crawling', { session_id: sessionId });
+  return invoke('resume_session', { session_id: sessionId });
   }
 
   async getCrawlingStats(sessionId?: string): Promise<any> {

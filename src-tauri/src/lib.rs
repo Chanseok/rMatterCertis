@@ -222,8 +222,7 @@ pub mod commands {
     pub mod real_actor_commands; // 🎭 Real Actor 시스템 명령어 (moved here)
     }
     pub mod legacy {
-        #[cfg(feature = "legacy-ui")]
-        pub mod dashboard_commands; // 🎨 Phase C: 실시간 대시보드 (legacy gated)
+    // dashboard UI removed (Option B); legacy module deleted
     }
     // moved under devtools::real_actor_commands
     // moved under crawling/ with alias re-exports below
@@ -231,8 +230,6 @@ pub mod commands {
     // pub mod simple_actor_test;
     // pub mod smart_crawling;
     pub mod sync_commands;
-    // Legacy compatibility wrappers for FE invokes
-    pub mod compat_commands;
     // pub mod unified_crawling; // 🎯 NEW: 통합 크롤링 명령어 (Actor 시스템 진입점)
     pub mod validation_commands; // ✅ Validation pass commands (page/index integrity) // 🔄 Partial Sync (recrawl + DB upsert) // 🧹 DB URL duplicate cleanup
 
@@ -240,9 +237,9 @@ pub mod commands {
     // simple_crawling removed
     pub use advanced_engine_api::*; // Advanced Engine 명령어 export
     pub use config_commands::*; // Config and window management 명령어 export
-    // New: relocated crawling_test_commands under devtools; preserve legacy path
+    // Dev-only crawling test utilities (no legacy path shim)
     #[cfg(feature = "dev-tools")]
-    pub use self::devtools::crawling_test_commands as crawling_test_commands;
+    pub use self::devtools::crawling_test_commands;
     #[cfg(feature = "dev-tools")]
     pub use self::devtools::crawling_test_commands::*;
     #[cfg(feature = "dev-tools")]
@@ -295,10 +292,7 @@ pub mod commands {
     #[cfg(feature = "dev-tools")]
     pub use devtools::product_details_analytics::*;
     // Legacy exports
-    #[cfg(feature = "legacy-ui")]
-    pub use legacy::dashboard_commands as dashboard_commands;
-    #[cfg(feature = "legacy-ui")]
-    pub use legacy::dashboard_commands::*; // Phase C 대시보드 명령어 export
+    // dashboard legacy exports removed
     // real_crawling_commands re-exported above via crawling:: alias
     pub use sync_commands::*; // Partial Sync 명령어 export // DB cleanup 명령어 export // Export analytics command
 } // Modern Rust 2024 - 명시적 모듈 선언
@@ -312,7 +306,6 @@ pub mod commands {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Start the application runtime and initialize subsystems.
-#[allow(deprecated)] // temporary: allow deprecated compat_commands in invoke handler until FE migration completes
 ///
 /// # Panics
 /// Panics if a Tokio runtime cannot be created.
@@ -567,7 +560,9 @@ pub fn run() {
             // System Analysis commands (proposal6.md Phase 3)
             commands::analysis::system_analysis::analyze_system_status,
             commands::analysis::system_analysis::diagnose_and_repair_data,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::analysis::system_analysis::get_analysis_cache_status,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::analysis::system_analysis::clear_analysis_cache,
             // Smart crawling commands
             commands::crawling::smart_crawling::calculate_crawling_range,
@@ -628,14 +623,15 @@ pub fn run() {
             commands::crawling::real_crawling_commands::cancel_real_crawling,
             // 🧪 Phase C: Crawling Test & Development Tools
             #[cfg(feature = "dev-tools")]
-            commands::crawling_test_commands::quick_crawling_test,
+            commands::devtools::crawling_test_commands::quick_crawling_test,
             #[cfg(feature = "dev-tools")]
-            commands::crawling_test_commands::check_site_status_only,
+            commands::devtools::crawling_test_commands::check_site_status_only,
             #[cfg(feature = "dev-tools")]
-            commands::crawling_test_commands::crawling_performance_benchmark,
+            commands::devtools::crawling_test_commands::crawling_performance_benchmark,
             // 🔧 Phase C: Performance Optimization Tools
             #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::analysis::performance_commands::init_performance_optimizer,
+            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::analysis::performance_commands::get_current_performance_metrics,
             #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::analysis::performance_commands::get_optimization_recommendation,
@@ -668,20 +664,11 @@ pub fn run() {
             commands::sync_commands::retry_failed_details,
             commands::sync_commands::start_diagnostic_sync,
             commands::actor_system::start_manual_crawl_pages_actor,
-            // Legacy invoke compatibility wrappers (kept minimal)
-            commands::compat_commands::get_crawling_status,
-            commands::compat_commands::pause_crawling,
-            commands::compat_commands::resume_crawling,
-            commands::compat_commands::stop_crawling,
-            commands::compat_commands::resume_from_token_compat,
+            // Legacy invoke compatibility wrappers removed (FE migrated to actor_system)
             #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::devtools::db_diagnostics::scan_db_pagination_mismatches,
             #[cfg(feature = "dev-tools")]
             commands::devtools::debug_commands::ui_debug_log,
-            #[cfg(any(feature = "dev-tools", debug_assertions))]
-            commands::analysis::system_analysis::get_analysis_cache_status,
-            #[cfg(any(feature = "dev-tools", debug_assertions))]
-            commands::analysis::system_analysis::clear_analysis_cache,
             #[cfg(feature = "dev-tools")]
             commands::database::db_repair::sync_product_details_coordinates,
             #[cfg(feature = "dev-tools")]

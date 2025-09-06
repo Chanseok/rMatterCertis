@@ -80,3 +80,14 @@ npm run dev:unified
 - `npm run tauri:build`: 프로덕션용으로 앱을 빌드합니다.
 - `bash scripts/generate_types.sh`: Rust 타입으로부터 TypeScript 타입을 다시 생성합니다.
 - `bash scripts/lint_rust.sh`: Rust 코드의 린트를 실행합니다.
+
+---
+
+## 🔄 최근 변경 사항 (요약)
+
+- Rust 2024 모듈 스타일로 전환: `mod.rs` 제거, 파일 기반 모듈로 재구성.
+- 명령 구조 정리: `commands::{crawling, database, analysis, devtools, legacy}`로 그룹화 및 재노출 유지.
+- Actor System 명령어를 기본 진입점으로 통합: `start_actor_system_crawling`, `pause_session`, `resume_session`, `get_session_status`, `request_graceful_shutdown`.
+- 프론트엔드 invoke 마이그레이션 완료: 레거시 호환 래퍼 등록 제거.
+- FE 비참조 명령어를 컴파일 타임 게이트로 축소: 성능/분석 캐시/테스트/리얼크롤링 보조 명령어를 `dev-tools` 또는 `debug_assertions`로 한정.
+- `scripts/audit_tauri_commands_usage.sh`로 FE 사용 여부를 자동 점검; 현재 미참조 29개는 개발 전용으로 게이트됨.

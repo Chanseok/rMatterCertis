@@ -810,7 +810,7 @@ class CrawlerStore {
     this.setError(null);
 
     try {
-      const result = await safeApiCall(() => apiAdapter.stopCrawling(targetSessionId));
+  const result = await safeApiCall(() => apiAdapter.stopCrawling(targetSessionId));
       
       if (result.error) {
         this.setError(result.error.message);
@@ -840,7 +840,7 @@ class CrawlerStore {
     this.setError(null);
 
     try {
-      const result = await safeApiCall(() => apiAdapter.pauseCrawling(targetSessionId));
+  const result = await safeApiCall(() => apiAdapter.pauseCrawling(targetSessionId));
       
       if (result.error) {
         this.setError(result.error.message);
@@ -864,7 +864,7 @@ class CrawlerStore {
     this.setError(null);
 
     try {
-      const result = await safeApiCall(() => apiAdapter.resumeCrawling(targetSessionId));
+  const result = await safeApiCall(() => apiAdapter.resumeCrawling(targetSessionId));
       
       if (result.error) {
         this.setError(result.error.message);

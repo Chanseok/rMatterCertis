@@ -82,31 +82,33 @@ export class CrawlingService {
   }
 
   /**
-   * Get status of a crawling session (modern)
+   * Get status of a crawling session (migrated to actor_system)
    */
   static async getCrawlingStatus(sessionId: string): Promise<SessionStatusDto> {
-    return await invoke<SessionStatusDto>("get_crawling_status", { sessionId });
+    // New actor-system API
+    return await invoke<SessionStatusDto>("get_session_status", { session_id: sessionId });
   }
 
   /**
-   * Stop a crawling session
+   * Stop a crawling session (migrated to actor_system graceful shutdown)
    */
-  static async stopCrawling(sessionId: string): Promise<void> {
-    await invoke("stop_crawling", { sessionId });
+  static async stopCrawling(_sessionId: string): Promise<void> {
+    // request_graceful_shutdown does not require session_id currently
+    await invoke("request_graceful_shutdown");
   }
 
   /**
-   * Pause a crawling session
+   * Pause a crawling session (migrated to actor_system)
    */
   static async pauseCrawling(sessionId: string): Promise<void> {
-    await invoke("pause_crawling", { sessionId });
+    await invoke("pause_session", { session_id: sessionId });
   }
 
   /**
-   * Resume a crawling session
+   * Resume a crawling session (migrated to actor_system)
    */
   static async resumeCrawling(sessionId: string): Promise<void> {
-    await invoke("resume_crawling", { sessionId });
+    await invoke("resume_session", { session_id: sessionId });
   }
 
   /**

@@ -5,6 +5,7 @@
 import { Component, createSignal } from 'solid-js';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { tauriApi } from '../../services/tauri-api';
+import { apiAdapter } from '../../platform/tauri';
 import { crawlerStore } from '../../stores/crawlerStore';
 import type { CrawlingStatusCheck } from '../../types/crawling';
 import { CrawlingStatus } from '../../types/crawling';
@@ -81,7 +82,9 @@ export const StatusTab: Component = () => {
 
   const pauseCrawling = async () => {
     try {
-      await tauriApi.pauseCrawling();
+      const target = crawlerStore.currentSessionId();
+      if (!target) throw new Error('No active session');
+      await apiAdapter.pauseCrawling(target);
       console.log('⏸️ 크롤링 일시정지됨');
     } catch (error) {
       console.error('❌ 크롤링 일시정지 실패:', error);
@@ -90,7 +93,7 @@ export const StatusTab: Component = () => {
 
   const stopCrawling = async () => {
     try {
-      await tauriApi.stopCrawling();
+      await apiAdapter.stopCrawling('');
       console.log('⏹️ 크롤링 중지됨');
     } catch (error) {
       console.error('❌ 크롤링 중지 실패:', error);

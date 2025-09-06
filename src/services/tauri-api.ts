@@ -110,7 +110,20 @@ export class TauriApiService {
    */
   async pauseCrawling(): Promise<void> {
     try {
-      await invoke<void>('pause_crawling');
+      // Use actor-system: require current session id from store if available
+      // For simplicity, issue graceful pause to all sessions is not supported; UI should provide sessionId
+      // Keeping signature for compatibility with callers that don't pass id; no-op if none.
+      try {
+        const { crawlerStore } = await import('../stores/crawlerStore');
+        const sid = crawlerStore.currentSessionId();
+        if (sid) {
+          await invoke<void>('pause_session', { session_id: sid });
+          return;
+        }
+      } catch (e) {
+        // fallback: no session id available
+      }
+      throw new Error('No active session to pause');
     } catch (error) {
       throw new Error(`Failed to pause crawling: ${error}`);
     }
@@ -121,7 +134,15 @@ export class TauriApiService {
    */
   async resumeCrawling(): Promise<void> {
     try {
-      await invoke<void>('resume_crawling');
+      try {
+        const { crawlerStore } = await import('../stores/crawlerStore');
+        const sid = crawlerStore.currentSessionId();
+        if (sid) {
+          await invoke<void>('resume_session', { session_id: sid });
+          return;
+        }
+      } catch (e) {}
+      throw new Error('No paused session to resume');
     } catch (error) {
       throw new Error(`Failed to resume crawling: ${error}`);
     }
@@ -132,7 +153,7 @@ export class TauriApiService {
    */
   async stopCrawling(): Promise<void> {
     try {
-      await invoke<void>('stop_crawling');
+      await invoke<void>('request_graceful_shutdown');
     } catch (error) {
       throw new Error(`Failed to stop crawling: ${error}`);
     }
@@ -256,11 +277,15 @@ export class TauriApiService {
   }
 
   /**
-   * Get the current crawling progress and status
+   * Get the current crawling progress and status (deprecated: use actor-system API directly)
    */
   async getCrawlingStatus(): Promise<CrawlingProgress> {
     try {
-      return await invoke<CrawlingProgress>('get_crawling_status');
+      // Route to actor-system status using current sessionId if available
+      const { crawlerStore } = await import('../stores/crawlerStore');
+      const sid = crawlerStore.currentSessionId();
+      if (!sid) throw new Error('No active session');
+      return await invoke<any>('get_session_status', { session_id: sid });
     } catch (error) {
       throw new Error(`Failed to get crawling status: ${error}`);
     }
