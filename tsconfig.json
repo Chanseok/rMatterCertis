@@ -37,11 +37,26 @@
     "src/components/tabs/NewArchTestTab.tsx",
   "src/components/dashboard/**",
   "src/components/charts/**",
+  "src/components/visualizations/**",
     "src/components/HierarchicalEventMonitor.tsx",
     "src/components/dashboard/DomainStatusDashboard.tsx",
     "src/components/dashboard/DomainStatusDashboardDeprecated.tsx",
   // Exclude legacy generator output that has broken intra-module imports
-  "src/types/src/types/generated/**"
+  "src/types/src/types/generated/**",
+  // Exclude archived tabs (kept in src/_archive) and legacy/unused tabs in src/components/tabs
+  "src/_archive/**",
+  "src/components/tabs/ActorSystemTab.tsx",
+  "src/components/tabs/ActorSystemTab.css",
+  "src/components/tabs/DomainDashboardTab.tsx",
+  "src/components/tabs/GameDashboardTab.tsx",
+  "src/components/tabs/LiveCrawlingTab.tsx",
+  "src/components/tabs/LiveProductionTab.tsx",
+  "src/components/tabs/NewArchTestTab.tsx",
+  "src/components/tabs/NewArchTestTab.css",
+  "src/components/tabs/RealtimeDashboardTab.tsx",
+  "src/components/tabs/StatusTab.tsx",
+  // Exclude non-tab legacy components no longer used
+  "src/components/ActorSystemTab.tsx"
   ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

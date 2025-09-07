@@ -37,9 +37,9 @@ export const TabNavigation: Component = () => {
       setIsQuickCheckRunning(true);
       console.log("� 빠른 상태 체크 시작 (실시간 모니터링)...");
 
-      // 상태 탭으로 이동
-      setActiveTab("status");
-      windowState.setLastActiveTab("status");
+  // 이동: 현재 유효한 탭으로 안전하게 리디렉션 (설정 탭)
+  setActiveTab("settings");
+  windowState.setLastActiveTab("settings");
 
       // 잠시 후 상태 체크 실행 (UI가 로드될 시간을 줌)
       setTimeout(async () => {
@@ -63,9 +63,9 @@ export const TabNavigation: Component = () => {
       setIsSiteAnalysisRunning(true);
       console.log("🔍 사이트 종합 분석 시작 (사전 조사)...");
 
-      // 상태 탭으로 이동
-      setActiveTab("status");
-      windowState.setLastActiveTab("status");
+  // 이동: 현재 유효한 탭으로 안전하게 리디렉션 (분석 탭)
+  setActiveTab("analysis");
+  windowState.setLastActiveTab("analysis");
 
       // 잠시 후 사이트 분석 실행
       setTimeout(async () => {

@@ -7,7 +7,6 @@ import { Component, Show, createMemo, onMount } from 'solid-js';
 import { AppLayout } from './layout/AppLayout';
 import CrawlingEngineTabSimple from './tabs/CrawlingEngineTabSimple';
 import { SettingsTab } from './tabs/SettingsTab';
-import { StatusTab } from './tabs/StatusTab';
 import { LocalDBTab } from './tabs/LocalDBTab';
 import { AnalysisTab } from './tabs/AnalysisTab';
 // Archived tabs removed from runtime imports:
