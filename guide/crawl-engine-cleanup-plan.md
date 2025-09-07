@@ -290,9 +290,9 @@ Definition of Done(Phase 2.5)
 - **2025-09-06**: Typed Results 전환 마무리(Phase 2.5). StageResult.details를 typed(Vec<StageItemResult>)로 전환, BatchActor 변환 로직을 enum 매칭으로 재작성, 서비스/전략/테스트 업데이트. ts-rs 생성물에서 typed/legacy 이름을 명확히 분리. 백엔드 테스트·FE type-check 그린 유지. 레거시 타입은 Deprecated로 일시 유지(Phase 3에서 제거 예정).
 - **2025-09-06(2)**: Phase 3 완료. LegacyStageItemResult 및 변환/TS export 제거, SessionSummary 로그/브리지 정합화, clippy -D warnings 그린 달성, 테스트 226/226 통과.
 - **2025-09-06(3)**: StageBatcher 헬퍼 추가 및 StageActor에 배치 계획 훅 적용(기본 no-op). 배치 전 동시성/타임아웃/청크 정책을 외부화할 수 있는 주입 포인트(`set_batcher`/`with_batcher`) 제공. BatchActor는 `#[deprecated]`로 표시하여 단계적 제거 계획 시작(호환성 유지).
-- **2025-09-06(4)**: SessionActor에 StageActor 직행 토글 도입. 기본 정책 업데이트: debug/release 모두 기본적으로 StageActor 경로 사용(환경변수 `MC_USE_STAGE_DIRECT=0`으로 해제 가능). `legacy-batch` feature 도입(default on)으로 BatchActor 모듈을 기능 게이트 뒤로 이동(향후 기본 feature에서 제외 예정). `tests/stage_vs_batch_parity.rs`를 이벤트 구독 집계 기반으로 확장(ignored, 수동/CI 로그 비교용).
+- **2025-09-06(4)**: SessionActor에 StageActor 직행 경로 도입. 기본 정책 업데이트: debug/release 모두 StageActor 경로 사용(환경변수 토글 제거). BatchActor 모듈은 기능 게이트 뒤로 이동 후 은퇴 수순. `tests/stage_vs_batch_parity.rs`는 기록용(역사적 맥락)으로만 유지 후 제거.
 - **2025-09-06(5)**: CI 파이프라인 정리 및 파리티 비교를 기본 엄격 모드로 승격. `scripts/ci_parity_compare.sh --strict`를 기본으로 실행하고, `workflow_dispatch.inputs.allowParityFailure=true`일 때만 비차단으로 전환. 파리티 요약(log artifacts) 업로드 유지.
-- **2025-09-06(6)**: Cargo feature 기본값에서 `legacy-batch` 제거(비활성). 기본 런타임은 StageActor 경로로 고정되며, 레거시 경로는 명시적으로 `--features legacy-batch` 빌드에서만 사용 가능. CI는 여전히 no-legacy 모드와 stage 모드를 병행 테스트.
+- **2025-09-06(6)**: Cargo feature에서 `legacy-batch` 완전 제거. 기본 런타임은 StageActor 경로로 고정. CI는 단일 경로만 테스트.
 - **2025-09-03**: Gemini 제안에 따라 `src` 전체 리팩토링 계획으로 확장. Phase 0, 1, 2로 구조화. `_archive` 삭제 및 계층형 아키텍처 적용을 최우선 과제로 설정.
 - **2025-09-03(2)**: Commands 도메인 그룹화(\`crawling\`, \`database\`, \`analysis\`, \`devtools\`, \`legacy\`) 완료. `lib.rs` invoke_handler 및 re-export 정리. 상위 중복 파일 제거. `analysis::system_analysis`/`performance_commands` 이관 및 보완. `database::{data_queries, db_cleanup, db_repair}`와 `devtools::{db_diagnostics, debug_commands, product_details_analytics}` 정리. 빌드/타입체크 그린.
 - **2025-09-01**: Stage/Batch/Session Actor의 `emit` 헬퍼 도입 및 이벤트 경로 통일. clone 최소화 적용.

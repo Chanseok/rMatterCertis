@@ -217,6 +217,16 @@ export default function CrawlingEngineTabSimple() {
   // Animation toggles
   const [validationPulse, setValidationPulse] = createSignal(false);
   const [persistFlash, setPersistFlash] = createSignal(false);
+  // Stage 5: last batch snapshot (for visibility alongside session totals)
+  const [persistLastBatch, setPersistLastBatch] = createSignal<{
+    attempted: number;
+    succeeded: number;
+    failed: number;
+    duplicates: number;
+    unchanged: number;
+    failedTrue: number;
+    durationMs: number;
+  } | null>(null);
   // Stage X: DB mismatch diagnostics
   const [diagLoading, setDiagLoading] = createSignal(false);
   const [diagResult, setDiagResult] = createSignal<any | null>(null);
@@ -1232,14 +1242,26 @@ export default function CrawlingEngineTabSimple() {
           console.log("[DEBUG] ProductLifecycleGroup persist event received:", payload);
           const attempted = Number(payload?.group_size ?? 0) || 0;
           const succeeded = Number(payload?.succeeded ?? 0) || 0;
-          // Backend's 'failed' may include unchanged; compute derived fields for UI clarity
+          // Backend 'failed' may include unchanged; compute clearer FE breakdown
           const failed = Number(payload?.failed ?? 0) || 0;
           const duplicates = Number(payload?.duplicates ?? 0) || 0;
           const unchanged = Math.max(0, attempted - (succeeded + duplicates));
           const failedTrue = Math.max(0, failed - duplicates - unchanged);
           const durationMs = Number(payload?.duration_ms ?? 0) || 0;
-          
-          setPersistStats({
+
+          // Accumulate over the session so multiple persist groups sum up
+          setPersistStats((prev) => ({
+            attempted: (prev.attempted || 0) + attempted,
+            succeeded: (prev.succeeded || 0) + succeeded,
+            failed: (prev.failed || 0) + failed,
+            duplicates: (prev.duplicates || 0) + duplicates,
+            unchanged: (prev.unchanged || 0) + unchanged,
+            failedTrue: (prev.failedTrue || 0) + failedTrue,
+            durationMs: (prev.durationMs || 0) + durationMs,
+          }));
+
+          // Snapshot the most recent batch
+          setPersistLastBatch({
             attempted,
             succeeded,
             failed,
@@ -1248,8 +1270,8 @@ export default function CrawlingEngineTabSimple() {
             failedTrue,
             durationMs,
           });
-          
-          // Also surface cumulative DB change counts when session report lags
+
+          // Also surface cumulative DB change counts when session report lags (treat succeeded as net changed rows)
           setDbSnapshot((prev) => ({
             ...prev,
             updated: (Number(prev.updated ?? 0) || 0) + succeeded,
@@ -1922,6 +1944,20 @@ export default function CrawlingEngineTabSimple() {
                     true
                   );
                   addLog(`✅ 수동 크롤링 세션 시작: ${JSON.stringify(res)}`);
+                  // Optimistically set planned counts for Stage 1/2
+                  setCrawlingRange((prev) => {
+                    const pages = uniquePages.length;
+                    const estimated_new_products = pages * 12;
+                    return {
+                      ...(prev || {}),
+                      crawling_info: {
+                        ...((prev as any)?.crawling_info || {}),
+                        pages_to_crawl: pages,
+                        estimated_new_products,
+                      },
+                      range: [Math.max(...uniquePages), Math.min(...uniquePages)],
+                    } as any;
+                  });
                   if (res?.session_id) {
                     addLog(`🆔 세션 ID: ${res.session_id}`);
                   }
@@ -2154,7 +2190,8 @@ export default function CrawlingEngineTabSimple() {
                   const planned = (cr?.crawling_info?.pages_to_crawl ??
                     ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 || 0)) as number;
                   const batchEst = pageStats().totalEstimated || 0;
-                  const est = batchEst > 0 ? batchEst : (planned > 0 ? planned : siteTotal);
+                  // Prefer planned total pages when available; fallback to batch-estimated, then site total.
+                  const est = planned > 0 ? planned : (batchEst > 0 ? batchEst : siteTotal);
                   return est > 0 ? `예상 ${est}p` : "";
                 })()}
               </span>
@@ -2202,7 +2239,7 @@ export default function CrawlingEngineTabSimple() {
                     const planned = (cr?.crawling_info?.pages_to_crawl ??
                       ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 || 0)) as number;
                     const batchEst = pageStats().totalEstimated || 0;
-                    const denom = batchEst > 0 ? batchEst : (planned > 0 ? planned : siteTotal);
+                    const denom = planned > 0 ? planned : (batchEst > 0 ? batchEst : siteTotal);
                     return denom > 0
                       ? Math.min(100, (pageStats().completed / denom) * 100)
                       : 0;
@@ -2231,10 +2268,14 @@ export default function CrawlingEngineTabSimple() {
               </Show>
               <span class="text-xs text-gray-500">
                 {(() => {
-                  const est = (crawlingRange()?.crawling_info?.estimated_new_products ?? 0) as number;
+                  const cr = crawlingRange();
+                  const plannedPages = (cr?.crawling_info?.pages_to_crawl ??
+                    ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 || 0)) as number;
+                  const plannedProducts = plannedPages > 0 ? plannedPages * 12 : 0;
+                  const est = (cr?.crawling_info?.estimated_new_products ?? 0) as number;
                   const observed = Math.max(detailStats().started || 0, detailStats().completed || 0);
-                  // Prefer observed (session-scoped) to avoid overestimation from global plan during manual runs
-                  const val = observed > 0 ? observed : (est > 0 ? est : 0);
+                  // Prefer planned products when available; else prefer observed; else backend estimate
+                  const val = plannedProducts > 0 ? plannedProducts : (observed > 0 ? observed : (est > 0 ? est : 0));
                   return val > 0 ? `예상 ${val}` : "";
                 })()}
               </span>
@@ -2497,6 +2538,20 @@ export default function CrawlingEngineTabSimple() {
             <div class="mt-2 text-xs text-gray-500">
               소요 시간: {persistStats().durationMs}ms
             </div>
+            {/* Last-batch concise row */}
+            <Show when={persistLastBatch()}>
+              <div class="mt-3 text-xs text-gray-600">
+                <div class="font-medium text-gray-700 mb-1">마지막 배치</div>
+                <div class="flex flex-wrap gap-3">
+                  <div>시도: <b>{persistLastBatch()!.attempted}</b></div>
+                  <div>성공: <b class="text-emerald-700">{persistLastBatch()!.succeeded}</b></div>
+                  <div>실패: <b class="text-rose-700">{persistLastBatch()!.failedTrue}</b></div>
+                  <div>중복: <b class="text-amber-700">{persistLastBatch()!.duplicates}</b></div>
+                  <div>미변경: <b class="text-slate-700">{persistLastBatch()!.unchanged}</b></div>
+                  <div>시간: {persistLastBatch()!.durationMs}ms</div>
+                </div>
+              </div>
+            </Show>
           </div>
         </div>
 

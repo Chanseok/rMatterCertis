@@ -6,20 +6,11 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
-    inputs:
-      allowParityFailure:
-        description: "Allow parity compare to be non-blocking"
-        type: boolean
-        default: false
 
 jobs:
   rust-tests:
-    name: "Rust tests (${{ matrix.mode }})"
+    name: Rust tests
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: [default, legacy]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -27,14 +18,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: Run cargo test (default features)
-        if: ${{ matrix.mode == 'default' }}
+      - name: Run cargo test
         working-directory: src-tauri
         run: cargo test --all -q
-      - name: Run cargo test (with legacy-batch feature)
-        if: ${{ matrix.mode == 'legacy' }}
-        working-directory: src-tauri
-        run: cargo test --all -q --features legacy-batch
 
   ts-typecheck:
     name: TypeScript type-check
@@ -60,34 +46,4 @@ jobs:
         continue-on-error: true
         run: bash scripts/check_url_slot_id_consistency.sh
 
-  parity-compare:
-    name: Parity compare (stage vs legacy)
-    runs-on: ubuntu-latest
-    needs: [rust-tests, ts-typecheck]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      - name: Run parity compare
-        shell: bash
-        run: |
-          # Run in strict mode for push/PR events, or for manual runs where allowParityFailure is false.
-          # Run in non-blocking mode only for manual runs where allowParityFailure is true.
-          if [[ "${{ github.event_name }}" != "workflow_dispatch" || "${{ github.event.inputs.allowParityFailure }}" != "true" ]]; then
-            echo "Running parity compare in --strict mode"
-            bash scripts/ci_parity_compare.sh --strict
-          else
-            echo "Running parity compare in non-blocking mode"
-            bash scripts/ci_parity_compare.sh
-          fi
-      - name: Upload parity summaries (always)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: parity-summaries
-          path: |
-            parity/
-            src-tauri/parity/
+  # parity-compare job removed with legacy BatchActor retirement

@@ -18,14 +18,6 @@ interface ActorSystemStatus {
     total_processed: number;
     uptime_seconds: number;
   };
-  batch_actors: Array<{
-    id: string;
-    status: 'idle' | 'processing' | 'waiting' | 'completed' | 'error';
-    current_stage: string | null;
-    processed_items: number;
-    success_rate: number;
-    error_count: number;
-  }>;
   stage_actors: Array<{
     id: string;
     stage_type: string;
@@ -544,52 +536,7 @@ ${error}
                 </div>
               </div>
 
-              {/* Batch Actors 상태 */}
-              <div class="actor-section">
-                <h3>📦 Batch Actors ({systemStatus()!.batch_actors.length})</h3>
-                <div class="batch-actors-grid">
-                  <For each={systemStatus()!.batch_actors}>
-                    {(batchActor) => (
-                      <div class="batch-actor-card">
-                        <div class="actor-header">
-                          <span 
-                            class="status-indicator"
-                            style={{ "background-color": getStatusColor(batchActor.status) }}
-                          ></span>
-                          <span class="actor-id">{batchActor.id}</span>
-                        </div>
-                        
-                        <div class="actor-details">
-                          <div class="detail-row">
-                            <span>상태:</span>
-                            <span>{batchActor.status}</span>
-                          </div>
-                          {batchActor.current_stage && (
-                            <div class="detail-row">
-                              <span>현재 단계:</span>
-                              <span>{batchActor.current_stage}</span>
-                            </div>
-                          )}
-                          <div class="detail-row">
-                            <span>처리 항목:</span>
-                            <span>{batchActor.processed_items}</span>
-                          </div>
-                          <div class="detail-row">
-                            <span>성공률:</span>
-                            <span>{batchActor.success_rate.toFixed(1)}%</span>
-                          </div>
-                          <div class="detail-row">
-                            <span>오류 수:</span>
-                            <span class={batchActor.error_count > 0 ? 'error-count' : ''}>
-                              {batchActor.error_count}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </For>
-                </div>
-              </div>
+              {/* Batch Actors section hidden (legacy path retired) */}
 
               {/* Stage Actors 상태 */}
               <div class="actor-section">

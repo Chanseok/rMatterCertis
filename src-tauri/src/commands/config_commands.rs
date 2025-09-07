@@ -46,8 +46,9 @@ use crate::{
     application::state::AppState,
     infrastructure::config::{AppConfig, ConfigManager, LoggingConfig, csa_iot},
 };
-#[cfg(feature = "dev-tools")]
-use crate::infrastructure::config::utils;
+// dev-tools utils are referenced via fully qualified paths; no direct import needed.
+// #[cfg(feature = "dev-tools")]
+// use crate::infrastructure::config::utils;
 
 /// Frontend-friendly configuration structure
 /// This is what gets exposed to the frontend via IPC

@@ -22,7 +22,9 @@ impl RealCrawlingIntegration {
 
 // NOTE: StageActor integration methods were unified into `crawling_integration.rs`.
 
-/// `BatchActor` 확장: 실제 크롤링 서비스를 사용하는 `OneShot` 스테이지 실행
+// Legacy BatchActor path retired. Keep the following extension methods behind an always-false cfg
+// to preserve history without referencing removed types at compile time.
+#[cfg(any())]
 impl crate::crawl_engine::actors::BatchActor {
     /// Stage 1용: 사이트 상태 점검을 수행하고 레거시 StageResult(details 포함)로 브리징
     pub async fn execute_status_check_with_details(

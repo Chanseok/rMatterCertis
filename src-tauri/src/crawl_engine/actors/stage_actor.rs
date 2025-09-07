@@ -464,6 +464,12 @@ impl StageActor {
                             }
                             guard.insert(guard_key);
                         }
+                        // Compute attempted upfront so we can emit grouped summary even when skip-save is on
+                        let attempted_count = match &lifecycle_item {
+                            StageItem::ValidatedProducts(v) => v.products.len() as u32,
+                            StageItem::ProductDetails(d) => d.products.len() as u32,
+                            _ => 0,
+                        };
                         let skip_save = std::env::var("MC_SKIP_DB_SAVE")
                             .ok()
                             .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
@@ -479,12 +485,33 @@ impl StageActor {
                                 metrics: Some(SimpleMetrics::Generic { key: "reason".into(), value: "MC_SKIP_DB_SAVE".into() }),
                                 timestamp: Utc::now(),
                             });
+                            // Emit grouped snapshot for Stage 5 panel even when skipping DB save
+                            Self::emit_best_effort(&ctx, AppEvent::ProductLifecycleGroup {
+                                session_id: session_id.clone(),
+                                batch_id: batch_id.clone(),
+                                page_number: None,
+                                group_size: attempted_count,
+                                started: attempted_count,
+                                succeeded: 0,
+                                failed: 0,
+                                duplicates: 0,
+                                duration_ms: item_start.elapsed().as_millis() as u64,
+                                phase: "persist".into(),
+                                timestamp: Utc::now(),
+                            });
+                            // Also emit a DatabaseStats snapshot (unchanged totals) so Stage 4 flashes
+                            if let Ok((cnt, minp, maxp, _)) = deps.product_repo.get_product_detail_stats().await {
+                                Self::emit_best_effort(&ctx, AppEvent::DatabaseStats {
+                                    session_id: session_id.clone(),
+                                    batch_id: batch_id.clone(),
+                                    total_product_details: cnt,
+                                    min_page: minp,
+                                    max_page: maxp,
+                                    note: Some("post_persist:nosave".into()),
+                                    timestamp: Utc::now(),
+                                });
+                            }
                         } else {
-                            let attempted_count = match &lifecycle_item {
-                                StageItem::ValidatedProducts(v) => v.products.len() as u32,
-                                StageItem::ProductDetails(d) => d.products.len() as u32,
-                                _ => 0,
-                            };
                             Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle {
                                 session_id: session_id.clone(),
                                 batch_id: batch_id.clone(),
@@ -508,6 +535,32 @@ impl StageActor {
                                     metrics: Some(SimpleMetrics::Generic { key: "persist_result".into(), value: "attempted=0".into() }),
                                     timestamp: Utc::now(),
                                 });
+                                // Emit grouped snapshot (empty)
+                                Self::emit_best_effort(&ctx, AppEvent::ProductLifecycleGroup {
+                                    session_id: session_id.clone(),
+                                    batch_id: batch_id.clone(),
+                                    page_number: None,
+                                    group_size: 0,
+                                    started: 0,
+                                    succeeded: 0,
+                                    failed: 0,
+                                    duplicates: 0,
+                                    duration_ms: 0,
+                                    phase: "persist".into(),
+                                    timestamp: Utc::now(),
+                                });
+                                // Emit DB stats snapshot as well
+                                if let Ok((cnt, minp, maxp, _)) = deps.product_repo.get_product_detail_stats().await {
+                                    Self::emit_best_effort(&ctx, AppEvent::DatabaseStats {
+                                        session_id: session_id.clone(),
+                                        batch_id: batch_id.clone(),
+                                        total_product_details: cnt,
+                                        min_page: minp,
+                                        max_page: maxp,
+                                        note: Some("post_persist:empty".into()),
+                                        timestamp: Utc::now(),
+                                    });
+                                }
                                 return Ok(StageItemResult { item_id: "data_saving_empty".into(), item_type: StageItemType::Url { url_type: "data_saving".into() }, success: true, error: None, duration_ms: item_start.elapsed().as_millis() as u64, retry_count: 0, collected_data: None });
                             }
                             let persist_start = Instant::now();
@@ -522,9 +575,60 @@ impl StageActor {
                                         else { "persist_mixed" };
                                     let metrics = SimpleMetrics::Generic { key: "persist_result".into(), value: format!("attempted={},inserted={},updated={},duplicates={},unchanged={}", attempted, inserted, updated, duplicates_ct, unchanged) };
                                     Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: None, product_ref: "_batch_persist".into(), status: status.into(), retry: None, duration_ms: Some(persist_start.elapsed().as_millis() as u64), metrics: Some(metrics), timestamp: Utc::now() });
+                                    // Emit grouped snapshot for UI Stage 5 panel
+                                    Self::emit_best_effort(&ctx, AppEvent::ProductLifecycleGroup {
+                                        session_id: session_id.clone(),
+                                        batch_id: batch_id.clone(),
+                                        page_number: None,
+                                        group_size: attempted,
+                                        started: attempted,
+                                        succeeded: inserted + updated,
+                                        failed: unchanged, // "true" failures are derived in UI; provide unchanged as baseline here
+                                        duplicates: duplicates_ct,
+                                        duration_ms: persist_start.elapsed().as_millis() as u64,
+                                        phase: "persist".into(),
+                                        timestamp: Utc::now(),
+                                    });
+                                    // Emit DatabaseStats snapshot to drive Stage 4 panel
+                                    if let Ok((cnt, minp, maxp, _)) = deps.product_repo.get_product_detail_stats().await {
+                                        Self::emit_best_effort(&ctx, AppEvent::DatabaseStats {
+                                            session_id: session_id.clone(),
+                                            batch_id: batch_id.clone(),
+                                            total_product_details: cnt,
+                                            min_page: minp,
+                                            max_page: maxp,
+                                            note: Some("post_persist".into()),
+                                            timestamp: Utc::now(),
+                                        });
+                                    }
                                 }
                                 Err(e) => {
                                     Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: None, product_ref: "_batch_persist".into(), status: "persist_failed".into(), retry: None, duration_ms: Some(persist_start.elapsed().as_millis() as u64), metrics: Some(SimpleMetrics::Generic { key: "error".into(), value: e }), timestamp: Utc::now() });
+                                    // Emit grouped failure snapshot and DB stats (unchanged)
+                                    Self::emit_best_effort(&ctx, AppEvent::ProductLifecycleGroup {
+                                        session_id: session_id.clone(),
+                                        batch_id: batch_id.clone(),
+                                        page_number: None,
+                                        group_size: attempted_count,
+                                        started: attempted_count,
+                                        succeeded: 0,
+                                        failed: attempted_count,
+                                        duplicates: 0,
+                                        duration_ms: persist_start.elapsed().as_millis() as u64,
+                                        phase: "persist".into(),
+                                        timestamp: Utc::now(),
+                                    });
+                                    if let Ok((cnt, minp, maxp, _)) = deps.product_repo.get_product_detail_stats().await {
+                                        Self::emit_best_effort(&ctx, AppEvent::DatabaseStats {
+                                            session_id: session_id.clone(),
+                                            batch_id: batch_id.clone(),
+                                            total_product_details: cnt,
+                                            min_page: minp,
+                                            max_page: maxp,
+                                            note: Some("post_persist:error".into()),
+                                            timestamp: Utc::now(),
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -711,10 +815,12 @@ impl StageActor {
         timeout_secs: u64,
         context: &AppContext,
     ) -> Result<StageResult, StageError> {
-        self.handle_execute_stage(stage_type, items, concurrency_limit, timeout_secs, context)
+        // Execute the stage and produce a result snapshot from current actor state
+        self
+            .handle_execute_stage(stage_type, items, concurrency_limit, timeout_secs, context)
             .await?;
 
-        Ok(StageResult {
+        let result = StageResult {
             processed_items: self.completed_items,
             successful_items: self.success_count,
             failed_items: self.failure_count,
@@ -723,7 +829,12 @@ impl StageActor {
                 .map_or(0, |start| start.elapsed().as_millis() as u64),
             // Now StageResult.details is typed; return as-is
             details: self.item_results.clone(),
-        })
+        };
+
+        // Important: reset internal state to Idle so caller can run subsequent stages sequentially
+        self.cleanup_stage();
+
+        Ok(result)
     }
 
     /// 스테이지 실행 처리

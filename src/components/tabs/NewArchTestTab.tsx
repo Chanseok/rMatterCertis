@@ -63,7 +63,6 @@ export const NewArchTestTab: Component = () => {
     await loadConfig();
     await runTest('channels', 'test_new_arch_channels');
     await runTest('session_actor', 'test_new_arch_session_actor');
-    await runTest('batch_actor', 'test_new_arch_batch_actor');
     await runTest('integration', 'test_new_arch_integration');
     await runTest('performance', 'test_new_arch_performance');
   };
@@ -71,7 +70,6 @@ export const NewArchTestTab: Component = () => {
   const testButtons = [
     { key: 'channels', label: '채널 통신 테스트', command: 'test_new_arch_channels' },
     { key: 'session_actor', label: 'SessionActor 테스트', command: 'test_new_arch_session_actor' },
-    { key: 'batch_actor', label: 'BatchActor 테스트', command: 'test_new_arch_batch_actor' },
     { key: 'integration', label: '통합 테스트', command: 'test_new_arch_integration' },
     { key: 'performance', label: '성능 테스트', command: 'test_new_arch_performance' }
   ];
@@ -115,7 +113,6 @@ export const NewArchTestTab: Component = () => {
   const testResultsList = [
     { key: 'channels', title: '채널 통신' },
     { key: 'session_actor', title: 'SessionActor' },
-    { key: 'batch_actor', title: 'BatchActor' },
     { key: 'integration', title: '통합 테스트' },
     { key: 'performance', title: '성능 테스트' }
   ];

@@ -1047,7 +1047,7 @@ export class TauriApiService {
     
     for (let i = 0; i < batches; i++) {
       setTimeout(() => {
-        // Simulate BatchActor events
+  // Simulate batch events (for UI only; no legacy BatchActor at runtime)
         window.dispatchEvent(new CustomEvent('actor-batch-started', {
           detail: {
             batch_id: `batch-${i + 1}`,

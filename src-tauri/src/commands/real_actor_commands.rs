@@ -1,10 +1,7 @@
 #![cfg(feature = "dev-tools")]
 //! 🎭 Real Actor System Commands
 //!
-//! `SessionActor` → `BatchActor` → `StageActor` 계층 구조로 병렬 크롤링 실행
-//! - `SessionActor`: `CrawlingPlanner` 기반 전체 세션 관리
-//! - `BatchActor`: 병렬 배치 실행 (sequential이 아닌 parallel)
-//! - `StageActor`: Stage 2,3,4를 순차 실행 (`SessionActor가` 아닌 `BatchActor가` 관리)
+//! Unified Actor flow (Stage-only runtime)
 //! - Frontend Events: 실시간 진행 상황 브로드캐스트
 
 use chrono::Utc;

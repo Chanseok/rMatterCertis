@@ -29,17 +29,7 @@ impl StageActor {
     }
 }
 
-// BatchActor - 기존 코드 호환성
-#[derive(Debug, Clone)]
-pub struct BatchActor {
-    pub batch_id: String,
-}
-
-impl BatchActor {
-    #[must_use] pub const fn new(batch_id: String) -> Self {
-        Self { batch_id }
-    }
-}
+// BatchActor compatibility removed
 
 // ActorSystem - 기존 코드 호환성
 #[derive(Debug, Clone)]

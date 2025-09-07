@@ -68,10 +68,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 ## Removed stale bins (files deleted): phase3_test, real_crawling_test_fixed
 
-[[bin]]
-name = "batch_actor_sanity"
-path = "src/bin/batch_actor_sanity.rs"
-required-features = ["legacy-batch"]
+## Removed legacy BatchActor sanity binary
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -240,7 +237,7 @@ test-utils = []         # Testing utilities
 live_crawl_test = []    # Enable real async main for src/bin/live_crawl_test.rs
 legacy-ui = []          # Legacy UI-related commands (dashboard)
 dev-tools = []          # Developer/diagnostics command set (db utils, debug, analytics)
-legacy-batch = []       # Temporary: include legacy BatchActor (will be disabled by default later)
+## legacy-batch feature removed: StageActor is the single runtime path now
 
 [[bench]]
 name = "shared_service_benchmark"

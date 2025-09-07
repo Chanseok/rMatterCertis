@@ -40,8 +40,7 @@ pub use actor_system::ActorSystem;
 pub use actors::{
     ActorCommand, ActorError, BatchConfig, SessionActor, StageActor, StageResult, StageType,
 };
-#[cfg(feature = "legacy-batch")]
-pub use actors::BatchActor;
+// BatchActor retired
 pub use channels::types::{AppEvent, StageItem as ChannelStageItem};
 pub use config::SystemConfig;
 pub use events::*;
