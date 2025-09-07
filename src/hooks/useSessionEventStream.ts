@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, Accessor } from 'solid-js';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { UnlistenFn } from '@tauri-apps/api/event';
 import { tauriApi } from '../services/tauri-api';
 
 // Simple throttle to batch rapid progress updates

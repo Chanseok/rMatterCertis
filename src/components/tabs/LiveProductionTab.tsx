@@ -4,4 +4,7 @@
  */
 
 import type { Component } from 'solid-js';
+
+// Archived stub: original moved to src/_archive/tabs/LiveProductionTab.tsx
 export const LiveProductionTab: Component = () => null;
+export default LiveProductionTab;

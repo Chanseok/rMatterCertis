@@ -7,7 +7,6 @@ import { createStore } from 'solid-js/store';
 import { invoke } from '@tauri-apps/api/core';
 
 // ts-rs로 생성된 타입들 import (Modern Rust 2024 ts-rs 정책)
-import type { WindowState as TauriWindowState } from '../types/generated/WindowState';
 import type { WindowPosition } from '../types/generated/WindowPosition';
 import type { WindowSize } from '../types/generated/WindowSize';
 

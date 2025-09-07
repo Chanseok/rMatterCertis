@@ -3,4 +3,7 @@
  */
 
 import type { Component } from 'solid-js';
+
+// Archived stub: original moved to src/_archive/tabs/DomainDashboardTab.tsx
 export const DomainDashboardTab: Component = () => null;
+export default DomainDashboardTab;

@@ -6,11 +6,8 @@
 import { For, Component, createSignal, onMount, onCleanup } from "solid-js";
 import { tabState, setActiveTab } from "../../stores/tabStore";
 import { windowState } from "../../stores/windowStore";
-import { tauriApi } from "../../services/tauri-api";
 
 export const TabNavigation: Component = () => {
-  const [isQuickCheckRunning, setIsQuickCheckRunning] = createSignal(false);
-  const [isSiteAnalysisRunning, setIsSiteAnalysisRunning] = createSignal(false);
   // Live clock (updates every 30s)
   const formatTime = () =>
     new Date().toLocaleTimeString("ko-KR", {
@@ -30,58 +27,6 @@ export const TabNavigation: Component = () => {
     setActiveTab(tabId);
     // 마지막 활성 탭을 windowState에 저장
     windowState.setLastActiveTab(tabId);
-  };
-
-  const runQuickStatusCheck = async () => {
-    try {
-      setIsQuickCheckRunning(true);
-      console.log("� 빠른 상태 체크 시작 (실시간 모니터링)...");
-
-  // 이동: 현재 유효한 탭으로 안전하게 리디렉션 (설정 탭)
-  setActiveTab("settings");
-  windowState.setLastActiveTab("settings");
-
-      // 잠시 후 상태 체크 실행 (UI가 로드될 시간을 줌)
-      setTimeout(async () => {
-        try {
-          const result = await tauriApi.getCrawlingStatusCheck();
-          console.log("✅ 빠른 상태 체크 완료:", result);
-        } catch (error) {
-          console.error("❌ 빠른 상태 체크 실패:", error);
-        } finally {
-          setIsQuickCheckRunning(false);
-        }
-      }, 100);
-    } catch (error) {
-      console.error("❌ 빠른 상태 체크 오류:", error);
-      setIsQuickCheckRunning(false);
-    }
-  };
-
-  const runSiteAnalysis = async () => {
-    try {
-      setIsSiteAnalysisRunning(true);
-      console.log("🔍 사이트 종합 분석 시작 (사전 조사)...");
-
-  // 이동: 현재 유효한 탭으로 안전하게 리디렉션 (분석 탭)
-  setActiveTab("analysis");
-  windowState.setLastActiveTab("analysis");
-
-      // 잠시 후 사이트 분석 실행
-      setTimeout(async () => {
-        try {
-          const result = await tauriApi.checkSiteStatus();
-          console.log("✅ 사이트 분석 완료:", result);
-        } catch (error) {
-          console.error("❌ 사이트 분석 실패:", error);
-        } finally {
-          setIsSiteAnalysisRunning(false);
-        }
-      }, 100);
-    } catch (error) {
-      console.error("❌ 사이트 분석 오류:", error);
-      setIsSiteAnalysisRunning(false);
-    }
   };
 
   return (

@@ -8,12 +8,9 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { loggingService } from './loggingService';
 import type {
   BackendCrawlerConfig,
   CrawlingProgress,
-  CrawlingResult,
-  CrawlingTaskStatus,
   CrawlingStatusCheck,
   DatabaseStats
 } from '../types/crawling';

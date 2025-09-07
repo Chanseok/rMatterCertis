@@ -3,6 +3,8 @@
  */
 
 import type { Component } from 'solid-js';
+
+// Archived stub: original moved to src/_archive/tabs/RealtimeDashboardTab.tsx
 const RealtimeDashboardTab: Component = () => null;
 export { RealtimeDashboardTab };
 export default RealtimeDashboardTab;

@@ -8,7 +8,6 @@
 import { createStore } from 'solid-js/store';
 import { createSignal, onCleanup } from 'solid-js';
 import { tauriApi } from '../services/tauri-api';
-import { FLAGS } from '../utils/env';
 import type { DatabaseStats } from '../types/crawling';
 
 // 데이터베이스 상태 인터페이스

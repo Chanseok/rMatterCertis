@@ -5,7 +5,8 @@
  */
 // Archived: remove runtime imports
 
-// Archived; stub to keep import paths valid if referenced accidentally.
 import type { Component } from 'solid-js';
+
+// Archived stub: original moved to src/_archive/tabs/LiveCrawlingTab.tsx
 export const LiveCrawlingTab: Component = () => null;
 export default LiveCrawlingTab;

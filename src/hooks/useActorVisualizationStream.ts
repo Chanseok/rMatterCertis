@@ -46,7 +46,6 @@ function normalize(raw: any): VisualizationEvent | null {
     case 'actor-stage-completed': return { ...base, type: 'stage', stageType: raw.stage_type } as VisualizationEvent;
     // Consolidated lifecycle (preferred in new pipeline): map to page type
     case 'actor-page-lifecycle': {
-      const status = (raw.status || '').toString().toLowerCase();
       const pageNum = raw.page_number ?? raw.page;
       return { ...base, type: 'page', page: Number(pageNum) } as VisualizationEvent;
     }

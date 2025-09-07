@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store";
-import { SystemStatePayload, AtomicTaskEvent, BatchInfo, StageInfo, TaskStatus } from "../types/events";
+import { SystemStatePayload, AtomicTaskEvent, BatchInfo, TaskStatus } from "../types/events";
 
 // 개별 작업 아이템 (페이지, 제품)
 export interface TaskItem {

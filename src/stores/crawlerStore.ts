@@ -9,20 +9,8 @@ import { createStore } from 'solid-js/store';
 import { createSignal, onCleanup } from 'solid-js';
 import { tauriApi } from '../services/tauri-api';
 import { apiAdapter, safeApiCall } from '../platform/tauri';
-import type {
-  Product,
-  ProductDetail,
-  SiteStatus,
-  DatabaseAnalysis
-} from '@/types';
-import type {
-  CrawlingProgress,
-  CrawlingTaskStatus,
-  CrawlingResult,
-  BackendCrawlerConfig,
-  CrawlingStatusCheck,
-  AtomicTaskEvent
-} from '../types/crawling';
+// types from '@/types' were unused and removed to satisfy noUnused
+import type { CrawlingProgress, CrawlingTaskStatus, CrawlingResult, BackendCrawlerConfig, CrawlingStatusCheck } from '../types/crawling';
 import { CrawlingStatus, CrawlingStage } from '../types/crawling';
 import { DatabaseHealth } from '../types/crawling';
 import type { 

@@ -4,4 +4,7 @@
  */
 
 import type { Component } from 'solid-js';
+
+// Archived stub: original moved to src/_archive/tabs/ActorSystemTab.tsx
 export const ActorSystemTab: Component = () => null;
+export default ActorSystemTab;

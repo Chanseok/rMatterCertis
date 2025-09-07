@@ -1,7 +1,5 @@
 import { createSignal, onMount, onCleanup } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-
-interface SessionListResponse { sessions: string[] }
 interface StatusPayload {
   session_id: string;
   status: string;

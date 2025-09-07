@@ -11,12 +11,6 @@ import { loggingService } from './loggingService';
 import { crawlerStore } from '../stores/crawlerStore';
 import { databaseStore } from '../stores/databaseStore';
 import { uiStore } from '../stores/uiStore';
-import type {
-  CrawlingProgress,
-  CrawlingTaskStatus,
-  DatabaseStats,
-  CrawlingResult
-} from '../types/crawling';
 
 // 연결 상태 타입
 interface ConnectionState {

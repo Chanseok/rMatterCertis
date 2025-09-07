@@ -14,9 +14,9 @@ export default function CrawlingEngineTabSimple() {
   const [statusMessage, setStatusMessage] =
     createSignal<string>("크롤링 준비 완료");
   const [logs, setLogs] = createSignal<string[]>([]);
-  const [showConsole, setShowConsole] = createSignal<boolean>(true);
+  const [showConsole] = createSignal<boolean>(true);
   const [consoleExpanded, setConsoleExpanded] = createSignal<boolean>(false); // Actor 이벤트 콘솔 확장/축소 상태 (기본: 축소)
-  const [isValidating, setIsValidating] = createSignal(false);
+  // isValidating: 제거됨 (미사용)
   const [isSyncing, setIsSyncing] = createSignal(false);
   const [syncRanges, setSyncRanges] = createSignal<string>("");
   // Lightweight Sync runtime view
@@ -40,7 +40,7 @@ export default function CrawlingEngineTabSimple() {
     skipped: 0,
     failed: 0,
   });
-  const [validationPages, setValidationPages] = createSignal<number | "">("");
+  // validationPages: 제거됨 (미사용)
   // Auto re-plan from backend after a session completes
   const [nextPlan, setNextPlan] = createSignal<any | null>(null);
   // Lightweight live actor-event telemetry (debug aid)
@@ -48,7 +48,7 @@ export default function CrawlingEngineTabSimple() {
   const [actorEventCount, setActorEventCount] = createSignal<number>(0);
 
   // Dramatic transition for Calculated Crawling Range
-  const [rangeFxKey, setRangeFxKey] = createSignal(0);
+  const [rangeFxKey] = createSignal(0);
   const [rangeFxActive, setRangeFxActive] = createSignal(false);
   const [rangeExpanded, setRangeExpanded] = createSignal(true); // 크롤링 범위 섹션 확장/축소 상태
   const [confettiPieces, setConfettiPieces] = createSignal<
@@ -131,8 +131,8 @@ export default function CrawlingEngineTabSimple() {
   };
 
   const playRangeTransition = () => {
-    setRangeFxActive(true);
-    setRangeFxKey((k) => k + 1);
+  setRangeFxActive(true);
+  rangeFxKey(); // touch to avoid 'unused' and keep effect sequence stable
     triggerConfetti();
     setTimeout(() => setRangeFxActive(false), 720);
   };
@@ -214,8 +214,7 @@ export default function CrawlingEngineTabSimple() {
     lastAssignedStart: null as number | null,
     lastAssignedEnd: null as number | null,
   });
-  // Animation toggles
-  const [validationPulse, setValidationPulse] = createSignal(false);
+  // Animation toggles (validation pulse 제거됨)
   const [persistFlash, setPersistFlash] = createSignal(false);
   // Stage 5: last batch snapshot (for visibility alongside session totals)
   const [persistLastBatch, setPersistLastBatch] = createSignal<{
@@ -349,53 +348,7 @@ export default function CrawlingEngineTabSimple() {
     } catch {}
   });
 
-  // Start button circular wave FX (restored)
-  const [waveBursts, setWaveBursts] = createSignal<
-    Array<{ id: number; x: number; y: number; kind: "up" | "down" | "ring" }>
-  >([]);
-  let waveIdSeq = 1;
-  const triggerStartWave = (evt?: MouseEvent | PointerEvent) => {
-    // Compute click point in viewport; fallback to the center of the pressed button, else screen center
-    let x: number | undefined = (evt as any)?.clientX;
-    let y: number | undefined = (evt as any)?.clientY;
-    if ((x == null || y == null) && (evt as any)?.currentTarget) {
-      try {
-        const el = (evt as any).currentTarget as HTMLElement;
-        const rect = el.getBoundingClientRect();
-        x = rect.left + rect.width / 2;
-        y = rect.top + rect.height / 2;
-      } catch {}
-    }
-    if (x == null || y == null) {
-      x = window.innerWidth / 2;
-      y = window.innerHeight / 2;
-    }
-    // Compute scale to fill the viewport from the click point
-    const dx = Math.max(x, window.innerWidth - x);
-    const dy = Math.max(y, window.innerHeight - y);
-    const radius = Math.hypot(dx, dy);
-    const baseRadius = 12; // starting diameter ~24px, so radius ~12
-    const fillScale = Math.max(35, radius / baseRadius);
-    const idUp = waveIdSeq++;
-    const idDown = waveIdSeq++;
-    const idRing = waveIdSeq++;
-    setWaveBursts((prev) => [
-      ...prev,
-      { id: idUp, x, y, kind: "up" },
-      { id: idDown, x, y, kind: "down" },
-      { id: idRing, x, y, kind: "ring" },
-    ]);
-    // Auto cleanup after animations
-    setTimeout(
-      () =>
-        setWaveBursts((prev) =>
-          prev.filter(
-            (w) => w.id !== idUp && w.id !== idDown && w.id !== idRing
-          )
-        ),
-      1000
-    );
-  };
+  // Start button circular wave FX 제거됨 (미사용)
 
   // 크롤링 범위 계산
   const calculateCrawlingRange = async () => {
@@ -440,30 +393,7 @@ export default function CrawlingEngineTabSimple() {
     }
   };
 
-  // 통합 Actor 기반 크롤링 (경량 설정)
-  const startLightUnified = async () => {
-    if (isRunning()) return;
-
-    setIsRunning(true);
-    setStatusMessage("🎭 통합 파이프라인(라이트) 시작 중...");
-    addLog("🎭 통합 파이프라인 시작 (라이트 설정)");
-
-    try {
-      const res = await tauriApi.startUnifiedCrawling({
-        mode: "advanced",
-        overrideConcurrency: 8,
-        overrideBatchSize: 3,
-        delayMs: 100,
-      });
-      addLog(`✅ 통합 파이프라인(라이트) 세션 시작: ${JSON.stringify(res)}`);
-      setStatusMessage("🎭 통합 파이프라인 실행 중 (라이트)");
-    } catch (error) {
-      console.error("통합 파이프라인(라이트) 시작 실패:", error);
-      addLog(`❌ 통합 파이프라인(라이트) 시작 실패: ${error}`);
-      setStatusMessage("크롤링 실패");
-      setIsRunning(false);
-    }
-  };
+  // 경량 설정 스타터 제거됨 (미사용)
 
   // 통합 Actor 기반 크롤링 (하이 설정)
   const startUnifiedAdvanced = async () => {
@@ -497,118 +427,13 @@ export default function CrawlingEngineTabSimple() {
     setLogs((prev) => [`[${timestamp}] ${message}`, ...prev.slice(0, 19)]);
   };
 
-  // Validation run
-  const startValidationRun = async () => {
-    if (isValidating()) return;
-    setIsValidating(true);
-    addLog("🧪 Validation 시작");
-    try {
-      const res = await tauriApi.startValidation({
-        scanPages:
-          typeof validationPages() === "number"
-            ? (validationPages() as number)
-            : undefined,
-      });
-      addLog(`✅ Validation 요청 완료: ${JSON.stringify(res)}`);
-    } catch (e) {
-      console.error(e);
-      addLog(`❌ Validation 실패: ${e}`);
-    } finally {
-      setIsValidating(false);
-    }
-  };
+  // Validation helper 제거됨 (미사용)
 
-  // Sync run
-  const startSyncRun = async () => {
-    if (isSyncing()) return;
-    setIsSyncing(true);
-    const ranges = syncRanges().trim();
-    addLog(`🔄 Sync 시작 ${ranges ? `(범위: ${ranges})` : "(자동 범위)"}`);
-    try {
-      const res = ranges
-        ? await tauriApi.startPartialSync(ranges)
-        : await tauriApi.startRepairSync();
-      addLog(`✅ Sync 완료: ${JSON.stringify(res)}`);
-    } catch (e) {
-      addLog(`❌ Sync 실패: ${e}`);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
+  // Sync starter 제거됨 (미사용)
 
-  const syncMissingPagesFromDiagnostics = async () => {
-    if (isSyncing()) return;
-    const diag = diagResult();
-    if (!diag) {
-      addLog("⚠️ 먼저 진단을 실행하세요.");
-      return;
-    }
-    // Collect physical pages where group status indicates holes/sparse and we have current_page_number
-    const pages: number[] = (diag.group_summaries || [])
-      .filter(
-        (g: any) =>
-          g.status && g.status !== "ok" && (g.missing_indices?.length || 0) > 0
-      )
-      .map((g: any) => g.current_page_number)
-      .filter((p: any) => typeof p === "number" && p > 0);
-    const uniquePages = Array.from(new Set(pages));
-    if (uniquePages.length === 0) {
-      addLog("ℹ️ 누락 항목이 있는 물리 페이지가 없습니다.");
-      return;
-    }
-    setIsSyncing(true);
-    addLog(
-      `🔁 진단 선택 페이지만 Sync (기본 엔진): [${uniquePages.join(", ")}]`
-    );
-    try {
-      const res = await tauriApi.startBasicSyncPages(uniquePages);
-      addLog(`✅ 부분 Sync 완료: ${JSON.stringify(res)}`);
-      // Re-run diagnostics to show before/after
-      await runDiagnostics();
-    } catch (e) {
-      addLog(`❌ 부분 Sync 실패: ${e}`);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
+  // 진단 기반 부분 Sync: 제거됨 (미사용)
 
-  // 정밀 복구 실행: 현재 진단 결과에서 각 페이지의 누락 슬롯(index)만 정확히 채움
-  const runPreciseDiagnosticRepair = async () => {
-    const diag = diagResult();
-    if (!diag) {
-      addLog("⚠️ 먼저 진단을 실행하세요.");
-      return;
-    }
-    // group_summaries에서 status!=ok 이고 missing_indices가 존재하는 항목을 모아 payload 구성
-    const groups: Array<{ physical_page: number; miss_indices: number[] }> = [];
-    for (const g of diag.group_summaries || []) {
-      const miss = (g.missing_indices || []).filter(
-        (n: any) => Number.isInteger(n) && n >= 0 && n < 12
-      );
-      const phys = g.current_page_number;
-      if (!phys || miss.length === 0) continue;
-      groups.push({
-        physical_page: phys as number,
-        miss_indices: miss.map((x: number) => Number(x)),
-      });
-    }
-    if (groups.length === 0) {
-      addLog("ℹ️ 정밀 복구 대상이 없습니다. (누락 슬롯 없음)");
-      return;
-    }
-    setIsSyncing(true);
-    addLog(`🧩 정밀 복구 실행: ${groups.length}개 페이지 (슬롯 지정)`);
-    try {
-      // 스냅샷은 생략(백엔드가 알아서 최신 사이트 메타 조회), 필요 시 diag의 total_pages_site/items_on_last_page를 넣을 수 있음
-      const res = await tauriApi.startDiagnosticSync(groups);
-      addLog(`✅ 정밀 복구 완료: ${JSON.stringify(res)}`);
-      await runDiagnostics();
-    } catch (e) {
-      addLog(`❌ 정밀 복구 실패: ${e}`);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
+  // 정밀 복구 실행 헬퍼: 제거됨 (미사용)
 
   onMount(() => {
     calculateCrawlingRange();
@@ -1081,10 +906,7 @@ export default function CrawlingEngineTabSimple() {
               ) || prev.lastAssignedEnd,
           }));
           // trigger subtle pulse animation
-          if (effectsOn()) {
-            setValidationPulse(true);
-            setTimeout(() => setValidationPulse(false), 300);
-          }
+          // subtle validation pulse removed
         }
         if (name === "actor-validation-divergence") {
           setValidationStats((prev) => ({
@@ -1845,8 +1667,7 @@ export default function CrawlingEngineTabSimple() {
           {/* Sync Controls */}
           <div class="flex items-center gap-3">
             <button
-              onClick={(e) => {
-                triggerStartWave(e as unknown as MouseEvent);
+              onClick={() => {
                 startUnifiedAdvanced();
               }}
               disabled={isRunning()}

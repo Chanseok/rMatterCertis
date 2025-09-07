@@ -255,7 +255,7 @@ export class TauriApiAdapter {
     return invoke('get_session_status', { session_id: sessionId });
   }
 
-  async stopCrawling(sessionId: string): Promise<SessionStatusDto> {
+  async stopCrawling(_sessionId: string): Promise<SessionStatusDto> {
   // Actor-system graceful shutdown does not require session_id currently
   return invoke('request_graceful_shutdown');
   }
