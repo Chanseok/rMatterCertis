@@ -1276,4 +1276,4 @@ export const SettingsTab: Component = () => {
   );
 };
 
-export default SettingsTab;
+// Removed unused default export; use named export only.

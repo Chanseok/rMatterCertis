@@ -41,11 +41,7 @@ export interface CreateProductDto {
   index_in_page?: number;
 }
 
-export interface UpdateProductDto {
-  manufacturer?: string;
-  model?: string;
-  certificate_id?: string;
-}
+// Removed unused UpdateProductDto.
 
 export interface ProductResponseDto {
   url: string;
@@ -109,11 +105,7 @@ export interface MatterProductResponseDto {
 // Session Management Types (Memory-based)
 // ============================================================================
 
-export interface StartSessionDto {
-  session_id: string;
-  start_url: string;
-  target_domains: string[];
-}
+// Removed unused StartSessionDto.
 
 export interface SessionStatusDto {
   session_id: string;
@@ -128,11 +120,7 @@ export interface SessionStatusDto {
 // Search and Filter Types
 // ============================================================================
 
-export interface ProductSearchDto {
-  query?: string;
-  page?: number;
-  page_size?: number;
-}
+// Removed unused ProductSearchDto.
 
 export interface MatterProductFilterDto {
   manufacturer?: string;
@@ -156,13 +144,7 @@ export interface ProductSearchResultDto {
 // Database Summary Types
 // ============================================================================
 
-export interface DatabaseSummaryDto {
-  total_vendors: number;
-  total_products: number;
-  total_matter_products: number;
-  database_size_mb: number;
-  last_crawling_date?: string;
-}
+// Removed unused DatabaseSummaryDto.
 
 // ============================================================================
 // Crawling Engine Types (for Phase 3 implementation)
@@ -176,76 +158,29 @@ export interface StartCrawlingDto {
   delay_ms?: number;
 }
 
-export interface CrawlingConfigDto {
-  max_concurrent_requests: number;
-  request_delay_ms: number;
-  timeout_seconds: number;
-  retry_attempts: number;
-  user_agent: string;
-  respect_robots_txt: boolean;
-}
+// Removed unused CrawlingConfigDto.
 
-export interface CrawlingResultDto {
-  session_id: string;
-  status: string;
-  total_pages_crawled: number;
-  products_found: number;
-  errors_count: number;
-  started_at: string;
-  completed_at?: string;
-  execution_time_seconds?: number;
-  error_details: string[];
-}
+// Removed unused CrawlingResultDto.
 
-export interface CrawlingProgressDto {
-  session_id: string;
-  current_page: number;
-  total_pages: number;
-  progress_percentage: number;
-  current_url?: string;
-  products_found: number;
-  last_updated: string;
-  estimated_completion?: string;
-}
+// Removed unused CrawlingProgressDto.
 
 // ============================================================================
 // Union Types for State Management
 // ============================================================================
 
-export type CrawlingStatus = 'idle' | 'running' | 'paused' | 'completed' | 'error';
+// Removed unused CrawlingStatus union.
 
-export type DeviceType = 
-  | 'bridge'
-  | 'light'
-  | 'switch'
-  | 'sensor'
-  | 'thermostat'
-  | 'lock'
-  | 'camera'
-  | 'speaker'
-  | 'display'
-  | 'appliance'
-  | 'other';
+// Removed unused DeviceType union.
 
-export type SortOrder = 'asc' | 'desc';
+// Removed unused SortOrder union.
 
 // ============================================================================
 // Utility Types
 // ============================================================================
 
-export interface ApiResponse<T> {
-  data: T;
-  success: boolean;
-  error?: string;
-}
+// Removed unused ApiResponse.
 
-export interface PaginatedResponse<T> {
-  items: T[];
-  total_count: number;
-  page: number;
-  page_size: number;
-  total_pages: number;
-}
+// Removed unused PaginatedResponse.
 
 export interface ApiError {
   message: string;

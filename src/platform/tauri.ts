@@ -352,37 +352,10 @@ export async function safeApiCall<T>(
 /**
  * Batch API calls with error isolation
  */
-export async function batchApiCalls<T extends Record<string, () => Promise<any>>>(
-  operations: T
-): Promise<{ [K in keyof T]: { data?: Awaited<ReturnType<T[K]>>; error?: ApiError } }> {
-  const results = {} as any;
-  
-  await Promise.all(
-    Object.entries(operations).map(async ([key, operation]) => {
-      results[key] = await safeApiCall(operation);
-    })
-  );
-  
-  return results;
-}
+// batchApiCalls was unused across the codebase and removed during cleanup.
 
 // ============================================================================
 // Type Guards
 // ============================================================================
 
-export function isApiError(value: unknown): value is ApiError {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'message' in value &&
-    typeof (value as any).message === 'string'
-  );
-}
-
-export function hasApiError<T>(result: { data?: T; error?: ApiError }): result is { error: ApiError } {
-  return !!result.error;
-}
-
-export function hasApiData<T>(result: { data?: T; error?: ApiError }): result is { data: T } {
-  return !!result.data && !result.error;
-}
+// Unused type guards removed (isApiError, hasApiError, hasApiData).

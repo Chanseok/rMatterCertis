@@ -1,0 +1,97 @@
+src/platform/tauri.ts:355 - batchApiCalls
+src/platform/tauri.ts:373 - isApiError
+src/platform/tauri.ts:382 - hasApiError
+src/platform/tauri.ts:386 - hasApiData
+src/platform/tauri.ts:22 - MethodParamsMapping (used in module)
+src/platform/tauri.ts:54 - MethodReturnMapping (used in module)
+src/platform/tauri.ts:136 - TauriApiAdapter (used in module)
+src/services/tauri-api.ts:28 - TauriApiService (used in module)
+src/stores/eventStore.ts:4 - GlobalEvent (used in module)
+src/stores/tabStore.ts:9 - TabConfig (used in module)
+src/stores/tabStore.ts:21 - TabState (used in module)
+src/stores/tabStore.ts:124 - toggleExpandedSection
+src/stores/tabStore.ts:128 - setExpandedSection
+src/stores/uiStore.ts:11 - UIState (used in module)
+src/stores/uiStore.ts:34 - Notification (used in module)
+src/stores/uiStore.ts:48 - AppState (used in module)
+src/stores/uiStore.ts:279 - appStore
+src/types/config.ts:3 - LoggingConfig (used in module)
+src/types/config.ts:19 - BatchConfig (used in module)
+src/types/config.ts:26 - WorkerConfig (used in module)
+src/types/config.ts:35 - TimingConfig (used in module)
+src/types/config.ts:43 - CrawlingConfigSection (used in module)
+src/types/config.ts:69 - UserConfig (used in module)
+src/types/config.ts:84 - AdvancedConfig (used in module)
+src/types/config.ts:98 - AppManagedConfig (used in module)
+src/types/config.ts:114 - ConfigPreset (used in module)
+src/types/crawling.ts:26 - TaskStatus (used in module)
+src/types/crawling.ts:79 - SiteDataChangeStatus (used in module)
+src/types/crawling.ts:86 - RecommendedAction (used in module)
+src/types/crawling.ts:93 - SeverityLevel (used in module)
+src/types/crawling.ts:100 - DataDecreaseRecommendation (used in module)
+src/types/crawling.ts:107 - SiteStatus (used in module)
+src/types/crawling.ts:118 - PerformanceMetrics (used in module)
+src/types/crawling.ts:138 - CrawlingEvent
+src/types/crawling.ts:146 - CrawlingConfig
+src/types/crawling.ts:157 - Product (used in module)
+src/types/crawling.ts:168 - MatterProduct
+src/types/crawling.ts:195 - ProductSearchRequest
+src/types/crawling.ts:202 - ProductSearchResult
+src/types/crawling.ts:210 - MatterProductFilter
+src/types/crawling.ts:218 - DatabaseSummary
+src/types/crawling.ts:278 - BackendLoggingConfig (used in module)
+src/types/crawling.ts:286 - ConfigPreset (used in module)
+src/types/crawling.ts:292 - CONFIG_PRESETS
+src/types/crawling.ts:348 - getCrawlingStageDisplayName
+src/types/crawling.ts:362 - getCrawlingStatusDisplayName
+src/types/crawling.ts:374 - getTaskStatusDisplayName
+src/types/crawling.ts:386 - getDatabaseHealthDisplayName
+src/types/crawling.ts:396 - getCrawlingStatusColor
+src/types/crawling.ts:408 - getDatabaseHealthColor
+src/types/crawling.ts:417 - getSeverityLevelColor
+src/types/crawling.ts:427 - getSeverityLevelDisplayName
+src/types/crawling.ts:437 - getRecommendedActionDisplayName
+src/types/crawling.ts:447 - getDataChangeStatusDisplayName
+src/types/crawling.ts:478 - getDataChangeStatusColor
+src/types/crawling.ts:495 - getTaskStatusColor
+src/types/crawling.ts:508 - formatElapsedTime (used in module)
+src/types/crawling.ts:522 - formatRemainingTime
+src/types/crawling.ts:528 - calculateProgressPercentage
+src/types/crawling.ts:533 - getProgressBarColor
+src/types/crawling.ts:548 - DatabaseStatus (used in module)
+src/types/crawling.ts:568 - SmartRecommendation (used in module)
+src/types/crawling.ts:594 - AtomicTaskEvent
+src/types/crawling.ts:625 - AtomicEventStats
+src/types/crawling.ts:633 - BatchStatus (used in module)
+src/types/crawling.ts:634 - PageStatus (used in module)
+src/types/crawling.ts:635 - ProductStatus (used in module)
+src/types/crawling.ts:637 - BatchInfo (used in module)
+src/types/crawling.ts:650 - PageInfo (used in module)
+src/types/crawling.ts:661 - ProductInfo (used in module)
+src/types/crawling.ts:672 - AnimationState (used in module)
+src/types/crawling.ts:678 - VisualizationNode
+src/types/crawling.ts:689 - CrawlingSystemState
+src/types/crawling.ts:699 - VisualizationConfig
+src/types/domain.ts:44 - UpdateProductDto
+src/types/domain.ts:112 - StartSessionDto
+src/types/domain.ts:131 - ProductSearchDto
+src/types/domain.ts:159 - DatabaseSummaryDto
+src/types/domain.ts:179 - CrawlingConfigDto
+src/types/domain.ts:188 - CrawlingResultDto
+src/types/domain.ts:200 - CrawlingProgressDto
+src/types/domain.ts:215 - CrawlingStatus
+src/types/domain.ts:217 - DeviceType
+src/types/domain.ts:230 - SortOrder
+src/types/domain.ts:236 - ApiResponse
+src/types/domain.ts:242 - PaginatedResponse
+src/types/events.ts:3 - DbCursor (used in module)
+src/types/events.ts:21 - TaskStatus (used in module)
+src/types/events.ts:33 - BatchInfo (used in module)
+src/types/events.ts:43 - StageInfo (used in module)
+src/types/events.ts:60 - DetailStatus
+src/types/events.ts:83 - ConcurrencyEvent
+src/types/events.ts:104 - ValidationEvent
+src/types/events.ts:116 - DatabaseSaveEvent
+src/components/dev/EventConsole.tsx:4 - EventConsole (used in module)
+src/components/dev/StageBatcherSettingsPanel.tsx:11 - StageBatcherSettingsPanel (used in module)
+src/components/tabs/SettingsTab.tsx:1279 - default

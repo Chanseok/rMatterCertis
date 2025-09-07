@@ -121,12 +121,6 @@ export const restoreLastActiveTab = (lastActiveTab: string) => {
   }
 };
 
-export const toggleExpandedSection = (sectionId: string) => {
-  setTabState('expandedSections', sectionId, !tabState.expandedSections[sectionId]);
-};
-
-export const setExpandedSection = (sectionId: string, expanded: boolean) => {
-  setTabState('expandedSections', sectionId, expanded);
-};
+// Removed unused expanded section helpers during cleanup.
 
 export { tabState };

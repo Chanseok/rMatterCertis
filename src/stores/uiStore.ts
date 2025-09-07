@@ -276,4 +276,4 @@ function createUIStore() {
 export const uiStore = createUIStore();
 
 // 기본 export (하위 호환성)
-export const appStore = uiStore;
+// Removed unused alias export; use uiStore directly.
