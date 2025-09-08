@@ -13,12 +13,12 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use crate::crawl_engine::actors::stage_batcher::{DefaultStageBatcher, StageBatcher};
 use crate::crawl_engine::actors::traits::{Actor, ActorHealth, ActorStatus, ActorType};
 use crate::crawl_engine::actors::types::{
     ActorCommand, ActorError, AppEvent, SimpleMetrics, StageError, StageItemResult, StageItemType,
     StageResult, StageType,
 };
-use crate::crawl_engine::actors::stage_batcher::{DefaultStageBatcher, StageBatcher};
 use crate::crawl_engine::channels::types::StageItem;
 use crate::crawl_engine::integrated_context::AppContext;
 use crate::crawl_engine::stages::traits::StageLogicFactory;
@@ -89,16 +89,26 @@ struct GuardOutcome {
 }
 
 impl TaskExecutionGuard {
-    fn new(ctx: AppContext, session_id: String, batch_id: Option<String>, stage_type: StageType, item_id: String, item_type: StageItemType) -> Self {
+    fn new(
+        ctx: AppContext,
+        session_id: String,
+        batch_id: Option<String>,
+        stage_type: StageType,
+        item_id: String,
+        item_type: StageItemType,
+    ) -> Self {
         // 시작 이벤트 발행 (best-effort)
-        StageActor::emit_best_effort(&ctx, AppEvent::StageItemStarted {
-            session_id: session_id.clone(),
-            batch_id: batch_id.clone(),
-            stage_type: stage_type.clone(),
-            item_id: item_id.clone(),
-            item_type: item_type.clone(),
-            timestamp: Utc::now(),
-        });
+        StageActor::emit_best_effort(
+            &ctx,
+            AppEvent::StageItemStarted {
+                session_id: session_id.clone(),
+                batch_id: batch_id.clone(),
+                stage_type: stage_type.clone(),
+                item_id: item_id.clone(),
+                item_type: item_type.clone(),
+                timestamp: Utc::now(),
+            },
+        );
         Self {
             ctx,
             session_id,
@@ -133,24 +143,40 @@ impl TaskExecutionGuard {
 impl Drop for TaskExecutionGuard {
     fn drop(&mut self) {
         // 완료 이벤트 발행 (best-effort, Drop 내에서 실패 무시)
-        let (success, error, duration_ms, retry_count, collected_count) = if let Some(o) = &self.outcome {
-            (o.success, o.error.clone(), o.duration_ms, o.retry_count, o.collected_count)
-        } else {
-            (false, Some("unknown_error_or_early_drop".into()), self.started_at.elapsed().as_millis() as u64, 0, None)
-        };
-        StageActor::emit_best_effort(&self.ctx, AppEvent::StageItemCompleted {
-            session_id: self.session_id.clone(),
-            batch_id: self.batch_id.clone(),
-            stage_type: self.stage_type.clone(),
-            item_id: self.item_id.clone(),
-            item_type: self.item_type.clone(),
-            success,
-            error,
-            duration_ms,
-            retry_count,
-            collected_count,
-            timestamp: Utc::now(),
-        });
+        let (success, error, duration_ms, retry_count, collected_count) =
+            if let Some(o) = &self.outcome {
+                (
+                    o.success,
+                    o.error.clone(),
+                    o.duration_ms,
+                    o.retry_count,
+                    o.collected_count,
+                )
+            } else {
+                (
+                    false,
+                    Some("unknown_error_or_early_drop".into()),
+                    self.started_at.elapsed().as_millis() as u64,
+                    0,
+                    None,
+                )
+            };
+        StageActor::emit_best_effort(
+            &self.ctx,
+            AppEvent::StageItemCompleted {
+                session_id: self.session_id.clone(),
+                batch_id: self.batch_id.clone(),
+                stage_type: self.stage_type.clone(),
+                item_id: self.item_id.clone(),
+                item_type: self.item_type.clone(),
+                success,
+                error,
+                duration_ms,
+                retry_count,
+                collected_count,
+                timestamp: Utc::now(),
+            },
+        );
     }
 }
 
@@ -220,15 +246,25 @@ impl StageItemExt for StageItem {
     fn item_type_enum(&self) -> StageItemType {
         match self {
             Self::Page(page) => StageItemType::Page { page_number: *page },
-            Self::Url(_u) => StageItemType::Url { url_type: "generic".into() },
-            Self::Product(_p) => StageItemType::Url { url_type: "product".into() },
+            Self::Url(_u) => StageItemType::Url {
+                url_type: "generic".into(),
+            },
+            Self::Product(_p) => StageItemType::Url {
+                url_type: "product".into(),
+            },
             Self::ProductList(_l) => StageItemType::ProductUrls { urls: vec![] },
             Self::ProductUrls(list) => StageItemType::ProductUrls {
                 urls: list.urls.iter().map(|u| u.url.clone()).collect(),
             },
-            Self::ProductDetails(_d) => StageItemType::Url { url_type: "product_details".into() },
-            Self::ValidatedProducts(_v) => StageItemType::Url { url_type: "validated_products".into() },
-            Self::ValidationTarget(_t) => StageItemType::Url { url_type: "validation_target".into() },
+            Self::ProductDetails(_d) => StageItemType::Url {
+                url_type: "product_details".into(),
+            },
+            Self::ValidatedProducts(_v) => StageItemType::Url {
+                url_type: "validated_products".into(),
+            },
+            Self::ValidationTarget(_t) => StageItemType::Url {
+                url_type: "validation_target".into(),
+            },
         }
     }
 }
@@ -240,7 +276,9 @@ impl StageActor {
         context
             .emit_event(evt)
             .map(|_| ())
-            .map_err(|e| StageError::GenericError { message: e.to_string() })
+            .map_err(|e| StageError::GenericError {
+                message: e.to_string(),
+            })
     }
     /// Helper to emit AppEvent best-effort (ignore errors). Used in per-item paths and RAII.
     #[inline]
@@ -283,21 +321,28 @@ impl StageActor {
         let lifecycle_item = item.clone();
         match (&stage_type, &item) {
             (StageType::ListPageCrawling, StageItem::Page(pn)) => {
-                Self::emit_best_effort(&ctx, AppEvent::PageLifecycle {
-                    session_id: session_id.clone(),
-                    batch_id: batch_id.clone(),
-                    page_number: *pn,
-                    status: "fetch_started".into(),
-                    metrics: None,
-                    timestamp: Utc::now(),
-                });
+                Self::emit_best_effort(
+                    &ctx,
+                    AppEvent::PageLifecycle {
+                        session_id: session_id.clone(),
+                        batch_id: batch_id.clone(),
+                        page_number: *pn,
+                        status: "fetch_started".into(),
+                        metrics: None,
+                        timestamp: Utc::now(),
+                    },
+                );
             }
             (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls_wrapper)) => {
                 // best-effort DB 체크로 스케줄 수 추정 후 이벤트
                 let mut ct = 0u32;
                 for u in &urls_wrapper.urls {
                     match deps.product_repo.get_product_detail_by_url(&u.url).await {
-                        Ok(existing) => if existing.is_none() { ct += 1 },
+                        Ok(existing) => {
+                            if existing.is_none() {
+                                ct += 1;
+                            }
+                        }
                         Err(e) => {
                             warn!("[DetailFilter] DB check failed url={} err={}", u.url, e);
                             ct += 1;
@@ -305,18 +350,21 @@ impl StageActor {
                     }
                 }
                 if let Some(first) = urls_wrapper.urls.first() {
-                    Self::emit_best_effort(&ctx, AppEvent::PageLifecycle {
-                        session_id: session_id.clone(),
-                        batch_id: batch_id.clone(),
-                        page_number: first.page_id as u32,
-                        status: "detail_mapping_emitted".into(),
-                        metrics: Some(SimpleMetrics::Page {
-                            url_count: Some(urls_wrapper.urls.len() as u32),
-                            scheduled_details: Some(ct),
-                            error: None,
-                        }),
-                        timestamp: Utc::now(),
-                    });
+                    Self::emit_best_effort(
+                        &ctx,
+                        AppEvent::PageLifecycle {
+                            session_id: session_id.clone(),
+                            batch_id: batch_id.clone(),
+                            page_number: first.page_id as u32,
+                            status: "detail_mapping_emitted".into(),
+                            metrics: Some(SimpleMetrics::Page {
+                                url_count: Some(urls_wrapper.urls.len() as u32),
+                                scheduled_details: Some(ct),
+                                error: None,
+                            }),
+                            timestamp: Utc::now(),
+                        },
+                    );
                 }
             }
             _ => {}
@@ -365,7 +413,9 @@ impl StageActor {
                     let (products_found, products_checked, divergences, anomalies) = {
                         use crate::crawl_engine::actors::types::StageResultData as SRD;
                         match &r.collected_data {
-                            Some(SRD::ValidationResult { validated_count, .. }) => {
+                            Some(SRD::ValidationResult {
+                                validated_count, ..
+                            }) => {
                                 let found = *validated_count;
                                 (found, u64::from(found), 0, 0)
                             }
@@ -387,35 +437,46 @@ impl StageActor {
                                         .filter(|i| matches!(i.severity, crate::crawl_engine::services::data_quality_analyzer::IssueSeverity::Critical | crate::crawl_engine::services::data_quality_analyzer::IssueSeverity::Warning))
                                         .count() as u32;
                                     (dup, anom)
-                                } else { (0, 0) };
+                                } else {
+                                    (0, 0)
+                                };
                                 (found, u64::from(found), div_ct, anom_ct)
                             }
                             _ => (0, 0, 0, 0),
                         }
                     };
-                    Self::emit_best_effort(&ctx, AppEvent::ValidationStarted {
-                        session_id: session_id.clone(),
-                        scan_pages: 1,
-                        total_pages_site: None,
-                        timestamp: Utc::now(),
-                    });
-                    Self::emit_best_effort(&ctx, AppEvent::ValidationPageScanned {
-                        session_id: session_id.clone(),
-                        physical_page: 0,
-                        products_found,
-                        assigned_start_offset: 0,
-                        assigned_end_offset: u64::from(products_found.saturating_sub(1)),
-                        timestamp: Utc::now(),
-                    });
-                    Self::emit_best_effort(&ctx, AppEvent::ValidationCompleted {
-                        session_id: session_id.clone(),
-                        pages_scanned: 1,
-                        products_checked,
-                        divergences,
-                        anomalies,
-                        duration_ms: item_start.elapsed().as_millis() as u64,
-                        timestamp: Utc::now(),
-                    });
+                    Self::emit_best_effort(
+                        &ctx,
+                        AppEvent::ValidationStarted {
+                            session_id: session_id.clone(),
+                            scan_pages: 1,
+                            total_pages_site: None,
+                            timestamp: Utc::now(),
+                        },
+                    );
+                    Self::emit_best_effort(
+                        &ctx,
+                        AppEvent::ValidationPageScanned {
+                            session_id: session_id.clone(),
+                            physical_page: 0,
+                            products_found,
+                            assigned_start_offset: 0,
+                            assigned_end_offset: u64::from(products_found.saturating_sub(1)),
+                            timestamp: Utc::now(),
+                        },
+                    );
+                    Self::emit_best_effort(
+                        &ctx,
+                        AppEvent::ValidationCompleted {
+                            session_id: session_id.clone(),
+                            pages_scanned: 1,
+                            products_checked,
+                            divergences,
+                            anomalies,
+                            duration_ms: item_start.elapsed().as_millis() as u64,
+                            timestamp: Utc::now(),
+                        },
+                    );
                 }
 
                 // ProductDetail 크롤링 그룹 완료 이벤트
@@ -424,19 +485,22 @@ impl StageActor {
                         let page_hint = urls.urls.first().map_or(0u32, |u| u.page_id as u32);
                         let total = urls.urls.len() as u32;
                         let duration_ms = item_start.elapsed().as_millis() as u64;
-                        Self::emit_best_effort(&ctx, AppEvent::ProductLifecycleGroup {
-                            session_id: session_id.clone(),
-                            batch_id: batch_id.clone(),
-                            page_number: Some(page_hint),
-                            group_size: total,
-                            started: total,
-                            succeeded: total,
-                            failed: 0,
-                            duplicates: 0,
-                            duration_ms,
-                            phase: "fetch".into(),
-                            timestamp: Utc::now(),
-                        });
+                        Self::emit_best_effort(
+                            &ctx,
+                            AppEvent::ProductLifecycleGroup {
+                                session_id: session_id.clone(),
+                                batch_id: batch_id.clone(),
+                                page_number: Some(page_hint),
+                                group_size: total,
+                                started: total,
+                                succeeded: total,
+                                failed: 0,
+                                duplicates: 0,
+                                duration_ms,
+                                phase: "fetch".into(),
+                                timestamp: Utc::now(),
+                            },
+                        );
                     }
                 }
 
@@ -454,7 +518,9 @@ impl StageActor {
                             if guard.contains(&guard_key) {
                                 return Ok(StageItemResult {
                                     item_id: "data_saving_guard".into(),
-                                    item_type: StageItemType::Url { url_type: "data_saving".into() },
+                                    item_type: StageItemType::Url {
+                                        url_type: "data_saving".into(),
+                                    },
                                     success: true,
                                     error: None,
                                     duration_ms: item_start.elapsed().as_millis() as u64,
@@ -474,160 +540,274 @@ impl StageActor {
                             .ok()
                             .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
                         if skip_save {
-                            Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle {
-                                session_id: session_id.clone(),
-                                batch_id: batch_id.clone(),
-                                page_number: None,
-                                product_ref: "_batch_persist".into(),
-                                status: "persist_skipped".into(),
-                                retry: None,
-                                duration_ms: None,
-                                metrics: Some(SimpleMetrics::Generic { key: "reason".into(), value: "MC_SKIP_DB_SAVE".into() }),
-                                timestamp: Utc::now(),
-                            });
-                            // Emit grouped snapshot for Stage 5 panel even when skipping DB save
-                            Self::emit_best_effort(&ctx, AppEvent::ProductLifecycleGroup {
-                                session_id: session_id.clone(),
-                                batch_id: batch_id.clone(),
-                                page_number: None,
-                                group_size: attempted_count,
-                                started: attempted_count,
-                                succeeded: 0,
-                                failed: 0,
-                                duplicates: 0,
-                                duration_ms: item_start.elapsed().as_millis() as u64,
-                                phase: "persist".into(),
-                                timestamp: Utc::now(),
-                            });
-                            // Also emit a DatabaseStats snapshot (unchanged totals) so Stage 4 flashes
-                            if let Ok((cnt, minp, maxp, _)) = deps.product_repo.get_product_detail_stats().await {
-                                Self::emit_best_effort(&ctx, AppEvent::DatabaseStats {
-                                    session_id: session_id.clone(),
-                                    batch_id: batch_id.clone(),
-                                    total_product_details: cnt,
-                                    min_page: minp,
-                                    max_page: maxp,
-                                    note: Some("post_persist:nosave".into()),
-                                    timestamp: Utc::now(),
-                                });
-                            }
-                        } else {
-                            Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle {
-                                session_id: session_id.clone(),
-                                batch_id: batch_id.clone(),
-                                page_number: None,
-                                product_ref: "_batch_persist".into(),
-                                status: "persist_started".into(),
-                                retry: None,
-                                duration_ms: None,
-                                metrics: Some(SimpleMetrics::Generic { key: "attempted_count".into(), value: attempted_count.to_string() }),
-                                timestamp: Utc::now(),
-                            });
-                            if attempted_count == 0 {
-                                Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle {
+                            Self::emit_best_effort(
+                                &ctx,
+                                AppEvent::ProductLifecycle {
                                     session_id: session_id.clone(),
                                     batch_id: batch_id.clone(),
                                     page_number: None,
                                     product_ref: "_batch_persist".into(),
-                                    status: "persist_empty".into(),
+                                    status: "persist_skipped".into(),
                                     retry: None,
-                                    duration_ms: Some(0),
-                                    metrics: Some(SimpleMetrics::Generic { key: "persist_result".into(), value: "attempted=0".into() }),
+                                    duration_ms: None,
+                                    metrics: Some(SimpleMetrics::Generic {
+                                        key: "reason".into(),
+                                        value: "MC_SKIP_DB_SAVE".into(),
+                                    }),
                                     timestamp: Utc::now(),
-                                });
-                                // Emit grouped snapshot (empty)
-                                Self::emit_best_effort(&ctx, AppEvent::ProductLifecycleGroup {
+                                },
+                            );
+                            // Emit grouped snapshot for Stage 5 panel even when skipping DB save
+                            Self::emit_best_effort(
+                                &ctx,
+                                AppEvent::ProductLifecycleGroup {
                                     session_id: session_id.clone(),
                                     batch_id: batch_id.clone(),
                                     page_number: None,
-                                    group_size: 0,
-                                    started: 0,
+                                    group_size: attempted_count,
+                                    started: attempted_count,
                                     succeeded: 0,
                                     failed: 0,
                                     duplicates: 0,
-                                    duration_ms: 0,
+                                    duration_ms: item_start.elapsed().as_millis() as u64,
                                     phase: "persist".into(),
                                     timestamp: Utc::now(),
-                                });
-                                // Emit DB stats snapshot as well
-                                if let Ok((cnt, minp, maxp, _)) = deps.product_repo.get_product_detail_stats().await {
-                                    Self::emit_best_effort(&ctx, AppEvent::DatabaseStats {
+                                },
+                            );
+                            // Also emit a DatabaseStats snapshot (unchanged totals) so Stage 4 flashes
+                            if let Ok((cnt, minp, maxp, _)) =
+                                deps.product_repo.get_product_detail_stats().await
+                            {
+                                Self::emit_best_effort(
+                                    &ctx,
+                                    AppEvent::DatabaseStats {
                                         session_id: session_id.clone(),
                                         batch_id: batch_id.clone(),
                                         total_product_details: cnt,
                                         min_page: minp,
                                         max_page: maxp,
-                                        note: Some("post_persist:empty".into()),
+                                        note: Some("post_persist:nosave".into()),
                                         timestamp: Utc::now(),
-                                    });
+                                    },
+                                );
+                            }
+                        } else {
+                            Self::emit_best_effort(
+                                &ctx,
+                                AppEvent::ProductLifecycle {
+                                    session_id: session_id.clone(),
+                                    batch_id: batch_id.clone(),
+                                    page_number: None,
+                                    product_ref: "_batch_persist".into(),
+                                    status: "persist_started".into(),
+                                    retry: None,
+                                    duration_ms: None,
+                                    metrics: Some(SimpleMetrics::Generic {
+                                        key: "attempted_count".into(),
+                                        value: attempted_count.to_string(),
+                                    }),
+                                    timestamp: Utc::now(),
+                                },
+                            );
+                            if attempted_count == 0 {
+                                Self::emit_best_effort(
+                                    &ctx,
+                                    AppEvent::ProductLifecycle {
+                                        session_id: session_id.clone(),
+                                        batch_id: batch_id.clone(),
+                                        page_number: None,
+                                        product_ref: "_batch_persist".into(),
+                                        status: "persist_empty".into(),
+                                        retry: None,
+                                        duration_ms: Some(0),
+                                        metrics: Some(SimpleMetrics::Generic {
+                                            key: "persist_result".into(),
+                                            value: "attempted=0".into(),
+                                        }),
+                                        timestamp: Utc::now(),
+                                    },
+                                );
+                                // Emit grouped snapshot (empty)
+                                Self::emit_best_effort(
+                                    &ctx,
+                                    AppEvent::ProductLifecycleGroup {
+                                        session_id: session_id.clone(),
+                                        batch_id: batch_id.clone(),
+                                        page_number: None,
+                                        group_size: 0,
+                                        started: 0,
+                                        succeeded: 0,
+                                        failed: 0,
+                                        duplicates: 0,
+                                        duration_ms: 0,
+                                        phase: "persist".into(),
+                                        timestamp: Utc::now(),
+                                    },
+                                );
+                                // Emit DB stats snapshot as well
+                                if let Ok((cnt, minp, maxp, _)) =
+                                    deps.product_repo.get_product_detail_stats().await
+                                {
+                                    Self::emit_best_effort(
+                                        &ctx,
+                                        AppEvent::DatabaseStats {
+                                            session_id: session_id.clone(),
+                                            batch_id: batch_id.clone(),
+                                            total_product_details: cnt,
+                                            min_page: minp,
+                                            max_page: maxp,
+                                            note: Some("post_persist:empty".into()),
+                                            timestamp: Utc::now(),
+                                        },
+                                    );
                                 }
-                                return Ok(StageItemResult { item_id: "data_saving_empty".into(), item_type: StageItemType::Url { url_type: "data_saving".into() }, success: true, error: None, duration_ms: item_start.elapsed().as_millis() as u64, retry_count: 0, collected_data: None });
+                                return Ok(StageItemResult {
+                                    item_id: "data_saving_empty".into(),
+                                    item_type: StageItemType::Url {
+                                        url_type: "data_saving".into(),
+                                    },
+                                    success: true,
+                                    error: None,
+                                    duration_ms: item_start.elapsed().as_millis() as u64,
+                                    retry_count: 0,
+                                    collected_data: None,
+                                });
                             }
                             let persist_start = Instant::now();
-                            match Self::execute_real_database_storage(&lifecycle_item, deps.product_repo.clone(), deps.duplicate_policy.clone()).await {
+                            match Self::execute_real_database_storage(
+                                &lifecycle_item,
+                                deps.product_repo.clone(),
+                                deps.duplicate_policy.clone(),
+                            )
+                            .await
+                            {
                                 Ok((inserted, updated, duplicates_ct)) => {
                                     let attempted = attempted_count;
                                     let consumed = inserted + updated + duplicates_ct;
                                     let unchanged = attempted.saturating_sub(consumed);
-                                    let status = if inserted > 0 && updated == 0 { "persist_inserted" }
-                                        else if updated > 0 && inserted == 0 { "persist_updated" }
-                                        else if inserted == 0 && updated == 0 { if duplicates_ct == attempted { "persist_noop_all_duplicate" } else { "persist_noop" } }
-                                        else { "persist_mixed" };
-                                    let metrics = SimpleMetrics::Generic { key: "persist_result".into(), value: format!("attempted={},inserted={},updated={},duplicates={},unchanged={}", attempted, inserted, updated, duplicates_ct, unchanged) };
-                                    Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: None, product_ref: "_batch_persist".into(), status: status.into(), retry: None, duration_ms: Some(persist_start.elapsed().as_millis() as u64), metrics: Some(metrics), timestamp: Utc::now() });
-                                    // Emit grouped snapshot for UI Stage 5 panel
-                                    Self::emit_best_effort(&ctx, AppEvent::ProductLifecycleGroup {
-                                        session_id: session_id.clone(),
-                                        batch_id: batch_id.clone(),
-                                        page_number: None,
-                                        group_size: attempted,
-                                        started: attempted,
-                                        succeeded: inserted + updated,
-                                        failed: unchanged, // "true" failures are derived in UI; provide unchanged as baseline here
-                                        duplicates: duplicates_ct,
-                                        duration_ms: persist_start.elapsed().as_millis() as u64,
-                                        phase: "persist".into(),
-                                        timestamp: Utc::now(),
-                                    });
-                                    // Emit DatabaseStats snapshot to drive Stage 4 panel
-                                    if let Ok((cnt, minp, maxp, _)) = deps.product_repo.get_product_detail_stats().await {
-                                        Self::emit_best_effort(&ctx, AppEvent::DatabaseStats {
+                                    let status = if inserted > 0 && updated == 0 {
+                                        "persist_inserted"
+                                    } else if updated > 0 && inserted == 0 {
+                                        "persist_updated"
+                                    } else if inserted == 0 && updated == 0 {
+                                        if duplicates_ct == attempted {
+                                            "persist_noop_all_duplicate"
+                                        } else {
+                                            "persist_noop"
+                                        }
+                                    } else {
+                                        "persist_mixed"
+                                    };
+                                    let metrics = SimpleMetrics::Generic {
+                                        key: "persist_result".into(),
+                                        value: format!(
+                                            "attempted={},inserted={},updated={},duplicates={},unchanged={}",
+                                            attempted, inserted, updated, duplicates_ct, unchanged
+                                        ),
+                                    };
+                                    Self::emit_best_effort(
+                                        &ctx,
+                                        AppEvent::ProductLifecycle {
                                             session_id: session_id.clone(),
                                             batch_id: batch_id.clone(),
-                                            total_product_details: cnt,
-                                            min_page: minp,
-                                            max_page: maxp,
-                                            note: Some("post_persist".into()),
+                                            page_number: None,
+                                            product_ref: "_batch_persist".into(),
+                                            status: status.into(),
+                                            retry: None,
+                                            duration_ms: Some(
+                                                persist_start.elapsed().as_millis() as u64
+                                            ),
+                                            metrics: Some(metrics),
                                             timestamp: Utc::now(),
-                                        });
+                                        },
+                                    );
+                                    // Emit grouped snapshot for UI Stage 5 panel
+                                    Self::emit_best_effort(
+                                        &ctx,
+                                        AppEvent::ProductLifecycleGroup {
+                                            session_id: session_id.clone(),
+                                            batch_id: batch_id.clone(),
+                                            page_number: None,
+                                            group_size: attempted,
+                                            started: attempted,
+                                            succeeded: inserted + updated,
+                                            failed: unchanged, // "true" failures are derived in UI; provide unchanged as baseline here
+                                            duplicates: duplicates_ct,
+                                            duration_ms: persist_start.elapsed().as_millis() as u64,
+                                            phase: "persist".into(),
+                                            timestamp: Utc::now(),
+                                        },
+                                    );
+                                    // Emit DatabaseStats snapshot to drive Stage 4 panel
+                                    if let Ok((cnt, minp, maxp, _)) =
+                                        deps.product_repo.get_product_detail_stats().await
+                                    {
+                                        Self::emit_best_effort(
+                                            &ctx,
+                                            AppEvent::DatabaseStats {
+                                                session_id: session_id.clone(),
+                                                batch_id: batch_id.clone(),
+                                                total_product_details: cnt,
+                                                min_page: minp,
+                                                max_page: maxp,
+                                                note: Some("post_persist".into()),
+                                                timestamp: Utc::now(),
+                                            },
+                                        );
                                     }
                                 }
                                 Err(e) => {
-                                    Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: None, product_ref: "_batch_persist".into(), status: "persist_failed".into(), retry: None, duration_ms: Some(persist_start.elapsed().as_millis() as u64), metrics: Some(SimpleMetrics::Generic { key: "error".into(), value: e }), timestamp: Utc::now() });
-                                    // Emit grouped failure snapshot and DB stats (unchanged)
-                                    Self::emit_best_effort(&ctx, AppEvent::ProductLifecycleGroup {
-                                        session_id: session_id.clone(),
-                                        batch_id: batch_id.clone(),
-                                        page_number: None,
-                                        group_size: attempted_count,
-                                        started: attempted_count,
-                                        succeeded: 0,
-                                        failed: attempted_count,
-                                        duplicates: 0,
-                                        duration_ms: persist_start.elapsed().as_millis() as u64,
-                                        phase: "persist".into(),
-                                        timestamp: Utc::now(),
-                                    });
-                                    if let Ok((cnt, minp, maxp, _)) = deps.product_repo.get_product_detail_stats().await {
-                                        Self::emit_best_effort(&ctx, AppEvent::DatabaseStats {
+                                    Self::emit_best_effort(
+                                        &ctx,
+                                        AppEvent::ProductLifecycle {
                                             session_id: session_id.clone(),
                                             batch_id: batch_id.clone(),
-                                            total_product_details: cnt,
-                                            min_page: minp,
-                                            max_page: maxp,
-                                            note: Some("post_persist:error".into()),
+                                            page_number: None,
+                                            product_ref: "_batch_persist".into(),
+                                            status: "persist_failed".into(),
+                                            retry: None,
+                                            duration_ms: Some(
+                                                persist_start.elapsed().as_millis() as u64
+                                            ),
+                                            metrics: Some(SimpleMetrics::Generic {
+                                                key: "error".into(),
+                                                value: e,
+                                            }),
                                             timestamp: Utc::now(),
-                                        });
+                                        },
+                                    );
+                                    // Emit grouped failure snapshot and DB stats (unchanged)
+                                    Self::emit_best_effort(
+                                        &ctx,
+                                        AppEvent::ProductLifecycleGroup {
+                                            session_id: session_id.clone(),
+                                            batch_id: batch_id.clone(),
+                                            page_number: None,
+                                            group_size: attempted_count,
+                                            started: attempted_count,
+                                            succeeded: 0,
+                                            failed: attempted_count,
+                                            duplicates: 0,
+                                            duration_ms: persist_start.elapsed().as_millis() as u64,
+                                            phase: "persist".into(),
+                                            timestamp: Utc::now(),
+                                        },
+                                    );
+                                    if let Ok((cnt, minp, maxp, _)) =
+                                        deps.product_repo.get_product_detail_stats().await
+                                    {
+                                        Self::emit_best_effort(
+                                            &ctx,
+                                            AppEvent::DatabaseStats {
+                                                session_id: session_id.clone(),
+                                                batch_id: batch_id.clone(),
+                                                total_product_details: cnt,
+                                                min_page: minp,
+                                                max_page: maxp,
+                                                note: Some("post_persist:error".into()),
+                                                timestamp: Utc::now(),
+                                            },
+                                        );
                                     }
                                 }
                             }
@@ -641,7 +821,9 @@ impl StageActor {
                     match &r.collected_data {
                         Some(SRD::ProductUrls { urls, .. }) => Some(urls.len() as u32),
                         Some(SRD::ProductDetails { details, .. }) => Some(details.len() as u32),
-                        Some(SRD::ValidationResult { validated_count, .. }) => Some(*validated_count),
+                        Some(SRD::ValidationResult {
+                            validated_count, ..
+                        }) => Some(*validated_count),
                         Some(SRD::SavingResult { saved_count, .. }) => Some(*saved_count),
                         Some(SRD::StatusCheck { .. }) => Some(1),
                         Some(SRD::QualityAnalysis { total_analyzed, .. }) => Some(*total_analyzed),
@@ -653,12 +835,47 @@ impl StageActor {
             }
             Err(err) => {
                 guard.record_err(format!("{:?}", err));
-                if let (StageType::ListPageCrawling, StageItem::Page(pn)) = (&stage_type, &lifecycle_item) {
-                    Self::emit_best_effort(&ctx, AppEvent::PageLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: *pn, status: "failed".into(), metrics: Some(SimpleMetrics::Page { url_count: None, scheduled_details: None, error: Some(format!("{:?}", err)) }), timestamp: Utc::now() });
+                if let (StageType::ListPageCrawling, StageItem::Page(pn)) =
+                    (&stage_type, &lifecycle_item)
+                {
+                    Self::emit_best_effort(
+                        &ctx,
+                        AppEvent::PageLifecycle {
+                            session_id: session_id.clone(),
+                            batch_id: batch_id.clone(),
+                            page_number: *pn,
+                            status: "failed".into(),
+                            metrics: Some(SimpleMetrics::Page {
+                                url_count: None,
+                                scheduled_details: None,
+                                error: Some(format!("{:?}", err)),
+                            }),
+                            timestamp: Utc::now(),
+                        },
+                    );
                 }
-                if let (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) = (&stage_type, &lifecycle_item) {
+                if let (StageType::ProductDetailCrawling, StageItem::ProductUrls(urls)) =
+                    (&stage_type, &lifecycle_item)
+                {
                     for pu in &urls.urls {
-                        Self::emit_best_effort(&ctx, AppEvent::ProductLifecycle { session_id: session_id.clone(), batch_id: batch_id.clone(), page_number: Some(pu.page_id as u32), product_ref: pu.url.clone(), status: "failed".into(), retry: None, duration_ms: Some(item_start.elapsed().as_millis() as u64), metrics: Some(SimpleMetrics::Product { fields: None, size_bytes: None, error: Some(format!("{:?}", err)) }), timestamp: Utc::now() });
+                        Self::emit_best_effort(
+                            &ctx,
+                            AppEvent::ProductLifecycle {
+                                session_id: session_id.clone(),
+                                batch_id: batch_id.clone(),
+                                page_number: Some(pu.page_id as u32),
+                                product_ref: pu.url.clone(),
+                                status: "failed".into(),
+                                retry: None,
+                                duration_ms: Some(item_start.elapsed().as_millis() as u64),
+                                metrics: Some(SimpleMetrics::Product {
+                                    fields: None,
+                                    size_bytes: None,
+                                    error: Some(format!("{:?}", err)),
+                                }),
+                                timestamp: Utc::now(),
+                            },
+                        );
                     }
                 }
             }
@@ -667,11 +884,7 @@ impl StageActor {
         result
     }
     /// Before-each-item hook (middleware slot): emit logs/metrics or modify context in future.
-    async fn before_each_item_hook(
-        _: &AppContext,
-        _: &StageType,
-        _: &StageItem,
-    ) {
+    async fn before_each_item_hook(_: &AppContext, _: &StageType, _: &StageItem) {
         // No-op by default. Reserved for cross-cutting concerns (logging/metrics/instrumentation).
     }
 
@@ -712,11 +925,14 @@ impl StageActor {
                     throughput_per_second: throughput,
                 };
                 // Emit as AppEvent::PerformanceMetrics (additive, consumed by UI)
-                StageActor::emit_best_effort(context, AppEvent::PerformanceMetrics {
-                    session_id: key,
-                    metrics: snapshot,
-                    timestamp: Utc::now(),
-                });
+                StageActor::emit_best_effort(
+                    context,
+                    AppEvent::PerformanceMetrics {
+                        session_id: key,
+                        metrics: snapshot,
+                        timestamp: Utc::now(),
+                    },
+                );
                 entry.last_emit = Some(now);
                 // Keep window from growing unbounded
                 entry.item_count = 0;
@@ -771,7 +987,6 @@ impl StageActor {
         self
     }
 
-
     /// 사이트 페이지네이션 힌트 설정 (`StatusCheck` 결과를 상위에서 주입)
     pub fn set_site_pagination_hints(&mut self, total_pages: u32, products_on_last_page: u32) {
         self.site_total_pages_hint = Some(total_pages);
@@ -782,7 +997,6 @@ impl StageActor {
         );
     }
 
-
     /// 크롤링 엔진 초기화 (임시 구현)
     /// 현재는 시뮬레이션 모드이므로 실제 엔진 초기화는 건너뛰기
     ///
@@ -790,7 +1004,7 @@ impl StageActor {
     /// 현재 구현은 항상 `Ok(())`를 반환합니다. 실제 엔진 초기화가 도입되면
     /// 초기화 실패 사유를 `StageError`로 반환해야 합니다.
     pub fn initialize_default_engines(&mut self) -> Result<(), StageError> {
-    // No-op in production. Historical simulation path removed.
+        // No-op in production. Historical simulation path removed.
         Ok(())
     }
 
@@ -816,8 +1030,7 @@ impl StageActor {
         context: &AppContext,
     ) -> Result<StageResult, StageError> {
         // Execute the stage and produce a result snapshot from current actor state
-        self
-            .handle_execute_stage(stage_type, items, concurrency_limit, timeout_secs, context)
+        self.handle_execute_stage(stage_type, items, concurrency_limit, timeout_secs, context)
             .await?;
 
         let result = StageResult {
@@ -899,7 +1112,7 @@ impl StageActor {
             timestamp: Utc::now(),
         };
 
-    self.emit(context, start_event)?;
+        self.emit(context, start_event)?;
 
         // 상태를 Processing으로 전환
         self.state = StageState::Processing;
@@ -981,10 +1194,10 @@ impl StageActor {
     async fn process_stage_items(
         &mut self,
         stage_type: StageType,
-    raw_items: Vec<StageItem>,
-    raw_concurrency_limit: u32,
+        raw_items: Vec<StageItem>,
+        raw_concurrency_limit: u32,
         _context: &AppContext,
-    raw_overall_timeout: Duration,
+        raw_overall_timeout: Duration,
     ) -> Result<StageResult, StageError> {
         debug!(
             "Processing {} raw items for stage {:?}",
@@ -992,16 +1205,19 @@ impl StageActor {
             stage_type
         );
 
-    // 배치 정책 적용 (현재는 no-op 계획)
-    let plan = self
-        .batcher
-        .plan(&stage_type, raw_items, raw_concurrency_limit, raw_overall_timeout);
-    let items = plan.items;
-    let concurrency_limit = plan.concurrency_limit;
-    let overall_timeout = plan.overall_timeout;
+        // 배치 정책 적용 (현재는 no-op 계획)
+        let plan = self.batcher.plan(
+            &stage_type,
+            raw_items,
+            raw_concurrency_limit,
+            raw_overall_timeout,
+        );
+        let items = plan.items;
+        let concurrency_limit = plan.concurrency_limit;
+        let overall_timeout = plan.overall_timeout;
 
-    // 의존성/설정 클론 (Arc 복사)
-    let deps_arc = self.deps.clone();
+        // 의존성/설정 클론 (Arc 복사)
+        let deps_arc = self.deps.clone();
 
         // 동시성 제어를 위한 세마포어
         let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency_limit as usize));
@@ -1012,9 +1228,9 @@ impl StageActor {
         let products_on_last_page_hint = self.products_on_last_page_hint;
         // Duplicate policy는 deps에서 참조
 
-    // 각 아이템을 병렬로 처리 (StageItemStarted를 먼저 emit하여 이벤트 순서 보장)
-    let deadline = Instant::now() + overall_timeout;
-    let mut join_set = tokio::task::JoinSet::new();
+        // 각 아이템을 병렬로 처리 (StageItemStarted를 먼저 emit하여 이벤트 순서 보장)
+        let deadline = Instant::now() + overall_timeout;
+        let mut join_set = tokio::task::JoinSet::new();
         let batch_id_owned = self.batch_id.clone();
         for item in items {
             let sem = semaphore.clone();
@@ -1043,18 +1259,40 @@ impl StageActor {
                         error!("Aborted after timeout; task error: {:?}", e);
                     }
                 }
-                return Err(StageError::TimeoutError { timeout_ms: overall_timeout.as_millis() as u64 });
+                return Err(StageError::TimeoutError {
+                    timeout_ms: overall_timeout.as_millis() as u64,
+                });
             }
             let remaining = deadline.saturating_duration_since(now);
             match tokio::time::timeout(remaining, join_set.join_next()).await {
                 Ok(Some(Ok(Ok(res)))) => results.push(res),
                 Ok(Some(Ok(Err(e)))) => {
                     error!("Item processing failed: {:?}", e);
-                    results.push(StageItemResult { item_id: "unknown".into(), item_type: StageItemType::Url { url_type: "unknown".into() }, success: false, error: Some(format!("{:?}", e)), duration_ms: 0, retry_count: 0, collected_data: None });
+                    results.push(StageItemResult {
+                        item_id: "unknown".into(),
+                        item_type: StageItemType::Url {
+                            url_type: "unknown".into(),
+                        },
+                        success: false,
+                        error: Some(format!("{:?}", e)),
+                        duration_ms: 0,
+                        retry_count: 0,
+                        collected_data: None,
+                    });
                 }
                 Ok(Some(Err(join_err))) => {
                     error!("Task join error: {}", join_err);
-                    results.push(StageItemResult { item_id: "unknown".into(), item_type: StageItemType::Url { url_type: "unknown".into() }, success: false, error: Some(format!("Task join error: {}", join_err)), duration_ms: 0, retry_count: 0, collected_data: None });
+                    results.push(StageItemResult {
+                        item_id: "unknown".into(),
+                        item_type: StageItemType::Url {
+                            url_type: "unknown".into(),
+                        },
+                        success: false,
+                        error: Some(format!("Task join error: {}", join_err)),
+                        duration_ms: 0,
+                        retry_count: 0,
+                        collected_data: None,
+                    });
                 }
                 Ok(None) => break, // all done
                 Err(_elapsed) => {
@@ -1323,8 +1561,8 @@ mod tests {
     use super::*;
     use crate::crawl_engine::channels::types as ch;
     use crate::crawl_engine::integrated_context::IntegratedContextFactory;
-    use crate::crawl_engine::system_config::SystemConfig;
     use crate::crawl_engine::stages::DefaultStageLogicFactory;
+    use crate::crawl_engine::system_config::SystemConfig;
     use std::sync::Arc;
 
     async fn memory_repo() -> Arc<IntegratedProductRepository> {
@@ -1344,15 +1582,16 @@ mod tests {
         let (context, channels) = factory
             .create_session_context("sess-itg".to_string())
             .expect("context");
-    let event_rx = channels.event_tx.subscribe();
+        let event_rx = channels.event_tx.subscribe();
 
         // DI deps
         let app_config = crate::infrastructure::config::AppConfig::default();
         let http_client = Arc::new(app_config.create_http_client().expect("http"));
-        let extractor = Arc::new(crate::infrastructure::MatterDataExtractor::new().expect("extractor"));
+        let extractor =
+            Arc::new(crate::infrastructure::MatterDataExtractor::new().expect("extractor"));
         let repo = memory_repo().await;
 
-    let deps = StageDeps {
+        let deps = StageDeps {
             http_client: Arc::clone(&http_client),
             data_extractor: Arc::clone(&extractor),
             product_repo: Arc::clone(&repo),
@@ -1370,15 +1609,43 @@ mod tests {
         // Build a minimal valid ProductDetails payload for DataValidation
         let now = chrono::Utc::now();
         let pd1 = crate::domain::product::ProductDetail {
-            url: "https://e/p1".into(), page_id: Some(1), index_in_page: Some(1), id: None,
-            manufacturer: Some("A".into()), model: Some("M".into()), device_type: None, certificate_id: None, certification_date: None, software_version: None, hardware_version: None, vid: None, pid: None,
-            family_sku: None, family_variant_sku: None, firmware_version: None, family_id: None, tis_trp_tested: None, specification_version: None, transport_interface: None,
-            primary_device_type_id: None, primary_device_type_ids: None, application_categories: None, description: None, compliance_document_url: None, program_type: Some("Matter".into()), created_at: now, updated_at: now
+            url: "https://e/p1".into(),
+            page_id: Some(1),
+            index_in_page: Some(1),
+            id: None,
+            manufacturer: Some("A".into()),
+            model: Some("M".into()),
+            device_type: None,
+            certificate_id: None,
+            certification_date: None,
+            software_version: None,
+            hardware_version: None,
+            vid: None,
+            pid: None,
+            family_sku: None,
+            family_variant_sku: None,
+            firmware_version: None,
+            family_id: None,
+            tis_trp_tested: None,
+            specification_version: None,
+            transport_interface: None,
+            primary_device_type_ids: None,
+            application_categories: None,
+            description: None,
+            compliance_document_url: None,
+            program_type: Some("Matter".into()),
+            created_at: now,
+            updated_at: now,
         };
         let items = vec![ch::StageItem::ProductDetails(ch::ProductDetails {
             products: vec![pd1],
             source_urls: vec![],
-            extraction_stats: ch::ExtractionStats { attempted: 1, successful: 1, failed: 0, empty_responses: 0 },
+            extraction_stats: ch::ExtractionStats {
+                attempted: 1,
+                successful: 1,
+                failed: 0,
+                empty_responses: 0,
+            },
         })];
 
         // Spawn a task to collect a handful of events until StageCompleted received
@@ -1393,18 +1660,33 @@ mod tests {
             while Instant::now() < deadline {
                 if let Ok(ev) = tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
                     match ev {
-                        Ok(AppEvent::StageCompleted { .. }) => { got_stage_completed = true; },
-                        Ok(AppEvent::PerformanceMetrics { .. }) => { metrics_seen = true; },
-                        Ok(AppEvent::StageStarted { .. }) => { started_seen = true; },
-                        Ok(AppEvent::ValidationCompleted { .. }) => { validation_completed_seen = true; },
+                        Ok(AppEvent::StageCompleted { .. }) => {
+                            got_stage_completed = true;
+                        }
+                        Ok(AppEvent::PerformanceMetrics { .. }) => {
+                            metrics_seen = true;
+                        }
+                        Ok(AppEvent::StageStarted { .. }) => {
+                            started_seen = true;
+                        }
+                        Ok(AppEvent::ValidationCompleted { .. }) => {
+                            validation_completed_seen = true;
+                        }
                         _ => {}
                     }
-                    if got_stage_completed && validation_completed_seen { break; }
+                    if got_stage_completed && validation_completed_seen {
+                        break;
+                    }
                 } else {
                     // timeout, continue loop until overall deadline
                 }
             }
-            (got_stage_completed, metrics_seen, started_seen, validation_completed_seen)
+            (
+                got_stage_completed,
+                metrics_seen,
+                started_seen,
+                validation_completed_seen,
+            )
         });
 
         // Run the stage
@@ -1420,7 +1702,8 @@ mod tests {
             .expect("stage ok");
         assert!(res.successful_items >= 1);
 
-        let (got_completed, metrics_seen, started_seen, validation_done) = collector.await.expect("collector join");
+        let (got_completed, metrics_seen, started_seen, validation_done) =
+            collector.await.expect("collector join");
         assert!(started_seen, "StageStarted not seen");
         assert!(validation_done, "ValidationCompleted not seen");
         assert!(got_completed, "StageCompleted not seen");

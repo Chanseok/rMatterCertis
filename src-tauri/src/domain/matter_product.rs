@@ -17,10 +17,10 @@ pub struct MatterProduct {
     pub firmware_version: Option<String>,
     pub hardware_version: Option<String>,
     pub specification_version: Option<String>,
-    pub product_id: Option<String>,             // Hexadecimal ID
-    pub vendor_id: Option<String>,              // Hexadecimal ID
-    pub primary_device_type_id: Option<String>, // Hexadecimal ID
-    pub transport_interface: Option<String>,    // Comma-separated
+    pub product_id: Option<String>, // Hexadecimal ID
+    pub vendor_id: Option<String>,  // Hexadecimal ID
+    // primary_device_type_id removed; use normalized list in ProductDetail
+    pub transport_interface: Option<String>, // Comma-separated
 
     // Certification Details
     pub certified_date: Option<DateTime<Utc>>,
@@ -44,7 +44,8 @@ pub struct MatterProduct {
 
 impl MatterProduct {
     /// Create a new `MatterProduct` with basic information
-    #[must_use] pub fn new(
+    #[must_use]
+    pub fn new(
         certificate_id: String,
         company_name: String,
         product_name: String,
@@ -62,7 +63,7 @@ impl MatterProduct {
             specification_version: None,
             product_id: None,
             vendor_id: None,
-            primary_device_type_id: None,
+            // removed
             transport_interface: None,
             certified_date: None,
             tis_trp_tested: None,
@@ -79,14 +80,16 @@ impl MatterProduct {
     }
 
     /// Set page metadata (page number and position)
-    #[must_use] pub const fn with_page_metadata(mut self, page_number: i32, position: i32) -> Self {
+    #[must_use]
+    pub const fn with_page_metadata(mut self, page_number: i32, position: i32) -> Self {
         self.page_number = Some(page_number);
         self.position_in_page = Some(position);
         self
     }
 
     /// Set listing URL where this product was found
-    #[must_use] pub fn with_listing_url(mut self, listing_url: String) -> Self {
+    #[must_use]
+    pub fn with_listing_url(mut self, listing_url: String) -> Self {
         self.listing_url = Some(listing_url);
         self
     }
@@ -100,7 +103,6 @@ impl MatterProduct {
         specification_version: Option<String>,
         product_id: Option<String>,
         vendor_id: Option<String>,
-        primary_device_type_id: Option<String>,
         transport_interface: Option<String>,
     ) {
         self.firmware_version = firmware_version;
@@ -108,7 +110,6 @@ impl MatterProduct {
         self.specification_version = specification_version;
         self.product_id = product_id;
         self.vendor_id = vendor_id;
-        self.primary_device_type_id = primary_device_type_id;
         self.transport_interface = transport_interface;
         self.updated_at = Utc::now();
     }
@@ -193,7 +194,8 @@ pub enum CrawlingStage {
 }
 
 impl MatterCrawlingSession {
-    #[must_use] pub fn new(session_id: String, config: MatterCrawlerConfig) -> Self {
+    #[must_use]
+    pub fn new(session_id: String, config: MatterCrawlerConfig) -> Self {
         Self {
             session_id,
             config,

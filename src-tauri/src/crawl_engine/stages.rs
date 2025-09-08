@@ -18,7 +18,7 @@ impl StageLogicFactory for DefaultStageLogicFactory {
         &self,
         stage_type: &crate::crawl_engine::actors::types::StageType,
     ) -> Option<Arc<dyn StageLogic>> {
-    use crate::crawl_engine::stages::strategies::default::{
+        use crate::crawl_engine::stages::strategies::default::{
             DataSavingLogic, DataValidationLogic, ListPageLogic, ProductDetailLogic,
             StatusCheckLogic,
         };

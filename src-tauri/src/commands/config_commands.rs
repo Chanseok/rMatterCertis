@@ -4,15 +4,15 @@
 //! in a unified way. The frontend should always get configuration from the
 //! backend through these commands to ensure a single source of truth.
 
+use crate::api::frontend_api::DatabaseStats;
 use crate::domain::services::crawling_services::StatusChecker;
 use crate::infrastructure::MatterDataExtractor;
-use crate::api::frontend_api::DatabaseStats;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
 use tracing::{debug, info};
 // For exposing StageBatcher settings (read-only UI)
-use crate::crawl_engine::system_config::{SystemConfig, StageBatcherSettings};
+use crate::crawl_engine::system_config::{StageBatcherSettings, SystemConfig};
 
 // Local helpers for explicit numeric conversions where truncation is acceptable and bounded
 #[inline]
@@ -794,7 +794,12 @@ pub async fn write_frontend_log(entry: LogEntry, state: State<'_, AppState>) -> 
             "timestamped" => {
                 let date_str = FixedOffset::east_opt(9 * 3600).map_or_else(
                     || Utc::now().format("%Y%m%d").to_string(),
-                    |offset| Utc::now().with_timezone(&offset).format("%Y%m%d").to_string(),
+                    |offset| {
+                        Utc::now()
+                            .with_timezone(&offset)
+                            .format("%Y%m%d")
+                            .to_string()
+                    },
                 );
                 log_dir.join(format!("back_front-{}.log", date_str))
             }
@@ -970,10 +975,7 @@ pub async fn get_crawling_status_check(
     let last_crawl_time = config.app_managed.last_successful_crawl.clone();
 
     // Calculate local DB page range (estimate)
-    let avg_products_per_page_f64: f64 = config
-        .app_managed
-        .avg_products_per_page
-        .unwrap_or(12.0);
+    let avg_products_per_page_f64: f64 = config.app_managed.avg_products_per_page.unwrap_or(12.0);
     let estimated_max_local_page = if avg_products_per_page_f64 > 0.0 {
         let estimate = (f64::from(local_product_count) / avg_products_per_page_f64).ceil();
         // Clamp to u32 range
@@ -1072,17 +1074,14 @@ pub async fn get_crawling_status_check(
     let estimated_new_products = estimated_total_products.map_or_else(
         || {
             let pages_to_crawl = recommended_end_page.saturating_sub(recommended_start_page) + 1;
-        let v = f64::from(pages_to_crawl) * avg_products_per_page_f64;
-        f64_to_u32_saturating_floor(v)
+            let v = f64::from(pages_to_crawl) * avg_products_per_page_f64;
+            f64_to_u32_saturating_floor(v)
         },
         |total| {
-            let limited_total = std::cmp::min(
-                total,
-                {
-            let v = f64::from(effective_max_page) * avg_products_per_page_f64;
-            f64_to_u32_saturating_floor(v)
-                },
-            );
+            let limited_total = std::cmp::min(total, {
+                let v = f64::from(effective_max_page) * avg_products_per_page_f64;
+                f64_to_u32_saturating_floor(v)
+            });
             limited_total.saturating_sub(local_product_count)
         },
     );
@@ -1096,13 +1095,13 @@ pub async fn get_crawling_status_check(
         } else {
             0.0
         };
-    f64_to_f32_lossy(efficiency.min(1.0))
+        f64_to_f32_lossy(efficiency.min(1.0))
     } else {
         // 신규 제품이 없어도 데이터 신선도에 따라 점수 부여
         if estimated_max_local_page > 0 && local_product_count > 0 {
             let denom = f64::from(estimated_total_products.unwrap_or(1));
             let freshness = if denom > 0.0 {
-        f64_to_f32_lossy((f64::from(local_product_count) / denom).min(1.0))
+                f64_to_f32_lossy((f64::from(local_product_count) / denom).min(1.0))
             } else {
                 0.0
             };
@@ -1196,7 +1195,7 @@ pub async fn get_crawling_status_check(
     let sync_percentage = if site_estimated_total > 0 {
         let numerator = f64::from(local_product_count);
         let denominator = f64::from(site_estimated_total);
-    f64_to_f32_lossy(((numerator / denominator) * 100.0).min(100.0))
+        f64_to_f32_lossy(((numerator / denominator) * 100.0).min(100.0))
     } else {
         0.0
     };

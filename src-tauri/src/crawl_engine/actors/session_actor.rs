@@ -169,25 +169,37 @@ impl SessionActor {
         config: &CrawlingConfig,
         context: &AppContext,
         deps: &SessionDeps,
-    ) -> Result<(
-        crate::crawl_engine::services::crawling_planner::CrawlingPlan,
-        crate::domain::services::SiteStatus,
-    ), SessionError> {
-        let status_checker: Arc<dyn StatusChecker> = Arc::new(StatusCheckerImpl::with_product_repo(
-            deps.http_client.as_ref().clone(),
-            deps.data_extractor.as_ref().clone(),
-            AppConfig::for_development(),
-            Arc::clone(&deps.product_repo),
-        ));
+    ) -> Result<
+        (
+            crate::crawl_engine::services::crawling_planner::CrawlingPlan,
+            crate::domain::services::SiteStatus,
+        ),
+        SessionError,
+    > {
+        let status_checker: Arc<dyn StatusChecker> =
+            Arc::new(StatusCheckerImpl::with_product_repo(
+                deps.http_client.as_ref().clone(),
+                deps.data_extractor.as_ref().clone(),
+                AppConfig::for_development(),
+                Arc::clone(&deps.product_repo),
+            ));
         let db_analyzer: Arc<dyn DatabaseAnalyzer> =
             Arc::new(DatabaseAnalyzerImpl::new(Arc::clone(&deps.product_repo)));
-    let planner = CrawlingPlanner::new(Arc::clone(&status_checker), db_analyzer, Arc::clone(&context.config))
-            .with_repository(Arc::clone(&deps.product_repo));
+        let planner = CrawlingPlanner::new(
+            Arc::clone(&status_checker),
+            db_analyzer,
+            Arc::clone(&context.config),
+        )
+        .with_repository(Arc::clone(&deps.product_repo));
 
         // TTL 5m cache for site status
         let ttl = Duration::from_secs(300);
         let cached = self.site_status_cache.as_ref().and_then(|(status, ts)| {
-            if ts.elapsed() <= ttl { Some(status.clone()) } else { None }
+            if ts.elapsed() <= ttl {
+                Some(status.clone())
+            } else {
+                None
+            }
         });
         if self.crawling_plan.is_some() {
             warn!(
@@ -197,9 +209,9 @@ impl SessionActor {
         let (plan, used_site_status) = planner
             .create_crawling_plan_with_cache(config, cached)
             .await
-            .map_err(|e| SessionError::InitializationFailed(format!(
-                "Failed to create crawling plan: {e}"
-            )))?;
+            .map_err(|e| {
+                SessionError::InitializationFailed(format!("Failed to create crawling plan: {e}"))
+            })?;
 
         self.plan_version = 1;
         self.crawling_plan = Some(std::sync::Arc::new(plan.clone()));
@@ -231,7 +243,7 @@ impl SessionActor {
             percentage: 0.0,
             timestamp: Utc::now(),
         };
-    self.emit(&context, evt)
+        self.emit(&context, evt)
     }
 
     /// Emit a "plan ready" progress event for a preplanned ExecutionPlan (manual path)
@@ -279,7 +291,7 @@ impl SessionActor {
         context: &AppContext,
         session_id: &str,
         plan: &crate::crawl_engine::services::crawling_planner::CrawlingPlan,
-    deps: &SessionDeps,
+        deps: &SessionDeps,
         site_status: &crate::domain::services::SiteStatus,
     ) -> Result<usize, SessionError> {
         let planned_list_batches: Vec<_> = plan
@@ -293,9 +305,7 @@ impl SessionActor {
             })
             .collect();
         if planned_list_batches.is_empty() {
-            warn!(
-                "⚠️ No ListPageCrawling phases planned (requested start/end maybe collapsed)."
-            );
+            warn!("⚠️ No ListPageCrawling phases planned (requested start/end maybe collapsed).");
         } else {
             let mut agg: Vec<u32> = planned_list_batches
                 .iter()
@@ -320,7 +330,9 @@ impl SessionActor {
             }
             batch_idx += 1;
             let pages = &phase.pages;
-            if pages.is_empty() { continue; }
+            if pages.is_empty() {
+                continue;
+            }
             let batch_id = format!("{session_id}-batch-{batch_idx}");
             info!(
                 "🏃 SessionActor {} running batch {} (batch_index={}/{}) with {} pages: {:?}",
@@ -341,23 +353,21 @@ impl SessionActor {
             };
             self.emit(&context, start_evt)?;
 
-        // Always use StageActor path (legacy BatchActor retired)
-        let run_result = {
-                self
-                    .run_batch_with_stage_actor(
-                        &batch_id,
-                        &pages,
-                        context,
-                        deps,
-                        site_status,
-                    )
-            .await
-        };
+            // Always use StageActor path (legacy BatchActor retired)
+            let run_result = {
+                self.run_batch_with_stage_actor(&batch_id, &pages, context, deps, site_status)
+                    .await
+            };
 
             if let Err(e) = run_result {
                 error!("❌ Batch {} failed: {}", batch_id, e);
                 self.errors.push(format!("batch {batch_id}: {e}"));
-                let fail_event = AppEvent::SessionFailed { session_id: session_id.to_string(), error: format!("Batch {batch_id} failed: {e}"), final_failure: false, timestamp: Utc::now() };
+                let fail_event = AppEvent::SessionFailed {
+                    session_id: session_id.to_string(),
+                    error: format!("Batch {batch_id} failed: {e}"),
+                    final_failure: false,
+                    timestamp: Utc::now(),
+                };
                 self.emit(&context, fail_event)?;
                 continue;
             }
@@ -395,18 +405,13 @@ impl SessionActor {
             } else {
                 (range.start_page..=range.end_page).collect()
             };
-            if pages.is_empty() { continue; }
+            if pages.is_empty() {
+                continue;
+            }
             let batch_id = format!("{}-pre-{}", session_id, idx + 1);
             // Execute via StageActor (legacy path retired) so preplanned runs process pages.
             let run_result: Result<(), SessionError> = {
-                self
-                    .run_batch_with_stage_actor(
-                        &batch_id,
-                        &pages,
-                        context,
-                        deps,
-                        site_status,
-                    )
+                self.run_batch_with_stage_actor(&batch_id, &pages, context, deps, site_status)
                     .await
             };
 
@@ -425,9 +430,8 @@ impl SessionActor {
             } else {
                 // Count only on successful execution
                 self.processed_batches = self.processed_batches.saturating_add(1);
-                self.total_success_count = self
-                    .total_success_count
-                    .saturating_add(pages.len() as u32);
+                self.total_success_count =
+                    self.total_success_count.saturating_add(pages.len() as u32);
             }
         }
         Ok(planned_batches)
@@ -444,25 +448,22 @@ impl SessionActor {
             SessionError::InitializationFailed(format!("Failed to create HttpClient: {e}"))
         })?);
         let data_extractor = Arc::new(MatterDataExtractor::new().map_err(|e| {
-            SessionError::InitializationFailed(format!(
-                "Failed to create MatterDataExtractor: {e}"
-            ))
+            SessionError::InitializationFailed(format!("Failed to create MatterDataExtractor: {e}"))
         })?);
         let db_pool = crate::infrastructure::database_connection::get_or_init_global_pool()
             .await
             .map_err(|e| {
-                SessionError::InitializationFailed(format!(
-                    "Failed to obtain database pool: {e}"
-                ))
+                SessionError::InitializationFailed(format!("Failed to obtain database pool: {e}"))
             })?;
         let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
 
-        let status_checker: Arc<dyn StatusChecker> = Arc::new(StatusCheckerImpl::with_product_repo(
-            http_client.as_ref().clone(),
-            data_extractor.as_ref().clone(),
-            AppConfig::for_development(),
-            Arc::clone(&product_repo),
-        ));
+        let status_checker: Arc<dyn StatusChecker> =
+            Arc::new(StatusCheckerImpl::with_product_repo(
+                http_client.as_ref().clone(),
+                data_extractor.as_ref().clone(),
+                AppConfig::for_development(),
+                Arc::clone(&product_repo),
+            ));
         let db_analyzer: Arc<dyn DatabaseAnalyzer> =
             Arc::new(DatabaseAnalyzerImpl::new(Arc::clone(&product_repo)));
         let planner = CrawlingPlanner::new(
@@ -498,7 +499,7 @@ impl SessionActor {
             plan: next_plan,
             timestamp: Utc::now(),
         };
-    self.emit(&context, next_event)?;
+        self.emit(&context, next_event)?;
         Ok(())
     }
 
@@ -529,7 +530,7 @@ impl SessionActor {
             summary: aggregated_summary.clone(),
             timestamp: Utc::now(),
         };
-    self.emit(&context, completion_event)?;
+        self.emit(&context, completion_event)?;
 
         // === 추가: 세션 리포트 이벤트 발행 ===
         let duration_ms = self
@@ -547,7 +548,7 @@ impl SessionActor {
             products_updated: self.products_updated,
             timestamp: Utc::now(),
         };
-    self.emit(&context, crawl_report)?;
+        self.emit(&context, crawl_report)?;
 
         // === KPI: 최종 세션 요약 로그 (DB 저장 내역 포함) ===
         let plan_hash_json = match &self.active_plan_hash {
@@ -588,10 +589,10 @@ impl SessionActor {
             chrono::Utc::now()
         );
 
-    info!("✅ Session {} completed successfully", session_id);
-    // Mark completion to prevent duplicate emission later
-    self.completion_emitted = true;
-    Ok(())
+        info!("✅ Session {} completed successfully", session_id);
+        // Mark completion to prevent duplicate emission later
+        self.completion_emitted = true;
+        Ok(())
     }
 
     /// 새로운 `SessionActor` 인스턴스 생성
@@ -601,7 +602,8 @@ impl SessionActor {
     ///
     /// # Returns
     /// * `Self` - 새로운 `SessionActor` 인스턴스
-    #[must_use] pub const fn new(actor_id: String) -> Self {
+    #[must_use]
+    pub const fn new(actor_id: String) -> Self {
         Self {
             actor_id,
             session_id: None,
@@ -650,7 +652,7 @@ impl SessionActor {
 
         // 상태 업데이트
         self.session_id = Some(session_id.clone());
-    self.transition(SessionState::Starting)?;
+        self.transition(SessionState::Starting)?;
         self.start_time = Some(Instant::now());
 
         // 세션 시작 이벤트 발행
@@ -660,7 +662,7 @@ impl SessionActor {
             timestamp: Utc::now(),
         };
 
-    self.emit(&context, start_event)?;
+        self.emit(&context, start_event)?;
 
         // 실제 크롤링 실행 로직 시작
         info!(
@@ -675,13 +677,11 @@ impl SessionActor {
         );
 
         // 서비스 구성
-    let http_client = Arc::new(HttpClient::create_from_global_config().map_err(|e| {
+        let http_client = Arc::new(HttpClient::create_from_global_config().map_err(|e| {
             SessionError::InitializationFailed(format!("Failed to create HttpClient: {e}"))
         })?);
         let data_extractor = Arc::new(MatterDataExtractor::new().map_err(|e| {
-            SessionError::InitializationFailed(format!(
-                "Failed to create MatterDataExtractor: {e}"
-            ))
+            SessionError::InitializationFailed(format!("Failed to create MatterDataExtractor: {e}"))
         })?);
 
         // DB 풀 재사용 우선 (글로벌 풀), 필요 시 안전하게 초기화
@@ -690,26 +690,27 @@ impl SessionActor {
             .map_err(|e| {
                 SessionError::InitializationFailed(format!("Failed to obtain database pool: {e}"))
             })?;
-    let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
-    let deps = SessionDeps { http_client, data_extractor, product_repo };
+        let product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
+        let deps = SessionDeps {
+            http_client,
+            data_extractor,
+            product_repo,
+        };
 
         info!("🎬 [SessionRun] Enter run() for session_id={}", session_id);
         // Preflight DB stats emit (best-effort)
-        self
-            .emit_preflight_db_snapshot(
-                context,
-                deps.product_repo.as_ref(),
-                &session_id,
-                None,
-                None,
-                "initial_db_scan",
-            )
-            .await?;
+        self.emit_preflight_db_snapshot(
+            context,
+            deps.product_repo.as_ref(),
+            &session_id,
+            None,
+            None,
+            "initial_db_scan",
+        )
+        .await?;
 
         // 계획 생성 (헬퍼 사용)
-        let (plan, used_site_status) = self
-            .plan_session(&config, context, &deps)
-            .await?;
+        let (plan, used_site_status) = self.plan_session(&config, context, &deps).await?;
         let list_pages: usize = plan
             .phases
             .iter()
@@ -733,7 +734,7 @@ impl SessionActor {
             detail_pages,
             plan.created_at
         );
-    self.transition(SessionState::Planned)?;
+        self.transition(SessionState::Planned)?;
         debug!(
             "[PlanInit] CrawlingPlan stored (Arc) for session_id={}",
             session_id
@@ -743,8 +744,8 @@ impl SessionActor {
             "📋 Crawling plan created: {} phases (state=Planned)",
             plan.phases.len()
         );
-    // 플래너 완료 Progress 이벤트 발행 (헬퍼 사용)
-    self.emit_plan_ready(context, &session_id, &plan)?;
+        // 플래너 완료 Progress 이벤트 발행 (헬퍼 사용)
+        self.emit_plan_ready(context, &session_id, &plan)?;
 
         // 캐시 갱신 및 사용 로그
         self.site_status_cache = Some((used_site_status.clone(), Instant::now()));
@@ -755,26 +756,19 @@ impl SessionActor {
         );
 
         // Update DB stats with site info after site status known
-        self
-            .emit_preflight_db_snapshot(
-                context,
-                deps.product_repo.as_ref(),
-                &session_id,
-                Some(site_status.total_pages),
-                Some(site_status.total_pages),
-                "post_site_status",
-            )
-            .await?;
+        self.emit_preflight_db_snapshot(
+            context,
+            deps.product_repo.as_ref(),
+            &session_id,
+            Some(site_status.total_pages),
+            Some(site_status.total_pages),
+            "post_site_status",
+        )
+        .await?;
 
         // 배치 실행 (헬퍼 사용)
         let planned_batches_count = self
-            .run_list_batches(
-                context,
-                &session_id,
-                &plan,
-                &deps,
-                &site_status,
-            )
+            .run_list_batches(context, &session_id, &plan, &deps, &site_status)
             .await?;
 
         // Unified detail crawling (if enabled) BEFORE marking completion
@@ -802,7 +796,7 @@ impl SessionActor {
         }
 
         // 상태를 Running으로 전환 후 Complete로 이동
-    self.transition(SessionState::Running)?;
+        self.transition(SessionState::Running)?;
         if self.processed_batches as usize == planned_batches_count {
             info!(
                 "📊 All planned list batches executed planned={} executed={}",
@@ -818,14 +812,13 @@ impl SessionActor {
             "🎯 SessionActor {} completing session: {} batches, {} pages total",
             self.actor_id, self.processed_batches, self.total_success_count
         );
-    self.transition(SessionState::Completed)?;
+        self.transition(SessionState::Completed)?;
 
-    // Emit completion events and KPI logs (helper)
-    self.emit_session_completion(context, &session_id, planned_batches_count)?;
+        // Emit completion events and KPI logs (helper)
+        self.emit_session_completion(context, &session_id, planned_batches_count)?;
 
         // === 세션 종료 후: 다음 계획 자동 수립 및 이벤트 발행 ===
-        self
-            .compute_and_emit_next_plan_ready(context, &config, &session_id)
+        self.compute_and_emit_next_plan_ready(context, &config, &session_id)
             .await?;
 
         Ok(())
@@ -837,17 +830,17 @@ impl SessionActor {
 
     /// Run a list-page batch directly via StageActor, bypassing BatchActor.
     async fn run_batch_with_stage_actor(
-        &mut self,
+        &self,
         batch_id: &str,
         pages: &[u32],
         context: &AppContext,
         deps: &SessionDeps,
         site_status: &crate::domain::services::SiteStatus,
     ) -> Result<(), SessionError> {
-    use crate::crawl_engine::actors::types::StageType;
-    use crate::crawl_engine::actors::types::StageResultData as SRD;
-    use crate::crawl_engine::channels::types as ch;
-    use crate::crawl_engine::channels::types::StageItem;
+        use crate::crawl_engine::actors::types::StageResultData as SRD;
+        use crate::crawl_engine::actors::types::StageType;
+        use crate::crawl_engine::channels::types as ch;
+        use crate::crawl_engine::channels::types::StageItem;
         use std::sync::Arc;
 
         let app_config = AppConfig::for_development();
@@ -875,7 +868,8 @@ impl SessionActor {
             let batcher = Arc::new(ConfigurableStageBatcher::from_settings(cfg));
             stage_actor.set_batcher(batcher);
         }
-        stage_actor.set_site_pagination_hints(site_status.total_pages, site_status.products_on_last_page);
+        stage_actor
+            .set_site_pagination_hints(site_status.total_pages, site_status.products_on_last_page);
 
         // Map pages to StageItems
         let items: Vec<StageItem> = pages.iter().copied().map(StageItem::Page).collect();
@@ -890,7 +884,9 @@ impl SessionActor {
                 context,
             )
             .await
-            .map_err(|e| SessionError::ContextError(format!("StageActor list run failed: {e:?}")))?;
+            .map_err(|e| {
+                SessionError::ContextError(format!("StageActor list run failed: {e:?}"))
+            })?;
 
         // Extract product URLs from list stage results (typed)
         let mut all_urls: Vec<crate::domain::product_url::ProductUrl> = Vec::new();
@@ -914,8 +910,15 @@ impl SessionActor {
         }
 
         // Stage 3: ProductDetailCrawling
-    info!("[Chaining] Batch {batch_id}: starting ProductDetailCrawling for {} urls", all_urls.len());
-        let detail_concurrency = app_config.user.crawling.workers.product_detail_max_concurrent as u32;
+        info!(
+            "[Chaining] Batch {batch_id}: starting ProductDetailCrawling for {} urls",
+            all_urls.len()
+        );
+        let detail_concurrency = app_config
+            .user
+            .crawling
+            .workers
+            .product_detail_max_concurrent as u32;
         let detail_items: Vec<StageItem> = vec![StageItem::ProductUrls(ch::ProductUrls {
             urls: all_urls.clone(),
             batch_id: Some(batch_id.to_string()),
@@ -929,9 +932,9 @@ impl SessionActor {
                 context,
             )
             .await
-            .map_err(|e| SessionError::ContextError(format!(
-                "StageActor detail run failed: {e:?}"
-            )))?;
+            .map_err(|e| {
+                SessionError::ContextError(format!("StageActor detail run failed: {e:?}"))
+            })?;
 
         info!(
             "[Chaining] Batch {batch_id}: ProductDetailCrawling completed: {} item_results (ok={} fail={})",
@@ -941,11 +944,17 @@ impl SessionActor {
         );
 
         // Collect ProductDetails for subsequent stages
-        let mut collected_details: Vec<crate::domain::integrated_product::ProductDetail> = Vec::new();
+        let mut collected_details: Vec<crate::domain::integrated_product::ProductDetail> =
+            Vec::new();
         let mut successful_count: u32 = 0;
         let mut failed_count: u32 = 0;
         for it in &detail_res.details {
-            if let Some(SRD::ProductDetails { details, successful_count: sc, failed_count: fc }) = &it.collected_data {
+            if let Some(SRD::ProductDetails {
+                details,
+                successful_count: sc,
+                failed_count: fc,
+            }) = &it.collected_data
+            {
                 collected_details.extend(details.clone());
                 successful_count = successful_count.saturating_add(*sc);
                 failed_count = failed_count.saturating_add(*fc);
@@ -964,8 +973,8 @@ impl SessionActor {
             },
         };
 
-    // Stage 4: DataValidation (read-only, for UI progress metrics)
-    info!("[Chaining] Batch {batch_id}: starting DataValidation");
+        // Stage 4: DataValidation (read-only, for UI progress metrics)
+        info!("[Chaining] Batch {batch_id}: starting DataValidation");
         let _validate_res = stage_actor
             .execute_stage(
                 StageType::DataValidation,
@@ -975,12 +984,12 @@ impl SessionActor {
                 context,
             )
             .await
-            .map_err(|e| SessionError::ContextError(format!(
-                "StageActor validation run failed: {e:?}"
-            )))?;
+            .map_err(|e| {
+                SessionError::ContextError(format!("StageActor validation run failed: {e:?}"))
+            })?;
 
-    // Stage 5: DataSaving (persist to DB)
-    info!("[Chaining] Batch {batch_id}: starting DataSaving");
+        // Stage 5: DataSaving (persist to DB)
+        info!("[Chaining] Batch {batch_id}: starting DataSaving");
         let _save_res = stage_actor
             .execute_stage(
                 StageType::DataSaving,
@@ -990,9 +999,9 @@ impl SessionActor {
                 context,
             )
             .await
-            .map_err(|e| SessionError::ContextError(format!(
-                "StageActor saving run failed: {e:?}"
-            )))?;
+            .map_err(|e| {
+                SessionError::ContextError(format!("StageActor saving run failed: {e:?}"))
+            })?;
 
         Ok(())
     }
@@ -1015,9 +1024,7 @@ impl SessionActor {
         if !matches!(self.state, SessionState::Running) {
             return Err(SessionError::InvalidStateTransition {
                 from: self.state.clone(),
-                to: SessionState::Paused {
-                    reason,
-                },
+                to: SessionState::Paused { reason },
             });
         }
 
@@ -1039,7 +1046,7 @@ impl SessionActor {
         };
         // (metrics already aggregated post batch run)
 
-    self.emit(&context, pause_event)?;
+        self.emit(&context, pause_event)?;
 
         Ok(())
     }
@@ -1078,7 +1085,7 @@ impl SessionActor {
             timestamp: Utc::now(),
         };
 
-    self.emit(&context, resume_event)?;
+        self.emit(&context, resume_event)?;
 
         Ok(())
     }
@@ -1116,7 +1123,7 @@ impl SessionActor {
             timestamp: Utc::now(),
         };
 
-    self.emit(&context, cancel_event)?;
+        self.emit(&context, cancel_event)?;
 
         // 세션 정리
         self.cleanup_session();

@@ -43,7 +43,7 @@ impl StatusChecker for MockStatusChecker {
     }
 
     async fn estimate_crawling_time(&self, pages: u32) -> std::time::Duration {
-    std::time::Duration::from_secs(u64::from(pages))
+        std::time::Duration::from_secs(u64::from(pages))
     }
 
     async fn verify_site_accessibility(&self) -> anyhow::Result<bool> {

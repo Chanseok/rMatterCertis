@@ -5,9 +5,9 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use std::{collections::HashMap, time::Duration};
 use thiserror::Error;
+use ts_rs::TS;
 
 #[derive(Error, Debug)]
 pub enum ConfigError {
@@ -90,7 +90,7 @@ pub struct PerformanceSettings {
 }
 
 /// Policy knobs for StageBatcher (read-only for now; behavior remains pass-through)
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, Default)]
 pub struct StageBatcherSettings {
     /// Optional maximum items per chunk when pre-planning batches (0 = disabled)
     #[serde(default)]
@@ -101,12 +101,6 @@ pub struct StageBatcherSettings {
     /// Enforce an overall timeout per planned batch in milliseconds (None = use actor defaults)
     #[serde(default)]
     pub enforce_timeout_ms: Option<u64>,
-}
-
-impl Default for StageBatcherSettings {
-    fn default() -> Self {
-        Self { max_chunk_size: 0, prefer_reverse_order: false, enforce_timeout_ms: None }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,15 +155,18 @@ pub struct ActorSettings {
 }
 
 impl RetryPolicy {
-    #[must_use] pub const fn base_delay(&self) -> Duration {
+    #[must_use]
+    pub const fn base_delay(&self) -> Duration {
         Duration::from_millis(self.base_delay_ms)
     }
 
-    #[must_use] pub const fn max_delay(&self) -> Duration {
+    #[must_use]
+    pub const fn max_delay(&self) -> Duration {
         Duration::from_millis(self.max_delay_ms)
     }
 
-    #[must_use] pub const fn jitter_range(&self) -> Duration {
+    #[must_use]
+    pub const fn jitter_range(&self) -> Duration {
         Duration::from_millis(self.jitter_range_ms)
     }
 }
@@ -217,7 +214,8 @@ impl SystemConfig {
         Ok(())
     }
 
-    #[must_use] pub fn default() -> Self {
+    #[must_use]
+    pub fn default() -> Self {
         use std::collections::HashMap;
 
         let mut stage_limits = HashMap::new();
@@ -351,7 +349,7 @@ impl SystemConfig {
         Ok(Self::default())
     }
 }
- 
+
 /// 크롤링 설정 (호환성용)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlingSettings {

@@ -1,14 +1,14 @@
 // Default strategy implementations for each Stage are split into dedicated files (pinned paths)
-#[path = "default/list_page.rs"]
-pub mod list_page;
-#[path = "default/status_check.rs"]
-pub mod status_check;
-#[path = "default/product_detail.rs"]
-pub mod product_detail;
-#[path = "default/data_validation.rs"]
-pub mod data_validation;
 #[path = "default/data_saving.rs"]
 pub mod data_saving;
+#[path = "default/data_validation.rs"]
+pub mod data_validation;
+#[path = "default/list_page.rs"]
+pub mod list_page;
+#[path = "default/product_detail.rs"]
+pub mod product_detail;
+#[path = "default/status_check.rs"]
+pub mod status_check;
 
 // Re-exports for factory binding and tests
 pub use data_saving::DataSavingLogic;
@@ -28,20 +28,20 @@ mod tests {
         // Use default config paths; these dependencies may still do real work. For unit scope, we won't invoke network.
         let cfg = crate::infrastructure::config::AppConfig::default();
         let http = Arc::new(cfg.create_http_client().expect("http client"));
-        let extractor = Arc::new(
-            crate::infrastructure::MatterDataExtractor::new().expect("extractor"),
-        );
+        let extractor =
+            Arc::new(crate::infrastructure::MatterDataExtractor::new().expect("extractor"));
         let pool = futures::executor::block_on(
             crate::infrastructure::database_connection::get_or_init_global_pool(),
         )
         .expect("pool");
-        let repo = Arc::new(crate::infrastructure::IntegratedProductRepository::new(pool));
+        let repo = Arc::new(crate::infrastructure::IntegratedProductRepository::new(
+            pool,
+        ));
         Deps {
             http,
             extractor,
             repo,
-            duplicate_policy:
-                crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
+            duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
             list_collector: None,
             detail_collector: None,
         }
@@ -103,21 +103,23 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("memory pool");
-        Arc::new(crate::infrastructure::IntegratedProductRepository::new(pool))
+        Arc::new(crate::infrastructure::IntegratedProductRepository::new(
+            pool,
+        ))
     }
 
-    fn deps_stub_memory_sync(repo: Arc<crate::infrastructure::IntegratedProductRepository>) -> Deps {
+    fn deps_stub_memory_sync(
+        repo: Arc<crate::infrastructure::IntegratedProductRepository>,
+    ) -> Deps {
         let cfg = crate::infrastructure::config::AppConfig::default();
         let http = Arc::new(cfg.create_http_client().expect("http client"));
-        let extractor = Arc::new(
-            crate::infrastructure::MatterDataExtractor::new().expect("extractor"),
-        );
+        let extractor =
+            Arc::new(crate::infrastructure::MatterDataExtractor::new().expect("extractor"));
         Deps {
             http,
             extractor,
             repo,
-            duplicate_policy:
-                crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
+            duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
             list_collector: None,
             detail_collector: None,
         }
@@ -130,7 +132,10 @@ mod tests {
         let deps = deps_stub_memory_sync(repo);
         let input = StageInput {
             stage_type: crate::crawl_engine::actors::types::StageType::ProductDetailCrawling,
-            item: ch::StageItem::ProductUrls(ch::ProductUrls { urls: vec![], batch_id: None }),
+            item: ch::StageItem::ProductUrls(ch::ProductUrls {
+                urls: vec![],
+                batch_id: None,
+            }),
             config: crate::infrastructure::config::AppConfig::default(),
             deps,
             total_pages_hint: Some(1),
@@ -170,7 +175,6 @@ mod tests {
             tis_trp_tested: None,
             specification_version: None,
             transport_interface: None,
-            primary_device_type_id: None,
             primary_device_type_ids: None,
             application_categories: None,
             description: None,
@@ -179,14 +183,22 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        let pd2 = crate::domain::product::ProductDetail { url: "https://example.com/p2".into(), ..pd1.clone() };
+        let pd2 = crate::domain::product::ProductDetail {
+            url: "https://example.com/p2".into(),
+            ..pd1.clone()
+        };
 
         let input = StageInput {
             stage_type: crate::crawl_engine::actors::types::StageType::DataValidation,
             item: ch::StageItem::ProductDetails(ch::ProductDetails {
                 products: vec![pd1, pd2],
                 source_urls: vec![],
-                extraction_stats: ch::ExtractionStats { attempted: 2, successful: 2, failed: 0, empty_responses: 0 },
+                extraction_stats: ch::ExtractionStats {
+                    attempted: 2,
+                    successful: 2,
+                    failed: 0,
+                    empty_responses: 0,
+                },
             }),
             config: crate::infrastructure::config::AppConfig::default(),
             deps,
@@ -196,9 +208,12 @@ mod tests {
         let res = logic.execute(input).await.expect("happy path");
         assert!(res.result.success);
         // Should serialize typed validation result
-    let data = res.result.collected_data.expect("validated data");
-    match data {
-            crate::crawl_engine::actors::types::StageResultData::ValidationResult { validated_count, .. } => {
+        let data = res.result.collected_data.expect("validated data");
+        match data {
+            crate::crawl_engine::actors::types::StageResultData::ValidationResult {
+                validated_count,
+                ..
+            } => {
                 assert_eq!(validated_count, 2);
             }
             other => panic!("unexpected variant: {:?}", other),
@@ -210,7 +225,11 @@ mod tests {
         let logic = DataSavingLogic;
         let repo = memory_repo().await;
         let deps = deps_stub_memory_sync(repo);
-        let empty = ch::ValidatedProducts { products: vec![], validation_report: None, storage_recommendation: ch::StorageRecommendation::HighlyRecommended };
+        let empty = ch::ValidatedProducts {
+            products: vec![],
+            validation_report: None,
+            storage_recommendation: ch::StorageRecommendation::HighlyRecommended,
+        };
         let input = StageInput {
             stage_type: crate::crawl_engine::actors::types::StageType::DataSaving,
             item: ch::StageItem::ValidatedProducts(empty),

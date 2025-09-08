@@ -17,7 +17,8 @@ pub struct ProductUrl {
 
 impl ProductUrl {
     /// 새로운 `ProductUrl` 생성
-    #[must_use] pub const fn new(url: String, page_id: i32, index_in_page: i32) -> Self {
+    #[must_use]
+    pub const fn new(url: String, page_id: i32, index_in_page: i32) -> Self {
         Self {
             url,
             page_id,
@@ -26,12 +27,14 @@ impl ProductUrl {
     }
 
     /// URL만 추출 (기존 코드와의 호환성을 위해)
-    #[must_use] pub fn get_url(&self) -> &str {
+    #[must_use]
+    pub fn get_url(&self) -> &str {
         &self.url
     }
 
     /// 메타데이터를 튜플로 반환
-    #[must_use] pub const fn get_position(&self) -> (i32, i32) {
+    #[must_use]
+    pub const fn get_position(&self) -> (i32, i32) {
         (self.page_id, self.index_in_page)
     }
 }

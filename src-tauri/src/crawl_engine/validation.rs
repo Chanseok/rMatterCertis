@@ -45,7 +45,8 @@ pub struct ValidationCoordinator {
 }
 
 impl ValidationCoordinator {
-    #[must_use] pub const fn new(scan_depth: u32) -> Self {
+    #[must_use]
+    pub const fn new(scan_depth: u32) -> Self {
         Self { scan_depth }
     }
 

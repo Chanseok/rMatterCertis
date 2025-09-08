@@ -70,33 +70,40 @@ impl StageLogic for ListPageLogic {
         };
 
         // Prefer hints to avoid extra status calls
-    let (total_pages, products_on_last_page) = match (total_pages_hint, products_on_last_page_hint) {
-            (Some(tp), Some(plp)) => (tp, plp),
-            _ => (
-        config.user.crawling.page_range_limit.max(1),
-                12u32.min(crate::domain::constants::site::PRODUCTS_PER_PAGE as u32),
-            ),
-        };
+        let (total_pages, products_on_last_page) =
+            match (total_pages_hint, products_on_last_page_hint) {
+                (Some(tp), Some(plp)) => (tp, plp),
+                _ => (
+                    config.user.crawling.page_range_limit.max(1),
+                    12u32.min(crate::domain::constants::site::PRODUCTS_PER_PAGE as u32),
+                ),
+            };
 
         let urls = collector
             .collect_single_page(page_number, total_pages, products_on_last_page)
             .await
             .map_err(|e| StageLogicError::Internal(format!("List page collect failed: {}", e)))?;
         if urls.is_empty() {
-            return Err(StageLogicError::Internal("Empty result from list page".into()));
+            return Err(StageLogicError::Internal(
+                "Empty result from list page".into(),
+            ));
         }
         let duration_ms = start.elapsed().as_millis() as u64;
         let total_found = urls.len() as u32;
         // Produce typed result and bridge back to legacy at the boundary for now
-    let enhanced = StageItemResult {
+        let enhanced = StageItemResult {
             item_id: format!("page_{}", page_number),
             item_type: StageItemType::Page { page_number },
             success: true,
             error: None,
             duration_ms,
             retry_count: 0,
-            collected_data: Some(StageResultData::ProductUrls { urls, page_number, total_found }),
+            collected_data: Some(StageResultData::ProductUrls {
+                urls,
+                page_number,
+                total_found,
+            }),
         };
-    Ok(StageOutput { result: enhanced })
+        Ok(StageOutput { result: enhanced })
     }
 }

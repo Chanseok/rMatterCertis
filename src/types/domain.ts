@@ -95,7 +95,6 @@ export interface MatterProductResponseDto {
   tis_trp_tested?: string;
   specification_version?: string;
   transport_interface?: string;
-  primary_device_type_id?: string;
   application_categories: string[];
   created_at: string;
   updated_at: string;

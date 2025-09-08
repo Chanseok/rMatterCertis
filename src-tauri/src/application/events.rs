@@ -38,7 +38,8 @@ pub struct EventEmitter {
 
 impl EventEmitter {
     /// Create a new event emitter
-    #[must_use] pub fn new(app_handle: AppHandle) -> Self {
+    #[must_use]
+    pub fn new(app_handle: AppHandle) -> Self {
         Self {
             app_handle,
             enabled: Arc::new(RwLock::new(true)),
@@ -46,7 +47,10 @@ impl EventEmitter {
     }
 
     /// Create a new event emitter with batching enabled
-    #[must_use] pub fn with_batching(app_handle: AppHandle, _batch_size: usize, _interval_ms: u64) -> Self { Self::new(app_handle) }
+    #[must_use]
+    pub fn with_batching(app_handle: AppHandle, _batch_size: usize, _interval_ms: u64) -> Self {
+        Self::new(app_handle)
+    }
 
     /// Enable or disable event emission
     pub async fn set_enabled(&self, enabled: bool) {
@@ -66,7 +70,9 @@ impl EventEmitter {
     // Legacy CrawlingEvent emission removed – unified actor-event only.
 
     /// Emit a progress update
-    pub async fn emit_progress(&self, _progress: serde_json::Value) -> EventResult { Ok(()) }
+    pub async fn emit_progress(&self, _progress: serde_json::Value) -> EventResult {
+        Ok(())
+    }
 
     /// Emit a task status update
     pub async fn emit_task_update(&self, _task_status: serde_json::Value) -> EventResult {
@@ -74,16 +80,30 @@ impl EventEmitter {
     }
 
     /// Emit a stage change notification
-    pub async fn emit_stage_change(&self, _from: &str, _to: &str, _message: String) -> EventResult { Ok(()) }
+    pub async fn emit_stage_change(&self, _from: &str, _to: &str, _message: String) -> EventResult {
+        Ok(())
+    }
 
     /// Emit an error notification
-    pub async fn emit_error(&self, _error_id: String, _message: String, _stage: &str, _recoverable: bool) -> EventResult { Ok(()) }
+    pub async fn emit_error(
+        &self,
+        _error_id: String,
+        _message: String,
+        _stage: &str,
+        _recoverable: bool,
+    ) -> EventResult {
+        Ok(())
+    }
 
     /// Emit database statistics update
-    pub async fn emit_database_update(&self, _stats: serde_json::Value) -> EventResult { Ok(()) }
+    pub async fn emit_database_update(&self, _stats: serde_json::Value) -> EventResult {
+        Ok(())
+    }
 
     /// Emit crawling completion notification
-    pub async fn emit_completed(&self, _result: serde_json::Value) -> EventResult { Ok(()) }
+    pub async fn emit_completed(&self, _result: serde_json::Value) -> EventResult {
+        Ok(())
+    }
 
     /// Emit detailed crawling event for hierarchical event monitor
     pub async fn emit_detailed_crawling_event<T: serde::Serialize>(
@@ -161,7 +181,7 @@ impl EventEmitter {
 
         let event_name = AtomicTaskEvent::event_name();
 
-    match self.app_handle.emit(event_name, &event) {
+        match self.app_handle.emit(event_name, &event) {
             Ok(()) => {
                 debug!(
                     "Successfully emitted atomic task event: {} for task {}",
@@ -183,8 +203,8 @@ impl EventEmitter {
         task_id: crate::domain::atomic_events::TaskId,
         task_type: String,
     ) -> EventResult {
-    let event = AtomicTaskEvent::started(task_id, task_type);
-    self.emit_atomic_task_event(&event).await
+        let event = AtomicTaskEvent::started(task_id, task_type);
+        self.emit_atomic_task_event(&event).await
     }
 
     /// Emit task completed event
@@ -194,8 +214,8 @@ impl EventEmitter {
         task_type: String,
         duration_ms: u64,
     ) -> EventResult {
-    let event = AtomicTaskEvent::completed(task_id, task_type, duration_ms);
-    self.emit_atomic_task_event(&event).await
+        let event = AtomicTaskEvent::completed(task_id, task_type, duration_ms);
+        self.emit_atomic_task_event(&event).await
     }
 
     /// Emit task failed event
@@ -206,8 +226,8 @@ impl EventEmitter {
         error_message: String,
         retry_count: u32,
     ) -> EventResult {
-    let event = AtomicTaskEvent::failed(task_id, task_type, error_message, retry_count);
-    self.emit_atomic_task_event(&event).await
+        let event = AtomicTaskEvent::failed(task_id, task_type, error_message, retry_count);
+        self.emit_atomic_task_event(&event).await
     }
 
     /// Emit task retrying event
@@ -218,8 +238,8 @@ impl EventEmitter {
         retry_count: u32,
         delay_ms: u64,
     ) -> EventResult {
-    let event = AtomicTaskEvent::retrying(task_id, task_type, retry_count, delay_ms);
-    self.emit_atomic_task_event(&event).await
+        let event = AtomicTaskEvent::retrying(task_id, task_type, retry_count, delay_ms);
+        self.emit_atomic_task_event(&event).await
     }
 
     // =========================================================================
@@ -227,7 +247,9 @@ impl EventEmitter {
     // =========================================================================
 
     /// Emit multiple events in batch (useful for reducing frontend update frequency)
-    pub async fn emit_batch(&self, events: Vec<serde_json::Value>) -> Vec<EventResult> { events.into_iter().map(|_| Ok(())).collect() }
+    pub async fn emit_batch(&self, events: Vec<serde_json::Value>) -> Vec<EventResult> {
+        events.into_iter().map(|_| Ok(())).collect()
+    }
 
     // =========================================================================
     // 확장: 독립 이벤트 스트림 emit 헬퍼들
@@ -282,7 +304,8 @@ pub struct EventEmitterBuilder {
 
 impl EventEmitterBuilder {
     /// Create a new event emitter builder
-    #[must_use] pub const fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             app_handle: None,
             enabled: true,
@@ -293,19 +316,22 @@ impl EventEmitterBuilder {
     }
 
     /// Set the app handle
-    #[must_use] pub fn with_app_handle(mut self, app_handle: AppHandle) -> Self {
+    #[must_use]
+    pub fn with_app_handle(mut self, app_handle: AppHandle) -> Self {
         self.app_handle = Some(app_handle);
         self
     }
 
     /// Set initial enabled state
-    #[must_use] pub const fn with_enabled(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
     /// Enable batched event emission
-    #[must_use] pub const fn with_batching(mut self, batch_size: usize, interval_ms: u64) -> Self {
+    #[must_use]
+    pub const fn with_batching(mut self, batch_size: usize, interval_ms: u64) -> Self {
         self.enable_batching = true;
         self.batch_size = batch_size;
         self.batch_interval_ms = interval_ms;

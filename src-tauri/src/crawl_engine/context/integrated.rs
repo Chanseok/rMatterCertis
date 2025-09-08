@@ -32,7 +32,8 @@ pub struct IntegratedContext {
 
 impl IntegratedContext {
     /// 새 컨텍스트 생성
-    #[must_use] pub const fn new(
+    #[must_use]
+    pub const fn new(
         session_id: String,
         config: Arc<SystemConfig>,
         control_tx: ControlChannel<ActorCommand>,
@@ -52,21 +53,24 @@ impl IntegratedContext {
     }
 
     /// 하위 컨텍스트 생성 메서드들
-    #[must_use] pub fn with_batch(&self, batch_id: String) -> Self {
+    #[must_use]
+    pub fn with_batch(&self, batch_id: String) -> Self {
         Self {
             batch_id: Some(batch_id),
             ..self.clone()
         }
     }
 
-    #[must_use] pub fn with_stage(&self, stage_id: String) -> Self {
+    #[must_use]
+    pub fn with_stage(&self, stage_id: String) -> Self {
         Self {
             stage_id: Some(stage_id),
             ..self.clone()
         }
     }
 
-    #[must_use] pub fn with_task(&self, task_id: String) -> Self {
+    #[must_use]
+    pub fn with_task(&self, task_id: String) -> Self {
         Self {
             task_id: Some(task_id),
             ..self.clone()
@@ -75,7 +79,8 @@ impl IntegratedContext {
 
     /// 설정 기반 유틸리티 메서드들
     /// 현재 컨텍스트의 재시도 정책 가져오기
-    #[must_use] pub fn get_retry_policy(&self, stage_type: &str) -> &RetryPolicy {
+    #[must_use]
+    pub fn get_retry_policy(&self, stage_type: &str) -> &RetryPolicy {
         match stage_type {
             "list_collection" => &self.config.retry_policies.list_collection,
             "detail_collection" => &self.config.retry_policies.detail_collection,
@@ -86,7 +91,8 @@ impl IntegratedContext {
     }
 
     /// 스테이지별 동시성 제한 가져오기
-    #[must_use] pub fn get_concurrency_limit(&self, stage_type: &str) -> u32 {
+    #[must_use]
+    pub fn get_concurrency_limit(&self, stage_type: &str) -> u32 {
         self.config
             .performance
             .concurrency
@@ -97,22 +103,26 @@ impl IntegratedContext {
     }
 
     /// 현재 배치 크기 설정 가져오기
-    #[must_use] pub fn get_current_batch_size(&self) -> u32 {
+    #[must_use]
+    pub fn get_current_batch_size(&self) -> u32 {
         self.config.performance.batch_sizes.initial_size
     }
 
     /// 세션 타임아웃 가져오기
-    #[must_use] pub fn get_session_timeout(&self) -> std::time::Duration {
+    #[must_use]
+    pub fn get_session_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.config.system.session_timeout_secs)
     }
 
     /// 스테이지 타임아웃 가져오기
-    #[must_use] pub fn get_stage_timeout(&self) -> std::time::Duration {
+    #[must_use]
+    pub fn get_stage_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.config.system.stage_timeout_secs.unwrap_or(300))
     }
 
     /// 취소 신호 확인
-    #[must_use] pub fn is_cancelled(&self) -> bool {
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
         *self.cancellation_rx.borrow()
     }
 
@@ -134,7 +144,8 @@ impl IntegratedContext {
     }
 
     /// 컨텍스트 식별자 생성
-    #[must_use] pub fn get_context_id(&self) -> String {
+    #[must_use]
+    pub fn get_context_id(&self) -> String {
         let mut parts = vec![self.session_id.clone()];
 
         if let Some(batch_id) = &self.batch_id {
@@ -153,13 +164,15 @@ impl IntegratedContext {
     }
 
     /// 로그 레벨 확인
-    #[must_use] pub fn should_log(&self, level: &LogLevel) -> bool {
+    #[must_use]
+    pub fn should_log(&self, level: &LogLevel) -> bool {
         let config_level = LogLevel::from_string(&self.config.monitoring.log_level);
         level.is_enabled_for(&config_level)
     }
 
     /// 프로파일링 활성화 여부
-    #[must_use] pub fn is_profiling_enabled(&self) -> bool {
+    #[must_use]
+    pub fn is_profiling_enabled(&self) -> bool {
         self.config.monitoring.enable_profiling
     }
 }
@@ -170,12 +183,14 @@ pub struct ContextBuilder {
 }
 
 impl ContextBuilder {
-    #[must_use] pub const fn new(config: Arc<SystemConfig>) -> Self {
+    #[must_use]
+    pub const fn new(config: Arc<SystemConfig>) -> Self {
         Self { config }
     }
 
     /// 완전한 컨텍스트 구축
-    #[must_use] pub fn build(
+    #[must_use]
+    pub fn build(
         self,
         session_id: String,
         control_tx: ControlChannel<ActorCommand>,
@@ -208,7 +223,8 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    #[must_use] pub fn from_string(s: &str) -> Self {
+    #[must_use]
+    pub fn from_string(s: &str) -> Self {
         match s.to_uppercase().as_str() {
             "TRACE" => Self::Trace,
             "DEBUG" => Self::Debug,
@@ -219,7 +235,8 @@ impl LogLevel {
         }
     }
 
-    #[must_use] pub fn is_enabled_for(&self, config_level: &Self) -> bool {
+    #[must_use]
+    pub fn is_enabled_for(&self, config_level: &Self) -> bool {
         self >= config_level
     }
 }

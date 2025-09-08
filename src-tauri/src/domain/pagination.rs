@@ -21,7 +21,10 @@ pub struct PageIdCalculation {
 impl PageIdCalculator {
     #[must_use]
     pub const fn new(last_page_number: u32, products_in_last_page: usize) -> Self {
-        Self { last_page_number, products_in_last_page }
+        Self {
+            last_page_number,
+            products_in_last_page,
+        }
     }
 
     #[must_use]
@@ -32,20 +35,31 @@ impl PageIdCalculator {
     ) -> PageIdCalculation {
         let p: u32 = PRODUCTS_PER_PAGE as u32;
         if self.last_page_number == 0 {
-            return PageIdCalculation { page_id: 0, index_in_page: 0 };
+            return PageIdCalculation {
+                page_id: 0,
+                index_in_page: 0,
+            };
         }
         let total_products = if self.last_page_number > 0 {
             (self.last_page_number - 1) * p + u32::try_from(self.products_in_last_page).unwrap_or(p)
-        } else { 0 };
+        } else {
+            0
+        };
         if total_products == 0 {
-            return PageIdCalculation { page_id: 0, index_in_page: 0 };
+            return PageIdCalculation {
+                page_id: 0,
+                index_in_page: 0,
+            };
         }
-        let index_from_newest = (actual_page_number - 1) * p
-            + u32::try_from(product_index_in_actual_page).unwrap_or(p);
+        let index_from_newest =
+            (actual_page_number - 1) * p + u32::try_from(product_index_in_actual_page).unwrap_or(p);
         let index_from_oldest = (total_products - 1).saturating_sub(index_from_newest);
         let page_id = i32::try_from(index_from_oldest / p).unwrap_or(i32::MAX);
         let index_in_page = i32::try_from(index_from_oldest % p).unwrap_or(i32::MAX);
-        PageIdCalculation { page_id, index_in_page }
+        PageIdCalculation {
+            page_id,
+            index_in_page,
+        }
     }
 
     #[must_use]
@@ -76,7 +90,8 @@ impl Default for PaginationCalculator {
 }
 
 impl PaginationCalculator {
-    #[must_use] pub const fn new(products_per_page: usize) -> Self {
+    #[must_use]
+    pub const fn new(products_per_page: usize) -> Self {
         Self { products_per_page }
     }
 
@@ -86,7 +101,8 @@ impl PaginationCalculator {
     /// - 마지막(가장 오래된) 물리 페이지의 제품들은 `page_id` = 0, `index_in_page` = (n-1 .. 0)
     /// - 그 이전(더 최신) 페이지 제품들은 `page_id` = 1 이어서 `index_in_page` = (n-1 .. 0)
     /// - 한 `page_id` 범위는 최대 `products_per_page` * 2 를 넘지 않도록 사이트 상의 불균형(마지막/이전 페이지) 처리
-    #[must_use] pub const fn calculate(
+    #[must_use]
+    pub const fn calculate(
         &self,
         physical_page: u32,
         index_in_physical: u32,
@@ -119,7 +135,8 @@ impl PaginationCalculator {
 
     /// reverse: `page_id` / `index_in_page` 로부터 물리 페이지와 해당 페이지 내 index 추정.
     /// 일부 정보 손실(마지막/이전 경계)에 의해 모호성이 있을 수 있어 Option 반환.
-    #[must_use] pub const fn reverse(
+    #[must_use]
+    pub const fn reverse(
         &self,
         page_id: i32,
         index_in_page: i32,

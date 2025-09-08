@@ -6,12 +6,12 @@ fn db_diagnostics_command_gating_compiles() {
     // and when on, it is present.
     #[cfg(any(feature = "dev-tools", debug_assertions))]
     {
-    // If this use resolves, the symbol is present under the gate.
-    use matter_certis_v2_lib::commands::devtools::db_diagnostics::scan_db_pagination_mismatches as _sym;
-    // Reference the symbol so it's considered used without invoking it
-    let _ = &_sym;
-    let present = true; // presence check by successful import and reference
-    assert!(present);
+        // If this use resolves, the symbol is present under the gate.
+        use matter_certis_v2_lib::commands::devtools::db_diagnostics::scan_db_pagination_mismatches as _sym;
+        // Reference the symbol so it's considered used without invoking it
+        let _ = &_sym;
+        let present = true; // presence check by successful import and reference
+        assert!(present);
     }
 
     #[cfg(all(not(feature = "dev-tools"), not(debug_assertions)))]

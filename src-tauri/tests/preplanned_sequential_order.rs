@@ -7,15 +7,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use matter_certis_v2_lib::crawl_engine::actors::types::{AppEvent, ExecutionPlan, PageRange, PlanInputSnapshot, ActorCommand};
+use matter_certis_v2_lib::crawl_engine::SessionActor;
 use matter_certis_v2_lib::crawl_engine::actors::Actor; // bring trait for run()
+use matter_certis_v2_lib::crawl_engine::actors::types::{
+    ActorCommand, AppEvent, ExecutionPlan, PageRange, PlanInputSnapshot,
+};
 use matter_certis_v2_lib::crawl_engine::integrated_context::IntegratedContextFactory;
 use matter_certis_v2_lib::crawl_engine::system_config::SystemConfig;
-use matter_certis_v2_lib::crawl_engine::SessionActor;
 use tokio::sync::mpsc;
 
 #[tokio::test]
 #[ignore = "set MC_RUN_PREPLANNED_IT=1 to enable; requires network and DB"]
+#[allow(clippy::too_many_lines)]
 async fn preplanned_batches_run_sequentially_in_order() {
     // Toggle guard
     if std::env::var("MC_RUN_PREPLANNED_IT").ok().as_deref() != Some("1") {
@@ -28,8 +31,18 @@ async fn preplanned_batches_run_sequentially_in_order() {
         plan_id: "plan_seq".into(),
         session_id: session_id.clone(),
         crawling_ranges: vec![
-            PageRange { start_page: 10, end_page: 9, estimated_products: 24, reverse_order: true },
-            PageRange { start_page: 8, end_page: 8, estimated_products: 12, reverse_order: true },
+            PageRange {
+                start_page: 10,
+                end_page: 9,
+                estimated_products: 24,
+                reverse_order: true,
+            },
+            PageRange {
+                start_page: 8,
+                end_page: 8,
+                estimated_products: 12,
+                reverse_order: true,
+            },
         ],
         batch_size: 2,
         concurrency_limit: 2,
@@ -71,7 +84,10 @@ async fn preplanned_batches_run_sequentially_in_order() {
 
     // Trigger preplanned execution
     // Use the context's control_tx via helper
-    let cmd = ActorCommand::ExecutePrePlanned { session_id: session_id.clone(), plan };
+    let cmd = ActorCommand::ExecutePrePlanned {
+        session_id: session_id.clone(),
+        plan,
+    };
     cmd_tx.send(cmd).await.expect("send ExecutePrePlanned");
 
     // Assert: observe BatchStarted/Completed for ...-pre-1 then ...-pre-2 in order
@@ -83,11 +99,17 @@ async fn preplanned_batches_run_sequentially_in_order() {
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     loop {
-        if tokio::time::Instant::now() > deadline { break; }
+        if tokio::time::Instant::now() > deadline {
+            break;
+        }
         if let Ok(Ok(ev)) = tokio::time::timeout(Duration::from_secs(5), event_rx.recv()).await {
             match ev {
-                AppEvent::BatchStarted { batch_id, plan_id, .. } => {
-                    if plan_id.is_some() { saw_plan_id = true; }
+                AppEvent::BatchStarted {
+                    batch_id, plan_id, ..
+                } => {
+                    if plan_id.is_some() {
+                        saw_plan_id = true;
+                    }
                     if batch_id.ends_with("-pre-1") {
                         // first batch must start before the second
                         assert!(!saw_started_2, "Batch 2 started before Batch 1");
@@ -97,8 +119,12 @@ async fn preplanned_batches_run_sequentially_in_order() {
                         assert!(saw_completed_1, "Batch 2 started before Batch 1 completed");
                     }
                 }
-                AppEvent::BatchCompleted { batch_id, plan_id, .. } => {
-                    if plan_id.is_some() { saw_plan_id = true; }
+                AppEvent::BatchCompleted {
+                    batch_id, plan_id, ..
+                } => {
+                    if plan_id.is_some() {
+                        saw_plan_id = true;
+                    }
                     if batch_id.ends_with("-pre-1") {
                         saw_completed_1 = true;
                     } else if batch_id.ends_with("-pre-2") {
@@ -112,7 +138,12 @@ async fn preplanned_batches_run_sequentially_in_order() {
     }
 
     let _ = handle.await;
-    assert!(saw_started_1 && saw_completed_1 && saw_started_2 && saw_completed_2,
-        "Expected sequential preplanned batches to start and complete in order");
-    assert!(saw_plan_id, "Expected plan_id to be present on batch events");
+    assert!(
+        saw_started_1 && saw_completed_1 && saw_started_2 && saw_completed_2,
+        "Expected sequential preplanned batches to start and complete in order"
+    );
+    assert!(
+        saw_plan_id,
+        "Expected plan_id to be present on batch events"
+    );
 }

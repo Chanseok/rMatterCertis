@@ -72,7 +72,12 @@ pub struct SystemStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub enum ServerStatus { Healthy, Degraded { issues: Vec<String> }, Critical { error: String }, Down }
+pub enum ServerStatus {
+    Healthy,
+    Degraded { issues: Vec<String> },
+    Critical { error: String },
+    Down,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -97,7 +102,11 @@ pub struct SiteStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct ChartDataPoint { pub timestamp: i64, pub value: f64, pub label: Option<String> }
+pub struct ChartDataPoint {
+    pub timestamp: i64,
+    pub value: f64,
+    pub label: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -142,20 +151,49 @@ pub struct PerformanceThresholds {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct DashboardAlert { pub id: String, pub level: AlertLevel, pub title: String, pub message: String, pub timestamp: DateTime<Utc>, pub session_id: Option<String>, pub auto_resolve: bool }
+pub struct DashboardAlert {
+    pub id: String,
+    pub level: AlertLevel,
+    pub title: String,
+    pub message: String,
+    pub timestamp: DateTime<Utc>,
+    pub session_id: Option<String>,
+    pub auto_resolve: bool,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub enum AlertLevel { Info, Warning, Error, Critical }
+pub enum AlertLevel {
+    Info,
+    Warning,
+    Error,
+    Critical,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub enum DashboardEvent {
-    SessionStarted { session: ActiveCrawlingSession },
-    ProgressUpdate { session_id: String, progress: f64, stage_progress: f64 },
-    PerformanceUpdate { metrics: RealtimePerformanceMetrics },
-    SessionCompleted { session: CompletedSession },
-    SystemStatusChange { status: SystemStatus },
-    NewAlert { alert: DashboardAlert },
-    ChartDataUpdate { data: RealtimeChartData },
+    SessionStarted {
+        session: ActiveCrawlingSession,
+    },
+    ProgressUpdate {
+        session_id: String,
+        progress: f64,
+        stage_progress: f64,
+    },
+    PerformanceUpdate {
+        metrics: RealtimePerformanceMetrics,
+    },
+    SessionCompleted {
+        session: CompletedSession,
+    },
+    SystemStatusChange {
+        status: SystemStatus,
+    },
+    NewAlert {
+        alert: DashboardAlert,
+    },
+    ChartDataUpdate {
+        data: RealtimeChartData,
+    },
 }

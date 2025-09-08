@@ -58,7 +58,7 @@ impl ProductDetailParser {
         let mut regex_patterns = HashMap::new();
 
         // Compile regex patterns for fallback extraction
-    Self::compile_regex_patterns(&mut regex_patterns);
+        Self::compile_regex_patterns(&mut regex_patterns);
 
         Ok(Self {
             title_selectors: Self::compile_selectors(&selectors.title)?,
@@ -135,7 +135,7 @@ impl ProductDetailParser {
             }
         }
 
-    // no error path; best-effort compilation
+        // no error path; best-effort compilation
     }
 }
 
@@ -164,7 +164,7 @@ impl ContextualParser for ProductDetailParser {
         let device_type = self.extract_basic_info(html, "category", &self.category_selectors);
 
         // Extract Matter-specific certification data using multiple strategies
-    let certification_data = self.extract_matter_certification_data(html);
+        let certification_data = self.extract_matter_certification_data(html);
 
         // Extract additional fields
         let description = self.extract_product_description(html);
@@ -173,12 +173,8 @@ impl ContextualParser for ProductDetailParser {
 
         let product_detail = ProductDetail {
             url: context.url.clone(),
-            page_id: context
-                .source_page_id
-                .and_then(|p| i32::try_from(p).ok()),
-            index_in_page: context
-                .source_index
-                .and_then(|i| i32::try_from(i).ok()),
+            page_id: context.source_page_id.and_then(|p| i32::try_from(p).ok()),
+            index_in_page: context.source_index.and_then(|i| i32::try_from(i).ok()),
             id: certification_data.get("certification_id").cloned(),
             manufacturer,
             model: Some(model),
@@ -196,7 +192,6 @@ impl ContextualParser for ProductDetailParser {
             tis_trp_tested: None,
             specification_version: certification_data.get("specification_version").cloned(),
             transport_interface: certification_data.get("transport_interface").cloned(),
-            primary_device_type_id: None,
             primary_device_type_ids: None,
             application_categories: None,
             description,
@@ -242,10 +237,7 @@ impl ProductDetailParser {
     }
 
     /// Extract Matter certification data using multiple strategies
-    fn extract_matter_certification_data(
-        &self,
-        html: &Html,
-    ) -> HashMap<String, String> {
+    fn extract_matter_certification_data(&self, html: &Html) -> HashMap<String, String> {
         let mut certification_data = HashMap::new();
 
         // Strategy 0: Direct extraction using configured field-specific selectors
@@ -318,7 +310,7 @@ impl ProductDetailParser {
             debug!("Total extracted fields: {}", certification_data.len());
         }
 
-    certification_data
+        certification_data
     }
 
     /// Extract data from HTML tables - Most reliable method for Matter data

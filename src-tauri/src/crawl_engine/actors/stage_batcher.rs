@@ -6,8 +6,8 @@
 use std::time::Duration;
 
 use crate::crawl_engine::actors::types::StageType;
-use crate::crawl_engine::system_config::StageBatcherSettings;
 use crate::crawl_engine::channels::types::StageItem;
+use crate::crawl_engine::system_config::StageBatcherSettings;
 
 /// 배치 실행 전 사전 계획 결과
 #[derive(Debug, Clone)]
@@ -88,7 +88,11 @@ impl StageBatcher for ConfigurableStageBatcher {
         // 타임아웃 강제 정책(None이면 비활성화)
         let planned_timeout = if let Some(ms) = self.settings.enforce_timeout_ms {
             let enforced = Duration::from_millis(ms);
-            if enforced < overall_timeout { enforced } else { overall_timeout }
+            if enforced < overall_timeout {
+                enforced
+            } else {
+                overall_timeout
+            }
         } else {
             overall_timeout
         };
@@ -112,34 +116,68 @@ mod tests {
 
     #[test]
     fn test_reverse_order() {
-        let settings = StageBatcherSettings { max_chunk_size: 0, prefer_reverse_order: true, enforce_timeout_ms: None };
+        let settings = StageBatcherSettings {
+            max_chunk_size: 0,
+            prefer_reverse_order: true,
+            enforce_timeout_ms: None,
+        };
         let batcher = ConfigurableStageBatcher::from_settings(settings);
-    let out = batcher.plan(&StageType::ListPageCrawling, mk_items(3), 5, Duration::from_secs(10));
+        let out = batcher.plan(
+            &StageType::ListPageCrawling,
+            mk_items(3),
+            5,
+            Duration::from_secs(10),
+        );
         let mut ids: Vec<u32> = vec![];
         for it in out.items {
-            if let StageItem::Page(p) = it { ids.push(p); }
+            if let StageItem::Page(p) = it {
+                ids.push(p);
+            }
         }
-        assert_eq!(ids, vec![3,2,1]);
+        assert_eq!(ids, vec![3, 2, 1]);
     }
 
     #[test]
     fn test_concurrency_cap() {
-        let settings = StageBatcherSettings { max_chunk_size: 3, prefer_reverse_order: false, enforce_timeout_ms: None };
+        let settings = StageBatcherSettings {
+            max_chunk_size: 3,
+            prefer_reverse_order: false,
+            enforce_timeout_ms: None,
+        };
         let batcher = ConfigurableStageBatcher::from_settings(settings);
-    let out = batcher.plan(&StageType::ProductDetailCrawling, mk_items(5), 10, Duration::from_secs(5));
+        let out = batcher.plan(
+            &StageType::ProductDetailCrawling,
+            mk_items(5),
+            10,
+            Duration::from_secs(5),
+        );
         assert_eq!(out.concurrency_limit, 3);
     }
 
     #[test]
     fn test_timeout_enforcement_only_if_stricter() {
-        let settings = StageBatcherSettings { max_chunk_size: 0, prefer_reverse_order: false, enforce_timeout_ms: Some(1500) };
+        let settings = StageBatcherSettings {
+            max_chunk_size: 0,
+            prefer_reverse_order: false,
+            enforce_timeout_ms: Some(1500),
+        };
         let batcher = ConfigurableStageBatcher::from_settings(settings);
         // Input overall_timeout 2s -> enforcement 1.5s should apply
-        let out = batcher.plan(&StageType::DataValidation, mk_items(1), 2, Duration::from_secs(2));
+        let out = batcher.plan(
+            &StageType::DataValidation,
+            mk_items(1),
+            2,
+            Duration::from_secs(2),
+        );
         assert_eq!(out.overall_timeout, Duration::from_millis(1500));
 
         // Input overall_timeout 1s -> enforcement 1.5s should NOT shorten (keep 1s)
-        let out2 = batcher.plan(&StageType::DataValidation, mk_items(1), 2, Duration::from_secs(1));
+        let out2 = batcher.plan(
+            &StageType::DataValidation,
+            mk_items(1),
+            2,
+            Duration::from_secs(1),
+        );
         assert_eq!(out2.overall_timeout, Duration::from_secs(1));
     }
 }

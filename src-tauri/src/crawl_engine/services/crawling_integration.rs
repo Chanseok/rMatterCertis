@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-use tokio::sync::oneshot;
 
 use crate::crawl_engine::actor_system::{StageError, StageResult};
 use crate::crawl_engine::channels::types::{StageItem, StageType};
@@ -111,7 +111,7 @@ impl CrawlingIntegrationService {
             ),
         );
 
-    Ok(Self {
+        Ok(Self {
             status_checker,
             list_collector,
             detail_collector,
@@ -733,7 +733,8 @@ pub struct RealCrawlingStageExecutor {
 }
 
 impl RealCrawlingStageExecutor {
-    #[must_use] pub const fn new(integration_service: Arc<CrawlingIntegrationService>) -> Self {
+    #[must_use]
+    pub const fn new(integration_service: Arc<CrawlingIntegrationService>) -> Self {
         Self {
             integration_service,
         }
@@ -803,9 +804,8 @@ impl crate::crawl_engine::actors::StageActor {
     ) -> anyhow::Result<Self> {
         // Initialize integration service
         let app_cfg = app_config.clone();
-        let integration_service = Arc::new(
-            CrawlingIntegrationService::new(config.clone(), app_cfg.clone()).await?,
-        );
+        let integration_service =
+            Arc::new(CrawlingIntegrationService::new(config.clone(), app_cfg.clone()).await?);
 
         // Create executor
         let crawling_executor = Arc::new(RealCrawlingStageExecutor::new(integration_service));
@@ -814,7 +814,9 @@ impl crate::crawl_engine::actors::StageActor {
         let http_client = Arc::new(app_cfg.create_http_client()?);
         let extractor = Arc::new(crate::infrastructure::MatterDataExtractor::new()?);
         let pool = crate::infrastructure::database_connection::get_or_init_global_pool().await?;
-        let repo = Arc::new(crate::infrastructure::IntegratedProductRepository::new(pool));
+        let repo = Arc::new(crate::infrastructure::IntegratedProductRepository::new(
+            pool,
+        ));
         let status_checker_impl = Arc::new(
             crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
                 (*http_client).clone(),
@@ -846,16 +848,9 @@ impl crate::crawl_engine::actors::StageActor {
                 Arc::clone(&http_client),
                 Arc::clone(&extractor),
                 crate::infrastructure::crawling_service_impls::CollectorConfig {
-                    max_concurrent: app_cfg
-                        .user
-                        .crawling
-                        .workers
-                        .product_detail_max_concurrent as u32,
-                    concurrency: app_cfg
-                        .user
-                        .crawling
-                        .workers
-                        .product_detail_max_concurrent as u32,
+                    max_concurrent: app_cfg.user.crawling.workers.product_detail_max_concurrent
+                        as u32,
+                    concurrency: app_cfg.user.crawling.workers.product_detail_max_concurrent as u32,
                     delay_between_requests: std::time::Duration::from_millis(
                         app_cfg.user.request_delay_ms,
                     ),
@@ -933,7 +928,10 @@ impl crate::crawl_engine::actors::StageActor {
                         .await;
                     break;
                 }
-                crate::crawl_engine::channels::types::ActorCommand::CancelSession { reason, .. } => {
+                crate::crawl_engine::channels::types::ActorCommand::CancelSession {
+                    reason,
+                    ..
+                } => {
                     final_result = StageResult::FatalError {
                         error: StageError::ValidationError {
                             message: format!("Session cancelled: {}", reason),

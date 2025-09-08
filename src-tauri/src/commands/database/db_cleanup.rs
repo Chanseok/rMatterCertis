@@ -6,22 +6,22 @@ use tauri::{AppHandle, State};
 
 #[derive(Debug, Serialize)]
 pub struct UrlDedupCleanupReport {
-	// URL-based dedup results
-	pub products_removed: u64,
-	pub product_details_removed: u64,
-	pub remaining_duplicates_products: u64,
-	pub remaining_duplicates_product_details: u64,
-	// Slot-based dedup results (page_id, index_in_page)
-	pub slot_products_removed: u64,
-	pub slot_product_details_removed: u64,
-	pub remaining_slot_duplicates_products: u64,
-	pub remaining_slot_duplicates_product_details: u64,
+    // URL-based dedup results
+    pub products_removed: u64,
+    pub product_details_removed: u64,
+    pub remaining_duplicates_products: u64,
+    pub remaining_duplicates_product_details: u64,
+    // Slot-based dedup results (page_id, index_in_page)
+    pub slot_products_removed: u64,
+    pub slot_product_details_removed: u64,
+    pub remaining_slot_duplicates_products: u64,
+    pub remaining_slot_duplicates_product_details: u64,
 }
 
 async fn delete_dupes_in_table(pool: &sqlx::SqlitePool, table: &str) -> Result<u64, String> {
-	// Delete rows whose url duplicates exist, keeping the lowest rowid per url
-	let sql = format!(
-		r"
+    // Delete rows whose url duplicates exist, keeping the lowest rowid per url
+    let sql = format!(
+        r"
 		WITH dupes AS (
 			SELECT url, MIN(rowid) AS keep_rowid
 			FROM {table}
@@ -33,19 +33,19 @@ async fn delete_dupes_in_table(pool: &sqlx::SqlitePool, table: &str) -> Result<u
 		WHERE url IN (SELECT url FROM dupes)
 		  AND rowid NOT IN (SELECT keep_rowid FROM dupes);
 		",
-		table = table
-	);
+        table = table
+    );
 
-	let res: SqliteQueryResult = sqlx::query(&sql)
-		.execute(pool)
-		.await
-		.map_err(|e| e.to_string())?;
-	Ok(res.rows_affected())
+    let res: SqliteQueryResult = sqlx::query(&sql)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(res.rows_affected())
 }
 
 async fn count_remaining_dupes(pool: &sqlx::SqlitePool, table: &str) -> Result<u64, String> {
-	let sql = format!(
-		r"
+    let sql = format!(
+        r"
 		SELECT COALESCE(SUM(cnt - 1), 0) AS remain
 		FROM (
 			SELECT url, COUNT(*) AS cnt
@@ -55,20 +55,20 @@ async fn count_remaining_dupes(pool: &sqlx::SqlitePool, table: &str) -> Result<u
 			HAVING COUNT(*) > 1
 		) t;
 		",
-		table = table
-	);
-	let remain: i64 = sqlx::query_scalar(&sql)
-		.fetch_one(pool)
-		.await
-		.map_err(|e| e.to_string())
-		.unwrap_or(0);
-	Ok(u64::try_from(remain).unwrap_or_default())
+        table = table
+    );
+    let remain: i64 = sqlx::query_scalar(&sql)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| e.to_string())
+        .unwrap_or(0);
+    Ok(u64::try_from(remain).unwrap_or_default())
 }
 
 async fn delete_slot_dupes_in_table(pool: &sqlx::SqlitePool, table: &str) -> Result<u64, String> {
-	// Delete rows that collide on (page_id, index_in_page), keep the lowest rowid per slot
-	let sql = format!(
-		r"
+    // Delete rows that collide on (page_id, index_in_page), keep the lowest rowid per slot
+    let sql = format!(
+        r"
 		WITH kept AS (
 			SELECT MIN(rowid) AS keep_rowid
 			FROM {table}
@@ -79,19 +79,19 @@ async fn delete_slot_dupes_in_table(pool: &sqlx::SqlitePool, table: &str) -> Res
 		WHERE page_id IS NOT NULL AND index_in_page IS NOT NULL
 		  AND rowid NOT IN (SELECT keep_rowid FROM kept);
 		",
-		table = table
-	);
+        table = table
+    );
 
-	let res: SqliteQueryResult = sqlx::query(&sql)
-		.execute(pool)
-		.await
-		.map_err(|e| e.to_string())?;
-	Ok(res.rows_affected())
+    let res: SqliteQueryResult = sqlx::query(&sql)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(res.rows_affected())
 }
 
 async fn count_remaining_slot_dupes(pool: &sqlx::SqlitePool, table: &str) -> Result<u64, String> {
-	let sql = format!(
-		r"
+    let sql = format!(
+        r"
 		SELECT COALESCE(SUM(cnt - 1), 0) AS remain
 		FROM (
 			SELECT page_id, index_in_page, COUNT(*) AS cnt
@@ -101,14 +101,14 @@ async fn count_remaining_slot_dupes(pool: &sqlx::SqlitePool, table: &str) -> Res
 			HAVING COUNT(*) > 1
 		) t;
 		",
-		table = table
-	);
-	let remain: i64 = sqlx::query_scalar(&sql)
-		.fetch_one(pool)
-		.await
-		.map_err(|e| e.to_string())
-		.unwrap_or(0);
-	Ok(u64::try_from(remain).unwrap_or_default())
+        table = table
+    );
+    let remain: i64 = sqlx::query_scalar(&sql)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| e.to_string())
+        .unwrap_or(0);
+    Ok(u64::try_from(remain).unwrap_or_default())
 }
 
 /// Remove duplicate rows by exact URL for both products and product_details.
@@ -118,40 +118,39 @@ async fn count_remaining_slot_dupes(pool: &sqlx::SqlitePool, table: &str) -> Res
 /// # Errors
 /// Returns an error string if the database pool cannot be obtained or a query fails.
 pub async fn cleanup_duplicate_urls(
-	app: AppHandle,
-	app_state: State<'_, AppState>,
+    app: AppHandle,
+    app_state: State<'_, AppState>,
 ) -> Result<UrlDedupCleanupReport, String> {
-	let pool = app_state
-		.get_database_pool()
-		.await
-		.map_err(|e| format!("DB pool unavailable: {e}"))?;
+    let pool = app_state
+        .get_database_pool()
+        .await
+        .map_err(|e| format!("DB pool unavailable: {e}"))?;
 
-	// Pass 1: URL-based dedup
-	let products_removed = delete_dupes_in_table(&pool, "products").await?;
-	let product_details_removed = delete_dupes_in_table(&pool, "product_details").await?;
+    // Pass 1: URL-based dedup
+    let products_removed = delete_dupes_in_table(&pool, "products").await?;
+    let product_details_removed = delete_dupes_in_table(&pool, "product_details").await?;
 
-	// Pass 2: Slot-based dedup (page_id, index_in_page)
-	let slot_products_removed = delete_slot_dupes_in_table(&pool, "products").await?;
-	let slot_product_details_removed = delete_slot_dupes_in_table(&pool, "product_details").await?;
+    // Pass 2: Slot-based dedup (page_id, index_in_page)
+    let slot_products_removed = delete_slot_dupes_in_table(&pool, "products").await?;
+    let slot_product_details_removed = delete_slot_dupes_in_table(&pool, "product_details").await?;
 
-	// Remaining duplicate counts (post-commit)
-	let remaining_duplicates_products = count_remaining_dupes(&pool, "products").await?;
-	let remaining_duplicates_product_details =
-		count_remaining_dupes(&pool, "product_details").await?;
+    // Remaining duplicate counts (post-commit)
+    let remaining_duplicates_products = count_remaining_dupes(&pool, "products").await?;
+    let remaining_duplicates_product_details =
+        count_remaining_dupes(&pool, "product_details").await?;
 
-	let remaining_slot_duplicates_products = count_remaining_slot_dupes(&pool, "products").await?;
-	let remaining_slot_duplicates_product_details =
-		count_remaining_slot_dupes(&pool, "product_details").await?;
+    let remaining_slot_duplicates_products = count_remaining_slot_dupes(&pool, "products").await?;
+    let remaining_slot_duplicates_product_details =
+        count_remaining_slot_dupes(&pool, "product_details").await?;
 
-	Ok(UrlDedupCleanupReport {
-		products_removed,
-		product_details_removed,
-		remaining_duplicates_products,
-		remaining_duplicates_product_details,
-		slot_products_removed,
-		slot_product_details_removed,
-		remaining_slot_duplicates_products,
-		remaining_slot_duplicates_product_details,
-	})
+    Ok(UrlDedupCleanupReport {
+        products_removed,
+        product_details_removed,
+        remaining_duplicates_products,
+        remaining_duplicates_product_details,
+        slot_products_removed,
+        slot_product_details_removed,
+        remaining_slot_duplicates_products,
+        remaining_slot_duplicates_product_details,
+    })
 }
-

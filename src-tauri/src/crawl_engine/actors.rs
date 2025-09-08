@@ -23,7 +23,7 @@ pub mod types;
 pub use contract::ACTOR_CONTRACT_VERSION;
 pub use session_actor::{SessionActor, SessionError};
 pub use stage_actor::StageActor;
-pub use stage_batcher::{StageBatcher, DefaultStageBatcher, PlannedBatch};
+pub use stage_batcher::{DefaultStageBatcher, PlannedBatch, StageBatcher};
 pub use traits::*;
 pub use types::{
     ActorCommand, ActorError, BatchConfig, CrawlingConfig, StageItem, StageItemResult,

@@ -43,12 +43,14 @@ pub enum AtomicTaskEvent {
 
 impl AtomicTaskEvent {
     /// Get the event name for Tauri emission
-    #[must_use] pub const fn event_name() -> &'static str {
+    #[must_use]
+    pub const fn event_name() -> &'static str {
         "atomic-task-update"
     }
 
     /// Get the task ID from any variant
-    #[must_use] pub const fn task_id(&self) -> TaskId {
+    #[must_use]
+    pub const fn task_id(&self) -> TaskId {
         match self {
             Self::TaskStarted { task_id, .. } => *task_id,
             Self::TaskCompleted { task_id, .. } => *task_id,
@@ -58,7 +60,8 @@ impl AtomicTaskEvent {
     }
 
     /// Get the task type from any variant
-    #[must_use] pub fn task_type(&self) -> &str {
+    #[must_use]
+    pub fn task_type(&self) -> &str {
         match self {
             Self::TaskStarted { task_type, .. } => task_type,
             Self::TaskCompleted { task_type, .. } => task_type,
@@ -68,7 +71,8 @@ impl AtomicTaskEvent {
     }
 
     /// Create a `TaskStarted` event
-    #[must_use] pub fn started(task_id: TaskId, task_type: String) -> Self {
+    #[must_use]
+    pub fn started(task_id: TaskId, task_type: String) -> Self {
         Self::TaskStarted {
             task_id,
             task_type,
@@ -77,7 +81,8 @@ impl AtomicTaskEvent {
     }
 
     /// Create a `TaskCompleted` event
-    #[must_use] pub fn completed(task_id: TaskId, task_type: String, duration_ms: u64) -> Self {
+    #[must_use]
+    pub fn completed(task_id: TaskId, task_type: String, duration_ms: u64) -> Self {
         Self::TaskCompleted {
             task_id,
             task_type,
@@ -87,7 +92,8 @@ impl AtomicTaskEvent {
     }
 
     /// Create a `TaskFailed` event
-    #[must_use] pub fn failed(
+    #[must_use]
+    pub fn failed(
         task_id: TaskId,
         task_type: String,
         error_message: String,
@@ -103,7 +109,8 @@ impl AtomicTaskEvent {
     }
 
     /// Create a `TaskRetrying` event
-    #[must_use] pub fn retrying(task_id: TaskId, task_type: String, retry_count: u32, delay_ms: u64) -> Self {
+    #[must_use]
+    pub fn retrying(task_id: TaskId, task_type: String, retry_count: u32, delay_ms: u64) -> Self {
         Self::TaskRetrying {
             task_id,
             task_type,

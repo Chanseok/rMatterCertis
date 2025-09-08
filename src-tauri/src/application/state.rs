@@ -52,7 +52,8 @@ pub struct AppState {
 
 impl AppState {
     /// Create a new application state
-    #[must_use] pub fn new(config: crate::infrastructure::config::AppConfig) -> Self {
+    #[must_use]
+    pub fn new(config: crate::infrastructure::config::AppConfig) -> Self {
         Self {
             event_emitter: Arc::new(RwLock::new(None)),
             database_pool: Arc::new(RwLock::new(None)),
@@ -154,7 +155,10 @@ impl AppState {
     }
 
     /// Update the current crawling progress with calculated fields
-    pub async fn update_progress(&self, progress: fe_types::CrawlingProgressInfo) -> Result<(), String> {
+    pub async fn update_progress(
+        &self,
+        progress: fe_types::CrawlingProgressInfo,
+    ) -> Result<(), String> {
         // Update stored progress (already frontend-friendly)
         let mut progress_guard = self.current_progress.write().await;
         *progress_guard = progress;
@@ -203,7 +207,8 @@ impl AppState {
             estimated_remaining_time: None,
             session_id: session_clone.id.clone(),
             timestamp: now,
-        }).await?;
+        })
+        .await?;
         info!("Crawling session started");
         Ok(())
     }
@@ -237,12 +242,12 @@ impl AppState {
         }
 
         // Update progress to stopped state
-    let now = Utc::now();
-    let mut stopped = self.get_progress().await;
-    stopped.current_message = "크롤링이 중단되었습니다".to_string();
-    stopped.stage_name = "Cancelled".to_string();
-    stopped.timestamp = now;
-    self.update_progress(stopped).await?;
+        let now = Utc::now();
+        let mut stopped = self.get_progress().await;
+        stopped.current_message = "크롤링이 중단되었습니다".to_string();
+        stopped.stage_name = "Cancelled".to_string();
+        stopped.timestamp = now;
+        self.update_progress(stopped).await?;
         info!("Crawling session stopped");
         Ok(())
     }
@@ -265,7 +270,7 @@ impl AppState {
             *stats_guard = Some(stats.clone());
         }
 
-    // DB 통계의 FE 알림은 Actor 이벤트/대시보드 경로로 대체됩니다. 여기서는 별도 emit 하지 않습니다.
+        // DB 통계의 FE 알림은 Actor 이벤트/대시보드 경로로 대체됩니다. 여기서는 별도 emit 하지 않습니다.
 
         Ok(())
     }
@@ -298,21 +303,16 @@ impl AppState {
 
     /// Emit an error event
     pub async fn emit_error(&self, error_id: String, message: String, recoverable: bool) {
-    // Unified actor-event flow handles errors; this is a no-op placeholder for compatibility.
-    let _ = (error_id, message, recoverable);
-    tracing::debug!("emit_error called (no-op under unified event system)");
+        // Unified actor-event flow handles errors; this is a no-op placeholder for compatibility.
+        let _ = (error_id, message, recoverable);
+        tracing::debug!("emit_error called (no-op under unified event system)");
     }
 
     /// Emit a stage change event
-    pub async fn emit_stage_change(
-        &self,
-    from: &str,
-    to: &str,
-        message: String,
-    ) {
-    // Unified actor-event flow handles stage lifecycle; this is a no-op placeholder.
-    let _ = (from, to, message);
-    tracing::debug!("emit_stage_change called (no-op under unified event system)");
+    pub async fn emit_stage_change(&self, from: &str, to: &str, message: String) {
+        // Unified actor-event flow handles stage lifecycle; this is a no-op placeholder.
+        let _ = (from, to, message);
+        tracing::debug!("emit_stage_change called (no-op under unified event system)");
     }
 }
 

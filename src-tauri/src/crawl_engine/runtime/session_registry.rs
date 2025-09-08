@@ -87,10 +87,12 @@ pub fn failure_policy() -> FailurePolicy {
             removal_grace_secs: 30,
         })
 }
-#[must_use] pub fn failure_threshold() -> u32 {
+#[must_use]
+pub fn failure_threshold() -> u32 {
     failure_policy().failure_threshold
 }
-#[must_use] pub fn removal_grace_secs() -> i64 {
+#[must_use]
+pub fn removal_grace_secs() -> i64 {
     failure_policy().removal_grace_secs
 }
 

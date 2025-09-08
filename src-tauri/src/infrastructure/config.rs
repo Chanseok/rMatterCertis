@@ -308,7 +308,8 @@ pub struct AppManagedConfig {
 
 impl AppConfig {
     /// 개발/테스트용 기본 설정 생성
-    #[must_use] pub fn for_development() -> Self {
+    #[must_use]
+    pub fn for_development() -> Self {
         Self::default()
     }
 
@@ -857,7 +858,8 @@ impl ConfigManager {
     }
 
     /// Get the configuration file path
-    #[must_use] pub const fn config_path(&self) -> &PathBuf {
+    #[must_use]
+    pub const fn config_path(&self) -> &PathBuf {
         &self.config_path
     }
 }
@@ -1051,11 +1053,12 @@ pub mod defaults {
 
 /// URL building helper functions
 pub mod utils {
-    use super::csa_iot::{PRODUCTS_BASE, MATTER_QUERY_PARAMS, BASE_URL};
+    use super::csa_iot::{BASE_URL, MATTER_QUERY_PARAMS, PRODUCTS_BASE};
 
     /// Build a Matter products URL for a specific page number
     /// Uses the new URL structure: <https://csa-iot.org/csa-iot_products/page/{page}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver>
-    #[must_use] pub fn matter_products_page_url(page: u32) -> String {
+    #[must_use]
+    pub fn matter_products_page_url(page: u32) -> String {
         if page <= 1 {
             // First page uses base URL without /page/ path
             format!("{}{}", PRODUCTS_BASE, MATTER_QUERY_PARAMS)
@@ -1067,12 +1070,14 @@ pub mod utils {
 
     /// Build a Matter products URL by using the same structure as `matter_products_page_url`
     /// This function is kept for compatibility but now uses the same logic
-    #[must_use] pub fn matter_products_page_url_simple(page: u32) -> String {
+    #[must_use]
+    pub fn matter_products_page_url_simple(page: u32) -> String {
         matter_products_page_url(page)
     }
 
     /// Resolve a relative URL to an absolute URL using the base URL
-    #[must_use] pub fn resolve_url(relative_url: &str) -> String {
+    #[must_use]
+    pub fn resolve_url(relative_url: &str) -> String {
         if relative_url.starts_with("http://") || relative_url.starts_with("https://") {
             relative_url.to_string()
         } else if relative_url.starts_with('/') {

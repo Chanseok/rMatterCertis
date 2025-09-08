@@ -26,7 +26,7 @@ INSERT OR IGNORE INTO product_details (
     url, page_id, index_in_page, id, manufacturer, model, device_type, certificate_id,
     certification_date, software_version, hardware_version, firmware_version, specification_version,
     vid, pid, family_sku, family_variant_sku, family_id, tis_trp_tested,
-    transport_interface, primary_device_type_id, application_categories,
+    transport_interface, application_categories,
     description, compliance_document_url, program_type, created_at, updated_at
 )
 SELECT 
@@ -63,7 +63,6 @@ SELECT
     family_id,
     tis_trp_tested,
     transport_interface,
-    primary_device_type_id,
     application_categories,
     NULL as description, -- New field, will be NULL initially
     NULL as compliance_document_url, -- New field, will be NULL initially  

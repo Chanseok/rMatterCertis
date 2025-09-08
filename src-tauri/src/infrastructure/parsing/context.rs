@@ -20,7 +20,8 @@ pub struct ParseContext {
 
 impl ParseContext {
     /// Create new parse context
-    #[must_use] pub fn new(page_id: u32, base_url: String) -> Self {
+    #[must_use]
+    pub fn new(page_id: u32, base_url: String) -> Self {
         use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
 
         Self {
@@ -32,13 +33,15 @@ impl ParseContext {
     }
 
     /// Add metadata to context
-    #[must_use] pub fn with_metadata(mut self, key: String, value: String) -> Self {
+    #[must_use]
+    pub fn with_metadata(mut self, key: String, value: String) -> Self {
         self.metadata.insert(key, value);
         self
     }
 
     /// Set expected products per page
-    #[must_use] pub const fn with_expected_products(mut self, count: u32) -> Self {
+    #[must_use]
+    pub const fn with_expected_products(mut self, count: u32) -> Self {
         self.expected_products_per_page = count;
         self
     }
@@ -62,7 +65,8 @@ pub struct DetailParseContext {
 
 impl DetailParseContext {
     /// Create new detail parse context
-    #[must_use] pub const fn new(url: String, base_url: String) -> Self {
+    #[must_use]
+    pub const fn new(url: String, base_url: String) -> Self {
         Self {
             url,
             base_url,
@@ -72,7 +76,8 @@ impl DetailParseContext {
     }
 
     /// Set source information
-    #[must_use] pub const fn with_source(mut self, page_id: u32, index: u32) -> Self {
+    #[must_use]
+    pub const fn with_source(mut self, page_id: u32, index: u32) -> Self {
         self.source_page_id = Some(page_id);
         self.source_index = Some(index);
         self

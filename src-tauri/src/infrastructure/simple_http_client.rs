@@ -53,7 +53,8 @@ pub struct HttpClientConfig {
 
 impl HttpClientConfig {
     /// Create `HttpClientConfig` from `WorkerConfig`
-    #[must_use] pub fn from_worker_config(worker_config: &WorkerConfig) -> Self {
+    #[must_use]
+    pub fn from_worker_config(worker_config: &WorkerConfig) -> Self {
         Self {
             max_requests_per_second: worker_config.max_requests_per_second,
             timeout_seconds: worker_config.request_timeout_seconds,
@@ -142,7 +143,9 @@ impl GlobalRateLimiter {
         // Ensure refill is running. If rate changed, restart. If unchanged but no task, start.
         let need_start = {
             let handle = self.refill_handle.lock().await;
-            (*handle).as_ref().is_none_or(tauri::async_runtime::TokioJoinHandle::is_finished)
+            (*handle)
+                .as_ref()
+                .is_none_or(tauri::async_runtime::TokioJoinHandle::is_finished)
         };
         if changed || need_start {
             self.start_refill_task(max_requests_per_second).await;
@@ -300,7 +303,8 @@ impl HttpClient {
         })
     }
     /// Set a human-readable context label for logging provenance (returns self for chaining)
-    #[must_use] pub fn with_context_label(mut self, label: &str) -> Self {
+    #[must_use]
+    pub fn with_context_label(mut self, label: &str) -> Self {
         self.context_label = Some(label.to_string());
         self
     }
@@ -880,7 +884,8 @@ impl HttpClient {
     }
 
     /// Parse HTML from string (non-async, can be called after fetch)
-    #[must_use] pub fn parse_html(&self, html_content: &str) -> Html {
+    #[must_use]
+    pub fn parse_html(&self, html_content: &str) -> Html {
         Html::parse_document(html_content)
     }
 }
@@ -904,7 +909,9 @@ mod tests {
         let cnt_clone = counter.clone();
         tokio::spawn(async move {
             loop {
-                let Ok((mut socket, _)) = listener.accept().await else { break };
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
 
                 let mut buf = vec![0u8; 1024];
                 let _ = socket.read(&mut buf).await; // best-effort
@@ -1076,7 +1083,7 @@ mod tests {
         let results = futures::future::join_all(handles).await;
         let duration = start.elapsed();
 
-    let successful_requests = results.into_iter().flatten().count();
+        let successful_requests = results.into_iter().flatten().count();
 
         println!("Rate Limiter Test ({} RPS):", rps);
         println!(
@@ -1086,11 +1093,11 @@ mod tests {
         );
         println!("- {} requests were successful.", successful_requests);
 
-    #[allow(clippy::cast_precision_loss)]
-    let expected_duration_min = (num_requests as f32 / rps as f32) * 0.8; // Allow some bursting
+        #[allow(clippy::cast_precision_loss)]
+        let expected_duration_min = (num_requests as f32 / rps as f32) * 0.8; // Allow some bursting
         // CI/network variability can be high; allow a generous upper bound
-    #[allow(clippy::cast_precision_loss)]
-    let expected_duration_max = (num_requests as f32 / rps as f32) * 2.5; // Allow for higher latency
+        #[allow(clippy::cast_precision_loss)]
+        let expected_duration_max = (num_requests as f32 / rps as f32) * 2.5; // Allow for higher latency
 
         assert!(successful_requests > 0);
         if duration.as_secs_f32() <= expected_duration_min {

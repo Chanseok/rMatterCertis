@@ -174,8 +174,8 @@ pub enum AppEvent {
     BatchStarted {
         batch_id: String,
         session_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    plan_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        plan_id: Option<String>,
         pages_count: u32,
         timestamp: DateTime<Utc>,
     },
@@ -183,8 +183,8 @@ pub enum AppEvent {
     BatchCompleted {
         batch_id: String,
         session_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    plan_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        plan_id: Option<String>,
         success_count: u32,
         failed_count: u32,
         duration: u64, // Duration을 milliseconds로 변경
@@ -194,8 +194,8 @@ pub enum AppEvent {
     BatchFailed {
         batch_id: String,
         session_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    plan_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        plan_id: Option<String>,
         error: String,
         final_failure: bool,
         timestamp: DateTime<Utc>,
@@ -293,8 +293,8 @@ pub enum AppEvent {
     BatchReport {
         session_id: String,
         batch_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    plan_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        plan_id: Option<String>,
         pages_total: u32,
         pages_success: u32,
         pages_failed: u32,
@@ -700,7 +700,8 @@ pub enum StageType {
 
 impl StageType {
     /// `StageType을` 문자열로 변환
-    #[must_use] pub const fn as_str(&self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::StatusCheck => "status_check",
             Self::ListPageCrawling => "list_page_crawling",
@@ -1208,16 +1209,18 @@ pub struct ExecutionPlanKpi {
 
 impl ExecutionPlan {
     /// Preplanned 실행 시 최소한의 `SiteStatus` 형태를 구성 (페이지 처리 통계용)
-    #[must_use] pub fn input_snapshot_to_site_status(&self) -> crate::domain::services::SiteStatus {
+    #[must_use]
+    pub fn input_snapshot_to_site_status(&self) -> crate::domain::services::SiteStatus {
         use crate::domain::services::crawling_services::{
             CrawlingRangeRecommendation, SiteDataChangeStatus,
         };
         // 안정 상태 count 산출: DB 총량 >0 이면 사용, 아니면 페이지 * 마지막페이지상품수 (대략치)
         let stable_count: u32 = if self.input_snapshot.db_total_products > 0 {
             // u64 -> u32 캐스팅 (과도한 값은 u32::MAX 로 clamp)
-            self.input_snapshot.db_total_products.min(u64::from(u32::MAX)) as u32
+            self.input_snapshot
+                .db_total_products
+                .min(u64::from(u32::MAX)) as u32
         } else {
-            
             self.input_snapshot.total_pages * self.input_snapshot.products_on_last_page.max(1)
         };
         crate::domain::services::SiteStatus {
@@ -1387,7 +1390,10 @@ mod tests {
         };
         let v: Value = serde_json::to_value(&event).unwrap();
         let payload = get_variant_payload(&v);
-        assert!(payload.get("timestamp").is_some(), "timestamp must be present on SessionStarted");
+        assert!(
+            payload.get("timestamp").is_some(),
+            "timestamp must be present on SessionStarted"
+        );
     }
 
     #[test]
@@ -1402,10 +1408,16 @@ mod tests {
             duration: 1234,
             timestamp: Utc::now(),
         };
-    let v: Value = serde_json::to_value(&batch_completed).unwrap();
-    let payload = get_variant_payload(&v);
-    assert!(payload.get("duration").is_some(), "BatchCompleted must have legacy `duration` field");
-    assert!(payload.get("duration_ms").is_none(), "BatchCompleted must not rename to duration_ms");
+        let v: Value = serde_json::to_value(&batch_completed).unwrap();
+        let payload = get_variant_payload(&v);
+        assert!(
+            payload.get("duration").is_some(),
+            "BatchCompleted must have legacy `duration` field"
+        );
+        assert!(
+            payload.get("duration_ms").is_none(),
+            "BatchCompleted must not rename to duration_ms"
+        );
 
         // BatchReport uses `duration_ms`
         let batch_report = AppEvent::BatchReport {
@@ -1425,9 +1437,12 @@ mod tests {
             products_updated: 0,
             timestamp: Utc::now(),
         };
-    let v2: Value = serde_json::to_value(&batch_report).unwrap();
-    let payload2 = get_variant_payload(&v2);
-    assert!(payload2.get("duration_ms").is_some(), "BatchReport must have duration_ms");
+        let v2: Value = serde_json::to_value(&batch_report).unwrap();
+        let payload2 = get_variant_payload(&v2);
+        assert!(
+            payload2.get("duration_ms").is_some(),
+            "BatchReport must have duration_ms"
+        );
 
         // SyncPageCompleted uses legacy `ms`
         let sync_page_completed = AppEvent::SyncPageCompleted {
@@ -1440,10 +1455,16 @@ mod tests {
             ms: 250,
             timestamp: Utc::now(),
         };
-    let v3: Value = serde_json::to_value(&sync_page_completed).unwrap();
-    let payload3 = get_variant_payload(&v3);
-    assert!(payload3.get("ms").is_some(), "SyncPageCompleted must have legacy `ms` field");
-    assert!(payload3.get("duration_ms").is_none(), "SyncPageCompleted must not rename to duration_ms");
+        let v3: Value = serde_json::to_value(&sync_page_completed).unwrap();
+        let payload3 = get_variant_payload(&v3);
+        assert!(
+            payload3.get("ms").is_some(),
+            "SyncPageCompleted must have legacy `ms` field"
+        );
+        assert!(
+            payload3.get("duration_ms").is_none(),
+            "SyncPageCompleted must not rename to duration_ms"
+        );
     }
 
     #[test]
@@ -1458,7 +1479,10 @@ mod tests {
         };
         let v: Value = serde_json::to_value(&ev).unwrap();
         let payload = get_variant_payload(&v);
-        assert_eq!(payload.get("plan_id").and_then(|v| v.as_str()), Some("plan_123"));
+        assert_eq!(
+            payload.get("plan_id").and_then(|v| v.as_str()),
+            Some("plan_123")
+        );
 
         // BatchCompleted without plan_id (None)
         let ev2 = AppEvent::BatchCompleted {
@@ -1472,7 +1496,10 @@ mod tests {
         };
         let v2: Value = serde_json::to_value(&ev2).unwrap();
         let payload2 = get_variant_payload(&v2);
-        assert!(payload2.get("plan_id").is_none(), "plan_id should be omitted when None");
+        assert!(
+            payload2.get("plan_id").is_none(),
+            "plan_id should be omitted when None"
+        );
     }
 
     #[test]
@@ -1490,9 +1517,9 @@ mod tests {
             collected_count: Some(30),
             timestamp: Utc::now(),
         };
-    let v: Value = serde_json::to_value(&event).unwrap();
-    let payload = get_variant_payload(&v);
-    assert!(payload.get("duration_ms").is_some());
-    assert!(payload.get("timestamp").is_some());
+        let v: Value = serde_json::to_value(&event).unwrap();
+        let payload = get_variant_payload(&v);
+        assert!(payload.get("duration_ms").is_some());
+        assert!(payload.get("timestamp").is_some());
     }
 }

@@ -1,7 +1,7 @@
-use matter_certis_v2_lib::commands::analysis::system_analysis::{
-    analyze_system_status_core, CrawlingResponse,
-};
 use matter_certis_v2_lib::application::shared_state::SharedStateCache;
+use matter_certis_v2_lib::commands::analysis::system_analysis::{
+    CrawlingResponse, analyze_system_status_core,
+};
 use tauri::async_runtime::block_on;
 
 // Minimal happy-path invocation test for analyze_system_status.
@@ -21,7 +21,9 @@ fn analyze_system_status_happy_path() {
         Ok(success) => assert!(success, "analysis did not report success"),
         Err(e) => {
             // If environment/network not available, mark as skipped rather than failing CI hard
-            eprintln!("Skipping analyze_system_status_happy_path due to environment: {}", e);
+            eprintln!(
+                "Skipping analyze_system_status_happy_path due to environment: {e}"
+            );
         }
     }
 }

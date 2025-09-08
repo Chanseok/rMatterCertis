@@ -164,7 +164,8 @@ struct SessionMetrics {
 
 impl SessionManager {
     /// Create a new session manager
-    #[must_use] pub fn new() -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             metrics: Arc::new(Mutex::new(SessionMetrics::default())),
@@ -521,7 +522,8 @@ impl SessionManager {
         }
 
         if session.current_page > 0 {
-            let products_per_page = f64::from(session.products_found) / f64::from(session.current_page);
+            let products_per_page =
+                f64::from(session.products_found) / f64::from(session.current_page);
             metrics.avg_products_per_page = if metrics.avg_products_per_page == 0.0 {
                 products_per_page
             } else {

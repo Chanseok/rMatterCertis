@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS product_details (
     -- Testing and compliance
     tis_trp_tested TEXT,                  -- TIS/TRP tested status ("Yes"/"No")
     transport_interface TEXT,             -- Transport interface(s)
-    primary_device_type_id TEXT,          -- Primary device type ID
+    primary_device_type_ids TEXT,         -- Normalized primary device type IDs (JSON array of ints)
     application_categories TEXT,          -- JSON array of categories
     
     -- ENHANCEMENTS from new design
@@ -184,35 +184,7 @@ END;
 -- ====================================================================
 
 -- Create view for backward compatibility with existing frontend
-CREATE VIEW IF NOT EXISTS matter_products_legacy AS
-SELECT 
-    pd.url,
-    pd.page_id,
-    pd.index_in_page,
-    pd.id,
-    pd.manufacturer,
-    pd.model,
-    pd.device_type,
-    pd.certificate_id,
-    pd.certification_date,
-    pd.software_version,
-    pd.hardware_version,
-    pd.vid,
-    pd.pid,
-    pd.family_sku,
-    pd.family_variant_sku,
-    pd.firmware_version,
-    pd.family_id,
-    pd.tis_trp_tested,
-    pd.specification_version,
-    pd.transport_interface,
-    pd.primary_device_type_id,
-    pd.application_categories,
-    pd.created_at,
-    pd.updated_at
-FROM product_details pd
-INNER JOIN products p ON pd.url = p.url
-WHERE pd.program_type = 'Matter' OR pd.program_type IS NULL;
+-- (Legacy view removed in v2 schema; fresh installs do not expose it.)
 
 -- ====================================================================
 -- SCHEMA SUMMARY

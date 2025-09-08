@@ -289,7 +289,7 @@ impl MatterDataExtractor {
         // "Page X of Y" 형태의 텍스트에서 총 페이지 수 추출
         let page_info_selectors = vec![".pagination-info", ".page-info", ".showing-info"];
 
-    let re = regex::Regex::new(r"(?i)page\s+\d+\s+of\s+(\d+)").unwrap();
+        let re = regex::Regex::new(r"(?i)page\s+\d+\s+of\s+(\d+)").unwrap();
 
         for selector_str in page_info_selectors {
             if let Ok(selector) = Selector::parse(selector_str) {
@@ -473,7 +473,6 @@ impl MatterDataExtractor {
             tis_trp_tested: None,
             specification_version: None,
             transport_interface: None,
-            primary_device_type_id: None,
             primary_device_type_ids: None,
             application_categories: None,
             description: None,
@@ -533,7 +532,11 @@ impl MatterDataExtractor {
         let url = article
             .select(&link_selector)
             .next()
-            .and_then(|link| link.value().attr("href")).map_or_else(|| format!("unknown-{}-{}", page_id, index_in_page), |href| self.resolve_url(href, &self.config.base_url));
+            .and_then(|link| link.value().attr("href"))
+            .map_or_else(
+                || format!("unknown-{}-{}", page_id, index_in_page),
+                |href| self.resolve_url(href, &self.config.base_url),
+            );
 
         // Extract manufacturer - exactly as in guide
         let manufacturer_selector = Selector::parse("p.entry-company.notranslate").unwrap();
@@ -739,7 +742,7 @@ impl MatterDataExtractor {
                 detail.transport_interface = Some(value.to_string());
             }
             k if k.contains("primary device type id") => {
-                detail.primary_device_type_id = Some(value.to_string());
+                // primary_device_type_id removed; normalized list field is populated via DB pipeline
             }
             k if k.contains("device type") || k.contains("product type") => {
                 detail.device_type = Some(value.to_string());
@@ -801,7 +804,7 @@ impl MatterDataExtractor {
                 detail.transport_interface = Some(value.to_string());
             }
             l if l.contains("primary device type") || l.contains("device type id") => {
-                detail.primary_device_type_id = Some(value.to_string());
+                // primary_device_type_id removed; normalized list field is populated via DB pipeline
             }
             l if l.contains("device type")
                 || l.contains("product type")
@@ -865,7 +868,8 @@ impl PaginationContext {
     ///
     /// Note: `current_page` is 1-based, `index_on_page` is 1-based (first item on page = 1)
     /// Returns: (pageId, indexInPage) both 0-based where oldest product = (0, 0)
-    #[must_use] pub const fn calculate_page_index(&self, current_page: u32, index_on_page: u32) -> (i32, i32) {
+    #[must_use]
+    pub const fn calculate_page_index(&self, current_page: u32, index_on_page: u32) -> (i32, i32) {
         // Step 1: Calculate total products on site
         let total_products = (self.total_pages - 1) * self.items_per_page + self.items_on_last_page;
 
@@ -887,7 +891,8 @@ impl PaginationContext {
 
     /// Canonical 계산 방식 (Phase2): `domain::pagination::CanonicalPageIdCalculator` 사용
     /// `current_page`: 1-based, `zero_based_index`: 0-based
-    #[must_use] pub fn calculate_page_index_canonical(
+    #[must_use]
+    pub fn calculate_page_index_canonical(
         &self,
         current_page: u32,
         zero_based_index: u32,
@@ -1171,7 +1176,6 @@ mod tests {
             tis_trp_tested: None,
             specification_version: None,
             transport_interface: None,
-            primary_device_type_id: None,
             primary_device_type_ids: None,
             application_categories: None,
             description: None,

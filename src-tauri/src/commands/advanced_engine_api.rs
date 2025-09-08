@@ -5,12 +5,14 @@
 use tauri::{AppHandle, State, command};
 use tracing::{error, info, warn};
 
+use crate::api::frontend_api::{
+    ApiResponse, DatabaseStats, ProductInfo, ProductPage, SiteStatusInfo,
+}; // trait import for check_site_status
 use crate::application::shared_state::SharedStateCache;
-use crate::application::state::AppState;
-use crate::infrastructure::IntegratedProductRepository;
-use crate::api::frontend_api::{ApiResponse, SiteStatusInfo, ProductPage, ProductInfo, DatabaseStats}; // trait import for check_site_status
 use crate::application::shared_state::SiteAnalysisResult;
+use crate::application::state::AppState;
 use crate::domain::constants::site;
+use crate::infrastructure::IntegratedProductRepository;
 
 /// Advanced Crawling Engine 사이트 상태 확인 (실제 구현)
 #[command]
@@ -36,7 +38,7 @@ pub async fn check_advanced_site_status(
                 .num_minutes()
         );
 
-    // 캐시 히트: 이벤트 발신 대신 로그만 남깁니다
+        // 캐시 히트: 이벤트 발신 대신 로그만 남깁니다
 
         let site_status_info = SiteStatusInfo {
             is_accessible: true,

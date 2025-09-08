@@ -78,7 +78,8 @@ pub enum ParsingError {
 
 impl ParsingError {
     /// Create a required field missing error with context
-    #[must_use] pub fn required_field_missing(field: &str, context: Option<&str>) -> Self {
+    #[must_use]
+    pub fn required_field_missing(field: &str, context: Option<&str>) -> Self {
         Self::RequiredFieldMissing {
             field: field.to_string(),
             context: context.map(std::string::ToString::to_string),
@@ -86,7 +87,8 @@ impl ParsingError {
     }
 
     /// Create an invalid selector error with alternatives
-    #[must_use] pub fn invalid_selector(selector: &str, reason: &str, alternatives: Vec<String>) -> Self {
+    #[must_use]
+    pub fn invalid_selector(selector: &str, reason: &str, alternatives: Vec<String>) -> Self {
         Self::InvalidSelector {
             selector: selector.to_string(),
             reason: reason.to_string(),
@@ -95,7 +97,8 @@ impl ParsingError {
     }
 
     /// Create a no products found error with tried selectors
-    #[must_use] pub const fn no_products_found(page_id: u32, tried_selectors: Vec<String>) -> Self {
+    #[must_use]
+    pub const fn no_products_found(page_id: u32, tried_selectors: Vec<String>) -> Self {
         Self::NoProductsFound {
             page_id,
             tried_selectors,
@@ -103,7 +106,8 @@ impl ParsingError {
     }
 
     /// Create a Matter field extraction error with attempted selectors
-    #[must_use] pub fn matter_field_extraction_failed(
+    #[must_use]
+    pub fn matter_field_extraction_failed(
         field: &str,
         reason: &str,
         attempted_selectors: Vec<String>,
@@ -116,9 +120,12 @@ impl ParsingError {
     }
 
     /// Check if this error is recoverable
-    #[must_use] pub const fn is_recoverable(&self) -> bool {
+    #[must_use]
+    pub const fn is_recoverable(&self) -> bool {
         match self {
-            Self::NoProductsFound { .. } | Self::ConfigurationError { .. } | Self::HtmlParsingFailed { .. } => false,
+            Self::NoProductsFound { .. }
+            | Self::ConfigurationError { .. }
+            | Self::HtmlParsingFailed { .. } => false,
             Self::HttpRequestFailed { status, .. } => *status < 500,
             Self::RequiredFieldMissing { .. }
             | Self::InvalidSelector { .. }
@@ -131,7 +138,8 @@ impl ParsingError {
     }
 
     /// Get retry delay in seconds for recoverable errors
-    #[must_use] pub const fn retry_delay_seconds(&self) -> Option<u64> {
+    #[must_use]
+    pub const fn retry_delay_seconds(&self) -> Option<u64> {
         match self {
             Self::RateLimitExceeded {
                 retry_after_seconds,

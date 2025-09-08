@@ -124,7 +124,6 @@ pub struct MatterProduct {
     pub tis_trp_tested: Option<String>,
     pub specification_version: Option<String>,
     pub transport_interface: Option<String>,
-    pub primary_device_type_id: Option<String>,
     pub application_categories: Vec<String>, // JSON array as Vec
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

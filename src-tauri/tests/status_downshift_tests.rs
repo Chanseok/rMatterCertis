@@ -6,8 +6,10 @@ use matter_certis_v2_lib::crawl_engine::runtime::session_registry::{
 
 #[tokio::test]
 async fn status_includes_downshift_metadata_when_set() {
-    let nanos = Utc::now()
-        .timestamp_nanos_opt().map_or_else(|| i128::from(Utc::now().timestamp_millis()) * 1_000_000, i128::from);
+    let nanos = Utc::now().timestamp_nanos_opt().map_or_else(
+        || i128::from(Utc::now().timestamp_millis()) * 1_000_000,
+        i128::from,
+    );
     let sid = format!("test_{nanos}");
     {
         let registry = session_registry();
@@ -56,11 +58,9 @@ async fn status_includes_downshift_metadata_when_set() {
         );
     }
     let payload =
-        matter_certis_v2_lib::commands::actor_system::test_build_session_status_payload(
-            &sid,
-        )
-        .await
-        .expect("payload");
+        matter_certis_v2_lib::commands::actor_system::test_build_session_status_payload(&sid)
+            .await
+            .expect("payload");
     let details = &payload["details"];
     assert!(details["downshifted"].as_bool().unwrap());
     assert!(details["downshift_meta"]["timestamp"].is_string());

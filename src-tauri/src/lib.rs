@@ -104,7 +104,7 @@ pub mod domain {
     pub mod atomic_events; // 추가: 원자적 태스크 이벤트
     pub mod constants; // 추가: 사이트 및 도메인 상수들
     pub mod entities;
-        // pub mod events; // removed: legacy event types (replaced by AppEvent + FE API types)
+    // pub mod events; // removed: legacy event types (replaced by AppEvent + FE API types)
     pub mod product_url;
     // pub mod repositories; // removed: legacy repository traits (no active implementations)
     // pub mod value_objects; // removed: unused value objects (ValidatedUrl, ProductData, etc.)
@@ -135,7 +135,7 @@ pub mod domain {
 
     // Re-export commonly used items
     pub use entities::*;
-        // pub use events::*; // removed re-export of legacy event types
+    // pub use events::*; // removed re-export of legacy event types
     pub use pagination::{CanonicalPageIdCalculator, PagePosition, PaginationCalculator};
 }
 
@@ -154,12 +154,12 @@ pub mod application {
     // pub mod crawler_manager;  // 🚧 임시 비활성화 - 컴파일 문제로 인해
 
     // Re-export commonly used items
-        pub use events::EventEmitter;
-        pub use shared_state::SharedStateCache;
-        pub use state::AppState;
-        // removed: dto::* re-export (module unused)
-        pub use integrated_use_cases::IntegratedProductUseCases;
-        // removed: parsing_service re-exports (module unused)
+    pub use events::EventEmitter;
+    pub use shared_state::SharedStateCache;
+    pub use state::AppState;
+    // removed: dto::* re-export (module unused)
+    pub use integrated_use_cases::IntegratedProductUseCases;
+    // removed: parsing_service re-exports (module unused)
     // pub use crawler_manager::{CrawlerManager, CrawlingConfig, CrawlingEngineType}; // 임시 비활성화
 }
 
@@ -185,9 +185,9 @@ pub mod commands {
     pub mod crawling {
         pub mod actor_system; // moved here physically
         pub mod real_crawling_commands;
+        #[cfg(feature = "dev-tools")]
+        pub mod simple_actor_test;
         pub mod smart_crawling;
-    #[cfg(feature = "dev-tools")]
-    pub mod simple_actor_test;
         pub mod unified_crawling;
     }
     pub mod advanced_engine_api; // 새로운 Advanced Engine API 추가
@@ -197,11 +197,11 @@ pub mod commands {
     // Grouped domain modules
     pub mod database {
         pub mod data_queries; // Backend-Only CRUD commands (Modern Rust 2024)
-    pub mod vendor_sync; // CSA DCL vendor sync
         #[cfg(feature = "dev-tools")]
         pub mod db_cleanup;
         #[cfg(feature = "dev-tools")]
-        pub mod db_repair; // 🔧 DB repair/sync between products and product_details
+        pub mod db_repair;
+        pub mod vendor_sync; // CSA DCL vendor sync // 🔧 DB repair/sync between products and product_details
     }
     pub mod analysis {
         pub mod performance_commands; // 🔧 Phase C: 성능 최적화 도구
@@ -216,12 +216,12 @@ pub mod commands {
         pub mod debug_commands; // 🔎 UI debug logging helpers
         #[cfg(feature = "dev-tools")]
         pub mod product_details_analytics; // 📊 product_details analytics endpoints
-    // Relocated from commands::crawling_test_commands (pruned from public build)
-    // pub mod crawling_test_commands; // 🧪 Crawling test utilities
-    // pub mod real_actor_commands; // 🎭 Real Actor 시스템 명령어 (moved here)
+        // Relocated from commands::crawling_test_commands (pruned from public build)
+        // pub mod crawling_test_commands; // 🧪 Crawling test utilities
+        // pub mod real_actor_commands; // 🎭 Real Actor 시스템 명령어 (moved here)
     }
     pub mod legacy {
-    // dashboard UI removed (Option B); legacy module deleted
+        // dashboard UI removed (Option B); legacy module deleted
     }
     // moved under devtools::real_actor_commands
     // moved under crawling/ with alias re-exports below
@@ -242,50 +242,50 @@ pub mod commands {
     // pub use self::devtools::real_actor_commands as real_actor_commands;
     // pub use self::devtools::real_actor_commands::*;
     // Preserve original path commands::actor_system via alias re-export
-    pub use crawling::actor_system as actor_system;
+    pub use crawling::actor_system;
     pub use crawling::actor_system::*; // prefer role-based alias (star)
     // Preserve original paths for other crawling commands via alias re-exports
-    pub use crawling::real_crawling_commands as real_crawling_commands;
+    pub use crawling::real_crawling_commands;
     pub use crawling::real_crawling_commands::*;
-    pub use crawling::smart_crawling as smart_crawling;
-    pub use crawling::smart_crawling::*;
     #[cfg(feature = "dev-tools")]
-    pub use crawling::simple_actor_test as simple_actor_test;
+    pub use crawling::simple_actor_test;
     #[cfg(feature = "dev-tools")]
     pub use crawling::simple_actor_test::*;
-    pub use crawling::unified_crawling as unified_crawling;
+    pub use crawling::smart_crawling;
+    pub use crawling::smart_crawling::*;
+    pub use crawling::unified_crawling;
     pub use crawling::unified_crawling::*;
     // Database exports (preserve commands::data_queries path)
-    pub use database::data_queries as data_queries;
+    pub use database::data_queries;
     pub use database::data_queries::*;
-    pub use database::vendor_sync as vendor_sync;
-    pub use database::vendor_sync::*;
     #[cfg(feature = "dev-tools")]
-    pub use database::db_cleanup as db_cleanup;
+    pub use database::db_cleanup;
     #[cfg(feature = "dev-tools")]
     pub use database::db_cleanup::*;
     #[cfg(feature = "dev-tools")]
-    pub use database::db_repair as db_repair;
+    pub use database::db_repair;
     #[cfg(feature = "dev-tools")]
-    pub use database::db_repair::*; // DB repair/sync 명령어 export
+    pub use database::db_repair::*;
+    pub use database::vendor_sync;
+    pub use database::vendor_sync::*; // DB repair/sync 명령어 export
     // Analysis exports
-    pub use analysis::performance_commands as performance_commands;
+    pub use analysis::performance_commands;
     pub use analysis::performance_commands::*; // Phase C 성능 최적화 명령어 export
-    pub use analysis::system_analysis as system_analysis;
+    pub use analysis::system_analysis;
     pub use analysis::system_analysis::*; // 시스템 분석 명령어 export
     // Devtools exports
     #[cfg(feature = "dev-tools")]
-    pub use devtools::actor_system_monitoring as actor_system_monitoring;
+    pub use devtools::actor_system_monitoring;
     #[cfg(any(feature = "dev-tools", debug_assertions))]
-    pub use devtools::db_diagnostics as db_diagnostics;
+    pub use devtools::db_diagnostics;
     #[cfg(any(feature = "dev-tools", debug_assertions))]
     pub use devtools::db_diagnostics::*; // DB diagnostics 명령어 export
     #[cfg(feature = "dev-tools")]
-    pub use devtools::debug_commands as debug_commands;
+    pub use devtools::debug_commands;
     #[cfg(feature = "dev-tools")]
     pub use devtools::debug_commands::*; // UI debug logger export
     #[cfg(feature = "dev-tools")]
-    pub use devtools::product_details_analytics as product_details_analytics;
+    pub use devtools::product_details_analytics;
     #[cfg(feature = "dev-tools")]
     pub use devtools::product_details_analytics::*;
     // Legacy exports

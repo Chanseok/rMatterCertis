@@ -12,7 +12,8 @@ pub struct SessionActor {
 }
 
 impl SessionActor {
-    #[must_use] pub const fn new(session_id: String) -> Self {
+    #[must_use]
+    pub const fn new(session_id: String) -> Self {
         Self { session_id }
     }
 }
@@ -24,7 +25,8 @@ pub struct StageActor {
 }
 
 impl StageActor {
-    #[must_use] pub const fn new(stage_id: String) -> Self {
+    #[must_use]
+    pub const fn new(stage_id: String) -> Self {
         Self { stage_id }
     }
 }
@@ -38,7 +40,8 @@ pub struct ActorSystem {
 }
 
 impl ActorSystem {
-    #[must_use] pub const fn new(system_id: String) -> Self {
+    #[must_use]
+    pub const fn new(system_id: String) -> Self {
         Self { system_id }
     }
 }

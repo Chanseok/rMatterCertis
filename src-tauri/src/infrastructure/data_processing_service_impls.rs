@@ -8,7 +8,15 @@ use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
 use crate::domain::product::Product;
-use crate::domain::services::data_processing_services::{DeduplicationService, DuplicationAnalysis, DuplicateProductGroup, DuplicationType, ValidationService, ValidationResult, InvalidProduct, ValidationSummary, ProductValidation, ValidationError, ValidationErrorType, ValidationWarning, ValidationWarningType, FieldValidation, ResolutionStrategy, ConflictResolver, ConflictGroup, ConflictType, BatchProgressTracker, BatchProgress, BatchResult, BatchRecoveryService, RecoveryResult, RecoveryAction, RecoverabilityAssessment, RetryManager, ErrorClassification, ErrorType, ErrorSeverity, RetryStrategy, ErrorClassifier, ErrorAction};
+use crate::domain::services::data_processing_services::{
+    BatchProgress, BatchProgressTracker, BatchRecoveryService, BatchResult, ConflictGroup,
+    ConflictResolver, ConflictType, DeduplicationService, DuplicateProductGroup,
+    DuplicationAnalysis, DuplicationType, ErrorAction, ErrorClassification, ErrorClassifier,
+    ErrorSeverity, ErrorType, FieldValidation, InvalidProduct, ProductValidation,
+    RecoverabilityAssessment, RecoveryAction, RecoveryResult, ResolutionStrategy, RetryManager,
+    RetryStrategy, ValidationError, ValidationErrorType, ValidationResult, ValidationService,
+    ValidationSummary, ValidationWarning, ValidationWarningType,
+};
 
 /// 중복 제거 서비스 구현체
 pub struct DeduplicationServiceImpl {
@@ -16,7 +24,8 @@ pub struct DeduplicationServiceImpl {
 }
 
 impl DeduplicationServiceImpl {
-    #[must_use] pub const fn new(similarity_threshold: f64) -> Self {
+    #[must_use]
+    pub const fn new(similarity_threshold: f64) -> Self {
         Self {
             similarity_threshold: similarity_threshold.clamp(0.0, 1.0),
         }
@@ -208,7 +217,8 @@ impl Default for ValidationServiceImpl {
 }
 
 impl ValidationServiceImpl {
-    #[must_use] pub fn new() -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self {
             required_fields: vec!["manufacturer".to_string(), "model".to_string()],
         }
@@ -229,10 +239,7 @@ impl ValidationServiceImpl {
                     .manufacturer
                     .as_ref()
                     .is_some_and(|m| !m.trim().is_empty()),
-                "model" => product
-                    .model
-                    .as_ref()
-                    .is_some_and(|m| !m.trim().is_empty()),
+                "model" => product.model.as_ref().is_some_and(|m| !m.trim().is_empty()),
                 _ => false,
             })
             .filter(|&filled| filled)
@@ -475,7 +482,8 @@ pub struct ConflictResolverImpl {
 }
 
 impl ConflictResolverImpl {
-    #[must_use] pub const fn new(strategy: ResolutionStrategy) -> Self {
+    #[must_use]
+    pub const fn new(strategy: ResolutionStrategy) -> Self {
         Self {
             resolution_strategy: strategy,
         }
@@ -575,12 +583,18 @@ impl ConflictResolver for ConflictResolverImpl {
 
                 if new.manufacturer.is_some() && existing.manufacturer.is_none() {
                     if let Some(val) = &new.manufacturer {
-                        merged.manufacturer.get_or_insert_with(Default::default).clone_from(val);
+                        merged
+                            .manufacturer
+                            .get_or_insert_with(Default::default)
+                            .clone_from(val);
                     }
                 }
                 if new.model.is_some() && existing.model.is_none() {
                     if let Some(val) = &new.model {
-                        merged.model.get_or_insert_with(Default::default).clone_from(val);
+                        merged
+                            .model
+                            .get_or_insert_with(Default::default)
+                            .clone_from(val);
                     }
                 }
                 if new.certificate_id.is_some() && existing.certificate_id.is_none() {
@@ -641,7 +655,8 @@ impl Default for BatchProgressTrackerImpl {
 }
 
 impl BatchProgressTrackerImpl {
-    #[must_use] pub const fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {}
     }
 }
@@ -692,7 +707,8 @@ impl Default for BatchRecoveryServiceImpl {
 }
 
 impl BatchRecoveryServiceImpl {
-    #[must_use] pub const fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {}
     }
 }
@@ -750,7 +766,8 @@ pub struct RetryManagerImpl {
 }
 
 impl RetryManagerImpl {
-    #[must_use] pub const fn new(max_retries: u32, base_delay_ms: u64) -> Self {
+    #[must_use]
+    pub const fn new(max_retries: u32, base_delay_ms: u64) -> Self {
         Self {
             max_retries,
             base_delay_ms,
@@ -877,7 +894,8 @@ impl Default for ErrorClassifierImpl {
 }
 
 impl ErrorClassifierImpl {
-    #[must_use] pub const fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {}
     }
 }

@@ -65,7 +65,7 @@ impl IntegratedProductRepository {
     ) -> Result<UpsertOutcome> {
         // Check existing record
         let existing = sqlx::query(
-            r#"SELECT vendor_name, company_legal_name FROM vendors WHERE vendor_number = ?"#,
+            r"SELECT vendor_name, company_legal_name FROM vendors WHERE vendor_number = ?",
         )
         .bind(vendor_number)
         .fetch_optional(&*self.pool)
@@ -80,11 +80,11 @@ impl IntegratedProductRepository {
 
             if name_changed || legal_changed {
                 sqlx::query(
-                    r#"
+                    r"
                     UPDATE vendors
                     SET vendor_name = ?, company_legal_name = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE vendor_number = ?
-                    "#,
+                    ",
                 )
                 .bind(vendor_name)
                 .bind(company_legal_name)
@@ -92,16 +92,22 @@ impl IntegratedProductRepository {
                 .execute(&*self.pool)
                 .await?;
 
-                Ok(UpsertOutcome { inserted: false, updated: true })
+                Ok(UpsertOutcome {
+                    inserted: false,
+                    updated: true,
+                })
             } else {
-                Ok(UpsertOutcome { inserted: false, updated: false })
+                Ok(UpsertOutcome {
+                    inserted: false,
+                    updated: false,
+                })
             }
         } else {
             sqlx::query(
-                r#"
+                r"
                 INSERT INTO vendors (vendor_number, vendor_name, company_legal_name, created_at, updated_at)
                 VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                "#,
+                ",
             )
             .bind(vendor_number)
             .bind(vendor_name)
@@ -109,7 +115,10 @@ impl IntegratedProductRepository {
             .execute(&*self.pool)
             .await?;
 
-            Ok(UpsertOutcome { inserted: true, updated: false })
+            Ok(UpsertOutcome {
+                inserted: true,
+                updated: false,
+            })
         }
     }
     /// Vacate an occupied (`page_id`, `index_in_page`) slot if it's taken by a different URL.
@@ -214,7 +223,7 @@ impl IntegratedProductRepository {
         .bind(&normalized)
         .execute(&*self.pool)
         .await?;
-    let prod_rows = u32::try_from(prod_res.rows_affected()).unwrap_or(u32::MAX);
+        let prod_rows = u32::try_from(prod_res.rows_affected()).unwrap_or(u32::MAX);
 
         // product_details 테이블 업데이트 (id 포함)
         let det_res = sqlx::query(
@@ -229,7 +238,7 @@ impl IntegratedProductRepository {
         .bind(&normalized)
         .execute(&*self.pool)
         .await?;
-    let det_rows = u32::try_from(det_res.rows_affected()).unwrap_or(u32::MAX);
+        let det_rows = u32::try_from(det_res.rows_affected()).unwrap_or(u32::MAX);
 
         Ok((prod_rows, det_rows))
     }
@@ -239,21 +248,26 @@ impl IntegratedProductRepository {
     /// - Leaves path/query as-is (CSA URLs are case-sensitive there)
     fn normalize_url(url: &str) -> String {
         let trimmed = url.trim();
-        url::Url::parse(trimmed).map_or_else(|_| trimmed.to_string(), |mut parsed| {
-            if let Some(host) = parsed.host_str() {
-                let lower = host.to_ascii_lowercase();
-                if lower != host {
-                    let _ = parsed.set_host(Some(&lower));
+        url::Url::parse(trimmed).map_or_else(
+            |_| trimmed.to_string(),
+            |mut parsed| {
+                if let Some(host) = parsed.host_str() {
+                    let lower = host.to_ascii_lowercase();
+                    if lower != host {
+                        let _ = parsed.set_host(Some(&lower));
+                    }
                 }
-            }
-            parsed.to_string()
-        })
+                parsed.to_string()
+            },
+        )
     }
     /// Expose underlying pool reference (read-only operations convenience)
-    #[must_use] pub fn pool(&self) -> &sqlx::SqlitePool {
+    #[must_use]
+    pub fn pool(&self) -> &sqlx::SqlitePool {
         &self.pool
     }
-    #[must_use] pub fn new(pool: SqlitePool) -> Self {
+    #[must_use]
+    pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool: Arc::new(pool),
         }
@@ -279,7 +293,7 @@ impl IntegratedProductRepository {
         {
             details_deleted = res.rows_affected();
         }
-    if let Ok(res) = sqlx::query("DELETE FROM products")
+        if let Ok(res) = sqlx::query("DELETE FROM products")
             .execute(&*self.pool)
             .await
         {
@@ -514,7 +528,7 @@ impl IntegratedProductRepository {
             fill_or_change_opt_str!(family_variant_sku, "family_variant_sku");
             fill_or_change_opt_str!(family_id, "family_id");
             fill_or_change_opt_str!(tis_trp_tested, "tis_trp_tested");
-            fill_or_change_opt_str!(primary_device_type_id, "primary_device_type_id");
+            // primary_device_type_id removed; normalization uses primary_device_type_ids only
             fill_or_change_opt_str!(certificate_id, "certificate_id");
             // numeric
             if existing_detail.vid != detail.vid && detail.vid.is_some() {
@@ -598,9 +612,16 @@ impl IntegratedProductRepository {
                 if verbose {
                     // helper closures for formatting
                     fn fmt_opt_str(v: Option<&String>) -> String {
-                        v.map_or_else(|| "∅".to_string(), |s| {
-                            if s.is_empty() { String::new() } else { s.clone() }
-                        })
+                        v.map_or_else(
+                            || "∅".to_string(),
+                            |s| {
+                                if s.is_empty() {
+                                    String::new()
+                                } else {
+                                    s.clone()
+                                }
+                            },
+                        )
                     }
                     fn fmt_opt_i32(v: Option<i32>) -> String {
                         v.map_or_else(|| "∅".to_string(), |n| n.to_string())
@@ -669,22 +690,17 @@ impl IntegratedProductRepository {
                                     fmt_opt_str(existing_detail.tis_trp_tested.as_ref()),
                                     fmt_opt_str(detail.tis_trp_tested.as_ref()),
                                 ),
-                                "primary_device_type_id" => (
-                                    fmt_opt_str(existing_detail.primary_device_type_id.as_ref()),
-                                    fmt_opt_str(detail.primary_device_type_id.as_ref()),
-                                ),
+                                // primary_device_type_id removed; normalized list is primary_device_type_ids
                                 "certificate_id" => (
                                     fmt_opt_str(existing_detail.certificate_id.as_ref()),
                                     fmt_opt_str(detail.certificate_id.as_ref()),
                                 ),
-                                "vid" => (
-                                    fmt_opt_i32(existing_detail.vid),
-                                    fmt_opt_i32(detail.vid),
-                                ),
-                                "pid" => (
-                                    fmt_opt_i32(existing_detail.pid),
-                                    fmt_opt_i32(detail.pid),
-                                ),
+                                "vid" => {
+                                    (fmt_opt_i32(existing_detail.vid), fmt_opt_i32(detail.vid))
+                                }
+                                "pid" => {
+                                    (fmt_opt_i32(existing_detail.pid), fmt_opt_i32(detail.pid))
+                                }
                                 "manufacturer" => (
                                     fmt_opt_str(existing_detail.manufacturer.as_ref()),
                                     fmt_opt_str(detail.manufacturer.as_ref()),
@@ -842,7 +858,7 @@ impl IntegratedProductRepository {
                                  certificate_id, certification_date, software_version, hardware_version,
                                  vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
                                  tis_trp_tested, specification_version, transport_interface, 
-                                 primary_device_type_id, application_categories, description,
+                                 application_categories, description,
                                  compliance_document_url, program_type, created_at, updated_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 ON CONFLICT(url) DO UPDATE SET
@@ -865,7 +881,6 @@ impl IntegratedProductRepository {
                                     tis_trp_tested = excluded.tis_trp_tested,
                                     specification_version = excluded.specification_version,
                                     transport_interface = excluded.transport_interface,
-                                    primary_device_type_id = excluded.primary_device_type_id,
                                     application_categories = excluded.application_categories,
                                     description = excluded.description,
                                     compliance_document_url = excluded.compliance_document_url,
@@ -893,7 +908,6 @@ impl IntegratedProductRepository {
             .bind(detail.tis_trp_tested.clone())
             .bind(&detail.specification_version)
             .bind(&detail.transport_interface)
-            .bind(detail.primary_device_type_id.clone())
             .bind(&detail.application_categories)
             .bind(&detail.description)
             .bind(&detail.compliance_document_url)
@@ -997,17 +1011,19 @@ impl IntegratedProductRepository {
 
         row.map_or_else(
             || Ok(None),
-            |row| Ok(Some(Product {
-                id: None, // products 테이블에는 id 컬럼이 없음
-                url: row.get("url"),
-                manufacturer: row.get("manufacturer"),
-                model: row.get("model"),
-                certificate_id: row.get("certificate_id"),
-                page_id: row.get("page_id"),
-                index_in_page: row.get("index_in_page"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
-            })),
+            |row| {
+                Ok(Some(Product {
+                    id: None, // products 테이블에는 id 컬럼이 없음
+                    url: row.get("url"),
+                    manufacturer: row.get("manufacturer"),
+                    model: row.get("model"),
+                    certificate_id: row.get("certificate_id"),
+                    page_id: row.get("page_id"),
+                    index_in_page: row.get("index_in_page"),
+                    created_at: row.get("created_at"),
+                    updated_at: row.get("updated_at"),
+                }))
+            },
         )
     }
 
@@ -1039,7 +1055,7 @@ impl IntegratedProductRepository {
                    certificate_id, certification_date, software_version, hardware_version,
                    vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
                    tis_trp_tested, specification_version, transport_interface, 
-             primary_device_type_id, primary_device_type_ids, application_categories, description,
+             primary_device_type_ids, application_categories, description,
                    compliance_document_url, program_type, created_at, updated_at
             FROM product_details WHERE url = ?
             ",
@@ -1050,39 +1066,40 @@ impl IntegratedProductRepository {
 
         row.map_or_else(
             || Ok(None),
-            |row| Ok(Some(ProductDetail {
-                url: row.get("url"),
-                page_id: row.get("page_id"),
-                index_in_page: row.get("index_in_page"),
-                id: row.get("id"),
-                manufacturer: row.get("manufacturer"),
-                model: row.get("model"),
-                device_type: row.get("device_type"),
-                certificate_id: row.get("certificate_id"),
-                certification_date: row.get("certification_date"),
-                software_version: row.get("software_version"),
-                hardware_version: row.get("hardware_version"),
-                vid: row.get("vid"),
-                pid: row.get("pid"),
-                family_sku: row.get("family_sku"),
-                family_variant_sku: row.get("family_variant_sku"),
-                firmware_version: row.get("firmware_version"),
-                family_id: row.get("family_id"),
-                tis_trp_tested: row.get("tis_trp_tested"),
-                specification_version: row.get("specification_version"),
-                transport_interface: row.get("transport_interface"),
-                primary_device_type_id: row.get("primary_device_type_id"),
-                primary_device_type_ids: {
-                    let json: Option<String> = row.get("primary_device_type_ids");
-                    json.and_then(|s| serde_json::from_str::<Vec<i32>>(&s).ok())
-                },
-                application_categories: row.get("application_categories"),
-                description: row.get("description"),
-                compliance_document_url: row.get("compliance_document_url"),
-                program_type: row.get("program_type"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
-            })),
+            |row| {
+                Ok(Some(ProductDetail {
+                    url: row.get("url"),
+                    page_id: row.get("page_id"),
+                    index_in_page: row.get("index_in_page"),
+                    id: row.get("id"),
+                    manufacturer: row.get("manufacturer"),
+                    model: row.get("model"),
+                    device_type: row.get("device_type"),
+                    certificate_id: row.get("certificate_id"),
+                    certification_date: row.get("certification_date"),
+                    software_version: row.get("software_version"),
+                    hardware_version: row.get("hardware_version"),
+                    vid: row.get("vid"),
+                    pid: row.get("pid"),
+                    family_sku: row.get("family_sku"),
+                    family_variant_sku: row.get("family_variant_sku"),
+                    firmware_version: row.get("firmware_version"),
+                    family_id: row.get("family_id"),
+                    tis_trp_tested: row.get("tis_trp_tested"),
+                    specification_version: row.get("specification_version"),
+                    transport_interface: row.get("transport_interface"),
+                    primary_device_type_ids: {
+                        let json: Option<String> = row.get("primary_device_type_ids");
+                        json.and_then(|s| serde_json::from_str::<Vec<i32>>(&s).ok())
+                    },
+                    application_categories: row.get("application_categories"),
+                    description: row.get("description"),
+                    compliance_document_url: row.get("compliance_document_url"),
+                    program_type: row.get("program_type"),
+                    created_at: row.get("created_at"),
+                    updated_at: row.get("updated_at"),
+                }))
+            },
         )
     }
 
@@ -1157,7 +1174,7 @@ impl IntegratedProductRepository {
                    pd.id, pd.device_type as pd_device_type, pd.certification_date as pd_certification_date, pd.software_version, pd.hardware_version,
                    pd.vid, pd.pid, pd.family_sku, pd.family_variant_sku, pd.firmware_version, pd.family_id,
                    pd.tis_trp_tested, pd.specification_version, pd.transport_interface, 
-                   pd.primary_device_type_id, pd.primary_device_type_ids, pd.application_categories, pd.description,
+                   pd.primary_device_type_ids, pd.application_categories, pd.description,
                    pd.compliance_document_url, pd.program_type,
                    pd.created_at as pd_created_at, pd.updated_at as pd_updated_at
             FROM products p
@@ -1213,7 +1230,6 @@ impl IntegratedProductRepository {
                         tis_trp_tested: row.get("tis_trp_tested"),
                         specification_version: row.get("specification_version"),
                         transport_interface: row.get("transport_interface"),
-                        primary_device_type_id: row.get("primary_device_type_id"),
                         primary_device_type_ids: {
                             let json: Option<String> = row.get("primary_device_type_ids");
                             json.and_then(|s| serde_json::from_str::<Vec<i32>>(&s).ok())
@@ -1263,13 +1279,21 @@ impl IntegratedProductRepository {
         let mut basic_product = Product {
             id: None, // Will be generated in create_or_update_product
             url: url.clone(),
-            manufacturer: product_json["manufacturer"].as_str().map(std::string::ToString::to_string),
-            model: product_json["model"].as_str().map(std::string::ToString::to_string),
+            manufacturer: product_json["manufacturer"]
+                .as_str()
+                .map(std::string::ToString::to_string),
+            model: product_json["model"]
+                .as_str()
+                .map(std::string::ToString::to_string),
             certificate_id: product_json["certification_id"]
                 .as_str()
                 .map(std::string::ToString::to_string),
-            page_id: product_json["page_id"].as_i64().and_then(|i| i32::try_from(i).ok()),
-            index_in_page: product_json["index_in_page"].as_i64().and_then(|i| i32::try_from(i).ok()),
+            page_id: product_json["page_id"]
+                .as_i64()
+                .and_then(|i| i32::try_from(i).ok()),
+            index_in_page: product_json["index_in_page"]
+                .as_i64()
+                .and_then(|i| i32::try_from(i).ok()),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1284,17 +1308,25 @@ impl IntegratedProductRepository {
         if product_json.get("device_type").is_some()
             || product_json.get("hardware_version").is_some()
         {
-            let vid = product_json["vid"].as_i64().and_then(|i| i32::try_from(i).ok());
-            let pid = product_json["pid"].as_i64().and_then(|i| i32::try_from(i).ok());
+            let vid = product_json["vid"]
+                .as_i64()
+                .and_then(|i| i32::try_from(i).ok());
+            let pid = product_json["pid"]
+                .as_i64()
+                .and_then(|i| i32::try_from(i).ok());
 
             let detail = ProductDetail {
                 url: url.clone(),
                 page_id: basic_product.page_id,
                 index_in_page: basic_product.index_in_page,
-                id: product_json["id"].as_str().map(std::string::ToString::to_string),
+                id: product_json["id"]
+                    .as_str()
+                    .map(std::string::ToString::to_string),
                 manufacturer: basic_product.manufacturer.clone(),
                 model: basic_product.model.clone(),
-                device_type: product_json["device_type"].as_str().map(std::string::ToString::to_string),
+                device_type: product_json["device_type"]
+                    .as_str()
+                    .map(std::string::ToString::to_string),
                 certificate_id: basic_product.certificate_id.clone(),
                 certification_date: product_json["certification_date"]
                     .as_str()
@@ -1307,14 +1339,18 @@ impl IntegratedProductRepository {
                     .map(std::string::ToString::to_string),
                 vid,
                 pid,
-                family_sku: product_json["family_sku"].as_str().map(std::string::ToString::to_string),
+                family_sku: product_json["family_sku"]
+                    .as_str()
+                    .map(std::string::ToString::to_string),
                 family_variant_sku: product_json["family_variant_sku"]
                     .as_str()
                     .map(std::string::ToString::to_string),
                 firmware_version: product_json["firmware_version"]
                     .as_str()
                     .map(std::string::ToString::to_string),
-                family_id: product_json["family_id"].as_str().map(std::string::ToString::to_string),
+                family_id: product_json["family_id"]
+                    .as_str()
+                    .map(std::string::ToString::to_string),
                 tis_trp_tested: product_json["tis_trp_tested"]
                     .as_str()
                     .map(std::string::ToString::to_string),
@@ -1324,9 +1360,7 @@ impl IntegratedProductRepository {
                 transport_interface: product_json["transport_interface"]
                     .as_str()
                     .map(std::string::ToString::to_string),
-                primary_device_type_id: product_json["primary_device_type_id"]
-                    .as_str()
-                    .map(std::string::ToString::to_string),
+                // legacy field removed; keep only normalized list
                 primary_device_type_ids: None,
                 application_categories: product_json["application_categories"].as_array().map(
                     |arr| {
@@ -1335,11 +1369,15 @@ impl IntegratedProductRepository {
                             .collect()
                     },
                 ),
-                description: product_json["description"].as_str().map(std::string::ToString::to_string),
+                description: product_json["description"]
+                    .as_str()
+                    .map(std::string::ToString::to_string),
                 compliance_document_url: product_json["compliance_document_url"]
                     .as_str()
                     .map(std::string::ToString::to_string),
-                program_type: product_json["program_type"].as_str().map(std::string::ToString::to_string),
+                program_type: product_json["program_type"]
+                    .as_str()
+                    .map(std::string::ToString::to_string),
                 created_at: basic_product.created_at,
                 updated_at: basic_product.updated_at,
             };
@@ -1687,17 +1725,19 @@ impl IntegratedProductRepository {
 
         row.map_or_else(
             || Ok(None),
-            |row| Ok(Some(Product {
-                id: None, // products 테이블에는 id 컬럼이 없음
-                url: row.get("url"),
-                manufacturer: row.get("manufacturer"),
-                model: row.get("model"),
-                certificate_id: row.get("certificate_id"),
-                page_id: row.get("page_id"),
-                index_in_page: row.get("index_in_page"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
-            })),
+            |row| {
+                Ok(Some(Product {
+                    id: None, // products 테이블에는 id 컬럼이 없음
+                    url: row.get("url"),
+                    manufacturer: row.get("manufacturer"),
+                    model: row.get("model"),
+                    certificate_id: row.get("certificate_id"),
+                    page_id: row.get("page_id"),
+                    index_in_page: row.get("index_in_page"),
+                    created_at: row.get("created_at"),
+                    updated_at: row.get("updated_at"),
+                }))
+            },
         )
     }
 
@@ -1961,8 +2001,8 @@ impl IntegratedProductRepository {
             return Ok(true);
         }
         // Convert site page (1=newest, total_pages_on_site=oldest) to our 0-based page_id
-        let page_id: i32 = i32::try_from(total_pages_on_site.saturating_sub(site_page))
-            .unwrap_or(i32::MAX);
+        let page_id: i32 =
+            i32::try_from(total_pages_on_site.saturating_sub(site_page)).unwrap_or(i32::MAX);
         // Expected count
         let expected: i32 = if site_page == total_pages_on_site {
             i32::try_from(products_on_last_page).unwrap_or(i32::MAX)
@@ -2018,9 +2058,9 @@ impl IntegratedProductRepository {
             FROM products 
             WHERE page_id >= ? AND page_id <= ?
             ",
-    )
-    .bind(i32::try_from(start_page_id).unwrap_or(i32::MAX))
-    .bind(i32::try_from(end_page_id).unwrap_or(i32::MAX))
+        )
+        .bind(i32::try_from(start_page_id).unwrap_or(i32::MAX))
+        .bind(i32::try_from(end_page_id).unwrap_or(i32::MAX))
         .fetch_one(&*self.pool)
         .await?;
 
@@ -2054,7 +2094,7 @@ impl IntegratedProductRepository {
         Ok(crate::application::shared_state::DbAnalysisResult {
             total_products: u32::try_from(stats.total_products).unwrap_or(u32::MAX),
             max_page_id: Some(i32::try_from(stats.total_products).unwrap_or(i32::MAX) / 12), // Assuming 12 products per page
-            max_index_in_page: Some(11),                         // 0-indexed, so max is 11
+            max_index_in_page: Some(11), // 0-indexed, so max is 11
             quality_score,
             analyzed_at: chrono::Utc::now(),
             cached_at: std::time::Instant::now(),

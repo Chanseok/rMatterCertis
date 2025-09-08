@@ -11,6 +11,6 @@ fn test_page_id_calculator_with_correct_values() {
     for (p, i) in &[(1, 0), (1, 11), (2, 0), (100, 0), (100, 7)] {
         let r = calculator.calculate(*p, *i);
         assert!(r.index_in_page >= 0 && r.index_in_page <= 11);
-    assert!(r.page_id >= 0 && u32::try_from(r.page_id).unwrap_or(u32::MAX) <= total_pages);
+        assert!(r.page_id >= 0 && u32::try_from(r.page_id).unwrap_or(u32::MAX) <= total_pages);
     }
 }

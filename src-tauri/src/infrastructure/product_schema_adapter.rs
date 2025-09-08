@@ -41,7 +41,7 @@ impl ProductSchemaAdapter {
             tis_trp_tested: matter_product.tis_trp_tested.map(|b| if b { "Yes".to_string() } else { "No".to_string() }),
             specification_version: matter_product.specification_version.clone(),
             transport_interface: matter_product.transport_interface.clone(),
-            primary_device_type_id: matter_product.primary_device_type_id.clone(),
+            // primary_device_type_id removed
             application_categories: None, // Not available in MatterProduct, but could be derived from device_type
         }
     }
@@ -69,7 +69,7 @@ impl ProductSchemaAdapter {
             tis_trp_tested: None,
             specification_version: None,
             transport_interface: None,
-            primary_device_type_id: None,
+            // primary_device_type_id removed
             application_categories: None,
         });
 
@@ -84,7 +84,7 @@ impl ProductSchemaAdapter {
             specification_version: detail.specification_version.clone(),
             product_id: detail.id.clone(),
             vendor_id: detail.vid.map(|v| format!("0x{:X}", v)),
-            primary_device_type_id: detail.primary_device_type_id.clone(),
+            // primary_device_type_id removed
             transport_interface: detail.transport_interface.clone(),
             certified_date: Self::parse_date_string(&detail.certification_date),
             tis_trp_tested: detail.tis_trp_tested.as_ref().map(|s| s == "Yes"),
@@ -129,12 +129,12 @@ impl ProductSchemaAdapter {
     pub fn device_type_to_application_categories(device_type: &Option<String>) -> Option<String> {
         device_type.as_ref().map(|dt| {
             match dt.as_str() {
-                "Light Bulb" | "Dimmable Light" | "Color Light" => r"["Light Bulb"]".to_string(),
-                "Smart Plug" | "On/Off Plug In Unit" => r"["Smart Plug"]".to_string(),
-                "Door Lock" => r"["Door Lock"]".to_string(),
-                "Thermostat" => r"["Thermostat"]".to_string(),
-                "Motion Sensor" | "Contact Sensor" => r"["Sensor"]".to_string(),
-                _ => format!(r"["{dt}"]"),
+                "Light Bulb" | "Dimmable Light" | "Color Light" => "[\"Light Bulb\"]".to_string(),
+                "Smart Plug" | "On/Off Plug In Unit" => "[\"Smart Plug\"]".to_string(),
+                "Door Lock" => "[\"Door Lock\"]".to_string(),
+                "Thermostat" => "[\"Thermostat\"]".to_string(),
+                "Motion Sensor" | "Contact Sensor" => "[\"Sensor\"]".to_string(),
+                _ => format!("[\"{}\"]", dt),
             }
         })
     }
@@ -158,7 +158,7 @@ mod tests {
             specification_version: Some("1.1".to_string()),
             product_id: Some("0x1234".to_string()),
             vendor_id: Some("0x5678".to_string()),
-            primary_device_type_id: Some("0x010A".to_string()),
+            // primary_device_type_id removed
             transport_interface: Some("Wi-Fi".to_string()),
             certified_date: Some(Utc::now()),
             tis_trp_tested: Some(true),
@@ -192,11 +192,11 @@ mod tests {
     fn test_device_type_mapping() {
         assert_eq!(
             ProductSchemaAdapter::device_type_to_application_categories(&Some("Light Bulb".to_string())),
-            Some(r"["Light Bulb"]".to_string())
+            Some(r#"["Light Bulb"]"#.to_string())
         );
         assert_eq!(
             ProductSchemaAdapter::device_type_to_application_categories(&Some("Smart Plug".to_string())),
-            Some(r"["Smart Plug"]".to_string())
+            Some(r#"["Smart Plug"]"#.to_string())
         );
     }
 }

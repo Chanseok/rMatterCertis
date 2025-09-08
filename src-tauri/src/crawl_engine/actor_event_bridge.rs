@@ -7,8 +7,8 @@
 use crate::crawl_engine::actors::types::{AppEvent, SimpleMetrics};
 use std::collections::VecDeque;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast;
@@ -25,7 +25,8 @@ pub struct ActorEventBridge {
     /// 단조 증가 시퀀스 번호
     seq: Arc<AtomicU64>,
     /// 최근 네이티브 PageLifecycle 키 캐시 (세션/배치/페이지) to prevent synthetic duplicates
-    recent_pages: Arc<tokio::sync::Mutex<VecDeque<(String, Option<String>, u32, std::time::Instant)>>>,
+    recent_pages:
+        Arc<tokio::sync::Mutex<VecDeque<(String, Option<String>, u32, std::time::Instant)>>>,
 }
 
 impl ActorEventBridge {
@@ -115,7 +116,10 @@ impl ActorEventBridge {
         // Concise info line to events.log for visibility
         if let Some(obj) = enriched.as_object() {
             let variant = obj.get("variant").and_then(|v| v.as_str()).unwrap_or("?");
-            let seq_val = obj.get("seq").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            let seq_val = obj
+                .get("seq")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
             let session_id = obj.get("session_id").and_then(|v| v.as_str());
             let batch_id = obj.get("batch_id").and_then(|v| v.as_str());
             tracing::info!(target: "actor-event",
@@ -129,31 +133,72 @@ impl ActorEventBridge {
         }
         // Helpful concise logs by variant
         match &actor_event {
-            AppEvent::TaskLifecycle { session_id, batch_id, task_kind, page_number, product_ref, status, duration_ms, .. } => {
+            AppEvent::TaskLifecycle {
+                session_id,
+                batch_id,
+                task_kind,
+                page_number,
+                product_ref,
+                status,
+                duration_ms,
+                ..
+            } => {
                 tracing::info!(target: "actor-event",
                     "[TaskLifecycle] kind={:?} status={} page={:?} ref={:?} dur_ms={:?} batch={:?} session={}",
                     task_kind, status, page_number, product_ref, duration_ms, batch_id, session_id
                 );
             }
-            AppEvent::ProductLifecycleGroup { session_id, batch_id, page_number, group_size, started, succeeded, failed, duplicates, duration_ms, phase, .. } => {
+            AppEvent::ProductLifecycleGroup {
+                session_id,
+                batch_id,
+                page_number,
+                group_size,
+                started,
+                succeeded,
+                failed,
+                duplicates,
+                duration_ms,
+                phase,
+                ..
+            } => {
                 tracing::info!(target: "actor-event",
                     "[ProductLifecycleGroup] phase={} size={} started={} ok={} fail={} dup={} page={:?} batch={:?} dur_ms={} session={}",
                     phase, group_size, started, succeeded, failed, duplicates, page_number, batch_id, duration_ms, session_id
                 );
             }
-            AppEvent::DatabaseStats { session_id, batch_id, total_product_details, min_page, max_page, note, .. } => {
+            AppEvent::DatabaseStats {
+                session_id,
+                batch_id,
+                total_product_details,
+                min_page,
+                max_page,
+                note,
+                ..
+            } => {
                 tracing::info!(target: "actor-event",
                     "[DatabaseStats] total={} range={:?}-{:?} note={:?} batch={:?} session={}",
                     total_product_details, min_page, max_page, note, batch_id, session_id
                 );
             }
-            AppEvent::PageLifecycle { session_id, batch_id, page_number, status, metrics, .. } => {
-                self.push_recent_page(session_id, batch_id.as_ref(), *page_number).await;
+            AppEvent::PageLifecycle {
+                session_id,
+                batch_id,
+                page_number,
+                status,
+                metrics,
+                ..
+            } => {
+                self.push_recent_page(session_id, batch_id.as_ref(), *page_number)
+                    .await;
                 let (urls, scheduled, err) = match metrics {
-                    Some(SimpleMetrics::Page { url_count, scheduled_details, error }) => (
+                    Some(SimpleMetrics::Page {
+                        url_count,
+                        scheduled_details,
+                        error,
+                    }) => (
                         url_count.unwrap_or(0),
                         scheduled_details.unwrap_or(0),
-                        error.as_deref().unwrap_or("")
+                        error.as_deref().unwrap_or(""),
                     ),
                     _ => (0, 0, ""),
                 };
@@ -162,13 +207,25 @@ impl ActorEventBridge {
                     status, page_number, urls, scheduled, err, batch_id, session_id
                 );
             }
-            AppEvent::StageStarted { stage_type, session_id, batch_id, items_count, .. } => {
+            AppEvent::StageStarted {
+                stage_type,
+                session_id,
+                batch_id,
+                items_count,
+                ..
+            } => {
                 tracing::info!(target: "actor-event",
                     "[Stage] started stage={} items={} batch={:?} session={}",
                     stage_type.as_str(), items_count, batch_id, session_id
                 );
             }
-            AppEvent::StageCompleted { stage_type, session_id, batch_id, result, .. } => {
+            AppEvent::StageCompleted {
+                stage_type,
+                session_id,
+                batch_id,
+                result,
+                ..
+            } => {
                 tracing::info!(target: "actor-event",
                     "[Stage] completed stage={} processed={} ok={} fail={} dur_ms={} batch={:?} session={}",
                     stage_type.as_str(), result.processed_items, result.successful_items, result.failed_items, result.duration_ms, batch_id, session_id
@@ -205,7 +262,7 @@ impl ActorEventBridge {
             );
         }
 
-    // 보강: SessionCompleted(summary) 수신 시에도 메인 로그에 인간 친화적 요약을 남긴다.
+        // 보강: SessionCompleted(summary) 수신 시에도 메인 로그에 인간 친화적 요약을 남긴다.
         if let AppEvent::SessionCompleted { summary, .. } = &actor_event {
             info!(
                 "📊 Session Final Summary | session_id={} state={} batches(planned/executed)={}/{} failed_pages={} inserted={} updated={} duplicates={} ts={}",
@@ -225,7 +282,7 @@ impl ActorEventBridge {
             "✅ Forwarded generalized Actor event '{}' (original={})",
             unified_name, event_name
         );
-    return Ok(());
+        return Ok(());
     }
 
     /// `AppEvent를` 프론트엔드 이벤트로 변환
@@ -263,7 +320,11 @@ impl ActorEventBridge {
         }
         let cutoff = now - Duration::from_secs(15);
         while let Some(front) = q.front() {
-            if front.3 < cutoff { q.pop_front(); } else { break; }
+            if front.3 < cutoff {
+                q.pop_front();
+            } else {
+                break;
+            }
         }
     }
 
@@ -356,7 +417,7 @@ pub(crate) fn convert_actor_event_to_frontend_value(
 #[cfg(test)]
 mod tests {
     use super::convert_actor_event_to_frontend_value;
-    use crate::crawl_engine::actors::types::{AppEvent, StageType, TaskKind, SimpleMetrics};
+    use crate::crawl_engine::actors::types::{AppEvent, SimpleMetrics, StageType, TaskKind};
     use chrono::Utc;
 
     // Test-only: mirror emission name selection (unified vs. per-variant)
@@ -380,11 +441,17 @@ mod tests {
         let (name, payload) = convert_actor_event_to_frontend_value(ev).expect("map ok");
         assert_eq!(name, "actor-stage-started");
         let obj = payload.as_object().expect("obj");
-        assert_eq!(obj.get("variant").and_then(|v| v.as_str()), Some("StageStarted"));
+        assert_eq!(
+            obj.get("variant").and_then(|v| v.as_str()),
+            Some("StageStarted")
+        );
         assert_eq!(obj.get("session_id").and_then(|v| v.as_str()), Some("s1"));
         assert_eq!(obj.get("batch_id").and_then(|v| v.as_str()), Some("b1"));
         assert_eq!(obj.get("items_count").and_then(|v| v.as_u64()), Some(10));
-        assert_eq!(obj.get("stage_type").and_then(|v| v.as_str()), Some("ListPageCrawling"));
+        assert_eq!(
+            obj.get("stage_type").and_then(|v| v.as_str()),
+            Some("ListPageCrawling")
+        );
         assert!(obj.contains_key("timestamp"));
     }
 
@@ -405,7 +472,10 @@ mod tests {
         let (name, payload) = convert_actor_event_to_frontend_value(ev).expect("map ok");
         assert_eq!(name, "actor-performance-metrics");
         let obj = payload.as_object().expect("obj");
-        assert_eq!(obj.get("variant").and_then(|v| v.as_str()), Some("PerformanceMetrics"));
+        assert_eq!(
+            obj.get("variant").and_then(|v| v.as_str()),
+            Some("PerformanceMetrics")
+        );
         assert_eq!(obj.get("session_id").and_then(|v| v.as_str()), Some("s2"));
         assert!(obj.get("metrics").is_some());
         assert!(obj.contains_key("timestamp"));
@@ -428,12 +498,24 @@ mod tests {
         let (name, payload) = convert_actor_event_to_frontend_value(ev).expect("map ok");
         assert_eq!(name, "actor-page-lifecycle");
         let obj = payload.as_object().expect("obj");
-        assert_eq!(obj.get("variant").and_then(|v| v.as_str()), Some("PageLifecycle"));
-        assert_eq!(obj.get("session_id").and_then(|v| v.as_str()), Some("sess-pg"));
+        assert_eq!(
+            obj.get("variant").and_then(|v| v.as_str()),
+            Some("PageLifecycle")
+        );
+        assert_eq!(
+            obj.get("session_id").and_then(|v| v.as_str()),
+            Some("sess-pg")
+        );
         assert_eq!(obj.get("batch_id").and_then(|v| v.as_str()), Some("bpg"));
         assert_eq!(obj.get("page_number").and_then(|v| v.as_u64()), Some(3));
-        assert_eq!(obj.get("status").and_then(|v| v.as_str()), Some("fetch_completed"));
-        let metrics = obj.get("metrics").and_then(|v| v.as_object()).expect("metrics obj");
+        assert_eq!(
+            obj.get("status").and_then(|v| v.as_str()),
+            Some("fetch_completed")
+        );
+        let metrics = obj
+            .get("metrics")
+            .and_then(|v| v.as_object())
+            .expect("metrics obj");
         assert_eq!(metrics.get("kind").and_then(|v| v.as_str()), Some("Page"));
         // optional nested checks
         assert!(metrics.get("data").is_some());
@@ -450,17 +532,32 @@ mod tests {
             status: "success".into(),
             retry: Some(0),
             duration_ms: Some(123),
-            metrics: Some(SimpleMetrics::Generic { key: "k".into(), value: "v".into() }),
+            metrics: Some(SimpleMetrics::Generic {
+                key: "k".into(),
+                value: "v".into(),
+            }),
             timestamp: Utc::now(),
         };
         let (name, payload) = convert_actor_event_to_frontend_value(ev).expect("map ok");
         assert_eq!(name, "actor-task-lifecycle");
         let obj = payload.as_object().expect("obj");
-        assert_eq!(obj.get("variant").and_then(|v| v.as_str()), Some("TaskLifecycle"));
-        assert_eq!(obj.get("session_id").and_then(|v| v.as_str()), Some("sess-task"));
-        assert_eq!(obj.get("task_kind").and_then(|v| v.as_str()), Some("Product"));
+        assert_eq!(
+            obj.get("variant").and_then(|v| v.as_str()),
+            Some("TaskLifecycle")
+        );
+        assert_eq!(
+            obj.get("session_id").and_then(|v| v.as_str()),
+            Some("sess-task")
+        );
+        assert_eq!(
+            obj.get("task_kind").and_then(|v| v.as_str()),
+            Some("Product")
+        );
         assert_eq!(obj.get("page_number").and_then(|v| v.as_u64()), Some(5));
-        assert_eq!(obj.get("product_ref").and_then(|v| v.as_str()), Some("p/123"));
+        assert_eq!(
+            obj.get("product_ref").and_then(|v| v.as_str()),
+            Some("p/123")
+        );
         assert_eq!(obj.get("status").and_then(|v| v.as_str()), Some("success"));
         assert_eq!(obj.get("retry").and_then(|v| v.as_u64()), Some(0));
         assert_eq!(obj.get("duration_ms").and_then(|v| v.as_u64()), Some(123));
@@ -478,7 +575,10 @@ mod tests {
         let (name, payload) = convert_actor_event_to_frontend_value(ev).expect("map ok");
         assert_eq!(name, "actor-batch-started");
         let obj = payload.as_object().expect("obj");
-        assert_eq!(obj.get("plan_id").and_then(|v| v.as_str()), Some("plan_xyz"));
+        assert_eq!(
+            obj.get("plan_id").and_then(|v| v.as_str()),
+            Some("plan_xyz")
+        );
     }
 
     #[test]
@@ -495,10 +595,19 @@ mod tests {
         let (name, payload) = convert_actor_event_to_frontend_value(ev).expect("map ok");
         assert_eq!(name, "actor-validation-completed");
         let obj = payload.as_object().expect("obj");
-        assert_eq!(obj.get("variant").and_then(|v| v.as_str()), Some("ValidationCompleted"));
-        assert_eq!(obj.get("session_id").and_then(|v| v.as_str()), Some("sess-val"));
+        assert_eq!(
+            obj.get("variant").and_then(|v| v.as_str()),
+            Some("ValidationCompleted")
+        );
+        assert_eq!(
+            obj.get("session_id").and_then(|v| v.as_str()),
+            Some("sess-val")
+        );
         assert_eq!(obj.get("pages_scanned").and_then(|v| v.as_u64()), Some(12));
-        assert_eq!(obj.get("products_checked").and_then(|v| v.as_u64()), Some(345));
+        assert_eq!(
+            obj.get("products_checked").and_then(|v| v.as_u64()),
+            Some(345)
+        );
         assert_eq!(obj.get("divergences").and_then(|v| v.as_u64()), Some(2));
         assert_eq!(obj.get("anomalies").and_then(|v| v.as_u64()), Some(1));
         assert_eq!(obj.get("duration_ms").and_then(|v| v.as_u64()), Some(9876));
@@ -520,7 +629,8 @@ mod tests {
             },
             timestamp: Utc::now(),
         };
-        let (original_name, mut payload) = convert_actor_event_to_frontend_value(ev).expect("map ok");
+        let (original_name, mut payload) =
+            convert_actor_event_to_frontend_value(ev).expect("map ok");
 
         // When: generalized-only is considered ON, emission name is unified but payload still carries original name
         let emission = compute_emission_name_for_test(&original_name, true);
@@ -528,12 +638,21 @@ mod tests {
 
         // Simulate enrichment as bridge does (subset sufficient for assertion)
         if let Some(obj) = payload.as_object_mut() {
-            obj.insert("event_name".into(), serde_json::Value::from(original_name.clone()));
+            obj.insert(
+                "event_name".into(),
+                serde_json::Value::from(original_name.clone()),
+            );
             obj.insert("seq".into(), serde_json::Value::from(1));
-            obj.insert("backend_ts".into(), serde_json::Value::from(chrono::Utc::now().to_rfc3339()));
+            obj.insert(
+                "backend_ts".into(),
+                serde_json::Value::from(chrono::Utc::now().to_rfc3339()),
+            );
         }
         let obj = payload.as_object().expect("obj");
-        assert_eq!(obj.get("event_name").and_then(|v| v.as_str()), Some("actor-stage-completed"));
+        assert_eq!(
+            obj.get("event_name").and_then(|v| v.as_str()),
+            Some("actor-stage-completed")
+        );
     }
 }
 

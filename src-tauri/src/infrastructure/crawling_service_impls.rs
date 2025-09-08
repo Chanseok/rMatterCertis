@@ -51,7 +51,8 @@ struct PageAnalysisCache {
 }
 
 impl StatusCheckerImpl {
-    #[must_use] pub fn new(
+    #[must_use]
+    pub fn new(
         http_client: HttpClient,
         data_extractor: MatterDataExtractor,
         config: AppConfig,
@@ -78,7 +79,8 @@ impl StatusCheckerImpl {
 
 impl StatusCheckerImpl {
     /// Associate a product repository after initial creation (legacy helper)
-    #[must_use] pub fn with_product_repo(
+    #[must_use]
+    pub fn with_product_repo(
         http_client: HttpClient,
         data_extractor: MatterDataExtractor,
         config: AppConfig,
@@ -134,7 +136,7 @@ impl StatusChecker for StatusCheckerImpl {
         let access_test = {
             // Use configured HttpClient instead of hardcoded default
             let _client = self.create_configured_http_client()?;
-            
+
             self.http_client.fetch_response(&url).await?.text().await
         };
 
@@ -267,7 +269,9 @@ impl StatusChecker for StatusCheckerImpl {
         let effective_total = db_analysis
             .total_products
             .max(local_status.total_saved_products);
-        let estimated_new_products = site_status.estimated_products.saturating_sub(effective_total);
+        let estimated_new_products = site_status
+            .estimated_products
+            .saturating_sub(effective_total);
 
         if estimated_new_products == 0 {
             info!("📊 No new products detected - recommending minimal verification crawl");
@@ -276,7 +280,8 @@ impl StatusChecker for StatusCheckerImpl {
 
         // Calculate pages needed for new products
         let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
-        let pages_needed = (f64::from(estimated_new_products) / f64::from(products_per_page)).ceil() as u32;
+        let pages_needed =
+            (f64::from(estimated_new_products) / f64::from(products_per_page)).ceil() as u32;
         let limited_pages = pages_needed.min(self.config.user.crawling.page_range_limit);
 
         info!(
@@ -866,7 +871,10 @@ impl StatusCheckerImpl {
     fn get_canonical_url(&self, doc: &scraper::Html) -> Option<String> {
         if let Ok(selector) = scraper::Selector::parse("link[rel='canonical']") {
             if let Some(element) = doc.select(&selector).next() {
-                return element.value().attr("href").map(std::string::ToString::to_string);
+                return element
+                    .value()
+                    .attr("href")
+                    .map(std::string::ToString::to_string);
             }
         }
         None
@@ -933,7 +941,8 @@ impl StatusCheckerImpl {
             }
             Some(prev_count) => {
                 let change_percentage = if prev_count > 0 {
-                    ((f64::from(current_estimated_products) - f64::from(prev_count)) / f64::from(prev_count))
+                    ((f64::from(current_estimated_products) - f64::from(prev_count))
+                        / f64::from(prev_count))
                         * 100.0
                 } else {
                     0.0
@@ -1351,7 +1360,8 @@ impl StatusCheckerImpl {
             None => DataChangeAnalysis::Initial,
             Some(prev_count) => {
                 let _change_percentage = if prev_count > 0 {
-                    ((f64::from(current_estimated_products) - f64::from(prev_count)) / f64::from(prev_count))
+                    ((f64::from(current_estimated_products) - f64::from(prev_count))
+                        / f64::from(prev_count))
                         * 100.0
                 } else {
                     0.0
@@ -1570,7 +1580,8 @@ pub struct ProductListCollectorImpl {
 }
 
 impl ProductListCollectorImpl {
-    #[must_use] pub const fn new(
+    #[must_use]
+    pub const fn new(
         http_client: Arc<HttpClient>, // 🔥 Mutex 제거
         data_extractor: Arc<MatterDataExtractor>,
         config: CollectorConfig,
@@ -2512,7 +2523,8 @@ pub struct DatabaseAnalyzerImpl {
 }
 
 impl DatabaseAnalyzerImpl {
-    #[must_use] pub const fn new(product_repo: Arc<IntegratedProductRepository>) -> Self {
+    #[must_use]
+    pub const fn new(product_repo: Arc<IntegratedProductRepository>) -> Self {
         Self { product_repo }
     }
 }
@@ -2624,7 +2636,8 @@ pub struct ProductDetailCollectorImpl {
 }
 
 impl ProductDetailCollectorImpl {
-    #[must_use] pub const fn new(
+    #[must_use]
+    pub const fn new(
         http_client: Arc<HttpClient>, // 🔥 Mutex 제거
         data_extractor: Arc<MatterDataExtractor>,
         config: CollectorConfig,
@@ -2749,8 +2762,10 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                         }
                         Err(e) => {
                             if attempts < max_retries {
-                                tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts)))
-                                    .await;
+                                tokio::time::sleep(Duration::from_millis(
+                                    500 * u64::from(attempts),
+                                ))
+                                .await;
                                 continue;
                             }
                             warn!(
@@ -2762,7 +2777,8 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                     },
                     Err(e) => {
                         if attempts < max_retries {
-                            tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts))).await;
+                            tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts)))
+                                .await;
                             continue;
                         }
                         warn!(
@@ -2844,8 +2860,10 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                         }
                         Err(e) => {
                             if attempts < max_retries {
-                                tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts)))
-                                    .await;
+                                tokio::time::sleep(Duration::from_millis(
+                                    500 * u64::from(attempts),
+                                ))
+                                .await;
                                 continue;
                             }
                             warn!(
@@ -2857,7 +2875,8 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
                     },
                     Err(e) => {
                         if attempts < max_retries {
-                            tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts))).await;
+                            tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts)))
+                                .await;
                             continue;
                         }
                         warn!(
@@ -3018,8 +3037,10 @@ impl ProductDetailCollectorImpl {
                         }
                         Err(e) => {
                             if attempts < max_retries {
-                                tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts)))
-                                    .await;
+                                tokio::time::sleep(Duration::from_millis(
+                                    500 * u64::from(attempts),
+                                ))
+                                .await;
                             } else {
                                 let _ = event_tx.send(ProductDetailEvent::TaskFailed {
                                     product_url: url.clone(),
@@ -3033,7 +3054,8 @@ impl ProductDetailCollectorImpl {
                     },
                     Err(e) => {
                         if attempts < max_retries {
-                            tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts))).await;
+                            tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts)))
+                                .await;
                         } else {
                             let _ = event_tx.send(ProductDetailEvent::TaskFailed {
                                 product_url: url.clone(),
@@ -3124,7 +3146,8 @@ pub struct RangeSimpleProgress {
 }
 
 impl CrawlingRangeCalculator {
-    #[must_use] pub const fn new(product_repo: Arc<IntegratedProductRepository>, config: AppConfig) -> Self {
+    #[must_use]
+    pub const fn new(product_repo: Arc<IntegratedProductRepository>, config: AppConfig) -> Self {
         Self {
             product_repo,
             config,
@@ -3262,7 +3285,8 @@ impl CrawlingRangeCalculator {
 }
 
 /// `ProductDetail을` Product로 변환하는 헬퍼 함수
-#[must_use] pub fn product_detail_to_product(detail: ProductDetail) -> Product {
+#[must_use]
+pub fn product_detail_to_product(detail: ProductDetail) -> Product {
     let mut product = Product {
         id: detail.id.clone(), // Use detail's id if available
         url: detail.url,
@@ -3335,9 +3359,7 @@ const fn calculate_extracted_fields(detail: &crate::domain::product::ProductDeta
     if detail.transport_interface.is_some() {
         count += 1;
     }
-    if detail.primary_device_type_id.is_some() {
-        count += 1;
-    }
+    // primary_device_type_id removed; normalized list handled elsewhere
     if detail.application_categories.is_some() {
         count += 1;
     }

@@ -108,7 +108,8 @@ pub enum NetworkErrorType {
 
 impl RetryManager {
     /// 새 재시도 관리자 생성
-    #[must_use] pub fn new(max_retries: u32) -> Self {
+    #[must_use]
+    pub fn new(max_retries: u32) -> Self {
         let failure_classifier = Arc::new(StandardFailureClassifier::new());
 
         Self {
@@ -126,7 +127,7 @@ impl RetryManager {
     pub async fn add_failed_item(
         &self,
         item_id: String,
-    stage: StageName,
+        stage: StageName,
         error: String,
         url: String,
         metadata: HashMap<String, String>,
@@ -204,7 +205,7 @@ impl RetryManager {
     /// # Errors
     /// 현재 구현에서는 오류를 반환하지 않습니다. 반환 타입은 향후 확장을 위한 것입니다.
     pub async fn get_ready_items(&self) -> Result<Vec<RetryItem>> {
-    let mut queue = self.retry_queue.lock().await;
+        let mut queue = self.retry_queue.lock().await;
         let now = chrono::Utc::now();
         let mut ready_items = Vec::new();
         let mut remaining_items = VecDeque::new();
@@ -218,9 +219,9 @@ impl RetryManager {
             }
         }
 
-    *queue = remaining_items;
-    // Explicitly release the queue lock before logging to reduce contention
-    drop(queue);
+        *queue = remaining_items;
+        // Explicitly release the queue lock before logging to reduce contention
+        drop(queue);
 
         if !ready_items.is_empty() {
             info!("📤 Retrieved {} items ready for retry", ready_items.len());
@@ -256,27 +257,29 @@ impl RetryManager {
         backoff: Duration,
         success: bool,
     ) {
-    let mut history = self.retry_history.write().await;
-    let attempts = history.entry(item_id.to_string()).or_insert_with(Vec::new);
+        let mut history = self.retry_history.write().await;
+        let attempts = history.entry(item_id.to_string()).or_insert_with(Vec::new);
 
         attempts.push(RetryAttempt {
             // Use fallible conversion to avoid lossy cast warnings; saturate on overflow
-            attempt_number: u32::try_from(attempts.len()).unwrap_or(u32::MAX).saturating_add(1),
+            attempt_number: u32::try_from(attempts.len())
+                .unwrap_or(u32::MAX)
+                .saturating_add(1),
             attempted_at: chrono::Utc::now(),
             error_type: classification,
             backoff_duration: backoff,
             success,
         });
-    // Release the write lock as early as possible
-    drop(history);
+        // Release the write lock as early as possible
+        drop(history);
     }
 
     /// 아이템의 재시도 횟수 조회
     async fn get_retry_count(&self, item_id: &str) -> u32 {
         let history = self.retry_history.read().await;
-        history
-            .get(item_id)
-            .map_or(0, |attempts| u32::try_from(attempts.len()).unwrap_or(u32::MAX))
+        history.get(item_id).map_or(0, |attempts| {
+            u32::try_from(attempts.len()).unwrap_or(u32::MAX)
+        })
     }
 
     /// 재시도 통계 조회
@@ -338,7 +341,8 @@ impl Default for StandardFailureClassifier {
 }
 
 impl StandardFailureClassifier {
-    #[must_use] pub const fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             base_backoff: Duration::from_secs(1),
             max_backoff: Duration::from_secs(300), // 5분 최대

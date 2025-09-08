@@ -46,7 +46,6 @@ pub struct ProductDetail {
     pub tis_trp_tested: Option<String>,
     pub specification_version: Option<String>,
     pub transport_interface: Option<String>,
-    pub primary_device_type_id: Option<String>,
     pub primary_device_type_ids: Option<Vec<i32>>, // normalized list (JSON-backed)
     pub application_categories: Option<String>,
     pub description: Option<String>,
@@ -107,7 +106,8 @@ impl Product {
     }
 
     /// Generate ID and return the generated value
-    #[must_use] pub fn with_generated_id(mut self) -> Self {
+    #[must_use]
+    pub fn with_generated_id(mut self) -> Self {
         self.generate_id();
         self
     }
@@ -124,7 +124,8 @@ impl ProductDetail {
     }
 
     /// Generate ID and return the generated value
-    #[must_use] pub fn with_generated_id(mut self) -> Self {
+    #[must_use]
+    pub fn with_generated_id(mut self) -> Self {
         self.generate_id();
         self
     }
@@ -176,7 +177,6 @@ mod tests {
             tis_trp_tested: None,
             specification_version: None,
             transport_interface: None,
-            primary_device_type_id: None,
             primary_device_type_ids: None,
             application_categories: None,
             description: None,

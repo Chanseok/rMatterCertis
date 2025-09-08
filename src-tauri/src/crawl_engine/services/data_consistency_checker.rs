@@ -60,7 +60,8 @@ impl DataConsistencyChecker {
         }
     }
 
-    #[must_use] pub const fn with_max_samples(mut self, samples: usize) -> Self {
+    #[must_use]
+    pub const fn with_max_samples(mut self, samples: usize) -> Self {
         self.max_samples = samples;
         self
     }
@@ -101,11 +102,12 @@ impl DataConsistencyChecker {
                 continue;
             };
             // 역방향 계산: (page_id, index_in_page) -> (physical_page, physical_index)
-            if let Some((phys_page, phys_index)) = calculator.reverse_calculate(stored_page_id, stored_index_in_page) {
+            if let Some((phys_page, phys_index)) =
+                calculator.reverse_calculate(stored_page_id, stored_index_in_page)
+            {
                 // 정방향 재계산
                 let recalc = calculator.calculate(phys_page, phys_index);
-                if recalc.page_id == stored_page_id
-                    && recalc.index_in_page == stored_index_in_page
+                if recalc.page_id == stored_page_id && recalc.index_in_page == stored_index_in_page
                 {
                     valid += 1;
                 } else {

@@ -1,7 +1,4 @@
-#![allow(
-    clippy::missing_errors_doc,
-    clippy::or_fun_call
-)]
+#![allow(clippy::missing_errors_doc, clippy::or_fun_call)]
 use crate::application::shared_state::SharedStateCache;
 use crate::events::{
     AtomicTaskEvent, BatchInfo, DbCursor, LiveSystemState, StageInfo, SystemStatePayload,
@@ -134,7 +131,8 @@ pub struct SystemStateBroadcaster {
 }
 
 impl SystemStateBroadcaster {
-    #[must_use] pub const fn new(app_handle: AppHandle) -> Self {
+    #[must_use]
+    pub const fn new(app_handle: AppHandle) -> Self {
         Self {
             app_handle,
             last_broadcast: None,
@@ -169,10 +167,10 @@ impl SystemStateBroadcaster {
         let db_repo = IntegratedProductRepository::new(db_pool);
 
         // 최근 제품의 page_id, index_in_page 정보 가져오기
-    let last_cursor = if let Some(last_product) = db_repo.get_latest_updated_product().await? {
+        let last_cursor = if let Some(last_product) = db_repo.get_latest_updated_product().await? {
             Some(DbCursor {
-        page: u32::try_from(last_product.page_id.unwrap_or(0)).unwrap_or(0),
-        index: u32::try_from(last_product.index_in_page.unwrap_or(0)).unwrap_or(0),
+                page: u32::try_from(last_product.page_id.unwrap_or(0)).unwrap_or(0),
+                index: u32::try_from(last_product.index_in_page.unwrap_or(0)).unwrap_or(0),
             })
         } else {
             None

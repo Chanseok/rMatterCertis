@@ -53,7 +53,8 @@ pub struct IntegratedContext {
 
 impl IntegratedContext {
     /// 새로운 통합 컨텍스트 생성
-    #[must_use] pub fn new(
+    #[must_use]
+    pub fn new(
         session_id: String,
         control_tx: ControlChannel<ActorCommand>,
         event_tx: EventChannel<AppEvent>,
@@ -75,28 +76,32 @@ impl IntegratedContext {
     }
 
     /// 실행 계획 ID 주입
-    #[must_use] pub fn with_plan(&self, plan_id: String) -> Self {
+    #[must_use]
+    pub fn with_plan(&self, plan_id: String) -> Self {
         let mut context = self.clone();
         context.plan_id = Some(plan_id);
         context
     }
 
     /// 배치 컨텍스트로 확장
-    #[must_use] pub fn with_batch(&self, batch_id: String) -> Self {
+    #[must_use]
+    pub fn with_batch(&self, batch_id: String) -> Self {
         let mut context = self.clone();
         context.batch_id = Some(batch_id);
         context
     }
 
     /// 스테이지 컨텍스트로 확장
-    #[must_use] pub fn with_stage(&self, stage_id: String) -> Self {
+    #[must_use]
+    pub fn with_stage(&self, stage_id: String) -> Self {
         let mut context = self.clone();
         context.stage_id = Some(stage_id);
         context
     }
 
     /// 태스크 컨텍스트로 확장
-    #[must_use] pub fn with_task(&self, task_id: String) -> Self {
+    #[must_use]
+    pub fn with_task(&self, task_id: String) -> Self {
         let mut context = self.clone();
         context.task_id = Some(task_id);
         context
@@ -131,17 +136,20 @@ impl IntegratedContext {
     }
 
     /// 취소 신호 확인
-    #[must_use] pub fn is_cancelled(&self) -> bool {
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
         *self.cancellation_rx.borrow()
     }
 
     /// 세션 ID 접근자 메서드
-    #[must_use] pub fn session_id(&self) -> &str {
+    #[must_use]
+    pub fn session_id(&self) -> &str {
         &self.session_id
     }
 
     /// 현재 컨텍스트 경로 문자열 생성
-    #[must_use] pub fn context_path(&self) -> String {
+    #[must_use]
+    pub fn context_path(&self) -> String {
         let mut path = format!("session:{}", self.session_id);
 
         if let Some(batch_id) = &self.batch_id {
@@ -160,12 +168,14 @@ impl IntegratedContext {
     }
 
     /// 설정에서 채널 버퍼 크기 가져오기
-    #[must_use] pub fn get_control_buffer_size(&self) -> usize {
+    #[must_use]
+    pub fn get_control_buffer_size(&self) -> usize {
         self.config.control_buffer_size.unwrap_or(100)
     }
 
     /// 설정에서 이벤트 채널 크기 가져오기
-    #[must_use] pub fn get_event_buffer_size(&self) -> usize {
+    #[must_use]
+    pub fn get_event_buffer_size(&self) -> usize {
         self.config.event_buffer_size.unwrap_or(1000)
     }
 
@@ -174,7 +184,8 @@ impl IntegratedContext {
     /// `SessionActor` 등이 실시간으로 `BatchReport` 등 `AppEvent` 를 수신하여
     /// 누적 지표(예: `duplicates_skipped)를` 집계하기 위한 표준 인터페이스.
     /// 호출 시마다 새로운 receiver 가 생성되며 call site 에서 select! 에 통합 가능.
-    #[must_use] pub fn subscribe_events(&self) -> broadcast::Receiver<AppEvent> {
+    #[must_use]
+    pub fn subscribe_events(&self) -> broadcast::Receiver<AppEvent> {
         self.event_tx.subscribe()
     }
 }
@@ -197,7 +208,6 @@ pub enum ContextError {
 
 impl From<ContextError> for crate::crawl_engine::actors::types::ActorError {
     fn from(err: ContextError) -> Self {
-        
         match err {
             ContextError::ControlChannelSend { message } => Self::ChannelError(message),
             ContextError::EventBroadcastFailed => {
@@ -216,7 +226,8 @@ pub struct IntegratedContextFactory {
 
 impl IntegratedContextFactory {
     /// 새로운 팩토리 생성
-    #[must_use] pub const fn new(config: Arc<SystemConfig>) -> Self {
+    #[must_use]
+    pub const fn new(config: Arc<SystemConfig>) -> Self {
         Self { config }
     }
 

@@ -7,12 +7,11 @@ use tracing::{debug, error, info, warn};
 /// level: "error" | "warn" | "info" | "debug" (기본: info)
 #[cfg_attr(feature = "dev-tools", tauri::command)]
 pub async fn ui_debug_log(level: Option<String>, message: String) -> Result<(), String> {
-	match level.as_deref() {
-		Some("error") => error!("[UI] {}", message),
-		Some("warn") => warn!("[UI] {}", message),
-		Some("debug") => debug!("[UI] {}", message),
-		_ => info!("[UI] {}", message),
-	}
-	Ok(())
+    match level.as_deref() {
+        Some("error") => error!("[UI] {}", message),
+        Some("warn") => warn!("[UI] {}", message),
+        Some("debug") => debug!("[UI] {}", message),
+        _ => info!("[UI] {}", message),
+    }
+    Ok(())
 }
-

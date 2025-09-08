@@ -11,15 +11,23 @@ pub struct StatusCheckLogic;
 
 #[async_trait::async_trait]
 impl StageLogic for StatusCheckLogic {
-    fn name(&self) -> &'static str { "StatusCheckLogic" }
+    fn name(&self) -> &'static str {
+        "StatusCheckLogic"
+    }
 
     async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
-        let StageInput { stage_type: st, item, config, deps, .. } = input;
+        let StageInput {
+            stage_type: st,
+            item,
+            config,
+            deps,
+            ..
+        } = input;
         if !matches!(st, ActorStageType::StatusCheck) {
             return Err(StageLogicError::Unsupported(st));
         }
-    let start = std::time::Instant::now();
-    let status_checker = Arc::new(
+        let start = std::time::Instant::now();
+        let status_checker = Arc::new(
             crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
                 (*deps.http).clone(),
                 (*deps.extractor).clone(),
@@ -33,11 +41,19 @@ impl StageLogic for StatusCheckLogic {
             .map_err(|e| StageLogicError::Internal(format!("Status check failed: {}", e)))?;
         let duration_ms = start.elapsed().as_millis() as u64;
         let (item_id, item_type) = match item {
-            StageItem::Page(n) => (format!("page_{}", n), StageItemType::Page { page_number: n }),
-            StageItem::Url(u) => (u, StageItemType::Url { url_type: "site_check".into() }),
+            StageItem::Page(n) => (
+                format!("page_{}", n),
+                StageItemType::Page { page_number: n },
+            ),
+            StageItem::Url(u) => (
+                u,
+                StageItemType::Url {
+                    url_type: "site_check".into(),
+                },
+            ),
             _ => ("unknown".into(), StageItemType::SiteCheck),
         };
-    let enhanced = StageItemResult {
+        let enhanced = StageItemResult {
             item_id,
             item_type,
             success: true,
@@ -51,6 +67,6 @@ impl StageLogic for StatusCheckLogic {
                 response_time_ms: status.response_time_ms,
             }),
         };
-    Ok(StageOutput { result: enhanced })
+        Ok(StageOutput { result: enhanced })
     }
 }

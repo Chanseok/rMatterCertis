@@ -8,7 +8,7 @@ use chrono::Utc;
 use tauri::{AppHandle, Manager};
 use tracing::{error, info, warn};
 
-use crate::application::{shared_state::SharedStateCache, AppState};
+use crate::application::{AppState, shared_state::SharedStateCache};
 use crate::crawl_engine::actors::contract::ACTOR_CONTRACT_VERSION;
 use crate::crawl_engine::actors::types::{ExecutionPlan, PageRange};
 use crate::crawl_engine::context::SystemConfig;
@@ -40,7 +40,14 @@ pub trait PlanningStrategy: Send + Sync {
         &self,
         app: &AppHandle,
         overrides: Option<&PlanOverrides>,
-    ) -> Result<(ExecutionPlan, AppConfig, crate::domain::services::SiteStatus), String>;
+    ) -> Result<
+        (
+            ExecutionPlan,
+            AppConfig,
+            crate::domain::services::SiteStatus,
+        ),
+        String,
+    >;
 }
 
 /// Intelligent strategy using CrawlingPlanner and caches
@@ -75,9 +82,9 @@ impl IntelligentPlanningStrategy {
         use crate::crawl_engine::actors::types::PageSlot;
         use crate::domain::pagination::PaginationCalculator;
 
-    let norm_start = Self::normalize_override(start_page);
-    let norm_end = Self::normalize_override(end_page);
-    let norm_count = Self::normalize_override(page_count);
+        let norm_start = Self::normalize_override(start_page);
+        let norm_end = Self::normalize_override(end_page);
+        let norm_count = Self::normalize_override(page_count);
         if norm_start.is_none() && norm_end.is_none() && norm_count.is_none() {
             return Ok(());
         }
@@ -186,11 +193,7 @@ pub struct ManualPlanningStrategy;
 
 impl ManualPlanningStrategy {
     /// Build page ranges newest -> oldest using provided overrides and fallback hints
-    fn build_ranges_from_overrides(
-        high: u32,
-        low: u32,
-        batch_size: u32,
-    ) -> Vec<PageRange> {
+    fn build_ranges_from_overrides(high: u32, low: u32, batch_size: u32) -> Vec<PageRange> {
         let mut pages: Vec<u32> = if low <= high {
             (low..=high).rev().collect()
         } else {
@@ -221,7 +224,14 @@ impl PlanningStrategy for IntelligentPlanningStrategy {
         &self,
         app: &AppHandle,
         overrides: Option<&PlanOverrides>,
-    ) -> Result<(ExecutionPlan, AppConfig, crate::domain::services::SiteStatus), String> {
+    ) -> Result<
+        (
+            ExecutionPlan,
+            AppConfig,
+            crate::domain::services::SiteStatus,
+        ),
+        String,
+    > {
         // 1) Load config and DB pool
         let config_manager = ConfigManager::new().map_err(|e| e.to_string())?;
         let mut app_config = config_manager
@@ -274,58 +284,58 @@ impl PlanningStrategy for IntelligentPlanningStrategy {
         )
         .with_repository(product_repo.clone());
 
-        let shared_cache: Option<tauri::State<SharedStateCache>> = app.try_state::<SharedStateCache>();
+        let shared_cache: Option<tauri::State<SharedStateCache>> =
+            app.try_state::<SharedStateCache>();
         // Site status cache
-        let cached_site_status: Option<crate::domain::services::SiteStatus> = if let Some(c) =
-            shared_cache.as_ref()
-        {
-            if let Some(cached) = c.get_valid_site_analysis_async(Some(5)).await {
-                Some(crate::domain::services::SiteStatus {
-                    is_accessible: true,
-                    response_time_ms: 0,
-                    total_pages: cached.total_pages,
-                    estimated_products: cached.estimated_products,
-                    products_on_last_page: cached.products_on_last_page,
-                    last_check_time: cached.analyzed_at,
-                    health_score: cached.health_score,
-                    data_change_status: SiteDataChangeStatus::Stable {
-                        count: cached.estimated_products,
-                    },
-                    decrease_recommendation: None,
-                    crawling_range_recommendation: CrawlingRangeRecommendation::Full,
-                })
+        let cached_site_status: Option<crate::domain::services::SiteStatus> =
+            if let Some(c) = shared_cache.as_ref() {
+                if let Some(cached) = c.get_valid_site_analysis_async(Some(5)).await {
+                    Some(crate::domain::services::SiteStatus {
+                        is_accessible: true,
+                        response_time_ms: 0,
+                        total_pages: cached.total_pages,
+                        estimated_products: cached.estimated_products,
+                        products_on_last_page: cached.products_on_last_page,
+                        last_check_time: cached.analyzed_at,
+                        health_score: cached.health_score,
+                        data_change_status: SiteDataChangeStatus::Stable {
+                            count: cached.estimated_products,
+                        },
+                        decrease_recommendation: None,
+                        crawling_range_recommendation: CrawlingRangeRecommendation::Full,
+                    })
+                } else {
+                    None
+                }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
         // DB analysis cache
         let cached_db_analysis: Option<DatabaseAnalysis> = if let Some(c) = shared_cache.as_ref() {
-            c.get_valid_db_analysis_async(Some(3)).await.map(|d| DatabaseAnalysis {
-                total_products: d.total_products,
-                unique_products: d.total_products,
-                duplicate_count: 0,
-                missing_products_count: 0,
-                last_update: Some(d.analyzed_at),
-                missing_fields_analysis: crate::domain::services::crawling_services::FieldAnalysis {
-                    missing_company: 0,
-                    missing_model: 0,
-                    missing_matter_version: 0,
-                    missing_connectivity: 0,
-                    missing_certification_date: 0,
-                },
-                data_quality_score: d.quality_score,
-            })
+            c.get_valid_db_analysis_async(Some(3))
+                .await
+                .map(|d| DatabaseAnalysis {
+                    total_products: d.total_products,
+                    unique_products: d.total_products,
+                    duplicate_count: 0,
+                    missing_products_count: 0,
+                    last_update: Some(d.analyzed_at),
+                    missing_fields_analysis:
+                        crate::domain::services::crawling_services::FieldAnalysis {
+                            missing_company: 0,
+                            missing_model: 0,
+                            missing_matter_version: 0,
+                            missing_connectivity: 0,
+                            missing_certification_date: 0,
+                        },
+                    data_quality_score: d.quality_score,
+                })
         } else {
             None
         };
 
         // Strategy pre-choice by DB count
-        let existing_product_count = product_repo
-            .get_product_count()
-            .await
-            .unwrap_or_default();
+        let existing_product_count = product_repo.get_product_count().await.unwrap_or_default();
         let chosen_strategy = if existing_product_count > 0 {
             crate::crawl_engine::actors::types::CrawlingStrategy::ContinueFromDb
         } else {
@@ -345,7 +355,11 @@ impl PlanningStrategy for IntelligentPlanningStrategy {
         };
 
         let (crawling_plan, site_status, db_analysis_used) = planner
-            .create_crawling_plan_with_caches(&crawling_config, cached_site_status, cached_db_analysis)
+            .create_crawling_plan_with_caches(
+                &crawling_config,
+                cached_site_status,
+                cached_db_analysis,
+            )
             .await
             .map_err(|e| e.to_string())?;
 
@@ -353,10 +367,12 @@ impl PlanningStrategy for IntelligentPlanningStrategy {
         let mut crawling_ranges: Vec<PageRange> = crawling_plan
             .phases
             .iter()
-            .filter(|p| matches!(
-                p.phase_type,
-                crate::crawl_engine::services::crawling_planner::PhaseType::ListPageCrawling
-            ))
+            .filter(|p| {
+                matches!(
+                    p.phase_type,
+                    crate::crawl_engine::services::crawling_planner::PhaseType::ListPageCrawling
+                )
+            })
             .filter(|p| !p.pages.is_empty())
             .map(|p| {
                 let first = *p.pages.first().unwrap();
@@ -397,19 +413,44 @@ impl PlanningStrategy for IntelligentPlanningStrategy {
                 }
                 accumulated += pages_in_range;
             }
-            if let Some(cut) = trim_index { crawling_ranges.truncate(cut); }
+            if let Some(cut) = trim_index {
+                crawling_ranges.truncate(cut);
+            }
         }
 
         if crawling_ranges.is_empty() {
-            crawling_ranges.push(PageRange { start_page: 1, end_page: 1, estimated_products: 12, reverse_order: true });
+            crawling_ranges.push(PageRange {
+                start_page: 1,
+                end_page: 1,
+                estimated_products: 12,
+                reverse_order: true,
+            });
         }
 
-        let total_pages: u32 = crawling_ranges.iter().map(|r| if r.reverse_order { r.start_page - r.end_page + 1 } else { r.end_page - r.start_page + 1 }).sum();
+        let total_pages: u32 = crawling_ranges
+            .iter()
+            .map(|r| {
+                if r.reverse_order {
+                    r.start_page - r.end_page + 1
+                } else {
+                    r.end_page - r.start_page + 1
+                }
+            })
+            .sum();
 
         // DB snapshot enrichment
-        let (db_max_page_id, db_max_index_in_page) = match product_repo.get_max_page_id_and_index().await { Ok(v) => v, Err(e) => { warn!("⚠️ Failed to read max page/index: {}", e); (None, None) } };
+        let (db_max_page_id, db_max_index_in_page) =
+            match product_repo.get_max_page_id_and_index().await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("⚠️ Failed to read max page/index: {}", e);
+                    (None, None)
+                }
+            };
         if let Some(cache_state) = shared_cache.as_ref() {
-            cache_state.enrich_db_analysis_position(db_max_page_id, db_max_index_in_page).await;
+            cache_state
+                .enrich_db_analysis_position(db_max_page_id, db_max_index_in_page)
+                .await;
         }
 
         let snapshot = crate::crawl_engine::actors::types::PlanInputSnapshot {
@@ -434,8 +475,16 @@ impl PlanningStrategy for IntelligentPlanningStrategy {
                 let mut hit = hit;
                 // Apply overrides on cached plan (batch/concurrency/delay)
                 if let Some(o) = overrides {
-                    if let Some(b) = o.batch_size { if b > 0 { hit.batch_size = b; } }
-                    if let Some(c) = o.concurrency { if c > 0 { hit.concurrency_limit = c; } }
+                    if let Some(b) = o.batch_size {
+                        if b > 0 {
+                            hit.batch_size = b;
+                        }
+                    }
+                    if let Some(c) = o.concurrency {
+                        if c > 0 {
+                            hit.concurrency_limit = c;
+                        }
+                    }
                 }
                 return Ok((hit, app_config, site_status));
             }
@@ -452,15 +501,24 @@ impl PlanningStrategy for IntelligentPlanningStrategy {
                 Box::new(range.start_page..=range.end_page)
             };
             for physical_page in pages_iter {
-                if physical_page == 0 { continue; }
+                if physical_page == 0 {
+                    continue;
+                }
                 let assumed_capacity = crate::domain::constants::site::PRODUCTS_PER_PAGE as u32;
                 for idx in 0..assumed_capacity {
                     let pos = calc.calculate(physical_page, idx, site_status.total_pages);
-                    page_slots.push(crate::crawl_engine::actors::types::PageSlot { physical_page, page_id: i64::from(pos.page_id), index_in_page: pos.index_in_page as i16 });
+                    page_slots.push(crate::crawl_engine::actors::types::PageSlot {
+                        physical_page,
+                        page_id: i64::from(pos.page_id),
+                        index_in_page: pos.index_in_page as i16,
+                    });
                 }
             }
         }
-        page_slots.sort_by(|a, b| match a.page_id.cmp(&b.page_id) { core::cmp::Ordering::Equal => a.index_in_page.cmp(&b.index_in_page), other => other });
+        page_slots.sort_by(|a, b| match a.page_id.cmp(&b.page_id) {
+            core::cmp::Ordering::Equal => a.index_in_page.cmp(&b.index_in_page),
+            other => other,
+        });
         page_slots.dedup_by(|a, b| a.page_id == b.page_id && a.index_in_page == b.index_in_page);
 
         let mut execution_plan = ExecutionPlan {
@@ -497,15 +555,32 @@ impl PlanningStrategy for IntelligentPlanningStrategy {
 
         // Apply overrides (batch/concurrency/delay + page overrrides)
         if let Some(o) = overrides {
-            if let Some(b) = o.batch_size { if b > 0 { execution_plan.batch_size = b; } }
-            if let Some(c) = o.concurrency { if c > 0 { execution_plan.concurrency_limit = c; } }
-            if let Some(d) = o.delay_ms { app_config.user.request_delay_ms = d; }
+            if let Some(b) = o.batch_size {
+                if b > 0 {
+                    execution_plan.batch_size = b;
+                }
+            }
+            if let Some(c) = o.concurrency {
+                if c > 0 {
+                    execution_plan.concurrency_limit = c;
+                }
+            }
+            if let Some(d) = o.delay_ms {
+                app_config.user.request_delay_ms = d;
+            }
             // Range overrides mutate plan ranges and slots
-            Self::adjust_execution_plan_with_page_overrides(&mut execution_plan, o.start_page, o.end_page, o.page_count)?;
+            Self::adjust_execution_plan_with_page_overrides(
+                &mut execution_plan,
+                o.start_page,
+                o.end_page,
+                o.page_count,
+            )?;
         }
 
         if let Some(cache_state) = app.try_state::<SharedStateCache>() {
-            cache_state.cache_execution_plan(execution_plan.clone()).await;
+            cache_state
+                .cache_execution_plan(execution_plan.clone())
+                .await;
         }
 
         Ok((execution_plan, app_config, site_status))
@@ -513,7 +588,9 @@ impl PlanningStrategy for IntelligentPlanningStrategy {
 }
 
 // Small helper for KPI placeholder init; avoids borrow issues above
-fn execution_plan_placeholder_total_ranges(_total_pages: u32) -> usize { 0 }
+fn execution_plan_placeholder_total_ranges(_total_pages: u32) -> usize {
+    0
+}
 
 #[async_trait]
 impl PlanningStrategy for ManualPlanningStrategy {
@@ -521,7 +598,14 @@ impl PlanningStrategy for ManualPlanningStrategy {
         &self,
         app: &AppHandle,
         overrides: Option<&PlanOverrides>,
-    ) -> Result<(ExecutionPlan, AppConfig, crate::domain::services::SiteStatus), String> {
+    ) -> Result<
+        (
+            ExecutionPlan,
+            AppConfig,
+            crate::domain::services::SiteStatus,
+        ),
+        String,
+    > {
         // Load config
         let config_manager = ConfigManager::new().map_err(|e| e.to_string())?;
         let mut app_config = config_manager
@@ -530,53 +614,89 @@ impl PlanningStrategy for ManualPlanningStrategy {
             .map_err(|e| e.to_string())?;
 
         // Read cached site status if available (no network calls here)
-        let shared_cache: Option<tauri::State<SharedStateCache>> = app.try_state::<SharedStateCache>();
-        let cached_site_status: Option<crate::domain::services::SiteStatus> = if let Some(c) =
-            shared_cache.as_ref()
-        {
-            c.get_valid_site_analysis_async(Some(5)).await.map(|cached| crate::domain::services::SiteStatus {
-                is_accessible: true,
-                response_time_ms: 0,
-                total_pages: cached.total_pages,
-                estimated_products: cached.estimated_products,
-                products_on_last_page: cached.products_on_last_page,
-                last_check_time: cached.analyzed_at,
-                health_score: cached.health_score,
-                data_change_status: SiteDataChangeStatus::Stable { count: cached.estimated_products },
-                decrease_recommendation: None,
-                crawling_range_recommendation: CrawlingRangeRecommendation::Full,
-            })
-        } else { None };
+        let shared_cache: Option<tauri::State<SharedStateCache>> =
+            app.try_state::<SharedStateCache>();
+        let cached_site_status: Option<crate::domain::services::SiteStatus> =
+            if let Some(c) = shared_cache.as_ref() {
+                c.get_valid_site_analysis_async(Some(5))
+                    .await
+                    .map(|cached| crate::domain::services::SiteStatus {
+                        is_accessible: true,
+                        response_time_ms: 0,
+                        total_pages: cached.total_pages,
+                        estimated_products: cached.estimated_products,
+                        products_on_last_page: cached.products_on_last_page,
+                        last_check_time: cached.analyzed_at,
+                        health_score: cached.health_score,
+                        data_change_status: SiteDataChangeStatus::Stable {
+                            count: cached.estimated_products,
+                        },
+                        decrease_recommendation: None,
+                        crawling_range_recommendation: CrawlingRangeRecommendation::Full,
+                    })
+            } else {
+                None
+            };
 
         // Derive high/low from overrides
-        let ov = overrides.ok_or_else(|| "ManualPlanningStrategy requires overrides".to_string())?;
+        let ov =
+            overrides.ok_or_else(|| "ManualPlanningStrategy requires overrides".to_string())?;
         let norm_start = IntelligentPlanningStrategy::normalize_override(ov.start_page);
         let norm_end = IntelligentPlanningStrategy::normalize_override(ov.end_page);
         let norm_count = IntelligentPlanningStrategy::normalize_override(ov.page_count);
 
         // Choose defaults from cache when possible
-        let default_high = cached_site_status.as_ref().map(|s| s.total_pages).unwrap_or(10);
+        let default_high = cached_site_status
+            .as_ref()
+            .map(|s| s.total_pages)
+            .unwrap_or(10);
         let high = norm_start.unwrap_or(default_high).max(1);
 
-        let low = if let Some(e) = norm_end { e.max(1) } else if let Some(c) = norm_count { high.saturating_sub(c.saturating_sub(1)) } else { 1 };
+        let low = if let Some(e) = norm_end {
+            e.max(1)
+        } else if let Some(c) = norm_count {
+            high.saturating_sub(c.saturating_sub(1))
+        } else {
+            1
+        };
         if low > high {
-            return Err(format!("invalid manual range: end_page {} > start_page {}", low, high));
+            return Err(format!(
+                "invalid manual range: end_page {} > start_page {}",
+                low, high
+            ));
         }
 
         // Build ranges
-        let batch_size = ov.batch_size.unwrap_or(app_config.user.batch.batch_size).max(1);
+        let batch_size = ov
+            .batch_size
+            .unwrap_or(app_config.user.batch.batch_size)
+            .max(1);
         let mut ranges = Self::build_ranges_from_overrides(high, low, batch_size);
         if ranges.is_empty() {
-            ranges.push(PageRange { start_page: high, end_page: high, estimated_products: 12, reverse_order: true });
+            ranges.push(PageRange {
+                start_page: high,
+                end_page: high,
+                estimated_products: 12,
+                reverse_order: true,
+            });
         }
 
         // Compute total pages
-        let total_pages_selected: u32 = ranges.iter().map(|r| r.start_page.saturating_sub(r.end_page) + 1).sum();
+        let total_pages_selected: u32 = ranges
+            .iter()
+            .map(|r| r.start_page.saturating_sub(r.end_page) + 1)
+            .sum();
 
         // Snapshot (DB metrics omitted in manual)
         let snapshot = crate::crawl_engine::actors::types::PlanInputSnapshot {
-            total_pages: cached_site_status.as_ref().map(|s| s.total_pages).unwrap_or(high),
-            products_on_last_page: cached_site_status.as_ref().map(|s| s.products_on_last_page).unwrap_or(12),
+            total_pages: cached_site_status
+                .as_ref()
+                .map(|s| s.total_pages)
+                .unwrap_or(high),
+            products_on_last_page: cached_site_status
+                .as_ref()
+                .map(|s| s.products_on_last_page)
+                .unwrap_or(12),
             db_max_page_id: None,
             db_max_index_in_page: None,
             db_total_products: 0,
@@ -588,7 +708,8 @@ impl PlanningStrategy for ManualPlanningStrategy {
 
         // Compute hash/ids
         let strategy_string = "Manual".to_string();
-        let plan_hash = IntelligentPlanningStrategy::compute_plan_hash(&snapshot, &ranges, &strategy_string);
+        let plan_hash =
+            IntelligentPlanningStrategy::compute_plan_hash(&snapshot, &ranges, &strategy_string);
         let plan_id = format!("plan_{}", Utc::now().timestamp());
         let session_id = format!("actor_session_{}", Utc::now().timestamp());
 
@@ -598,13 +719,29 @@ impl PlanningStrategy for ManualPlanningStrategy {
         let mut page_slots: Vec<crate::crawl_engine::actors::types::PageSlot> = Vec::new();
         let site_total_pages = snapshot.total_pages;
         for r in &ranges {
-            let iter: Box<dyn Iterator<Item = u32>> = if r.reverse_order { Box::new(r.end_page..=r.start_page) } else { Box::new(r.start_page..=r.end_page) };
-            for physical_page in iter { if physical_page == 0 { continue; } for idx in 0..crate::domain::constants::site::PRODUCTS_PER_PAGE as u32 {
+            let iter: Box<dyn Iterator<Item = u32>> = if r.reverse_order {
+                Box::new(r.end_page..=r.start_page)
+            } else {
+                Box::new(r.start_page..=r.end_page)
+            };
+            for physical_page in iter {
+                if physical_page == 0 {
+                    continue;
+                }
+                for idx in 0..crate::domain::constants::site::PRODUCTS_PER_PAGE as u32 {
                     let pos = calc.calculate(physical_page, idx, site_total_pages);
-                    page_slots.push(crate::crawl_engine::actors::types::PageSlot { physical_page, page_id: i64::from(pos.page_id), index_in_page: pos.index_in_page as i16 });
-                }}
+                    page_slots.push(crate::crawl_engine::actors::types::PageSlot {
+                        physical_page,
+                        page_id: i64::from(pos.page_id),
+                        index_in_page: pos.index_in_page as i16,
+                    });
+                }
+            }
         }
-        page_slots.sort_by(|a, b| match a.page_id.cmp(&b.page_id) { core::cmp::Ordering::Equal => a.index_in_page.cmp(&b.index_in_page), other => other });
+        page_slots.sort_by(|a, b| match a.page_id.cmp(&b.page_id) {
+            core::cmp::Ordering::Equal => a.index_in_page.cmp(&b.index_in_page),
+            other => other,
+        });
         page_slots.dedup_by(|a, b| a.page_id == b.page_id && a.index_in_page == b.index_in_page);
 
         // Build plan
@@ -616,7 +753,10 @@ impl PlanningStrategy for ManualPlanningStrategy {
             concurrency_limit: app_config.user.max_concurrent_requests,
             estimated_duration_secs: 0,
             created_at: Utc::now(),
-            analysis_summary: format!("Manual range {}..{} ({} pages)", high, low, total_pages_selected),
+            analysis_summary: format!(
+                "Manual range {}..{} ({} pages)",
+                high, low, total_pages_selected
+            ),
             original_strategy: strategy_string.clone(),
             input_snapshot: snapshot,
             plan_hash,
@@ -631,12 +771,21 @@ impl PlanningStrategy for ManualPlanningStrategy {
             contract_version: ACTOR_CONTRACT_VERSION,
             page_slots,
         };
-        if let Some(kpi) = &mut execution_plan.kpi_meta { kpi.total_ranges = execution_plan.crawling_ranges.len(); kpi.batches = execution_plan.crawling_ranges.len(); }
+        if let Some(kpi) = &mut execution_plan.kpi_meta {
+            kpi.total_ranges = execution_plan.crawling_ranges.len();
+            kpi.batches = execution_plan.crawling_ranges.len();
+        }
 
         // Apply non-range overrides
         if let Some(o) = overrides {
-            if let Some(c) = o.concurrency { if c > 0 { execution_plan.concurrency_limit = c; } }
-            if let Some(d) = o.delay_ms { app_config.user.request_delay_ms = d; }
+            if let Some(c) = o.concurrency {
+                if c > 0 {
+                    execution_plan.concurrency_limit = c;
+                }
+            }
+            if let Some(d) = o.delay_ms {
+                app_config.user.request_delay_ms = d;
+            }
         }
 
         // Return site status for downstream usage
@@ -670,8 +819,18 @@ mod tests {
             plan_id: "p".into(),
             session_id: "s".into(),
             crawling_ranges: vec![
-                PageRange { start_page: 10, end_page: 8, estimated_products: 36, reverse_order: true },
-                PageRange { start_page: 7, end_page: 5, estimated_products: 36, reverse_order: true },
+                PageRange {
+                    start_page: 10,
+                    end_page: 8,
+                    estimated_products: 36,
+                    reverse_order: true,
+                },
+                PageRange {
+                    start_page: 7,
+                    end_page: 5,
+                    estimated_products: 36,
+                    reverse_order: true,
+                },
             ],
             batch_size: 2,
             concurrency_limit: 3,
@@ -692,12 +851,23 @@ mod tests {
             },
             plan_hash: "h".into(),
             skip_duplicate_urls: true,
-            kpi_meta: Some(crate::crawl_engine::actors::types::ExecutionPlanKpi { total_ranges: 2, total_pages: 6, batches: 2, strategy: "Manual".into(), created_at: Utc::now() }),
+            kpi_meta: Some(crate::crawl_engine::actors::types::ExecutionPlanKpi {
+                total_ranges: 2,
+                total_pages: 6,
+                batches: 2,
+                strategy: "Manual".into(),
+                created_at: Utc::now(),
+            }),
             contract_version: ACTOR_CONTRACT_VERSION,
             page_slots: vec![],
         };
         // Keep only 2 newest pages overall => pages [10,9]
-        let res = IntelligentPlanningStrategy::adjust_execution_plan_with_page_overrides(&mut plan, None, None, Some(2));
+        let res = IntelligentPlanningStrategy::adjust_execution_plan_with_page_overrides(
+            &mut plan,
+            None,
+            None,
+            Some(2),
+        );
         assert!(res.is_ok());
         // Expect a single range with start=10, end=9 and reverse_order=true
         assert_eq!(plan.crawling_ranges.len(), 1);
@@ -714,7 +884,12 @@ mod tests {
         let mut plan = ExecutionPlan {
             plan_id: "p".into(),
             session_id: "s".into(),
-            crawling_ranges: vec![PageRange { start_page: 5, end_page: 3, estimated_products: 36, reverse_order: true }],
+            crawling_ranges: vec![PageRange {
+                start_page: 5,
+                end_page: 3,
+                estimated_products: 36,
+                reverse_order: true,
+            }],
             batch_size: 2,
             concurrency_limit: 3,
             estimated_duration_secs: 0,
@@ -734,12 +909,23 @@ mod tests {
             },
             plan_hash: "h".into(),
             skip_duplicate_urls: true,
-            kpi_meta: Some(crate::crawl_engine::actors::types::ExecutionPlanKpi { total_ranges: 1, total_pages: 3, batches: 1, strategy: "Manual".into(), created_at: Utc::now() }),
+            kpi_meta: Some(crate::crawl_engine::actors::types::ExecutionPlanKpi {
+                total_ranges: 1,
+                total_pages: 3,
+                batches: 1,
+                strategy: "Manual".into(),
+                created_at: Utc::now(),
+            }),
             contract_version: ACTOR_CONTRACT_VERSION,
             page_slots: vec![],
         };
         // start_page(lower bound via overrides set higher than end_page => invalid
-        let res = IntelligentPlanningStrategy::adjust_execution_plan_with_page_overrides(&mut plan, Some(5), Some(10), None);
+        let res = IntelligentPlanningStrategy::adjust_execution_plan_with_page_overrides(
+            &mut plan,
+            Some(5),
+            Some(10),
+            None,
+        );
         assert!(res.is_err());
     }
 }

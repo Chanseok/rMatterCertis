@@ -147,10 +147,10 @@ pub struct BatchConfig {
 pub use crate::crawl_engine::actors::types::AppEvent;
 
 // 타입들을 frontend_api에서 import
+pub use crate::api::frontend_api::ProductInfo;
 pub use crate::crawl_engine::actors::types::{
     CollectionMetrics, ProcessingMetrics, StageSuccessResult,
 };
-pub use crate::api::frontend_api::ProductInfo;
 
 /// 채널 팩토리 - 설정 기반 채널 생성
 pub struct ChannelFactory {
@@ -158,33 +158,39 @@ pub struct ChannelFactory {
 }
 
 impl ChannelFactory {
-    #[must_use] pub const fn new(config: Arc<SystemConfig>) -> Self {
+    #[must_use]
+    pub const fn new(config: Arc<SystemConfig>) -> Self {
         Self { config }
     }
 
     /// 설정 기반 제어 채널 생성
-    #[must_use] pub fn create_control_channel<T>(&self) -> (ControlChannel<T>, ControlReceiver<T>) {
+    #[must_use]
+    pub fn create_control_channel<T>(&self) -> (ControlChannel<T>, ControlReceiver<T>) {
         mpsc::channel(self.config.channels.control_buffer_size)
     }
 
     /// 설정 기반 이벤트 채널 생성
-    #[must_use] pub fn create_event_channel<T: Clone>(&self) -> EventChannel<T> {
+    #[must_use]
+    pub fn create_event_channel<T: Clone>(&self) -> EventChannel<T> {
         let (tx, _) = broadcast::channel(self.config.channels.event_buffer_size);
         tx
     }
 
     /// 데이터 채널 생성 (`OneShot은` 크기 설정 불필요)
-    #[must_use] pub fn create_data_channel<T>(&self) -> (DataChannel<T>, DataReceiver<T>) {
+    #[must_use]
+    pub fn create_data_channel<T>(&self) -> (DataChannel<T>, DataReceiver<T>) {
         oneshot::channel()
     }
 
     /// 취소 채널 생성
-    #[must_use] pub fn create_cancellation_channel(&self) -> (CancellationChannel, CancellationReceiver) {
+    #[must_use]
+    pub fn create_cancellation_channel(&self) -> (CancellationChannel, CancellationReceiver) {
         watch::channel(false)
     }
 
     /// 백프레셔 임계값 확인
-    #[must_use] pub fn check_backpressure(&self, current_load: f64) -> bool {
+    #[must_use]
+    pub fn check_backpressure(&self, current_load: f64) -> bool {
         current_load > self.config.channels.backpressure_threshold
     }
 }

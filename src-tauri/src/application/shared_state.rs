@@ -238,8 +238,7 @@ pub struct CrawlingSessionInfo {
 }
 
 /// 실시간 크롤링 상태 정보
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RuntimeState {
     pub is_crawling_active: bool,
     pub session_target_items: Option<u32>,
@@ -249,7 +248,6 @@ pub struct RuntimeState {
     pub current_stage: Option<String>,
     pub analyzed_at: Option<DateTime<Utc>>,
 }
-
 
 impl CacheItem for CrawlingSessionInfo {
     fn is_expired(&self, ttl: Duration) -> bool {
@@ -501,7 +499,8 @@ impl SharedStateCache {
     }
 
     /// 유효한 계산된 범위 가져오기
-    #[must_use] pub const fn get_valid_calculated_range(&self, _ttl_minutes: u64) -> Option<&CalculatedRange> {
+    #[must_use]
+    pub const fn get_valid_calculated_range(&self, _ttl_minutes: u64) -> Option<&CalculatedRange> {
         // Note: 이 메서드는 동기식이므로 실제로는 사용하지 않음
         // async 버전을 사용하는 것을 권장
         None

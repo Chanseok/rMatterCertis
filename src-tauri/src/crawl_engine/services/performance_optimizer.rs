@@ -72,7 +72,8 @@ pub struct CrawlingPerformanceOptimizer {
 
 impl CrawlingPerformanceOptimizer {
     /// 새 최적화 서비스 생성
-    #[must_use] pub fn new(config: Arc<SystemConfig>) -> Self {
+    #[must_use]
+    pub fn new(config: Arc<SystemConfig>) -> Self {
         Self {
             config,
             metrics_history: Arc::new(RwLock::new(Vec::new())),
@@ -310,7 +311,8 @@ impl CrawlingPerformanceOptimizer {
         let expected_improvement_percent = if recommended_concurrency == current_concurrency {
             0.0
         } else {
-            let concurrency_diff = f64::from(recommended_concurrency) / f64::from(current_concurrency);
+            let concurrency_diff =
+                f64::from(recommended_concurrency) / f64::from(current_concurrency);
             (concurrency_diff - 1.0) * 50.0 // 동시성 변화의 50% 효과 가정
         };
 

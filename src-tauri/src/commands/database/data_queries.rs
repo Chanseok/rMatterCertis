@@ -13,32 +13,32 @@ use crate::infrastructure::integrated_product_repository::IntegratedProductRepos
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ProductPage {
-	pub products: Vec<Product>,
-	pub total_count: u32,
-	pub page: u32,
-	pub size: u32,
-	pub has_next: bool,
+    pub products: Vec<Product>,
+    pub total_count: u32,
+    pub page: u32,
+    pub size: u32,
+    pub has_next: bool,
 }
 
 /// 크롤링 상태 정보
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct CrawlingStatusInfo {
-	pub is_running: bool,
-	pub current_page: Option<u32>,
-	pub total_pages: Option<u32>,
-	pub last_updated: Option<String>,
-	pub session_id: Option<String>,
+    pub is_running: bool,
+    pub current_page: Option<u32>,
+    pub total_pages: Option<u32>,
+    pub last_updated: Option<String>,
+    pub session_id: Option<String>,
 }
 
 /// 시스템 상태 정보
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SystemStatus {
-	pub database_connected: bool,
-	pub total_products: u32,
-	pub last_crawl_time: Option<DateTime<chrono::Utc>>,
-	pub config_loaded: bool,
+    pub database_connected: bool,
+    pub total_products: u32,
+    pub last_crawl_time: Option<DateTime<chrono::Utc>>,
+    pub config_loaded: bool,
 }
 
 /// 제품 데이터 페이지별 조회 (Backend-Only CRUD)
@@ -47,48 +47,48 @@ pub struct SystemStatus {
 /// # Errors
 /// Returns an error string if the database pool cannot be obtained or queries fail.
 pub async fn get_products_page(
-	state: State<'_, AppState>,
-	page: u32,
-	size: u32,
+    state: State<'_, AppState>,
+    page: u32,
+    size: u32,
 ) -> Result<ProductPage, String> {
-	let pool = state.get_database_pool().await?;
-	let repo = IntegratedProductRepository::new(pool);
+    let pool = state.get_database_pool().await?;
+    let repo = IntegratedProductRepository::new(pool);
 
-	let page_i32 = i32::try_from(page).unwrap_or(i32::MAX);
-	let size_i32 = i32::try_from(size).unwrap_or(i32::MAX);
-	match repo.get_products_paginated(page_i32, size_i32).await {
-		Ok(products) => {
-			// 전체 개수 조회 (향후 최적화 가능)
-			let total_count = repo.count_products().await.map_or_else(
-				|e| {
-					error!("Failed to count products: {}", e);
-					0
-				},
-				|count| u32::try_from(count).unwrap_or(u32::MAX),
-			);
+    let page_i32 = i32::try_from(page).unwrap_or(i32::MAX);
+    let size_i32 = i32::try_from(size).unwrap_or(i32::MAX);
+    match repo.get_products_paginated(page_i32, size_i32).await {
+        Ok(products) => {
+            // 전체 개수 조회 (향후 최적화 가능)
+            let total_count = repo.count_products().await.map_or_else(
+                |e| {
+                    error!("Failed to count products: {}", e);
+                    0
+                },
+                |count| u32::try_from(count).unwrap_or(u32::MAX),
+            );
 
-			let has_next = (page + 1) * size < total_count;
+            let has_next = (page + 1) * size < total_count;
 
-			info!(
-				"✅ Retrieved {} products for page {} (size: {})",
-				products.len(),
-				page,
-				size
-			);
+            info!(
+                "✅ Retrieved {} products for page {} (size: {})",
+                products.len(),
+                page,
+                size
+            );
 
-			Ok(ProductPage {
-				products,
-				total_count,
-				page,
-				size,
-				has_next,
-			})
-		}
-		Err(e) => {
-			error!("Failed to get products page: {}", e);
-			Err(format!("Failed to retrieve products: {}", e))
-		}
-	}
+            Ok(ProductPage {
+                products,
+                total_count,
+                page,
+                size,
+                has_next,
+            })
+        }
+        Err(e) => {
+            error!("Failed to get products page: {}", e);
+            Err(format!("Failed to retrieve products: {}", e))
+        }
+    }
 }
 
 /// 최근 업데이트된 제품 조회 (Backend-Only CRUD)
@@ -97,22 +97,22 @@ pub async fn get_products_page(
 /// # Errors
 /// Returns an error string if the database pool cannot be obtained or queries fail.
 pub async fn get_latest_products(
-	state: State<'_, AppState>,
-	limit: u32,
+    state: State<'_, AppState>,
+    limit: u32,
 ) -> Result<Vec<Product>, String> {
-	let pool = state.get_database_pool().await?;
-	let repo = IntegratedProductRepository::new(pool);
+    let pool = state.get_database_pool().await?;
+    let repo = IntegratedProductRepository::new(pool);
 
-	match repo.get_latest_updated_products(limit).await {
-		Ok(products) => {
-			info!("✅ Retrieved {} latest updated products", products.len());
-			Ok(products)
-		}
-		Err(e) => {
-			error!("Failed to get latest products: {}", e);
-			Err(format!("Failed to retrieve latest products: {}", e))
-		}
-	}
+    match repo.get_latest_updated_products(limit).await {
+        Ok(products) => {
+            info!("✅ Retrieved {} latest updated products", products.len());
+            Ok(products)
+        }
+        Err(e) => {
+            error!("Failed to get latest products: {}", e);
+            Err(format!("Failed to retrieve latest products: {}", e))
+        }
+    }
 }
 
 /// 크롤링 상태 조회 (Backend-Only CRUD)
@@ -121,24 +121,24 @@ pub async fn get_latest_products(
 /// # Errors
 /// Returns an error string if shared state cannot be accessed.
 pub async fn get_crawling_status_v2(
-	state: State<'_, AppState>,
+    state: State<'_, AppState>,
 ) -> Result<CrawlingStatusInfo, String> {
-	let current_session = state.current_session.read().await;
-	let current_progress = state.current_progress.read().await;
+    let current_session = state.current_session.read().await;
+    let current_progress = state.current_progress.read().await;
 
-	let status = CrawlingStatusInfo {
-		is_running: current_session.is_some(),
-		current_page: None,
-		total_pages: None,
-		last_updated: None, // CrawlingProgress doesn't have last_updated field
-		session_id: current_session.as_ref().map(|s| s.id.clone()),
-	};
+    let status = CrawlingStatusInfo {
+        is_running: current_session.is_some(),
+        current_page: None,
+        total_pages: None,
+        last_updated: None, // CrawlingProgress doesn't have last_updated field
+        session_id: current_session.as_ref().map(|s| s.id.clone()),
+    };
 
-	let running = status.is_running;
-	drop(current_session);
-	drop(current_progress);
-	info!("✅ Retrieved crawling status: running={}", running);
-	Ok(status)
+    let running = status.is_running;
+    drop(current_session);
+    drop(current_progress);
+    info!("✅ Retrieved crawling status: running={}", running);
+    Ok(status)
 }
 
 /// 시스템 전체 상태 조회 (Backend-Only CRUD)
@@ -147,46 +147,45 @@ pub async fn get_crawling_status_v2(
 /// # Errors
 /// Returns an error string if the database pool cannot be obtained or queries fail.
 pub async fn get_system_status(state: State<'_, AppState>) -> Result<SystemStatus, String> {
-	// 데이터베이스 연결 확인
-	let database_connected = state.get_database_pool().await.is_ok();
+    // 데이터베이스 연결 확인
+    let database_connected = state.get_database_pool().await.is_ok();
 
-	let (total_products, last_crawl_time) = if database_connected {
-		let pool = state.get_database_pool().await?;
-		let repo = IntegratedProductRepository::new(pool);
+    let (total_products, last_crawl_time) = if database_connected {
+        let pool = state.get_database_pool().await?;
+        let repo = IntegratedProductRepository::new(pool);
 
-		let total = repo
-			.count_products()
-			.await
-			.map(|count| u32::try_from(count).unwrap_or(u32::MAX))
-			.unwrap_or(0);
+        let total = repo
+            .count_products()
+            .await
+            .map(|count| u32::try_from(count).unwrap_or(u32::MAX))
+            .unwrap_or(0);
 
-		let last_updated = match repo.get_latest_updated_product().await {
-			Ok(Some(product)) => Some(product.updated_at),
-			_ => None,
-		};
+        let last_updated = match repo.get_latest_updated_product().await {
+            Ok(Some(product)) => Some(product.updated_at),
+            _ => None,
+        };
 
-		(total, last_updated)
-	} else {
-		(0, None)
-	};
+        (total, last_updated)
+    } else {
+        (0, None)
+    };
 
-	// 설정 로딩 상태 확인
-	let config_guard = state.config.read().await;
-	let config_loaded = true; // config가 항상 로드되어 있음
-	drop(config_guard);
+    // 설정 로딩 상태 확인
+    let config_guard = state.config.read().await;
+    let config_loaded = true; // config가 항상 로드되어 있음
+    drop(config_guard);
 
-	let status = SystemStatus {
-		database_connected,
-		total_products,
-		last_crawl_time,
-		config_loaded,
-	};
+    let status = SystemStatus {
+        database_connected,
+        total_products,
+        last_crawl_time,
+        config_loaded,
+    };
 
-	info!(
-		"✅ System status: db_connected={}, total_products={}, config_loaded={}",
-		status.database_connected, status.total_products, status.config_loaded
-	);
+    info!(
+        "✅ System status: db_connected={}, total_products={}, config_loaded={}",
+        status.database_connected, status.total_products, status.config_loaded
+    );
 
-	Ok(status)
+    Ok(status)
 }
-

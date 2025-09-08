@@ -6,8 +6,8 @@ use crate::infrastructure::{
 }; // uses ConfigManager (no AppConfigManager)
 use chrono::Utc;
 use serde_json::{Map, Value};
-use std::collections::HashMap;
 use sqlx::Row;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, State};
 use tracing::{debug, error, info, warn};
@@ -482,7 +482,10 @@ pub async fn start_validation(
             if total_products <= 360 {
                 // Use max_page_id span (max_page_id inclusive means +1 pages), fallback to count-derived
                 let pages_from_max = max_page_id.map_or(1, |v| u32::try_from(v).unwrap_or(0) + 1);
-                let pages_from_count = u32::try_from(total_products).unwrap_or(0).div_ceil(12).max(1);
+                let pages_from_count = u32::try_from(total_products)
+                    .unwrap_or(0)
+                    .div_ceil(12)
+                    .max(1);
                 pages_from_max.max(pages_from_count)
             } else {
                 30u32

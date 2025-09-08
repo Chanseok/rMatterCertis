@@ -81,7 +81,8 @@ impl DatabasePathManager {
     }
 
     /// 메인 데이터베이스 URL 반환 (`SQLx` 형식)
-    #[must_use] pub fn get_main_database_url(&self) -> String {
+    #[must_use]
+    pub fn get_main_database_url(&self) -> String {
         format!("sqlite:{}", self.main_database_path.display())
     }
 
@@ -102,7 +103,8 @@ impl DatabasePathManager {
     }
 
     /// 데이터베이스 파일이 존재하는지 확인
-    #[must_use] pub fn database_exists(&self) -> bool {
+    #[must_use]
+    pub fn database_exists(&self) -> bool {
         self.main_database_path.exists()
     }
 
@@ -131,14 +133,14 @@ impl DatabasePathManager {
     }
 
     /// 데이터베이스 파일이 쓰기 가능한지 확인
-    #[must_use] pub fn is_database_writable(&self) -> bool {
+    #[must_use]
+    pub fn is_database_writable(&self) -> bool {
         if !self.database_exists() {
             return false;
         }
 
         // 실제 쓰기 테스트
         std::fs::OpenOptions::new()
-            
             .append(true)
             .open(&self.main_database_path)
             .is_ok()
@@ -196,7 +198,8 @@ impl DatabasePathManager {
 
 /// 편의 함수들 - 전역에서 쉽게 사용할 수 있도록
 /// 메인 데이터베이스 URL 가져오기 (가장 자주 사용)
-#[must_use] pub fn get_main_database_url() -> String {
+#[must_use]
+pub fn get_main_database_url() -> String {
     DatabasePathManager::global().get_main_database_url()
 }
 

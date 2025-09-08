@@ -44,12 +44,14 @@ fn read_flag(name: &str, default: bool) -> bool {
 }
 
 /// Use unified HTTP client implementation path
-#[must_use] pub fn feature_http_client_unified() -> bool {
+#[must_use]
+pub fn feature_http_client_unified() -> bool {
     read_flag("MC_FEATURE_HTTP_CLIENT_UNIFIED", false)
 }
 
 /// Use Stage executor template + strategy pattern path
-#[must_use] pub const fn feature_stage_executor_template() -> bool {
+#[must_use]
+pub const fn feature_stage_executor_template() -> bool {
     // Permanently enabled. Legacy path removed.
     true
 }
@@ -78,24 +80,24 @@ mod tests {
 
         assert!(!feature_http_client_unified());
         assert!(feature_stage_executor_template());
-    // unified actor-event emission is always on (no flag)
-    // pagetask legacy removed
+        // unified actor-event emission is always on (no flag)
+        // pagetask legacy removed
     }
 
     #[test]
     fn explicit_values_parse() {
-    let _g = TEST_GUARD.lock().unwrap();
+        let _g = TEST_GUARD.lock().unwrap();
         // Set values in test env map
         let mut map = super::test_env::TEST_ENV.lock().unwrap();
         map.insert("MC_FEATURE_HTTP_CLIENT_UNIFIED".into(), "1".into());
         map.insert("MC_FEATURE_STAGE_EXECUTOR_TEMPLATE".into(), "false".into()); // ignored now
-    // unified actor-event emission has no flag anymore
-    // pagetask legacy removed
+        // unified actor-event emission has no flag anymore
+        // pagetask legacy removed
         drop(map);
 
-    assert!(feature_http_client_unified());
-    assert!(feature_stage_executor_template());
-    // unified actor-event emission is always on (no flag)
-    // pagetask legacy removed
+        assert!(feature_http_client_unified());
+        assert!(feature_stage_executor_template());
+        // unified actor-event emission is always on (no flag)
+        // pagetask legacy removed
     }
 }

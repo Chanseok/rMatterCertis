@@ -52,7 +52,8 @@ impl FormatTime for KstTimeFormatter {
 }
 
 /// Get the log directory relative to the executable location
-#[must_use] pub fn get_log_directory() -> PathBuf {
+#[must_use]
+pub fn get_log_directory() -> PathBuf {
     // Get the directory where the executable is located
     let exe_dir = std::env::current_exe()
         .ok()
@@ -194,7 +195,11 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
             }
         }
         _ => {
-            if config.separate_frontend_backend { "back.log" } else { "back_front.log" }
+            if config.separate_frontend_backend {
+                "back.log"
+            } else {
+                "back_front.log"
+            }
         }
     };
 
@@ -232,7 +237,7 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
         }
 
         // Fallback for backwards compatibility - apply default suppression if no module_filters
-    if config.module_filters.is_empty() && !config.level.to_lowercase().contains("trace") {
+        if config.module_filters.is_empty() && !config.level.to_lowercase().contains("trace") {
             filter = filter
                 // SQLx query logs (migrations, prepared statements) - strongly suppress
                 .add_directive("sqlx::query=error".parse().unwrap())
@@ -562,7 +567,7 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
 
     // Handle frontend logging setup
     if config.file_output {
-    setup_frontend_logging(&log_dir, config)?;
+        setup_frontend_logging(&log_dir, config)?;
     }
 
     Ok(())

@@ -5,9 +5,10 @@
 //! - 개선: 세션당 1번만 사이트 상태 확인 (1번 × 500ms = 0.5초)
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use matter_certis_v2_lib::infrastructure::config::AppConfig;
-use matter_certis_v2_lib::crawl_engine::system_config::SystemConfig;
 use matter_certis_v2_lib::crawl_engine::services::crawling_integration::CrawlingIntegrationService;
+use matter_certis_v2_lib::crawl_engine::system_config::SystemConfig;
+use matter_certis_v2_lib::infrastructure::config::AppConfig;
+use matter_certis_v2_lib::infrastructure::database_paths::DatabasePathManager;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
@@ -52,6 +53,15 @@ async fn benchmark_with_shared_service() {
 }
 
 fn performance_comparison(c: &mut Criterion) {
+    // Skip running benchmarks unless explicitly enabled
+    if std::env::var("MC_RUN_BENCH").ok().as_deref() != Some("1") {
+        eprintln!("MC_RUN_BENCH not set; skipping benchmarks");
+        return;
+    }
+
+    // Best-effort DB path manager init to avoid panics in bench environment
+    let _ = DatabasePathManager::initialize();
+
     let rt = Runtime::new().unwrap();
 
     c.bench_function(

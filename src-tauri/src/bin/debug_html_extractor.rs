@@ -48,7 +48,10 @@ async fn main() -> anyhow::Result<()> {
                     let urls = extractor
                         .extract_product_urls_from_content(&html_str)
                         .unwrap_or_default();
-                    println!("\n[app extractor] Page {page} => {} product URLs", urls.len());
+                    println!(
+                        "\n[app extractor] Page {page} => {} product URLs",
+                        urls.len()
+                    );
                     for (i, u) in urls.iter().enumerate() {
                         let pos = calc.calculate(page, i);
                         println!(

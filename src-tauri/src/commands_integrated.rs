@@ -1,7 +1,4 @@
-#![allow(
-    clippy::missing_errors_doc,
-    clippy::used_underscore_binding
-)]
+#![allow(clippy::missing_errors_doc, clippy::used_underscore_binding)]
 use crate::application::integrated_use_cases::IntegratedProductUseCases;
 use crate::domain::integrated_product::DatabaseStatistics;
 use crate::domain::product::ProductSearchCriteria;

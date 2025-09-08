@@ -52,7 +52,8 @@ impl DatabaseConnection {
         Ok(Self { pool })
     }
 
-    #[must_use] pub const fn pool(&self) -> &SqlitePool {
+    #[must_use]
+    pub const fn pool(&self) -> &SqlitePool {
         &self.pool
     }
 
@@ -74,6 +75,11 @@ impl DatabaseConnection {
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&self.pool)
             .await?;
+
+        // Pre-clean: drop legacy compatibility view if it exists to avoid schema validation errors
+        let _ = sqlx::query("DROP VIEW IF EXISTS matter_products_legacy;")
+            .execute(&self.pool)
+            .await;
 
         // Load and run the integrated schema SQL (003_integrated_schema.sql)
         if concise {
@@ -237,16 +243,21 @@ impl DatabaseConnection {
 
         if has_primary_device_type_ids_col.is_none() {
             if concise {
-                debug!("🧩 Applying migration 007_primary_device_type_ids.sql (normalized device type ids)");
+                debug!(
+                    "🧩 Applying migration 007_primary_device_type_ids.sql (normalized device type ids)"
+                );
             } else {
-                info!("🧩 Applying migration 007_primary_device_type_ids.sql (normalized device type ids)");
+                info!(
+                    "🧩 Applying migration 007_primary_device_type_ids.sql (normalized device type ids)"
+                );
             }
             let migration_path = std::path::Path::new("migrations/007_primary_device_type_ids.sql");
             if migration_path.exists() {
                 let migration_sql = fs::read_to_string(migration_path)?;
                 sqlx::query(&migration_sql).execute(&self.pool).await?;
             } else {
-                let migration_sql = include_str!("../../migrations/007_primary_device_type_ids.sql");
+                let migration_sql =
+                    include_str!("../../migrations/007_primary_device_type_ids.sql");
                 sqlx::query(migration_sql).execute(&self.pool).await?;
             }
             if concise {
@@ -261,17 +272,93 @@ impl DatabaseConnection {
         // Apply 008_fix_primary_device_type_ids.sql if present (idempotent corrective backfill)
         let mig008_path = std::path::Path::new("migrations/008_fix_primary_device_type_ids.sql");
         if mig008_path.exists() {
-            if concise {
-                debug!("🧩 Applying migration 008_fix_primary_device_type_ids.sql (corrective backfill + trigger refresh)");
-            } else {
-                info!("🧩 Applying migration 008_fix_primary_device_type_ids.sql (corrective backfill + trigger refresh)");
+            // Only apply 008 if legacy column exists; otherwise skip (fresh installs)
+            let has_legacy_col_008: Option<i64> = sqlx::query_scalar(
+                "SELECT 1 FROM pragma_table_info('product_details') WHERE name='primary_device_type_id' LIMIT 1;",
+            )
+            .fetch_optional(&self.pool)
+            .await?
+            .flatten();
+            if has_legacy_col_008.is_some() {
+                if concise {
+                    debug!(
+                        "🧩 Applying migration 008_fix_primary_device_type_ids.sql (corrective backfill + trigger refresh)"
+                    );
+                } else {
+                    info!(
+                        "🧩 Applying migration 008_fix_primary_device_type_ids.sql (corrective backfill + trigger refresh)"
+                    );
+                }
+                let migration_sql = std::fs::read_to_string(mig008_path)?;
+                sqlx::query(&migration_sql).execute(&self.pool).await?;
+                if concise {
+                    debug!("✅ Migration 008 applied");
+                } else {
+                    info!("✅ Migration 008 applied");
+                }
+            } else if !concise {
+                debug!("ℹ️ Migration 008 not needed (legacy column absent)");
             }
-            let migration_sql = std::fs::read_to_string(mig008_path)?;
-            sqlx::query(&migration_sql).execute(&self.pool).await?;
-            if concise {
-                debug!("✅ Migration 008 applied");
-            } else {
-                info!("✅ Migration 008 applied");
+        }
+
+        // Apply 009_drop_legacy_primary_device_type_id.sql if present and legacy column exists
+        let mig009_path =
+            std::path::Path::new("migrations/009_drop_legacy_primary_device_type_id.sql");
+        if mig009_path.exists() {
+            // Check if legacy column still exists to avoid unnecessary rebuild on fresh installs
+            let has_legacy_col: Option<i64> = sqlx::query_scalar(
+                "SELECT 1 FROM pragma_table_info('product_details') WHERE name='primary_device_type_id' LIMIT 1;",
+            )
+            .fetch_optional(&self.pool)
+            .await?
+            .flatten();
+
+            if has_legacy_col.is_some() {
+                if concise {
+                    debug!(
+                        "🧩 Applying migration 009_drop_legacy_primary_device_type_id.sql (remove legacy column)"
+                    );
+                } else {
+                    info!(
+                        "🧩 Applying migration 009_drop_legacy_primary_device_type_id.sql (remove legacy column)"
+                    );
+                }
+                let migration_sql = std::fs::read_to_string(mig009_path)?;
+                sqlx::query(&migration_sql).execute(&self.pool).await?;
+                if concise {
+                    debug!("✅ Migration 009 applied");
+                } else {
+                    info!("✅ Migration 009 applied");
+                }
+            } else if !concise {
+                debug!("ℹ️ Migration 009 not needed (legacy column already absent)");
+            }
+        } else {
+            // Fallback to embedded migration when available in packaged builds
+            let has_legacy_col: Option<i64> = sqlx::query_scalar(
+                "SELECT 1 FROM pragma_table_info('product_details') WHERE name='primary_device_type_id' LIMIT 1;",
+            )
+            .fetch_optional(&self.pool)
+            .await?
+            .flatten();
+            if has_legacy_col.is_some() {
+                if concise {
+                    debug!(
+                        "🧩 Applying embedded migration 009_drop_legacy_primary_device_type_id.sql"
+                    );
+                } else {
+                    info!(
+                        "🧩 Applying embedded migration 009_drop_legacy_primary_device_type_id.sql"
+                    );
+                }
+                let migration_sql =
+                    include_str!("../../migrations/009_drop_legacy_primary_device_type_id.sql");
+                sqlx::query(migration_sql).execute(&self.pool).await?;
+                if concise {
+                    debug!("✅ Migration 009 applied (embedded)");
+                } else {
+                    info!("✅ Migration 009 applied (embedded)");
+                }
             }
         }
 
@@ -418,7 +505,35 @@ mod tests {
         .await?
         .flatten();
 
-        assert!(exists.is_some(), "primary_device_type_ids column should exist after migration 007");
+        assert!(
+            exists.is_some(),
+            "primary_device_type_ids column should exist after migration 007"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_migration_009_legacy_column_absent() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path().join("test_mig_009.db");
+        let database_url = format!("sqlite:{}", db_path.display());
+
+        let db = DatabaseConnection::new(&database_url).await?;
+        db.migrate().await?;
+
+        // Verify legacy column is absent (either because base schema omits it or migration 009 dropped it)
+        let exists: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM pragma_table_info('product_details') WHERE name='primary_device_type_id' LIMIT 1;",
+        )
+        .fetch_optional(db.pool())
+        .await?
+        .flatten();
+
+        assert!(
+            exists.is_none(),
+            "legacy primary_device_type_id column should be absent after migrations"
+        );
 
         Ok(())
     }

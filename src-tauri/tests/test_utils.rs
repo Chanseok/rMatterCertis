@@ -16,7 +16,8 @@ impl TestDatabase {
         Ok(Self { connection: db })
     }
 
-    #[must_use] pub fn pool(&self) -> sqlx::Pool<sqlx::Sqlite> {
+    #[must_use]
+    pub fn pool(&self) -> sqlx::Pool<sqlx::Sqlite> {
         self.connection.pool().clone()
     }
 }
@@ -33,11 +34,11 @@ impl TestContext {
         let database = TestDatabase::new().await?;
         let pool = database.pool();
 
-        let integrated_repo = Arc::new(
-            matter_certis_v2_lib::infrastructure::IntegratedProductRepository::new(pool),
-        );
+        let integrated_repo =
+            Arc::new(matter_certis_v2_lib::infrastructure::IntegratedProductRepository::new(pool));
 
-        let session_manager = Arc::new(matter_certis_v2_lib::domain::session_manager::SessionManager::new());
+        let session_manager =
+            Arc::new(matter_certis_v2_lib::domain::session_manager::SessionManager::new());
 
         let integrated_use_cases =
             matter_certis_v2_lib::application::IntegratedProductUseCases::new(

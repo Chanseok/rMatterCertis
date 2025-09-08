@@ -110,7 +110,11 @@ impl ContextualParser for ProductListParser {
 
                 // Extract data from each product element
                 for (index, element) in product_elements.iter().enumerate() {
-                    match self.extract_product_from_element(element, u32::try_from(index).unwrap_or(u32::MAX), context) {
+                    match self.extract_product_from_element(
+                        element,
+                        u32::try_from(index).unwrap_or(u32::MAX),
+                        context,
+                    ) {
                         Ok(product) => {
                             if self.validate_product(&product)? {
                                 products.push(product);
@@ -286,7 +290,7 @@ impl ProductListParser {
             });
         }
 
-    Ok(resolved_url)
+        Ok(resolved_url)
     }
 
     /// Validate extracted product data
@@ -298,7 +302,11 @@ impl ProductListParser {
             errors.push("URL is empty".to_string());
         }
 
-        if product.model.as_ref().map_or(true, std::string::String::is_empty) {
+        if product
+            .model
+            .as_ref()
+            .map_or(true, std::string::String::is_empty)
+        {
             errors.push("Model/title is empty".to_string());
         }
 
@@ -313,7 +321,8 @@ impl ProductListParser {
     }
 
     /// Check if there are more pages to crawl
-    #[must_use] pub fn has_next_page(&self, html: &Html) -> bool {
+    #[must_use]
+    pub fn has_next_page(&self, html: &Html) -> bool {
         for selector in &self.pagination_selectors {
             if html.select(selector).any(|element| {
                 let text = element.text().collect::<String>().to_lowercase();
