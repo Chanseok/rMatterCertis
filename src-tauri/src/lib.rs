@@ -197,6 +197,7 @@ pub mod commands {
     // Grouped domain modules
     pub mod database {
         pub mod data_queries; // Backend-Only CRUD commands (Modern Rust 2024)
+    pub mod vendor_sync; // CSA DCL vendor sync
         #[cfg(feature = "dev-tools")]
         pub mod db_cleanup;
         #[cfg(feature = "dev-tools")]
@@ -257,6 +258,8 @@ pub mod commands {
     // Database exports (preserve commands::data_queries path)
     pub use database::data_queries as data_queries;
     pub use database::data_queries::*;
+    pub use database::vendor_sync as vendor_sync;
+    pub use database::vendor_sync::*;
     #[cfg(feature = "dev-tools")]
     pub use database::db_cleanup as db_cleanup;
     #[cfg(feature = "dev-tools")]
@@ -578,6 +581,8 @@ pub fn run() {
             commands::database::data_queries::get_crawling_status_v2,
             #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::database::data_queries::get_system_status,
+            // Vendor sync command (CSA DCL)
+            commands::database::vendor_sync::update_vendors_from_csa,
             // Window Management commands (이미 config_commands에 구현됨)
             commands::config_commands::save_window_state,
             commands::config_commands::load_window_state,

@@ -27,6 +27,13 @@ enum BindValue<'a> {
     OwnedStr(String),
 }
 
+/// Outcome of an upsert operation (vendors)
+#[derive(Debug, Clone, Copy)]
+pub struct UpsertOutcome {
+    pub inserted: bool,
+    pub updated: bool,
+}
+
 /// Repository for the integrated schema (products + `product_details` + vendors + `crawling_results`)
 #[derive(Clone)]
 pub struct IntegratedProductRepository {
@@ -34,6 +41,77 @@ pub struct IntegratedProductRepository {
 }
 
 impl IntegratedProductRepository {
+    /// Count vendors in the local database
+    /// # Errors
+    /// Returns an error if the query fails.
+    pub async fn count_vendors(&self) -> Result<i64> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vendors")
+            .fetch_one(&*self.pool)
+            .await?;
+        Ok(count)
+    }
+
+    /// Upsert a vendor by vendor_number.
+    /// - Inserts when vendor_number doesn't exist.
+    /// - Updates name/legal name if changed.
+    /// Returns whether an insert or update occurred.
+    /// # Errors
+    /// Returns an error if database operations fail.
+    pub async fn upsert_vendor_by_number(
+        &self,
+        vendor_number: i32,
+        vendor_name: &str,
+        company_legal_name: Option<&str>,
+    ) -> Result<UpsertOutcome> {
+        // Check existing record
+        let existing = sqlx::query(
+            r#"SELECT vendor_name, company_legal_name FROM vendors WHERE vendor_number = ?"#,
+        )
+        .bind(vendor_number)
+        .fetch_optional(&*self.pool)
+        .await?;
+
+        if let Some(row) = existing {
+            let cur_name: String = row.get("vendor_name");
+            let cur_legal: Option<String> = row.get("company_legal_name");
+
+            let name_changed = cur_name != vendor_name;
+            let legal_changed = cur_legal.as_deref() != company_legal_name;
+
+            if name_changed || legal_changed {
+                sqlx::query(
+                    r#"
+                    UPDATE vendors
+                    SET vendor_name = ?, company_legal_name = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE vendor_number = ?
+                    "#,
+                )
+                .bind(vendor_name)
+                .bind(company_legal_name)
+                .bind(vendor_number)
+                .execute(&*self.pool)
+                .await?;
+
+                Ok(UpsertOutcome { inserted: false, updated: true })
+            } else {
+                Ok(UpsertOutcome { inserted: false, updated: false })
+            }
+        } else {
+            sqlx::query(
+                r#"
+                INSERT INTO vendors (vendor_number, vendor_name, company_legal_name, created_at, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                "#,
+            )
+            .bind(vendor_number)
+            .bind(vendor_name)
+            .bind(company_legal_name)
+            .execute(&*self.pool)
+            .await?;
+
+            Ok(UpsertOutcome { inserted: true, updated: false })
+        }
+    }
     /// Vacate an occupied (`page_id`, `index_in_page`) slot if it's taken by a different URL.
     /// This helps avoid UNIQUE constraint violations when moving an item to a new position.
     /// Returns the URL that was occupying the slot, if any, after setting its position to NULL.
