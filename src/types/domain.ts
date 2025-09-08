@@ -187,3 +187,14 @@ export interface ApiError {
   code?: string;
   details?: Record<string, any>;
 }
+
+// Result returned by update_vendors_from_csa Tauri command
+export interface VendorSyncResult {
+  inserted: number;
+  updated: number;
+  skipped: number;
+  api_total: number;
+  final_count: number;
+  pages: number;
+  finished_at: string; // ISO timestamp
+}

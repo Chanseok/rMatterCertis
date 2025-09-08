@@ -4,6 +4,7 @@
 
 import { Component, createSignal, For, onMount, Show } from 'solid-js';
 import { tauriApi } from '../../services/tauri-api';
+import type { VendorSyncResult } from '../../types/domain';
 
 export const LocalDBTab: Component = () => {
   // 데이터베이스 상태 (실제 데이터)
@@ -104,6 +105,24 @@ export const LocalDBTab: Component = () => {
       loadDbStats(); // 통계 새로고침
     } catch (err) {
       alert(`데이터베이스 최적화 실패: ${err}`);
+    }
+  };
+
+  // Vendor-only sync (CSA DCL)
+  const [vendorSyncLoading, setVendorSyncLoading] = createSignal(false);
+  const [vendorSyncResult, setVendorSyncResult] = createSignal<VendorSyncResult | null>(null);
+  const syncVendors = async () => {
+    try {
+      setVendorSyncLoading(true);
+      setVendorSyncResult(null);
+      const res = await tauriApi.updateVendorsFromCsa();
+      setVendorSyncResult(res);
+      // Refresh stats after sync
+      await loadDbStats();
+    } catch (err) {
+      alert(`벤더 동기화 실패: ${err}`);
+    } finally {
+      setVendorSyncLoading(false);
     }
   };
 
@@ -227,10 +246,23 @@ export const LocalDBTab: Component = () => {
         {/* DB Management */}
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
           <h3 class="text-lg font-semibold text-gray-800 mb-4">데이터베이스 관리</h3>
-          <div class="flex flex-wrap gap-2">
+          <div class="flex flex-wrap gap-2 items-center">
             <button class="px-4 py-2 rounded-lg text-white bg-indigo-600 hover:bg-indigo-700" onClick={exportData}>📤 데이터 내보내기</button>
             <button class="px-4 py-2 rounded-lg text-white bg-emerald-600 hover:bg-emerald-700" onClick={optimizeDatabase}>⚡ 데이터베이스 최적화</button>
             <button class="px-4 py-2 rounded-lg text-white bg-rose-600 hover:bg-rose-700" onClick={clearDatabase}>🗑️ 데이터베이스 초기화</button>
+            <div class="h-6 w-px bg-gray-200 mx-2" />
+            <button
+              class={`px-4 py-2 rounded-lg text-white ${vendorSyncLoading() ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+              disabled={vendorSyncLoading()}
+              onClick={syncVendors}
+            >
+              {vendorSyncLoading() ? '벤더 업데이트 중...' : 'CSA에서 벤더만 업데이트'}
+            </button>
+            <Show when={!!vendorSyncResult()}>
+              <span class="text-sm text-gray-600 ml-2">
+                완료: +{vendorSyncResult()!.inserted} 신규, {vendorSyncResult()!.updated} 수정, {vendorSyncResult()!.skipped} 유지 (총 {vendorSyncResult()!.final_count} / API {vendorSyncResult()!.api_total}, {vendorSyncResult()!.pages}페이지)
+              </span>
+            </Show>
           </div>
         </div>
 

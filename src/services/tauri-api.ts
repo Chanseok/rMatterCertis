@@ -21,6 +21,7 @@ import type {
 } from '../types/events';
 // Import concrete generated type file to avoid directory barrel resolution issues in bundler mode
 import type { StageBatcherSettings } from '../types/generated/StageBatcherSettings';
+import type { VendorSyncResult } from '../types/domain';
 
 /**
  * Service class for communicating with the Rust backend
@@ -331,6 +332,17 @@ export class TauriApiService {
       return await invoke<any>('get_local_db_stats');
     } catch (error) {
       throw new Error(`Failed to get local DB stats: ${error}`);
+    }
+  }
+
+  /**
+   * Update local vendors from CSA DCL (vendor-only sync)
+   */
+  async updateVendorsFromCsa(): Promise<VendorSyncResult> {
+    try {
+      return await invoke<VendorSyncResult>('update_vendors_from_csa');
+    } catch (error) {
+      throw new Error(`Failed to update vendors from CSA: ${error}`);
     }
   }
 
