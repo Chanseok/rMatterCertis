@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tauri::State;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::application::AppState;
 use crate::infrastructure::integrated_product_repository::{IntegratedProductRepository, UpsertOutcome};

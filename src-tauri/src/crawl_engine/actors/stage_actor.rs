@@ -1373,7 +1373,7 @@ mod tests {
             url: "https://e/p1".into(), page_id: Some(1), index_in_page: Some(1), id: None,
             manufacturer: Some("A".into()), model: Some("M".into()), device_type: None, certificate_id: None, certification_date: None, software_version: None, hardware_version: None, vid: None, pid: None,
             family_sku: None, family_variant_sku: None, firmware_version: None, family_id: None, tis_trp_tested: None, specification_version: None, transport_interface: None,
-            primary_device_type_id: None, application_categories: None, description: None, compliance_document_url: None, program_type: Some("Matter".into()), created_at: now, updated_at: now
+            primary_device_type_id: None, primary_device_type_ids: None, application_categories: None, description: None, compliance_document_url: None, program_type: Some("Matter".into()), created_at: now, updated_at: now
         };
         let items = vec![ch::StageItem::ProductDetails(ch::ProductDetails {
             products: vec![pd1],

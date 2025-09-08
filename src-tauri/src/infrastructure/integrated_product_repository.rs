@@ -1035,11 +1035,11 @@ impl IntegratedProductRepository {
         let normalized_url = Self::normalize_url(url);
         let row = sqlx::query(
             r"
-            SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
+         SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
                    certificate_id, certification_date, software_version, hardware_version,
                    vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
                    tis_trp_tested, specification_version, transport_interface, 
-                   primary_device_type_id, application_categories, description,
+             primary_device_type_id, primary_device_type_ids, application_categories, description,
                    compliance_document_url, program_type, created_at, updated_at
             FROM product_details WHERE url = ?
             ",
@@ -1072,6 +1072,10 @@ impl IntegratedProductRepository {
                 specification_version: row.get("specification_version"),
                 transport_interface: row.get("transport_interface"),
                 primary_device_type_id: row.get("primary_device_type_id"),
+                primary_device_type_ids: {
+                    let json: Option<String> = row.get("primary_device_type_ids");
+                    json.and_then(|s| serde_json::from_str::<Vec<i32>>(&s).ok())
+                },
                 application_categories: row.get("application_categories"),
                 description: row.get("description"),
                 compliance_document_url: row.get("compliance_document_url"),
@@ -1153,7 +1157,7 @@ impl IntegratedProductRepository {
                    pd.id, pd.device_type as pd_device_type, pd.certification_date as pd_certification_date, pd.software_version, pd.hardware_version,
                    pd.vid, pd.pid, pd.family_sku, pd.family_variant_sku, pd.firmware_version, pd.family_id,
                    pd.tis_trp_tested, pd.specification_version, pd.transport_interface, 
-                   pd.primary_device_type_id, pd.application_categories, pd.description,
+                   pd.primary_device_type_id, pd.primary_device_type_ids, pd.application_categories, pd.description,
                    pd.compliance_document_url, pd.program_type,
                    pd.created_at as pd_created_at, pd.updated_at as pd_updated_at
             FROM products p
@@ -1210,6 +1214,10 @@ impl IntegratedProductRepository {
                         specification_version: row.get("specification_version"),
                         transport_interface: row.get("transport_interface"),
                         primary_device_type_id: row.get("primary_device_type_id"),
+                        primary_device_type_ids: {
+                            let json: Option<String> = row.get("primary_device_type_ids");
+                            json.and_then(|s| serde_json::from_str::<Vec<i32>>(&s).ok())
+                        },
                         application_categories: row.get("application_categories"),
                         description: row.get("description"),
                         compliance_document_url: row.get("compliance_document_url"),
@@ -1319,6 +1327,7 @@ impl IntegratedProductRepository {
                 primary_device_type_id: product_json["primary_device_type_id"]
                     .as_str()
                     .map(std::string::ToString::to_string),
+                primary_device_type_ids: None,
                 application_categories: product_json["application_categories"].as_array().map(
                     |arr| {
                         arr.iter()

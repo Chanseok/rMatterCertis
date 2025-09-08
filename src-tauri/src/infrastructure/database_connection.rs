@@ -227,6 +227,54 @@ impl DatabaseConnection {
             debug!("ℹ️ Migration 006 not needed (unique slot indexes exist)");
         }
 
+        // Apply 007_primary_device_type_ids.sql if normalized column is missing
+        let has_primary_device_type_ids_col: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM pragma_table_info('product_details') WHERE name='primary_device_type_ids' LIMIT 1;",
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+
+        if has_primary_device_type_ids_col.is_none() {
+            if concise {
+                debug!("🧩 Applying migration 007_primary_device_type_ids.sql (normalized device type ids)");
+            } else {
+                info!("🧩 Applying migration 007_primary_device_type_ids.sql (normalized device type ids)");
+            }
+            let migration_path = std::path::Path::new("migrations/007_primary_device_type_ids.sql");
+            if migration_path.exists() {
+                let migration_sql = fs::read_to_string(migration_path)?;
+                sqlx::query(&migration_sql).execute(&self.pool).await?;
+            } else {
+                let migration_sql = include_str!("../../migrations/007_primary_device_type_ids.sql");
+                sqlx::query(migration_sql).execute(&self.pool).await?;
+            }
+            if concise {
+                debug!("✅ Migration 007 applied");
+            } else {
+                info!("✅ Migration 007 applied");
+            }
+        } else if !concise {
+            debug!("ℹ️ Migration 007 not needed (primary_device_type_ids exists)");
+        }
+
+        // Apply 008_fix_primary_device_type_ids.sql if present (idempotent corrective backfill)
+        let mig008_path = std::path::Path::new("migrations/008_fix_primary_device_type_ids.sql");
+        if mig008_path.exists() {
+            if concise {
+                debug!("🧩 Applying migration 008_fix_primary_device_type_ids.sql (corrective backfill + trigger refresh)");
+            } else {
+                info!("🧩 Applying migration 008_fix_primary_device_type_ids.sql (corrective backfill + trigger refresh)");
+            }
+            let migration_sql = std::fs::read_to_string(mig008_path)?;
+            sqlx::query(&migration_sql).execute(&self.pool).await?;
+            if concise {
+                debug!("✅ Migration 008 applied");
+            } else {
+                info!("✅ Migration 008 applied");
+            }
+        }
+
         // Report on database status
         let product_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products")
             .fetch_one(&self.pool)
@@ -350,6 +398,28 @@ mod tests {
         // sessions_table can be created by later features; only assert core tables exist for this test
 
         println!("✅ Matter certification database migration test passed!");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_migration_007_column_exists() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path().join("test_mig_007.db");
+        let database_url = format!("sqlite:{}", db_path.display());
+
+        let db = DatabaseConnection::new(&database_url).await?;
+        db.migrate().await?;
+
+        // Verify the new normalized column exists on product_details
+        let exists: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM pragma_table_info('product_details') WHERE name='primary_device_type_ids' LIMIT 1;",
+        )
+        .fetch_optional(db.pool())
+        .await?
+        .flatten();
+
+        assert!(exists.is_some(), "primary_device_type_ids column should exist after migration 007");
+
         Ok(())
     }
 }

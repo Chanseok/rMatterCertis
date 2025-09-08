@@ -1,110 +1,101 @@
-╭────────────────────────────────────────────────────────────────────────╮
-│  > FE 측의 사용되지 않는 파일들을 정리 중인데 많이 정리된 상태인가요?  │
-╰────────────────────────────────────────────────────────────────────────╯
+최신 Matter Device Type ID 목록 (Device Library 기준)
 
-✦ 네, 다시 한번 확인해 보겠습니다. 이전 검토 이후 추가로 정리를 진행하신 것으로 생각하고, 현재 최신 상태의 프론트엔드 파일 구조를 확인하여 다시
-  평가해 드리겠습니다.
+Utility Device Types
+	•	0x0016 – Root Node
+	•	0x0011 – Power Source
+	•	0x0012 – OTA Requestor
+	•	0x0014 – OTA Provider
+	•	0x000E – Aggregator
+	•	0x0013 – Bridged Node
+￼
 
- ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
- │ ✓  FindFiles 'src/**/*.{ts,tsx}'                                                                                                         │
- │                                                                                                                                          │
- │    Found 44 matching file(s)                                                                                                             │
- ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-✦ 네, 다시 확인했습니다. 이전 상태와 비교했을 때 비약적으로 발전했습니다. 이제는 정말 많이 정리된 상태가 맞습니다.
+Application Device Types
 
-  현재 상태 평가
+Lighting
+	•	0x0100 – On/Off Light
+	•	0x0101 – Dimmable Light
+	•	0x010C – Color Temperature Light
+	•	0x010D – Extended Color Light
 
-   1. 핵심 위주의 코드베이스: 파일 목록을 보면, 이전에 지적했던 src/components/tabs 내의 중복 및 레거시 파일들이 대부분 사라졌습니다. 현재 남아있는
-      파일들은 CrawlingEngineTabSimple, AnalysisTab, LocalDBTab, SettingsTab 등 현재 기능과 직접적으로 관련 있거나, 정리가 필요한 소수의 대상만
-      남아있는 것으로 보입니다.
+Smart Plugs / Actuators
+	•	0x010A – On/Off Plug-in Unit
+	•	0x010B – Dimmable Plug-In Unit
+	•	0x0303 – Pump
+	•	0x0042 – Water Valve (Matter 1.3)
 
-   2. 파일 수의 급격한 감소: 처음 확인했을 때 97개였던 .ts/.tsx 파일이 현재 44개로 줄었습니다. 코드베이스의 전체적인 부피가 절반 이하로 줄어든
-      것으로, 이는 유지보수성과 가독성 측면에서 엄청난 개선입니다.
+Switches & Controls
+	•	0x0103 – On/Off Light Switch
+	•	0x0104 – Dimmer Switch
+	•	0x0105 – Color Dimmer Switch
+	•	0x0840 – Control Bridge
+	•	0x0304 – Pump Controller
+	•	0x000F – Generic Switch
 
-   3. 명확해진 구조: stores, hooks, services 디렉토리의 파일들도 일부 정리된 것으로 보입니다. 전체적인 코드 구조가 훨씬 더 명확해지고, 새로운
-      개발자가 파악하기에도 훨씬 용이한 상태가 되었습니다.
+Load Control Switches (Matter 1.4)
+	•	0x0504 – Mounted On/Off Load Control
+	•	0x0505 – Mounted Dimmable Load Control
 
-  결론
+Sensors
+	•	0x0015 – Contact Sensor
+	•	0x0106 – Light Sensor
+	•	0x0107 – Occupancy Sensor
+	•	0x0302 – Temperature Sensor
+	•	0x0305 – Pressure Sensor
+	•	0x0306 – Flow Sensor
+	•	0x0307 – Humidity Sensor
+	•	0x0850 – On/Off Sensor
+	•	0x0076 – Smoke CO Alarm
+	•	0x0044 – Water Freeze Sensor (Matter 1.3)
+	•	0x0043 – Water Leak Detector (Matter 1.3)
+	•	0x002E – Rain Sensor (Matter 1.3)
 
-  매우 성공적인 정리 작업을 수행하셨습니다. 현재 코드베이스는 이전과 비교할 수 없을 정도로 깨끗하고 관리하기 좋은 상태가 되었습니다. "죽은 코드"가
-  상당수 제거되어 프로젝트의 기술 부채가 크게 해소되었습니다.
+Closures
+	•	0x000A – Door Lock
+	•	0x000B – Door Lock Controller
+	•	0x0202 – Window Covering
+	•	0x0203 – Window Covering Controller
 
-  남은 작업 및 다음 단계 제안
+HVAC
+	•	0x0300 – Heating/Cooling Unit
+	•	0x0301 – Thermostat
+	•	0x002B – Fan
+	•	0x002D – Air Purifier
+	•	0x002C – Air Quality Sensor
 
-  이제 큰 덩어리들은 대부분 정리되었으므로, 다음과 같은 세밀한 추가 정리 작업을 고려해볼 수 있습니다.
+Media
+	•	0x0028 – Basic Video Player
+	•	0x0023 – Casting Video Player
+	•	0x0022 – Speaker
+	•	0x0024 – Content App
+	•	0x0029 – Casting Video Client
+	•	0x002A – Video Remote Control
 
-   1. 남아있는 비활성 탭 확인: AnalysisTab, LocalDBTab 등이 현재의 활성 탭 4가지에 포함되는지 마지막으로 확인하고, 아니라면 이들도 아카이빙/삭제하는
-      것을 고려할 수 있습니다.
-   2. "고아" 코드 찾기: 삭제된 탭들에서만 사용되었던 stores, hooks, utils 함수들이 아직 남아있을 수 있습니다. 이런 "고아(orphaned)" 코드를 찾아
-      제거하면 코드베이스를 더욱 완벽하게 만들 수 있습니다.
+Generic
+	•	0x0027 – Mode Select
 
-  정말 큰 진전을 이루셨습니다. 현재 상태는 매우 훌륭하며, 남은 작업은 새로운 기능을 개발하며 병행해도 될 정도로 양호한 수준입니다. 수고
-  많으셨습니다.
+Robotic Devices
+	•	0x0074 – Robotic Vacuum Cleaner
 
-╭──────────────────────────────────────────────────────────────────────────────╮
-│  > 그렇다면 추가로 더 정리를 해야 할 후보들을 검색해서 list up  해 주십시요  │
-╰──────────────────────────────────────────────────────────────────────────────╯
+Appliances
+	•	0x0070 – Refrigerator
+	•	0x0071 – Temperature Controlled Cabinet
+	•	0x0072 – Room Air Conditioner
+	•	0x0073 – Laundry Washer (Matter 1.2)
+	•	0x0075 – Dishwasher (Matter 1.2)
+	•	0x0077 – Cooktop (Matter 1.3)
+	•	0x0078 – Oven (Matter 1.3)
+	•	0x0079 – Extractor Hood (Matter 1.3)
+	•	0x007A – Microwave Oven (Matter 1.3)
 
-✦ 네, 알겠습니다. 현재 남은 파일들을 분석하여, 삭제를 고려해볼 만한 "정리 후보" 파일 목록을 추려드리겠습니다.
+Energy Management (Matter 1.3/1.4):
 
-  분석 방법은 다음과 같습니다.
-   1. 애플리케이션의 메인 진입점(AppTabBased.tsx)을 확인하여 현재 실제로 사용 중인 핵심 컴포넌트들을 파악합니다.
-   2. 전체 파일 목록에서 이 핵심 컴포넌트들과 그 자식 컴포넌트들을 제외한 나머지 파일들을 찾습니다.
-   3. 이름이나 기능을 볼 때, 삭제된 레거시 탭들에서만 사용했을 가능성이 높은 파일들을 후보로 선정합니다.
+	•	0x050D – Electric Vehicle Supply Equipment (EVSE)
+	•	0x050E – Energy Management
+	•	0x050F – Energy Sensor
+	•	0x0507 – Solar Power (Matter 1.4)
+	•	0x0018 – Battery (Matter 1.4)
+	•	0x0538 – Heat Pump (Matter 1.4)
+	•	0x050C – Water Heater (Matter 1.4)
 
-  먼저, AppTabBased.tsx 파일을 읽어 현재 활성화된 탭이 무엇인지 확인하겠습니다.
-
- ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
- │ x  ReadFile {"absolute_path":"/Users/chanseok/Codes/rMatterCertis/src/AppTabBased.tsx"}                                                  │
- │                                                                                                                                          │
- │    File not found: /Users/chanseok/Codes/rMatterCertis/src/AppTabBased.tsx                                                               │
- ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-✦ おっと、AppTabBased.tsx 파일이 보이지 않네요. 아마 최근 정리 과정에서 이름이 변경되었거나 다른 파일과 통합되었을 수 있습니다.
-
-  그렇다면 애플리케이션의 메인 탭을 구성하는 다른 파일을 찾아보겠습니다. AppWithTabs.tsx가 유력한 후보로 보입니다. 이 파일을 읽어보겠습니다.
-
- ╭─────────────────────────────────────────────╮
- │ ✓  ReadFile src/components/AppWithTabs.tsx  │
- ╰─────────────────────────────────────────────╯
-✦ 네, AppWithTabs.tsx 파일을 통해 현재 사용 중인 탭 목록을 정확히 확인했습니다. 이 정보를 바탕으로 추가 정리 대상을 선정했습니다.
-
-  현재 활성화된 탭은 다음과 같습니다.
-   - CrawlingEngineTabSimple
-   - SettingsTab
-   - LocalDBTab
-   - AnalysisTab
-
-  이 탭들과 직접적인 관련이 적어 보이거나, 과거 대시보드 형태의 복잡한 UI에서만 사용되었을 것으로 추정되는 파일들을 정리 후보로 분류했습니다.
-
-  추가 정리 후보 파일 목록
-
-  1. 시각화(Visualization) 컴포넌트
-  가장 유력한 정리 후보들입니다. 복잡한 대시보드 탭들이 사라졌으므로, 이 컴포넌트들은 현재 사용되지 않을 확률이 매우 높습니다.
-   - src/components/visualization/CrawlingCity3D.tsx
-   - src/components/visualization/CrawlingCityDashboard.tsx
-   - src/components/visualization/CrawlingMetricsChart.tsx
-   - src/components/visualization/CrawlingProgressDashboard.tsx
-
-  2. 특정 목적의 스토어(Store)
-  일부 스토어는 이름으로 볼 때, 삭제된 특정 탭이나 기능과 강하게 결부되어 있을 수 있습니다.
-   - src/stores/crawlerStore.ts: modernCrawlerStore나 crawlingSessionStore로 기능이 통합되었을 가능성이 있습니다.
-   - src/stores/windowStore.ts: 탭 상태와 창 상태가 tabStore와 uiStore로 통합 관리되고 있다면 중복일 수 있습니다. (확인 필요)
-
-  3. 개발(dev) 및 특수 목적 컴포넌트
-  이 컴포넌트들은 현재 개발 과정에서 사용되지 않는다면 정리할 수 있습니다.
-   - src/components/dev/EventConsole.tsx: 이벤트 감사를 위한 개발용 콘솔.
-   - src/components/dev/StageBatcherSettingsPanel.tsx: Stage Batcher가 백엔드 로직으로 넘어갔다면 UI 패널은 불필요합니다.
-   - src/components/HierarchicalEventMonitor.tsx: 또 다른 개발용 이벤트 모니터.
-
-  4. 고수준(High-level) 대시보드 컴포넌트
-  이름으로 보아 여러 정보를 종합해서 보여주는 복합 컴포넌트로, 현재의 단순화된 탭 구조에서는 사용되지 않을 수 있습니다.
-   - src/components/CrawlingProcessDashboard.tsx
-
-  정리 진행 방법 제안
-
-   1. 1순위 (확실한 대상): 시각화(Visualization) 컴포넌트들을 먼저 src/_archive로 이동시키거나 삭제합니다. 이들은 독립적이라 다른 곳에 미치는 영향이
-      적을 가능성이 높습니다.
-   2. 2순위 (확인 필요): 스토어(Store) 파일들을 정리합니다.
-       - crawlerStore.ts를 import하는 활성 컴포넌트가 있는지 코드 전체에서 검색해봅니다. 없다면 삭제합니다.
-       - windowStore.ts도 같은 방식으로 확인합니다.
-   3. 3순위 (판단 필요): 개발(dev) 및 대시보드 컴포넌트들은 현재 개발/디버깅 워크플로우에 따라 유지할지 삭제할지 판단하여 정리합니다.
+Infrastructure (Matter 1.4):
+	•	0x001B – Home Router/Access Point (HRAP)

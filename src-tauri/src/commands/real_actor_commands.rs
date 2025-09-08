@@ -785,6 +785,7 @@ fn convert_json_to_product_detail(
         specification_version: None,
         transport_interface: None,
         primary_device_type_id: None,
+    primary_device_type_ids: None,
         application_categories: None,
         description,
         compliance_document_url: None,

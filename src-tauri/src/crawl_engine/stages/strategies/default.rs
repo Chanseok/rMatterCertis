@@ -171,6 +171,7 @@ mod tests {
             specification_version: None,
             transport_interface: None,
             primary_device_type_id: None,
+            primary_device_type_ids: None,
             application_categories: None,
             description: None,
             compliance_document_url: None,

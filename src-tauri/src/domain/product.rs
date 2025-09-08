@@ -47,6 +47,7 @@ pub struct ProductDetail {
     pub specification_version: Option<String>,
     pub transport_interface: Option<String>,
     pub primary_device_type_id: Option<String>,
+    pub primary_device_type_ids: Option<Vec<i32>>, // normalized list (JSON-backed)
     pub application_categories: Option<String>,
     pub description: Option<String>,
     pub compliance_document_url: Option<String>,
@@ -176,6 +177,7 @@ mod tests {
             specification_version: None,
             transport_interface: None,
             primary_device_type_id: None,
+            primary_device_type_ids: None,
             application_categories: None,
             description: None,
             compliance_document_url: None,
