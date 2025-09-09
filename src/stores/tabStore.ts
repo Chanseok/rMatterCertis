@@ -71,7 +71,7 @@ const [tabState, setTabState] = createStore<TabState>({
         text: 'text-amber-700',
         accent: 'from-amber-500 to-orange-500'
       }
-    }
+  }
 
     
   ],

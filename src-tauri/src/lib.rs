@@ -202,6 +202,8 @@ pub mod commands {
         #[cfg(feature = "dev-tools")]
         pub mod db_repair;
         pub mod vendor_sync; // CSA DCL vendor sync // 🔧 DB repair/sync between products and product_details
+    pub mod export_import; // Phase 2: export/import commands
+    pub mod device_types_editor; // Phase 5: device types JSON editor
     }
     pub mod analysis {
         pub mod performance_commands; // 🔧 Phase C: 성능 최적화 도구
@@ -356,7 +358,8 @@ pub fn run() {
     info!("✅ Tokio runtime initialized successfully");
 
     // 🦀 Modern Rust 2024: Single Responsibility Database Initialization
-    rt.block_on(async {
+    // Initialize primary DatabaseConnection (will be injected into Tauri managed state)
+    let database_connection = rt.block_on(async {
         let concise_all = std::env::var("MC_CONCISE_ALL")
             .ok()
             .is_none_or(|v| !(v == "0" || v.eq_ignore_ascii_case("false")));
@@ -467,6 +470,8 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // Provide direct access to the primary database connection for dashboard commands
+        .manage(database_connection)
         .manage(app_state)
         .manage(shared_state) // SharedState 추가
         .manage(session_manager) // CrawlingSessionManager 추가
@@ -825,8 +830,21 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             commands::database::data_queries::get_crawling_status_v2,
             #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::database::data_queries::get_system_status,
+            // Local DB Dashboard Phase 1
+            commands::database::data_queries::get_db_summary,
+            commands::database::data_queries::analytics_query,
             // Vendor sync command (CSA DCL)
             commands::database::vendor_sync::update_vendors_from_csa,
+            commands::database::vendor_sync::dashboard_vendor_sync,
+            // Phase 5 device types JSON editor
+            commands::database::device_types_editor::get_device_types_json,
+            commands::database::device_types_editor::save_device_types_json,
+            // Phase 2 export/import
+            commands::database::export_import::export_data,
+            commands::database::export_import::import_data,
+            // Phase 3 delete range
+            commands::database::export_import::preview_delete_range,
+            commands::database::export_import::delete_range,
             // Window Management commands (이미 config_commands에 구현됨)
             commands::config_commands::save_window_state,
             commands::config_commands::load_window_state,

@@ -60,6 +60,7 @@ export const AppWithTabs: Component = () => {
       <Show when={currentTab() === 'analysis'}>
         <AnalysisTab />
       </Show>
+  {/* 기존 'Local DB Dashboard' 중복 탭 제거 (6B 재정비 단계) */}
     </AppLayout>
   );
 };

@@ -4,6 +4,7 @@ use tauri::State;
 use tracing::{info, warn, debug};
 
 use crate::application::AppState;
+use tauri::Emitter; // bring emit() into scope for AppHandle
 use crate::infrastructure::integrated_product_repository::{
     IntegratedProductRepository, UpsertOutcome,
 };
@@ -67,6 +68,8 @@ pub async fn sync_vendors_internal(
     http: &HttpClient,
 ) -> anyhow::Result<VendorSyncResult> {
     let repo = IntegratedProductRepository::new(pool.clone());
+    // Optional progress emitter lookup (best-effort)
+    // (We can't access AppState here directly; pages progress now emitted in wrapper loop instead)
 
     // first page
     let first = fetch_csa_page(http, None).await?;
@@ -123,7 +126,7 @@ pub async fn sync_vendors_internal(
 
         // iterate remaining pages
         let mut seen_keys = std::collections::HashSet::new();
-        while let Some(k) = next_key.clone() {
+    while let Some(k) = next_key.clone() {
             if !seen_keys.insert(k.clone()) {
                 warn!("Duplicate pagination key detected, breaking: {}", k);
                 break;
@@ -190,4 +193,120 @@ pub async fn update_vendors_from_csa(
     sync_vendors_internal(&pool, &http)
         .await
         .map_err(|e| format!("CSA vendor sync failed: {}", e))
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: Dashboard-oriented vendor sync wrapper with optional dry-run
+// Emits lightweight progress events (without streaming every vendor) via
+// application event emitter if available.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VendorSyncOptions {
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VendorSyncProgress {
+    pub stage: String,
+    pub pages_processed: u32,
+    pub inserted: u32,
+    pub updated: u32,
+    pub skipped: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VendorSyncDryRunResult {
+    pub api_total: u32,
+    pub local_count: u32,
+    pub will_sync: bool,
+}
+
+#[tauri::command]
+pub async fn dashboard_vendor_sync(
+    state: State<'_, AppState>,
+    options: Option<VendorSyncOptions>,
+) -> Result<serde_json::Value, String> {
+    let dry_run = options.as_ref().and_then(|o| o.dry_run).unwrap_or(false);
+    let pool = state.get_database_pool().await?;
+    let http = state.get_http_client().await?;
+
+    // Quick first page fetch to compute intent
+    let first = fetch_csa_page(&http, None)
+        .await
+        .map_err(|e| format!("Failed to fetch CSA vendors: {}", e))?;
+    let api_total: u32 = first.pagination.total.parse().unwrap_or(0);
+    let repo = IntegratedProductRepository::new(pool.clone());
+    let local_count: u32 = repo
+        .count_vendors()
+        .await
+        .map(|c| u32::try_from(c).unwrap_or(u32::MAX))
+        .unwrap_or(0);
+    let will_sync = api_total > local_count;
+    if dry_run {
+        return Ok(serde_json::json!(VendorSyncDryRunResult {
+            api_total,
+            local_count,
+            will_sync,
+        }));
+    }
+
+    // Emit start progress
+    if let Some(emitter) = state.get_event_emitter().await {
+        let _ = emitter.app_handle().emit("vendor_sync_progress", VendorSyncProgress { stage: "starting".into(), pages_processed: 0, inserted: 0, updated: 0, skipped: 0 });
+    }
+
+    if !will_sync {
+        if let Some(emitter) = state.get_event_emitter().await {
+            let _ = emitter.app_handle().emit("vendor_sync_progress", VendorSyncProgress { stage: "up_to_date".into(), pages_processed: 0, inserted: 0, updated: 0, skipped: 0 });
+        }
+        return Ok(serde_json::json!({"status":"up_to_date","api_total":api_total,"local_count":local_count}));
+    }
+
+    // Re-run full sync (reuse internal function by reconstructing first page path for simplicity)
+    // We inline the loop to emit page progress events instead of calling sync_vendors_internal directly
+    let repo = IntegratedProductRepository::new(pool.clone());
+    let mut inserted = 0u32; let mut updated = 0u32; let mut skipped = 0u32; let mut pages_processed = 0u32;
+    // process first (already fetched)
+    if api_total > local_count {
+        for v in &first.vendor_info {
+            match repo.upsert_vendor_by_number(v.vendor_id, &v.vendor_name, v.company_legal_name.as_deref()).await {
+                Ok(UpsertOutcome { inserted: true, updated: false }) => inserted += 1,
+                Ok(UpsertOutcome { inserted: false, updated: true }) => updated += 1,
+                Ok(_) => skipped += 1,
+                Err(e) => { warn!("Vendor upsert failed for {} ({}): {}", v.vendor_name, v.vendor_id, e); }
+            }
+        }
+        pages_processed += 1;
+        if let Some(emitter) = state.get_event_emitter().await {
+            let _ = emitter.app_handle().emit("vendor_sync_progress", VendorSyncProgress { stage: "page".into(), pages_processed, inserted, updated, skipped });
+        }
+        let mut next_key = first.pagination.next_key.clone();
+        let mut seen_keys = std::collections::HashSet::new();
+        while let Some(k) = next_key.clone() {
+            if !seen_keys.insert(k.clone()) { break; }
+            let page = match fetch_csa_page(&http, Some(&k)).await { Ok(p) => p, Err(e) => { warn!("CSA fetch failed {}: {}", k, e); break; } };
+            for v in &page.vendor_info {
+                match repo.upsert_vendor_by_number(v.vendor_id, &v.vendor_name, v.company_legal_name.as_deref()).await {
+                    Ok(UpsertOutcome { inserted: true, updated: false }) => inserted += 1,
+                    Ok(UpsertOutcome { inserted: false, updated: true }) => updated += 1,
+                    Ok(_) => skipped += 1,
+                    Err(e) => warn!("Vendor upsert failed for {} ({}): {}", v.vendor_name, v.vendor_id, e),
+                }
+            }
+            pages_processed += 1;
+            if let Some(emitter) = state.get_event_emitter().await {
+                let _ = emitter.app_handle().emit("vendor_sync_progress", VendorSyncProgress { stage: "page".into(), pages_processed, inserted, updated, skipped });
+            }
+            next_key = page.pagination.next_key;
+        }
+    }
+    let final_count: u32 = repo.count_vendors().await.map(|c| u32::try_from(c).unwrap_or(u32::MAX)).unwrap_or(0);
+    let result = VendorSyncResult { inserted, updated, skipped, api_total, final_count, pages: pages_processed, finished_at: chrono::Utc::now().to_rfc3339() };
+
+    if let Some(emitter) = state.get_event_emitter().await {
+        let _ = emitter.app_handle().emit("vendor_sync_progress", VendorSyncProgress { stage: "finished".into(), pages_processed: result.pages, inserted: result.inserted, updated: result.updated, skipped: result.skipped });
+    }
+
+    Ok(serde_json::json!(result))
 }

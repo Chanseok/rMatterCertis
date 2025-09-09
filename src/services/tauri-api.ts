@@ -396,6 +396,68 @@ export class TauriApiService {
     }
   }
 
+  // ========================================================================
+  // Local DB Dashboard (Phases 1-5) APIs
+  // ========================================================================
+
+  async getDbSummary(): Promise<{
+    total_products: number;
+    total_product_details: number;
+    total_vendors: number;
+    total_device_types: number;
+    new_products_24h: number;
+    new_products_7d: number;
+    top_device_categories: [string, number][];
+  }> {
+    return await invoke('get_db_summary');
+  }
+
+  async analyticsQuery(params: { offset?: number; limit?: number; filter?: string } = {}): Promise<{
+    rows: Array<{ product_detail_url?: string; model?: string; vendor_name?: string; device_type_name?: string; device_category?: string; certification_date?: string; detail_created_at?: string; }>;
+    total: number; offset: number; limit: number; applied_filter?: string | null; filter_error?: string | null;
+  }> {
+  return await invoke('analytics_query', { params }); // Rust side expects params struct
+  }
+
+  async exportDataset(dataset: 'vendors' | 'device_types' | 'analytics'): Promise<string> {
+    return await invoke('export_data', { dataset });
+  }
+
+  async importDataset(dataset: 'vendors' | 'device_types', csvText: string): Promise<{
+    dataset: string; processed: number; inserted: number; updated: number; errors: string[]; backup_file?: string | null;
+  }> {
+    const base64_csv = btoa(csvText);
+  return await invoke('import_data', { dataset, base64Csv: base64_csv, base64_csv }); // ensure snake_case provided
+  }
+
+  async previewDeleteRange(fromPage: number, toPage: number): Promise<{
+    from_page: number; to_page: number; product_details_count: number; products_count: number; product_details_with_primary_types: number;
+  }> {
+  return await invoke('preview_delete_range', { from_page: fromPage, to_page: toPage });
+  }
+
+  async deleteRange(fromPage: number, toPage: number): Promise<{
+    from_page: number; to_page: number; deleted_product_details: number; deleted_products: number; deleted_bridge_rows: number;
+  }> {
+  return await invoke('delete_range', { from_page: fromPage, to_page: toPage });
+  }
+
+  async dashboardVendorSync(options?: { dry_run?: boolean }): Promise<any> {
+  return await invoke('dashboard_vendor_sync', { options });
+  }
+
+  async getDeviceTypesJson(): Promise<{ json: string; path?: string | null; count_in_file: number; count_in_db: number; }> {
+    return await invoke('get_device_types_json');
+  }
+
+  async saveDeviceTypesJson(json: string, reseed: boolean): Promise<{ backup_path?: string | null; written_path?: string | null; parsed_count: number; reseed: boolean; inserted: number; updated: number; skipped: number; }> {
+    return await invoke('save_device_types_json', { newJson: json, new_json: json, options: { reseed } });
+  }
+
+  async vendorSyncDryRun(): Promise<{ api_total: number; local_count: number; will_sync: boolean; }> {
+    return await this.dashboardVendorSync({ dry_run: true });
+  }
+
   /**
    * Optimize the database for better performance
    */

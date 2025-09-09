@@ -46,6 +46,10 @@ impl EventEmitter {
         }
     }
 
+    /// Expose underlying AppHandle (restricted use: emitting custom dashboard events)
+    #[must_use]
+    pub fn app_handle(&self) -> &AppHandle { &self.app_handle }
+
     /// Create a new event emitter with batching enabled
     #[must_use]
     pub fn with_batching(app_handle: AppHandle, _batch_size: usize, _interval_ms: u64) -> Self {
