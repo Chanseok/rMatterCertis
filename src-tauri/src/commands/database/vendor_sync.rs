@@ -1,12 +1,14 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tauri::State;
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 
 use crate::application::AppState;
 use crate::infrastructure::integrated_product_repository::{
     IntegratedProductRepository, UpsertOutcome,
 };
+use crate::infrastructure::simple_http_client::HttpClient;
+use sqlx::SqlitePool;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VendorSyncResult {
@@ -59,19 +61,15 @@ async fn fetch_csa_page(
     Ok(page)
 }
 
-#[tauri::command]
-pub async fn update_vendors_from_csa(
-    state: State<'_, AppState>,
-) -> Result<VendorSyncResult, String> {
-    // resources
-    let pool = state.get_database_pool().await?;
-    let http = state.get_http_client().await?;
-    let repo = IntegratedProductRepository::new(pool);
+/// Core vendor sync logic (usable internally & by Tauri command)
+pub async fn sync_vendors_internal(
+    pool: &SqlitePool,
+    http: &HttpClient,
+) -> anyhow::Result<VendorSyncResult> {
+    let repo = IntegratedProductRepository::new(pool.clone());
 
     // first page
-    let first = fetch_csa_page(&http, None)
-        .await
-        .map_err(|e| format!("CSA fetch failed: {}", e))?;
+    let first = fetch_csa_page(http, None).await?;
     let api_total: u32 = first.pagination.total.parse().unwrap_or(0);
     let local_count: u32 = repo
         .count_vendors()
@@ -79,10 +77,7 @@ pub async fn update_vendors_from_csa(
         .map(|c| u32::try_from(c).unwrap_or(u32::MAX))
         .unwrap_or(0);
 
-    info!(
-        "CSA vendors total={}, local_count={}",
-        api_total, local_count
-    );
+    info!("CSA vendors total={}, local_count={}", api_total, local_count);
 
     let mut inserted = 0u32;
     let mut updated = 0u32;
@@ -133,7 +128,7 @@ pub async fn update_vendors_from_csa(
                 warn!("Duplicate pagination key detected, breaking: {}", k);
                 break;
             }
-            let page = match fetch_csa_page(&http, Some(&k)).await {
+            let page = match fetch_csa_page(http, Some(&k)).await {
                 Ok(p) => p,
                 Err(e) => {
                     warn!("CSA fetch failed on next_key {}: {}", k, e);
@@ -183,4 +178,16 @@ pub async fn update_vendors_from_csa(
         pages,
         finished_at: Utc::now().to_rfc3339(),
     })
+}
+
+#[tauri::command]
+pub async fn update_vendors_from_csa(
+    state: State<'_, AppState>,
+) -> Result<VendorSyncResult, String> {
+    let pool = state.get_database_pool().await?;
+    let http = state.get_http_client().await?;
+    debug!("⚙️ Invoking vendor sync via Tauri command");
+    sync_vendors_internal(&pool, &http)
+        .await
+        .map_err(|e| format!("CSA vendor sync failed: {}", e))
 }

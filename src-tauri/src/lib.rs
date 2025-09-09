@@ -529,6 +529,250 @@ pub fn run() {
                 }
                 info!("✅ HTTP client initialized (shared)");
 
+                // 5. Auto-seed reference tables & vendors when empty (idempotent)
+                let skip_auto = std::env::var("MC_SKIP_AUTO_SEED")
+                    .ok()
+                    .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+                if skip_auto {
+                    info!("⏭️ Skipping auto-seed (MC_SKIP_AUTO_SEED=1)");
+                } else {
+                    let pool_res = state.get_database_pool().await;
+                    let http_res = state.get_http_client().await;
+                    if let (Ok(pool), Ok(http)) = (pool_res, http_res) {
+                        // Device Types (guard for table existence; migrations might not have added yet in some packaged edge cases)
+                        match sqlx::query_scalar::<_, i64>(
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='device_types'"
+                        ).fetch_one(&pool).await {
+                            Ok(master_flag) if master_flag > 0 => {
+                                                                                     // Defensive inline schema upgrade (in case migration 011/012 didn't run yet)
+                                                                if let Ok(col_present) = sqlx::query_scalar::<_, i64>(
+                                                                        "SELECT 1 FROM pragma_table_info('device_types') WHERE name='category' LIMIT 1;"
+                                                                ).fetch_optional(&pool).await {
+                                                                        if col_present.is_none() {
+                                                                                info!("🛠️ Upgrading device_types schema inline (add category,introduced_in; drop description)");
+                                                                                let upgrade_sql = r#"
+BEGIN TRANSACTION;
+CREATE TABLE IF NOT EXISTS device_types_new (
+    id INTEGER PRIMARY KEY,
+    code_hex TEXT,
+    name TEXT NOT NULL,
+    category TEXT,
+    introduced_in TEXT,
+     type_id INTEGER,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT OR IGNORE INTO device_types_new (id, code_hex, name, created_at, updated_at)
+    SELECT id, code_hex, name, created_at, updated_at FROM device_types;
+DROP TABLE device_types;
+ALTER TABLE device_types_new RENAME TO device_types;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_device_types_name ON device_types(name);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_device_types_code_hex ON device_types(code_hex);
+ CREATE UNIQUE INDEX IF NOT EXISTS ux_device_types_type_id ON device_types(type_id);
+CREATE TRIGGER IF NOT EXISTS device_types_updated_at
+AFTER UPDATE ON device_types
+FOR EACH ROW BEGIN
+    UPDATE device_types SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+COMMIT;"#;
+                                                                                if let Err(e) = sqlx::query(upgrade_sql).execute(&pool).await {
+                                                                                        warn!("Inline device_types schema upgrade failed: {}", e);
+                                                                                } else {
+                                                                                        info!("✅ Inline device_types schema upgrade applied");
+                                                                                                                     // Backfill type_id from legacy id if still NULL
+                                                                                                                     if let Err(e) = sqlx::query("UPDATE device_types SET type_id = id WHERE type_id IS NULL;").execute(&pool).await { warn!("Failed to backfill type_id inline: {}", e); }
+                                                                                }
+                                                                        }
+                                                                }
+                                          // Ensure type_id column exists (if added via migrations but index missing)
+                                          if let Ok(has_type_id) = sqlx::query_scalar::<_, i64>("SELECT 1 FROM pragma_table_info('device_types') WHERE name='type_id' LIMIT 1;").fetch_optional(&pool).await { if has_type_id.is_some() { let _ = sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS ux_device_types_type_id ON device_types(type_id);").execute(&pool).await; } }
+                                if let Ok(count) = sqlx::query_scalar::<_, i64>(
+                                    "SELECT COUNT(*) FROM device_types"
+                                ).fetch_one(&pool).await {
+                                    if count == 0 {
+                                        info!("📥 Seeding device_types from data/matter_device_types.json (empty table)");
+                                        // Try multiple fallback paths for robustness (dev, prod, packaged)
+                                        let dt_paths = [
+                                            "data/matter_device_types.json",
+                                            "./data/matter_device_types.json",
+                                            "../data/matter_device_types.json",
+                                        ];
+                                        let mut dt_json: Option<String> = None;
+                                        for p in dt_paths.iter() {
+                                            if let Ok(s) = tokio::fs::read_to_string(p).await { dt_json = Some(s); info!("📄 Loaded device_types JSON from {}", p); break; }
+                                        }
+                                        if dt_json.is_none() {
+                                            if let Ok(exec) = std::env::current_exe() { if let Some(parent) = exec.parent() { let alt = parent.join("data/matter_device_types.json"); if let Ok(s) = tokio::fs::read_to_string(&alt).await { dt_json = Some(s); info!("📄 Loaded device_types JSON from {:?}", alt); } } }
+                                        }
+                                        match dt_json.map(|j| serde_json::from_str::<serde_json::Value>(&j)) {
+                                            Some(Ok(serde_json::Value::Array(items))) => {
+                                                let mut inserted = 0u32;
+                                                let has_type_id: Option<i64> = sqlx::query_scalar("SELECT 1 FROM pragma_table_info('device_types') WHERE name='type_id' LIMIT 1;").fetch_optional(&pool).await.ok().flatten();
+                                                for item in items {
+                                                    if let (Some(id), Some(name)) = (item.get("id").and_then(|v| v.as_i64()), item.get("name").and_then(|v| v.as_str())) {
+                                                        let id_i64 = id; // satisfy lint: explicit binding
+                                                        let code_hex = item.get("hex").and_then(|v| v.as_str()).unwrap_or("");
+                                                        let category = item.get("category").and_then(|v| v.as_str()).unwrap_or("");
+                                                        let introduced_in = item.get("introduced_in").and_then(|v| v.as_str()).unwrap_or("");
+                                                        let query = if has_type_id.is_some() {
+                                                            r#"INSERT INTO device_types (type_id, code_hex, name, category, introduced_in) VALUES (?1, ?2, ?3, ?4, ?5)
+                                                                ON CONFLICT(type_id) DO UPDATE SET code_hex=excluded.code_hex, name=excluded.name, category=excluded.category, introduced_in=excluded.introduced_in"#
+                                                        } else {
+                                                            r#"INSERT INTO device_types (id, code_hex, name, category, introduced_in) VALUES (?1, ?2, ?3, ?4, ?5)
+                                                                ON CONFLICT(id) DO UPDATE SET code_hex=excluded.code_hex, name=excluded.name, category=excluded.category, introduced_in=excluded.introduced_in"#
+                                                        };
+                                                        let q = sqlx::query(query)
+                                                            .bind(id_i64)
+                                                            .bind(code_hex)
+                                                            .bind(name)
+                                                            .bind(category)
+                                                            .bind(introduced_in);
+                                                        if let Err(e) = q.execute(&pool).await {
+                                                            warn!("device_type upsert failed id={} name={} err={}", id, name, e);
+                                                        } else { inserted += 1; }
+                                                    }
+                                                }
+                                                info!("✅ Seeded {} device_types", inserted);
+                                            }
+                                            Some(Ok(_)) => warn!("device_types JSON root is not an array"),
+                                            Some(Err(e)) => warn!("Failed to parse device_types JSON: {}", e),
+                                            None => warn!("device_types JSON file not found in fallback paths"),
+                                        }
+                                        // Runtime backfill of product_primary_device_types (after device_types seeded)
+                                        if let Ok(has_ppt) = sqlx::query_scalar::<_, i64>("SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_primary_device_types' LIMIT 1;").fetch_optional(&pool).await { if has_ppt.is_some() {
+                                            if let Ok(ppt_count) = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM product_primary_device_types").fetch_one(&pool).await { if ppt_count == 0 { info!("🔄 Backfilling product_primary_device_types (post device_types seed)");
+                                                let backfill_sql = r#"INSERT OR IGNORE INTO product_primary_device_types (product_detail_id, device_type_id)
+SELECT pd.url, CAST(json_each.value AS INTEGER) AS device_type_id
+FROM product_details pd
+JOIN json_each(pd.primary_device_type_ids)
+JOIN device_types dt ON dt.type_id = CAST(json_each.value AS INTEGER)
+WHERE pd.primary_device_type_ids IS NOT NULL
+  AND json_valid(pd.primary_device_type_ids)
+  AND json_each.value GLOB '[0-9]*';"#;
+                                                match sqlx::query(backfill_sql).execute(&pool).await { Ok(res) => info!("✅ Backfill complete: inserted={}", res.rows_affected()), Err(e) => warn!("Backfill product_primary_device_types failed: {}", e)};
+                                            } } } }
+                                    }
+                                }
+                            }
+                            Ok(_) => {
+                                // Fallback: create table inline (defensive) then seed
+                                info!("🧩 device_types table missing; creating inline fallback then seeding");
+                                if let Err(e) = sqlx::query(
+                                    r#"CREATE TABLE IF NOT EXISTS device_types (
+                                        id INTEGER PRIMARY KEY,
+                                        code_hex TEXT,
+                                        name TEXT NOT NULL,
+                                        category TEXT,
+                                        introduced_in TEXT,
+                                        type_id INTEGER,
+                                        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                    );"#
+                                ).execute(&pool).await { warn!("Failed to create device_types inline: {}", e); }
+                                if let Err(e) = sqlx::query(
+                                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_device_types_name ON device_types(name);"
+                                ).execute(&pool).await { warn!("Failed to create ux_device_types_name: {}", e); }
+                                if let Err(e) = sqlx::query(
+                                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_device_types_code_hex ON device_types(code_hex);"
+                                ).execute(&pool).await { warn!("Failed to create ux_device_types_code_hex: {}", e); }
+                                if let Err(e) = sqlx::query(
+                                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_device_types_type_id ON device_types(type_id);"
+                                ).execute(&pool).await { warn!("Failed to create ux_device_types_type_id: {}", e); }
+                                if let Err(e) = sqlx::query(
+                                    r#"CREATE TRIGGER IF NOT EXISTS device_types_updated_at
+                                        AFTER UPDATE ON device_types
+                                        FOR EACH ROW BEGIN
+                                            UPDATE device_types SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+                                        END;"#
+                                ).execute(&pool).await { warn!("Failed to create device_types_updated_at trigger: {}", e); }
+                                // After creating, attempt seeding (recursive style via master_flag path)
+                                if let Ok(count) = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM device_types").fetch_one(&pool).await {
+                                    if count == 0 {
+                                        info!("📥 Seeding device_types from data/matter_device_types.json (post-inline creation)");
+                                        // Fallback seeding using same multi-path logic (post-inline creation)
+                                        let dt_paths = [
+                                            "data/matter_device_types.json",
+                                            "./data/matter_device_types.json",
+                                            "../data/matter_device_types.json",
+                                        ];
+                                        let mut dt_json: Option<String> = None;
+                                        for p in dt_paths.iter() {
+                                            if let Ok(s) = tokio::fs::read_to_string(p).await { dt_json = Some(s); info!("📄 Loaded device_types JSON from {}", p); break; }
+                                        }
+                                        if dt_json.is_none() {
+                                            if let Ok(exec) = std::env::current_exe() { if let Some(parent) = exec.parent() { let alt = parent.join("data/matter_device_types.json"); if let Ok(s) = tokio::fs::read_to_string(&alt).await { dt_json = Some(s); info!("📄 Loaded device_types JSON from {:?}", alt); } } }
+                                        }
+                                        match dt_json.map(|j| serde_json::from_str::<serde_json::Value>(&j)) {
+                                            Some(Ok(serde_json::Value::Array(items))) => {
+                                                let mut inserted = 0u32;
+                                                let has_type_id: Option<i64> = sqlx::query_scalar("SELECT 1 FROM pragma_table_info('device_types') WHERE name='type_id' LIMIT 1;").fetch_optional(&pool).await.ok().flatten();
+                                                for item in items {
+                                                    if let (Some(id), Some(name)) = (item.get("id").and_then(|v| v.as_i64()), item.get("name").and_then(|v| v.as_str())) {
+                                                        let id_i64 = id;
+                                                        let code_hex = item.get("hex").and_then(|v| v.as_str()).unwrap_or("");
+                                                        let category = item.get("category").and_then(|v| v.as_str()).unwrap_or("");
+                                                        let introduced_in = item.get("introduced_in").and_then(|v| v.as_str()).unwrap_or("");
+                                                        let query = if has_type_id.is_some() {
+                                                            r#"INSERT INTO device_types (type_id, code_hex, name, category, introduced_in) VALUES (?1, ?2, ?3, ?4, ?5)
+                                                                ON CONFLICT(type_id) DO UPDATE SET code_hex=excluded.code_hex, name=excluded.name, category=excluded.category, introduced_in=excluded.introduced_in"#
+                                                        } else {
+                                                            r#"INSERT INTO device_types (id, code_hex, name, category, introduced_in) VALUES (?1, ?2, ?3, ?4, ?5)
+                                                                ON CONFLICT(id) DO UPDATE SET code_hex=excluded.code_hex, name=excluded.name, category=excluded.category, introduced_in=excluded.introduced_in"#
+                                                        };
+                                                        let q = sqlx::query(query)
+                                                            .bind(id_i64)
+                                                            .bind(code_hex)
+                                                            .bind(name)
+                                                            .bind(category)
+                                                            .bind(introduced_in);
+                                                        if let Err(e) = q.execute(&pool).await {
+                                                            warn!("device_type upsert failed id={} name={} err={}", id, name, e);
+                                                        } else { inserted += 1; }
+                                                    }
+                                                }
+                                                info!("✅ Seeded {} device_types", inserted);
+                                            }
+                                            Some(Ok(_)) => warn!("device_types JSON root is not an array"),
+                                            Some(Err(e)) => warn!("Failed to parse device_types JSON: {}", e),
+                                            None => warn!("device_types JSON file not found in fallback paths"),
+                                        }
+                                                                                // Runtime backfill after inline creation + seeding
+                                                                                if let Ok(has_ppt) = sqlx::query_scalar::<_, i64>("SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_primary_device_types' LIMIT 1;").fetch_optional(&pool).await { if has_ppt.is_some() { if let Ok(ppt_count) = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM product_primary_device_types").fetch_one(&pool).await { if ppt_count == 0 { info!("🔄 Backfilling product_primary_device_types (post inline seed)");
+                                                                                                let backfill_sql = r#"INSERT OR IGNORE INTO product_primary_device_types (product_detail_id, device_type_id)
+SELECT pd.url, CAST(json_each.value AS INTEGER) AS device_type_id
+FROM product_details pd
+JOIN json_each(pd.primary_device_type_ids)
+JOIN device_types dt ON dt.type_id = CAST(json_each.value AS INTEGER)
+WHERE pd.primary_device_type_ids IS NOT NULL
+    AND json_valid(pd.primary_device_type_ids)
+    AND json_each.value GLOB '[0-9]*';"#;
+                                                                                                match sqlx::query(backfill_sql).execute(&pool).await { Ok(res) => info!("✅ Backfill complete: inserted={}", res.rows_affected()), Err(e) => warn!("Backfill product_primary_device_types failed: {}", e)}; } } } }
+                                    }
+                                }
+                            },
+                            Err(e) => warn!("device_types existence check failed: {}", e),
+                        };
+
+                        // Vendors (only if empty)
+                        if let Ok(vendor_count) = sqlx::query_scalar::<_, i64>(
+                            "SELECT COUNT(*) FROM vendors"
+                        )
+                        .fetch_one(&pool)
+                        .await
+                        {
+                            if vendor_count == 0 {
+                                info!("📥 Auto-syncing vendors from CSA (empty vendors table)");
+                                match crate::commands::database::vendor_sync::sync_vendors_internal(&pool, &http).await {
+                                    Ok(res) => info!("✅ Vendors sync complete: inserted={} updated={} skipped={} final={}", res.inserted, res.updated, res.skipped, res.final_count),
+                                    Err(e) => warn!("Vendor auto-sync failed: {}", e),
+                                }
+                            }
+                        }
+                    } else {
+                        warn!("Skipping auto-seed: pool or http client not available");
+                    }
+                }
+
                 // 4. Start system state broadcaster (10s intervals)
                 info!("� Starting system state broadcaster...");
                 crate::infrastructure::system_broadcaster::start_system_broadcaster(

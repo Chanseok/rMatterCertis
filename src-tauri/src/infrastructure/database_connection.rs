@@ -362,6 +362,109 @@ impl DatabaseConnection {
             }
         }
 
+        // Apply 010_device_types.sql if device_types table missing
+        let has_device_types: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='device_types' LIMIT 1;",
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+        if has_device_types.is_none() {
+            if concise {
+                debug!("🧩 Applying migration 010_device_types.sql (device_types reference table)");
+            } else {
+                info!("🧩 Applying migration 010_device_types.sql (device_types reference table)");
+            }
+            let migration_path = std::path::Path::new("migrations/010_device_types.sql");
+            if migration_path.exists() {
+                let migration_sql = std::fs::read_to_string(migration_path)?;
+                sqlx::query(&migration_sql).execute(&self.pool).await?;
+            } else {
+                let migration_sql = include_str!("../../migrations/010_device_types.sql");
+                sqlx::query(migration_sql).execute(&self.pool).await?;
+            }
+            if concise {
+                debug!("✅ Migration 010 applied");
+            } else {
+                info!("✅ Migration 010 applied");
+            }
+        } else if !concise {
+            debug!("ℹ️ Migration 010 not needed (device_types table exists)");
+        }
+
+        // Apply 011_device_types_add_category_introduced_in.sql if category column missing
+        let has_category_col: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM pragma_table_info('device_types') WHERE name='category' LIMIT 1;",
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+        if has_device_types.is_some() && has_category_col.is_none() {
+            if concise { debug!("🧩 Applying migration 011_device_types_add_category_introduced_in.sql"); } else { info!("🧩 Applying migration 011_device_types_add_category_introduced_in.sql"); }
+            let migration_path = std::path::Path::new("migrations/011_device_types_add_category_introduced_in.sql");
+            if migration_path.exists() {
+                let migration_sql = std::fs::read_to_string(migration_path)?;
+                sqlx::query(&migration_sql).execute(&self.pool).await?;
+            } else {
+                let migration_sql = include_str!("../../migrations/011_device_types_add_category_introduced_in.sql");
+                sqlx::query(migration_sql).execute(&self.pool).await?;
+            }
+            if concise { debug!("✅ Migration 011 applied"); } else { info!("✅ Migration 011 applied"); }
+        } else if has_device_types.is_some() && has_category_col.is_some() && !concise {
+            debug!("ℹ️ Migration 011 not needed (category column present)");
+        }
+
+        // Apply 012_device_types_add_type_id.sql if type_id column missing
+        let has_type_id_col: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM pragma_table_info('device_types') WHERE name='type_id' LIMIT 1;",
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+        if has_device_types.is_some() && has_type_id_col.is_none() {
+            if concise { debug!("🧩 Applying migration 012_device_types_add_type_id.sql"); } else { info!("🧩 Applying migration 012_device_types_add_type_id.sql"); }
+            let migration_path = std::path::Path::new("migrations/012_device_types_add_type_id.sql");
+            if migration_path.exists() {
+                let migration_sql = std::fs::read_to_string(migration_path)?;
+                sqlx::query(&migration_sql).execute(&self.pool).await?;
+            } else {
+                let migration_sql = include_str!("../../migrations/012_device_types_add_type_id.sql");
+                sqlx::query(migration_sql).execute(&self.pool).await?;
+            }
+            if concise { debug!("✅ Migration 012 applied"); } else { info!("✅ Migration 012 applied"); }
+        } else if has_device_types.is_some() && has_type_id_col.is_some() && !concise {
+            debug!("ℹ️ Migration 012 not needed (type_id column present)");
+        }
+
+        // Apply 013_product_primary_device_types_and_analytics_view.sql
+        // Guard: run if bridge table missing OR analytics view missing
+        let has_ppt: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_primary_device_types' LIMIT 1;",
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+        let has_view: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM sqlite_master WHERE type='view' AND name='v_product_detail_analytics' LIMIT 1;",
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+        if has_ppt.is_none() || has_view.is_none() {
+            if concise { debug!("🧩 Applying migration 013_product_primary_device_types_and_analytics_view.sql"); } else { info!("🧩 Applying migration 013_product_primary_device_types_and_analytics_view.sql"); }
+            let migration_path = std::path::Path::new("migrations/013_product_primary_device_types_and_analytics_view.sql");
+            if migration_path.exists() {
+                let migration_sql = std::fs::read_to_string(migration_path)?;
+                sqlx::query(&migration_sql).execute(&self.pool).await?;
+            } else {
+                let migration_sql = include_str!("../../migrations/013_product_primary_device_types_and_analytics_view.sql");
+                sqlx::query(migration_sql).execute(&self.pool).await?;
+            }
+            if concise { debug!("✅ Migration 013 applied"); } else { info!("✅ Migration 013 applied"); }
+        } else if !concise {
+            debug!("ℹ️ Migration 013 not needed (bridge + view present)");
+        }
+
         // Report on database status
         let product_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products")
             .fetch_one(&self.pool)
