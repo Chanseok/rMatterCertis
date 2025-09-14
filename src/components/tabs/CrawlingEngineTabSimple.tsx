@@ -316,13 +316,24 @@ export default function CrawlingEngineTabSimple() {
   // Stage 5: Persist (grouped snapshot)
   const [persistStats, setPersistStats] = createSignal<{
     attempted: number;
-    succeeded: number;
-    failed: number; // backend-reported (may include duplicates/unchanged)
+    inserted: number;
+    updated: number;
+    succeeded: number; // derived = inserted + updated
+    failed: number; // derived = attempted - succeeded
     duplicates: number;
     unchanged: number; // derived on FE: attempted - (succeeded + duplicates)
     failedTrue: number; // derived on FE: failed - duplicates - unchanged
     durationMs: number;
-  }>({ attempted: 0, succeeded: 0, failed: 0, duplicates: 0, unchanged: 0, failedTrue: 0, durationMs: 0 });
+    statusCounts: {
+      insertedOnly: number;
+      updatedOnly: number;
+      mixed: number;
+      allDuplicate: number;
+      noop: number;
+      failed: number;
+      empty: number;
+    };
+  }>({ attempted: 0, inserted: 0, updated: 0, succeeded: 0, failed: 0, duplicates: 0, unchanged: 0, failedTrue: 0, durationMs: 0, statusCounts: { insertedOnly: 0, updatedOnly: 0, mixed: 0, allDuplicate: 0, noop: 0, failed: 0, empty: 0 } });
   // Stage 4: DB snapshot animation toggle
   const [dbFlash, setDbFlash] = createSignal(false);
   // Preflight diagnostics (site totals) to improve expected counts
@@ -627,12 +638,15 @@ export default function CrawlingEngineTabSimple() {
           setDbSnapshot({});
           setPersistStats({
             attempted: 0,
+            inserted: 0,
+            updated: 0,
             succeeded: 0,
             failed: 0,
             duplicates: 0,
             unchanged: 0,
             failedTrue: 0,
             durationMs: 0,
+            statusCounts: { insertedOnly: 0, updatedOnly: 0, mixed: 0, allDuplicate: 0, noop: 0, failed: 0, empty: 0 },
           });
         }
         if (name === "actor-session-completed") {
@@ -745,6 +759,96 @@ export default function CrawlingEngineTabSimple() {
         }
         if (name === "actor-batch-completed") {
           // Keep current count; nothing to do for now.
+        }
+        // === Fine-grained StageItem events (new) for real-time Stage 1/2 responsiveness ===
+        if (name === "actor-stage-item-started" || name === "actor-stage-item-completed") {
+          try {
+            const stageTypeRaw = (payload as any)?.stage_type;
+            const stageStr = typeof stageTypeRaw === 'string'
+              ? stageTypeRaw.toLowerCase()
+              : stageTypeRaw && typeof stageTypeRaw === 'object'
+              ? (Object.keys(stageTypeRaw)[0] || '').toLowerCase()
+              : '';
+            const isList = stageStr.includes('list_page');
+            const isDetail = stageStr.includes('product_detail');
+            if (!isList && !isDetail) {
+              // Only track Stage 1 & 2
+              // (Validation & Persistence already have separate handlers)
+              // Skip to avoid noise.
+              // console.debug('[StageItem] Ignoring non list/detail item', stageStr);
+            } else {
+              // Extract item type structure - handle multiple possible serde shapes.
+              const it = (payload as any)?.item_type || (payload as any)?.itemType;
+              let pageNumber: number | undefined;
+              if (it) {
+                try {
+                  // Shape A: { Page: { page_number: 123 } }
+                  if (typeof it === 'object' && !Array.isArray(it) && it.Page) {
+                    pageNumber = Number(it.Page.page_number ?? it.Page.pageNumber);
+                  }
+                  // Shape B: direct camelCase: { type: 'Page', page_number: 123 }
+                  const typeStr = String(it.type || it.item_type || '').toLowerCase();
+                  if (typeStr === 'page') {
+                    pageNumber = Number(it.page_number ?? it.pageNumber ?? pageNumber);
+                  }
+                  // Shape C: flatten: { page_number: 123 }
+                  if (pageNumber == null && (it.page_number != null || it.pageNumber != null)) {
+                    pageNumber = Number(it.page_number ?? it.pageNumber);
+                  }
+                } catch {}
+              }
+              // Started event
+              if (name === 'actor-stage-item-started') {
+                if (isList && pageNumber != null && Number.isFinite(pageNumber)) {
+                  if (!pageSeen.has(pageNumber)) {
+                    pageSeen.add(pageNumber);
+                    setPageStats((prev) => {
+                      const started = pageSeen.size;
+                      const inflight = Math.max(0, started - (prev.completed + prev.failed));
+                      return { ...prev, started, inflight };
+                    });
+                    if (effectsOn()) triggerStage1Pulse();
+                  }
+                } else if (isDetail) {
+                  // We do not have stable unique product IDs yet; increment started optimistically.
+                  setDetailStats((prev) => {
+                    const started = (prev.started || 0) + 1;
+                    const inflight = Math.max(0, started - (prev.completed + prev.failed));
+                    return { ...prev, started, inflight };
+                  });
+                  if (effectsOn()) triggerStage2Pulse();
+                }
+              } else if (name === 'actor-stage-item-completed') {
+                const success = !!(payload as any)?.success;
+                if (isList && pageNumber != null && Number.isFinite(pageNumber)) {
+                  if (!pageSeen.has(pageNumber)) pageSeen.add(pageNumber);
+                  if (success) {
+                    if (!pageCompleted.has(pageNumber)) pageCompleted.add(pageNumber);
+                  } else {
+                    pageFailedFinal.add(pageNumber);
+                  }
+                  setPageStats((prev) => {
+                    const started = pageSeen.size;
+                    const completed = pageCompleted.size;
+                    const failed = pageFailedFinal.size;
+                    const inflight = Math.max(0, started - (completed + failed));
+                    return { ...prev, started, completed, failed, inflight };
+                  });
+                  if (effectsOn()) triggerStage1Pulse();
+                } else if (isDetail) {
+                  setDetailStats((prev) => {
+                    const completed = (prev.completed || 0) + (success ? 1 : 0);
+                    const failed = (prev.failed || 0) + (success ? 0 : 1);
+                    const inflight = Math.max(0, (prev.started) - (completed + failed));
+                    return { ...prev, completed, failed, inflight };
+                  });
+                  if (effectsOn()) triggerStage2Pulse();
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('[CrawlingEngineTabSimple] stage-item event handling failed', e);
+          }
         }
   // Stage 1 (list page) via consolidated 'actor-page-lifecycle' events
   // Map lifecycle to Stage 1 counters so the UI remains responsive.
@@ -1032,6 +1136,8 @@ export default function CrawlingEngineTabSimple() {
             setPersistStats((prev) => ({
               ...prev,
               attempted: insertedFromBatch + updatedFromBatch,
+              inserted: insertedFromBatch,
+              updated: updatedFromBatch,
               succeeded: insertedFromBatch + updatedFromBatch,
               failed: 0,
               duplicates: 0,
@@ -1067,28 +1173,49 @@ export default function CrawlingEngineTabSimple() {
           const failed = Number(payload?.failed ?? 0) || 0;
           const duplicates = Number(payload?.duplicates ?? 0) || 0;
           const unchanged = Math.max(0, attempted - (succeeded + duplicates));
-          const failedTrue = Math.max(0, failed - duplicates - unchanged);
           const durationMs = Number(payload?.duration_ms ?? 0) || 0;
-
-          // Accumulate over the session so multiple persist groups sum up
-          setPersistStats((prev) => ({
-            attempted: (prev.attempted || 0) + attempted,
-            succeeded: (prev.succeeded || 0) + succeeded,
-            failed: (prev.failed || 0) + failed,
-            duplicates: (prev.duplicates || 0) + duplicates,
-            unchanged: (prev.unchanged || 0) + unchanged,
-            failedTrue: (prev.failedTrue || 0) + failedTrue,
-            durationMs: (prev.durationMs || 0) + durationMs,
-          }));
+          // failedTrue now derived after inserted/updated accumulation; keep computation for clarity if needed.
+          // Accumulate over the session without double-counting inserted/updated (handled in persist_result parse)
+          setPersistStats((prev) => {
+            const attemptedTotal = prev.attempted + attempted;
+            const duplicatesTotal = prev.duplicates + duplicates;
+            const unchangedTotal = prev.unchanged + unchanged;
+            const insertedTotal = prev.inserted; // rely on persist_result for actual values
+            const updatedTotal = prev.updated;
+            const succeededTotal = insertedTotal + updatedTotal;
+            const failedTrueTotal = Math.max(0, attemptedTotal - succeededTotal - duplicatesTotal - unchangedTotal);
+            const failedTotal = attemptedTotal - succeededTotal; // includes duplicates+unchanged+failedTrue
+            console.info('[Stage5][Group] agg before persist_result', {
+              attemptedTotal,
+              insertedTotal,
+              updatedTotal,
+              duplicatesTotal,
+              unchangedTotal,
+              succeededTotal,
+              failedTrueTotal,
+            });
+            return {
+              ...prev,
+              attempted: attemptedTotal,
+              duplicates: duplicatesTotal,
+              unchanged: unchangedTotal,
+              inserted: insertedTotal,
+              updated: updatedTotal,
+              succeeded: succeededTotal,
+              failedTrue: failedTrueTotal,
+              failed: failedTotal,
+              durationMs: prev.durationMs + durationMs,
+            };
+          });
 
           // Snapshot the most recent batch
           setPersistLastBatch({
             attempted,
             succeeded,
-            failed,
+            failed, // raw failed from backend (includes duplicates+unchanged)
             duplicates,
             unchanged,
-            failedTrue,
+            failedTrue: Math.max(0, failed - duplicates - unchanged),
             durationMs,
           });
 
@@ -1109,12 +1236,15 @@ export default function CrawlingEngineTabSimple() {
           console.log("[DEBUG] ProductLifecycle persist_empty event received:", payload);
           setPersistStats({
             attempted: 0,
+            inserted: 0,
+            updated: 0,
             succeeded: 0,
             failed: 0,
             duplicates: 0,
             unchanged: 0,
             failedTrue: 0,
             durationMs: 0,
+            statusCounts: { insertedOnly: 0, updatedOnly: 0, mixed: 0, allDuplicate: 0, noop: 0, failed: 0, empty: 1 },
           });
           
           if (effectsOn()) {
@@ -1162,11 +1292,54 @@ export default function CrawlingEngineTabSimple() {
               const updated = parts.updated ?? 0;
               const duplicates = parts.duplicates ?? 0;
               const unchanged = parts.unchanged ?? Math.max(0, attempted - (inserted + updated + duplicates));
-              const succeeded = inserted + updated;
-              const failed = Math.max(0, attempted - succeeded);
-              const failedTrue = Math.max(0, failed - duplicates - unchanged);
               const durationMs = Number(payload?.duration_ms ?? 0) || 0;
-              setPersistStats({ attempted, succeeded, failed, duplicates, unchanged, failedTrue, durationMs });
+              console.info('[Stage5][PersistResult] raw parsed', { attempted, inserted, updated, duplicates, unchanged, durationMs, status: payload?.status });
+              setPersistStats((prev) => {
+                const inserted = parts.inserted ?? 0;
+                const updated = parts.updated ?? 0;
+                const newInserted = (prev.inserted || 0) + inserted;
+                const newUpdated = (prev.updated || 0) + updated;
+                const attemptedTotal = (prev.attempted || 0) + attempted;
+                const duplicatesTotal = (prev.duplicates || 0) + duplicates;
+                const unchangedTotal = (prev.unchanged || 0) + unchanged;
+                const succeededTotal = newInserted + newUpdated;
+                const failedTrueTotal = Math.max(0, attemptedTotal - succeededTotal - duplicatesTotal - unchangedTotal);
+                const failedTotal = attemptedTotal - succeededTotal;
+                // Status counting
+                const status = String(payload?.status || '');
+                const sc = { ...prev.statusCounts };
+                if (status === 'persist_inserted') sc.insertedOnly += 1;
+                else if (status === 'persist_updated') sc.updatedOnly += 1;
+                else if (status === 'persist_mixed') sc.mixed += 1;
+                else if (status === 'persist_noop_all_duplicate') sc.allDuplicate += 1;
+                else if (status === 'persist_noop') sc.noop += 1;
+                else if (status === 'persist_failed') sc.failed += 1;
+                console.info('[Stage5][PersistResult] agg update', {
+                  attemptedTotal,
+                  newInserted,
+                  newUpdated,
+                  duplicatesTotal,
+                  unchangedTotal,
+                  succeededTotal,
+                  failedTrueTotal,
+                  failedTotal,
+                  status,
+                  statusCounts: sc,
+                });
+                return {
+                  ...prev,
+                  attempted: attemptedTotal,
+                  inserted: newInserted,
+                  updated: newUpdated,
+                  succeeded: succeededTotal,
+                  failed: failedTotal,
+                  duplicates: duplicatesTotal,
+                  unchanged: unchangedTotal,
+                  failedTrue: failedTrueTotal,
+                  durationMs: (prev.durationMs || 0) + durationMs,
+                  statusCounts: sc,
+                };
+              });
               if (effectsOn()) {
                 setPersistFlash(true);
                 setTimeout(() => setPersistFlash(false), 500);
@@ -1191,6 +1364,63 @@ export default function CrawlingEngineTabSimple() {
     onCleanup(() => {
       unsubs.forEach((u) => u());
     });
+
+    // === New: Direct actor app-event listener for Stage 4/5 (DatabaseStats & DataSaving) ===
+    try {
+      listen("app-event", (evt) => {
+        const ev: any = evt.payload;
+        if (!ev || typeof ev !== "object" || !ev.type) return;
+        switch (ev.type) {
+          case "DatabaseStats": {
+            // Normalize to existing state shape (dbSnapshot currently had optional keys)
+            setDbSnapshot({
+              total: ev.total_product_details,
+              minPage: ev.min_page ?? null,
+              maxPage: ev.max_page ?? null,
+              inserted: ev.inserted, // may be undefined
+              updated: ev.updated,
+            });
+            setDbFlash(true);
+            setTimeout(() => setDbFlash(false), 300);
+            break;
+          }
+          case "StageStarted": {
+            if (ev.stage_type === "data_validation") {
+              setValidationStats((s) => ({ ...s, started: true }));
+            }
+            if (ev.stage_type === "data_saving") {
+              setPersistFlash(true);
+              setTimeout(() => setPersistFlash(false), 250);
+            }
+            break;
+          }
+          case "StageCompleted": {
+            if (ev.stage_type === "data_validation") {
+              setValidationStats((s) => ({ ...s, completed: true }));
+            }
+            if (ev.stage_type === "data_saving") {
+              const r: any = ev.result || {};
+              const attempted = Number(r.processed_items || 0);
+              const failedRaw = Number(r.failed_items || 0);
+              setPersistStats((prev) => {
+                const inserted = prev.inserted; // keep previously parsed totals
+                const updated = prev.updated;
+                const succeededTotal = inserted + updated;
+                return {
+                  ...prev,
+                  attempted: Math.max(prev.attempted, attempted),
+                  failed: Math.max(prev.failed, failedRaw),
+                  succeeded: succeededTotal,
+                };
+              });
+            }
+            break;
+          }
+        }
+      }).then((un) => unsubs.push(un));
+    } catch (e) {
+      console.warn("[CrawlingEngineTabSimple] failed to attach app-event listener", e);
+    }
   });
 
   return (
@@ -2303,6 +2533,7 @@ export default function CrawlingEngineTabSimple() {
               </h3>
               <span class="text-xs text-gray-500">그룹 이벤트</span>
             </div>
+            {/* Primary aggregate row */}
             <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-center">
               <div class="bg-blue-50 rounded p-2">
                 <div class="text-xl font-bold text-blue-600">
@@ -2353,6 +2584,70 @@ export default function CrawlingEngineTabSimple() {
                   )}
                 </div>
                 <div class="text-xs text-gray-600">미변경</div>
+              </div>
+            </div>
+            {/* Inserted/Updated split */}
+            <div class="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
+              <div class="bg-green-50 rounded p-2">
+                <div class="text-lg font-bold text-green-600">
+                  {effectsOn() ? <CountUp value={persistStats().inserted} /> : persistStats().inserted}
+                </div>
+                <div class="text-[11px] text-gray-600">삽입(inserted)</div>
+              </div>
+              <div class="bg-indigo-50 rounded p-2">
+                <div class="text-lg font-bold text-indigo-600">
+                  {effectsOn() ? <CountUp value={persistStats().updated} /> : persistStats().updated}
+                </div>
+                <div class="text-[11px] text-gray-600">업데이트(updated)</div>
+              </div>
+              <div class="bg-fuchsia-50 rounded p-2">
+                <div class="text-lg font-bold text-fuchsia-600">
+                  {effectsOn() ? <CountUp value={persistStats().inserted + persistStats().updated} /> : (persistStats().inserted + persistStats().updated)}
+                </div>
+                <div class="text-[11px] text-gray-600">성공 합계</div>
+              </div>
+              <div class="bg-gray-50 rounded p-2">
+                <div class="text-lg font-bold text-gray-700">
+                  {(() => {
+                    const p = persistStats();
+                    return p.attempted > 0 ? ((p.succeeded / Math.max(1, p.attempted)) * 100).toFixed(1) + '%' : '-';
+                  })()}
+                </div>
+                <div class="text-[11px] text-gray-600">성공률</div>
+              </div>
+            </div>
+            {/* Status classification breakdown */}
+            <div class="mt-4">
+              <div class="text-xs font-medium text-gray-700 mb-1">결과 유형 빈도 (배치 기준)</div>
+              <div class="grid grid-cols-2 md:grid-cols-7 gap-2 text-center text-[11px]">
+                <div class="bg-green-50 rounded p-2">
+                  <div class="font-semibold text-green-600">{persistStats().statusCounts.insertedOnly}</div>
+                  <div class="text-gray-600">삽입전용</div>
+                </div>
+                <div class="bg-indigo-50 rounded p-2">
+                  <div class="font-semibold text-indigo-600">{persistStats().statusCounts.updatedOnly}</div>
+                  <div class="text-gray-600">업데이트전용</div>
+                </div>
+                <div class="bg-fuchsia-50 rounded p-2">
+                  <div class="font-semibold text-fuchsia-600">{persistStats().statusCounts.mixed}</div>
+                  <div class="text-gray-600">혼합</div>
+                </div>
+                <div class="bg-amber-50 rounded p-2">
+                  <div class="font-semibold text-amber-600">{persistStats().statusCounts.allDuplicate}</div>
+                  <div class="text-gray-600">전부중복</div>
+                </div>
+                <div class="bg-slate-50 rounded p-2">
+                  <div class="font-semibold text-slate-600">{persistStats().statusCounts.noop}</div>
+                  <div class="text-gray-600">무변경</div>
+                </div>
+                <div class="bg-rose-50 rounded p-2">
+                  <div class="font-semibold text-rose-600">{persistStats().statusCounts.failed}</div>
+                  <div class="text-gray-600">실패</div>
+                </div>
+                <div class="bg-gray-100 rounded p-2">
+                  <div class="font-semibold text-gray-700">{persistStats().statusCounts.empty}</div>
+                  <div class="text-gray-600">빈배치</div>
+                </div>
               </div>
             </div>
             <div class="mt-2 text-xs text-gray-500">

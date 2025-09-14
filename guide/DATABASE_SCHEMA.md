@@ -35,7 +35,7 @@ CREATE TABLE product_details (
     certificate_id TEXT,                   -- 인증서 ID
     
     -- 인증 상세 정보
-    certification_date TEXT,               -- 인증 날짜
+    certification_date DATE,               -- 인증 날짜 (DATE affinity, stored as ISO8601)
     software_version TEXT,                 -- 소프트웨어 버전
     hardware_version TEXT,                 -- 하드웨어 버전
     firmware_version TEXT,                 -- 펌웨어 버전

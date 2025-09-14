@@ -110,10 +110,18 @@ export const LocalDBTab: Component = () => {
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 space-y-4">
           <div class="flex items-center justify-between">
             <h3 class="text-lg font-semibold text-gray-800">Analytics</h3>
-            <div class="flex gap-2">
+            <div class="flex gap-2 items-center">
               <input class="px-3 py-1.5 border rounded text-sm" placeholder="필터 DSL (예: vendor:Philips date>=2024-01-01)" value={analytics.filterDraft} onInput={e => localDbDashboardStore.setAnalytics({ ...analytics, filterDraft: e.currentTarget.value })} />
               <button class="px-3 py-1.5 rounded bg-indigo-600 text-white text-sm" onClick={() => localDbDashboardStore.applyFilter()} disabled={analytics.loading}>적용</button>
               <button class="px-3 py-1.5 rounded bg-gray-200 text-gray-700 text-sm" onClick={() => localDbDashboardStore.resetFilter()} disabled={analytics.loading || (!analytics.filterApplied && !analytics.filterDraft)}>초기화</button>
+              <button class="px-3 py-1.5 rounded bg-amber-600 text-white text-sm" onClick={async () => {
+                try {
+                  const res = await tauriApi.diagnosticsAnalyticsMapping();
+                  localDbDashboardStore.setUi({ ...localDbDashboardStore.ui, analyticsDiagnostics: res });
+                } catch (e) {
+                  alert('Diag 실패: '+ e);
+                }
+              }}>Diag</button>
             </div>
           </div>
           <Show when={analytics.filterApplied || analytics.filterError}>
@@ -126,13 +134,60 @@ export const LocalDBTab: Component = () => {
             <table class="w-full text-xs">
               <thead class="bg-gray-50 sticky top-0">
                 <tr>
-                  <th class="p-2 text-left">URL</th>
-                  <th class="p-2 text-left">Model</th>
-                  <th class="p-2 text-left">Vendor</th>
-                  <th class="p-2 text-left">Device Type</th>
-                  <th class="p-2 text-left">Category</th>
-                  <th class="p-2 text-left">Cert Date</th>
-                  <th class="p-2 text-left">Created</th>
+                  {(() => {
+                    const cols: { key: string; label: string }[] = [
+                      { key: 'device_category', label: 'Category' },
+                      { key: 'device_type_name', label: 'Device Type' },
+                      { key: 'model', label: 'Model' },
+                      { key: 'vendor_name', label: 'Vendor' },
+                      { key: 'certification_date', label: 'Cert Date' },
+                      { key: 'transport_interface', label: 'Transport IF' },
+                      { key: 'detail_created_at', label: 'Created' },
+                    ];
+                    const current = analytics.sort; // e.g. ['model:asc']
+                    function cycle(col: string, multi: boolean) {
+                      let order = [...current];
+                      const idx = order.findIndex(o => o.startsWith(col + ':'));
+                      const nextState = (prev?: string): string[] => {
+                        // tri-state: none -> asc -> desc -> none
+                        if (!prev) return [`${col}:asc`];
+                        if (prev.endsWith(':asc')) return [`${col}:desc`];
+                        return []; // remove
+                      };
+                      let replacement: string[] = [];
+                      if (idx >= 0) {
+                        replacement = nextState(order[idx]);
+                        order.splice(idx, 1); // remove old
+                      } else {
+                        replacement = nextState(undefined);
+                      }
+                      if (replacement.length) {
+                        if (!multi) order = []; // single sort if not multi
+                        order.push(replacement[0]);
+                      }
+                      localDbDashboardStore.updateSort(order);
+                      localDbDashboardStore.loadAnalytics(0);
+                    }
+                    function indicator(col: string) {
+                      const idx = current.findIndex(o => o.startsWith(col + ':'));
+                      if (idx < 0) return '';
+                      const dir = current[idx].split(':')[1];
+                      const n = idx + 1;
+                      return dir === 'asc' ? `▲${current.length>1? n:''}` : `▼${current.length>1? n:''}`;
+                    }
+                    return (
+                      <>
+                        {cols.map(c => (
+                          <th class="p-2 text-left select-none cursor-pointer group" onClick={e => cycle(c.key, e.shiftKey)} title="Click: sort / Shift+Click: multi-sort">
+                            <span class="inline-flex items-center gap-1">
+                              <span>{c.label}</span>
+                              <span class="text-[9px] text-indigo-600 group-hover:opacity-100 opacity-70">{indicator(c.key)}</span>
+                            </span>
+                          </th>
+                        ))}
+                      </>
+                    );
+                  })()}
                 </tr>
               </thead>
               <tbody>
@@ -141,13 +196,20 @@ export const LocalDBTab: Component = () => {
                 </Show>
                 <For each={analytics.rows}>{r => (
                   <tr class="border-t border-gray-100">
-                    <td class="p-2 max-w-[180px] truncate" title={r.product_detail_url}>{r.product_detail_url}</td>
-                    <td class="p-2">{r.model}</td>
-                    <td class="p-2">{r.vendor_name}</td>
-                    <td class="p-2">{r.device_type_name}</td>
-                    <td class="p-2">{r.device_category}</td>
-                    <td class="p-2">{r.certification_date}</td>
-                    <td class="p-2">{r.detail_created_at}</td>
+                    <td class="p-2 whitespace-nowrap">{r.device_category}</td>
+                    <td class="p-2 whitespace-nowrap" title={r.device_type_name}>{r.device_type_name}</td>
+                    <td class="p-2 max-w-[220px] truncate" title={r.model || r.product_detail_url}>
+                      <a
+                        href={r.product_detail_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="text-indigo-600 hover:underline"
+                      >{r.model || '(no model)'}</a>
+                    </td>
+                    <td class="p-2 whitespace-nowrap" title={r.vendor_name}>{r.vendor_name}</td>
+                    <td class="p-2 whitespace-nowrap">{r.certification_date}</td>
+                    <td class="p-2 whitespace-nowrap">{(r.transport_interface || r.transport_if || '-') as any}</td>
+                    <td class="p-2 whitespace-nowrap">{r.detail_created_at}</td>
                   </tr>
                 )}</For>
               </tbody>
@@ -162,6 +224,12 @@ export const LocalDBTab: Component = () => {
             <button class="px-2 py-1 rounded border" disabled={analytics.loading || analytics.offset + analytics.limit >= analytics.total} onClick={() => localDbDashboardStore.loadAnalytics(analytics.offset + analytics.limit)}>다음</button>
             <div class="ml-auto text-xs text-gray-400">총 {analytics.total} 행 / limit {analytics.limit}</div>
           </div>
+          <Show when={localDbDashboardStore.ui.analyticsDiagnostics}>
+            <div class="mt-3 text-[10px] bg-slate-900 text-slate-100 rounded p-2 space-y-1 font-mono overflow-auto max-h-48">
+              <div class="text-xs font-semibold text-amber-300">Diagnostics</div>
+              <pre>{JSON.stringify(localDbDashboardStore.ui.analyticsDiagnostics, null, 2)}</pre>
+            </div>
+          </Show>
         </div>
 
         {/* Maintenance (Export / Import / Delete Range) */}

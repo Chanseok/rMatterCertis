@@ -465,6 +465,151 @@ impl DatabaseConnection {
             debug!("ℹ️ Migration 013 not needed (bridge + view present)");
         }
 
+        // Apply 014_product_primary_device_types_backfill_and_triggers.sql (always run to ensure triggers/backfill)
+        if concise { debug!("🧩 Applying migration 014_product_primary_device_types_backfill_and_triggers.sql"); } else { info!("🧩 Applying migration 014_product_primary_device_types_backfill_and_triggers.sql"); }
+        let migration_014_path = std::path::Path::new("migrations/014_product_primary_device_types_backfill_and_triggers.sql");
+        if migration_014_path.exists() {
+            if let Ok(migration_sql) = std::fs::read_to_string(migration_014_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
+        } else {
+            let migration_sql = include_str!("../../migrations/014_product_primary_device_types_backfill_and_triggers.sql");
+            let _ = sqlx::query(migration_sql).execute(&self.pool).await;
+        }
+        if concise { debug!("✅ Migration 014 applied (idempotent)"); } else { info!("✅ Migration 014 applied (idempotent)"); }
+
+        // Apply 015_backfill_primary_device_type_ids_from_device_type.sql (fallback mapping from device_type text)
+        if concise { debug!("🧩 Applying migration 015_backfill_primary_device_type_ids_from_device_type.sql"); } else { info!("🧩 Applying migration 015_backfill_primary_device_type_ids_from_device_type.sql"); }
+        let migration_015_path = std::path::Path::new("migrations/015_backfill_primary_device_type_ids_from_device_type.sql");
+        if migration_015_path.exists() {
+            if let Ok(migration_sql) = std::fs::read_to_string(migration_015_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
+        } else {
+            let migration_sql = include_str!("../../migrations/015_backfill_primary_device_type_ids_from_device_type.sql");
+            let _ = sqlx::query(migration_sql).execute(&self.pool).await;
+        }
+        if concise { debug!("✅ Migration 015 applied (idempotent)"); } else { info!("✅ Migration 015 applied (idempotent)"); }
+
+        // Apply 016_rebuild_bridge_dual_mapping.sql (ensure bridge rows using type_id OR id)
+        if concise { debug!("🧩 Applying migration 016_rebuild_bridge_dual_mapping.sql"); } else { info!("🧩 Applying migration 016_rebuild_bridge_dual_mapping.sql"); }
+        let migration_016_path = std::path::Path::new("migrations/016_rebuild_bridge_dual_mapping.sql");
+        if migration_016_path.exists() {
+            if let Ok(migration_sql) = std::fs::read_to_string(migration_016_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
+        } else {
+            let migration_sql = include_str!("../../migrations/016_rebuild_bridge_dual_mapping.sql");
+            let _ = sqlx::query(migration_sql).execute(&self.pool).await;
+        }
+        if concise { debug!("✅ Migration 016 applied (idempotent)"); } else { info!("✅ Migration 016 applied (idempotent)"); }
+
+        // Apply 017_backfill_bridge_using_type_id_values.sql (map JSON codes directly to type_id)
+        if concise { debug!("🧩 Applying migration 017_backfill_bridge_using_type_id_values.sql"); } else { info!("🧩 Applying migration 017_backfill_bridge_using_type_id_values.sql"); }
+        let migration_017_path = std::path::Path::new("migrations/017_backfill_bridge_using_type_id_values.sql");
+        if migration_017_path.exists() {
+            if let Ok(migration_sql) = std::fs::read_to_string(migration_017_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
+        } else {
+            let migration_sql = include_str!("../../migrations/017_backfill_bridge_using_type_id_values.sql");
+            let _ = sqlx::query(migration_sql).execute(&self.pool).await;
+        }
+        if concise { debug!("✅ Migration 017 applied (idempotent)"); } else { info!("✅ Migration 017 applied (idempotent)"); }
+
+        // Apply 018_resilient_analytics_view.sql (fallback direct JSON mapping)
+        if concise { debug!("🧩 Applying migration 018_resilient_analytics_view.sql"); } else { info!("🧩 Applying migration 018_resilient_analytics_view.sql"); }
+        let migration_018_path = std::path::Path::new("migrations/018_resilient_analytics_view.sql");
+        if migration_018_path.exists() {
+            if let Ok(migration_sql) = std::fs::read_to_string(migration_018_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
+        } else {
+            let migration_sql = include_str!("../../migrations/018_resilient_analytics_view.sql");
+            let _ = sqlx::query(migration_sql).execute(&self.pool).await;
+        }
+        if concise { debug!("✅ Migration 018 applied (idempotent)"); } else { info!("✅ Migration 018 applied (idempotent)"); }
+
+        // DISABLED: Migrations 019, 020, 021 replaced by comprehensive migration 022
+        // Apply 019_fix_device_type_mapping_in_analytics_view.sql (strict mapping + multi-value aggregation)
+        // let migration_019_path = std::path::Path::new("migrations/019_fix_device_type_mapping_in_analytics_view.sql");
+        // if migration_019_path.exists() {
+        //     if let Ok(migration_sql) = std::fs::read_to_string(migration_019_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
+        // } else {
+        //     // Fallback to bundled version if not present on FS
+        //     let migration_sql = include_str!("../../migrations/019_fix_device_type_mapping_in_analytics_view.sql");
+        //     let _ = sqlx::query(migration_sql).execute(&self.pool).await;
+        // }
+        if concise { debug!("✅ Migration 019 skipped (replaced by 022)"); } else { info!("✅ Migration 019 skipped (replaced by 022)"); }
+
+        // Apply 020_populate_bridge_table_and_fix_mappings.sql (populate bridge table and fix JSON mappings)
+        // let migration_020_path = std::path::Path::new("migrations/020_populate_bridge_table_and_fix_mappings.sql");
+        // if migration_020_path.exists() {
+        //     if let Ok(migration_sql) = std::fs::read_to_string(migration_020_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
+        // } else {
+        //     // Fallback to bundled version if not present on FS
+        //     let migration_sql = include_str!("../../../migrations/020_populate_bridge_table_and_fix_mappings.sql");
+        //     let _ = sqlx::query(migration_sql).execute(&self.pool).await;
+        // }
+        if concise { debug!("✅ Migration 020 skipped (replaced by 022)"); } else { info!("✅ Migration 020 skipped (replaced by 022)"); }
+
+        // Apply 021_convert_device_type_id_to_text.sql (convert type_id from INTEGER to TEXT)
+        // let migration_021_path = std::path::Path::new("migrations/021_convert_device_type_id_to_text.sql");
+        // if migration_021_path.exists() {
+        //     if let Ok(migration_sql) = std::fs::read_to_string(migration_021_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
+        // } else {
+        //     // Fallback to bundled version if not present on FS
+        //     let migration_sql = include_str!("../../../migrations/021_convert_device_type_id_to_text.sql");
+        //     let _ = sqlx::query(migration_sql).execute(&self.pool).await;
+        // }
+        if concise { debug!("✅ Migration 021 skipped (replaced by 022)"); } else { info!("✅ Migration 021 skipped (replaced by 022)"); }
+
+        // Apply 022_final_cleanup_and_optimization.sql (remove bridge table, optimize analytics view)
+        let migration_022_path = std::path::Path::new("migrations/022_final_cleanup_and_optimization.sql");
+        if migration_022_path.exists() {
+            if let Ok(migration_sql) = std::fs::read_to_string(migration_022_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
+        } else {
+            // Fallback to bundled version if not present on FS
+            let migration_sql = include_str!("../../../migrations/022_final_cleanup_and_optimization.sql");
+            let _ = sqlx::query(migration_sql).execute(&self.pool).await;
+        }
+        if concise { debug!("✅ Migration 022 applied (idempotent)"); } else { info!("✅ Migration 022 applied (idempotent)"); }
+
+        // Apply 023_enhance_analytics_view_transport_and_introduced_in.sql (ensure transport_interface + introduced_in)
+        let migration_023_path = std::path::Path::new("migrations/023_enhance_analytics_view_transport_and_introduced_in.sql");
+        if migration_023_path.exists() {
+            if let Ok(migration_sql) = std::fs::read_to_string(migration_023_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
+        } else {
+            let migration_sql = include_str!("../../../migrations/023_enhance_analytics_view_transport_and_introduced_in.sql");
+            let _ = sqlx::query(migration_sql).execute(&self.pool).await;
+        }
+        if concise { debug!("✅ Migration 023 applied (idempotent)"); } else { info!("✅ Migration 023 applied (idempotent)"); }
+
+        // Apply 024_change_certification_date_to_date.sql (change column type TEXT->DATE via table rebuild)
+        // Guard: only run if current column declared type != 'DATE'
+        if let Ok(current_type) = sqlx::query_scalar::<_, Option<String>>("SELECT type FROM pragma_table_info('product_details') WHERE name='certification_date' LIMIT 1;")
+            .fetch_one(&self.pool).await {
+            let needs = current_type.map(|t| t.to_uppercase() != "DATE").unwrap_or(false);
+            if needs {
+                let mig024_path = std::path::Path::new("migrations/024_change_certification_date_to_date.sql");
+                if mig024_path.exists() {
+                    if let Ok(migration_sql) = std::fs::read_to_string(mig024_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
+                } else {
+                    let migration_sql = include_str!("../../../migrations/024_change_certification_date_to_date.sql");
+                    let _ = sqlx::query(migration_sql).execute(&self.pool).await;
+                }
+                if concise { debug!("✅ Migration 024 applied (certification_date -> DATE)"); } else { info!("✅ Migration 024 applied (certification_date -> DATE)"); }
+            } else if concise { debug!("ℹ️ Migration 024 skipped (certification_date already DATE)"); }
+        }
+
+        // Apply 025_normalize_certification_date_iso.sql (normalize MM/DD/YYYY -> YYYY-MM-DD)
+        // Guard: run if any value matches slash pattern and any value not already ISO.
+        if let (Ok(slash_cnt), Ok(any_rows)) = (
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM product_details WHERE certification_date LIKE '%/%'").fetch_one(&self.pool).await,
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM product_details WHERE certification_date IS NOT NULL AND certification_date <> ''").fetch_one(&self.pool).await,
+        ) {
+            if slash_cnt > 0 && any_rows > 0 {
+                let mig025_path = std::path::Path::new("migrations/025_normalize_certification_date_iso.sql");
+                if mig025_path.exists() {
+                    if let Ok(migration_sql) = std::fs::read_to_string(mig025_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
+                } else {
+                    let migration_sql = include_str!("../../../migrations/025_normalize_certification_date_iso.sql");
+                    let _ = sqlx::query(migration_sql).execute(&self.pool).await;
+                }
+                if concise { debug!("✅ Migration 025 applied (normalize certification_date)"); } else { info!("✅ Migration 025 applied (normalize certification_date)"); }
+            } else if concise { debug!("ℹ️ Migration 025 skipped (no slash-form dates)"); }
+        }
+
         // Report on database status
         let product_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products")
             .fetch_one(&self.pool)

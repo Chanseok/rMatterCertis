@@ -23,6 +23,7 @@ interface AnalyticsState {
   filterApplied: string;
   filterError?: string | null;
   loading: boolean;
+  sort: string[]; // e.g. ['device_category:asc','vendor_name:desc']
 }
 
 interface UiFlags {
@@ -46,13 +47,14 @@ interface UiFlags {
     samples?: { added: any[]; updated: any[]; removed: any[] };
     parseError?: string;
   } | null;
+  analyticsDiagnostics?: any;
 }
 
 export const DEFAULT_PAGE_SIZE = 50;
 
 const [summary, setSummary] = createSignal<SummaryData | null>(null);
 const [ui, setUi] = createStore<UiFlags>({ loadingSummary: false, deviceTypesJson: '[]', reseedAfterSave: true });
-const [analytics, setAnalytics] = createStore<AnalyticsState>({ rows: [], total: 0, offset: 0, limit: DEFAULT_PAGE_SIZE, filterDraft: '', filterApplied: '', loading: false });
+const [analytics, setAnalytics] = createStore<AnalyticsState>({ rows: [], total: 0, offset: 0, limit: DEFAULT_PAGE_SIZE, filterDraft: '', filterApplied: '', loading: false, sort: [] });
 
 async function loadSummary() {
   setUi({ ...ui, loadingSummary: true, summaryError: null });
@@ -69,7 +71,7 @@ async function loadSummary() {
 async function loadAnalytics(offset = 0) {
   setAnalytics({ ...analytics, loading: true });
   try {
-    const res = await tauriApi.analyticsQuery({ offset, limit: analytics.limit, filter: analytics.filterApplied || undefined });
+  const res = await tauriApi.analyticsQuery({ offset, limit: analytics.limit, filter: analytics.filterApplied || undefined, sort: analytics.sort.length ? analytics.sort : undefined });
     setAnalytics({ ...analytics, rows: res.rows || [], total: res.total || 0, offset: res.offset || offset, limit: res.limit || analytics.limit, filterError: res.filter_error || null, loading: false });
   } catch (e: any) {
     setAnalytics({ ...analytics, rows: [], total: 0, filterError: String(e), loading: false });
@@ -231,6 +233,8 @@ export const localDbDashboardStore = {
   executeDeleteRange,
   vendorDryRun,
   vendorSync,
+  // Sorting helpers
+  updateSort(order: string[]) { setAnalytics({ ...analytics, sort: order }); },
 };
 
 // 초기 로드 헬퍼 (탭 진입 시 호출)

@@ -9,6 +9,7 @@ import CrawlingEngineTabSimple from './tabs/CrawlingEngineTabSimple';
 import { SettingsTab } from './tabs/SettingsTab';
 import { LocalDBTab } from './tabs/LocalDBTab';
 import { AnalysisTab } from './tabs/AnalysisTab';
+import { DatabaseDiagnostics } from './DatabaseDiagnostics';
 // Archived tabs removed from runtime imports:
 // LiveProductionTab, LiveCrawlingTab, NewArchTestTab, ActorSystemTab,
 // DomainDashboardTab, RealtimeDashboardTab, HierarchicalEventMonitor
@@ -59,6 +60,9 @@ export const AppWithTabs: Component = () => {
       </Show>
       <Show when={currentTab() === 'analysis'}>
         <AnalysisTab />
+      </Show>
+      <Show when={currentTab() === 'diagnostics'}>
+        <DatabaseDiagnostics />
       </Show>
   {/* 기존 'Local DB Dashboard' 중복 탭 제거 (6B 재정비 단계) */}
     </AppLayout>

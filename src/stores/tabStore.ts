@@ -30,7 +30,7 @@ const [tabState, setTabState] = createStore<TabState>({
 
     {
       id: 'crawlingEngine',
-      label: 'Advanced Engine',
+      label: 'Crawling',
       icon: '🔬',
       theme: {
         bg: 'bg-gradient-to-br from-blue-50 to-indigo-50',
@@ -71,7 +71,18 @@ const [tabState, setTabState] = createStore<TabState>({
         text: 'text-amber-700',
         accent: 'from-amber-500 to-orange-500'
       }
-  }
+  },
+    {
+      id: 'diagnostics',
+      label: '진단',
+      icon: '🔍',
+      theme: {
+        bg: 'bg-red-50',
+        border: 'border-red-200',
+        text: 'text-red-700',
+        accent: 'from-red-500 to-rose-500'
+      }
+    }
 
     
   ],

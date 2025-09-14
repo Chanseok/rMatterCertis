@@ -1,4 +1,4 @@
-﻿# 로컬 DB 대시보드 구현/개선 계획 (갱신됨 2025-09-10)
+﻿# 로컬 DB 대시보드 구현/개선 계획 (갱신됨 2025-09-10 / 추가 업데이트 2025-09-10)
 
 단일 탭(기존 `로컬DB`)에서 로컬 데이터베이스 운영/분석/유지보수를 수행하는 기능을 단계적으로 구축한다. 중복 탭(`Local DB`)은 제거하고, 향후 필터 DSL 반영을 위한 구조를 먼저 정리한다.
 
@@ -84,11 +84,24 @@
 ## 8. Phase 별 진행 현황 (업데이트)
 | Phase | 상태 | 메모 |
 |-------|------|------|
-| 1 ~ 5 | 완료 | 백엔드 명령 동작, 기본 검증 OK |
-| 6 (초기) | 완료 | `LocalDbDashboard` 시도 (중복 탭 문제 발생) |
-| 6B (재정비) | 진행중 | 탭 통합, Store 구성, Maintenance / Device Types / Vendor Sync Dry Run / Diff / 이벤트 일부 구현 |
-| 7 | 대기 | DSL 사양 확정(본 문서) → 구현 준비 완료 |
-| 8 | 대기 | 테스트/캐싱/성능 패스 예정 |
+| 1 ~ 5 | **완료** | 백엔드 명령 동작, 기본 검증 OK |
+| 6 (초기) | **완료** | `LocalDbDashboard` 1차 UI 시도 (중복 탭 문제 발견) |
+| 6B (재정비) | **진행중 (~70%)** | 단일 탭 통합, Store 기본 상태, Summary/Analytics/Maintenance/Vendor Sync/Device Types/Filter Placeholder 섹션, 로딩/에러 공통화, DSL 입력 Mock, Device Types diff 1차, Vendor Sync 이벤트 일부 수신 |
+| 7 | **대기** | DSL 파서 본 구현 미착수 (사양 확정 완료) |
+| 8 | **대기** | 테스트/캐싱/성능 하드닝 패스 예정 |
+
+### 8.1 상세 진행 내역
+- Backend (Phase 1~5): 모든 API (`get_db_summary`, `analytics_query`, `export_data`, `import_data`, `preview_delete_range`, `delete_range`, `dashboard_vendor_sync`, `get_device_types_json`, `save_device_types_json`) 동작 및 기본 검증 완료
+- 안전장치: Import 백업 / Device Types 원자적 쓰기 / Delete Range 프리뷰 & 50페이지 제한 / Vendor Sync dry-run 경로 확보
+- Frontend 구조(6 & 6B 일부):
+	- 단일 탭 정리 및 중복 제거
+	- Summary / Analytics / Maintenance(Export, Import, Delete) / Vendor Sync / Device Types Editor / Filter Placeholder 섹션 UI 구성
+	- 상태 Store: summary, analytics, loading/error, filterDraft, filterApplied 초안
+	- 공통 로딩 & 에러 컴포넌트 적용
+	- DSL 입력창 + 적용/초기화 버튼 Mock (백엔드 연동 전)
+	- Device Types diff 1차(기초 비교) 구현
+	- Vendor Sync 이벤트 일부 수신 (중간 진행율/취소 미구현)
+- 미완료 항목(6B 잔여): Device Types diff 고도화, Vendor Sync 진행율/취소 UX, Maintenance 섹션 UX 세부(에러/프리뷰 명확화), DSL 연동 준비(파서 결과 표시 구조), reseed/prune 옵션 노출 설계
 
 ## 9. 6B (FE 재정비) 세부 계획
 1. 탭 정리: `localDbDashboard` 제거, 기존 `localDB` 탭에 기능 통합
@@ -99,12 +112,25 @@
 6. Device Types 편집: 변경 라인 diff(간단: 기존 JSON → parse → ID/Name 비교) 추후
 7. Vendor Sync 진행 이벤트 수신 (향후 page 단위 event 확장 예정)
 
-## 10. 이후 우선순위 (요약)
-1. 6B 구현 → UI 단일화 및 상태 정리
-2. Phase 7 DSL 파서 + 테스트
-3. Vendor Sync 중간 진행율/취소
-4. Device Types prune 옵션 + dry-run 검증
-5. 성능/캐싱 + 통합 테스트 스위트
+## 10. 이후 우선순위 (요약 / Remaining Tasks)
+1. 6B 마무리
+	- Device Types diff 고도화 (ID/Name 변경/추가/삭제 명확 표기, inline 편집 가드)
+	- Vendor Sync: 진행 이벤트 UI 확장 (progress %, 단계 표시, 취소 핸들) + dry-run → 실행 전환 UX
+	- Maintenance: Export/Import/Delete UX 다듬기 (프리뷰/확인 모달, 에러/성공 토스트, 파일 선택 상태)
+	- DSL 입력 Mock → 실제 파서 연동 대비 상태 수명주기 정리 (draft/applied/error)
+2. Phase 7: DSL 파서 본 구현 및 통합
+	- 토큰화/파싱/유효성 검사/SQL 변환 + 바인딩 리스트 산출
+	- 에러 포맷(`filter_error`) 일관성 구현 + 경계/에러 케이스 테스트
+	- FE: applied_filter_sql / filter_tokens 디버깅 패널(접기 기능)
+3. Phase 8: 품질/하드닝
+	- 통합 테스트 (API 라운드 트립 / 파서 / Delete Range 정합 / Export-Import round-trip)
+	- 선택적 Summary 캐싱(TTL 5s 가설) + 캐시 무효화 규칙 정의
+	- 대량 Analytics 페이지네이션 프로파일링 & 필요 인덱스 제안
+	- Vendor Sync 중간 취소 & 재시도 안전성 검증
+4. 추가 개선 후보
+	- Device Types prune + dry-run diff (삭제 후보 명시)
+	- DSL 인용부호 다단어 검색(Phase 7.5) 여부 결정
+	- Timezone 명시(UTC 고정 vs 로컬 변환 전략 문서화)
 
 ## 11. 테스트 항목 초안 (Phase 7 포함)
 - DSL: 유효/에러 케이스 파싱, SQL 바인딩 개수 매칭
@@ -119,5 +145,11 @@
 - 대량 analytics 페이지네이션 성능 (필요 시 인덱스 추가)
 - Summary 캐싱 TTL (예: 5초) 도입 여부
 
+## 13. 요약 (2025-09-10)
+- Backend Phase 1~5 완료, 기본 안정화
+- Frontend 6 & 6B 약 70% 진행 (구조·상태·기초 UI 마련)
+- DSL 파서(Phase 7) 미구현 / 품질 패스(Phase 8) 미착수
+- 단기 초점: 6B 잔여 UI/UX 마무리 → DSL 파서 → 테스트/성능 순
+
 ---
-문서 한글화 및 6B 재정비 계획 반영 완료.
+문서 진행 현황 및 남은 업무 갱신 완료 (2025-09-10).

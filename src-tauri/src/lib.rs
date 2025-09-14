@@ -212,8 +212,7 @@ pub mod commands {
     pub mod devtools {
         #[cfg(feature = "dev-tools")]
         pub mod actor_system_monitoring;
-        #[cfg(any(feature = "dev-tools", debug_assertions))]
-        pub mod db_diagnostics; // 🧪 DB pagination mismatch scan
+    pub mod db_diagnostics; // 🧪 DB pagination mismatch scan (enabled in release)
         #[cfg(feature = "dev-tools")]
         pub mod debug_commands; // 🔎 UI debug logging helpers
         #[cfg(feature = "dev-tools")]
@@ -833,6 +832,8 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             // Local DB Dashboard Phase 1
             commands::database::data_queries::get_db_summary,
             commands::database::data_queries::analytics_query,
+            commands::database::data_queries::diagnostics_analytics_mapping,
+            // commands::database::data_queries::diagnose_db_mapping, // TODO: Fix command registration
             // Vendor sync command (CSA DCL)
             commands::database::vendor_sync::update_vendors_from_csa,
             commands::database::vendor_sync::dashboard_vendor_sync,
@@ -922,7 +923,6 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             commands::sync_commands::start_diagnostic_sync,
             commands::actor_system::start_manual_crawl_pages_actor,
             // Legacy invoke compatibility wrappers removed (FE migrated to actor_system)
-            #[cfg(any(feature = "dev-tools", debug_assertions))]
             commands::devtools::db_diagnostics::scan_db_pagination_mismatches,
             #[cfg(feature = "dev-tools")]
             commands::devtools::debug_commands::ui_debug_log,

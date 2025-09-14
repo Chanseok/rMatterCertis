@@ -1,4 +1,4 @@
-#![cfg(any(feature = "dev-tools", debug_assertions))]
+// Diagnostics now enabled also for release builds (was gated by dev-tools/debug).
 use crate::application::AppState;
 use crate::application::shared_state::SharedStateCache;
 // (no additional infrastructure imports needed)
@@ -73,98 +73,94 @@ pub async fn scan_db_pagination_mismatches(
         .await
         .map_err(|e| format!("DB pool unavailable: {e}"))?;
 
-    // === Pre-pass: align product_details positions/ids by products.url, then backfill products.id from details ===
+    // === Pre-pass (best effort). If DB is busy (crawler writing), skip instead of failing. ===
     let mut prepass = PrepassSummary::default();
-    {
-        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-        // 1) Align product_details.page_id/index_in_page and recompute product_details.id from products
-        //    Only when products has non-null page_id/index_in_page.
-        // Count how many rows would collide with existing target slot
-        let res0 = sqlx::query_scalar::<_, i64>(
-												r"
-												SELECT COUNT(*) FROM product_details pd
-												WHERE EXISTS (SELECT 1 FROM products WHERE products.url = pd.url)
-													AND (SELECT page_id FROM products WHERE products.url = pd.url) IS NOT NULL
-													AND (SELECT index_in_page FROM products WHERE products.url = pd.url) IS NOT NULL
-													AND EXISTS (
-															SELECT 1 FROM product_details AS pd2
-															WHERE pd2.page_id = (SELECT page_id FROM products WHERE products.url = pd.url)
-																AND pd2.index_in_page = (SELECT index_in_page FROM products WHERE products.url = pd.url)
-													)
-													AND (
-															COALESCE(pd.page_id, -1) != COALESCE((SELECT page_id FROM products WHERE products.url = pd.url), -1)
-															OR COALESCE(pd.index_in_page, -1) != COALESCE((SELECT index_in_page FROM products WHERE products.url = pd.url), -1)
-															OR pd.id != printf('p%04di%02d',
-																			(SELECT page_id FROM products WHERE products.url = pd.url),
-																			(SELECT index_in_page FROM products WHERE products.url = pd.url))
-													)
-												",
-								)
-								.fetch_one(&mut *tx)
-								.await
-								.unwrap_or(0);
+    // Small busy timeout to wait briefly for writer release
+    let _ = sqlx::query("PRAGMA busy_timeout=2500").execute(&pool).await;
+    if let Ok(mut tx) = pool.begin().await {
+        // Wrap the whole aligning logic so any lock/busy error just skips
+        match async {
+            let res0 = sqlx::query_scalar::<_, i64>(r"
+                SELECT COUNT(*) FROM product_details pd
+                WHERE EXISTS (SELECT 1 FROM products WHERE products.url = pd.url)
+                  AND (SELECT page_id FROM products WHERE products.url = pd.url) IS NOT NULL
+                  AND (SELECT index_in_page FROM products WHERE products.url = pd.url) IS NOT NULL
+                  AND EXISTS (
+                        SELECT 1 FROM product_details AS pd2
+                        WHERE pd2.page_id = (SELECT page_id FROM products WHERE products.url = pd.url)
+                          AND pd2.index_in_page = (SELECT index_in_page FROM products WHERE products.url = pd.url)
+                  )
+                  AND (
+                        COALESCE(pd.page_id, -1) != COALESCE((SELECT page_id FROM products WHERE products.url = pd.url), -1)
+                     OR COALESCE(pd.index_in_page, -1) != COALESCE((SELECT index_in_page FROM products WHERE products.url = pd.url), -1)
+                     OR pd.id != printf('p%04di%02d',
+                                (SELECT page_id FROM products WHERE products.url = pd.url),
+                                (SELECT index_in_page FROM products WHERE products.url = pd.url))
+                  )
+            ").fetch_one(&mut *tx).await.unwrap_or(0);
 
-        let res1 = sqlx::query(
-						r"
-						UPDATE product_details
-						SET
-							page_id = (SELECT page_id FROM products WHERE products.url = product_details.url),
-							index_in_page = (SELECT index_in_page FROM products WHERE products.url = product_details.url),
-							id = printf('p%04di%02d',
-										(SELECT page_id FROM products WHERE products.url = product_details.url),
-										(SELECT index_in_page FROM products WHERE products.url = product_details.url))
-						WHERE
-							EXISTS (SELECT 1 FROM products WHERE products.url = product_details.url)
-							AND (SELECT page_id FROM products WHERE products.url = product_details.url) IS NOT NULL
-							AND (SELECT index_in_page FROM products WHERE products.url = product_details.url) IS NOT NULL
-							-- Choose a single canonical row per URL to avoid multiple rows racing for the same target slot
-							AND product_details.rowid = (
-								SELECT MIN(rowid) FROM product_details AS pdsame WHERE pdsame.url = product_details.url
-							)
-							-- Do not update if the target slot is already occupied by any row (avoid UNIQUE violation)
-							AND NOT EXISTS (
-								SELECT 1 FROM product_details AS pd2
-								WHERE pd2.page_id = (SELECT page_id FROM products WHERE products.url = product_details.url)
-								  AND pd2.index_in_page = (SELECT index_in_page FROM products WHERE products.url = product_details.url)
-							)
-							AND (
-								COALESCE(product_details.page_id, -1) != COALESCE((SELECT page_id FROM products WHERE products.url = product_details.url), -1)
-								OR COALESCE(product_details.index_in_page, -1) != COALESCE((SELECT index_in_page FROM products WHERE products.url = product_details.url), -1)
-								OR product_details.id != printf('p%04di%02d',
-										(SELECT page_id FROM products WHERE products.url = product_details.url),
-										(SELECT index_in_page FROM products WHERE products.url = product_details.url))
-							)
-						",
-				)
-				.execute(&mut *tx)
-				.await
-				.map_err(|e| format!("Prepass alignment failed: {e}"))?;
-        prepass.details_aligned = res1.rows_affected();
-        prepass.details_align_skipped_due_to_slot_taken =
-            Some(u64::try_from(res0).unwrap_or_default());
-        debug!(target: "db_diagnostics", details_aligned = prepass.details_aligned, "prepass: details aligned");
+            let res1 = sqlx::query(r"
+                UPDATE product_details
+                SET
+                    page_id = (SELECT page_id FROM products WHERE products.url = product_details.url),
+                    index_in_page = (SELECT index_in_page FROM products WHERE products.url = product_details.url),
+                    id = printf('p%04di%02d',
+                                (SELECT page_id FROM products WHERE products.url = product_details.url),
+                                (SELECT index_in_page FROM products WHERE products.url = product_details.url))
+                WHERE
+                    EXISTS (SELECT 1 FROM products WHERE products.url = product_details.url)
+                    AND (SELECT page_id FROM products WHERE products.url = product_details.url) IS NOT NULL
+                    AND (SELECT index_in_page FROM products WHERE products.url = product_details.url) IS NOT NULL
+                    AND product_details.rowid = (
+                        SELECT MIN(rowid) FROM product_details AS pdsame WHERE pdsame.url = product_details.url
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1 FROM product_details AS pd2
+                        WHERE pd2.page_id = (SELECT page_id FROM products WHERE products.url = product_details.url)
+                          AND pd2.index_in_page = (SELECT index_in_page FROM products WHERE products.url = product_details.url)
+                    )
+                    AND (
+                        COALESCE(product_details.page_id, -1) != COALESCE((SELECT page_id FROM products WHERE products.url = product_details.url), -1)
+                     OR COALESCE(product_details.index_in_page, -1) != COALESCE((SELECT index_in_page FROM products WHERE products.url = product_details.url), -1)
+                     OR product_details.id != printf('p%04di%02d',
+                                (SELECT page_id FROM products WHERE products.url = product_details.url),
+                                (SELECT index_in_page FROM products WHERE products.url = product_details.url))
+                    )
+            ").execute(&mut *tx).await?;
+            prepass.details_aligned = res1.rows_affected();
+            prepass.details_align_skipped_due_to_slot_taken = Some(u64::try_from(res0).unwrap_or_default());
+            debug!(target: "db_diagnostics", details_aligned = prepass.details_aligned, "prepass: details aligned");
 
-        // 2) Backfill products.id from product_details.id when NULL/empty
-        let res2 = sqlx::query(
-            r"
-						UPDATE products
-						SET id = (SELECT id FROM product_details WHERE product_details.url = products.url)
-						WHERE (id IS NULL OR id = '')
-							AND EXISTS (
-								SELECT 1 FROM product_details 
-								WHERE product_details.url = products.url 
-									AND product_details.id IS NOT NULL 
-									AND product_details.id <> ''
-							)
-						",
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| format!("Prepass products.id backfill failed: {e}"))?;
-        prepass.products_id_backfilled = res2.rows_affected();
-        debug!(target: "db_diagnostics", products_id_backfilled = prepass.products_id_backfilled, "prepass: products.id backfilled");
-
-        tx.commit().await.map_err(|e| e.to_string())?;
+            let res2 = sqlx::query(r"
+                UPDATE products
+                SET id = (SELECT id FROM product_details WHERE product_details.url = products.url)
+                WHERE (id IS NULL OR id = '')
+                  AND EXISTS (
+                        SELECT 1 FROM product_details 
+                        WHERE product_details.url = products.url 
+                          AND product_details.id IS NOT NULL 
+                          AND product_details.id <> ''
+                  )
+            ").execute(&mut *tx).await?;
+            prepass.products_id_backfilled = res2.rows_affected();
+            debug!(target: "db_diagnostics", products_id_backfilled = prepass.products_id_backfilled, "prepass: products.id backfilled");
+            tx.commit().await?;
+            Ok::<(), sqlx::Error>(())
+        }.await {
+            Ok(_) => {},
+            Err(e) => {
+                if e.to_string().contains("locked") || e.to_string().contains("busy") {
+                    // Downgrade to info: we still return a report; mark prepass as None later if desired
+                    info!(target: "db_diagnostics", "prepass skipped due to busy/lock: {e}");
+                    prepass = PrepassSummary::default();
+                } else {
+                    // Unexpected error: include partial prepass so far but continue (non-fatal)
+                    info!(target: "db_diagnostics", error = %e, "prepass encountered non-lock error; continuing without abort");
+                }
+            }
+        }
+    } else {
+        info!(target: "db_diagnostics", "prepass transaction begin failed (possibly locked); skipping prepass mutations");
     }
 
     // Skip network calls in diagnostics to avoid stalling; derive site meta from cache/config only.

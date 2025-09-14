@@ -41,6 +41,27 @@ pub struct IntegratedProductRepository {
 }
 
 impl IntegratedProductRepository {
+    /// Normalize date strings to ISO YYYY-MM-DD if in MM/DD/YYYY format.
+    fn normalize_cert_date(raw: &Option<String>) -> Option<String> {
+        raw.as_ref().and_then(|s| {
+            let trimmed = s.trim();
+            if trimmed.is_empty() { return None; }
+            // Already ISO (simple check)
+            if trimmed.len() == 10 && trimmed.chars().nth(4) == Some('-') && trimmed.chars().nth(7) == Some('-') {
+                return Some(trimmed.to_string());
+            }
+            // MM/DD/YYYY pattern
+            if trimmed.len() == 10 && trimmed.chars().nth(2) == Some('/') && trimmed.chars().nth(5) == Some('/') {
+                let mm = &trimmed[0..2];
+                let dd = &trimmed[3..5];
+                let yyyy = &trimmed[6..10];
+                if mm.chars().all(|c| c.is_ascii_digit()) && dd.chars().all(|c| c.is_ascii_digit()) && yyyy.chars().all(|c| c.is_ascii_digit()) {
+                    return Some(format!("{}-{}-{}", yyyy, mm, dd));
+                }
+            }
+            Some(trimmed.to_string())
+        })
+    }
     /// Count vendors in the local database
     /// # Errors
     /// Returns an error if the query fails.
@@ -896,7 +917,7 @@ impl IntegratedProductRepository {
             .bind(&detail.model)
             .bind(&detail.device_type)
             .bind(&detail.certificate_id)
-            .bind(&detail.certification_date)
+            .bind(&Self::normalize_cert_date(&detail.certification_date))
             .bind(&detail.software_version)
             .bind(&detail.hardware_version)
             .bind(detail.vid)

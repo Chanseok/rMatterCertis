@@ -285,6 +285,18 @@ impl StageActor {
     fn emit_best_effort(context: &AppContext, evt: AppEvent) {
         let _ = context.emit_event(evt);
     }
+
+    /// Expose limited read-only access to product repo stats for external actors (e.g., SessionActor fallback emissions)
+    /// Intentionally narrow to avoid leaking full deps struct.
+    pub async fn try_product_detail_stats(
+        &self,
+    ) -> Result<(i64, Option<i32>, Option<i32>, Option<chrono::DateTime<chrono::Utc>>), ()> {
+        self.deps
+            .product_repo
+            .get_product_detail_stats()
+            .await
+            .map_err(|_| ())
+    }
     // 개별 태스크 실행 헬퍼 (spawn 대상)
     async fn execute_single_item_task(
         sem: Arc<tokio::sync::Semaphore>,
@@ -506,40 +518,111 @@ impl StageActor {
 
                 // DataSaving 퍼시스턴스
                 if matches!(stage_type, StageType::DataSaving) {
+                    tracing::info!(target: "data_saving_diag", "[DataSaving] Enter StageType::DataSaving for session={session_id} batch={:?}", batch_id);
+                    let mut persist_events_count: u32 = 0; // count emitted persist related events (ProductLifecycle / Group)
                     let is_persist_target = matches!(lifecycle_item, StageItem::ProductDetails(_))
                         || matches!(lifecycle_item, StageItem::ValidatedProducts(_));
                     if is_persist_target {
+                        tracing::info!(target: "data_saving_diag", "[DataSaving] lifecycle_item qualifies as persist target (ProductDetails|ValidatedProducts)");
                         let guard_key = format!(
                             "{}:{}:data_saving",
                             session_id,
                             batch_id.clone().unwrap_or_else(|| "none".into())
                         );
-                        if let Ok(mut guard) = DATA_SAVING_RUN_GUARD.lock() {
-                            if guard.contains(&guard_key) {
-                                return Ok(StageItemResult {
-                                    item_id: "data_saving_guard".into(),
-                                    item_type: StageItemType::Url {
-                                        url_type: "data_saving".into(),
-                                    },
-                                    success: true,
-                                    error: None,
-                                    duration_ms: item_start.elapsed().as_millis() as u64,
-                                    retry_count: 0,
-                                    collected_data: None,
-                                });
-                            }
-                            guard.insert(guard_key);
-                        }
-                        // Compute attempted upfront so we can emit grouped summary even when skip-save is on
+                        // Pre-compute attempted_count early so guard skip path can also emit persist snapshot
                         let attempted_count = match &lifecycle_item {
                             StageItem::ValidatedProducts(v) => v.products.len() as u32,
                             StageItem::ProductDetails(d) => d.products.len() as u32,
                             _ => 0,
                         };
+                        // Acquire + evaluate guard under a short scope so we don't hold the lock across awaits
+                        let guard_hit = {
+                            if let Ok(mut guard) = DATA_SAVING_RUN_GUARD.lock() {
+                                if guard.contains(&guard_key) {
+                                    true
+                                } else {
+                                    tracing::info!(target: "data_saving_diag", "[DataSaving] guard insert key={guard_key}");
+                                    guard.insert(guard_key.clone());
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        };
+
+                        if guard_hit {
+                            tracing::warn!(target: "data_saving_diag", "[DataSaving] guard hit; skipping duplicate save for key={guard_key}");
+                            // Emit guard-skip persist snapshot so Stage 5 UI still updates
+                            Self::emit_best_effort(
+                                &ctx,
+                                AppEvent::ProductLifecycle {
+                                    session_id: session_id.clone(),
+                                    batch_id: batch_id.clone(),
+                                    page_number: None,
+                                    product_ref: "_batch_persist".into(),
+                                    status: "persist_guard_skipped".into(),
+                                    retry: None,
+                                    duration_ms: Some(item_start.elapsed().as_millis() as u64),
+                                    metrics: Some(SimpleMetrics::Generic {
+                                        key: "persist_result".into(),
+                                        value: format!(
+                                            "attempted={},inserted=0,updated=0,duplicates=0,unchanged={}",
+                                            attempted_count, attempted_count
+                                        ),
+                                    }),
+                                    timestamp: Utc::now(),
+                                },
+                            );
+                            Self::emit_best_effort(
+                                &ctx,
+                                AppEvent::ProductLifecycleGroup {
+                                    session_id: session_id.clone(),
+                                    batch_id: batch_id.clone(),
+                                    page_number: None,
+                                    group_size: attempted_count,
+                                    started: attempted_count,
+                                    succeeded: 0,
+                                    failed: attempted_count,
+                                    duplicates: 0,
+                                    duration_ms: item_start.elapsed().as_millis() as u64,
+                                    phase: "persist".into(),
+                                    timestamp: Utc::now(),
+                                },
+                            );
+                            // Database stats snapshot (unchanged)
+                            if let Ok((cnt, minp, maxp, _)) = deps.product_repo.get_product_detail_stats().await {
+                                Self::emit_best_effort(
+                                    &ctx,
+                                    AppEvent::DatabaseStats {
+                                        session_id: session_id.clone(),
+                                        batch_id: batch_id.clone(),
+                                        total_product_details: cnt,
+                                        min_page: minp,
+                                        max_page: maxp,
+                                        note: Some("post_persist:guard_skip".into()),
+                                        timestamp: Utc::now(),
+                                    },
+                                );
+                            }
+                            return Ok(StageItemResult {
+                                item_id: "data_saving_guard".into(),
+                                item_type: StageItemType::Url { url_type: "data_saving".into() },
+                                success: true,
+                                error: None,
+                                duration_ms: item_start.elapsed().as_millis() as u64,
+                                retry_count: 0,
+                                collected_data: None,
+                            });
+                        }
+                        // We'll log the number of persist events emitted at the end of the DataSaving block (after all possible early returns except guard/empty cases)
+                        // attempted_count already computed above
+                        tracing::info!(target: "data_saving_diag", attempted_count, "[DataSaving] computed attempted_count");
                         let skip_save = std::env::var("MC_SKIP_DB_SAVE")
                             .ok()
                             .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+                        tracing::info!(target: "data_saving_diag", skip_save, "[DataSaving] skip_save flag");
                         if skip_save {
+                            tracing::warn!(target: "data_saving_diag", "[DataSaving] MC_SKIP_DB_SAVE active - emitting nosave events only");
                             Self::emit_best_effort(
                                 &ctx,
                                 AppEvent::ProductLifecycle {
@@ -610,6 +693,7 @@ impl StageActor {
                                 },
                             );
                             if attempted_count == 0 {
+                                tracing::info!(target: "data_saving_diag", "[DataSaving] attempted_count=0 => persist_empty path");
                                 Self::emit_best_effort(
                                     &ctx,
                                     AppEvent::ProductLifecycle {
@@ -648,6 +732,7 @@ impl StageActor {
                                 if let Ok((cnt, minp, maxp, _)) =
                                     deps.product_repo.get_product_detail_stats().await
                                 {
+                                    tracing::info!(target: "data_saving_diag", cnt, minp, maxp, "[DataSaving] post_persist:empty stats fetched");
                                     Self::emit_best_effort(
                                         &ctx,
                                         AppEvent::DatabaseStats {
@@ -682,6 +767,7 @@ impl StageActor {
                             .await
                             {
                                 Ok((inserted, updated, duplicates_ct)) => {
+                                    tracing::info!(target: "data_saving_diag", inserted, updated, duplicates_ct, attempted = attempted_count, "[DataSaving] storage result success");
                                     let attempted = attempted_count;
                                     let consumed = inserted + updated + duplicates_ct;
                                     let unchanged = attempted.saturating_sub(consumed);
@@ -742,6 +828,7 @@ impl StageActor {
                                     if let Ok((cnt, minp, maxp, _)) =
                                         deps.product_repo.get_product_detail_stats().await
                                     {
+                                        tracing::info!(target: "data_saving_diag", cnt, minp, maxp, "[DataSaving] post_persist stats fetched");
                                         Self::emit_best_effort(
                                             &ctx,
                                             AppEvent::DatabaseStats {
@@ -755,8 +842,10 @@ impl StageActor {
                                             },
                                         );
                                     }
+                                    persist_events_count += 3; // ProductLifecycle + Group + DB stats
                                 }
                                 Err(e) => {
+                                    tracing::error!(target: "data_saving_diag", error=?e, "[DataSaving] storage result error");
                                     Self::emit_best_effort(
                                         &ctx,
                                         AppEvent::ProductLifecycle {
@@ -796,6 +885,7 @@ impl StageActor {
                                     if let Ok((cnt, minp, maxp, _)) =
                                         deps.product_repo.get_product_detail_stats().await
                                     {
+                                        tracing::info!(target: "data_saving_diag", cnt, minp, maxp, "[DataSaving] post_persist:error stats fetched");
                                         Self::emit_best_effort(
                                             &ctx,
                                             AppEvent::DatabaseStats {
@@ -809,9 +899,104 @@ impl StageActor {
                                             },
                                         );
                                     }
+                                    persist_events_count += 3; // ProductLifecycle + Group + DB stats
                                 }
                             }
+                            // Fallback: if nothing was emitted (unexpected early exit path), emit minimal failure snapshot
+                            if persist_events_count == 0 {
+                                tracing::warn!(target: "data_saving_diag", "[DataSaving] fallback trigger: no persist events emitted; emitting minimal snapshot");
+                                let attempted_count = match &lifecycle_item {
+                                    StageItem::ValidatedProducts(v) => v.products.len() as u32,
+                                    StageItem::ProductDetails(d) => d.products.len() as u32,
+                                    _ => 0,
+                                };
+                                Self::emit_best_effort(
+                                    &ctx,
+                                    AppEvent::ProductLifecycle {
+                                        session_id: session_id.clone(),
+                                        batch_id: batch_id.clone(),
+                                        page_number: None,
+                                        product_ref: "_batch_persist".into(),
+                                        status: "persist_failed_fallback".into(),
+                                        retry: None,
+                                        duration_ms: Some(item_start.elapsed().as_millis() as u64),
+                                        metrics: Some(SimpleMetrics::Generic {
+                                            key: "persist_result".into(),
+                                            value: format!("attempted={},inserted=0,updated=0,duplicates=0,unchanged={}", attempted_count, attempted_count),
+                                        }),
+                                        timestamp: Utc::now(),
+                                    },
+                                );
+                                Self::emit_best_effort(
+                                    &ctx,
+                                    AppEvent::ProductLifecycleGroup {
+                                        session_id: session_id.clone(),
+                                        batch_id: batch_id.clone(),
+                                        page_number: None,
+                                        group_size: attempted_count,
+                                        started: attempted_count,
+                                        succeeded: 0,
+                                        failed: attempted_count,
+                                        duplicates: 0,
+                                        duration_ms: item_start.elapsed().as_millis() as u64,
+                                        phase: "persist".into(),
+                                        timestamp: Utc::now(),
+                                    },
+                                );
+                                if let Ok((cnt, minp, maxp, _)) = deps.product_repo.get_product_detail_stats().await {
+                                    Self::emit_best_effort(
+                                        &ctx,
+                                        AppEvent::DatabaseStats {
+                                            session_id: session_id.clone(),
+                                            batch_id: batch_id.clone(),
+                                            total_product_details: cnt,
+                                            min_page: minp,
+                                            max_page: maxp,
+                                            note: Some("post_persist:fallback".into()),
+                                            timestamp: Utc::now(),
+                                        },
+                                    );
+                                }
+                                persist_events_count += 3; // ProductLifecycle + Group + DB stats
+                            }
+                            tracing::debug!(target: "data_saving_diag", persist_events_count, "[DataSaving] total persist-related events emitted in block");
                         }
+                    } else {
+                        // Non-persist target variant encountered (unexpected) – emit minimal snapshot so UI won't stay blank
+                        tracing::warn!(target: "data_saving_diag", "[DataSaving] non-persist StageItem variant encountered; emitting minimal persist_unexpected snapshot");
+                        Self::emit_best_effort(
+                            &ctx,
+                            AppEvent::ProductLifecycle {
+                                session_id: session_id.clone(),
+                                batch_id: batch_id.clone(),
+                                page_number: None,
+                                product_ref: "_batch_persist".into(),
+                                status: "persist_unexpected".into(),
+                                retry: None,
+                                duration_ms: Some(item_start.elapsed().as_millis() as u64),
+                                metrics: Some(SimpleMetrics::Generic {
+                                    key: "persist_result".into(),
+                                    value: "attempted=0,inserted=0,updated=0,duplicates=0,unchanged=0".into(),
+                                }),
+                                timestamp: Utc::now(),
+                            },
+                        );
+                        Self::emit_best_effort(
+                            &ctx,
+                            AppEvent::ProductLifecycleGroup {
+                                session_id: session_id.clone(),
+                                batch_id: batch_id.clone(),
+                                page_number: None,
+                                group_size: 0,
+                                started: 0,
+                                succeeded: 0,
+                                failed: 0,
+                                duplicates: 0,
+                                duration_ms: item_start.elapsed().as_millis() as u64,
+                                phase: "persist".into(),
+                                timestamp: Utc::now(),
+                            },
+                        );
                     }
                 }
 
@@ -1268,11 +1453,45 @@ impl StageActor {
                 Ok(Some(Ok(Ok(res)))) => results.push(res),
                 Ok(Some(Ok(Err(e)))) => {
                     error!("Item processing failed: {:?}", e);
+                    // If this stage is DataSaving, emit a minimal persist failure snapshot so Stage 5 UI updates
+                    if matches!(stage_type, StageType::DataSaving) {
+                        Self::emit_best_effort(
+                            &_context,
+                            AppEvent::ProductLifecycle {
+                                session_id: _context.session_id.clone(),
+                                batch_id: Some(batch_id_owned.clone()),
+                                page_number: None,
+                                product_ref: "_batch_persist".into(),
+                                status: "persist_failed_exec".into(),
+                                retry: None,
+                                duration_ms: None,
+                                metrics: Some(SimpleMetrics::Generic {
+                                    key: "error".into(),
+                                    value: format!("{:?}", e),
+                                }),
+                                timestamp: Utc::now(),
+                            },
+                        );
+                        Self::emit_best_effort(
+                            &_context,
+                            AppEvent::ProductLifecycleGroup {
+                                session_id: _context.session_id.clone(),
+                                batch_id: Some(batch_id_owned.clone()),
+                                page_number: None,
+                                group_size: 0,
+                                started: 0,
+                                succeeded: 0,
+                                failed: 1,
+                                duplicates: 0,
+                                duration_ms: 0,
+                                phase: "persist".into(),
+                                timestamp: Utc::now(),
+                            },
+                        );
+                    }
                     results.push(StageItemResult {
                         item_id: "unknown".into(),
-                        item_type: StageItemType::Url {
-                            url_type: "unknown".into(),
-                        },
+                        item_type: StageItemType::Url { url_type: "unknown".into() },
                         success: false,
                         error: Some(format!("{:?}", e)),
                         duration_ms: 0,

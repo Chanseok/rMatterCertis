@@ -412,8 +412,8 @@ export class TauriApiService {
     return await invoke('get_db_summary');
   }
 
-  async analyticsQuery(params: { offset?: number; limit?: number; filter?: string } = {}): Promise<{
-    rows: Array<{ product_detail_url?: string; model?: string; vendor_name?: string; device_type_name?: string; device_category?: string; certification_date?: string; detail_created_at?: string; }>;
+  async analyticsQuery(params: { offset?: number; limit?: number; filter?: string; sort?: string[] } = {}): Promise<{
+    rows: Array<{ product_detail_url?: string; model?: string; vendor_name?: string; device_type_name?: string; device_category?: string; certification_date?: string; detail_created_at?: string; transport_interface?: string; }>;
     total: number; offset: number; limit: number; applied_filter?: string | null; filter_error?: string | null;
   }> {
   return await invoke('analytics_query', { params }); // Rust side expects params struct
@@ -1238,6 +1238,10 @@ export class TauriApiService {
   async getStageBatcherSettings(): Promise<StageBatcherSettings> {
     const res = await invoke<StageBatcherSettings>('get_stage_batcher_settings');
     return res;
+  }
+
+  async diagnosticsAnalyticsMapping(): Promise<any> {
+    return await invoke<any>('diagnostics_analytics_mapping');
   }
 }
 

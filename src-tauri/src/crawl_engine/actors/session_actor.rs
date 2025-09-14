@@ -988,6 +988,24 @@ impl SessionActor {
                 SessionError::ContextError(format!("StageActor validation run failed: {e:?}"))
             })?;
 
+        // Fallback DB stats emit right after validation (for UI Stage 4 snapshot)
+        if let Ok((cnt, minp, maxp, _)) = stage_actor.try_product_detail_stats().await {
+            tracing::info!(target: "data_saving_diag", cnt, minp, maxp, "[Validation->Fallback] emitting DatabaseStats before DataSaving");
+            if let Some(sess) = &self.session_id {
+                let _ = context.emit_event(AppEvent::DatabaseStats {
+                    session_id: sess.clone(),
+                    batch_id: Some(batch_id.to_string()),
+                    total_product_details: cnt,
+                    min_page: minp,
+                    max_page: maxp,
+                    note: Some("post_validation:fallback".into()),
+                    timestamp: chrono::Utc::now(),
+                });
+            } else {
+                tracing::warn!(target: "data_saving_diag", "[Validation->Fallback] session_id missing; skip DatabaseStats emit");
+            }
+        }
+
         // Stage 5: DataSaving (persist to DB)
         info!("[Chaining] Batch {batch_id}: starting DataSaving");
         let _save_res = stage_actor
