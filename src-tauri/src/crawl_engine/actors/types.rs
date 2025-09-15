@@ -409,6 +409,12 @@ pub enum AppEvent {
         duplicates: u32,
         duration_ms: u64,
         phase: String, // fetch | persist
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    partial: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    done: Option<u32>,
         timestamp: DateTime<Utc>,
     },
     /// Fine grained HTTP fetch latency for list or detail product requests

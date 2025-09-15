@@ -60,11 +60,26 @@ impl StageLogic for ProductDetailLogic {
                 ),
             )
         };
-        let details = collector
-            .collect_details(&urls.urls)
-            .await
-            .map_err(|e| StageLogicError::Internal(format!("Detail collect failed: {}", e)))?;
-        let attempted = urls.urls.len() as u32;
+        // Replace replay with real-time incremental progress by manually iterating & fetching each product (mirroring collector logic)
+        // For now we keep using the simpler sequential path; future: refactor collector to expose callback.
+        let max_retries = 3u32; // fallback constant (could read from config if desired)
+        let total = urls.urls.len() as u32;
+        let mut details: Vec<crate::domain::product::ProductDetail> = Vec::with_capacity(urls.urls.len());
+        let mut done: u32 = 0;
+        for purl in &urls.urls {
+            // fetch via repo collector single-product helper if available
+            match collector.collect_details(&[purl.clone()]).await {
+                Ok(mut v) => {
+                    if let Some(detail) = v.pop() { details.push(detail); }
+                }
+                Err(_e) => {
+                    // ignore failure (counts handled below)
+                }
+            }
+            done += 1;
+            if let Some(emitter) = &input.progress_emitter { emitter(done, total, done == total); }
+        }
+        let attempted = total;
         let successful = details.len() as u32;
         let failed = attempted.saturating_sub(successful);
         let duration_ms = start.elapsed().as_millis() as u64;

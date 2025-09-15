@@ -770,6 +770,7 @@ mod tests {
             offset: Some(0),
             limit: Some(10),
             filter: None,
+            sort: None,
         };
         let page = analytics_query(state.clone(), params).await.unwrap();
         assert_eq!(page.offset, 0);

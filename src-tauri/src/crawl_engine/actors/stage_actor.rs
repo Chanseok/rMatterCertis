@@ -384,8 +384,228 @@ impl StageActor {
 
         let item_start = Instant::now();
 
-        // 전략 실행
-        let result = if let Some(logic) = strategy_factory.logic_for(&stage_type) {
+        // 재시도 & per-attempt 이벤트 wrapper
+    async fn run_with_attempt_events(
+            ctx: &AppContext,
+            stage_type: &StageType,
+            item: &StageItem,
+            session_id: &str,
+            batch_id: &Option<String>,
+            strategy_factory: &Arc<dyn StageLogicFactory + Send + Sync>,
+            deps: &Arc<StageDeps>,
+            total_pages_hint: Option<u32>,
+            products_on_last_page_hint: Option<u32>,
+    ) -> Result<StageItemResult, StageError> {
+            // Attempt-level lifecycle events always enabled (previously gated by MC_ATTEMPT_EVENTS)
+            let attempt_events_enabled = true;
+            // 기본 재시도 횟수 설정 (추후 설정에서 가져오도록 확장 가능)
+            let max_attempts = 3u32;
+            let per_attempt_timeout = Duration::from_secs(30);
+            for attempt in 1..=max_attempts {
+                let attempt_start = Instant::now();
+                // attempt_started 이벤트
+                if attempt_events_enabled && matches!(stage_type, StageType::ListPageCrawling | StageType::ProductDetailCrawling) {
+                    let status = if matches!(stage_type, StageType::ListPageCrawling) {
+                        "list_attempt_started"
+                    } else {
+                        "detail_attempt_started"
+                    };
+                    StageActor::emit_best_effort(
+                        ctx,
+                        AppEvent::ProductLifecycle {
+                            session_id: session_id.to_string(),
+                            batch_id: batch_id.clone(),
+                            page_number: None,
+                            product_ref: item.id_string(),
+                            status: status.into(),
+                            retry: Some(attempt.saturating_sub(1)),
+                            duration_ms: None,
+                            metrics: Some(SimpleMetrics::Generic {
+                                key: "attempt_meta".into(),
+                                value: format!(
+                                    "attempt={} total={} per_timeout_s=30 start_ts_ms={}",
+                                    attempt,
+                                    max_attempts,
+                                    chrono::Utc::now().timestamp_millis()
+                                ),
+                            }),
+                            timestamp: Utc::now(),
+                        },
+                    );
+                }
+                let deps_in = crate::crawl_engine::stages::traits::Deps {
+                    http: deps.http_client.clone(),
+                    extractor: deps.data_extractor.clone(),
+                    repo: deps.product_repo.clone(),
+                    duplicate_policy: deps.duplicate_policy.clone(),
+                    list_collector: None,
+                    detail_collector: None,
+                };
+                // Derive page hint & total products for detail progress emitter
+                let mut progress_emitter = None;
+                if matches!(stage_type, StageType::ProductDetailCrawling) {
+                    if let StageItem::ProductUrls(urls) = &item {
+                        let total = urls.urls.len() as u32;
+                        let page_hint = urls.urls.first().map(|u| u.page_id as u32);
+                        let ctx_clone = ctx.clone();
+                        let session_id_c = session_id.to_string();
+                        let batch_id_c = batch_id.clone();
+                        let emitter_closure: Arc<dyn Fn(u32, u32, bool) + Send + Sync> = Arc::new(move |done: u32, total_in: u32, final_flag: bool| {
+                            StageActor::emit_best_effort(&ctx_clone, AppEvent::ProductLifecycleGroup {
+                                session_id: session_id_c.clone(),
+                                batch_id: batch_id_c.clone(),
+                                page_number: page_hint,
+                                group_size: total_in,
+                                started: total_in,
+                                succeeded: done,
+                                failed: 0,
+                                duplicates: 0,
+                                duration_ms: 0, // fine-grained duration not tracked per increment
+                                phase: "fetch".into(),
+                                partial: Some(!final_flag),
+                                done: Some(done),
+                                timestamp: Utc::now(),
+                            });
+                        });
+                        progress_emitter = Some(emitter_closure);
+                        // Emit initial 0 state (optional)
+                        if let Some(em) = &progress_emitter { em(0, total, false); }
+                    }
+                }
+                let stage_input = crate::crawl_engine::stages::traits::StageInput {
+                    stage_type: stage_type.clone(),
+                    item: item.clone(),
+                    config: deps.app_config.clone(),
+                    deps: deps_in,
+                    total_pages_hint,
+                    products_on_last_page_hint,
+                    session_id: session_id.to_string(),
+                    batch_id: batch_id.clone(),
+                    progress_emitter,
+                };
+                let logic_arc = if let Some(l) = strategy_factory.logic_for(stage_type) { l } else { return Err(StageError::GenericError { message: format!("No strategy registered for stage {:?}", stage_type) }); };
+                let fut_exec = logic_arc.execute(stage_input);
+                match tokio::time::timeout(per_attempt_timeout, fut_exec).await {
+                    Ok(Ok(out)) => {
+                        // attempt_succeeded
+                        if attempt_events_enabled && matches!(stage_type, StageType::ListPageCrawling | StageType::ProductDetailCrawling) {
+                            let status = if matches!(stage_type, StageType::ListPageCrawling) {
+                                "list_attempt_succeeded"
+                            } else { "detail_attempt_succeeded" };
+                            let attempts_used = attempt; // 1-based
+                            StageActor::emit_best_effort(
+                                ctx,
+                                AppEvent::ProductLifecycle {
+                                    session_id: session_id.to_string(),
+                                    batch_id: batch_id.clone(),
+                                    page_number: None,
+                                    product_ref: item.id_string(),
+                                    status: status.into(),
+                                    retry: Some(attempt.saturating_sub(1)),
+                                    duration_ms: Some(attempt_start.elapsed().as_millis() as u64),
+                                    metrics: Some(SimpleMetrics::Generic { key: "attempts_used".into(), value: attempts_used.to_string() }),
+                                    timestamp: Utc::now(),
+                                },
+                            );
+                        }
+                        return Ok(out.result);
+                    }
+                    Ok(Err(e)) => {
+                        // attempt_failed
+                        if attempt_events_enabled && matches!(stage_type, StageType::ListPageCrawling | StageType::ProductDetailCrawling) {
+                            let status = if matches!(stage_type, StageType::ListPageCrawling) {
+                                "list_attempt_failed"
+                            } else { "detail_attempt_failed" };
+                            StageActor::emit_best_effort(
+                                ctx,
+                                AppEvent::ProductLifecycle {
+                                    session_id: session_id.to_string(),
+                                    batch_id: batch_id.clone(),
+                                    page_number: None,
+                                    product_ref: item.id_string(),
+                                    status: status.into(),
+                                    retry: Some(attempt.saturating_sub(1)),
+                                    duration_ms: Some(attempt_start.elapsed().as_millis() as u64),
+                                    metrics: Some(SimpleMetrics::Generic { key: "error".into(), value: format!("{}", e) }),
+                                    timestamp: Utc::now(),
+                                },
+                            );
+                        }
+                        if attempt == max_attempts {
+                            return Err(StageError::GenericError { message: format!("Strategy error after {} attempts: {}", attempt, e) });
+                        } else {
+                            // retry 이벤트
+                            if attempt_events_enabled && matches!(stage_type, StageType::ListPageCrawling | StageType::ProductDetailCrawling) {
+                                let status = if matches!(stage_type, StageType::ListPageCrawling) { "list_attempt_retry" } else { "detail_attempt_retry" };
+                                StageActor::emit_best_effort(
+                                    ctx,
+                                    AppEvent::ProductLifecycle {
+                                        session_id: session_id.to_string(),
+                                        batch_id: batch_id.clone(),
+                                        page_number: None,
+                                        product_ref: item.id_string(),
+                                        status: status.into(),
+                                        retry: Some(attempt),
+                                        duration_ms: None,
+                                        metrics: Some(SimpleMetrics::Generic { key: "reason".into(), value: "error".into() }),
+                                        timestamp: Utc::now(),
+                                    },
+                                );
+                            }
+                            continue;
+                        }
+                    }
+                    Err(_timeout) => {
+                        // attempt timeout
+                        if attempt_events_enabled && matches!(stage_type, StageType::ListPageCrawling | StageType::ProductDetailCrawling) {
+                            let status = if matches!(stage_type, StageType::ListPageCrawling) { "list_attempt_timeout" } else { "detail_attempt_timeout" };
+                            StageActor::emit_best_effort(
+                                ctx,
+                                AppEvent::ProductLifecycle {
+                                    session_id: session_id.to_string(),
+                                    batch_id: batch_id.clone(),
+                                    page_number: None,
+                                    product_ref: item.id_string(),
+                                    status: status.into(),
+                                    retry: Some(attempt.saturating_sub(1)),
+                                    duration_ms: Some(per_attempt_timeout.as_millis() as u64),
+                                    metrics: Some(SimpleMetrics::Generic { key: "reason".into(), value: "timeout".into() }),
+                                    timestamp: Utc::now(),
+                                },
+                            );
+                        }
+                        if attempt == max_attempts {
+                            return Err(StageError::TimeoutError { timeout_ms: per_attempt_timeout.as_millis() as u64 });
+                        } else {
+                            if attempt_events_enabled && matches!(stage_type, StageType::ListPageCrawling | StageType::ProductDetailCrawling) {
+                                let retry_status = if matches!(stage_type, StageType::ListPageCrawling) { "list_attempt_retry" } else { "detail_attempt_retry" };
+                                StageActor::emit_best_effort(
+                                    ctx,
+                                    AppEvent::ProductLifecycle {
+                                        session_id: session_id.to_string(),
+                                        batch_id: batch_id.clone(),
+                                        page_number: None,
+                                        product_ref: item.id_string(),
+                                        status: retry_status.into(),
+                                        retry: Some(attempt),
+                                        duration_ms: None,
+                                        metrics: Some(SimpleMetrics::Generic { key: "reason".into(), value: "timeout".into() }),
+                                        timestamp: Utc::now(),
+                                    },
+                                );
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+            // 이론상 도달하지 않음
+            Err(StageError::GenericError { message: "attempt loop exited unexpectedly".into() })
+        }
+
+    let result: Result<StageItemResult, StageError> = if matches!(stage_type, StageType::ListPageCrawling | StageType::ProductDetailCrawling) {
+            run_with_attempt_events(&ctx, &stage_type, &item, &session_id, &batch_id, &strategy_factory, &deps, total_pages_hint, products_on_last_page_hint).await
+        } else if let Some(logic) = strategy_factory.logic_for(&stage_type) {
             let deps_in = crate::crawl_engine::stages::traits::Deps {
                 http: deps.http_client.clone(),
                 extractor: deps.data_extractor.clone(),
@@ -394,24 +614,23 @@ impl StageActor {
                 list_collector: None,
                 detail_collector: None,
             };
-            let input = crate::crawl_engine::stages::traits::StageInput {
+            let stage_input = crate::crawl_engine::stages::traits::StageInput {
                 stage_type: stage_type.clone(),
                 item: item.clone(),
                 config: deps.app_config.clone(),
                 deps: deps_in,
                 total_pages_hint,
                 products_on_last_page_hint,
+                session_id: session_id.clone(),
+                batch_id: batch_id.clone(),
+                progress_emitter: None,
             };
-            match logic.execute(input).await {
+            match logic.execute(stage_input).await {
                 Ok(crate::crawl_engine::stages::traits::StageOutput { result }) => Ok(result),
-                Err(e) => Err(StageError::GenericError {
-                    message: format!("Strategy error: {}", e),
-                }),
+                Err(e) => Err(StageError::GenericError { message: format!("Strategy error: {}", e) }),
             }
         } else {
-            Err(StageError::GenericError {
-                message: format!("No strategy registered for stage {:?}", stage_type),
-            })
+            Err(StageError::GenericError { message: format!("No strategy registered for stage {:?}", stage_type) })
         };
 
         // 미들웨어 사후 훅
@@ -425,9 +644,7 @@ impl StageActor {
                     let (products_found, products_checked, divergences, anomalies) = {
                         use crate::crawl_engine::actors::types::StageResultData as SRD;
                         match &r.collected_data {
-                            Some(SRD::ValidationResult {
-                                validated_count, ..
-                            }) => {
+                            Some(SRD::ValidationResult { validated_count, .. }) => {
                                 let found = *validated_count;
                                 (found, u64::from(found), 0, 0)
                             }
@@ -435,7 +652,7 @@ impl StageActor {
                                 let found = details.len() as u32;
                                 // Optional: light analysis
                                 let report = crate::crawl_engine::services::data_quality_analyzer::DataQualityAnalyzer::new()
-                                    .analyze_product_quality(details)
+                                    .analyze_product_quality(&details)
                                     .ok();
                                 let (div_ct, anom_ct) = if let Some(rep) = report {
                                     let dup = rep
@@ -510,6 +727,8 @@ impl StageActor {
                                 duplicates: 0,
                                 duration_ms,
                                 phase: "fetch".into(),
+                                partial: None,
+                                done: None,
                                 timestamp: Utc::now(),
                             },
                         );
@@ -529,6 +748,11 @@ impl StageActor {
                             session_id,
                             batch_id.clone().unwrap_or_else(|| "none".into())
                         );
+                        // Persist phase ProductLifecycleGroup semantics:
+                        // - We emit exactly one final snapshot per persist attempt path (success, skip, empty, error, fallback, guard skip, unexpected)
+                        // - partial is always None for persist-phase snapshots (no incremental streaming here yet)
+                        // - done is ALWAYS Some(group_size) so UI can uniformly treat persist like other phases without heuristics
+                        // - failed field currently carries "unchanged" count for success path so UI can derive true failures separately
                         // Pre-compute attempted_count early so guard skip path can also emit persist snapshot
                         let attempted_count = match &lifecycle_item {
                             StageItem::ValidatedProducts(v) => v.products.len() as u32,
@@ -586,6 +810,8 @@ impl StageActor {
                                     duplicates: 0,
                                     duration_ms: item_start.elapsed().as_millis() as u64,
                                     phase: "persist".into(),
+                                    partial: None,
+                                    done: Some(attempted_count),
                                     timestamp: Utc::now(),
                                 },
                             );
@@ -654,6 +880,8 @@ impl StageActor {
                                     duplicates: 0,
                                     duration_ms: item_start.elapsed().as_millis() as u64,
                                     phase: "persist".into(),
+                                    partial: None,
+                                    done: Some(attempted_count),
                                     timestamp: Utc::now(),
                                 },
                             );
@@ -725,6 +953,8 @@ impl StageActor {
                                         duplicates: 0,
                                         duration_ms: 0,
                                         phase: "persist".into(),
+                                        partial: None,
+                                        done: Some(0),
                                         timestamp: Utc::now(),
                                     },
                                 );
@@ -821,6 +1051,8 @@ impl StageActor {
                                             duplicates: duplicates_ct,
                                             duration_ms: persist_start.elapsed().as_millis() as u64,
                                             phase: "persist".into(),
+                                            partial: None,
+                                            done: Some(attempted),
                                             timestamp: Utc::now(),
                                         },
                                     );
@@ -879,6 +1111,8 @@ impl StageActor {
                                             duplicates: 0,
                                             duration_ms: persist_start.elapsed().as_millis() as u64,
                                             phase: "persist".into(),
+                                            partial: None,
+                                            done: Some(attempted_count),
                                             timestamp: Utc::now(),
                                         },
                                     );
@@ -940,6 +1174,8 @@ impl StageActor {
                                         duplicates: 0,
                                         duration_ms: item_start.elapsed().as_millis() as u64,
                                         phase: "persist".into(),
+                                        partial: None,
+                                        done: Some(attempted_count),
                                         timestamp: Utc::now(),
                                     },
                                 );
@@ -994,6 +1230,8 @@ impl StageActor {
                                 duplicates: 0,
                                 duration_ms: item_start.elapsed().as_millis() as u64,
                                 phase: "persist".into(),
+                                partial: None,
+                                done: Some(0),
                                 timestamp: Utc::now(),
                             },
                         );
@@ -1006,9 +1244,7 @@ impl StageActor {
                     match &r.collected_data {
                         Some(SRD::ProductUrls { urls, .. }) => Some(urls.len() as u32),
                         Some(SRD::ProductDetails { details, .. }) => Some(details.len() as u32),
-                        Some(SRD::ValidationResult {
-                            validated_count, ..
-                        }) => Some(*validated_count),
+                        Some(SRD::ValidationResult { validated_count, .. }) => Some(*validated_count),
                         Some(SRD::SavingResult { saved_count, .. }) => Some(*saved_count),
                         Some(SRD::StatusCheck { .. }) => Some(1),
                         Some(SRD::QualityAnalysis { total_analyzed, .. }) => Some(*total_analyzed),
@@ -1435,6 +1671,13 @@ impl StageActor {
 
         // 모든 태스크 완료 대기 (전체 타임아웃 관리 및 잔여 task abort)
         let mut results = Vec::new();
+    // Progress tracking (ListPageCrawling only). Emit every page completion (no throttling); UI aggregates.
+    // ListPageCrawling: one StageItem per page -> total_items_count = scheduled pages
+    // ProductDetailCrawling: each StageItem currently bundles many product URLs; detail progress handled elsewhere
+    let progress_enabled = matches!(stage_type, StageType::ListPageCrawling);
+    let total_items_count = self.total_items; // pages scheduled
+    let mut succeeded_count: u32 = 0; // pages succeeded
+    let mut failed_count: u32 = 0;    // pages failed (retry-exhausted)
         loop {
             let now = Instant::now();
             if now >= deadline {
@@ -1450,7 +1693,32 @@ impl StageActor {
             }
             let remaining = deadline.saturating_duration_since(now);
             match tokio::time::timeout(remaining, join_set.join_next()).await {
-                Ok(Some(Ok(Ok(res)))) => results.push(res),
+                Ok(Some(Ok(Ok(res)))) => {
+                    if progress_enabled {
+                        if res.success { succeeded_count += 1; } else { failed_count += 1; }
+                        let emit_due_count = succeeded_count + failed_count; // pages completed (success+fail)
+                        let is_final = emit_due_count == total_items_count;
+                        Self::emit_best_effort(
+                            &_context,
+                            AppEvent::ProductLifecycleGroup {
+                                session_id: _context.session_id.clone(),
+                                batch_id: Some(batch_id_owned.clone()),
+                                page_number: None,
+                                group_size: total_items_count,
+                                started: total_items_count, // planned
+                                succeeded: succeeded_count,
+                                failed: failed_count,
+                                duplicates: 0,
+                                duration_ms: (overall_timeout.as_millis() as u64).saturating_sub(deadline.saturating_duration_since(Instant::now()).as_millis() as u64),
+                                phase: "fetch".into(),
+                                partial: Some(!is_final),
+                                done: Some(emit_due_count),
+                                timestamp: Utc::now(),
+                            },
+                        );
+                    }
+                    results.push(res)
+                },
                 Ok(Some(Ok(Err(e)))) => {
                     error!("Item processing failed: {:?}", e);
                     // If this stage is DataSaving, emit a minimal persist failure snapshot so Stage 5 UI updates
@@ -1485,6 +1753,8 @@ impl StageActor {
                                 duplicates: 0,
                                 duration_ms: 0,
                                 phase: "persist".into(),
+                                partial: None,
+                                done: None,
                                 timestamp: Utc::now(),
                             },
                         );

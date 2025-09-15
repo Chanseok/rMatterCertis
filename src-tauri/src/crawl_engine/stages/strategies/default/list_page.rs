@@ -25,6 +25,7 @@ impl StageLogic for ListPageLogic {
             deps,
             total_pages_hint,
             products_on_last_page_hint,
+            ..
         } = input;
         if !matches!(st, ActorStageType::ListPageCrawling) {
             return Err(StageLogicError::Unsupported(st));

@@ -31,6 +31,11 @@ pub struct StageInput {
     /// Optional pagination hints injected by Batch/Stage actor to avoid per-item site status calls
     pub total_pages_hint: Option<u32>,
     pub products_on_last_page_hint: Option<u32>,
+    /// Session context (for progress emission)
+    pub session_id: String,
+    pub batch_id: Option<String>,
+    /// Optional progress emitter: (done, total, final)
+    pub progress_emitter: Option<Arc<dyn Fn(u32, u32, bool) + Send + Sync>>,
 }
 
 /// Output from a `StageLogic` strategy

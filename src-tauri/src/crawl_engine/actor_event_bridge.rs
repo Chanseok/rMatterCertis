@@ -148,6 +148,25 @@ impl ActorEventBridge {
                     task_kind, status, page_number, product_ref, duration_ms, batch_id, session_id
                 );
             }
+            AppEvent::ProductLifecycle {
+                session_id,
+                batch_id,
+                page_number,
+                product_ref,
+                status,
+                retry,
+                duration_ms,
+                metrics,
+                ..
+            } => {
+                // New fine-grained product attempt event logging (list/detail attempts, retries, timeouts)
+                let retry_v = retry.map(|r| r.to_string()).unwrap_or_else(|| "0".into());
+                let metric_str = metrics.as_ref().map(|m| match m { SimpleMetrics::Generic { key, value } => format!("{}={}", key, value), _ => "".into() }).unwrap_or_default();
+                tracing::info!(target: "actor-event",
+                    "[ProductLifecycle] status={} ref={} retry={} dur_ms={:?} page={:?} metric={} batch={:?} session={}",
+                    status, product_ref, retry_v, duration_ms, page_number, metric_str, batch_id, session_id
+                );
+            }
             AppEvent::ProductLifecycleGroup {
                 session_id,
                 batch_id,
@@ -159,11 +178,15 @@ impl ActorEventBridge {
                 duplicates,
                 duration_ms,
                 phase,
+                partial,
+                done,
                 ..
             } => {
+                let stage_tag = if partial.unwrap_or(false) { "partial" } else { "final" };
+                let done_disp = done.map(|d| d.to_string()).unwrap_or_else(|| succeeded.to_string());
                 tracing::info!(target: "actor-event",
-                    "[ProductLifecycleGroup] phase={} size={} started={} ok={} fail={} dup={} page={:?} batch={:?} dur_ms={} session={}",
-                    phase, group_size, started, succeeded, failed, duplicates, page_number, batch_id, duration_ms, session_id
+                    "[ProductLifecycleGroup] {} phase={} size={} done={} started={} ok={} fail={} dup={} page={:?} batch={:?} dur_ms={} session={}",
+                    stage_tag, phase, group_size, done_disp, started, succeeded, failed, duplicates, page_number, batch_id, duration_ms, session_id
                 );
             }
             AppEvent::DatabaseStats {

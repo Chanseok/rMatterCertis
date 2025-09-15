@@ -1,4 +1,9 @@
-import { createSignal, Show, onMount, onCleanup, For } from "solid-js";
+import { createSignal, onMount, onCleanup, Show, For } from "solid-js";
+import SyncPanel from "./parts/SyncPanel";
+import SessionStatusCard from "./parts/SessionStatusCard";
+import ControlPanel from "./parts/ControlPanel";
+import StageStatsPanels from "./parts/StageStatsPanels";
+import DiagnosticsPanel from "./parts/DiagnosticsPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 // Types are relaxed locally to avoid tight coupling during integration
@@ -6,6 +11,9 @@ import { tauriApi } from "../../services/tauri-api";
 // Dev-only panels removed during cleanup
 import { usePulse } from "../../hooks/usePulse";
 import CountUp from "../common/CountUp";
+import ValidationPanel from "./parts/ValidationPanel";
+import DbSnapshotPanel from "./parts/DbSnapshotPanel";
+import PersistPanel from "./parts/PersistPanel";
 
 export default function CrawlingEngineTabSimple() {
   const [isRunning, setIsRunning] = createSignal(false);
@@ -18,6 +26,31 @@ export default function CrawlingEngineTabSimple() {
   // isValidating: 제거됨 (미사용)
   const [isSyncing, setIsSyncing] = createSignal(false);
   const [syncRanges, setSyncRanges] = createSignal<string>("");
+  // Stage 1: Page stats (runtime incremental)
+  const [pageStats, setPageStats] = createSignal<{
+    started: number;
+    completed: number;
+    failed: number;
+    retried: number;
+    totalEstimated: number; // estimated pages (from batches or preflight)
+    inflight: number;
+  }>({ started: 0, completed: 0, failed: 0, retried: 0, totalEstimated: 0, inflight: 0 });
+  // Stage 2: Detail stats (runtime incremental; derived from lifecycle group/product events)
+  const [detailStats, setDetailStats] = createSignal<{
+    started: number;
+    completed: number;
+    failed: number;
+    retried: number;
+    inflight: number;
+  }>({ started: 0, completed: 0, failed: 0, retried: 0, inflight: 0 });
+  // Batch info (Stage 1 batching)
+  const [batchInfo, setBatchInfo] = createSignal<{ current: number; totalEstimated?: number; batchId?: any; startedAt?: number }>({ current: 0 });
+  // Track pages already counted toward detail scheduling to prevent double counting
+  const detailScheduledPages = new Set<number>();
+  const [lastActorEvent, setLastActorEvent] = createSignal<string>("");
+  // Removed range FX related signals (legacy range panel removed)
+  const [actorEventCount, setActorEventCount] = createSignal(0);
+  // Legacy range animation helpers removed
   // Lightweight Sync runtime view
   const [syncLive, setSyncLive] = createSignal<{
     active: boolean;
@@ -38,149 +71,6 @@ export default function CrawlingEngineTabSimple() {
     updated: 0,
     skipped: 0,
     failed: 0,
-  });
-  // validationPages: 제거됨 (미사용)
-  // Auto re-plan from backend after a session completes
-  const [nextPlan, setNextPlan] = createSignal<any | null>(null);
-  // Lightweight live actor-event telemetry (debug aid)
-  const [lastActorEvent, setLastActorEvent] = createSignal<string>("");
-  const [actorEventCount, setActorEventCount] = createSignal<number>(0);
-
-  // Dramatic transition for Calculated Crawling Range
-  const [rangeFxKey] = createSignal(0);
-  const [rangeFxActive, setRangeFxActive] = createSignal(false);
-  const [rangeExpanded, setRangeExpanded] = createSignal(true); // 크롤링 범위 섹션 확장/축소 상태
-  const [confettiPieces, setConfettiPieces] = createSignal<
-    Array<{
-      x: number;
-      y: number;
-      color: string;
-      rx: number;
-      ry: number;
-      rot: number;
-      cw?: number;
-      ch?: number;
-    }>
-  >([]);
-  const [rangePrevSnapshot, setRangePrevSnapshot] = createSignal<{
-    start: number;
-    end: number;
-    total: number;
-    coverText: string;
-  } | null>(null);
-  let rangePanelRef: HTMLDivElement | undefined;
-
-  // Split text into animated particles (shatter)
-  const renderShatterText = (text: string) =>
-    text.split("").map((ch) => {
-      const mag = 140 + Math.random() * 160; // stronger spread
-      const theta = Math.random() * Math.PI * 1.3 - Math.PI * 0.65;
-      const dx = Math.cos(theta) * mag;
-      const dy = Math.sin(theta) * mag - 20; // upward bias
-      const rot = (Math.random() - 0.5) * 200;
-      const style = {
-        "--dx": `${dx}px`,
-        "--dy": `${dy}px`,
-        "--rot": `${rot}deg`,
-      } as any;
-      return (
-        <span class="shatter-char" style={style} aria-hidden="true">
-          {ch}
-        </span>
-      );
-    });
-
-  // Drum-roll in for new text
-  const renderDrumText = (text: string) =>
-    text.split("").map((ch, i) => (
-      <span class="drum-in" style={{ "--delay": `${i * 35}ms` } as any}>
-        {ch}
-      </span>
-    ));
-
-  // Lightweight CSS confetti
-  const triggerConfetti = (n = 48) => {
-    if (!rangePanelRef) return;
-    const colors = [
-      "#60A5FA",
-      "#34D399",
-      "#FBBF24",
-      "#F472B6",
-      "#A78BFA",
-      "#22D3EE",
-    ];
-    const pieces = Array.from({ length: n }, () => {
-      const angle = Math.random() * Math.PI * 2;
-      const dist = 90 + Math.random() * 160; // farther burst
-      const cw = 4 + Math.random() * 8; // width 4~12
-      const ch = 6 + Math.random() * 14; // height 6~20
-      return {
-        x: 0,
-        y: 0,
-        color: colors[Math.floor(Math.random() * colors.length)],
-        rx: Math.cos(angle) * dist,
-        ry: Math.sin(angle) * dist,
-        rot: (Math.random() - 0.5) * 220,
-        cw,
-        ch,
-      };
-    });
-    setConfettiPieces(pieces);
-    setTimeout(() => setConfettiPieces([]), 950);
-  };
-
-  const playRangeTransition = () => {
-  setRangeFxActive(true);
-  rangeFxKey(); // touch to avoid 'unused' and keep effect sequence stable
-    triggerConfetti();
-    setTimeout(() => setRangeFxActive(false), 720);
-  };
-
-  // Optimistically apply a planner result to the Calculated Crawling Range panel
-  const applyPlanToCalculatedRange = (plan: any) => {
-    try {
-      const phases = (plan?.phases || []) as any[];
-      const pages: number[] = phases.flatMap((p: any) =>
-        Array.isArray(p?.pages) ? (p.pages as number[]) : []
-      );
-      const uniq = Array.from(new Set(pages))
-        .filter((n) => Number.isFinite(n))
-        .sort((a, b) => b - a);
-      if (uniq.length === 0) return;
-      const start = uniq[0];
-      const end = uniq[uniq.length - 1];
-      setCrawlingRange((prev) => ({
-        ...(prev || {}),
-        range: [start, end],
-        crawling_info: {
-          ...((prev as any)?.crawling_info || {}),
-          pages_to_crawl: uniq.length,
-        },
-      }));
-    } catch {}
-  };
-  // Batch progress (best-effort estimation)
-  const [batchInfo, setBatchInfo] = createSignal<{
-    current: number;
-    totalEstimated?: number;
-    batchId?: string;
-    pagesInBatch?: number;
-  }>({ current: 0 });
-  // Lightweight runtime monitor for Stage 1 (list pages) and Stage 2 (detail)
-  const [pageStats, setPageStats] = createSignal({
-    started: 0,
-    completed: 0,
-    failed: 0,
-    retried: 0,
-    totalEstimated: 0,
-    inflight: 0,
-  });
-  const [detailStats, setDetailStats] = createSignal({
-    started: 0,
-    completed: 0,
-    failed: 0,
-    retried: 0,
-    inflight: 0,
   });
   // Stage 1 unique tracking (per page) to avoid double counting and track retries
   const pageSeen = new Set<number>();
@@ -215,16 +105,6 @@ export default function CrawlingEngineTabSimple() {
   });
   // Animation toggles (validation pulse 제거됨)
   const [persistFlash, setPersistFlash] = createSignal(false);
-  // Stage 5: last batch snapshot (for visibility alongside session totals)
-  const [persistLastBatch, setPersistLastBatch] = createSignal<{
-    attempted: number;
-    succeeded: number;
-    failed: number;
-    duplicates: number;
-    unchanged: number;
-    failedTrue: number;
-    durationMs: number;
-  } | null>(null);
   // Stage X: DB mismatch diagnostics
   const [diagLoading, setDiagLoading] = createSignal(false);
   const [diagResult, setDiagResult] = createSignal<any | null>(null);
@@ -315,15 +195,17 @@ export default function CrawlingEngineTabSimple() {
   }>({});
   // Stage 5: Persist (grouped snapshot)
   const [persistStats, setPersistStats] = createSignal<{
+    mode?: string;
     attempted: number;
     inserted: number;
     updated: number;
-    succeeded: number; // derived = inserted + updated
-    failed: number; // derived = attempted - succeeded
+    succeeded: number;
+    failed: number;
     duplicates: number;
-    unchanged: number; // derived on FE: attempted - (succeeded + duplicates)
-    failedTrue: number; // derived on FE: failed - duplicates - unchanged
+    unchanged: number;
+    failedTrue: number;
     durationMs: number;
+    successRate: number;
     statusCounts: {
       insertedOnly: number;
       updatedOnly: number;
@@ -333,13 +215,68 @@ export default function CrawlingEngineTabSimple() {
       failed: number;
       empty: number;
     };
-  }>({ attempted: 0, inserted: 0, updated: 0, succeeded: 0, failed: 0, duplicates: 0, unchanged: 0, failedTrue: 0, durationMs: 0, statusCounts: { insertedOnly: 0, updatedOnly: 0, mixed: 0, allDuplicate: 0, noop: 0, failed: 0, empty: 0 } });
+    noEvents?: boolean;
+    failureInferred?: boolean;
+  }>({ mode: undefined, attempted: 0, inserted: 0, updated: 0, succeeded: 0, failed: 0, duplicates: 0, unchanged: 0, failedTrue: 0, durationMs: 0, successRate: 0, statusCounts: { insertedOnly: 0, updatedOnly: 0, mixed: 0, allDuplicate: 0, noop: 0, failed: 0, empty: 0 }, noEvents: undefined, failureInferred: undefined });
+  // Persist normalization accumulator (Phase 1) - see docs/persist-metrics-normalization.md
+  const persistAccumulator = (() => {
+    let seenResult = false;
+    let group = { attempted: 0, duplicates: 0, unchanged: 0, durationMs: 0 };
+    let result = { attempted: 0, inserted: 0, updated: 0, duplicates: 0, unchanged: 0, durationMs: 0 };
+    let statusCounts = { insertedOnly: 0, updatedOnly: 0, mixed: 0, allDuplicate: 0, noop: 0, failed: 0, empty: 0 };
+    function applyGroup(e: { attempted: number; duplicates: number; unchanged: number; durationMs: number }) {
+      if (seenResult) { group.durationMs += e.durationMs; return; }
+      group.attempted += e.attempted;
+      group.duplicates += e.duplicates;
+      group.unchanged += e.unchanged;
+      group.durationMs += e.durationMs;
+    }
+    function applyResult(e: { attempted: number; inserted: number; updated: number; duplicates: number; unchanged: number; durationMs: number; status?: string }) {
+      seenResult = true;
+      result.attempted += e.attempted;
+      result.inserted += e.inserted;
+      result.updated += e.updated;
+      result.duplicates += e.duplicates;
+      result.unchanged += e.unchanged;
+      result.durationMs += e.durationMs;
+      const s = e.status || "";
+      if (s === 'persist_inserted') statusCounts.insertedOnly += 1; else if (s === 'persist_updated') statusCounts.updatedOnly += 1; else if (s === 'persist_mixed') statusCounts.mixed += 1; else if (s === 'persist_noop_all_duplicate') statusCounts.allDuplicate += 1; else if (s === 'persist_noop') statusCounts.noop += 1; else if (s === 'persist_failed') statusCounts.failed += 1; else if (s === 'persist_empty') statusCounts.empty += 1;
+    }
+    function applyEmpty() {
+      seenResult = true;
+      group = { attempted: 0, duplicates: 0, unchanged: 0, durationMs: 0 };
+      result = { attempted: 0, inserted: 0, updated: 0, duplicates: 0, unchanged: 0, durationMs: 0 };
+      statusCounts = { insertedOnly: 0, updatedOnly: 0, mixed: 0, allDuplicate: 0, noop: 0, failed: 0, empty: 1 };
+    }
+    function applyBatchFallback(e: { inserted: number; updated: number }) { if (seenResult) return; result.inserted += e.inserted; result.updated += e.updated; result.attempted += e.inserted + e.updated; }
+    function snapshot() {
+      const attempted = (seenResult ? result.attempted : group.attempted + result.attempted);
+      const inserted = result.inserted;
+      const updated = result.updated;
+      const duplicates = seenResult ? result.duplicates : group.duplicates + result.duplicates;
+      const unchanged = seenResult ? result.unchanged : group.unchanged + result.unchanged;
+      const succeeded = inserted + updated;
+      const failed = attempted - succeeded;
+      const failedTrue = Math.max(0, attempted - succeeded - duplicates - unchanged);
+      const durationMs = group.durationMs + result.durationMs;
+      return { mode: seenResult ? 'mixed' : 'group-only', attempted, inserted, updated, duplicates, unchanged, succeeded, failed, failedTrue, durationMs, statusCounts: { ...statusCounts } };
+    }
+    return { applyGroup, applyResult, applyEmpty, applyBatchFallback, snapshot };
+  })();
   // Stage 4: DB snapshot animation toggle
   const [dbFlash, setDbFlash] = createSignal(false);
   // Preflight diagnostics (site totals) to improve expected counts
   const [preflight, setPreflight] = createSignal<{ site_total_pages?: number } | null>(null);
   // Global effects toggle
   const [effectsOn, setEffectsOn] = createSignal(true);
+  // Stage2 discrepancy handling flags
+  const autoBackfillStage2 = false; // toggle if we want to forcibly reconcile started upward
+  // Per-page tracking for diagnostics: planned (scheduled) vs fetched (actual succeeded)
+  const pagePlannedMap: Map<number, number> = new Map();
+  const pageFetchedMap: Map<number, number> = new Map();
+  // Persist diagnostics flags
+  let persistEventsSeen = false;
+  let persistFailureSynthesized = false;
   // Sync input pulse highlight
   const [syncPulse, setSyncPulse] = createSignal(false);
   // Track sync-start events to detect backend start and enable fallbacks
@@ -457,18 +394,8 @@ export default function CrawlingEngineTabSimple() {
         // Optional transition snapshot for nicer UX
         try {
           const prev = crawlingRange();
-          const prevStart = (prev?.range?.[0] ?? 0) as number;
-          const prevEnd = (prev?.range?.[1] ?? 0) as number;
-          const prevTotal = (prev?.progress?.total_products ?? 0) as number;
-          const prevCover = `${
-            prev?.progress?.progress_percentage?.toFixed?.(1) ?? "0.0"
-          }%`;
-          setRangePrevSnapshot({
-            start: prevStart,
-            end: prevEnd,
-            total: prevTotal,
-            coverText: String(prevCover),
-          });
+          const _prevStart = (prev?.range?.[0] ?? 0) as number;
+          void _prevStart; // kept for potential future use
         } catch {}
         calculateCrawlingRange();
       }).then((un) => unsubs.push(un));
@@ -604,6 +531,14 @@ export default function CrawlingEngineTabSimple() {
             totalEstimated: 0,
             inflight: 0,
           });
+          // Manual range override: if crawlingRange has explicit page list length, use it as totalEstimated baseline
+          try {
+            const info = crawlingRange()?.crawling_info;
+            const manualPages = Array.isArray(info?.pages_explicit) ? info.pages_explicit.length : 0;
+            if (manualPages > 0) {
+              setPageStats((prev) => ({ ...prev, totalEstimated: manualPages }));
+            }
+          } catch {}
           setDetailStats({
             started: 0,
             completed: 0,
@@ -637,6 +572,7 @@ export default function CrawlingEngineTabSimple() {
           });
           setDbSnapshot({});
           setPersistStats({
+            mode: undefined,
             attempted: 0,
             inserted: 0,
             updated: 0,
@@ -646,6 +582,7 @@ export default function CrawlingEngineTabSimple() {
             unchanged: 0,
             failedTrue: 0,
             durationMs: 0,
+            successRate: 0,
             statusCounts: { insertedOnly: 0, updatedOnly: 0, mixed: 0, allDuplicate: 0, noop: 0, failed: 0, empty: 0 },
           });
         }
@@ -656,23 +593,17 @@ export default function CrawlingEngineTabSimple() {
           setBatchInfo((prev) => ({ ...prev }));
           // Play transition on session complete as well (helps visibility)
           try {
-            const prev = crawlingRange();
-            const prevStart = (prev?.range?.[0] ?? 0) as number;
-            const prevEnd = (prev?.range?.[1] ?? 0) as number;
-            const prevTotal = (prev?.progress?.total_products ?? 0) as number;
-            const prevCover = `${
-              prev?.progress?.progress_percentage?.toFixed?.(1) ?? "0.0"
-            }%`;
-            setRangePrevSnapshot({
-              start: prevStart,
-              end: prevEnd,
-              total: prevTotal,
-              coverText: String(prevCover),
-            });
-            if (effectsOn()) playRangeTransition();
+            // range snapshot removed
           } catch {}
           // Recompute crawling range so the UI reflects the newly planned range
           calculateCrawlingRange();
+          // Mark persist no-events state if applicable
+          if ((persistStats().attempted === 0 || persistStats().noEvents) ) {
+            if (!(persistStats().failureInferred)) {
+              setPersistStats((prev) => ({ ...prev, noEvents: true }));
+              console.log('[DIAG][Persist][session-complete-no-events-marked]');
+            }
+          }
         }
         if (name === "actor-session-failed") {
           setIsRunning(false);
@@ -692,35 +623,6 @@ export default function CrawlingEngineTabSimple() {
           calculateCrawlingRange();
         }
 
-        // Post-session auto re-plan (NextPlanReady)
-        if (name === "actor-next-plan-ready") {
-          try {
-            const plan = (payload && payload.plan) || payload;
-            // Take snapshot before values change
-            const prev = crawlingRange();
-            const prevStart = (prev?.range?.[0] ?? 0) as number;
-            const prevEnd = (prev?.range?.[1] ?? 0) as number;
-            const prevTotal = (prev?.progress?.total_products ?? 0) as number;
-            const prevCover = `${
-              prev?.progress?.progress_percentage?.toFixed?.(1) ?? "0.0"
-            }%`;
-            setRangePrevSnapshot({
-              start: prevStart,
-              end: prevEnd,
-              total: prevTotal,
-              coverText: String(prevCover),
-            });
-            setNextPlan(plan);
-            addLog("🧭 다음 실행 계획 수신");
-            // Optimistically reflect into the Calculated Range panel
-            applyPlanToCalculatedRange(plan);
-            if (effectsOn()) playRangeTransition();
-            // Update the calculated crawling range panel using backend planner
-            calculateCrawlingRange();
-          } catch (e) {
-            console.warn("[CrawlingEngineTabSimple] next-plan parse failed", e);
-          }
-        }
 
         // Estimate totals from batch starts (pages in batch)
         if (name === "actor-batch-started") {
@@ -753,11 +655,10 @@ export default function CrawlingEngineTabSimple() {
               current,
               totalEstimated,
               batchId: payload?.batch_id ?? prev.batchId,
-              pagesInBatch: t || prev.pagesInBatch,
             };
           });
         }
-        if (name === "actor-batch-completed") {
+  if (name === "actor-batch-completed") {
           // Keep current count; nothing to do for now.
         }
         // === Fine-grained StageItem events (new) for real-time Stage 1/2 responsiveness ===
@@ -810,13 +711,9 @@ export default function CrawlingEngineTabSimple() {
                     if (effectsOn()) triggerStage1Pulse();
                   }
                 } else if (isDetail) {
-                  // We do not have stable unique product IDs yet; increment started optimistically.
-                  setDetailStats((prev) => {
-                    const started = (prev.started || 0) + 1;
-                    const inflight = Math.max(0, started - (prev.completed + prev.failed));
-                    return { ...prev, started, inflight };
-                  });
-                  if (effectsOn()) triggerStage2Pulse();
+                  // Detail started events no longer increment 'started' to avoid double counting;
+                  // rely on scheduling/mapping events for attempt counting.
+                  // Optionally we could track inflight hints later.
                 }
               } else if (name === 'actor-stage-item-completed') {
                 const success = !!(payload as any)?.success;
@@ -858,42 +755,60 @@ export default function CrawlingEngineTabSimple() {
           if (!Number.isFinite(pageNum)) return;
           // Stage 2 start accounting from mapping/schedule signals
           if (status === "detail_scheduled" || status === "detail_mapping_emitted") {
-            // Robustly extract scheduled_details or url_count from enum-serialized metrics
-            const m = payload?.metrics;
-            let scheduled = 0;
-            let urlCount = 0;
-            try {
-              // Shape A: { metrics: { Page: { url_count, scheduled_details } } }
+            const pageNumKey = pageNum; // use page number as key; if unavailable skip
+            if (!Number.isFinite(pageNumKey)) return;
+            if (detailScheduledPages.has(pageNumKey)) {
+              // Already accounted for this page's details
+            } else {
+              const m = payload?.metrics;
+              let scheduled = 0;
+              // Priority order: url_count > scheduled_details
+              let urlCount = 0;
               if (m && typeof m === 'object' && !Array.isArray(m)) {
-                const k = Object.keys(m)[0];
-                if (k && typeof (m as any)[k] === 'object') {
-                  const inner = (m as any)[k];
-                  scheduled = Number(inner?.scheduled_details ?? 0) || 0;
-                  urlCount = Number(inner?.url_count ?? 0) || 0;
-                }
-                // Shape B: { metrics: { type: 'Page', data: { url_count, scheduled_details } } }
-                const typeStr = String((m as any)?.type || '').toLowerCase();
-                const dataObj = (m as any)?.data;
-                if (typeStr === 'page' && dataObj && typeof dataObj === 'object') {
-                  scheduled = Number(dataObj?.scheduled_details ?? scheduled) || scheduled;
-                  urlCount = Number(dataObj?.url_count ?? urlCount) || urlCount;
-                }
-                // Shape C: direct: { metrics: { url_count, scheduled_details } }
-                if ((m as any)?.url_count != null || (m as any)?.scheduled_details != null) {
-                  scheduled = Number((m as any)?.scheduled_details ?? scheduled) || scheduled;
-                  urlCount = Number((m as any)?.url_count ?? urlCount) || urlCount;
+                // Unified extract function
+                const extract = (obj: any) => {
+                  if (!obj || typeof obj !== 'object') return;
+                  if (obj.url_count != null) urlCount = Number(obj.url_count) || urlCount;
+                  if (obj.scheduled_details != null) scheduled = Number(obj.scheduled_details) || scheduled;
+                };
+                // Variant A: first key object
+                const firstKey = Object.keys(m)[0];
+                if (firstKey && typeof (m as any)[firstKey] === 'object') extract((m as any)[firstKey]);
+                // Variant B: type/data pattern
+                if (typeof (m as any).data === 'object') extract((m as any).data);
+                // Variant C: direct
+                extract(m);
+              }
+              let perPage = urlCount > 0 ? urlCount : (scheduled > 0 ? scheduled : 0);
+              if (perPage === 0) {
+                // Fallback: some PageLifecycle events expose top-level urls / scheduled counts (see logs)
+                const topUrls = Number((payload as any)?.urls ?? 0) || 0;
+                const topScheduled = Number((payload as any)?.scheduled ?? 0) || 0;
+                const fallback = topUrls > 0 ? topUrls : (topScheduled > 0 ? topScheduled : 0);
+                if (fallback > 0) {
+                  perPage = fallback;
+                  console.log('[DIAG][Stage2][fallback-top-level]', { page: pageNumKey, topUrls, topScheduled });
                 }
               }
-            } catch {}
-            // Backend reports scheduled=0 but urls=12, so prefer url_count when available
-            const toAdd = urlCount > 0 ? urlCount : (scheduled > 0 ? scheduled : 0);
-            if (toAdd > 0) {
-              setDetailStats((prev) => {
-                const started = (prev.started || 0) + toAdd;
-                const inflight = Math.max(0, started - ((prev.completed || 0) + (prev.failed || 0)));
-                return { ...prev, started, inflight };
-              });
-              if (effectsOn()) triggerStage2Pulse();
+              if (perPage > 0) {
+                detailScheduledPages.add(pageNumKey);
+                // Record planned per-page (first mapping only)
+                if (!pagePlannedMap.has(pageNumKey)) {
+                  pagePlannedMap.set(pageNumKey, perPage);
+                } else {
+                  // If a second mapping arrives with different count, log it
+                  const prevPlanned = pagePlannedMap.get(pageNumKey)!;
+                  if (prevPlanned !== perPage) {
+                    console.log('[DIAG][Stage2][mapping-ignored]', { page: pageNumKey, prevPlanned, newPlanned: perPage });
+                  }
+                }
+                setDetailStats((prev) => {
+                  const started = (prev.started || 0) + perPage;
+                  const inflight = Math.max(0, started - ((prev.completed || 0) + (prev.failed || 0)));
+                  return { ...prev, started, inflight };
+                });
+                if (effectsOn()) triggerStage2Pulse();
+              }
             }
           }
           if (status === "fetch_started") {
@@ -939,17 +854,53 @@ export default function CrawlingEngineTabSimple() {
           name === "actor-product-lifecycle-group" &&
           payload?.phase === "fetch"
         ) {
-          // Grouped completion snapshot: only update completions/failures here.
-          // 'started' is accounted from PageLifecycle detail_* mapping events to show inflight correctly.
-          const succeeded = Number(payload?.succeeded ?? 0) || 0;
-          const failed = Number(payload?.failed ?? 0) || 0;
-          setDetailStats((prev) => {
-            const completed = (prev.completed || 0) + succeeded;
-            const failedCt = (prev.failed || 0) + failed;
-            const inflight = Math.max(0, (prev.started || 0) - (completed + failedCt));
-            return { ...prev, completed, failed: failedCt, inflight };
-          });
-          if (effectsOn()) triggerStage2Pulse();
+          // Backend emits cumulative succeeded/failed per batch; convert to delta to avoid triangular overcount.
+          const batchId = String(payload?.batch_id || "");
+          const cumSucc = Number(payload?.succeeded ?? 0) || 0;
+          const cumFail = Number(payload?.failed ?? 0) || 0;
+          if (!(window as any).__detailGroupPrev) {
+            (window as any).__detailGroupPrev = new Map<string, { s: number; f: number }>();
+          }
+            const prevMap: Map<string, { s: number; f: number }> = (window as any).__detailGroupPrev;
+            const prev = prevMap.get(batchId) || { s: 0, f: 0 };
+            const dSucc = Math.max(0, cumSucc - prev.s);
+            const dFail = Math.max(0, cumFail - prev.f);
+            // Update snapshot
+            prevMap.set(batchId, { s: cumSucc, f: cumFail });
+            if (dSucc > 0 || dFail > 0) {
+              console.log('[DIAG][Stage2][delta]', { batchId, cumSucc, cumFail, prevSucc: prev.s, prevFail: prev.f, dSucc, dFail });
+            } else if (cumSucc > 0 || cumFail > 0) {
+              // No delta but cumulative advanced earlier; helpful to detect missed batches
+              console.log('[DIAG][Stage2][delta-zero]', { batchId, cumSucc, cumFail, prevSucc: prev.s, prevFail: prev.f });
+            }
+            if (dSucc > 0 || dFail > 0) {
+              setDetailStats((prevStats) => {
+                const completed = (prevStats.completed || 0) + dSucc;
+                const failedCt = (prevStats.failed || 0) + dFail;
+                const started = (prevStats.started || 0); // keep raw started (from scheduling)
+                const inflight = Math.max(0, started - (completed + failedCt));
+                // Track per-page fetched counts (page_number may be present in payload)
+                const pageNumber = Number(payload?.page_number ?? NaN);
+                if (Number.isFinite(pageNumber)) {
+                  const prevFetched = pageFetchedMap.get(pageNumber) || 0;
+                  pageFetchedMap.set(pageNumber, prevFetched + dSucc + dFail);
+                  const planned = pagePlannedMap.get(pageNumber) || 0;
+                  const actual = pageFetchedMap.get(pageNumber) || 0;
+                  if (actual !== planned) {
+                    console.log('[DIAG][Stage2][page-diff]', { page: pageNumber, planned, fetched: actual, delta: actual - planned });
+                  }
+                }
+                // Optional auto backfill
+                if (autoBackfillStage2) {
+                  const inferredAttempted = completed + failedCt;
+                  if (inferredAttempted > started) {
+                    return { ...prevStats, started: inferredAttempted, completed, failed: failedCt, inflight: Math.max(0, inferredAttempted - (completed + failedCt)) };
+                  }
+                }
+                return { ...prevStats, completed, failed: failedCt, inflight };
+              });
+              if (effectsOn()) triggerStage2Pulse();
+            }
         }
         if (name === "actor-product-lifecycle") {
           const status = String(payload?.status || "").toLowerCase();
@@ -1083,6 +1034,24 @@ export default function CrawlingEngineTabSimple() {
             }));
             if (effectsOn()) triggerStage1Pulse();
           }
+          if (t.includes('data_saving')) {
+            const ok = Number(payload?.result?.ok ?? 0) || 0;
+            const fail = Number(payload?.result?.fail ?? 0) || 0;
+            if (!persistEventsSeen && !persistFailureSynthesized && ok === 0 && fail > 0) {
+              persistFailureSynthesized = true;
+              console.log('[DIAG][Persist][failure-fallback]', { ok, fail });
+              setPersistStats((prev) => ({
+                ...prev,
+                mode: prev.mode || 'group-only',
+                attempted: prev.attempted > 0 ? prev.attempted : 1,
+                failed: prev.failed > 0 ? prev.failed : 1,
+                failedTrue: prev.failedTrue > 0 ? prev.failedTrue : 1,
+                successRate: 0,
+                noEvents: true,
+                failureInferred: true,
+              }));
+            }
+          }
         }
 
         // Stage 4 (DB) snapshots and session summary
@@ -1132,18 +1101,12 @@ export default function CrawlingEngineTabSimple() {
               updated: updatedFromBatch,
             }));
             
-            // If we don't get persist events, simulate persist stats
+            persistAccumulator.applyBatchFallback({ inserted: insertedFromBatch, updated: updatedFromBatch });
+            const snap = persistAccumulator.snapshot();
             setPersistStats((prev) => ({
               ...prev,
-              attempted: insertedFromBatch + updatedFromBatch,
-              inserted: insertedFromBatch,
-              updated: updatedFromBatch,
-              succeeded: insertedFromBatch + updatedFromBatch,
-              failed: 0,
-              duplicates: 0,
-              unchanged: 0,
-              failedTrue: 0,
-              durationMs: 0,
+              ...snap,
+              successRate: snap.attempted > 0 ? (snap.succeeded / snap.attempted) * 100 : 0,
             }));
             
             if (effectsOn()) {
@@ -1166,58 +1129,30 @@ export default function CrawlingEngineTabSimple() {
           name === "actor-product-lifecycle-group" &&
           payload?.phase === "persist"
         ) {
+          persistEventsSeen = true;
           console.log("[DEBUG] ProductLifecycleGroup persist event received:", payload);
+          const groupSize = Number(payload?.group_size ?? 0) || 0;
+          const succRaw = Number(payload?.succeeded ?? 0) || 0;
+          const failRaw = Number(payload?.failed ?? 0) || 0;
+          if (groupSize === 0 && succRaw === 0 && failRaw === 0 && !payload?.duration_ms && !payload?.duplicates) {
+            addLog("ℹ️ Persist placeholder 이벤트 무시 (모든 값 0)");
+            return;
+          }
           const attempted = Number(payload?.group_size ?? 0) || 0;
           const succeeded = Number(payload?.succeeded ?? 0) || 0;
-          // Backend 'failed' may include unchanged; compute clearer FE breakdown
-          const failed = Number(payload?.failed ?? 0) || 0;
           const duplicates = Number(payload?.duplicates ?? 0) || 0;
           const unchanged = Math.max(0, attempted - (succeeded + duplicates));
           const durationMs = Number(payload?.duration_ms ?? 0) || 0;
-          // failedTrue now derived after inserted/updated accumulation; keep computation for clarity if needed.
-          // Accumulate over the session without double-counting inserted/updated (handled in persist_result parse)
-          setPersistStats((prev) => {
-            const attemptedTotal = prev.attempted + attempted;
-            const duplicatesTotal = prev.duplicates + duplicates;
-            const unchangedTotal = prev.unchanged + unchanged;
-            const insertedTotal = prev.inserted; // rely on persist_result for actual values
-            const updatedTotal = prev.updated;
-            const succeededTotal = insertedTotal + updatedTotal;
-            const failedTrueTotal = Math.max(0, attemptedTotal - succeededTotal - duplicatesTotal - unchangedTotal);
-            const failedTotal = attemptedTotal - succeededTotal; // includes duplicates+unchanged+failedTrue
-            console.info('[Stage5][Group] agg before persist_result', {
-              attemptedTotal,
-              insertedTotal,
-              updatedTotal,
-              duplicatesTotal,
-              unchangedTotal,
-              succeededTotal,
-              failedTrueTotal,
-            });
-            return {
-              ...prev,
-              attempted: attemptedTotal,
-              duplicates: duplicatesTotal,
-              unchanged: unchangedTotal,
-              inserted: insertedTotal,
-              updated: updatedTotal,
-              succeeded: succeededTotal,
-              failedTrue: failedTrueTotal,
-              failed: failedTotal,
-              durationMs: prev.durationMs + durationMs,
-            };
-          });
+          persistAccumulator.applyGroup({ attempted, duplicates, unchanged, durationMs });
+          const snap = persistAccumulator.snapshot();
+          setPersistStats((prev) => ({
+            ...prev,
+            ...snap,
+            successRate: snap.attempted > 0 ? (snap.succeeded / snap.attempted) * 100 : 0,
+            noEvents: false,
+            failureInferred: false,
+          }));
 
-          // Snapshot the most recent batch
-          setPersistLastBatch({
-            attempted,
-            succeeded,
-            failed, // raw failed from backend (includes duplicates+unchanged)
-            duplicates,
-            unchanged,
-            failedTrue: Math.max(0, failed - duplicates - unchanged),
-            durationMs,
-          });
 
           // Also surface cumulative DB change counts when session report lags (treat succeeded as net changed rows)
           setDbSnapshot((prev) => ({
@@ -1230,22 +1165,35 @@ export default function CrawlingEngineTabSimple() {
             setTimeout(() => setPersistFlash(false), 500);
           }
         }
+
+        // Diagnostic: accept any persist-like ProductLifecycleGroup even if phase missing (schema drift)
+        if (name === 'actor-product-lifecycle-group' && payload?.phase !== 'fetch' && payload?.phase !== 'persist') {
+          // Heuristic: if group_size present and (succeeded or failed) and started fields exist, treat as persist fallback snapshot
+          if (payload?.group_size != null && (payload?.succeeded != null || payload?.failed != null)) {
+            console.log('[DIAG][Persist][phase-missing-or-unknown]', payload);
+          }
+        }
+
+        // Expose inferred attempted for Stage 2 (completed + failed) to compare against started
+        if (name === 'actor-product-lifecycle-group' && payload?.phase === 'fetch') {
+          // After updating detailStats we can log discrepancy
+          const ds = detailStats();
+          const inferredAttempted = (ds.completed || 0) + (ds.failed || 0);
+          if (ds.started > 0 && Math.abs(inferredAttempted - ds.started) >= 6) { // threshold to avoid noise
+            console.log('[DIAG][Stage2][discrepancy]', { started: ds.started, inferredAttempted, completed: ds.completed, failed: ds.failed });
+          }
+        }
         
         // Handle persist_empty case - when no products to persist
         if (name === "actor-product-lifecycle" && payload?.status === "persist_empty") {
           console.log("[DEBUG] ProductLifecycle persist_empty event received:", payload);
-          setPersistStats({
-            attempted: 0,
-            inserted: 0,
-            updated: 0,
-            succeeded: 0,
-            failed: 0,
-            duplicates: 0,
-            unchanged: 0,
-            failedTrue: 0,
-            durationMs: 0,
-            statusCounts: { insertedOnly: 0, updatedOnly: 0, mixed: 0, allDuplicate: 0, noop: 0, failed: 0, empty: 1 },
-          });
+          persistAccumulator.applyEmpty();
+          const snap = persistAccumulator.snapshot();
+          setPersistStats((prev) => ({
+            ...prev,
+            ...snap,
+            successRate: snap.attempted > 0 ? (snap.succeeded / snap.attempted) * 100 : 0,
+          }));
           
           if (effectsOn()) {
             setPersistFlash(true);
@@ -1294,52 +1242,13 @@ export default function CrawlingEngineTabSimple() {
               const unchanged = parts.unchanged ?? Math.max(0, attempted - (inserted + updated + duplicates));
               const durationMs = Number(payload?.duration_ms ?? 0) || 0;
               console.info('[Stage5][PersistResult] raw parsed', { attempted, inserted, updated, duplicates, unchanged, durationMs, status: payload?.status });
-              setPersistStats((prev) => {
-                const inserted = parts.inserted ?? 0;
-                const updated = parts.updated ?? 0;
-                const newInserted = (prev.inserted || 0) + inserted;
-                const newUpdated = (prev.updated || 0) + updated;
-                const attemptedTotal = (prev.attempted || 0) + attempted;
-                const duplicatesTotal = (prev.duplicates || 0) + duplicates;
-                const unchangedTotal = (prev.unchanged || 0) + unchanged;
-                const succeededTotal = newInserted + newUpdated;
-                const failedTrueTotal = Math.max(0, attemptedTotal - succeededTotal - duplicatesTotal - unchangedTotal);
-                const failedTotal = attemptedTotal - succeededTotal;
-                // Status counting
-                const status = String(payload?.status || '');
-                const sc = { ...prev.statusCounts };
-                if (status === 'persist_inserted') sc.insertedOnly += 1;
-                else if (status === 'persist_updated') sc.updatedOnly += 1;
-                else if (status === 'persist_mixed') sc.mixed += 1;
-                else if (status === 'persist_noop_all_duplicate') sc.allDuplicate += 1;
-                else if (status === 'persist_noop') sc.noop += 1;
-                else if (status === 'persist_failed') sc.failed += 1;
-                console.info('[Stage5][PersistResult] agg update', {
-                  attemptedTotal,
-                  newInserted,
-                  newUpdated,
-                  duplicatesTotal,
-                  unchangedTotal,
-                  succeededTotal,
-                  failedTrueTotal,
-                  failedTotal,
-                  status,
-                  statusCounts: sc,
-                });
-                return {
-                  ...prev,
-                  attempted: attemptedTotal,
-                  inserted: newInserted,
-                  updated: newUpdated,
-                  succeeded: succeededTotal,
-                  failed: failedTotal,
-                  duplicates: duplicatesTotal,
-                  unchanged: unchangedTotal,
-                  failedTrue: failedTrueTotal,
-                  durationMs: (prev.durationMs || 0) + durationMs,
-                  statusCounts: sc,
-                };
-              });
+              persistAccumulator.applyResult({ attempted, inserted, updated, duplicates, unchanged, durationMs, status: String(payload?.status || '') });
+              const snap = persistAccumulator.snapshot();
+              setPersistStats((prev) => ({
+                ...prev,
+                ...snap,
+                successRate: snap.attempted > 0 ? (snap.succeeded / snap.attempted) * 100 : 0,
+              }));
               if (effectsOn()) {
                 setPersistFlash(true);
                 setTimeout(() => setPersistFlash(false), 500);
@@ -1426,796 +1335,66 @@ export default function CrawlingEngineTabSimple() {
   return (
     <div class="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-blue-50 p-6">
       <div class="w-full max-w-7xl mx-auto space-y-6">
-        {/* Live Actor Event Telemetry (compact) */}
-        <div class="flex items-center justify-end text-[11px] text-gray-500 select-none">
+        <div class="flex items-center justify-end text-[11px] text-gray-500 select-none mb-2">
           <span class="px-2 py-1 rounded bg-white/70 border border-gray-200">
             events: {actorEventCount()} {lastActorEvent() ? `· last: ${lastActorEvent()}` : ""}
           </span>
         </div>
-        {/* Sync Runtime Status - Premium Card Design */}
-        <Show when={syncLive().active || syncLive().pagesProcessed > 0}>
-          <div class="bg-gradient-to-r from-teal-500 to-cyan-500 rounded-2xl p-6 mb-8 text-white shadow-2xl">
-            <div class="flex items-center justify-between mb-4">
-              <div class="flex items-center gap-3">
-                <div class="w-3 h-3 bg-white rounded-full animate-pulse"></div>
-                <h3 class="text-xl font-bold">실시간 동기화</h3>
-              </div>
-              <div class="bg-white/20 backdrop-blur-sm rounded-full px-4 py-2">
-                <span class="text-sm font-medium">
-                  {syncLive().planned ? `${syncLive().planned}페이지 계획` : "계획 수립 중"}
-                </span>
-              </div>
-            </div>
-            
-            <div class="bg-white/10 rounded-xl p-1 mb-4">
-              {(() => {
-                const processed = syncLive().pagesProcessed || 0;
-                const total = syncLive().planned || processed || 1;
-                const pct = Math.min(100, (processed / Math.max(1, total)) * 100);
-                return (
-                  <div class="relative">
-                    <div class="h-3 bg-white/20 rounded-lg overflow-hidden">
-                      <div
-                        class="h-full bg-gradient-to-r from-white to-yellow-200 rounded-lg transition-all duration-500 ease-out"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                    <div class="absolute inset-0 flex items-center justify-center">
-                      <span class="text-xs font-semibold text-white drop-shadow-lg">
-                        {pct.toFixed(1)}%
-                      </span>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-            
-            <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div class="bg-white/10 backdrop-blur-sm rounded-xl p-3 text-center">
-                <div class="text-2xl font-bold text-white">{syncLive().pagesProcessed}</div>
-                <div class="text-xs text-white/80">처리 페이지</div>
-              </div>
-              <div class="bg-emerald-400/20 backdrop-blur-sm rounded-xl p-3 text-center">
-                <div class="text-2xl font-bold text-white">{syncLive().inserted}</div>
-                <div class="text-xs text-white/80">신규 추가</div>
-              </div>
-              <div class="bg-blue-400/20 backdrop-blur-sm rounded-xl p-3 text-center">
-                <div class="text-2xl font-bold text-white">{syncLive().updated}</div>
-                <div class="text-xs text-white/80">업데이트</div>
-              </div>
-              <div class="bg-yellow-400/20 backdrop-blur-sm rounded-xl p-3 text-center">
-                <div class="text-2xl font-bold text-white">{syncLive().skipped}</div>
-                <div class="text-xs text-white/80">건너뜀</div>
-              </div>
-              <div class="bg-red-400/20 backdrop-blur-sm rounded-xl p-3 text-center">
-                <div class="text-2xl font-bold text-white">{syncLive().failed}</div>
-                <div class="text-xs text-white/80">실패</div>
-              </div>
-            </div>
-            
-            <Show when={syncLive().lastWarn}>
-              <div class="mt-4 bg-red-500/20 backdrop-blur-sm border border-red-300/30 rounded-xl px-4 py-3">
-                <div class="flex items-start gap-2">
-                  <span class="text-red-200 text-sm">⚠️</span>
-                  <div class="text-sm text-red-100">
-                    <strong>최근 경고:</strong> {syncLive().lastWarn}
-                  </div>
-                </div>
-              </div>
-            </Show>
-          </div>
-        </Show>
+    <SyncPanel syncLive={syncLive} />
+    <SessionStatusCard isRunning={isRunning} statusMessage={statusMessage} batchInfo={batchInfo} />
+        <StageStatsPanels
+          crawlingRange={crawlingRange}
+          preflight={preflight}
+          pageStats={pageStats}
+          detailStats={detailStats}
+          stage1Pulse={stage1Pulse}
+          stage2Pulse={stage2Pulse}
+          downshiftInfo={downshiftInfo}
+          effectsOn={effectsOn}
+        />
 
-        {/* Status Card with Modern Design */}
-        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8">
-          <div class="flex items-center justify-between mb-6">
-            <h2 class="text-3xl font-bold mb-3 flex items-center gap-2">
-              <span class="leading-none">🤖</span>
-              <span class="bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent">
-                스마트 크롤링 엔진
-              </span>
-            </h2>
-            <div class="flex items-center gap-2">
-              <div class={`w-3 h-3 rounded-full ${isRunning() ? 'bg-green-400 animate-pulse' : 'bg-gray-300'}`}></div>
-              <span class="text-sm font-medium text-gray-600">
-                {isRunning() ? '실행 중' : '대기'}
-              </span>
-            </div>
-          </div>
-          
-          <div
-            class={`p-6 rounded-xl border-2 transition-all duration-300 ${
-              isRunning()
-                ? "bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 shadow-lg"
-                : "bg-gradient-to-r from-emerald-50 to-green-50 border-emerald-200 shadow-md"
-            }`}
-          >
-            <div class="flex items-center justify-between">
-              <div class="flex items-center space-x-4">
-                <div class={`w-12 h-12 rounded-full flex items-center justify-center ${
-                  isRunning() ? 'bg-blue-500' : 'bg-emerald-500'
-                }`}>
-                  <span class="text-2xl text-white">
-                    {isRunning() ? "🔄" : "✅"}
-                  </span>
-                </div>
-                <div>
-                  <h3 class="text-xl font-bold text-gray-800">{statusMessage()}</h3>
-                  <Show when={isRunning() && batchInfo().current > 0}>
-                    <p class="text-sm text-gray-600 mt-1">
-                      배치 진행: {batchInfo().current}
-                      {batchInfo().totalEstimated ? `/${batchInfo().totalEstimated}` : ""}
-                    </p>
-                  </Show>
-                </div>
-              </div>
-              
-              <Show when={isRunning() && batchInfo().batchId}>
-                <div class="text-right">
-                  <div class="text-xs text-gray-500">세션 ID</div>
-                  <div class="text-sm font-mono text-gray-700 bg-white/50 px-2 py-1 rounded">
-                    {batchInfo().batchId}
-                  </div>
-                </div>
-              </Show>
-            </div>
-          </div>
-          {/* Next plan preview panel */}
-          <Show when={nextPlan()}>
-            <div class="mt-3 p-3 rounded-lg border border-indigo-200 bg-indigo-50 transition-opacity duration-300 opacity-100">
-              <div class="flex items-start justify-between gap-3">
-                <div>
-                  <div class="text-sm font-semibold text-indigo-900">
-                    🧭 다음 실행 계획 준비됨
-                  </div>
-                  <div class="text-xs text-indigo-800 mt-1">
-                    {(() => {
-                      try {
-                        const plan: any = nextPlan();
-                        const phases = (plan?.phases || []) as any[];
-                        const pages: number[] = phases.flatMap((p: any) =>
-                          Array.isArray(p?.pages) ? (p.pages as number[]) : []
-                        );
-                        const uniq = Array.from(new Set(pages)).sort(
-                          (a, b) => b - a
-                        );
-                        const sample = uniq.slice(0, Math.min(24, uniq.length));
-                        return (
-                          <span>
-                            단계 {phases.length}개 • 페이지 {uniq.length}개
-                            <span class="block mt-0.5 font-mono text-[11px] text-indigo-900">
-                              {sample.join(", ")}
-                              {uniq.length > sample.length ? " …" : ""}
-                            </span>
-                          </span>
-                        );
-                      } catch {
-                        return <span>요약 표시 오류</span>;
-                      }
-                    })()}
-                  </div>
-                </div>
-                <div class="shrink-0 flex flex-col items-end gap-1">
-                  <button
-                    class="px-2.5 py-1 text-xs rounded bg-indigo-600 text-white hover:bg-indigo-700"
-                    title="이 계획의 페이지를 Sync 범위 입력에 적용"
-                    onClick={() => {
-                      try {
-                        const plan: any = nextPlan();
-                        const phases = (plan?.phases || []) as any[];
-                        const pages: number[] = phases.flatMap((p: any) =>
-                          Array.isArray(p?.pages) ? (p.pages as number[]) : []
-                        );
-                        const uniq = Array.from(new Set(pages)).sort(
-                          (a, b) => b - a
-                        );
-                        let parts: string[] = [];
-                        if (uniq.length) {
-                          let start = uniq[0];
-                          let prev = uniq[0];
-                          for (const pg of uniq.slice(1)) {
-                            if (pg + 1 === prev) {
-                              prev = pg;
-                              continue;
-                            }
-                            parts.push(
-                              start === prev ? `${start}` : `${start}-${prev}`
-                            );
-                            start = pg;
-                            prev = pg;
-                          }
-                          parts.push(
-                            start === prev ? `${start}` : `${start}-${prev}`
-                          );
-                        }
-                        const expr = parts.join(",");
-                        if (expr) {
-                          setSyncRanges(expr);
-                          addLog(`🧭 다음 계획 적용 → Sync 범위: ${expr}`);
-                          setSyncPulse(true);
-                          setTimeout(() => setSyncPulse(false), 400);
-                        }
-                      } catch (e) {
-                        console.warn("apply next plan failed", e);
-                      }
-                    }}
-                  >
-                    계획 적용 → Sync
-                  </button>
-                  <button
-                    class="px-2.5 py-1 text-xs rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
-                    onClick={() => setNextPlan(null)}
-                  >
-                    숨기기
-                  </button>
-                </div>
-              </div>
-            </div>
-          </Show>
-        </div>
+        <ControlPanel
+          isRunning={isRunning}
+            isSyncing={isSyncing}
+            effectsOn={effectsOn}
+            syncPulse={syncPulse}
+            syncRanges={syncRanges}
+            startUnifiedAdvanced={startUnifiedAdvanced}
+            calculateCrawlingRange={calculateCrawlingRange}
+            deriveRangesFromDiagnostics={deriveRangesFromDiagnostics}
+            setSyncRanges={setSyncRanges}
+            setSyncPulse={setSyncPulse}
+            setEffectsOn={setEffectsOn}
+            setIsSyncing={setIsSyncing}
+            setCrawlingRange={setCrawlingRange}
+            addLog={addLog}
+            tauriApi={tauriApi}
+        />
 
-  {/* 크롤링 범위 정보 - Premium Design */}
-        <Show when={crawlingRange()}>
-          <div
-            ref={(el) => (rangePanelRef = el!)}
-            class={`bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8 transition-all duration-300 ${
-              rangeFxActive() ? "ring-4 ring-blue-200 ring-opacity-50" : ""
-            }`}
-          >
-            <div class="flex items-center justify-between mb-6">
-              <button
-                class="flex items-center gap-3 text-2xl font-bold text-gray-800 hover:text-blue-600 transition-all duration-200 group"
-                onClick={() => setRangeExpanded(!rangeExpanded())}
-              >
-                <div class={`w-8 h-8 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center transform transition-all duration-300 ${
-                  rangeExpanded() ? 'rotate-90 scale-110' : 'rotate-0'
-                }`}>
-                  <span class="text-white text-sm">▶</span>
-                </div>
-                <span class="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                  계산된 크롤링 범위
-                </span>
-              </button>
-              <div class="flex items-center gap-3">
-                <span class={`px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 ${
-                  rangeExpanded() 
-                    ? 'bg-blue-100 text-blue-700' 
-                    : 'bg-gray-100 text-gray-600'
-                }`}>
-                  {rangeExpanded() ? '펼쳐짐' : '접혀짐'}
-                </span>
-                <button
-                  class="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-purple-500 text-white text-sm font-medium hover:from-blue-600 hover:to-purple-600 disabled:opacity-50 transition-all duration-200 shadow-lg hover:shadow-xl"
-                  onClick={() => {
-                    const prev = crawlingRange();
-                    const prevStart = (prev?.range?.[0] ?? 0) as number;
-                    const prevEnd = (prev?.range?.[1] ?? 0) as number;
-                    const prevTotal = (prev?.progress?.total_products ?? 0) as number;
-                    const prevCover = `${prev?.progress?.progress_percentage?.toFixed?.(1) ?? "0.0"}%`;
-                    setRangePrevSnapshot({
-                      start: prevStart,
-                      end: prevEnd,
-                      total: prevTotal,
-                      coverText: String(prevCover),
-                    });
-                    if (effectsOn()) playRangeTransition();
-                  }}
-                  disabled={!effectsOn()}
-                  title={effectsOn() ? "계산된 범위 효과 미리보기" : "효과가 꺼져 있습니다"}
-                >
-                  ✨ 효과 미리보기
-                </button>
-              </div>
-            </div>
-            
-            <Show when={rangeExpanded()}>
-              <div class="space-y-6 animate-in slide-in-from-top duration-500">
-                {/* Main Stats Grid with Glass Effect */}
-                <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
-                  <div class="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl p-4 border border-blue-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
-                    <div class="text-center">
-                      <div class="text-3xl font-bold text-blue-600 mb-2">
-                        <Show
-                          when={rangeFxActive()}
-                          fallback={
-                            <span class="drum-line">
-                              {renderDrumText(String(crawlingRange()?.range?.[0] || 0))}
-                            </span>
-                          }
-                        >
-                          <span class="shatter-line">
-                            {renderShatterText(
-                              String(
-                                rangePrevSnapshot()?.start ??
-                                  (crawlingRange()?.range?.[0] || 0)
-                              )
-                            )}
-                          </span>
-                        </Show>
-                      </div>
-                      <div class="text-sm font-medium text-blue-700">시작 페이지</div>
-                    </div>
-                  </div>
-                  
-                  <div class="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-2xl p-4 border border-emerald-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
-                    <div class="text-center">
-                      <div class="text-3xl font-bold text-emerald-600 mb-2">
-                        <Show
-                          when={rangeFxActive()}
-                          fallback={
-                            <span class="drum-line">
-                              {renderDrumText(String(crawlingRange()?.range?.[1] || 0))}
-                            </span>
-                          }
-                        >
-                          <span class="shatter-line">
-                            {renderShatterText(
-                              String(
-                                rangePrevSnapshot()?.end ??
-                                  (crawlingRange()?.range?.[1] || 0)
-                              )
-                            )}
-                          </span>
-                        </Show>
-                      </div>
-                      <div class="text-sm font-medium text-emerald-700">종료 페이지</div>
-                    </div>
-                  </div>
-                  
-                  <div class="bg-gradient-to-br from-purple-50 to-purple-100 rounded-2xl p-4 border border-purple-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
-                    <div class="text-center">
-                      <div class="text-3xl font-bold text-purple-600 mb-2">
-                        <Show
-                          when={rangeFxActive()}
-                          fallback={
-                            <span class="drum-line">
-                              {renderDrumText(String(crawlingRange()?.crawling_info?.pages_to_crawl || 0))}
-                            </span>
-                          }
-                        >
-                          <span class="shatter-line">
-                            {renderShatterText(String(crawlingRange()?.crawling_info?.pages_to_crawl || 0))}
-                          </span>
-                        </Show>
-                      </div>
-                      <div class="text-sm font-medium text-purple-700">페이지 수</div>
-                    </div>
-                  </div>
-                  
-                  <div class="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl p-4 border border-indigo-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
-                    <div class="text-center">
-                      <div class="text-3xl font-bold text-indigo-600 mb-2">
-                        {crawlingRange()?.local_db_info?.total_saved_products || 0}
-                      </div>
-                      <div class="text-sm font-medium text-indigo-700">💾 로컬DB 제품</div>
-                    </div>
-                  </div>
-                  
-                  <div class="bg-gradient-to-br from-orange-50 to-orange-100 rounded-2xl p-4 border border-orange-200/50 shadow-lg hover:shadow-xl transition-all duration-300">
-                    <div class="text-center">
-                      <div class="text-3xl font-bold text-orange-600 mb-2">
-                        <Show
-                          when={rangeFxActive()}
-                          fallback={
-                            <span class="drum-line">
-                              {renderDrumText(
-                                `${crawlingRange()?.progress?.progress_percentage.toFixed(1) || 0}%`
-                              )}
-                            </span>
-                          }
-                        >
-                          <span class="shatter-line">
-                            {renderShatterText(
-                              String(
-                                rangePrevSnapshot()?.coverText ??
-                                  `${crawlingRange()?.progress?.progress_percentage.toFixed(1) || 0}%`
-                              )
-                            )}
-                          </span>
-                        </Show>
-                      </div>
-                      <div class="text-sm font-medium text-orange-700">커버리지</div>
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Confetti overlay */}
-                <Show when={confettiPieces().length > 0}>
-                  <div class="relative">
-                    <div
-                      class="pointer-events-none absolute inset-0 overflow-visible"
-                      aria-hidden="true"
-                    >
-                      <For each={confettiPieces()}>
-                        {(p) => (
-                          <span
-                            class="confetti-piece"
-                            style={
-                              {
-                                left: "50%",
-                                top: "0",
-                                background: p.color,
-                                "--cx": `${p.rx}px`,
-                                "--cy": `${p.ry}px`,
-                                "--crot": `${p.rot}deg`,
-                                "--cw": `${p.cw}px`,
-                                "--ch": `${p.ch}px`,
-                              } as any
-                            }
-                          />
-                        )}
-                      </For>
-                    </div>
-                  </div>
-                </Show>
-
-                {/* Enhanced Site Info Section */}
-                <div class="bg-gradient-to-r from-gray-50 to-blue-50 rounded-2xl p-6 border border-gray-200/50">
-                  <h4 class="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <span class="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center">
-                      🌐
-                    </span>
-                    사이트 정보
-                  </h4>
-                  <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div class="bg-white rounded-xl p-4 shadow-sm border border-blue-100 hover:shadow-md transition-all duration-200">
-                      <div class="text-2xl font-bold text-blue-600 mb-1">
-                        {crawlingRange()?.site_info?.total_pages || 0}
-                      </div>
-                      <div class="text-sm text-blue-700 font-medium">사이트 총 페이지</div>
-                    </div>
-                    <div class="bg-white rounded-xl p-4 shadow-sm border border-emerald-100 hover:shadow-md transition-all duration-200">
-                      <div class="text-2xl font-bold text-emerald-600 mb-1">
-                        {crawlingRange()?.site_info?.products_on_last_page || 0}
-                      </div>
-                      <div class="text-sm text-emerald-700 font-medium">마지막 페이지 제품</div>
-                    </div>
-                    <div class="bg-white rounded-xl p-4 shadow-sm border border-purple-100 hover:shadow-md transition-all duration-200">
-                      <div class="text-2xl font-bold text-purple-600 mb-1">
-                        {crawlingRange()?.site_info?.estimated_total_products || 0}
-                      </div>
-                      <div class="text-sm text-purple-700 font-medium">추정 총 제품</div>
-                    </div>
-                    <div class="bg-white rounded-xl p-4 shadow-sm border border-orange-100 hover:shadow-md transition-all duration-200">
-                      <div class="text-2xl font-bold text-orange-600 mb-1">
-                        {crawlingRange()?.crawling_info?.strategy || "unknown"}
-                      </div>
-                      <div class="text-sm text-orange-700 font-medium">🎯 크롤링 전략</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </Show>
-          </div>
-        </Show>
-
-  {/* 제어 패널 */}
-  <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8 flex flex-wrap gap-4 items-end">
-          {/* Legacy simple crawling button removed */}
-
-          {/* Sync Controls */}
-          <div class="flex items-center gap-3">
-            <button
-              onClick={() => {
-                startUnifiedAdvanced();
-              }}
-              disabled={isRunning()}
-              class={`px-6 py-3 rounded-xl font-semibold text-white ripple shadow-md hover:shadow-lg transition ${
-                isRunning()
-                  ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
-              }`}
-            >
-              {isRunning()
-                ? "통합 파이프라인 실행 중..."
-                : "🎭 크롤링"}
-            </button>
-
-            <button
-              onClick={calculateCrawlingRange}
-              disabled={isRunning()}
-              class="px-6 py-3 rounded-xl font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 disabled:opacity-50 ripple shadow"
-            >
-              📊 범위 다시 계산
-            </button>
-
-            <div class="h-10 w-px bg-gray-300 dark:bg-gray-600"></div>
-
-            <input
-              type="text"
-              class={`w-72 px-3 py-2 rounded-md text-sm bg-white/70 border border-white/40 focus:outline-none focus:ring-2 focus:ring-indigo-300 ${
-                syncPulse() && effectsOn() ? "flash-db" : ""
-              }`}
-              placeholder="Sync 범위 (예: 498-492,489,487-485)"
-              value={syncRanges()}
-              onInput={(e) => setSyncRanges(e.currentTarget.value)}
-            />
-
-            <button
-              onClick={async () => {
-                if (isSyncing()) return;
-                let ranges = (syncRanges() || "").trim();
-                if (!ranges) {
-                  const auto = deriveRangesFromDiagnostics();
-                  if (auto) {
-                    setSyncRanges(auto);
-                    addLog(`🔁 Diagnostics 기반 범위 자동설정: ${auto}`);
-                    ranges = auto;
-                  } else {
-                    addLog(
-                      "⚠️ 먼저 Sync 범위를 입력하거나, 진단을 실행해 주세요. 예: 498-492,489"
-                    );
-                    return;
-                  }
-                }
-                // Parse ranges into explicit pages
-                const norm = ranges
-                  .replace(/\s+/g, "")
-                  .replace(/[–—−﹣－]/g, "-")
-                  .replace(/[〜～]/g, "~");
-                const tokens = norm
-                  .split(",")
-                  .map((t) => t.trim())
-                  .filter(Boolean);
-                const pages: number[] = [];
-                for (const tk of tokens) {
-                  if (tk.includes("-") || tk.includes("~")) {
-                    const sep = tk.includes("~") ? "~" : "-";
-                    const [a, b] = tk.split(sep);
-                    let s = parseInt(a, 10),
-                      e = parseInt(b, 10);
-                    if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
-                    if (e > s) {
-                      const tmp = s;
-                      s = e;
-                      e = tmp;
-                    }
-                    for (let p = s; p >= e; p--) pages.push(p);
-                  } else {
-                    const v = parseInt(tk, 10);
-                    if (Number.isFinite(v)) pages.push(v);
-                  }
-                }
-                const seen = new Set<number>();
-                const uniquePages = pages.filter((p) =>
-                  seen.has(p) ? false : (seen.add(p), true)
-                );
-                if (uniquePages.length === 0) {
-                  addLog("⚠️ 유효한 페이지가 없습니다. 예: 498-492,489");
-                  return;
-                }
-                setIsSyncing(true);
-                addLog(
-                  `🧑‍💻 수동 크롤링(Actor) 실행: [${uniquePages.join(", ")}]`
-                );
-                try {
-                  const res = await tauriApi.startManualCrawlPagesActor(
-                    uniquePages,
-                    true
-                  );
-                  addLog(`✅ 수동 크롤링 세션 시작: ${JSON.stringify(res)}`);
-                  // Optimistically set planned counts for Stage 1/2
-                  setCrawlingRange((prev) => {
-                    const pages = uniquePages.length;
-                    const estimated_new_products = pages * 12;
-                    return {
-                      ...(prev || {}),
-                      crawling_info: {
-                        ...((prev as any)?.crawling_info || {}),
-                        pages_to_crawl: pages,
-                        estimated_new_products,
-                      },
-                      range: [Math.max(...uniquePages), Math.min(...uniquePages)],
-                    } as any;
-                  });
-                  if (res?.session_id) {
-                    addLog(`🆔 세션 ID: ${res.session_id}`);
-                  }
-                } catch (e) {
-                  addLog(`❌ 수동 크롤링(Actor) 실패: ${e}`);
-                } finally {
-                  setIsSyncing(false);
-                }
-              }}
-              disabled={isSyncing()}
-              class={`px-5 py-2.5 rounded-xl font-semibold text-white ripple shadow-md hover:shadow-lg transition ${
-                isSyncing()
-                  ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
-              }`}
-              title="기본 엔진으로 명시적 페이지 배열을 실행"
-            >
-              수동 크롤링
-            </button>
-          </div>
-
-          {/* Effects toggle */}
-          <label class="flex items-center gap-2 text-sm text-gray-700 select-none">
-            <input
-              type="checkbox"
-              checked={effectsOn()}
-              onInput={(e) => setEffectsOn(e.currentTarget.checked)}
-            />
-            애니메이션 효과
-          </label>
-        </div>
-
-    {/* Stage X: DB Pagination Diagnostics */}
-    <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8">
-          <div class="flex items-center justify-between mb-2">
-      <h3 class="text-lg font-bold text-gray-800">
-              Stage X: DB Pagination Diagnostics
-            </h3>
-            <div class="flex gap-2">
-              <button
-        class={`px-3 py-1.5 text-sm rounded-lg shadow ${
-                  diagLoading()
-                    ? "bg-gray-200 text-gray-500"
-          : "bg-indigo-600 text-white hover:bg-indigo-700"
-                }`}
-                disabled={diagLoading()}
-                onClick={runDiagnostics}
-              >
-                {diagLoading() ? "진단 중…" : "진단 실행"}
-              </button>
-              <button
-        class={`px-3 py-1.5 text-sm rounded-lg shadow ${
-                  cleanupLoading()
-                    ? "bg-gray-200 text-gray-500"
-          : "bg-rose-600 text-white hover:bg-rose-700"
-                }`}
-                disabled={cleanupLoading()}
-                onClick={runUrlCleanup}
-              >
-                {cleanupLoading() ? "정리 중…" : "URL 중복 제거"}
-              </button>
-              <button
-        class={`px-3 py-1.5 text-sm rounded-lg shadow ${
-                  isSyncing()
-                    ? "bg-gray-200 text-gray-500"
-                    : "bg-blue-600 text-white hover:bg-blue-700"
-                }`}
-                disabled={isSyncing()}
-                onClick={async () => {
-                  try {
-                    setIsSyncing(true);
-                    addLog("🔁 products→details 좌표/ID 정합화 실행...");
-                    const rep = await tauriApi.syncProductDetailsCoordinates();
-                    addLog(
-                      `✅ 정합화 완료: products.id=${rep.updated_product_ids}, inserted=${rep.inserted_details}, updated_coords=${rep.updated_coordinates}, details.id=${rep.updated_ids} (p=${rep.total_products}, d=${rep.total_details})`
-                    );
-                  } catch (e: any) {
-                    addLog(`❌ 정합화 실패: ${e.message || e}`);
-                  } finally {
-                    setIsSyncing(false);
-                  }
-                }}
-                title="products.url 기준으로 product_details에 page_id/index_in_page/id를 정합화합니다 (크롤링 없음)"
-              >
-                products→details 동기화
-              </button>
-            </div>
-          </div>
-          <Show
-            when={diagResult()}
-            fallback={
-              <p class="text-xs text-gray-500">
-                로컬 DB의 page_id/index_in_page 정합성을 검사합니다. 실행을 눌러
-                결과를 확인하세요.
-              </p>
+        <DiagnosticsPanel
+          diagResult={diagResult}
+          diagLoading={diagLoading}
+          cleanupLoading={cleanupLoading}
+          runDiagnostics={runDiagnostics}
+          runUrlCleanup={runUrlCleanup}
+          deriveRangesFromDiagnostics={deriveRangesFromDiagnostics}
+          setSyncRanges={setSyncRanges}
+          setSyncPulse={setSyncPulse}
+          addLog={addLog}
+          isSyncing={isSyncing}
+          startCoordSync={async () => {
+            try {
+              setIsSyncing(true);
+              addLog("🔁 products→details 좌표/ID 정합화 실행...");
+              const rep = await tauriApi.syncProductDetailsCoordinates();
+              addLog(`✅ 정합화 완료: products.id=${rep.updated_product_ids}, inserted=${rep.inserted_details}, updated_coords=${rep.updated_coordinates}, details.id=${rep.updated_ids} (p=${rep.total_products}, d=${rep.total_details})`);
+            } catch (e: any) {
+              addLog(`❌ 정합화 실패: ${e.message || e}`);
+            } finally {
+              setIsSyncing(false);
             }
-          >
-            <div class="text-xs text-gray-700 space-y-2">
-              {(() => {
-                const expr = deriveRangesFromDiagnostics();
-                if (!expr) return null;
-                return (
-                  <div class="p-2 rounded border border-amber-200 bg-amber-50 text-amber-900 flex items-center justify-between">
-                    <div>
-                      <b>추천 Sync 범위</b>:{" "}
-                      <span class="font-mono">{expr}</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <button
-                        class="px-2 py-0.5 text-[11px] rounded bg-amber-600 text-white hover:bg-amber-700"
-                        title="추천 범위를 Sync 입력에 적용"
-                        onClick={() => {
-                          setSyncRanges(expr);
-                          setSyncPulse(true);
-                          setTimeout(() => setSyncPulse(false), 400);
-                          addLog(`🧭 추천 범위 적용 → ${expr}`);
-                        }}
-                      >
-                        적용
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
-              <div class="flex gap-4">
-                <span>
-                  총 제품: <b>{diagResult()?.total_products ?? 0}</b>
-                </span>
-                <span>
-                  DB 최대 page_id: <b>{diagResult()?.max_page_id_db ?? "-"}</b>
-                </span>
-                <span>
-                  사이트 총 페이지:{" "}
-                  <b>{diagResult()?.total_pages_site ?? "-"}</b>
-                </span>
-                <span>
-                  마지막 페이지 아이템:{" "}
-                  <b>{diagResult()?.items_on_last_page ?? "-"}</b>
-                </span>
-              </div>
-              <Show when={diagResult()?.prepass}>
-                <div class="flex gap-4 text-teal-800 bg-teal-50 border border-teal-200 rounded p-2">
-                  <span>
-                    사전 정렬(details):{" "}
-                    <b>{diagResult()?.prepass?.details_aligned ?? 0}</b>
-                  </span>
-                  <span>
-                    products.id 백필:{" "}
-                    <b>{diagResult()?.prepass?.products_id_backfilled ?? 0}</b>
-                  </span>
-                </div>
-              </Show>
-              <div>
-                <b>이상 그룹</b>
-                <ul class="list-disc ml-5">
-                  <For
-                    each={(diagResult()?.group_summaries ?? []).filter(
-                      (g: any) => g.status !== "ok"
-                    )}
-                  >
-                    {(g: any) => (
-                      <li>
-                        page_id {g.page_id}
-                        {g.current_page_number != null
-                          ? ` (물리 ${g.current_page_number})`
-                          : ""}
-                        : status={g.status} count={g.count} distinct=
-                        {g.distinct_indices}
-                        {g.duplicate_indices?.length
-                          ? ` dup=${g.duplicate_indices.join(",")}`
-                          : ""}
-                        {g.missing_indices?.length
-                          ? ` miss=${g.missing_indices.join(",")}`
-                          : ""}
-                        {g.out_of_range_count
-                          ? ` oob=${g.out_of_range_count}`
-                          : ""}
-                      </li>
-                    )}
-                  </For>
-                </ul>
-              </div>
-              <Show when={(diagResult()?.duplicate_positions ?? []).length > 0}>
-                <div>
-                  <b>중복 위치 샘플</b>
-                  <ul class="list-disc ml-5">
-                    <For
-                      each={(diagResult()?.duplicate_positions ?? []).slice(
-                        0,
-                        20
-                      )}
-                    >
-                      {(d: any) => (
-                        <li>
-                          page_id {d.page_id}
-                          {d.current_page_number != null
-                            ? ` (물리 ${d.current_page_number})`
-                            : ""}
-                          , index {d.index_in_page}: {d.urls?.length ?? 0}개 URL
-                        </li>
-                      )}
-                    </For>
-                  </ul>
-                </div>
-              </Show>
-            </div>
-          </Show>
-        </div>
+          }}
+        />
 
         {/* Stage1/Stage2 Runtime Monitor */}
         <div
@@ -2335,7 +1514,14 @@ export default function CrawlingEngineTabSimple() {
                 <div class="text-xl font-bold text-blue-600">
                   <CountUp value={detailStats().started} />
                 </div>
-                <div class="text-xs text-gray-600">시작</div>
+                <div class="text-xs text-gray-600">
+                  시작
+                  <Show when={(detailStats().completed + detailStats().failed) > (detailStats().started || 0)}>
+                    <span class="ml-1 inline-block text-[10px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-700" title="completed+failed 로 추론한 값이 시작 수보다 큼">
+                      추론 {(detailStats().completed + detailStats().failed)}
+                    </span>
+                  </Show>
+                </div>
               </div>
               <div class="bg-emerald-50 rounded p-2">
                 <div class="text-xl font-bold text-emerald-600">
@@ -2381,293 +1567,44 @@ export default function CrawlingEngineTabSimple() {
           </div>
         </div>
 
-        {/* Stage3/Stage4/Stage5 Mini Panels */}
+        {/* Stage3/Stage4/Stage5 Mini Panels (modularized) */}
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          {/* Stage 3: Validation */}
-          <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
-            <div class="flex items-center justify-between mb-2">
-              <h3 class="text-md font-semibold text-gray-800">
-                Stage 3: 검증(집계)
-              </h3>
-              <span class="text-xs text-gray-500">
-                {validationStats().started
-                  ? validationStats().completed
-                    ? "완료"
-                    : "진행 중"
-                  : "대기"}
-              </span>
-            </div>
-            <div class="grid grid-cols-4 gap-2 text-center">
-              <div class="bg-indigo-50 rounded p-2">
-                <div class="text-xl font-bold text-indigo-600">
-                  {effectsOn() ? (
-                    <CountUp value={validationStats().targetPages} />
-                  ) : (
-                    validationStats().targetPages
-                  )}
-                </div>
-                <div class="text-xs text-gray-600">대상 페이지</div>
-              </div>
-              <div class="bg-emerald-50 rounded p-2">
-                <div class="text-xl font-bold text-emerald-600">
-                  {effectsOn() ? (
-                    <CountUp value={validationStats().pagesScanned} />
-                  ) : (
-                    validationStats().pagesScanned
-                  )}
-                </div>
-                <div class="text-xs text-gray-600">스캔 완료</div>
-              </div>
-              <div class="bg-amber-50 rounded p-2">
-                <div class="text-xl font-bold text-amber-600">
-                  {effectsOn() ? (
-                    <CountUp value={validationStats().divergences} />
-                  ) : (
-                    validationStats().divergences
-                  )}
-                </div>
-                <div class="text-xs text-gray-600">불일치</div>
-              </div>
-              <div class="bg-rose-50 rounded p-2">
-                <div class="text-xl font-bold text-rose-600">
-                  {effectsOn() ? (
-                    <CountUp value={validationStats().anomalies} />
-                  ) : (
-                    validationStats().anomalies
-                  )}
-                </div>
-                <div class="text-xs text-gray-600">이상</div>
-              </div>
-            </div>
-            <div class="mt-2 w-full bg-gray-200 rounded-full h-2">
-              <div
-                class="h-2 rounded-full bg-indigo-500 transition-all"
-                style={{
-                  width: `${(() => {
-                    const t = validationStats().targetPages || 0;
-                    const s = validationStats().pagesScanned || 0;
-                    return t > 0 ? Math.min(100, (s / t) * 100) : 0;
-                  })()}%`,
-                }}
-              ></div>
-            </div>
-            <Show when={validationStats().lastPage != null}>
-              <div class="mt-2 text-[11px] text-gray-500">
-                최근 스캔: 페이지 {validationStats().lastPage} (오프셋{" "}
-                {validationStats().lastAssignedStart ?? "-"}–
-                {validationStats().lastAssignedEnd ?? "-"})
-              </div>
-            </Show>
-          </div>
-          {/* Stage 4: DB Snapshot */}
-          <div
-            class={`bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 ${
-              dbFlash() && effectsOn() ? "flash-db" : ""
-            }`}
-          >
-            <div class="flex items-center justify-between mb-2">
-              <h3 class="text-md font-semibold text-gray-800">
-                Stage 4: DB 저장 스냅샷
-              </h3>
-              <span class="text-xs text-gray-500">최근 보고 기준</span>
-            </div>
-            <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-center">
-              <div class="bg-sky-50 rounded p-2">
-                <div class="text-xl font-bold text-sky-600">
-                  {effectsOn() && typeof dbSnapshot().total === "number" ? (
-                    <CountUp value={dbSnapshot().total as number} />
-                  ) : (
-                    dbSnapshot().total ?? "-"
-                  )}
-                </div>
-                <div class="text-xs text-gray-600">총 상세 수</div>
-              </div>
-              <div class="bg-purple-50 rounded p-2">
-                <div class="text-xl font-bold text-purple-600">
-                  {effectsOn() && typeof dbSnapshot().minPage === "number" ? (
-                    <CountUp value={dbSnapshot().minPage as number} />
-                  ) : (
-                    dbSnapshot().minPage ?? "-"
-                  )}
-                </div>
-                <div class="text-xs text-gray-600">DB 최소 페이지</div>
-              </div>
-              <div class="bg-purple-50 rounded p-2">
-                <div class="text-xl font-bold text-purple-600">
-                  {effectsOn() && typeof dbSnapshot().maxPage === "number" ? (
-                    <CountUp value={dbSnapshot().maxPage as number} />
-                  ) : (
-                    dbSnapshot().maxPage ?? "-"
-                  )}
-                </div>
-                <div class="text-xs text-gray-600">DB 최대 페이지</div>
-              </div>
-              <div class="bg-emerald-50 rounded p-2">
-                <div class="text-xl font-bold text-emerald-600">
-                  {effectsOn() ? (
-                    <CountUp value={dbSnapshot().inserted ?? 0} />
-                  ) : (
-                    dbSnapshot().inserted ?? 0
-                  )}
-                  /
-                  {effectsOn() ? (
-                    <CountUp value={dbSnapshot().updated ?? 0} />
-                  ) : (
-                    dbSnapshot().updated ?? 0
-                  )}
-                </div>
-                <div class="text-xs text-gray-600">삽입/업데이트(세션)</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Stage 5: Persist 요약 */}
-          <div
-            class={`bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 ${
-              persistFlash() && effectsOn() ? "flash-save" : ""
-            }`}
-          >
-            <div class="flex items-center justify-between mb-2">
-              <h3 class="text-md font-semibold text-gray-800">
-                Stage 5: 저장 요약
-              </h3>
-              <span class="text-xs text-gray-500">그룹 이벤트</span>
-            </div>
-            {/* Primary aggregate row */}
-            <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-center">
-              <div class="bg-blue-50 rounded p-2">
-                <div class="text-xl font-bold text-blue-600">
-                  {effectsOn() ? (
-                    <CountUp value={persistStats().attempted} />
-                  ) : (
-                    persistStats().attempted
-                  )}
-                </div>
-                <div class="text-xs text-gray-600">시도</div>
-              </div>
-              <div class="bg-emerald-50 rounded p-2">
-                <div class="text-xl font-bold text-emerald-600">
-                  {effectsOn() ? (
-                    <CountUp value={persistStats().succeeded} />
-                  ) : (
-                    persistStats().succeeded
-                  )}
-                </div>
-                <div class="text-xs text-gray-600">성공</div>
-              </div>
-              <div class="bg-rose-50 rounded p-2">
-                <div class="text-xl font-bold text-rose-600">
-                  {effectsOn() ? (
-                    <CountUp value={persistStats().failedTrue} />
-                  ) : (
-                    persistStats().failedTrue
-                  )}
-                </div>
-                <div class="text-xs text-gray-600">실패</div>
-              </div>
-              <div class="bg-amber-50 rounded p-2">
-                <div class="text-xl font-bold text-amber-600">
-                  {effectsOn() ? (
-                    <CountUp value={persistStats().duplicates} />
-                  ) : (
-                    persistStats().duplicates
-                  )}
-                </div>
-                <div class="text-xs text-gray-600">중복</div>
-              </div>
-              <div class="bg-slate-50 rounded p-2">
-                <div class="text-xl font-bold text-slate-600">
-                  {effectsOn() ? (
-                    <CountUp value={persistStats().unchanged} />
-                  ) : (
-                    persistStats().unchanged
-                  )}
-                </div>
-                <div class="text-xs text-gray-600">미변경</div>
-              </div>
-            </div>
-            {/* Inserted/Updated split */}
-            <div class="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
-              <div class="bg-green-50 rounded p-2">
-                <div class="text-lg font-bold text-green-600">
-                  {effectsOn() ? <CountUp value={persistStats().inserted} /> : persistStats().inserted}
-                </div>
-                <div class="text-[11px] text-gray-600">삽입(inserted)</div>
-              </div>
-              <div class="bg-indigo-50 rounded p-2">
-                <div class="text-lg font-bold text-indigo-600">
-                  {effectsOn() ? <CountUp value={persistStats().updated} /> : persistStats().updated}
-                </div>
-                <div class="text-[11px] text-gray-600">업데이트(updated)</div>
-              </div>
-              <div class="bg-fuchsia-50 rounded p-2">
-                <div class="text-lg font-bold text-fuchsia-600">
-                  {effectsOn() ? <CountUp value={persistStats().inserted + persistStats().updated} /> : (persistStats().inserted + persistStats().updated)}
-                </div>
-                <div class="text-[11px] text-gray-600">성공 합계</div>
-              </div>
-              <div class="bg-gray-50 rounded p-2">
-                <div class="text-lg font-bold text-gray-700">
-                  {(() => {
-                    const p = persistStats();
-                    return p.attempted > 0 ? ((p.succeeded / Math.max(1, p.attempted)) * 100).toFixed(1) + '%' : '-';
-                  })()}
-                </div>
-                <div class="text-[11px] text-gray-600">성공률</div>
-              </div>
-            </div>
-            {/* Status classification breakdown */}
-            <div class="mt-4">
-              <div class="text-xs font-medium text-gray-700 mb-1">결과 유형 빈도 (배치 기준)</div>
-              <div class="grid grid-cols-2 md:grid-cols-7 gap-2 text-center text-[11px]">
-                <div class="bg-green-50 rounded p-2">
-                  <div class="font-semibold text-green-600">{persistStats().statusCounts.insertedOnly}</div>
-                  <div class="text-gray-600">삽입전용</div>
-                </div>
-                <div class="bg-indigo-50 rounded p-2">
-                  <div class="font-semibold text-indigo-600">{persistStats().statusCounts.updatedOnly}</div>
-                  <div class="text-gray-600">업데이트전용</div>
-                </div>
-                <div class="bg-fuchsia-50 rounded p-2">
-                  <div class="font-semibold text-fuchsia-600">{persistStats().statusCounts.mixed}</div>
-                  <div class="text-gray-600">혼합</div>
-                </div>
-                <div class="bg-amber-50 rounded p-2">
-                  <div class="font-semibold text-amber-600">{persistStats().statusCounts.allDuplicate}</div>
-                  <div class="text-gray-600">전부중복</div>
-                </div>
-                <div class="bg-slate-50 rounded p-2">
-                  <div class="font-semibold text-slate-600">{persistStats().statusCounts.noop}</div>
-                  <div class="text-gray-600">무변경</div>
-                </div>
-                <div class="bg-rose-50 rounded p-2">
-                  <div class="font-semibold text-rose-600">{persistStats().statusCounts.failed}</div>
-                  <div class="text-gray-600">실패</div>
-                </div>
-                <div class="bg-gray-100 rounded p-2">
-                  <div class="font-semibold text-gray-700">{persistStats().statusCounts.empty}</div>
-                  <div class="text-gray-600">빈배치</div>
-                </div>
-              </div>
-            </div>
-            <div class="mt-2 text-xs text-gray-500">
-              소요 시간: {persistStats().durationMs}ms
-            </div>
-            {/* Last-batch concise row */}
-            <Show when={persistLastBatch()}>
-              <div class="mt-3 text-xs text-gray-600">
-                <div class="font-medium text-gray-700 mb-1">마지막 배치</div>
-                <div class="flex flex-wrap gap-3">
-                  <div>시도: <b>{persistLastBatch()!.attempted}</b></div>
-                  <div>성공: <b class="text-emerald-700">{persistLastBatch()!.succeeded}</b></div>
-                  <div>실패: <b class="text-rose-700">{persistLastBatch()!.failedTrue}</b></div>
-                  <div>중복: <b class="text-amber-700">{persistLastBatch()!.duplicates}</b></div>
-                  <div>미변경: <b class="text-slate-700">{persistLastBatch()!.unchanged}</b></div>
-                  <div>시간: {persistLastBatch()!.durationMs}ms</div>
-                </div>
-              </div>
-            </Show>
-          </div>
+          <ValidationPanel
+            stats={() => {
+              const v = validationStats();
+              return {
+                targetPages: v.targetPages,
+                pagesScanned: v.pagesScanned,
+                divergences: v.divergences,
+                anomalies: v.anomalies,
+                lastPage: v.lastPage ?? null,
+                lastAssignedStart: v.lastAssignedStart ?? null,
+                lastAssignedEnd: v.lastAssignedEnd ?? null,
+                started: !!v.started,
+                completed: !!v.completed,
+              };
+            }}
+            effectsOn={effectsOn}
+          />
+          <DbSnapshotPanel snapshot={dbSnapshot} flash={dbFlash} effectsOn={effectsOn} />
+          <PersistPanel
+            stats={() => {
+              const p = persistStats();
+              return {
+                attempted: p.attempted,
+                inserted: p.inserted,
+                updated: p.updated,
+                duplicates: p.duplicates,
+                unchanged: p.unchanged,
+                failedTrue: p.failedTrue,
+                successRate: p.attempted > 0 ? (p.succeeded / Math.max(1, p.attempted)) * 100 : 0,
+                mode: (p as any).mode, // optional mode if present
+              };
+            }}
+            lastBatch={() => undefined}
+            flash={persistFlash}
+            effectsOn={effectsOn}
+          />
         </div>
 
         {/* 실시간 로그 */}
