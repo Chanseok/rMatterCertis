@@ -49,6 +49,34 @@ export default function CrawlingEngineTabSimple() {
   const detailScheduledPages = new Set<number>();
   // Stage2 mapping cumulative tracker (batch-level) to compute delta of scheduled detail count
   const detailMappingBatchCounts = new Map<string, number>();
+  // Stage2 legacy baseline tracking (to offset early legacy increments before first mapping delta per batch)
+  const stage2LegacyBaseline = new Map<string, number>(); // batchId -> legacy started prior to first cumulative mapping event
+  // Track cumulative authoritative group_size (or size) per batch for discrepancy checks
+  const stage2GroupSizeSnapshot = new Map<string, number>();
+  // Stage2 legacy started (no-batch path) total accumulator
+  let stage2LegacyStartedTotal = 0;
+  // Stage2 per-batch succ/fail cumulative snapshot to derive deltas
+  const stage2BatchCum = new Map<string, { succ: number; fail: number }>();
+  // Helper: recompute Stage 2 started from per-batch snapshots + legacy total
+  const recomputeStage2Started = () => {
+    const batchIds = new Set<string>([
+      ...Array.from(detailMappingBatchCounts.keys()),
+      ...Array.from(stage2GroupSizeSnapshot.keys()),
+    ]);
+    let startedFromBatches = 0;
+    for (const id of batchIds) {
+      const mapCount = detailMappingBatchCounts.get(id) || 0;
+      const grpSize = stage2GroupSizeSnapshot.get(id) || 0;
+      startedFromBatches += Math.max(mapCount, grpSize);
+    }
+    const totalStarted = startedFromBatches + (stage2LegacyStartedTotal || 0);
+    setDetailStats((prev) => {
+      const completed = prev.completed || 0;
+      const failed = prev.failed || 0;
+      const inflight = Math.max(0, totalStarted - (completed + failed));
+      return { ...prev, started: totalStarted, inflight };
+    });
+  };
   const [lastActorEvent, setLastActorEvent] = createSignal<string>("");
   // Removed range FX related signals (legacy range panel removed)
   const [actorEventCount, setActorEventCount] = createSignal(0);
@@ -571,6 +599,12 @@ export default function CrawlingEngineTabSimple() {
           detailCompleted.clear();
           detailFailedFinal.clear();
           detailAttempts.clear();
+          // Clear Stage 2 per-batch state
+          detailMappingBatchCounts.clear();
+          stage2LegacyBaseline.clear();
+          stage2GroupSizeSnapshot.clear();
+          stage2BatchCum.clear();
+          stage2LegacyStartedTotal = 0;
           setDownshiftInfo(null);
           setValidationStats({
             started: false,
@@ -804,11 +838,8 @@ export default function CrawlingEngineTabSimple() {
                 if (topUrls > 0) {
                   detailScheduledPages.add(legacyPageKey!);
                   pagePlannedMap.set(legacyPageKey!, topUrls);
-                  setDetailStats((prev) => {
-                    const started = (prev.started || 0) + topUrls;
-                    const inflight = Math.max(0, started - ((prev.completed || 0) + (prev.failed || 0)));
-                    return { ...prev, started, inflight };
-                  });
+                  stage2LegacyStartedTotal += topUrls;
+                  recomputeStage2Started();
                   if (effectsOn()) triggerStage2Pulse();
                 }
               }
@@ -836,22 +867,34 @@ export default function CrawlingEngineTabSimple() {
               }
               if (cumulative > 0) {
                 const prevCumulative = detailMappingBatchCounts.get(batchId) || 0;
-                const delta = cumulative - prevCumulative;
-                if (delta > 0) {
-                  detailMappingBatchCounts.set(batchId, cumulative);
-                  setDetailStats((prev) => {
-                    const started = (prev.started || 0) + delta;
-                    const inflight = Math.max(0, started - ((prev.completed || 0) + (prev.failed || 0)));
-                    return { ...prev, started, inflight };
-                  });
-                  if (effectsOn()) triggerStage2Pulse();
-                  // Associate delta with a representative page for per-page diagnostics (optional)
-                  if (Number.isFinite(pageNum)) {
-                    const existing = pagePlannedMap.get(pageNum) || 0;
-                    pagePlannedMap.set(pageNum, existing + delta);
+                let delta = cumulative - prevCumulative;
+                // First snapshot baseline adjustment against legacy-only totals
+                if (prevCumulative === 0) {
+                  let legacyBase = stage2LegacyBaseline.get(batchId);
+                  if (legacyBase == null) {
+                    legacyBase = stage2LegacyStartedTotal || 0;
+                    stage2LegacyBaseline.set(batchId, legacyBase);
                   }
-                  console.log('[DIAG][Stage2][mapping-delta]', { batch: batchId, prev: prevCumulative, cumulative, delta });
-                } else if (delta < 0) {
+                  if (legacyBase > 0 && delta > 0) {
+                    const adjusted = Math.max(0, cumulative - legacyBase);
+                    console.warn('[Stage2][adjust-initial-delta]', { batch: batchId, cumulative, rawDelta: delta, legacyBase, adjusted });
+                    delta = adjusted;
+                  }
+                }
+                if (cumulative >= prevCumulative) {
+                  detailMappingBatchCounts.set(batchId, cumulative);
+                  // Recompute authoritative started count from all batches
+                  recomputeStage2Started();
+                  if (delta > 0) {
+                    if (effectsOn()) triggerStage2Pulse();
+                    // Associate delta with a representative page for per-page diagnostics (optional)
+                    if (Number.isFinite(pageNum)) {
+                      const existing = pagePlannedMap.get(pageNum) || 0;
+                      pagePlannedMap.set(pageNum, existing + delta);
+                    }
+                    console.log('[DIAG][Stage2][mapping-delta]', { batch: batchId, prev: prevCumulative, cumulative, delta });
+                  }
+                } else {
                   // Cumulative should never decrease; log anomaly
                   console.warn('[WARN][Stage2][mapping-cumulative-decrease]', { batch: batchId, prev: prevCumulative, cumulative });
                 }
@@ -903,100 +946,69 @@ export default function CrawlingEngineTabSimple() {
           name === "actor-product-lifecycle-group" &&
           payload?.phase === "fetch" && !detailTrackerActive
         ) {
-          // Mark that we have authoritative grouped detail fetch events
-          if (!detailGroupFetchEventsSeen) {
-            detailGroupFetchEventsSeen = true;
-          }
-          // Backend emits cumulative succeeded/failed per batch; convert to delta to avoid triangular overcount.
+          if (!detailGroupFetchEventsSeen) detailGroupFetchEventsSeen = true;
           const batchId = String(payload?.batch_id || "");
           const cumSucc = Number(payload?.succeeded ?? 0) || 0;
           const cumFail = Number(payload?.failed ?? 0) || 0;
-          const groupSize = Number(payload?.group_size ?? 0) || 0;
+          const groupSize = Number(payload?.group_size ?? payload?.size ?? payload?.started ?? 0) || 0;
           const partial = !!payload?.partial;
-          if (!(window as any).__detailGroupPrev) {
-            (window as any).__detailGroupPrev = new Map<string, { s: number; f: number }>();
+
+          // Track cumulative snapshot deltas (internal map)
+          const prev = stage2BatchCum.get(batchId) || { succ: 0, fail: 0 };
+          const dSucc = Math.max(0, cumSucc - prev.succ);
+          const dFail = Math.max(0, cumFail - prev.fail);
+          stage2BatchCum.set(batchId, { succ: cumSucc, fail: cumFail });
+          if (dSucc > 0 || dFail > 0) {
+            console.log('[DIAG][Stage2][delta]', { batchId, cumSucc, cumFail, prevSucc: prev.succ, prevFail: prev.fail, dSucc, dFail });
+          } else if (cumSucc > 0 || cumFail > 0) {
+            console.log('[DIAG][Stage2][delta-zero]', { batchId, cumSucc, cumFail, prevSucc: prev.succ, prevFail: prev.fail });
           }
-            const prevMap: Map<string, { s: number; f: number }> = (window as any).__detailGroupPrev;
-            const prev = prevMap.get(batchId) || { s: 0, f: 0 };
-            const dSucc = Math.max(0, cumSucc - prev.s);
-            const dFail = Math.max(0, cumFail - prev.f);
-            // Update snapshot
-            prevMap.set(batchId, { s: cumSucc, f: cumFail });
-            if (dSucc > 0 || dFail > 0) {
-              console.log('[DIAG][Stage2][delta]', { batchId, cumSucc, cumFail, prevSucc: prev.s, prevFail: prev.f, dSucc, dFail });
-            } else if (cumSucc > 0 || cumFail > 0) {
-              // No delta but cumulative advanced earlier; helpful to detect missed batches
-              console.log('[DIAG][Stage2][delta-zero]', { batchId, cumSucc, cumFail, prevSucc: prev.s, prevFail: prev.f });
-            }
-          // Top-up logic: ensure detailStats.started reflects the authoritative group_size (total URLs to fetch) per batch.
-          // Reason: mapping-based started could be lower if url_count metric missing or filtered. We align semantics (Option A).
+
+          // Remember authoritative group size
           if (groupSize > 0) {
-            // Track per-batch top-up so we don't over-increment on partials.
-            if (!(window as any).__stage2StartedTopups) {
-              (window as any).__stage2StartedTopups = new Map<string, number>();
-            }
-            const topups: Map<string, number> = (window as any).__stage2StartedTopups;
-            const already = topups.get(batchId) || 0;
+            stage2GroupSizeSnapshot.set(batchId, groupSize);
+            // Recompute started to reflect latest group size/mapping counts
+            recomputeStage2Started();
             const currentStarted = detailStats().started || 0;
-            // For first time we see this batch, compute how many of groupSize are not yet represented in started and add them.
-            if (already === 0 && currentStarted < groupSize) {
-              const deltaNeeded = groupSize - currentStarted;
-              if (deltaNeeded > 0) {
-                topups.set(batchId, deltaNeeded);
-                console.log('[DIAG][Stage2][started-topup]', { batchId, groupSize, prevStarted: currentStarted, add: deltaNeeded });
-                setDetailStats((prevStats) => {
-                  const started = (prevStats.started || 0) + deltaNeeded;
-                  const inflight = Math.max(0, started - ((prevStats.completed || 0) + (prevStats.failed || 0)));
-                  return { ...prevStats, started, inflight };
-                });
-              }
-            } else if (!partial && currentStarted < groupSize) {
-              // Final snapshot guard: if somehow no top-up yet (race), ensure alignment on final
-              const deltaNeeded = groupSize - currentStarted;
-              if (deltaNeeded > 0) {
-                console.log('[DIAG][Stage2][started-final-backfill]', { batchId, groupSize, prevStarted: currentStarted, add: deltaNeeded });
-                setDetailStats((prevStats) => {
-                  const started = (prevStats.started || 0) + deltaNeeded;
-                  const inflight = Math.max(0, started - ((prevStats.completed || 0) + (prevStats.failed || 0)));
-                  return { ...prevStats, started, inflight };
-                });
-              }
+            if (currentStarted > groupSize && !partial) {
+              console.warn('[Stage2][overcount-detected]', { batchId, currentStarted, groupSize, diff: currentStarted - groupSize });
             }
           }
-            if (dSucc > 0 || dFail > 0) {
-              setDetailStats((prevStats) => {
-                const completed = (prevStats.completed || 0) + dSucc;
-                const failedCt = (prevStats.failed || 0) + dFail;
-                const started = (prevStats.started || 0); // keep raw started (from scheduling)
-                const inflight = Math.max(0, started - (completed + failedCt));
-                // Track per-page fetched counts (page_number may be present in payload)
-                const pageNumber = Number(payload?.page_number ?? NaN);
-                if (Number.isFinite(pageNumber)) {
-                  const prevFetched = pageFetchedMap.get(pageNumber) || 0;
-                  pageFetchedMap.set(pageNumber, prevFetched + dSucc + dFail);
-                  const planned = pagePlannedMap.get(pageNumber) || 0;
-                  const actual = pageFetchedMap.get(pageNumber) || 0;
-                  if (actual !== planned) {
-                    console.log('[DIAG][Stage2][page-diff]', { page: pageNumber, planned, fetched: actual, delta: actual - planned });
-                  }
+
+          // Apply succeeded/failed deltas to completed/failed counters
+          if (dSucc > 0 || dFail > 0) {
+            setDetailStats((prevStats) => {
+              const completed = (prevStats.completed || 0) + dSucc;
+              const failedCt = (prevStats.failed || 0) + dFail;
+              const startedNow = detailStats().started || prevStats.started || 0;
+              const inflight = Math.max(0, startedNow - (completed + failedCt));
+              // Per-page fetched diagnostics
+              const pageNumber = Number(payload?.page_number ?? NaN);
+              if (Number.isFinite(pageNumber)) {
+                const prevFetched = pageFetchedMap.get(pageNumber) || 0;
+                pageFetchedMap.set(pageNumber, prevFetched + dSucc + dFail);
+                const planned = pagePlannedMap.get(pageNumber) || 0;
+                const actual = pageFetchedMap.get(pageNumber) || 0;
+                if (actual !== planned) {
+                  console.log('[DIAG][Stage2][page-diff]', { page: pageNumber, planned, fetched: actual, delta: actual - planned });
                 }
-                // Optional auto backfill
-                if (autoBackfillStage2) {
-                  const inferredAttempted = completed + failedCt;
-                  if (inferredAttempted > started) {
-                    return { ...prevStats, started: inferredAttempted, completed, failed: failedCt, inflight: Math.max(0, inferredAttempted - (completed + failedCt)) };
-                  }
+              }
+              if (autoBackfillStage2) {
+                const inferredAttempted = completed + failedCt;
+                if (inferredAttempted > startedNow) {
+                  return { ...prevStats, started: inferredAttempted, completed, failed: failedCt, inflight: Math.max(0, inferredAttempted - (completed + failedCt)) };
                 }
-                return { ...prevStats, completed, failed: failedCt, inflight };
-              });
-              if (effectsOn()) triggerStage2Pulse();
-            }
+              }
+              return { ...prevStats, completed, failed: failedCt, inflight, started: startedNow };
+            });
+            if (effectsOn()) triggerStage2Pulse();
+          }
         }
         if (name === "actor-product-lifecycle") {
           const status = String(payload?.status || "").toLowerCase();
           if (status === "failed") {
             setDetailStats((prev) => {
-              const started = prev.started || 0; // cannot infer per-product start
+              const started = detailStats().started || prev.started || 0; // use latest recomputed started
               const failed = (prev.failed || 0) + 1;
               const inflight = Math.max(0, started - (prev.completed + failed));
               return { ...prev, failed, inflight };
@@ -1004,13 +1016,6 @@ export default function CrawlingEngineTabSimple() {
             if (effectsOn()) triggerStage2Pulse();
           }
         }
-        if (name === "actor-detail-concurrency-downshifted") {
-          setDownshiftInfo({
-            newLimit: payload?.new_limit,
-            reason: payload?.reason,
-          });
-        }
-
         // Stage 3 (Validation) events
         if (name === "actor-validation-started") {
           const target = Number(payload?.scan_pages ?? 0) || 0;
@@ -1033,23 +1038,11 @@ export default function CrawlingEngineTabSimple() {
           setValidationStats((prev) => ({
             ...prev,
             pagesScanned: prev.pagesScanned + 1,
-            // Optional: we can accumulate products_found into productsChecked
-            productsChecked:
-              prev.productsChecked +
-              (Number(payload?.products_found ?? 0) || 0),
-            lastPage:
-              Number(payload?.physical_page ?? prev.lastPage ?? 0) ||
-              prev.lastPage,
-            lastAssignedStart:
-              Number(
-                payload?.assigned_start_offset ?? prev.lastAssignedStart ?? 0
-              ) || prev.lastAssignedStart,
-            lastAssignedEnd:
-              Number(
-                payload?.assigned_end_offset ?? prev.lastAssignedEnd ?? 0
-              ) || prev.lastAssignedEnd,
+            productsChecked: prev.productsChecked + (Number(payload?.products_found ?? 0) || 0),
+            lastPage: Number(payload?.physical_page ?? prev.lastPage ?? 0) || prev.lastPage,
+            lastAssignedStart: Number(payload?.assigned_start_offset ?? prev.lastAssignedStart ?? 0) || prev.lastAssignedStart,
+            lastAssignedEnd: Number(payload?.assigned_end_offset ?? prev.lastAssignedEnd ?? 0) || prev.lastAssignedEnd,
           }));
-          // trigger subtle pulse animation
           // subtle validation pulse removed
         }
         if (name === "actor-validation-divergence") {
