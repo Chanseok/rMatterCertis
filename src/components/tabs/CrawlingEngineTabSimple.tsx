@@ -423,6 +423,27 @@ export default function CrawlingEngineTabSimple() {
 
   const detailTracker = new DetailTracker();
   let detailTrackerActive = false; // becomes true once at least one keyed event ingested
+  // Helper: recompute Stage1 retried count
+  const recomputeStage1Retries = () => {
+    let retried = 0;
+    for (const v of pageAttempts.values()) {
+      if (v > 1) retried += (v - 1);
+    }
+    setPageStats((prev) => ({ ...prev, retried }));
+  };
+  // Helper: integrate Stage2 retries when tracker active
+  const applyDetailTrackerSnapshot = () => {
+    if (!detailTrackerActive) return;
+    const snap = detailTracker.snapshot();
+    setDetailStats((prev) => {
+      const started = snap.fetch.started;
+      const completed = snap.fetch.succeeded;
+      const failed = snap.fetch.failed;
+      const retried = snap.retries;
+      const inflight = Math.max(0, started - (completed + failed));
+      return { ...prev, started, completed, failed, retried, inflight };
+    });
+  };
 
   onMount(() => {
     calculateCrawlingRange();
@@ -906,6 +927,7 @@ export default function CrawlingEngineTabSimple() {
           if (status === "fetch_started") {
             const prevAttempts = pageAttempts.get(pageNum) ?? 0;
             pageAttempts.set(pageNum, prevAttempts + 1);
+            if (prevAttempts >= 1) recomputeStage1Retries();
             if (!pageSeen.has(pageNum)) {
               pageSeen.add(pageNum);
               setPageStats((prev) => {
@@ -924,6 +946,7 @@ export default function CrawlingEngineTabSimple() {
               const inflight = Math.max(0, started - (completed + prev.failed));
               return { ...prev, started, completed, inflight };
             });
+            recomputeStage1Retries();
             if (effectsOn()) triggerStage1Pulse();
           } else if (status === "failed") {
             const prevAttempts = pageAttempts.get(pageNum) ?? 0;
@@ -937,6 +960,7 @@ export default function CrawlingEngineTabSimple() {
               const inflight = Math.max(0, started - (prev.completed + failed));
               return { ...prev, started, failed, inflight };
             });
+            if (prevAttempts >= 1) recomputeStage1Retries();
             if (effectsOn()) triggerStage1Pulse();
           }
         }
@@ -1301,16 +1325,7 @@ export default function CrawlingEngineTabSimple() {
                 detailTrackerActive = true;
                 console.log('[Stage2][Tracker] activated via actor-product-detail-keyed (switching to keyed counting)');
               }
-              if (detailTrackerActive) {
-                const snap = detailTracker.snapshot();
-                setDetailStats((prev) => {
-                  const started = snap.fetch.started;
-                  const completed = snap.fetch.succeeded;
-                  const failed = snap.fetch.failed;
-                  const inflight = Math.max(0, started - (completed + failed));
-                  return { ...prev, started, completed, failed, inflight };
-                });
-              }
+              applyDetailTrackerSnapshot();
             }
           } catch (e) {
             console.warn('[Stage2][ProductDetailKeyed] handling failed', e);
@@ -1431,17 +1446,7 @@ export default function CrawlingEngineTabSimple() {
                 detailTrackerActive = true;
                 console.log('[Stage2][Tracker] activated (switching UI to keyed counting)');
               }
-              if (detailTrackerActive) {
-                // Mirror tracker snapshot into legacy detailStats for seamless UI reuse
-                const snap = detailTracker.snapshot();
-                setDetailStats((prev) => {
-                  const started = snap.fetch.started; // product-level started
-                  const completed = snap.fetch.succeeded; // successful fetch products
-                  const failed = snap.fetch.failed;
-                  const inflight = Math.max(0, started - (completed + failed));
-                  return { ...prev, started, completed, failed, inflight };
-                });
-              }
+              applyDetailTrackerSnapshot();
             } catch (e) {
               console.warn('[Stage2][Tracker] ingest failed', e);
             }
