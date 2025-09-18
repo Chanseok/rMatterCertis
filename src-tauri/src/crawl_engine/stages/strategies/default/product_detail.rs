@@ -17,17 +17,16 @@ impl StageLogic for ProductDetailLogic {
 
     async fn execute(&self, input: StageInput) -> Result<StageOutput, StageLogicError> {
         let start = std::time::Instant::now();
-        let StageInput {
-            stage_type: st,
-            item,
-            config,
-            deps,
-            ..
-        } = input;
+        // We need access to product_detail_event_emitter; avoid destructuring it away
+        let st = input.stage_type.clone();
+        let urls_item = input.item.clone();
+        let config = input.config.clone();
+        let deps = input.deps.clone();
+        let product_detail_event_emitter = input.product_detail_event_emitter.clone();
         if !matches!(st, ActorStageType::ProductDetailCrawling) {
             return Err(StageLogicError::Unsupported(st));
         }
-        let urls = match item {
+        let urls = match urls_item {
             ch::StageItem::ProductUrls(u) => u,
             other => {
                 return Err(StageLogicError::Internal(format!(
@@ -40,47 +39,37 @@ impl StageLogic for ProductDetailLogic {
         {
             Arc::clone(fake)
         } else {
-            Arc::new(
-                crate::infrastructure::crawling_service_impls::ProductDetailCollectorImpl::new(
-                    Arc::clone(&deps.http),
-                    Arc::clone(&deps.extractor),
-                    crate::infrastructure::crawling_service_impls::CollectorConfig {
-                        max_concurrent: config.user.crawling.workers.product_detail_max_concurrent
-                            as u32,
-                        concurrency: config.user.crawling.workers.product_detail_max_concurrent
-                            as u32,
-                        delay_between_requests: std::time::Duration::from_millis(
-                            config.user.request_delay_ms,
-                        ),
-                        delay_ms: config.user.request_delay_ms,
-                        batch_size: config.user.batch.batch_size,
-                        retry_attempts: config.user.crawling.workers.max_retries,
-                        retry_max: config.user.crawling.workers.max_retries,
-                    },
-                ),
-            )
+            let base = crate::infrastructure::crawling_service_impls::ProductDetailCollectorImpl::new(
+                Arc::clone(&deps.http),
+                Arc::clone(&deps.extractor),
+                crate::infrastructure::crawling_service_impls::CollectorConfig {
+                    max_concurrent: config.user.crawling.workers.product_detail_max_concurrent as u32,
+                    concurrency: config.user.crawling.workers.product_detail_max_concurrent as u32,
+                    delay_between_requests: std::time::Duration::from_millis(config.user.request_delay_ms),
+                    delay_ms: config.user.request_delay_ms,
+                    batch_size: config.user.batch.batch_size,
+                    retry_attempts: config.user.crawling.workers.max_retries,
+                    retry_max: config.user.crawling.workers.max_retries,
+                },
+            );
+            let base = if let Some(ref em) = product_detail_event_emitter {
+                base.with_event_emitter(Arc::clone(em))
+            } else { base };
+            Arc::new(base)
         };
-        // Replace replay with real-time incremental progress by manually iterating & fetching each product (mirroring collector logic)
-        // For now we keep using the simpler sequential path; future: refactor collector to expose callback.
-        let max_retries = 3u32; // fallback constant (could read from config if desired)
-        let total = urls.urls.len() as u32;
-        let mut details: Vec<crate::domain::product::ProductDetail> = Vec::with_capacity(urls.urls.len());
-        let mut done: u32 = 0;
-        for purl in &urls.urls {
-            // fetch via repo collector single-product helper if available
-            match collector.collect_details(&[purl.clone()]).await {
-                Ok(mut v) => {
-                    if let Some(detail) = v.pop() { details.push(detail); }
-                }
-                Err(_e) => {
-                    // ignore failure (counts handled below)
-                }
+        // Refactored: call collector once with all URLs; collector internally emits keyed events (fetch/parse/persist) via injected emitter
+        let attempted = urls.urls.len() as u32;
+        let mut details: Vec<crate::domain::product::ProductDetail> = Vec::new();
+        let mut successful = 0u32;
+        match collector.collect_details(&urls.urls).await {
+            Ok(mut v) => {
+                successful = v.len() as u32;
+                details.append(&mut v);
             }
-            done += 1;
-            if let Some(emitter) = &input.progress_emitter { emitter(done, total, done == total); }
+            Err(_e) => {
+                // On aggregate failure we leave successful=0; keyed per-item failures already emitted by collector
+            }
         }
-        let attempted = total;
-        let successful = details.len() as u32;
         let failed = attempted.saturating_sub(successful);
         let duration_ms = start.elapsed().as_millis() as u64;
         // Emit typed StageResultData and bridge to legacy JSON at the boundary

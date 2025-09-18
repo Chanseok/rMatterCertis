@@ -417,6 +417,36 @@ pub enum AppEvent {
     done: Option<u32>,
         timestamp: DateTime<Utc>,
     },
+    /// Fine-grained per-product keyed detail event (v3). Replaces heuristic Stage2 counting.
+    ProductDetailKeyed {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<String>,
+        /// Stable canonical key (e.g. normalized URL or hashed form)
+        product_key: String,
+        /// Original URL (may be same as key pre-hash)
+        product_url: String,
+        /// Phase: fetch | parse | persist
+        phase: String,
+        /// Status: started | succeeded | failed
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        attempt: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        duration_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        html_size: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        extracted_fields: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        error: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
     /// Fine grained HTTP fetch latency for list or detail product requests
     HttpRequestTiming {
         session_id: String,

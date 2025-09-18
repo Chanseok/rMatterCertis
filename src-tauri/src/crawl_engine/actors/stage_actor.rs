@@ -441,37 +441,10 @@ impl StageActor {
                     list_collector: None,
                     detail_collector: None,
                 };
-                // Derive page hint & total products for detail progress emitter
-                let mut progress_emitter = None;
-                if matches!(stage_type, StageType::ProductDetailCrawling) {
-                    if let StageItem::ProductUrls(urls) = &item {
-                        let total = urls.urls.len() as u32;
-                        let page_hint = urls.urls.first().map(|u| u.page_id as u32);
-                        let ctx_clone = ctx.clone();
-                        let session_id_c = session_id.to_string();
-                        let batch_id_c = batch_id.clone();
-                        let emitter_closure: Arc<dyn Fn(u32, u32, bool) + Send + Sync> = Arc::new(move |done: u32, total_in: u32, final_flag: bool| {
-                            StageActor::emit_best_effort(&ctx_clone, AppEvent::ProductLifecycleGroup {
-                                session_id: session_id_c.clone(),
-                                batch_id: batch_id_c.clone(),
-                                page_number: page_hint,
-                                group_size: total_in,
-                                started: total_in,
-                                succeeded: done,
-                                failed: 0,
-                                duplicates: 0,
-                                duration_ms: 0, // fine-grained duration not tracked per increment
-                                phase: "fetch".into(),
-                                partial: Some(!final_flag),
-                                done: Some(done),
-                                timestamp: Utc::now(),
-                            });
-                        });
-                        progress_emitter = Some(emitter_closure);
-                        // Emit initial 0 state (optional)
-                        if let Some(em) = &progress_emitter { em(0, total, false); }
-                    }
-                }
+                // Legacy ProductDetail progress-emitter disabled (keyed events now authoritative)
+                let progress_emitter = if matches!(stage_type, StageType::ProductDetailCrawling) {
+                    None
+                } else { None };
                 let stage_input = crate::crawl_engine::stages::traits::StageInput {
                     stage_type: stage_type.clone(),
                     item: item.clone(),
@@ -482,6 +455,12 @@ impl StageActor {
                     session_id: session_id.to_string(),
                     batch_id: batch_id.clone(),
                     progress_emitter,
+                    product_detail_event_emitter: if matches!(stage_type, StageType::ProductDetailCrawling) {
+                        let ctx_clone = ctx.clone();
+                        Some(Arc::new(move |evt: AppEvent| {
+                            StageActor::emit_best_effort(&ctx_clone, evt);
+                        }))
+                    } else { None },
                 };
                 let logic_arc = if let Some(l) = strategy_factory.logic_for(stage_type) { l } else { return Err(StageError::GenericError { message: format!("No strategy registered for stage {:?}", stage_type) }); };
                 let fut_exec = logic_arc.execute(stage_input);
@@ -624,6 +603,7 @@ impl StageActor {
                 session_id: session_id.clone(),
                 batch_id: batch_id.clone(),
                 progress_emitter: None,
+                product_detail_event_emitter: None,
             };
             match logic.execute(stage_input).await {
                 Ok(crate::crawl_engine::stages::traits::StageOutput { result }) => Ok(result),

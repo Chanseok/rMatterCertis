@@ -189,6 +189,30 @@ impl ActorEventBridge {
                     stage_tag, phase, group_size, done_disp, started, succeeded, failed, duplicates, page_number, batch_id, duration_ms, session_id
                 );
             }
+            AppEvent::ProductDetailKeyed {
+                session_id,
+                batch_id,
+                product_key,
+                product_url,
+                phase,
+                status,
+                attempt,
+                duration_ms,
+                html_size,
+                extracted_fields,
+                error,
+                ..
+            } => {
+                let attempt_v = attempt.map(|a| a.to_string()).unwrap_or_else(|| "1".into());
+                let dur_v = duration_ms.map(|d| d.to_string()).unwrap_or_else(|| "-".into());
+                let html_v = html_size.map(|s| s.to_string()).unwrap_or_else(|| "-".into());
+                let extr_v = extracted_fields.map(|s| s.to_string()).unwrap_or_else(|| "-".into());
+                let err_v = error.as_ref().map(|e| e.as_str()).unwrap_or("");
+                tracing::info!(target: "actor-event",
+                    "[ProductDetailKeyed] phase={} status={} key={} url={} attempt={} dur_ms={} html={} fields={} err={} batch={:?} session={}",
+                    phase, status, product_key, product_url, attempt_v, dur_v, html_v, extr_v, err_v, batch_id, session_id
+                );
+            }
             AppEvent::DatabaseStats {
                 session_id,
                 batch_id,
@@ -390,6 +414,7 @@ pub(crate) fn convert_actor_event_to_frontend_value(
         AppEvent::PageLifecycle { .. } => "actor-page-lifecycle",
         AppEvent::ProductLifecycle { .. } => "actor-product-lifecycle",
         &AppEvent::ProductLifecycleGroup { .. } => "actor-product-lifecycle-group",
+    AppEvent::ProductDetailKeyed { .. } => "actor-product-detail-keyed",
         &AppEvent::HttpRequestTiming { .. } => "actor-http-request-timing",
         AppEvent::PreflightDiagnostics { .. } => "actor-preflight-diagnostics",
         AppEvent::PersistenceAnomaly { .. } => "actor-persistence-anomaly",

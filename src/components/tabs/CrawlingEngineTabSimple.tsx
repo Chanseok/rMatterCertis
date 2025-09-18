@@ -10,10 +10,10 @@ import { listen } from "@tauri-apps/api/event";
 import { tauriApi } from "../../services/tauri-api";
 // Dev-only panels removed during cleanup
 import { usePulse } from "../../hooks/usePulse";
-import CountUp from "../common/CountUp";
 import ValidationPanel from "./parts/ValidationPanel";
 import DbSnapshotPanel from "./parts/DbSnapshotPanel";
 import PersistPanel from "./parts/PersistPanel";
+import { DetailTracker, ProductDetailEvent, ProductDetailPhase } from '../../services/detail-tracker';
 
 export default function CrawlingEngineTabSimple() {
   const [isRunning, setIsRunning] = createSignal(false);
@@ -47,6 +47,8 @@ export default function CrawlingEngineTabSimple() {
   const [batchInfo, setBatchInfo] = createSignal<{ current: number; totalEstimated?: number; batchId?: any; startedAt?: number }>({ current: 0 });
   // Track pages already counted toward detail scheduling to prevent double counting
   const detailScheduledPages = new Set<number>();
+  // Stage2 mapping cumulative tracker (batch-level) to compute delta of scheduled detail count
+  const detailMappingBatchCounts = new Map<string, number>();
   const [lastActorEvent, setLastActorEvent] = createSignal<string>("");
   // Removed range FX related signals (legacy range panel removed)
   const [actorEventCount, setActorEventCount] = createSignal(0);
@@ -266,7 +268,7 @@ export default function CrawlingEngineTabSimple() {
   // Stage 4: DB snapshot animation toggle
   const [dbFlash, setDbFlash] = createSignal(false);
   // Preflight diagnostics (site totals) to improve expected counts
-  const [preflight, setPreflight] = createSignal<{ site_total_pages?: number } | null>(null);
+  const [preflight, setPreflight] = createSignal<{ site_total_pages?: number; products_on_last_page?: number } | null>(null);
   // Global effects toggle
   const [effectsOn, setEffectsOn] = createSignal(true);
   // Stage2 discrepancy handling flags
@@ -277,6 +279,8 @@ export default function CrawlingEngineTabSimple() {
   // Persist diagnostics flags
   let persistEventsSeen = false;
   let persistFailureSynthesized = false;
+  // Stage 2 diagnostics: detect if grouped fetch events are present to avoid double counting with stage-item detail events
+  let detailGroupFetchEventsSeen = false;
   // Sync input pulse highlight
   const [syncPulse, setSyncPulse] = createSignal(false);
   // Track sync-start events to detect backend start and enable fallbacks
@@ -316,6 +320,13 @@ export default function CrawlingEngineTabSimple() {
       addLog(
         `✅ 사이트 상태 확인 완료: ${siteStatus.total_pages}페이지, 마지막 페이지 ${siteStatus.products_on_last_page}개 제품`
       );
+      // Update preflight snapshot so readiness banner can show details immediately
+      try {
+        setPreflight({
+          site_total_pages: Number(siteStatus.total_pages ?? 0) || undefined,
+          products_on_last_page: Number(siteStatus.products_on_last_page ?? 0) || undefined,
+        });
+      } catch {}
 
       const request: any = {
         total_pages_on_site: siteStatus.total_pages,
@@ -381,6 +392,9 @@ export default function CrawlingEngineTabSimple() {
   // 진단 기반 부분 Sync: 제거됨 (미사용)
 
   // 정밀 복구 실행 헬퍼: 제거됨 (미사용)
+
+  const detailTracker = new DetailTracker();
+  let detailTrackerActive = false; // becomes true once at least one keyed event ingested
 
   onMount(() => {
     calculateCrawlingRange();
@@ -711,6 +725,10 @@ export default function CrawlingEngineTabSimple() {
                     if (effectsOn()) triggerStage1Pulse();
                   }
                 } else if (isDetail) {
+                  if (detailTrackerActive) {
+                    // Using new keyed tracker; ignore legacy per-item detail counting
+                    return;
+                  }
                   // Detail started events no longer increment 'started' to avoid double counting;
                   // rely on scheduling/mapping events for attempt counting.
                   // Optionally we could track inflight hints later.
@@ -733,13 +751,22 @@ export default function CrawlingEngineTabSimple() {
                   });
                   if (effectsOn()) triggerStage1Pulse();
                 } else if (isDetail) {
-                  setDetailStats((prev) => {
-                    const completed = (prev.completed || 0) + (success ? 1 : 0);
-                    const failed = (prev.failed || 0) + (success ? 0 : 1);
-                    const inflight = Math.max(0, (prev.started) - (completed + failed));
-                    return { ...prev, completed, failed, inflight };
-                  });
-                  if (effectsOn()) triggerStage2Pulse();
+                  // If grouped product-lifecycle-group fetch events are present we ignore per-detail stage-item
+                  // events to avoid double counting (these appear to fire once per page as a summary).
+                  if (detailGroupFetchEventsSeen) {
+                    if ((window as any).__stage2DetailSkipped == null) (window as any).__stage2DetailSkipped = 0;
+                    (window as any).__stage2DetailSkipped += 1;
+                    // Optional verbose diagnostic (comment out if noisy)
+                    // console.log('[DIAG][Stage2][detail-stage-item-skipped]');
+                  } else {
+                    setDetailStats((prev) => {
+                      const completed = (prev.completed || 0) + (success ? 1 : 0);
+                      const failed = (prev.failed || 0) + (success ? 0 : 1);
+                      const inflight = Math.max(0, (prev.started) - (completed + failed));
+                      return { ...prev, completed, failed, inflight };
+                    });
+                    if (effectsOn()) triggerStage2Pulse();
+                  }
                 }
               }
             }
@@ -755,59 +782,81 @@ export default function CrawlingEngineTabSimple() {
           if (!Number.isFinite(pageNum)) return;
           // Stage 2 start accounting from mapping/schedule signals
           if (status === "detail_scheduled" || status === "detail_mapping_emitted") {
-            const pageNumKey = pageNum; // use page number as key; if unavailable skip
-            if (!Number.isFinite(pageNumKey)) return;
-            if (detailScheduledPages.has(pageNumKey)) {
-              // Already accounted for this page's details
+            // NEW LOGIC: mapping events may arrive multiple times with cumulative url counts for the whole batch (not per page)
+            // We switch to per-batch delta tracking instead of per-page single-shot to avoid undercount when subsequent
+            // mapping updates add more URLs (previous logic ignored duplicates via Set).
+            // Diagnostic: log raw metrics once per batch for verification
+            const batchId = String(payload?.batch_id || payload?.batchId || "");
+            if (batchId && !(window as any).__stage2MappingDiagLogged) {
+              (window as any).__stage2MappingDiagLogged = new Set();
+            }
+            try {
+              if (batchId && !(window as any).__stage2MappingDiagLogged.has(batchId)) {
+                (window as any).__stage2MappingDiagLogged.add(batchId);
+                console.log('[DIAG][Stage2][mapping-raw]', { batch: batchId, metrics: payload?.metrics });
+              }
+            } catch {}
+            if (!batchId) {
+              // Fallback to page-number legacy path if no batch id (rare)
+              const legacyPageKey = pageNum;
+              if (Number.isFinite(legacyPageKey) && !detailScheduledPages.has(legacyPageKey!)) {
+                const topUrls = Number((payload as any)?.urls ?? 0) || 0;
+                if (topUrls > 0) {
+                  detailScheduledPages.add(legacyPageKey!);
+                  pagePlannedMap.set(legacyPageKey!, topUrls);
+                  setDetailStats((prev) => {
+                    const started = (prev.started || 0) + topUrls;
+                    const inflight = Math.max(0, started - ((prev.completed || 0) + (prev.failed || 0)));
+                    return { ...prev, started, inflight };
+                  });
+                  if (effectsOn()) triggerStage2Pulse();
+                }
+              }
             } else {
-              const m = payload?.metrics;
-              let scheduled = 0;
-              // Priority order: url_count > scheduled_details
+              // Extract cumulative url count (url_count preferred, then scheduled_details, then top-level urls)
               let urlCount = 0;
+              let scheduled = 0;
+              const m = payload?.metrics;
+              const extract = (obj: any) => {
+                if (!obj || typeof obj !== 'object') return;
+                if (obj.url_count != null) urlCount = Number(obj.url_count) || urlCount;
+                if (obj.scheduled_details != null) scheduled = Number(obj.scheduled_details) || scheduled;
+              };
               if (m && typeof m === 'object' && !Array.isArray(m)) {
-                // Unified extract function
-                const extract = (obj: any) => {
-                  if (!obj || typeof obj !== 'object') return;
-                  if (obj.url_count != null) urlCount = Number(obj.url_count) || urlCount;
-                  if (obj.scheduled_details != null) scheduled = Number(obj.scheduled_details) || scheduled;
-                };
-                // Variant A: first key object
                 const firstKey = Object.keys(m)[0];
                 if (firstKey && typeof (m as any)[firstKey] === 'object') extract((m as any)[firstKey]);
-                // Variant B: type/data pattern
                 if (typeof (m as any).data === 'object') extract((m as any).data);
-                // Variant C: direct
                 extract(m);
               }
-              let perPage = urlCount > 0 ? urlCount : (scheduled > 0 ? scheduled : 0);
-              if (perPage === 0) {
-                // Fallback: some PageLifecycle events expose top-level urls / scheduled counts (see logs)
+              let cumulative = urlCount > 0 ? urlCount : (scheduled > 0 ? scheduled : 0);
+              if (cumulative === 0) {
                 const topUrls = Number((payload as any)?.urls ?? 0) || 0;
                 const topScheduled = Number((payload as any)?.scheduled ?? 0) || 0;
-                const fallback = topUrls > 0 ? topUrls : (topScheduled > 0 ? topScheduled : 0);
-                if (fallback > 0) {
-                  perPage = fallback;
-                  console.log('[DIAG][Stage2][fallback-top-level]', { page: pageNumKey, topUrls, topScheduled });
-                }
+                cumulative = topUrls > 0 ? topUrls : (topScheduled > 0 ? topScheduled : 0);
               }
-              if (perPage > 0) {
-                detailScheduledPages.add(pageNumKey);
-                // Record planned per-page (first mapping only)
-                if (!pagePlannedMap.has(pageNumKey)) {
-                  pagePlannedMap.set(pageNumKey, perPage);
-                } else {
-                  // If a second mapping arrives with different count, log it
-                  const prevPlanned = pagePlannedMap.get(pageNumKey)!;
-                  if (prevPlanned !== perPage) {
-                    console.log('[DIAG][Stage2][mapping-ignored]', { page: pageNumKey, prevPlanned, newPlanned: perPage });
+              if (cumulative > 0) {
+                const prevCumulative = detailMappingBatchCounts.get(batchId) || 0;
+                const delta = cumulative - prevCumulative;
+                if (delta > 0) {
+                  detailMappingBatchCounts.set(batchId, cumulative);
+                  setDetailStats((prev) => {
+                    const started = (prev.started || 0) + delta;
+                    const inflight = Math.max(0, started - ((prev.completed || 0) + (prev.failed || 0)));
+                    return { ...prev, started, inflight };
+                  });
+                  if (effectsOn()) triggerStage2Pulse();
+                  // Associate delta with a representative page for per-page diagnostics (optional)
+                  if (Number.isFinite(pageNum)) {
+                    const existing = pagePlannedMap.get(pageNum) || 0;
+                    pagePlannedMap.set(pageNum, existing + delta);
                   }
+                  console.log('[DIAG][Stage2][mapping-delta]', { batch: batchId, prev: prevCumulative, cumulative, delta });
+                } else if (delta < 0) {
+                  // Cumulative should never decrease; log anomaly
+                  console.warn('[WARN][Stage2][mapping-cumulative-decrease]', { batch: batchId, prev: prevCumulative, cumulative });
                 }
-                setDetailStats((prev) => {
-                  const started = (prev.started || 0) + perPage;
-                  const inflight = Math.max(0, started - ((prev.completed || 0) + (prev.failed || 0)));
-                  return { ...prev, started, inflight };
-                });
-                if (effectsOn()) triggerStage2Pulse();
+              } else {
+                console.log('[DIAG][Stage2][mapping-no-count]', { batch: batchId });
               }
             }
           }
@@ -852,12 +901,18 @@ export default function CrawlingEngineTabSimple() {
         // Stage 2 via product lifecycle events
         if (
           name === "actor-product-lifecycle-group" &&
-          payload?.phase === "fetch"
+          payload?.phase === "fetch" && !detailTrackerActive
         ) {
+          // Mark that we have authoritative grouped detail fetch events
+          if (!detailGroupFetchEventsSeen) {
+            detailGroupFetchEventsSeen = true;
+          }
           // Backend emits cumulative succeeded/failed per batch; convert to delta to avoid triangular overcount.
           const batchId = String(payload?.batch_id || "");
           const cumSucc = Number(payload?.succeeded ?? 0) || 0;
           const cumFail = Number(payload?.failed ?? 0) || 0;
+          const groupSize = Number(payload?.group_size ?? 0) || 0;
+          const partial = !!payload?.partial;
           if (!(window as any).__detailGroupPrev) {
             (window as any).__detailGroupPrev = new Map<string, { s: number; f: number }>();
           }
@@ -873,6 +928,41 @@ export default function CrawlingEngineTabSimple() {
               // No delta but cumulative advanced earlier; helpful to detect missed batches
               console.log('[DIAG][Stage2][delta-zero]', { batchId, cumSucc, cumFail, prevSucc: prev.s, prevFail: prev.f });
             }
+          // Top-up logic: ensure detailStats.started reflects the authoritative group_size (total URLs to fetch) per batch.
+          // Reason: mapping-based started could be lower if url_count metric missing or filtered. We align semantics (Option A).
+          if (groupSize > 0) {
+            // Track per-batch top-up so we don't over-increment on partials.
+            if (!(window as any).__stage2StartedTopups) {
+              (window as any).__stage2StartedTopups = new Map<string, number>();
+            }
+            const topups: Map<string, number> = (window as any).__stage2StartedTopups;
+            const already = topups.get(batchId) || 0;
+            const currentStarted = detailStats().started || 0;
+            // For first time we see this batch, compute how many of groupSize are not yet represented in started and add them.
+            if (already === 0 && currentStarted < groupSize) {
+              const deltaNeeded = groupSize - currentStarted;
+              if (deltaNeeded > 0) {
+                topups.set(batchId, deltaNeeded);
+                console.log('[DIAG][Stage2][started-topup]', { batchId, groupSize, prevStarted: currentStarted, add: deltaNeeded });
+                setDetailStats((prevStats) => {
+                  const started = (prevStats.started || 0) + deltaNeeded;
+                  const inflight = Math.max(0, started - ((prevStats.completed || 0) + (prevStats.failed || 0)));
+                  return { ...prevStats, started, inflight };
+                });
+              }
+            } else if (!partial && currentStarted < groupSize) {
+              // Final snapshot guard: if somehow no top-up yet (race), ensure alignment on final
+              const deltaNeeded = groupSize - currentStarted;
+              if (deltaNeeded > 0) {
+                console.log('[DIAG][Stage2][started-final-backfill]', { batchId, groupSize, prevStarted: currentStarted, add: deltaNeeded });
+                setDetailStats((prevStats) => {
+                  const started = (prevStats.started || 0) + deltaNeeded;
+                  const inflight = Math.max(0, started - ((prevStats.completed || 0) + (prevStats.failed || 0)));
+                  return { ...prevStats, started, inflight };
+                });
+              }
+            }
+          }
             if (dSucc > 0 || dFail > 0) {
               setDetailStats((prevStats) => {
                 const completed = (prevStats.completed || 0) + dSucc;
@@ -1183,6 +1273,56 @@ export default function CrawlingEngineTabSimple() {
             console.log('[DIAG][Stage2][discrepancy]', { started: ds.started, inferredAttempted, completed: ds.completed, failed: ds.failed });
           }
         }
+
+        // New keyed per-product detail events (authoritative, overrides legacy group/mapping logic)
+        if (name === 'actor-product-detail-keyed') {
+          try {
+            const key = payload?.product_key || payload?.product_url;
+            if (key) {
+              const status: string = String(payload?.status || '');
+              const phaseRaw: string = String(payload?.phase || 'fetch');
+              // Map (phaseRaw,status) -> ProductDetailPhase
+              let trackerPhase: ProductDetailPhase;
+              if (phaseRaw === 'fetch') {
+                trackerPhase = status === 'succeeded' ? 'fetch_succeeded' : (status === 'failed' ? 'fetch_failed' : 'fetch_started');
+              } else if (phaseRaw === 'parse') {
+                trackerPhase = status === 'succeeded' ? 'parse_succeeded' : (status === 'failed' ? 'parse_failed' : 'parse_started');
+              } else if (phaseRaw === 'persist') {
+                trackerPhase = status === 'succeeded' ? 'persist_succeeded' : (status === 'failed' ? 'persist_failed' : 'persist_started');
+              } else {
+                trackerPhase = 'fetch_started';
+              }
+              const isTerminal = status === 'succeeded' || status === 'failed';
+              const pd: ProductDetailEvent = {
+                key,
+                attempt: Number(payload?.attempt || 1) || 1,
+                phase: trackerPhase,
+                ts: Date.now(),
+                page: undefined,
+                meta: undefined,
+                final: isTerminal,
+                error_code: status === 'failed' ? (payload?.error || 'failed') : undefined,
+              };
+              detailTracker.ingest(pd);
+              if (!detailTrackerActive) {
+                detailTrackerActive = true;
+                console.log('[Stage2][Tracker] activated via actor-product-detail-keyed (switching to keyed counting)');
+              }
+              if (detailTrackerActive) {
+                const snap = detailTracker.snapshot();
+                setDetailStats((prev) => {
+                  const started = snap.fetch.started;
+                  const completed = snap.fetch.succeeded;
+                  const failed = snap.fetch.failed;
+                  const inflight = Math.max(0, started - (completed + failed));
+                  return { ...prev, started, completed, failed, inflight };
+                });
+              }
+            }
+          } catch (e) {
+            console.warn('[Stage2][ProductDetailKeyed] handling failed', e);
+          }
+        }
         
         // Handle persist_empty case - when no products to persist
         if (name === "actor-product-lifecycle" && payload?.status === "persist_empty") {
@@ -1280,6 +1420,40 @@ export default function CrawlingEngineTabSimple() {
         const ev: any = evt.payload;
         if (!ev || typeof ev !== "object" || !ev.type) return;
         switch (ev.type) {
+          // NEW: keyed product detail event stream (future backend integration)
+          case 'ProductDetailEvent': {
+            try {
+              const p: ProductDetailEvent = {
+                key: ev.key,
+                attempt: ev.attempt || 1,
+                phase: ev.phase,
+                ts: ev.ts,
+                page: ev.page,
+                meta: ev.meta,
+                final: ev.final,
+                error_code: ev.error_code,
+              };
+              detailTracker.ingest(p);
+              if (!detailTrackerActive) {
+                detailTrackerActive = true;
+                console.log('[Stage2][Tracker] activated (switching UI to keyed counting)');
+              }
+              if (detailTrackerActive) {
+                // Mirror tracker snapshot into legacy detailStats for seamless UI reuse
+                const snap = detailTracker.snapshot();
+                setDetailStats((prev) => {
+                  const started = snap.fetch.started; // product-level started
+                  const completed = snap.fetch.succeeded; // successful fetch products
+                  const failed = snap.fetch.failed;
+                  const inflight = Math.max(0, started - (completed + failed));
+                  return { ...prev, started, completed, failed, inflight };
+                });
+              }
+            } catch (e) {
+              console.warn('[Stage2][Tracker] ingest failed', e);
+            }
+            break;
+          }
           case "DatabaseStats": {
             // Normalize to existing state shape (dbSnapshot currently had optional keys)
             setDbSnapshot({
@@ -1342,6 +1516,66 @@ export default function CrawlingEngineTabSimple() {
         </div>
     <SyncPanel syncLive={syncLive} />
     <SessionStatusCard isRunning={isRunning} statusMessage={statusMessage} batchInfo={batchInfo} />
+    {/* 복원: 계산된 크롤링 범위 & 사전 분석 Premium Cards */}
+    <Show when={!isRunning()}>
+      <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 -mt-4 space-y-6">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent tracking-tight">📊 계산된 크롤링 플랜 개요</h3>
+          <div class="flex items-center gap-2 text-[11px] text-gray-500">
+            <span class="px-2 py-1 rounded-full bg-gray-100 border border-gray-200">Site + LocalDB + Settings 분석</span>
+          </div>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+          <div class="group relative overflow-hidden rounded-xl border border-blue-200/60 bg-gradient-to-br from-blue-50 to-blue-100 p-4 shadow hover:shadow-lg transition">
+            <div class="text-[11px] font-medium text-blue-700 mb-1">시작 페이지</div>
+            <div class="text-2xl font-bold text-blue-700 tabular-nums">{(() => { const r = crawlingRange(); return r?.range?.[0] ?? '-'; })()}</div>
+            <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_70%_20%,rgba(255,255,255,.9),transparent_60%)]" />
+          </div>
+          <div class="group relative overflow-hidden rounded-xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50 to-emerald-100 p-4 shadow hover:shadow-lg transition">
+            <div class="text-[11px] font-medium text-emerald-700 mb-1">종료 페이지</div>
+            <div class="text-2xl font-bold text-emerald-700 tabular-nums">{(() => { const r = crawlingRange(); return r?.range?.[1] ?? '-'; })()}</div>
+            <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_30%_80%,rgba(255,255,255,.85),transparent_65%)]" />
+          </div>
+          <div class="group relative overflow-hidden rounded-xl border border-purple-200/60 bg-gradient-to-br from-purple-50 to-purple-100 p-4 shadow hover:shadow-lg transition">
+            <div class="text-[11px] font-medium text-purple-700 mb-1">페이지 수</div>
+            <div class="text-2xl font-bold text-purple-700 tabular-nums">{(() => { const v = Number(crawlingRange()?.crawling_info?.pages_to_crawl ?? 0); return v>0? v: '-'; })()}</div>
+            <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,.9),transparent_60%)]" />
+          </div>
+          <div class="group relative overflow-hidden rounded-xl border border-indigo-200/60 bg-gradient-to-br from-indigo-50 to-indigo-100 p-4 shadow hover:shadow-lg transition">
+            <div class="text-[11px] font-medium text-indigo-700 mb-1">로컬DB 제품</div>
+            <div class="text-2xl font-bold text-indigo-700 tabular-nums">{(() => { const v = Number(crawlingRange()?.local_db_info?.total_saved_products ?? 0); return v>0? v: '-'; })()}</div>
+            <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_80%_30%,rgba(255,255,255,.95),transparent_65%)]" />
+          </div>
+          <div class="group relative overflow-hidden rounded-xl border border-orange-200/60 bg-gradient-to-br from-orange-50 to-orange-100 p-4 shadow hover:shadow-lg transition">
+            <div class="flex items-center justify-between mb-1">
+              <div class="text-[11px] font-medium text-orange-700">커버리지</div>
+              <Show when={(() => Number(crawlingRange()?.progress?.progress_percentage ?? 0) > 0)()}>
+                <span class="text-[10px] text-orange-600/70">progress</span>
+              </Show>
+            </div>
+            <div class="text-2xl font-bold text-orange-700 tabular-nums">{(() => { const p = Number(crawlingRange()?.progress?.progress_percentage ?? 0); return p>0? `${p.toFixed(1)}%` : '-'; })()}</div>
+            <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_20%_40%,rgba(255,255,255,.9),transparent_65%)]" />
+          </div>
+          <div class="group relative overflow-hidden rounded-xl border border-teal-200/60 bg-gradient-to-br from-teal-50 to-teal-100 p-4 shadow hover:shadow-lg transition">
+            <div class="text-[11px] font-medium text-teal-700 mb-1">예상 신규 세부</div>
+            <div class="text-2xl font-bold text-teal-700 tabular-nums">{(() => { const info = crawlingRange()?.crawling_info; const est = Number(info?.estimated_new_products ?? 0); if(est>0) return est; const pages = Number(info?.pages_to_crawl ?? 0); return pages>0? pages*12 : '-'; })()}</div>
+            <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_70%_70%,rgba(255,255,255,.9),transparent_60%)]" />
+          </div>
+          <div class="group relative overflow-hidden rounded-xl border border-gray-200/60 bg-gradient-to-br from-gray-50 to-gray-100 p-4 shadow hover:shadow-lg transition sm:col-span-2 lg:col-span-3">
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-[11px] font-medium text-gray-600">사이트 메타</div>
+              <div class="text-[10px] text-gray-400">preflight</div>
+            </div>
+            <div class="flex flex-wrap gap-4 text-xs text-gray-700">
+              <div>총페이지: <span class="font-semibold">{(() => { const p = preflight(); const v = Number(p?.site_total_pages ?? 0); return v>0? v: '-'; })()}</span></div>
+              <div>마지막페이지제품: <span class="font-semibold">{(() => { const p = preflight(); const v = Number(p?.products_on_last_page ?? 0); return v>0? v: '-'; })()}</span></div>
+              <div>범위: <span class="font-semibold">{(() => { const r = crawlingRange(); const s=r?.range?.[0]; const e=r?.range?.[1]; return (s&&e)? `${s}→${e}`:'-'; })()}</span></div>
+              <div>설정 효과: <span class="font-semibold">{effectsOn() ? 'ON' : 'OFF'}</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Show>
         <StageStatsPanels
           crawlingRange={crawlingRange}
           preflight={preflight}
@@ -1396,176 +1630,7 @@ export default function CrawlingEngineTabSimple() {
           }}
         />
 
-        {/* Stage1/Stage2 Runtime Monitor */}
-        <div
-          class={`grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 ${
-            stage1Pulse() ? "pulse-once" : ""
-          }`}
-        >
-          <div
-            class={`bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 ${
-              stage1Pulse() ? "pulse-once" : ""
-            }`}
-          >
-            <div class="flex items-center justify-between mb-2">
-              <h3 class="text-md font-semibold text-gray-800">
-                Stage 1: 제품 목록 수집
-              </h3>
-              <span class="text-xs text-gray-500">
-                {(() => {
-                  const cr = crawlingRange();
-                  const pre = preflight();
-                  const siteTotal = Number(pre?.site_total_pages ?? 0) || 0;
-                  const planned = (cr?.crawling_info?.pages_to_crawl ??
-                    ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 || 0)) as number;
-                  const batchEst = pageStats().totalEstimated || 0;
-                  // Prefer planned total pages when available; fallback to batch-estimated, then site total.
-                  const est = planned > 0 ? planned : (batchEst > 0 ? batchEst : siteTotal);
-                  return est > 0 ? `예상 ${est}p` : "";
-                })()}
-              </span>
-            </div>
-            <div class="grid grid-cols-5 gap-2 text-center">
-              <div class="bg-blue-50 rounded p-2">
-                <div class="text-xl font-bold text-blue-600">
-                  <CountUp value={pageStats().started} />
-                </div>
-                <div class="text-xs text-gray-600">시작</div>
-              </div>
-              <div class="bg-emerald-50 rounded p-2">
-                <div class="text-xl font-bold text-emerald-600">
-                  <CountUp value={pageStats().completed} />
-                </div>
-                <div class="text-xs text-gray-600">완료</div>
-              </div>
-              <div class="bg-amber-50 rounded p-2">
-                <div class="text-xl font-bold text-amber-600">
-                  <CountUp value={pageStats().inflight} />
-                </div>
-                <div class="text-xs text-gray-600">진행중</div>
-              </div>
-              <div class="bg-rose-50 rounded p-2">
-                <div class="text-xl font-bold text-rose-600">
-                  <CountUp value={pageStats().failed} />
-                </div>
-                <div class="text-xs text-gray-600">실패</div>
-              </div>
-              <div class="bg-violet-50 rounded p-2">
-                <div class="text-xl font-bold text-violet-600">
-                  <CountUp value={pageStats().retried} />
-                </div>
-                <div class="text-xs text-gray-600">재시도</div>
-              </div>
-            </div>
-            <div class="mt-2 w-full bg-gray-200 rounded-full h-2">
-              <div
-                class="progress-fill rounded-full"
-                style={{
-                  width: `${(() => {
-                    const cr = crawlingRange();
-                    const pre = preflight();
-                    const siteTotal = Number(pre?.site_total_pages ?? 0) || 0;
-                    const planned = (cr?.crawling_info?.pages_to_crawl ??
-                      ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 || 0)) as number;
-                    const batchEst = pageStats().totalEstimated || 0;
-                    const denom = planned > 0 ? planned : (batchEst > 0 ? batchEst : siteTotal);
-                    return denom > 0
-                      ? Math.min(100, (pageStats().completed / denom) * 100)
-                      : 0;
-                  })()}%`,
-                }}
-              ></div>
-            </div>
-          </div>
-
-          <div
-            class={`bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 ${
-              stage2Pulse() ? "pulse-once" : ""
-            }`}
-          >
-            <div class="flex items-center justify-between mb-2">
-              <h3 class="text-md font-semibold text-gray-800">
-                Stage 2: 세부 정보 수집
-              </h3>
-              <Show when={!!downshiftInfo()}>
-                <span
-                  class="text-[10px] px-2 py-1 bg-yellow-100 text-yellow-700 rounded shake-x"
-                  title={downshiftInfo()?.reason || ""}
-                >
-                  ↓ 제한 {downshiftInfo()?.newLimit ?? "-"}
-                </span>
-              </Show>
-              <span class="text-xs text-gray-500">
-                {(() => {
-                  const cr = crawlingRange();
-                  const plannedPages = (cr?.crawling_info?.pages_to_crawl ??
-                    ((cr?.range?.[0] ?? 0) - (cr?.range?.[1] ?? 0) + 1 || 0)) as number;
-                  const plannedProducts = plannedPages > 0 ? plannedPages * 12 : 0;
-                  const est = (cr?.crawling_info?.estimated_new_products ?? 0) as number;
-                  const observed = Math.max(detailStats().started || 0, detailStats().completed || 0);
-                  // Prefer planned products when available; else prefer observed; else backend estimate
-                  const val = plannedProducts > 0 ? plannedProducts : (observed > 0 ? observed : (est > 0 ? est : 0));
-                  return val > 0 ? `예상 ${val}` : "";
-                })()}
-              </span>
-            </div>
-            <div class="grid grid-cols-5 gap-2 text-center">
-              <div class="bg-blue-50 rounded p-2">
-                <div class="text-xl font-bold text-blue-600">
-                  <CountUp value={detailStats().started} />
-                </div>
-                <div class="text-xs text-gray-600">
-                  시작
-                  <Show when={(detailStats().completed + detailStats().failed) > (detailStats().started || 0)}>
-                    <span class="ml-1 inline-block text-[10px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-700" title="completed+failed 로 추론한 값이 시작 수보다 큼">
-                      추론 {(detailStats().completed + detailStats().failed)}
-                    </span>
-                  </Show>
-                </div>
-              </div>
-              <div class="bg-emerald-50 rounded p-2">
-                <div class="text-xl font-bold text-emerald-600">
-                  <CountUp value={detailStats().completed} />
-                </div>
-                <div class="text-xs text-gray-600">완료</div>
-              </div>
-              <div class="bg-amber-50 rounded p-2">
-                <div class="text-xl font-bold text-amber-600">
-                  <CountUp value={detailStats().inflight} />
-                </div>
-                <div class="text-xs text-gray-600">진행중</div>
-              </div>
-              <div class="bg-rose-50 rounded p-2">
-                <div class="text-xl font-bold text-rose-600">
-                  <CountUp value={detailStats().failed} />
-                </div>
-                <div class="text-xs text-gray-600">실패</div>
-              </div>
-              <div class="bg-violet-50 rounded p-2">
-                <div class="text-xl font-bold text-violet-600">
-                  <CountUp value={detailStats().retried} />
-                </div>
-                <div class="text-xs text-gray-600">재시도</div>
-              </div>
-            </div>
-            <div class="mt-2 w-full bg-gray-200 rounded-full h-2">
-              <div
-                class="progress-fill rounded-full"
-                style={{
-                  width: `${(() => {
-                    const est = (crawlingRange()?.crawling_info?.estimated_new_products ?? 0) as number;
-                    const observed = Math.max(detailStats().started || 0, detailStats().completed || 0);
-                    // Prefer observed when available; fallback to estimate only if no observed yet
-                    const denom = observed > 0 ? observed : (est > 0 ? est : 0);
-                    return denom > 0
-                      ? Math.min(100, (detailStats().completed / denom) * 100)
-                      : 0;
-                  })()}%`,
-                }}
-              ></div>
-            </div>
-          </div>
-        </div>
+        {/* Stage1/Stage2 Runtime Monitor duplicated block removed; StageStatsPanels renders these above */}
 
         {/* Stage3/Stage4/Stage5 Mini Panels (modularized) */}
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">

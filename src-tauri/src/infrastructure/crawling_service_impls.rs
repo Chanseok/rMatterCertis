@@ -4,7 +4,7 @@
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use chrono;
+use chrono::Utc;
 use regex;
 use scraper;
 use std::any::Any;
@@ -28,6 +28,7 @@ use crate::domain::services::{
 use crate::infrastructure::config::utils as config_utils;
 use crate::infrastructure::config::{AppConfig, CrawlingConfig};
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
+use crate::crawl_engine::actors::types::AppEvent;
 // Canonical pagination calculator (legacy utils::PageIdCalculator via domain alias)
 use crate::domain::pagination::CanonicalPageIdCalculator;
 
@@ -485,7 +486,7 @@ impl StatusCheckerImpl {
     async fn find_last_valid_page_with_safety_check(&self, start_page: u32) -> Result<u32> {
         let mut current_page = start_page;
         let mut consecutive_empty_pages = 0;
-        const MAX_CONSECUTIVE_EMPTY: u32 = 3;
+        const MAX_CONSECUTIVE_EMPTY: u32 = 12;
         let min_page = 1;
 
         info!(
@@ -2633,6 +2634,8 @@ pub struct ProductDetailCollectorImpl {
     http_client: Arc<HttpClient>, // 🔥 Mutex 제거 - GlobalRateLimiter가 동시성 관리
     data_extractor: Arc<MatterDataExtractor>,
     config: CollectorConfig,
+    /// Optional emitter closure for ProductDetailKeyed AppEvents (Option A)
+    event_emitter: Option<Arc<dyn Fn(AppEvent) + Send + Sync>>,
 }
 
 impl ProductDetailCollectorImpl {
@@ -2646,7 +2649,13 @@ impl ProductDetailCollectorImpl {
             http_client,
             data_extractor,
             config,
+            event_emitter: None,
         }
+    }
+    /// Attach an emitter closure (builder style)
+    pub fn with_event_emitter(mut self, emitter: Arc<dyn Fn(AppEvent) + Send + Sync>) -> Self {
+        self.event_emitter = Some(emitter);
+        self
     }
 
     /// 🔥 `ProductDetail` 이벤트 처리기 (비동기, 논블로킹)
@@ -3002,6 +3011,24 @@ impl ProductDetailCollectorImpl {
             let start_time = std::time::Instant::now();
             let task_id = format!("product-{}", url);
 
+            // Emit keyed detail fetch_started (phase=fetch, status=started)
+            if let Some(em) = &self.event_emitter {
+                em(AppEvent::ProductDetailKeyed {
+                    session_id: session_id.clone(),
+                    batch_id: Some(batch_id.clone()),
+                    product_key: url.clone(),
+                    product_url: url.clone(),
+                    phase: "fetch".into(),
+                    status: "started".into(),
+                    attempt: Some(1),
+                    duration_ms: None,
+                    html_size: None,
+                    extracted_fields: None,
+                    error: None,
+                    timestamp: Utc::now(),
+                });
+            }
+
             // 태스크 시작 이벤트
             let _ = event_tx.send(ProductDetailEvent::TaskStarted {
                 product_url: url.clone(),
@@ -3048,6 +3075,22 @@ impl ProductDetailCollectorImpl {
                                     error: format!("Failed to read response: {}", e),
                                     processing_time: start_time.elapsed(),
                                 });
+                                if let Some(em) = &self.event_emitter {
+                                    em(AppEvent::ProductDetailKeyed {
+                                        session_id: session_id.clone(),
+                                        batch_id: Some(batch_id.clone()),
+                                        product_key: url.clone(),
+                                        product_url: url.clone(),
+                                        phase: "fetch".into(),
+                                        status: "failed".into(),
+                                        attempt: Some(attempts),
+                                        duration_ms: Some(start_time.elapsed().as_millis() as u64),
+                                        html_size: None,
+                                        extracted_fields: None,
+                                        error: Some("read_response".into()),
+                                        timestamp: Utc::now(),
+                                    });
+                                }
                                 break;
                             }
                         }
@@ -3063,6 +3106,22 @@ impl ProductDetailCollectorImpl {
                                 error: format!("HTTP request failed: {}", e),
                                 processing_time: start_time.elapsed(),
                             });
+                            if let Some(em) = &self.event_emitter {
+                                em(AppEvent::ProductDetailKeyed {
+                                    session_id: session_id.clone(),
+                                    batch_id: Some(batch_id.clone()),
+                                    product_key: url.clone(),
+                                    product_url: url.clone(),
+                                    phase: "fetch".into(),
+                                    status: "failed".into(),
+                                    attempt: Some(attempts),
+                                    duration_ms: Some(start_time.elapsed().as_millis() as u64),
+                                    html_size: None,
+                                    extracted_fields: None,
+                                    error: Some("http_failed".into()),
+                                    timestamp: Utc::now(),
+                                });
+                            }
                             break;
                         }
                     }
@@ -3084,6 +3143,22 @@ impl ProductDetailCollectorImpl {
                 task_id: task_id.clone(),
                 html_size: html.len(),
             });
+            if let Some(em) = &self.event_emitter {
+                em(AppEvent::ProductDetailKeyed {
+                    session_id: session_id.clone(),
+                    batch_id: Some(batch_id.clone()),
+                    product_key: url.clone(),
+                    product_url: url.clone(),
+                    phase: "parse".into(),
+                    status: "started".into(),
+                    attempt: Some(1),
+                    duration_ms: None,
+                    html_size: Some(html.len() as u32),
+                    extracted_fields: None,
+                    error: None,
+                    timestamp: Utc::now(),
+                });
+            }
 
             let doc = scraper::Html::parse_document(&html);
             match self
@@ -3102,6 +3177,22 @@ impl ProductDetailCollectorImpl {
                         processing_time: start_time.elapsed(),
                         extracted_fields: calculate_extracted_fields(&detail),
                     });
+                    if let Some(em) = &self.event_emitter {
+                        em(AppEvent::ProductDetailKeyed {
+                            session_id: session_id.clone(),
+                            batch_id: Some(batch_id.clone()),
+                            product_key: url.clone(),
+                            product_url: url.clone(),
+                            phase: "persist".into(),
+                            status: "succeeded".into(),
+                            attempt: Some(1),
+                            duration_ms: Some(start_time.elapsed().as_millis() as u64),
+                            html_size: Some(html.len() as u32),
+                            extracted_fields: Some(calculate_extracted_fields(&detail)),
+                            error: None,
+                            timestamp: Utc::now(),
+                        });
+                    }
 
                     details.push(detail);
                 }
@@ -3112,6 +3203,22 @@ impl ProductDetailCollectorImpl {
                         error: format!("Parsing failed: {}", e),
                         processing_time: start_time.elapsed(),
                     });
+                    if let Some(em) = &self.event_emitter {
+                        em(AppEvent::ProductDetailKeyed {
+                            session_id: session_id.clone(),
+                            batch_id: Some(batch_id.clone()),
+                            product_key: url.clone(),
+                            product_url: url.clone(),
+                            phase: "parse".into(),
+                            status: "failed".into(),
+                            attempt: Some(1),
+                            duration_ms: Some(start_time.elapsed().as_millis() as u64),
+                            html_size: Some(html.len() as u32),
+                            extracted_fields: None,
+                            error: Some("parse_failed".into()),
+                            timestamp: Utc::now(),
+                        });
+                    }
                 }
             }
         }

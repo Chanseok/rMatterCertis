@@ -36,6 +36,8 @@ pub struct StageInput {
     pub batch_id: Option<String>,
     /// Optional progress emitter: (done, total, final)
     pub progress_emitter: Option<Arc<dyn Fn(u32, u32, bool) + Send + Sync>>,
+    /// Optional per-product keyed detail AppEvent emitter (Option A)
+    pub product_detail_event_emitter: Option<Arc<dyn Fn(crate::crawl_engine::actors::types::AppEvent) + Send + Sync>>,
 }
 
 /// Output from a `StageLogic` strategy
