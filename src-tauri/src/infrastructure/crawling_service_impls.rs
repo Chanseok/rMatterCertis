@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, trace};
 
 use crate::domain::product::{Product, ProductDetail};
 use crate::domain::product_url::ProductUrl;
@@ -2638,6 +2638,94 @@ pub struct ProductDetailCollectorImpl {
     event_emitter: Option<Arc<dyn Fn(AppEvent) + Send + Sync>>,
 }
 
+// Retry/Validation enums & helpers
+#[derive(Debug)]
+enum AttemptResult {
+    Success(ProductDetail),
+    Incomplete { detail: Option<ProductDetail>, reason: IncompleteReason },
+    TransientError(anyhow::Error),
+    FatalError(anyhow::Error),
+}
+
+#[derive(Debug)]
+enum IncompleteReason {
+    MissingCertificateId,
+    MissingRequiredField(&'static str),
+}
+
+#[derive(Clone, Copy)]
+struct DetailValidationRules {
+    require_certificate_id: bool,
+    required_fields: &'static [&'static str],
+}
+
+fn default_validation_rules() -> DetailValidationRules {
+    DetailValidationRules { require_certificate_id: true, required_fields: &[] }
+}
+
+fn classify_network_error(e: &anyhow::Error) -> bool {
+    let msg = format!("{}", e);
+    msg.contains("timeout") || msg.contains("temporarily") || msg.contains("connection")
+}
+
+async fn attempt_collect_product(
+    collector: &ProductDetailCollectorImpl,
+    product_url: &ProductUrl,
+    _attempt: u32,
+    rules: &DetailValidationRules,
+) -> AttemptResult {
+    let fetch_res = collector.http_client.fetch_response_with_policy(&product_url.url).await;
+    let response = match fetch_res {
+        Ok(r) => r,
+        Err(e) => {
+            let ae = anyhow!(e);
+            return if classify_network_error(&ae) { AttemptResult::TransientError(ae) } else { AttemptResult::FatalError(ae) };
+        }
+    };
+    let body = match response.text().await {
+        Ok(t) => t,
+        Err(e) => {
+            let ae = anyhow!(e);
+            return if classify_network_error(&ae) { AttemptResult::TransientError(ae) } else { AttemptResult::FatalError(ae) };
+        }
+    };
+    let doc = scraper::Html::parse_document(&body);
+    let extracted = match collector.data_extractor.extract_product_detail(&doc, product_url.url.clone()) {
+        Ok(d) => d,
+        Err(e) => {
+            let ae = anyhow!(e);
+            return AttemptResult::TransientError(ae);
+        }
+    };
+    let mut detail = extracted;
+    detail.page_id = Some(product_url.page_id);
+    detail.index_in_page = Some(product_url.index_in_page);
+    detail.id = Some(format!("p{:04}i{:02}", product_url.page_id, product_url.index_in_page));
+    if rules.require_certificate_id && detail.certificate_id.as_deref().unwrap_or("").trim().is_empty() {
+        return AttemptResult::Incomplete { detail: Some(detail), reason: IncompleteReason::MissingCertificateId };
+    }
+    for f in rules.required_fields {
+        match *f {
+            "manufacturer" if detail.manufacturer.as_deref().unwrap_or("").trim().is_empty() => {
+                return AttemptResult::Incomplete { detail: Some(detail), reason: IncompleteReason::MissingRequiredField(*f) };
+            }
+            "model" if detail.model.as_deref().unwrap_or("").trim().is_empty() => {
+                return AttemptResult::Incomplete { detail: Some(detail), reason: IncompleteReason::MissingRequiredField(*f) };
+            }
+            _ => {}
+        }
+    }
+    AttemptResult::Success(detail)
+}
+
+impl ProductDetailCollectorImpl {
+    async fn backoff_sleep(&self, attempt: u32) {
+        let base = 500_u64;
+        let delay = base * attempt as u64;
+        tokio::time::sleep(Duration::from_millis(delay)).await;
+    }
+}
+
 impl ProductDetailCollectorImpl {
     #[must_use]
     pub const fn new(
@@ -2745,87 +2833,46 @@ impl ProductDetailCollectorImpl {
 #[async_trait]
 impl ProductDetailCollector for ProductDetailCollectorImpl {
     async fn collect_details(&self, product_urls: &[ProductUrl]) -> Result<Vec<ProductDetail>> {
-        debug!(
-            "Collecting details sequentially for {} products",
-            product_urls.len()
-        );
-
-        let mut details = Vec::with_capacity(product_urls.len());
+        debug!("Collecting details (improved retry) for {} products", product_urls.len());
+        let mut collected = Vec::with_capacity(product_urls.len());
         let max_retries = self.config.retry_attempts.max(1);
-
+        let rules = default_validation_rules();
         for product_url in product_urls {
-            let url = product_url.url.clone();
-            let page_id = product_url.page_id;
-            let index_in_page = product_url.index_in_page;
-
-            // Retry-aware fetch + minimal parse retry (sequential)
-            let mut attempts: u32 = 0;
-            let mut html_opt: Option<String> = None;
-            loop {
-                attempts += 1;
-                match self.http_client.fetch_response_with_policy(&url).await {
-                    Ok(response) => match response.text().await {
-                        Ok(s) => {
-                            html_opt = Some(s);
-                            break;
+            let mut last_incomplete_reason: Option<String> = None;
+            for attempt in 1..=max_retries {
+                match attempt_collect_product(self, product_url, attempt, &rules).await {
+                    AttemptResult::Success(detail) => { collected.push(detail); break; }
+                    AttemptResult::Incomplete { detail: _d, reason } => {
+                        let reason_str = match reason {
+                            IncompleteReason::MissingCertificateId => "missing_certificate_id".to_string(),
+                            IncompleteReason::MissingRequiredField(f) => format!("missing_field:{}", f),
+                        };
+                        last_incomplete_reason = Some(reason_str.clone());
+                        if attempt == max_retries {
+                            warn!("Incomplete product detail after {} attempts ({}): url={}", attempt, reason_str, product_url.url);
+                        } else {
+                            debug!("Retrying incomplete (attempt {} of {}): {} -> {}", attempt, max_retries, product_url.url, reason_str);
+                            self.backoff_sleep(attempt).await;
                         }
-                        Err(e) => {
-                            if attempts < max_retries {
-                                tokio::time::sleep(Duration::from_millis(
-                                    500 * u64::from(attempts),
-                                ))
-                                .await;
-                                continue;
-                            }
-                            warn!(
-                                "Failed to read response text for {} after {} attempts: {}",
-                                url, attempts, e
-                            );
-                            break;
+                    }
+                    AttemptResult::TransientError(e) => {
+                        if attempt == max_retries {
+                            warn!("Transient error final attempt ({}): url={} err={}", attempt, product_url.url, e);
+                        } else {
+                            debug!("Transient error attempt {} of {} (retrying): url={} err={}", attempt, max_retries, product_url.url, e);
+                            self.backoff_sleep(attempt).await;
                         }
-                    },
-                    Err(e) => {
-                        if attempts < max_retries {
-                            tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts)))
-                                .await;
-                            continue;
-                        }
-                        warn!(
-                            "HTTP request failed for {} after {} attempts: {}",
-                            url, attempts, e
-                        );
+                    }
+                    AttemptResult::FatalError(e) => {
+                        warn!("Fatal error collecting detail (no retry): url={} err={}", product_url.url, e);
                         break;
                     }
                 }
             }
-
-            let Some(html_string) = html_opt else {
-                continue;
-            };
-
-            // Parse and build detail
-            let doc = scraper::Html::parse_document(&html_string);
-            match self
-                .data_extractor
-                .extract_product_detail(&doc, url.clone())
-            {
-                Ok(mut detail) => {
-                    detail.page_id = Some(page_id);
-                    detail.index_in_page = Some(index_in_page);
-                    detail.id = Some(format!("p{:04}i{:02}", page_id, index_in_page));
-                    details.push(detail);
-                }
-                Err(e) => {
-                    warn!("Failed to parse product detail for {}: {}", url, e);
-                }
-            }
+            if let Some(r) = last_incomplete_reason.take() { trace!("Final incomplete reason for {}: {}", product_url.url, r); }
         }
-
-        debug!(
-            "Successfully collected {} product details (sequential)",
-            details.len()
-        );
-        Ok(details)
+        debug!("Collected {} complete product details (improved retry)", collected.len());
+        Ok(collected)
     }
 
     async fn collect_details_with_cancellation(
@@ -2833,101 +2880,37 @@ impl ProductDetailCollector for ProductDetailCollectorImpl {
         product_urls: &[ProductUrl],
         cancellation_token: CancellationToken,
     ) -> Result<Vec<ProductDetail>> {
-        info!(
-            "Collecting details sequentially for {} products with cancellation support",
-            product_urls.len()
-        );
-
-        let mut details = Vec::with_capacity(product_urls.len());
+        debug!("Collecting details (improved retry + cancellation) for {} products", product_urls.len());
+        let mut collected = Vec::with_capacity(product_urls.len());
         let max_retries = self.config.retry_attempts.max(1);
-
+        let rules = default_validation_rules();
         'outer: for product_url in product_urls {
-            if cancellation_token.is_cancelled() {
-                warn!("Cancellation requested; stopping detail collection early");
-                break 'outer;
-            }
-
-            let url = product_url.url.clone();
-            let page_id = product_url.page_id;
-            let index_in_page = product_url.index_in_page;
-
-            // Retry-aware HTTP fetch with cancellation checks
-            let mut attempts: u32 = 0;
-            let mut html_opt: Option<String> = None;
-            loop {
-                if cancellation_token.is_cancelled() {
-                    warn!("Cancellation during retry loop for {}", url);
-                    break 'outer;
-                }
-
-                attempts += 1;
-                match self.http_client.fetch_response_with_policy(&url).await {
-                    Ok(response) => match response.text().await {
-                        Ok(s) => {
-                            html_opt = Some(s);
-                            break;
-                        }
-                        Err(e) => {
-                            if attempts < max_retries {
-                                tokio::time::sleep(Duration::from_millis(
-                                    500 * u64::from(attempts),
-                                ))
-                                .await;
-                                continue;
-                            }
-                            warn!(
-                                "Failed to read response text for {} after {} attempts: {}",
-                                url, attempts, e
-                            );
-                            break;
-                        }
-                    },
-                    Err(e) => {
-                        if attempts < max_retries {
-                            tokio::time::sleep(Duration::from_millis(500 * u64::from(attempts)))
-                                .await;
-                            continue;
-                        }
-                        warn!(
-                            "HTTP request failed for {} after {} attempts: {}",
-                            url, attempts, e
-                        );
-                        break;
+            if cancellation_token.is_cancelled() { warn!("Cancellation requested early; stopping"); break 'outer; }
+            let mut last_incomplete_reason: Option<String> = None;
+            for attempt in 1..=max_retries {
+                if cancellation_token.is_cancelled() { warn!("Cancellation inside attempts for {}", product_url.url); break 'outer; }
+                match attempt_collect_product(self, product_url, attempt, &rules).await {
+                    AttemptResult::Success(detail) => { collected.push(detail); break; }
+                    AttemptResult::Incomplete { detail: _d, reason } => {
+                        let reason_str = match reason {
+                            IncompleteReason::MissingCertificateId => "missing_certificate_id".to_string(),
+                            IncompleteReason::MissingRequiredField(f) => format!("missing_field:{}", f),
+                        };
+                        last_incomplete_reason = Some(reason_str.clone());
+                        if attempt == max_retries { warn!("Incomplete after {} attempts ({}): url={}", attempt, reason_str, product_url.url); }
+                        else { self.backoff_sleep(attempt).await; }
                     }
+                    AttemptResult::TransientError(e) => {
+                        if attempt == max_retries { warn!("Transient final ({}): url={} err={}", attempt, product_url.url, e); }
+                        else { self.backoff_sleep(attempt).await; }
+                    }
+                    AttemptResult::FatalError(e) => { warn!("Fatal (no retry): url={} err={}", product_url.url, e); break; }
                 }
             }
-
-            let Some(html_string) = html_opt else {
-                continue 'outer;
-            };
-
-            if cancellation_token.is_cancelled() {
-                warn!("Cancellation after fetch for {}", url);
-                break 'outer;
-            }
-
-            let doc = scraper::Html::parse_document(&html_string);
-            match self
-                .data_extractor
-                .extract_product_detail(&doc, url.clone())
-            {
-                Ok(mut detail) => {
-                    detail.page_id = Some(page_id);
-                    detail.index_in_page = Some(index_in_page);
-                    detail.id = Some(format!("p{:04}i{:02}", page_id, index_in_page));
-                    details.push(detail);
-                }
-                Err(e) => {
-                    warn!("Failed to parse product detail for {}: {}", url, e);
-                }
-            }
+            if let Some(r) = last_incomplete_reason.take() { trace!("Final incomplete reason for {}: {}", product_url.url, r); }
         }
-
-        info!(
-            "Successfully collected {} product details (sequential)",
-            details.len()
-        );
-        Ok(details)
+        debug!("Collected {} complete product details (improved retry + cancellation)", collected.len());
+        Ok(collected)
     }
 
     async fn collect_single_product(&self, product_url: &ProductUrl) -> Result<ProductDetail> {
