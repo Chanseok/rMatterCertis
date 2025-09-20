@@ -77,6 +77,8 @@ pub enum StageItem {
     // 새로운 파이프라인 타입들 추가
     ProductList(ProductList),
     ProductUrls(ProductUrls),
+    /// 개별 제품 URL (실시간 진행상황을 위한 개별 아이템)
+    ProductUrl(crate::domain::product_url::ProductUrl),
     ProductDetails(ProductDetails),
     ValidatedProducts(ValidatedProducts),
 }

@@ -765,7 +765,7 @@ pub struct StageItem {
     pub metadata: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub enum StageItemType {
     Page {
@@ -779,6 +779,12 @@ pub enum StageItemType {
     },
     ProductUrls {
         urls: Vec<String>, // 간단히 URL 문자열 리스트로 변경
+    },
+    /// 개별 제품 상세 URL (실시간 진행상황용)
+    ProductDetail {
+        url: String,
+        page_id: i32,
+        index_in_page: i32,
     },
     SiteCheck, // 사이트 상태 확인용 아이템 타입
 }

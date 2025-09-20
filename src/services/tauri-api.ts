@@ -718,6 +718,27 @@ export class TauriApiService {
     });
   }
 
+  /** Subscribe to stage item lifecycle events (실시간 개별 아이템 진행상황) */
+  async subscribeToStageItemEvents(callbacks: {
+    onItemStarted?: (data: any) => void;
+    onItemCompleted?: (data: any) => void;
+  }): Promise<() => void> {
+    return this.subscribeToActorBridgeEvents((eventName, payload) => {
+      if (eventName === 'actor-stage-item-started') {
+        console.log('📨 [TauriApi] actor-stage-item-started 이벤트 수신:', payload);
+        if (callbacks.onItemStarted) {
+          callbacks.onItemStarted(payload);
+        }
+      }
+      if (eventName === 'actor-stage-item-completed') {
+        console.log('📨 [TauriApi] actor-stage-item-completed 이벤트 수신:', payload);
+        if (callbacks.onItemCompleted) {
+          callbacks.onItemCompleted(payload);
+        }
+      }
+    });
+  }
+
   /** Subscribe to product lifecycle via unified stream */
   async subscribeToProductLifecycle(callback: (payload: any) => void): Promise<UnlistenFn> {
     return this.subscribeToUnifiedActorEvents({
@@ -1189,6 +1210,8 @@ export class TauriApiService {
     onStageCompleted?: (data: any) => void;
     onBatchCompleted?: (data: any) => void;
     onSessionCompleted?: (data: any) => void;
+    onStageItemStarted?: (data: any) => void;
+    onStageItemCompleted?: (data: any) => void;
   }): Promise<() => void> {
     const enableSim = (import.meta as any).env?.VITE_ENABLE_ACTOR_SIM === 'true';
     const eventListeners: Array<() => void> = [];
@@ -1226,6 +1249,18 @@ export class TauriApiService {
       const handler = (event: any) => callbacks.onSessionCompleted!(event.detail);
       window.addEventListener('actor-session-completed', handler);
       eventListeners.push(() => window.removeEventListener('actor-session-completed', handler));
+    }
+
+    if (callbacks.onStageItemStarted) {
+      const handler = (event: any) => callbacks.onStageItemStarted!(event.detail);
+      window.addEventListener('actor-stage-item-started', handler);
+      eventListeners.push(() => window.removeEventListener('actor-stage-item-started', handler));
+    }
+
+    if (callbacks.onStageItemCompleted) {
+      const handler = (event: any) => callbacks.onStageItemCompleted!(event.detail);
+      window.addEventListener('actor-stage-item-completed', handler);
+      eventListeners.push(() => window.removeEventListener('actor-stage-item-completed', handler));
     }
 
     // Return cleanup function

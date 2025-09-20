@@ -54,6 +54,24 @@ export interface CrawlingProgress {
   total_batches?: number;
   errors: number;
   timestamp: string; // ISO string format
+  
+  // 실시간 개별 아이템 진행상황
+  active_items?: {
+    item_id: string;
+    item_type: string; // StageItemType의 사용자 친화적 표현
+    stage_type: string;
+    started_at: string;
+  }[];
+  recent_completed_items?: {
+    item_id: string;
+    item_type: string; // StageItemType의 사용자 친화적 표현 
+    stage_type: string;
+    success: boolean;
+    duration_ms: number;
+    collected_count?: number;
+    error?: string;
+    completed_at: string;
+  }[];
 }
 
 export interface CrawlingTaskStatus {

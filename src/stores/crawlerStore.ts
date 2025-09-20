@@ -297,11 +297,25 @@ class CrawlerStore {
 
   private async subscribeToEvents(): Promise<void> {
     console.log('📡 Subscribing to unified actor events...');
-    const unlisten = await tauriApi.subscribeToUnifiedActorEvents({
+    
+    // 기본 액터 이벤트 구독
+    const unlisten1 = await tauriApi.subscribeToUnifiedActorEvents({
       onEvent: (payload) => this.handleActorEvent(payload),
     });
-    eventSubscriptions()[0] = () => { try { unlisten(); } catch {} };
-    console.log('✅ Subscribed to unified actor events.');
+    
+    // StageItem 이벤트 추가 구독
+    const unlisten2 = await tauriApi.subscribeToStageItemEvents({
+      onItemStarted: (payload) => this.handleStageItemStarted(payload),
+      onItemCompleted: (payload) => this.handleStageItemCompleted(payload),
+    });
+    
+    eventSubscriptions()[0] = () => { 
+      try { 
+        unlisten1(); 
+        unlisten2();
+      } catch {} 
+    };
+    console.log('✅ Subscribed to unified actor events and stage item events.');
   }
 
   private handleActorEvent(payload: any): void {
@@ -329,19 +343,38 @@ class CrawlerStore {
             setCrawlerState('currentSessionId', payload.session_id);
             break;
 
-  // Phase* removed
+      case 'StageStarted': {
+        const normalizedStageType = this.normalizeStageType(payload.stage_type);
+        const stageType = this.mapStageTypeToCrawlingStage(normalizedStageType);
+        console.log(`[CrawlerStore] StageStarted event received:`, payload);
+        setCrawlerState('progress', (prev) => {
+          const switchingToDetail = normalizedStageType.includes('productdetail');
+          const newProgress = {
+            ...prev,
+            status: CrawlingStatus.Running,
+            current_stage: stageType,
+            stage_started_at: new Date(),
+            total: payload.items_count,
+            current: 0, // Reset current on new stage
+            item_type: payload.item_type,
+            // 상세 단계 진입 시 진행률 0부터 다시 (이전 스테이지 잔류 방지)
+            percentage: switchingToDetail ? 0 : (prev?.percentage ?? 0),
+          };
 
-    case 'StageStarted': {
-      // Prefer structured stage type when present
-      const stageType = this.normalizeStageType(payload.stage_type);
-      const stage = this.mapStageTypeToCrawlingStage(stageType);
-      setCrawlerState('progress', (prev: CrawlingProgress | null) => ({
-        ...prev!,
-        current_stage: stage,
-        message: `Stage started: ${stageType}`,
-      }));
-      break;
-    }
+          // ProductDetailCrawling 스테이지의 경우 total을 명시적으로 업데이트
+          if (normalizedStageType.includes('productdetail')) {
+            console.log(
+              `[CrawlerStore] Updating total for ProductDetailCrawling: ${payload.items_count}`
+            );
+            newProgress.total = payload.items_count;
+            newProgress.current = 0; // 여기서도 current를 리셋합니다.
+          }
+          
+          console.log('[CrawlerStore] New progress state:', newProgress);
+          return newProgress as CrawlingProgress;
+        });
+        break;
+      }
 
     case 'TaskLifecycle': {
       // Derive stage heuristically from task kind
@@ -359,14 +392,21 @@ class CrawlerStore {
     }
 
     case 'Progress':
-       setCrawlerState('progress', (prev: CrawlingProgress | null) => ({
-        ...prev!,
-        status: CrawlingStatus.Running,
-        percentage: payload.percentage,
-        current_step: payload.message,
-        current: payload.current_step,
-        total: payload.total_steps,
-      }));
+       setCrawlerState('progress', (prev: CrawlingProgress | null) => {
+        if (!prev) return prev as any;
+        const isDetailStage = prev.current_stage === CrawlingStage.ProductDetails;
+        // Detail 단계에서는 total을 StageStarted에서 설정한 값을 보호
+        // current_step 값이 페이지 기준일 수 있으므로 아이템 기반 current는 StageItemCompleted 누적에 맡긴다.
+        return {
+          ...prev,
+          status: CrawlingStatus.Running,
+          percentage: isDetailStage ? prev.percentage : payload.percentage,
+          current_step: payload.message,
+          // ProductDetails 단계에서는 current/total을 덮어쓰지 않음
+          current: isDetailStage ? prev.current : payload.current_step,
+          total: isDetailStage ? prev.total : payload.total_steps,
+        };
+      });
       break;
 
     case 'SessionCompleted':
@@ -387,9 +427,84 @@ class CrawlerStore {
             this.setError(payload.error || 'Session failed');
             break;
 
+        // 실시간 개별 아이템 이벤트 처리
+        case 'StageItemStarted':
+          this.handleStageItemStarted(payload);
+          break;
+          
+        case 'StageItemCompleted':
+          this.handleStageItemCompleted(payload);
+          break;
+
         default:
             break;
     }
+  }
+
+  private handleStageItemStarted(payload: any): void {
+    console.log('🟢 [StageItemStarted] 이벤트 수신:', payload);
+    
+    // 새로운 StageItemType 구조에 맞게 타입 추출
+    const itemTypeDisplay = this.getItemTypeDisplay(payload.item_type);
+    
+    const activeItem = {
+      item_id: payload.item_id,
+      item_type: itemTypeDisplay,
+      stage_type: payload.stage_type,
+      started_at: payload.timestamp,
+    };
+
+    setCrawlerState('progress', (prev: CrawlingProgress | null) => ({
+      ...prev!,
+      active_items: [...(prev?.active_items || []), activeItem],
+      message: `Processing ${itemTypeDisplay}: ${payload.item_id}`,
+    }));
+  }
+
+  private handleStageItemCompleted(payload: any): void {
+    console.log('🔴 [StageItemCompleted] 이벤트 수신:', payload);
+    
+    // 새로운 StageItemType 구조에 맞게 타입 추출
+    const itemTypeDisplay = this.getItemTypeDisplay(payload.item_type);
+    
+    const completedItem = {
+      item_id: payload.item_id,
+      item_type: itemTypeDisplay,
+      stage_type: payload.stage_type,
+      success: payload.success,
+      duration_ms: payload.duration_ms,
+      collected_count: payload.collected_count,
+      error: payload.error,
+      completed_at: payload.timestamp,
+    };
+
+    setCrawlerState('progress', (prev: CrawlingProgress | null) => {
+      if (!prev) return prev;
+
+      // 활성 아이템에서 제거
+      const updatedActiveItems = (prev.active_items || []).filter(
+        item => item.item_id !== payload.item_id
+      );
+
+      // 최근 완료된 아이템에 추가 (최대 20개까지만 유지)
+      const updatedRecentCompleted = [
+        completedItem,
+        ...(prev.recent_completed_items || []),
+      ].slice(0, 20);
+
+      return {
+        ...prev,
+        active_items: updatedActiveItems,
+        recent_completed_items: updatedRecentCompleted,
+        current: prev.current + (payload.success ? 1 : 0),
+        errors: prev.errors + (payload.success ? 0 : 1),
+        new_items: prev.new_items + (payload.collected_count || 0),
+        // 상세 단계에서는 아이템 개수 기반으로 percentage 재계산
+        percentage: prev.current_stage === CrawlingStage.ProductDetails && prev.total > 0
+          ? Math.min(100, Math.round(((prev.current + (payload.success ? 1 : 0)) / prev.total) * 100))
+          : prev.percentage,
+      };
+    });
   }
 
   // Normalize stage_type field that can be string or nested-enum object
@@ -410,6 +525,36 @@ class CrawlerStore {
     if (stageTypeLower.includes('database')) return CrawlingStage.Database;
     if (stageTypeLower.includes('saving') || stageTypeLower.includes('persist')) return CrawlingStage.DatabaseSave;
     return CrawlingStage.StatusCheck;
+  }
+
+  // StageItemType을 사용자 친화적 문자열로 변환
+  private getItemTypeDisplay(itemType: any): string {
+    if (typeof itemType === 'string') {
+      return itemType;
+    }
+    
+    if (typeof itemType === 'object' && itemType !== null) {
+      if (itemType.Page) {
+        return `Page ${itemType.Page.page_number}`;
+      }
+      if (itemType.Product) {
+        return `Product (Page ${itemType.Product.page_number})`;
+      }
+      if (itemType.Url) {
+        return `URL (${itemType.Url.url_type})`;
+      }
+      if (itemType.ProductUrls) {
+        return `ProductUrls (${itemType.ProductUrls.urls.length} items)`;
+      }
+      if (itemType.ProductDetail) {
+        return `ProductDetail (${itemType.ProductDetail.url})`;
+      }
+      if (itemType === 'SiteCheck') {
+        return 'SiteCheck';
+      }
+    }
+    
+    return 'Unknown';
   }
 
   // Phase mapping removed

@@ -43,6 +43,18 @@ export default function CrawlingEngineTabSimple() {
     retried: number;
     inflight: number;
   }>({ started: 0, completed: 0, failed: 0, retried: 0, inflight: 0 });
+  // Stage 2: 확정(또는 최신 누적) 상세 아이템 총계 (Progress 분모로 사용)
+  const [detailPlannedTotal, _setDetailPlannedTotal] = createSignal<number | null>(null);
+  
+  // 🔍 DEBUG: detailPlannedTotal 설정 추적
+  const setDetailPlannedTotal = (value: number | null) => {
+    const prev = detailPlannedTotal();
+    console.log('🔍 [TRACK] setDetailPlannedTotal called:', { prev, new: value });
+    _setDetailPlannedTotal(value);
+    
+    // 글로벌 디버깅을 위한 창 객체 설정
+    (window as any).__detailPlannedTotal = value;
+  };
   // Batch info (Stage 1 batching)
   const [batchInfo, setBatchInfo] = createSignal<{ current: number; totalEstimated?: number; batchId?: any; startedAt?: number }>({ current: 0 });
   // Track pages already counted toward detail scheduling to prevent double counting
@@ -594,6 +606,8 @@ export default function CrawlingEngineTabSimple() {
             totalEstimated: 0,
             inflight: 0,
           });
+          // Stage 2 상세 총계 초기화 (authoritative denominator)
+          setDetailPlannedTotal(null);
           // Manual range override: if crawlingRange has explicit page list length, use it as totalEstimated baseline
           try {
             const info = crawlingRange()?.crawling_info;
@@ -889,6 +903,11 @@ export default function CrawlingEngineTabSimple() {
               if (cumulative > 0) {
                 const prevCumulative = detailMappingBatchCounts.get(batchId) || 0;
                 let delta = cumulative - prevCumulative;
+                // 최초 또는 증가 시 상세 계획 총계 갱신 (분모로 활용)
+                const currentPlanned = detailPlannedTotal();
+                if (currentPlanned == null || cumulative > currentPlanned) {
+                  setDetailPlannedTotal(cumulative);
+                }
                 // First snapshot baseline adjustment against legacy-only totals
                 if (prevCumulative === 0) {
                   let legacyBase = stage2LegacyBaseline.get(batchId);
@@ -993,6 +1012,9 @@ export default function CrawlingEngineTabSimple() {
             stage2GroupSizeSnapshot.set(batchId, groupSize);
             // Recompute started to reflect latest group size/mapping counts
             recomputeStage2Started();
+            // 중요: group_size 는 개별 batch snapshot 이며 전체 Stage 2 확정 total 이 아니다.
+            // 과거 구현은 여기서 detailPlannedTotal 을 덮어써 조기 100% 진행률을 유발.
+            // authoritative 분모는 'actor-stage-started(product_detail)' 의 items_count 에서만 설정.
             const currentStarted = detailStats().started || 0;
             if (currentStarted > groupSize && !partial) {
               console.warn('[Stage2][overcount-detected]', { batchId, currentStarted, groupSize, diff: currentStarted - groupSize });
@@ -1099,6 +1121,9 @@ export default function CrawlingEngineTabSimple() {
 
         // Fallback: If backend emits only generic stage events for Validation, reflect them here
         if (name === "actor-stage-started") {
+          // 🔍 CRITICAL DEBUG: StageStarted 이벤트 수신됨
+          console.log('🔍 [CRITICAL] StageStarted event received:', { name, payload });
+          
           // stage_type may be serialized as nested enum object; normalize to string
           const stageTypeRaw = (payload as any)?.stage_type;
           const t = typeof stageTypeRaw === "string"
@@ -1106,6 +1131,32 @@ export default function CrawlingEngineTabSimple() {
             : stageTypeRaw && typeof stageTypeRaw === "object"
             ? (Object.keys(stageTypeRaw)[0] || "").toLowerCase()
             : "";
+          
+          console.log('🔍 [CRITICAL] Stage type normalized:', { stageTypeRaw, t });
+          
+          // 🔍 EXTRA DEBUG: ProductDetail 검사 상세 로깅
+          const isProductDetail = t.includes('productdetail') || t.includes('product_detail');
+          console.log('🔍 [DEBUG-CONDITION] ProductDetail check:', { 
+            rawStageType: stageTypeRaw,
+            normalizedStageType: t, 
+            includesProductDetail: t.includes('productdetail'), 
+            includesProductUnder: t.includes('product_detail'),
+            finalResult: isProductDetail,
+            itemsCount: payload?.items_count,
+            fullPayload: payload
+          });
+          
+          // 🚨 CRITICAL: 모든 StageStarted 이벤트 로깅
+          if (!isProductDetail) {
+            console.log('🚨 [NON-PRODUCTDETAIL] Other stage detected:', {
+              rawStageType: stageTypeRaw,
+              normalizedStageType: t,
+              isValidation: t.includes("validation"),
+              isListPage: t.includes("listpage") || t.includes("list_page"),
+              itemsCount: payload?.items_count
+            });
+          }
+          
           if (t.includes("validation")) {
             const total = Number(payload?.items_count ?? 0) || 0;
             setValidationStats((prev) => ({
@@ -1114,6 +1165,22 @@ export default function CrawlingEngineTabSimple() {
               completed: false,
               targetPages: total || prev.targetPages,
             }));
+          }
+          // 🔧 FIX: ProductDetailCrawling 인식 수정
+          if (isProductDetail) {
+            console.log('🔍 [CRITICAL] ProductDetail stage detected!');
+            const expanded = Number(payload?.items_count ?? 0) || 0;
+            const prev = detailPlannedTotal();
+            console.log('🔍 [CRITICAL] DetailPlannedTotal update:', { expanded, prev });
+            
+            if (expanded > 0) {
+              // 🔧 FIX: 누적 처리 - 배치별로 누적
+              const newTotal = (prev || 0) + expanded;
+              console.log('✅ [SUCCESS] ACCUMULATING detailPlannedTotal:', { prev, expanded, newTotal });
+              setDetailPlannedTotal(newTotal);
+            } else {
+              console.error('❌ [ERROR] StageStarted missing items_count:', payload);
+            }
           }
         }
         if (name === "actor-stage-completed") {
@@ -1579,6 +1646,7 @@ export default function CrawlingEngineTabSimple() {
           preflight={preflight}
           pageStats={pageStats}
           detailStats={detailStats}
+          detailTarget={detailPlannedTotal}
           stage1Pulse={stage1Pulse}
           stage2Pulse={stage2Pulse}
           downshiftInfo={downshiftInfo}

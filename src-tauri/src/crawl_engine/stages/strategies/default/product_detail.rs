@@ -28,9 +28,16 @@ impl StageLogic for ProductDetailLogic {
         }
         let urls = match urls_item {
             ch::StageItem::ProductUrls(u) => u,
+            ch::StageItem::ProductUrl(single_url) => {
+                // 개별 ProductUrl을 ProductUrls 번들로 래핑
+                ch::ProductUrls {
+                    urls: vec![single_url],
+                    batch_id: None,
+                }
+            },
             other => {
                 return Err(StageLogicError::Internal(format!(
-                    "ProductDetailLogic expected ProductUrls, got {:?}",
+                    "ProductDetailLogic expected ProductUrls or ProductUrl, got {:?}",
                     other
                 )));
             }
@@ -73,11 +80,30 @@ impl StageLogic for ProductDetailLogic {
         let failed = attempted.saturating_sub(successful);
         let duration_ms = start.elapsed().as_millis() as u64;
         // Emit typed StageResultData and bridge to legacy JSON at the boundary
+        let (item_id, item_type) = if urls.urls.len() == 1 {
+            // 개별 ProductUrl의 경우
+            let url = &urls.urls[0];
+            (
+                url.url.clone(),
+                StageItemType::ProductDetail {
+                    url: url.url.clone(),
+                    page_id: url.page_id,
+                    index_in_page: url.index_in_page,
+                }
+            )
+        } else {
+            // 기존 ProductUrls 번들의 경우
+            (
+                format!("product_urls_{}", attempted),
+                StageItemType::ProductUrls {
+                    urls: urls.urls.iter().map(|u| u.url.clone()).collect(),
+                }
+            )
+        };
+        
         let enhanced = StageItemResult {
-            item_id: format!("product_urls_{}", attempted),
-            item_type: StageItemType::ProductUrls {
-                urls: urls.urls.iter().map(|u| u.url.clone()).collect(),
-            },
+            item_id,
+            item_type,
             success: true,
             error: None,
             duration_ms,

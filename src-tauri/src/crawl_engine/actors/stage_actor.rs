@@ -238,6 +238,7 @@ impl StageItemExt for StageItem {
             Self::Product(p) => p.url.clone(),
             Self::ProductList(l) => format!("list_page_{}", l.page_number),
             Self::ProductUrls(urls) => format!("product_urls_{}", urls.urls.len()),
+            Self::ProductUrl(url) => url.url.clone(),
             Self::ProductDetails(d) => format!("product_details_{}", d.products.len()),
             Self::ValidatedProducts(v) => format!("validated_products_{}", v.products.len()),
             Self::ValidationTarget(v) => format!("validation_target_{}", v.len()),
@@ -255,6 +256,11 @@ impl StageItemExt for StageItem {
             Self::ProductList(_l) => StageItemType::ProductUrls { urls: vec![] },
             Self::ProductUrls(list) => StageItemType::ProductUrls {
                 urls: list.urls.iter().map(|u| u.url.clone()).collect(),
+            },
+            Self::ProductUrl(url) => StageItemType::ProductDetail {
+                url: url.url.clone(),
+                page_id: url.page_id,
+                index_in_page: url.index_in_page,
             },
             Self::ProductDetails(_d) => StageItemType::Url {
                 url_type: "product_details".into(),
@@ -284,6 +290,44 @@ impl StageActor {
     #[inline]
     fn emit_best_effort(context: &AppContext, evt: AppEvent) {
         let _ = context.emit_event(evt);
+    }
+
+    /// ProductUrls 번들을 개별 ProductUrl 아이템으로 분할
+    /// 실시간 개별 URL 진행상황을 위한 핵심 로직
+    fn expand_product_urls_to_individual_items(items: Vec<StageItem>) -> Vec<StageItem> {
+        let mut expanded = Vec::new();
+        let mut bundle_count = 0;
+        let mut total_urls = 0;
+        
+        for item in items {
+            match item {
+                StageItem::ProductUrls(product_urls) => {
+                    bundle_count += 1;
+                    let url_count = product_urls.urls.len();
+                    total_urls += url_count;
+                    info!(
+                        "🔄 Expanding ProductUrls bundle {} with {} URLs", 
+                        bundle_count, url_count
+                    );
+                    
+                    // ProductUrls 번들의 각 URL을 개별 ProductUrl 아이템으로 변환
+                    for product_url in product_urls.urls {
+                        expanded.push(StageItem::ProductUrl(product_url));
+                    }
+                }
+                // 다른 아이템 타입들은 그대로 유지
+                other => expanded.push(other),
+            }
+        }
+        
+        if bundle_count > 0 {
+            info!(
+                "✅ Expansion complete: {} bundles → {} individual URLs", 
+                bundle_count, total_urls
+            );
+        }
+        
+        expanded
     }
 
     /// Expose limited read-only access to product repo stats for external actors (e.g., SessionActor fallback emissions)
@@ -1485,11 +1529,31 @@ impl StageActor {
 
         let stage_id = Uuid::new_v4().to_string();
 
+        // ProductDetailCrawling의 경우 StageStarted 이벤트 이전에 번들을 개별 URL로 확장해야 UI total이 정확해진다.
+        let (maybe_expanded_items, expanded_log) = if matches!(stage_type, StageType::ProductDetailCrawling) {
+            let original = items.len();
+            let expanded = Self::expand_product_urls_to_individual_items(items);
+            let expanded_cnt = expanded.len();
+            (
+                expanded,
+                format!(
+                    "🔄 Expanded ProductUrls bundles before StageStarted: {} -> {} ProductUrl items",
+                    original, expanded_cnt
+                ),
+            )
+        } else {
+            (items, String::new())
+        };
+
+        if !expanded_log.is_empty() {
+            info!(target: "stage_actor", "{}", expanded_log);
+        }
+
         info!(
             "🎯 StageActor {} executing stage {:?} with {} items",
             self.actor_id,
             stage_type,
-            items.len()
+            maybe_expanded_items.len()
         );
 
         // 상태 초기화
@@ -1497,7 +1561,7 @@ impl StageActor {
         self.stage_type = Some(stage_type.clone());
         self.state = StageState::Starting;
         self.start_time = Some(Instant::now());
-        self.total_items = items.len() as u32;
+    self.total_items = maybe_expanded_items.len() as u32;
         self.completed_items = 0;
         self.success_count = 0;
         self.failure_count = 0;
@@ -1509,7 +1573,7 @@ impl StageActor {
             stage_type: stage_type.clone(),
             session_id: context.session_id.clone(),
             batch_id: Some(self.batch_id.clone()),
-            items_count: items.len() as u32,
+            items_count: self.total_items,
             timestamp: Utc::now(),
         };
 
@@ -1522,7 +1586,7 @@ impl StageActor {
         let processing_result = self
             .process_stage_items(
                 stage_type.clone(),
-                items,
+                maybe_expanded_items,
                 concurrency_limit,
                 context,
                 Duration::from_secs(timeout_secs),
@@ -1613,7 +1677,7 @@ impl StageActor {
             raw_concurrency_limit,
             raw_overall_timeout,
         );
-        let items = plan.items;
+        let items = plan.items; // ProductDetail 확장은 handle_execute_stage 단계에서 이미 수행됨
         let concurrency_limit = plan.concurrency_limit;
         let overall_timeout = plan.overall_timeout;
 

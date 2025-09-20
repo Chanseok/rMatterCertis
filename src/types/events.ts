@@ -68,3 +68,38 @@ export interface LiveSystemState {
 // Removed unused ValidationEvent.
 
 // Removed unused DatabaseSaveEvent.
+
+// ---------------------------------------------------------------------
+// Stage Item Level Events (실시간 개별 아이템 진행상황)
+// ---------------------------------------------------------------------
+
+export type StageItemType = 
+  | { Page: { page_number: number } }
+  | { Product: { page_number: number } }
+  | { Url: { url_type: string } }
+  | { ProductUrls: { urls: string[] } }
+  | { ProductDetail: { url: string; page_id: number; index_in_page: number } }
+  | 'SiteCheck';
+
+export interface StageItemStartedEvent {
+  session_id: string;
+  batch_id?: string;
+  stage_type: string; // "ListPageCrawling" | "ProductDetailCrawling"
+  item_id: string;
+  item_type: StageItemType;
+  timestamp: string; // ISO datetime string
+}
+
+export interface StageItemCompletedEvent {
+  session_id: string;
+  batch_id?: string;
+  stage_type: string; // "ListPageCrawling" | "ProductDetailCrawling" 
+  item_id: string;
+  item_type: StageItemType;
+  success: boolean;
+  error?: string;
+  duration_ms: number;
+  retry_count: number;
+  collected_count?: number; // 수집된 엔트리 수 (ListPage: URL 개수, ProductDetail: 필드 개수)
+  timestamp: string; // ISO datetime string
+}
