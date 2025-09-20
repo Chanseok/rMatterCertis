@@ -13,6 +13,10 @@ use std::sync::{
 use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
+use crate::crawl_events::{emit_crawl_event};
+use crate::crawl_events_mapping::map_app_event;
+use std::time::{Instant, Duration};
+use crate::metrics::{inc_throttled};
 
 /// Actor 이벤트를 프론트엔드로 전달하는 브릿지
 pub struct ActorEventBridge {
@@ -27,6 +31,19 @@ pub struct ActorEventBridge {
     /// 최근 네이티브 PageLifecycle 키 캐시 (세션/배치/페이지) to prevent synthetic duplicates
     recent_pages:
         Arc<tokio::sync::Mutex<VecDeque<(String, Option<String>, u32, std::time::Instant)>>>,
+    /// 마지막 OverallProgressUpdate 구조화 이벤트 전송 시간
+    last_overall_emit: Arc<tokio::sync::Mutex<Option<Instant>>>,
+    /// 마지막 StageProgress 구조화 이벤트 전송 시간
+    last_stage_progress_emit: Arc<tokio::sync::Mutex<Option<Instant>>>,
+    /// 메트릭 카운터
+    metrics: Arc<BridgeMetrics>,
+}
+
+#[derive(Default)]
+struct BridgeMetrics {
+    structured_emitted: std::sync::atomic::AtomicU64,
+    structured_skipped_throttle: std::sync::atomic::AtomicU64,
+    structured_failed: std::sync::atomic::AtomicU64,
 }
 
 impl ActorEventBridge {
@@ -39,6 +56,9 @@ impl ActorEventBridge {
             is_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             seq: Arc::new(AtomicU64::new(1)),
             recent_pages: Arc::new(tokio::sync::Mutex::new(VecDeque::with_capacity(64))),
+            last_overall_emit: Arc::new(tokio::sync::Mutex::new(None)),
+            last_stage_progress_emit: Arc::new(tokio::sync::Mutex::new(None)),
+            metrics: Arc::new(BridgeMetrics::default()),
         }
     }
 
@@ -108,11 +128,62 @@ impl ActorEventBridge {
             }
             v
         };
-        // Always emit unified actor-event
+    // Always emit unified actor-event
+    // TODO(dual-emission): After validating new structured CrawlEvent (crawl_updates channel),
+    // emit additionally via `crate::events::emit_crawl_event` with mapped structured variant.
+    // Mapping layer: AppEvent -> CrawlEvent (lossless for required new fields). See `src-tauri/src/events/mod.rs`.
         let unified_name = "actor-event";
         self.app_handle
             .emit(unified_name, &enriched)
             .map_err(|e| format!("Tauri emit failed: {}", e))?;
+
+        // Dual emission (experimental): map to structured event and emit on crawl_updates
+        if let Some(mapped) = map_app_event(&actor_event, self.seq.load(Ordering::SeqCst)) {
+            // Throttle rules
+            let (is_progress, is_stage_progress) = match &mapped {
+                crate::crawl_events::CrawlEvent::OverallProgressUpdate { .. } => (true, false),
+                crate::crawl_events::CrawlEvent::StageProgress { .. } => (false, true),
+                _ => (false, false),
+            };
+            let now = Instant::now();
+            let throttle_window = Duration::from_millis(500);
+            if is_progress {
+                let mut last = self.last_overall_emit.lock().await;
+                if last.map(|t| now.duration_since(t) < throttle_window).unwrap_or(false) {
+                    self.metrics.structured_skipped_throttle.fetch_add(1, Ordering::SeqCst);
+                    inc_throttled("OverallProgressUpdate");
+                } else {
+                    *last = Some(now);
+                    if let Err(e) = emit_crawl_event(&self.app_handle, &mapped) {
+                        self.metrics.structured_failed.fetch_add(1, Ordering::SeqCst);
+                        tracing::warn!(target:"actor-event", "structured emit failed: {}", e);
+                    } else {
+                        self.metrics.structured_emitted.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            } else if is_stage_progress {
+                let mut last = self.last_stage_progress_emit.lock().await;
+                if last.map(|t| now.duration_since(t) < throttle_window).unwrap_or(false) {
+                    self.metrics.structured_skipped_throttle.fetch_add(1, Ordering::SeqCst);
+                    inc_throttled("StageProgress");
+                } else {
+                    *last = Some(now);
+                    if let Err(e) = emit_crawl_event(&self.app_handle, &mapped) {
+                        self.metrics.structured_failed.fetch_add(1, Ordering::SeqCst);
+                        tracing::warn!(target:"actor-event", "structured emit failed: {}", e);
+                    } else {
+                        self.metrics.structured_emitted.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            } else {
+                if let Err(e) = emit_crawl_event(&self.app_handle, &mapped) {
+                    self.metrics.structured_failed.fetch_add(1, Ordering::SeqCst);
+                    tracing::warn!(target:"actor-event", "structured emit failed: {}", e);
+                } else {
+                    self.metrics.structured_emitted.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        }
         // Concise info line to events.log for visibility
         if let Some(obj) = enriched.as_object() {
             let variant = obj.get("variant").and_then(|v| v.as_str()).unwrap_or("?");

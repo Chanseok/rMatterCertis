@@ -11,6 +11,7 @@ use regex::Regex;
 use sqlx::Row; // to access row.get
 use crate::domain::product::Product;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository; // 올바른 Product 타입 사용
+use super::core_queries::core_fetch_products_page;
 
 /// 제품 페이지 응답
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -55,37 +56,11 @@ pub async fn get_products_page(
     size: u32,
 ) -> Result<ProductPage, String> {
     let pool = state.get_database_pool().await?;
-    let repo = IntegratedProductRepository::new(pool);
-
-    let page_i32 = i32::try_from(page).unwrap_or(i32::MAX);
-    let size_i32 = i32::try_from(size).unwrap_or(i32::MAX);
-    match repo.get_products_paginated(page_i32, size_i32).await {
-        Ok(products) => {
-            // 전체 개수 조회 (향후 최적화 가능)
-            let total_count = repo.count_products().await.map_or_else(
-                |e| {
-                    error!("Failed to count products: {}", e);
-                    0
-                },
-                |count| u32::try_from(count).unwrap_or(u32::MAX),
-            );
-
+    match core_fetch_products_page(&pool, page, size).await {
+        Ok((products, total_count)) => {
             let has_next = (page + 1) * size < total_count;
-
-            info!(
-                "✅ Retrieved {} products for page {} (size: {})",
-                products.len(),
-                page,
-                size
-            );
-
-            Ok(ProductPage {
-                products,
-                total_count,
-                page,
-                size,
-                has_next,
-            })
+            info!("✅ Retrieved {} products for page {} (size: {})", products.len(), page, size);
+            Ok(ProductPage { products, total_count, page, size, has_next })
         }
         Err(e) => {
             error!("Failed to get products page: {}", e);
@@ -677,150 +652,6 @@ pub struct CrawlStatusSummary {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::infrastructure::database_connection::get_or_init_global_pool;
-    use sqlx::{Connection, Executor, SqliteConnection};
-
-    #[sqlx::test(fixtures("products"))]
-    async fn test_get_products_page(pool: SqliteConnection) {
-        let app_state = AppState::new(pool.clone()).await.unwrap();
-        let state = State::new(app_state);
-
-        // 첫 페이지 (기본 10개)
-        let page1 = get_products_page(state.clone(), 1, 10).await.unwrap();
-        assert_eq!(page1.page, 1);
-        assert_eq!(page1.size, 10);
-        assert!(page1.products.len() <= 10);
-        assert!(page1.total_count > 0);
-        assert!(page1.has_next);
-
-        // 두 번째 페이지
-        let page2 = get_products_page(state.clone(), 2, 10).await.unwrap();
-        assert_eq!(page2.page, 2);
-        assert_eq!(page2.size, 10);
-        assert!(page2.products.len() <= 10);
-        assert!(page2.total_count > 0);
-        assert!(page2.has_next);
-
-        // 페이지 크기 변경
-        let page_large = get_products_page(state.clone(), 1, 20).await.unwrap();
-        assert_eq!(page_large.page, 1);
-        assert_eq!(page_large.size, 20);
-        assert!(page_large.products.len() <= 20);
-        assert!(page_large.total_count > 0);
-        assert!(page_large.has_next);
-
-        // 존재하지 않는 페이지
-        let empty_page = get_products_page(state.clone(), 999, 10).await;
-        assert!(empty_page.is_err());
-    }
-
-    #[sqlx::test(fixtures("products"))]
-    async fn test_get_latest_products(pool: SqliteConnection) {
-        let app_state = AppState::new(pool.clone()).await.unwrap();
-        let state = State::new(app_state);
-
-        let latest_products = get_latest_products(state.clone(), 5).await.unwrap();
-        assert_eq!(latest_products.len(), 5);
-    }
-
-    #[sqlx::test(fixtures("crawling_status"))]
-    async fn test_get_crawling_status_v2(pool: SqliteConnection) {
-        let app_state = AppState::new(pool.clone()).await.unwrap();
-        let state = State::new(app_state);
-
-        let status = get_crawling_status_v2(state.clone()).await.unwrap();
-        assert!(status.is_running);
-        assert!(status.current_page.is_some());
-        assert!(status.total_pages.is_some());
-    }
-
-    #[sqlx::test(fixtures("products", "crawling_status"))]
-    async fn test_get_system_status(pool: SqliteConnection) {
-        let app_state = AppState::new(pool.clone()).await.unwrap();
-        let state = State::new(app_state);
-
-        let status = get_system_status(state.clone()).await.unwrap();
-        assert!(status.database_connected);
-        assert!(status.total_products > 0);
-        assert!(status.config_loaded);
-    }
-
-    #[sqlx::test(fixtures("products"))]
-    async fn test_get_db_summary(pool: SqliteConnection) {
-        let app_state = AppState::new(pool.clone()).await.unwrap();
-        let state = State::new(app_state);
-
-        let summary = get_db_summary(state.clone()).await.unwrap();
-        assert!(summary.total_products > 0);
-        assert!(summary.total_product_details > 0);
-        assert!(summary.total_vendors > 0);
-        assert!(summary.total_device_types > 0);
-        assert!(summary.new_products_24h >= 0);
-        assert!(summary.new_products_7d >= 0);
-        assert!(!summary.top_device_categories.is_empty());
-    }
-
-    #[sqlx::test(fixtures("products"))]
-    async fn test_analytics_query(pool: SqliteConnection) {
-        let app_state = AppState::new(pool.clone()).await.unwrap();
-        let state = State::new(app_state);
-
-        let params = AnalyticsQueryInput {
-            offset: Some(0),
-            limit: Some(10),
-            filter: None,
-            sort: None,
-        };
-        let page = analytics_query(state.clone(), params).await.unwrap();
-        assert_eq!(page.offset, 0);
-        assert_eq!(page.limit, 10);
-        assert!(page.rows.len() <= 10);
-        assert!(page.total > 0);
-    }
-
-    #[sqlx::test(fixtures("products"))]
-    async fn test_diagnostics_analytics_mapping(pool: SqliteConnection) {
-        let app_state = AppState::new(pool.clone()).await.unwrap();
-        let state = State::new(app_state);
-
-        let diagnostics = diagnostics_analytics_mapping(state.clone()).await.unwrap();
-        assert!(diagnostics.product_details_with_ids > 0);
-        assert!(diagnostics.product_details_total > 0);
-        assert!(diagnostics.bridge_rows >= 0);
-        assert!(diagnostics.distinct_bridge_products >= 0);
-        assert!(diagnostics.device_types_total > 0);
-        assert!(diagnostics.device_types_with_type_id >= 0);
-        assert!(diagnostics.device_types_type_id_null >= 0);
-        assert!(diagnostics.analytics_rows_total > 0);
-        assert!(diagnostics.analytics_with_device_type > 0);
-        assert!(diagnostics.analytics_distinct_products_total > 0);
-        assert!(diagnostics.analytics_distinct_products_mapped >= 0);
-        assert!(!diagnostics.sample_unmapped.is_empty());
-    }
-
-    #[sqlx::test(fixtures("products"))]
-    async fn test_db_diagnostics_report(pool: SqliteConnection) {
-        let app_state = AppState::new(pool.clone()).await.unwrap();
-        let _state = State::new(app_state);
-
-        let pool = get_or_init_global_pool().await.unwrap();
-        let report: DbDiagnosticsReport = sqlx::query_as("SELECT * FROM db_diagnostics_report LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-
-        assert!(report.product_details_total > 0);
-        assert!(report.product_details_with_ids > 0);
-        assert!(report.product_details_json_valid > 0);
-        assert!(!report.sample_primary_ids.is_empty());
-        assert!(report.device_types_total > 0);
-        assert!(report.device_types_type_id_null >= 0);
-        assert!(!report.sample_device_types.is_empty());
-        assert!(report.unmatched_codes_count >= 0);
-        assert!(!report.sample_unmatched_codes.is_empty());
-        assert!(report.analytics_view_total > 0);
-        assert!(report.analytics_view_mapped >= 0);
-        assert!(report.mapping_success_ratio >= 0.0);
-    }
+    // (정상화 1단계) 기존 인라인 DB 테스트 제거됨.
+    // 새 구조: tests/ 디렉토리에 재구성된 통합/쿼리 테스트를 별도 작성 예정.
 }

@@ -9,6 +9,7 @@ console.log("✅ solid-js/web and CSS imported successfully");
 
 // AppWithTabs를 직접 테스트해보겠습니다
 import { AppWithTabs } from "./components/AppWithTabs";
+import { bootstrapCrawlEventsLayer } from "./events/crawlEventsStore";
 
 console.log("✅ AppWithTabs imported successfully");
 
@@ -21,6 +22,15 @@ if (root) {
   try {
     render(() => <AppWithTabs />, root);
   console.log("✅ AppWithTabs render completed successfully");
+
+    // Initialize structured crawl events layer (dual emission consumer)
+    try {
+      void bootstrapCrawlEventsLayer().then(() => {
+        console.log("📡 Structured crawl events layer initialized (crawl_updates)");
+      });
+    } catch (e) {
+      console.warn("⚠️ Failed to bootstrap structured crawl events layer", e);
+    }
 
     // Optional dev: auto-start a sync on launch if env flags are set
     // Usage (zsh): VITE_AUTO_SYNC_RANGES="512-500" VITE_AUTO_SYNC_METHOD="basic|partial" VITE_AUTO_SYNC_DELAY=1500 npm run tauri:dev

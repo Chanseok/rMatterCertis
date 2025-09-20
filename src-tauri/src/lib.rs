@@ -168,8 +168,10 @@ pub mod infrastructure;
 // Re-export commonly used infrastructure items (database_paths 추가)
 pub use infrastructure::database_paths;
 
-// Events module - 실시간 이벤트 시스템
-pub mod events;
+// Structured crawl events (new) - flat module naming without mod.rs pattern
+pub mod crawl_events;
+pub mod crawl_events_mapping;
+pub mod metrics; // Prometheus metrics module
 
 // moved: services -> application::services
 
@@ -204,6 +206,7 @@ pub mod commands {
         pub mod vendor_sync; // CSA DCL vendor sync // 🔧 DB repair/sync between products and product_details
     pub mod export_import; // Phase 2: export/import commands
     pub mod device_types_editor; // Phase 5: device types JSON editor
+    pub mod core_queries; // Extracted core DB query functions for testability
     }
     pub mod analysis {
         pub mod performance_commands; // 🔧 Phase C: 성능 최적화 도구
@@ -465,6 +468,19 @@ pub fn run() {
     // crate::commands::crawling_session_manager::CrawlingSessionManager::new()
 
     info!("🔧 Building Tauri application...");
+
+    // Start Prometheus metrics server (non-blocking). Port can be overridden via MC_METRICS_PORT
+    let metrics_port: u16 = std::env::var("MC_METRICS_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(9898);
+    {
+        let port = metrics_port;
+        rt.spawn(async move {
+            crate::metrics::start_metrics_server(port).await; // detached task
+        });
+        info!(port, "📊 Metrics server initialized (Prometheus exporter)");
+    }
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

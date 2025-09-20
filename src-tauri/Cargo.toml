@@ -120,6 +120,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "chron
 tracing-appender = "0.2"
 tracing-opentelemetry = "0.22"
 once_cell = "1.19"
+prometheus = { version = "0.13", default-features = false, features = ["process"] }
+hyper = { version = "0.14", features = ["server", "http1", "runtime"] }
 
 # 🛠️ Error Handling & Utilities
 anyhow = "1.0"

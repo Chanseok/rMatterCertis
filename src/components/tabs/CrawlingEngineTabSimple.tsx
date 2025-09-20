@@ -14,6 +14,7 @@ import ValidationPanel from "./parts/ValidationPanel";
 import DbSnapshotPanel from "./parts/DbSnapshotPanel";
 import PersistPanel from "./parts/PersistPanel";
 import { DetailTracker, ProductDetailEvent, ProductDetailPhase } from '../../services/detail-tracker';
+import { getCrawlEventsStore } from '../../events/crawlEventsStore';
 
 export default function CrawlingEngineTabSimple() {
   const [isRunning, setIsRunning] = createSignal(false);
@@ -326,6 +327,38 @@ export default function CrawlingEngineTabSimple() {
   // Track sync-start events to detect backend start and enable fallbacks
   let syncStartSeq = 0;
   onMount(async () => {
+    // Subscribe to structured crawl events store (dual emission path)
+    try {
+      const store = getCrawlEventsStore();
+      const unsub = store.subscribe(snap => {
+        const session = snap.activeSession;
+        if (!session) return;
+        // Map stage stats if present
+        const listStage = session.stageStats['ListPageCrawling'];
+        if (listStage) {
+          setPageStats(prev => {
+            const started = listStage.started ? Math.max(prev.started, listStage.completedItems + listStage.failedItems) : prev.started;
+            const completed = listStage.completedItems;
+            const failed = listStage.failedItems;
+            const inflight = Math.max(0, started - (completed + failed));
+            return { ...prev, started, completed, failed, inflight };
+          });
+        }
+        const detailStage = session.stageStats['ProductDetailCrawling'];
+        if (detailStage) {
+          setDetailStats(prev => {
+            const started = detailStage.started ? Math.max(prev.started, detailStage.completedItems + detailStage.failedItems + detailStage.retries) : prev.started;
+            const completed = detailStage.completedItems;
+            const failed = detailStage.failedItems;
+            const inflight = Math.max(0, started - (completed + failed));
+            return { ...prev, started, completed, failed, inflight };
+          });
+        }
+      });
+      onCleanup(() => { try { unsub(); } catch {} });
+    } catch (e) {
+      console.warn('[StructuredEvents] subscription failed', e);
+    }
     try {
       const un1 = await tauriApi.subscribeToUnifiedActorEvents({
         variants: ['SyncStarted'],

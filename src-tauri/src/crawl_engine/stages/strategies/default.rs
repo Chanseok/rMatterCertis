@@ -57,6 +57,10 @@ mod tests {
             deps: deps_stub(),
             total_pages_hint: Some(1),
             products_on_last_page_hint: Some(12),
+            session_id: "test-session".into(),
+            batch_id: None,
+            progress_emitter: None,
+            product_detail_event_emitter: None,
         };
         let res = logic.execute(input).await;
         assert!(res.is_err());
@@ -72,6 +76,10 @@ mod tests {
             deps: deps_stub(),
             total_pages_hint: Some(1),
             products_on_last_page_hint: Some(12),
+            session_id: "test-session".into(),
+            batch_id: None,
+            progress_emitter: None,
+            product_detail_event_emitter: None,
         };
         let res = logic.execute(input).await;
         assert!(res.is_err());
@@ -87,6 +95,10 @@ mod tests {
             deps: deps_stub(),
             total_pages_hint: None,
             products_on_last_page_hint: None,
+            session_id: "test-session".into(),
+            batch_id: None,
+            progress_emitter: None,
+            product_detail_event_emitter: None,
         };
         let res = logic.execute(input).await;
         assert!(res.is_err());
@@ -140,6 +152,10 @@ mod tests {
             deps,
             total_pages_hint: Some(1),
             products_on_last_page_hint: Some(12),
+            session_id: "test-session".into(),
+            batch_id: None,
+            progress_emitter: None,
+            product_detail_event_emitter: None,
         };
         let res = logic.execute(input).await.expect("happy path");
         assert!(res.result.success);
@@ -204,6 +220,10 @@ mod tests {
             deps,
             total_pages_hint: None,
             products_on_last_page_hint: None,
+            session_id: "test-session".into(),
+            batch_id: None,
+            progress_emitter: None,
+            product_detail_event_emitter: None,
         };
         let res = logic.execute(input).await.expect("happy path");
         assert!(res.result.success);
@@ -237,6 +257,10 @@ mod tests {
             deps,
             total_pages_hint: None,
             products_on_last_page_hint: None,
+            session_id: "test-session".into(),
+            batch_id: None,
+            progress_emitter: None,
+            product_detail_event_emitter: None,
         };
         let res = logic.execute(input).await.expect("happy path");
         assert!(res.result.success);

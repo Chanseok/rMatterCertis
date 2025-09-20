@@ -1,6 +1,6 @@
 #![allow(clippy::missing_errors_doc, clippy::or_fun_call)]
 use crate::application::shared_state::SharedStateCache;
-use crate::events::{
+use crate::crawl_events::{
     AtomicTaskEvent, BatchInfo, DbCursor, LiveSystemState, StageInfo, SystemStatePayload,
 };
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
