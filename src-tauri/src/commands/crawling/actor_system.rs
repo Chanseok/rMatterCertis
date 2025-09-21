@@ -1212,6 +1212,21 @@ pub async fn start_manual_crawl_pages_actor(
     let (execution_plan, app_config, _site_status) =
         build_execution_plan_from_explicit_pages(&app, pages).await?;
 
+    // Health gate: if degradation note present, block unless MC_FORCE_CRAWL=1
+    let degraded = if let Some(state) = app.try_state::<crate::application::AppState>() {
+        // Use async read to avoid blocking within the runtime (previous blocking_read caused panic)
+        let cfg = state.config.read().await;
+        cfg.app_managed.last_degradation_note.clone()
+    } else { None };
+    if let Some(note) = degraded {
+        let force = std::env::var("MC_FORCE_CRAWL").ok().map(|v| v=="1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+        if !force {
+            return Err(format!("Site anomaly detected: {} (set MC_FORCE_CRAWL=1 to override)", note));
+        } else {
+            tracing::warn!(target="site_health", note, "Proceeding with crawl under anomaly due to MC_FORCE_CRAWL");
+        }
+    }
+
     info!(target: "kpi.plan", "{{\"event\":\"manual_actor_started\",\"session_id\":\"{}\",\"plan_id\":\"{}\",\"ranges\":{},\"hash\":\"{}\"}}",
         execution_plan.session_id,
         execution_plan.plan_id,

@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
 /// Global application state managed by Tauri
+#[derive(Clone)]
 pub struct AppState {
     /// Event emitter for real-time communication with frontend
     pub event_emitter: Arc<RwLock<Option<EventEmitter>>>,
@@ -48,6 +49,8 @@ pub struct AppState {
 
     /// Cancellation token for stopping crawling operations
     pub crawling_cancellation_token: Arc<RwLock<Option<CancellationToken>>>,
+    /// Session-scoped SQLITE lock/busy error counter (incremented on retry exhaustion or surfaced lock events)
+    pub lock_error_counter: Arc<RwLock<u64>>,
 }
 
 impl AppState {
@@ -74,6 +77,7 @@ impl AppState {
             http_client: Arc::new(RwLock::new(None)),
             session_start_time: Arc::new(RwLock::new(None)),
             crawling_cancellation_token: Arc::new(RwLock::new(None)),
+            lock_error_counter: Arc::new(RwLock::new(0)),
         }
     }
 
@@ -87,6 +91,23 @@ impl AppState {
         *pool_guard = Some(pool);
         // Note: Log message moved to lib.rs setup to avoid duplication
         Ok(())
+    }
+
+    /// Increment lock error counter
+    pub async fn incr_lock_errors(&self) {
+        let mut g = self.lock_error_counter.write().await;
+        *g += 1;
+    }
+
+    /// Get current lock error count
+    pub async fn get_lock_errors(&self) -> u64 {
+        *self.lock_error_counter.read().await
+    }
+
+    /// Reset lock error counter (e.g., after user acknowledgement)
+    pub async fn reset_lock_errors(&self) {
+        let mut g = self.lock_error_counter.write().await;
+        *g = 0;
     }
 
     /// Initialize the shared HTTP client from the current configuration

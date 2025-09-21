@@ -865,6 +865,65 @@ export class TauriApiService {
     }
   }
 
+  // =========================================================================
+  // Coordinate Repair & Targeted Recrawl Utilities
+  // =========================================================================
+
+  /**
+   * Run bulk coordinate repair (reconcile products -> product_details). Optional limit.
+   */
+  async repairProductCoordinates(limit?: number): Promise<{ fixed: number }> {
+    try {
+      return await invoke<any>('repair_product_coordinates_cmd', { limit });
+    } catch (error) {
+      throw new Error(`Failed to repair product coordinates: ${error}`);
+    }
+  }
+
+  /**
+   * List products whose page_id is 0 (suspicious) with basic context.
+   */
+  async listPageZeroUrls(limit?: number): Promise<Array<{ url: string; created_at?: string; detail_has_coords: boolean }>> {
+    try {
+      return await invoke<any>('list_page_zero_urls', { limit });
+    } catch (error) {
+      throw new Error(`Failed to list page zero URLs: ${error}`);
+    }
+  }
+
+  /**
+   * Request targeted recrawl of specific physical pages.
+   */
+  async recrawlPhysicalPages(pages: number[]): Promise<{ accepted: boolean; count: number }> {
+    try {
+      // Backend expects RecrawlPagesRequest { physical_pages: Vec<i32>, max_concurrent?: usize }
+      return await invoke<any>('recrawl_physical_pages', { req: { physical_pages: pages } });
+    } catch (error) {
+      throw new Error(`Failed to recrawl physical pages: ${error}`);
+    }
+  }
+
+  async coordMismatchBreakdown(): Promise<{ both_null: number; products_null_details_filled: number; details_null_products_filled: number; value_mismatch: number; page0_products: number; page0_distinct_indices: number; page0_total_rows: number; }> {
+    return await invoke<any>('coord_mismatch_breakdown');
+  }
+
+  /**
+   * Rehydrate list pages (skeleton backend currently no-op). Provide options.
+   */
+  async rehydrateListPages(opts: { pages?: number[]; limit?: number; dryRun?: boolean }): Promise<{ pages_targeted: number; pages_processed: number; products_with_null_coords_before: number; products_filled: number; products_already_had_coords: number; products_still_null_after: number; elapsed_ms: number; note: string; pages_failed: number; http_errors: number; mismatches_detected: number; would_fill: number; auto_selected: boolean; }> {
+    const { pages, limit, dryRun } = opts || {};
+    // Backend expects snake_case: dry_run
+    return await invoke<any>('rehydrate_list_pages', { params: { pages, limit, dry_run: dryRun } });
+  }
+
+  // Lock error counter utilities
+  async getLockErrorCount(): Promise<number> {
+    return await invoke<number>('get_lock_error_count');
+  }
+  async resetLockErrorCount(): Promise<void> {
+    await invoke<void>('reset_lock_error_count');
+  }
+
   // ❌ REMOVED: getFrontendConfig - 설정 전송 API 제거 (아키텍처 원칙 준수)
 
   /**

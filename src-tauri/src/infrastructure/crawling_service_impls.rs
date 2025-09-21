@@ -213,6 +213,82 @@ impl StatusChecker for StatusCheckerImpl {
             )
             .await?;
 
+        // Step 6: Anomaly detection against stored maxima
+        {
+            let mut cfg_guard = self.config.clone();
+            let mut mutated = false;
+            let now_ts = chrono::Utc::now().to_rfc3339();
+            // Track previous maxima
+            let prev_max_page = cfg_guard.app_managed.last_known_max_page;
+            let prev_max_products = cfg_guard.app_managed.last_known_max_total_products;
+
+            // Detect page count drop
+            if let Some(prev) = prev_max_page {
+                if total_pages < prev {
+                    // Potential anomaly: page count decreased
+                    if cfg_guard.app_managed.first_degradation_at.is_none() {
+                        cfg_guard.app_managed.first_degradation_at = Some(now_ts.clone());
+                    }
+                    cfg_guard.app_managed.last_degradation_note = Some(format!(
+                        "page_drop prev={} current={}", prev, total_pages
+                    ));
+                } else if total_pages > prev {
+                    // New high water mark resets degradation note
+                    cfg_guard.app_managed.last_known_max_page = Some(total_pages);
+                    cfg_guard.app_managed.last_degradation_note = None;
+                    mutated = true;
+                }
+            } else {
+                cfg_guard.app_managed.last_known_max_page = Some(total_pages);
+                mutated = true;
+            }
+
+            // Detect total products estimation drop
+            if let Some(prev_p) = prev_max_products {
+                if estimated_products < prev_p {
+                    if cfg_guard.app_managed.first_degradation_at.is_none() {
+                        cfg_guard.app_managed.first_degradation_at = Some(now_ts.clone());
+                    }
+                    cfg_guard.app_managed.last_degradation_note = Some(format!(
+                        "product_drop prev={} current={}", prev_p, estimated_products
+                    ));
+                } else if estimated_products > prev_p {
+                    cfg_guard.app_managed.last_known_max_total_products = Some(estimated_products);
+                    cfg_guard.app_managed.last_degradation_note = None;
+                    mutated = true;
+                }
+            } else {
+                cfg_guard.app_managed.last_known_max_total_products = Some(estimated_products);
+                mutated = true;
+            }
+
+            if mutated {
+                // Persist only the app_managed section (best-effort)
+                match crate::infrastructure::config::ConfigManager::new() {
+                    Ok(manager) => {
+                        let persist_result = async {
+                            let mut disk_cfg = manager.load_config().await?;
+                            disk_cfg.app_managed = cfg_guard.app_managed.clone();
+                            manager.save_config(&disk_cfg).await
+                        }.await;
+                        match persist_result {
+                            Ok(_) => {
+                                tracing::info!(target="site_health", max_page=?cfg_guard.app_managed.last_known_max_page, max_products=?cfg_guard.app_managed.last_known_max_total_products, "Updated stored maxima");
+                            }
+                            Err(e) => {
+                                tracing::warn!(target="site_health", error=%e, "Failed to persist updated maxima");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(target="site_health", error=%e, "Failed to init ConfigManager for maxima persistence");
+                    }
+                }
+            } else if cfg_guard.app_managed.last_degradation_note.is_some() {
+                tracing::warn!(target="site_health", note=?cfg_guard.app_managed.last_degradation_note, first_at=?cfg_guard.app_managed.first_degradation_at, "Site pagination anomaly detected (non-fatal)");
+            }
+        }
+
         Ok(SiteStatus {
             is_accessible: true,
             response_time_ms,

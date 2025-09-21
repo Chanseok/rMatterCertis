@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show, createEffect } from 'solid-js';
 // NOTE: 6B 재정비: 이 컴포넌트는 곧 `LocalDBTab`으로 통합 예정. 현재는 참조용/제거 대기 상태.
 import { tauriApi } from '../services/tauri-api';
+import CoordsRepairDebugPanel from './CoordsRepairDebugPanel';
 
 export const LocalDbDashboard = () => {
   const [summary, { refetch: refetchSummary }] = createResource(async () => tauriApi.getDbSummary());
@@ -75,6 +76,9 @@ export const LocalDbDashboard = () => {
 
   return (
     <div style="padding:16px; font-family: system-ui, sans-serif;">
+      <div style="margin-bottom:20px;">
+        <CoordsRepairDebugPanel />
+      </div>
       <h2 style="margin:0 0 12px;">Local DB Dashboard (Preview)</h2>
       <section style="margin-bottom:20px;">
         <h3>Summary</h3>

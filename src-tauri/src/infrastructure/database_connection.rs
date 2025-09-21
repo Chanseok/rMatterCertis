@@ -48,6 +48,10 @@ impl DatabaseConnection {
             .max_connections(crate::infrastructure::config::defaults::MAX_CONCURRENT_REQUESTS)
             .connect(database_url)
             .await?;
+        // Standardize busy_timeout & journal/wal pragmas (best effort)
+        let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(&pool).await;
+        let _ = sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await;
+        let _ = sqlx::query("PRAGMA synchronous=NORMAL").execute(&pool).await;
 
         Ok(Self { pool })
     }
@@ -656,6 +660,10 @@ pub async fn get_or_init_global_pool() -> Result<SqlitePool> {
         .max_connections(crate::infrastructure::config::defaults::MAX_CONCURRENT_REQUESTS)
         .connect(&database_url)
         .await?;
+    // Apply pragmas once per global pool init
+    let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(&pool).await;
+    let _ = sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await;
+    let _ = sqlx::query("PRAGMA synchronous=NORMAL").execute(&pool).await;
 
     // Best-effort set; if already set by a racy concurrent init, prefer the existing one
     let _ = GLOBAL_SQLITE_POOL.set(pool.clone());

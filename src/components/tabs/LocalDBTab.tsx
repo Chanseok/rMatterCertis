@@ -4,6 +4,7 @@
 
 import { Component, createSignal, For, onMount, Show } from 'solid-js';
 import { tauriApi } from '../../services/tauri-api';
+import CoordsRepairDebugPanel from '../CoordsRepairDebugPanel';
 import { localDbDashboardStore, initializeLocalDbDashboard } from '../../stores/localDbDashboardStore';
 import { listen } from '@tauri-apps/api/event';
 import type { VendorSyncResult } from '../../types/domain';
@@ -73,9 +74,12 @@ export const LocalDBTab: Component = () => {
   return (
     <div class="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-blue-50 p-6">
       <div class="w-full max-w-7xl mx-auto space-y-6">
-        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
+        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 space-y-4">
           <h2 class="text-2xl md:text-3xl font-bold text-gray-800">🗄️ 로컬DB (통합 대시보드)</h2>
           <p class="text-sm text-gray-500 mt-1">Phase 6B: 단일 탭 재구성 / DSL 필터 자리 확보</p>
+          <div class="mt-2">
+            <CoordsRepairDebugPanel />
+          </div>
         </div>
 
         {/* Summary */}

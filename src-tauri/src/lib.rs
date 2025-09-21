@@ -148,6 +148,7 @@ pub mod application {
     pub mod shared_state; // 새로 추가된 공유 상태 관리
     pub mod state;
     pub mod validated_crawling_config; // 검증된 크롤링 설정
+    pub mod app_handle_access; // global access helpers
     // File-based gate (resolved by services.rs) - path relative to this module
     #[path = "services.rs"]
     pub mod services;
@@ -457,8 +458,9 @@ pub fn run() {
         }
     });
 
-    // Create application state
+    // Create application state (owned). Also store Arc clone for global accessor.
     let app_state = application::AppState::new(config);
+    crate::application::app_handle_access::set_app_state(Arc::new(app_state.clone()));
 
     // Create shared state cache for stateful backend operations
     let shared_state = crate::application::shared_state::SharedStateCache::new();
@@ -487,7 +489,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         // Provide direct access to the primary database connection for dashboard commands
         .manage(database_connection)
-        .manage(app_state)
+    .manage(app_state)
         .manage(shared_state) // SharedState 추가
         .manage(session_manager) // CrawlingSessionManager 추가
         // Legacy CrawlingEngineState (crawling_v4) removed – unified actor-based path only
@@ -946,6 +948,14 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             commands::database::db_repair::sync_product_details_coordinates,
             #[cfg(feature = "dev-tools")]
             commands::database::db_cleanup::cleanup_duplicate_urls,
+            // Coordinate repair & targeted recrawl utilities (always available)
+            commands::database::data_queries::repair_product_coordinates_cmd,
+            commands::database::data_queries::list_page_zero_urls,
+            commands::database::data_queries::recrawl_physical_pages,
+            commands::database::data_queries::coord_mismatch_breakdown,
+            commands::database::data_queries::rehydrate_list_pages,
+            commands::database::data_queries::get_lock_error_count,
+            commands::database::data_queries::reset_lock_error_count,
             #[cfg(feature = "dev-tools")]
             commands::devtools::product_details_analytics::get_product_details_analytics // dev-tools only
         ]);

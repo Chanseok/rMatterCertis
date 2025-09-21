@@ -10,8 +10,7 @@ use crate::DatabaseConnection; // for new dashboard commands
 use regex::Regex;
 use sqlx::Row; // to access row.get
 use crate::domain::product::Product;
-use crate::infrastructure::integrated_product_repository::IntegratedProductRepository; // 올바른 Product 타입 사용
-use super::core_queries::core_fetch_products_page;
+// (removed unused imports: IntegratedProductRepository, core_fetch_products_page)
 
 /// 제품 페이지 응답
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -45,6 +44,76 @@ pub struct SystemStatus {
     pub config_loaded: bool,
 }
 
+/// 최근 제품 몇 개를 단순 반환 (dev tools context)
+#[tauri::command]
+pub async fn get_latest_products(state: State<'_, AppState>, limit: Option<u32>) -> Result<Vec<Product>, String> {
+    let pool = state.get_database_pool().await.map_err(|e| e.to_string())?;
+    let l = limit.unwrap_or(20).min(200) as i64;
+    let rows = sqlx::query("SELECT id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at FROM products ORDER BY created_at DESC LIMIT ?")
+        .bind(l)
+        .fetch_all(&pool).await.map_err(|e| e.to_string())?;
+    let mut products = Vec::with_capacity(rows.len());
+    for r in rows {
+        let created_raw: String = r.try_get("created_at").unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
+        let updated_raw: String = r.try_get("updated_at").unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
+        let created_at = chrono::DateTime::parse_from_rfc3339(&created_raw).map(|d| d.with_timezone(&chrono::Utc)).unwrap_or_else(|_| chrono::Utc::now());
+        let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_raw).map(|d| d.with_timezone(&chrono::Utc)).unwrap_or_else(|_| chrono::Utc::now());
+        products.push(Product {
+            id: r.try_get("id").ok(),
+            url: r.try_get("url").unwrap_or_default(),
+            manufacturer: r.try_get("manufacturer").ok(),
+            model: r.try_get("model").ok(),
+            certificate_id: r.try_get("certificate_id").ok(),
+            page_id: r.try_get("page_id").ok().and_then(|v: Option<i64>| v.map(|x| x as i32)),
+            index_in_page: r.try_get("index_in_page").ok().and_then(|v: Option<i64>| v.map(|x| x as i32)),
+            created_at,
+            updated_at,
+        });
+    }
+    Ok(products)
+}
+
+/// 단순 크롤링 상태 (임시 placeholder - 실제 러닝 플래그/페이지는 actor 시스템에서 broadcast)
+#[tauri::command]
+pub async fn get_crawling_status_v2(state: State<'_, AppState>) -> Result<CrawlingStatusInfo, String> {
+    // Minimal implementation: query a small status table if exists; else placeholder
+    let pool = state.get_database_pool().await.map_err(|e| e.to_string())?;
+    let (is_running, current_page, total_pages, last_updated, session_id) = sqlx::query(
+        r#"SELECT is_running, current_page, total_pages, last_updated, session_id FROM crawl_runtime_state LIMIT 1"#)
+        .fetch_optional(&pool).await
+        .ok()
+        .flatten()
+        .map(|row| {
+            let is_running: Option<i64> = row.get("is_running");
+            let current_page: Option<i64> = row.get("current_page");
+            let total_pages: Option<i64> = row.get("total_pages");
+            let last_updated: Option<String> = row.get("last_updated");
+            let session_id: Option<String> = row.get("session_id");
+            (
+                is_running.unwrap_or(0) != 0,
+                current_page.map(|v| v as u32),
+                total_pages.map(|v| v as u32),
+                last_updated,
+                session_id,
+            )
+        })
+        .unwrap_or((false, None, None, None, None));
+    Ok(CrawlingStatusInfo { is_running, current_page, total_pages, last_updated, session_id })
+}
+
+/// 시스템 상태 (DB 연결, 제품 수 등 간단 메트릭)
+#[tauri::command]
+pub async fn get_system_status(state: State<'_, AppState>) -> Result<SystemStatus, String> {
+    let pool = state.get_database_pool().await.map_err(|e| e.to_string())?;
+    let total_products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+        .fetch_one(&pool).await.unwrap_or(0);
+    // last crawl time heuristic: latest product_details created_at
+    let last_crawl_time_str: Option<String> = sqlx::query_scalar("SELECT created_at FROM product_details ORDER BY created_at DESC LIMIT 1")
+        .fetch_one(&pool).await.ok();
+    let last_crawl_time = last_crawl_time_str.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok()).map(|dt| dt.with_timezone(&chrono::Utc));
+    Ok(SystemStatus { database_connected: true, total_products: total_products as u32, last_crawl_time, config_loaded: true })
+}
+
 /// 제품 데이터 페이지별 조회 (Backend-Only CRUD)
 #[tauri::command]
 #[allow(clippy::used_underscore_binding)]
@@ -54,118 +123,41 @@ pub async fn get_products_page(
     state: State<'_, AppState>,
     page: u32,
     size: u32,
-) -> Result<ProductPage, String> {
-    let pool = state.get_database_pool().await?;
-    match core_fetch_products_page(&pool, page, size).await {
-        Ok((products, total_count)) => {
-            let has_next = (page + 1) * size < total_count;
-            info!("✅ Retrieved {} products for page {} (size: {})", products.len(), page, size);
-            Ok(ProductPage { products, total_count, page, size, has_next })
-        }
-        Err(e) => {
-            error!("Failed to get products page: {}", e);
-            Err(format!("Failed to retrieve products: {}", e))
-        }
+    ) -> Result<ProductPage, String> {
+    let pool = state.get_database_pool().await.map_err(|e| e.to_string())?;
+    let page = page.max(1);
+    let size = size.max(1).min(200);
+    let offset = (page - 1) * size;
+    let rows = sqlx::query("SELECT id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at FROM products ORDER BY id LIMIT ? OFFSET ?")
+        .bind(size as i64)
+        .bind(offset as i64)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut products = Vec::with_capacity(rows.len());
+    for r in rows {
+        let created_raw: String = r.try_get("created_at").unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
+        let updated_raw: String = r.try_get("updated_at").unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
+        let created_at = chrono::DateTime::parse_from_rfc3339(&created_raw).map(|d| d.with_timezone(&chrono::Utc)).unwrap_or_else(|_| chrono::Utc::now());
+        let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_raw).map(|d| d.with_timezone(&chrono::Utc)).unwrap_or_else(|_| chrono::Utc::now());
+        products.push(Product {
+            id: r.try_get("id").ok(),
+            url: r.try_get("url").unwrap_or_default(),
+            manufacturer: r.try_get("manufacturer").ok(),
+            model: r.try_get("model").ok(),
+            certificate_id: r.try_get("certificate_id").ok(),
+            page_id: r.try_get("page_id").ok().and_then(|v: Option<i64>| v.map(|x| x as i32)),
+            index_in_page: r.try_get("index_in_page").ok().and_then(|v: Option<i64>| v.map(|x| x as i32)),
+            created_at,
+            updated_at,
+        });
     }
-}
-
-/// 최근 업데이트된 제품 조회 (Backend-Only CRUD)
-#[tauri::command]
-#[allow(clippy::used_underscore_binding)]
-/// # Errors
-/// Returns an error string if the database pool cannot be obtained or queries fail.
-pub async fn get_latest_products(
-    state: State<'_, AppState>,
-    limit: u32,
-) -> Result<Vec<Product>, String> {
-    let pool = state.get_database_pool().await?;
-    let repo = IntegratedProductRepository::new(pool);
-
-    match repo.get_latest_updated_products(limit).await {
-        Ok(products) => {
-            info!("✅ Retrieved {} latest updated products", products.len());
-            Ok(products)
-        }
-        Err(e) => {
-            error!("Failed to get latest products: {}", e);
-            Err(format!("Failed to retrieve latest products: {}", e))
-        }
-    }
-}
-
-/// 크롤링 상태 조회 (Backend-Only CRUD)
-#[tauri::command]
-#[allow(clippy::used_underscore_binding)]
-/// # Errors
-/// Returns an error string if shared state cannot be accessed.
-pub async fn get_crawling_status_v2(
-    state: State<'_, AppState>,
-) -> Result<CrawlingStatusInfo, String> {
-    let current_session = state.current_session.read().await;
-    let current_progress = state.current_progress.read().await;
-
-    let status = CrawlingStatusInfo {
-        is_running: current_session.is_some(),
-        current_page: None,
-        total_pages: None,
-        last_updated: None, // CrawlingProgress doesn't have last_updated field
-        session_id: current_session.as_ref().map(|s| s.id.clone()),
-    };
-
-    let running = status.is_running;
-    drop(current_session);
-    drop(current_progress);
-    info!("✅ Retrieved crawling status: running={}", running);
-    Ok(status)
-}
-
-/// 시스템 전체 상태 조회 (Backend-Only CRUD)
-#[tauri::command]
-#[allow(clippy::used_underscore_binding)]
-/// # Errors
-/// Returns an error string if the database pool cannot be obtained or queries fail.
-pub async fn get_system_status(state: State<'_, AppState>) -> Result<SystemStatus, String> {
-    // 데이터베이스 연결 확인
-    let database_connected = state.get_database_pool().await.is_ok();
-
-    let (total_products, last_crawl_time) = if database_connected {
-        let pool = state.get_database_pool().await?;
-        let repo = IntegratedProductRepository::new(pool);
-
-        let total = repo
-            .count_products()
-            .await
-            .map(|count| u32::try_from(count).unwrap_or(u32::MAX))
-            .unwrap_or(0);
-
-        let last_updated = match repo.get_latest_updated_product().await {
-            Ok(Some(product)) => Some(product.updated_at),
-            _ => None,
-        };
-
-        (total, last_updated)
-    } else {
-        (0, None)
-    };
-
-    // 설정 로딩 상태 확인
-    let config_guard = state.config.read().await;
-    let config_loaded = true; // config가 항상 로드되어 있음
-    drop(config_guard);
-
-    let status = SystemStatus {
-        database_connected,
-        total_products,
-        last_crawl_time,
-        config_loaded,
-    };
-
-    info!(
-        "✅ System status: db_connected={}, total_products={}, config_loaded={}",
-        status.database_connected, status.total_products, status.config_loaded
-    );
-
-    Ok(status)
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+    let has_next = (offset as i64 + products.len() as i64) < total;
+    Ok(ProductPage { products, total_count: total as u32, page, size, has_next })
 }
 
 // -----------------------------------------------------------------------------
@@ -654,4 +646,351 @@ pub struct CrawlStatusSummary {
 mod tests {
     // (정상화 1단계) 기존 인라인 DB 테스트 제거됨.
     // 새 구조: tests/ 디렉토리에 재구성된 통합/쿼리 테스트를 별도 작성 예정.
+}
+
+// ==== Added: Coordinate repair & targeted recrawl assistance commands ====
+use crate::infrastructure::integrated_product_repository::IntegratedProductRepository as _RepoForRepair; // alias avoid clash
+use crate::application::AppState as _AppStateForRepair;
+use crate::commands::crawling::actor_system::start_manual_crawl_pages_actor;
+
+#[derive(serde::Serialize)]
+pub struct RepairResult { pub fixed: u64 }
+
+#[tauri::command]
+pub async fn repair_product_coordinates_cmd(state: State<'_, _AppStateForRepair>, limit: Option<i64>) -> Result<RepairResult, String> {
+    let pool = state.get_database_pool().await.map_err(|e| e.to_string())?;
+    let repo = _RepoForRepair::new(pool.clone());
+    repo.repair_product_coordinates(limit).await
+        .map(|fixed| RepairResult { fixed })
+        .map_err(|e| e.to_string())
+}
+
+// ===================== Lock Error Counter Commands =====================
+#[tauri::command(async)]
+pub async fn get_lock_error_count(app_state: State<'_, crate::application::AppState>) -> Result<u64, String> {
+    Ok(app_state.get_lock_errors().await)
+}
+
+#[tauri::command(async)]
+pub async fn reset_lock_error_count(app_state: State<'_, crate::application::AppState>) -> Result<(), String> {
+    app_state.reset_lock_errors().await;
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct PageZeroSample { pub url: String, pub created_at: Option<String>, pub detail_has_coords: bool }
+
+#[tauri::command]
+pub async fn list_page_zero_urls(state: State<'_, _AppStateForRepair>, limit: Option<i64>) -> Result<Vec<PageZeroSample>, String> {
+    let pool = state.get_database_pool().await.map_err(|e| e.to_string())?;
+    let l = limit.unwrap_or(100);
+    let sql = r#"SELECT p.url, p.created_at, (d.page_id IS NOT NULL AND d.index_in_page IS NOT NULL) AS detail_has_coords
+                 FROM products p LEFT JOIN product_details d ON d.url = p.url
+                 WHERE p.page_id = 0 ORDER BY p.created_at DESC LIMIT ?"#;
+    let rows = sqlx::query(sql).bind(l).fetch_all(&pool).await.map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().map(|r| PageZeroSample {
+        url: r.get("url"),
+        created_at: r.get("created_at"),
+        detail_has_coords: r.get::<i64,_>("detail_has_coords") == 1,
+    }).collect())
+}
+
+#[derive(serde::Deserialize)]
+pub struct RecrawlPagesRequest { pub physical_pages: Vec<i32>, pub max_concurrent: Option<usize> }
+#[derive(serde::Serialize)]
+pub struct RecrawlPagesResponse { pub accepted: bool, pub count: usize }
+
+#[tauri::command]
+pub async fn recrawl_physical_pages(app: tauri::AppHandle, req: RecrawlPagesRequest) -> Result<RecrawlPagesResponse, String> {
+    if req.physical_pages.is_empty() { return Ok(RecrawlPagesResponse { accepted: false, count: 0 }); }
+    // Convert to u32 (site page numbers assumed >=0)
+    let pages: Vec<u32> = req.physical_pages.iter().cloned().filter(|p| *p >= 0).map(|p| p as u32).collect();
+    if pages.is_empty() { return Ok(RecrawlPagesResponse { accepted: false, count: 0 }); }
+    let count = pages.len();
+    start_manual_crawl_pages_actor(app, pages, Some(true)).await.map_err(|e| e.to_string())?;
+    Ok(RecrawlPagesResponse { accepted: true, count })
+}
+
+// ===================== A: SQL Diagnostic Breakdown =====================
+#[derive(serde::Serialize)]
+pub struct CoordMismatchBreakdown {
+    pub both_null: u64,
+    pub products_null_details_filled: u64,
+    pub details_null_products_filled: u64,
+    pub value_mismatch: u64,
+    pub page0_products: u64,
+    pub page0_distinct_indices: u64,
+    pub page0_total_rows: u64,
+}
+
+#[tauri::command]
+pub async fn coord_mismatch_breakdown(state: State<'_, _AppStateForRepair>) -> Result<CoordMismatchBreakdown, String> {
+    let pool = state.get_database_pool().await.map_err(|e| e.to_string())?;
+    macro_rules! q { ($sql:expr) => { sqlx::query_scalar::<_, i64>($sql).fetch_one(&pool).await.unwrap_or(0) as u64 }; }
+    let both_null = q!(r"SELECT COUNT(*) FROM products p JOIN product_details d ON d.url = p.url
+        WHERE (p.page_id IS NULL OR p.index_in_page IS NULL)
+          AND (d.page_id IS NULL OR d.index_in_page IS NULL)");
+    let products_null_details_filled = q!(r"SELECT COUNT(*) FROM products p JOIN product_details d ON d.url = p.url
+        WHERE (p.page_id IS NULL OR p.index_in_page IS NULL)
+          AND d.page_id IS NOT NULL AND d.index_in_page IS NOT NULL");
+    let details_null_products_filled = q!(r"SELECT COUNT(*) FROM products p JOIN product_details d ON d.url = p.url
+        WHERE (d.page_id IS NULL OR d.index_in_page IS NULL)
+          AND p.page_id IS NOT NULL AND p.index_in_page IS NOT NULL");
+    let value_mismatch = q!(r"SELECT COUNT(*) FROM product_details d LEFT JOIN products p ON p.url = d.url
+        WHERE p.url IS NOT NULL
+          AND p.page_id IS NOT NULL AND p.index_in_page IS NOT NULL
+          AND d.page_id IS NOT NULL AND d.index_in_page IS NOT NULL
+          AND (p.page_id != d.page_id OR p.index_in_page != d.index_in_page)");
+    let page0_total_rows = q!(r"SELECT COUNT(*) FROM products WHERE page_id = 0");
+    let page0_distinct_indices = q!(r"SELECT COUNT(DISTINCT index_in_page) FROM products WHERE page_id = 0 AND index_in_page IS NOT NULL");
+    let page0_products = q!(r"SELECT COUNT(*) FROM products WHERE page_id = 0 AND (index_in_page IS NOT NULL OR index_in_page IS NULL)");
+    Ok(CoordMismatchBreakdown { both_null, products_null_details_filled, details_null_products_filled, value_mismatch, page0_products, page0_distinct_indices, page0_total_rows })
+}
+
+// ===================== B: List Page Rehydrate (Skeleton) =====================
+#[derive(serde::Deserialize)]
+pub struct RehydrateListPagesParams {
+    pub pages: Option<Vec<u32>>,      // physical page numbers (1-based) to target; None = auto (not yet implemented)
+    pub limit: Option<u32>,           // optional cap on number of pages processed
+    #[serde(alias="dryRun")] // accept camelCase from old callers
+    pub dry_run: Option<bool>,        // if true, compute targets & metrics only
+    /// 페이지 범위 구문: "1-50,120,200-205" (pages 가 비어있거나 None 일 때 우선 적용)
+    pub page_ranges: Option<String>,
+    /// 디버그 통계 확장 출력 여부
+    pub debug: Option<bool>,
+}
+
+#[derive(serde::Serialize)]
+pub struct RehydrateListPagesResult {
+    pub pages_targeted: u32,
+    pub pages_processed: u32,
+    pub products_with_null_coords_before: u64,
+    pub products_filled: u64,
+    pub products_already_had_coords: u64,
+    pub products_still_null_after: u64,
+    pub elapsed_ms: u128,
+    pub note: String,
+    pub pages_failed: u32,
+    pub http_errors: u32,
+    pub mismatches_detected: u64,
+    pub would_fill: u64,
+    pub auto_selected: bool,
+    pub per_page: Option<Vec<PerPageDebugStat>>, // debug=true 일 때만 Some
+}
+
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct PerPageDebugStat {
+    pub page: u32,
+    pub parsed_count: usize,
+    pub updated_products: u64,
+    pub updated_details: u64,
+    pub mismatches: u64,
+    pub would_fill: u64,
+}
+
+fn parse_page_ranges(expr: &str) -> Vec<u32> {
+    // 허용 패턴: 콤마 구분, 각 토큰은 단일 숫자 또는 start-end
+    let mut out = Vec::new();
+    for token in expr.split(',') {
+        let t = token.trim();
+        if t.is_empty() { continue; }
+        if let Some(hy) = t.find('-') {
+            let (a,b) = t.split_at(hy);
+            let b = &b[1..];
+            if let (Ok(sa), Ok(sb)) = (a.parse::<u32>(), b.parse::<u32>()) {
+                if sa>0 && sb>=sa && (sb-sa) <= 50_000 { // sanity bound
+                    for v in sa..=sb { out.push(v); }
+                }
+            }
+        } else if let Ok(v) = t.parse::<u32>() { if v>0 { out.push(v); } }
+    }
+    out
+}
+
+#[tauri::command]
+pub async fn rehydrate_list_pages(state: State<'_, _AppStateForRepair>, params: RehydrateListPagesParams) -> Result<RehydrateListPagesResult, String> {
+    use std::time::Instant;
+    use tracing::{info, warn, debug};
+    use std::sync::Arc;
+    let start = Instant::now();
+    let pool = state.get_database_pool().await.map_err(|e| e.to_string())?;
+
+    // Pre-metric: both NULL count
+    let before: i64 = sqlx::query_scalar(r"SELECT COUNT(*) FROM products p JOIN product_details d ON d.url = p.url
+        WHERE (p.page_id IS NULL OR p.index_in_page IS NULL)
+          AND (d.page_id IS NULL OR d.index_in_page IS NULL)")
+        .fetch_one(&pool).await.unwrap_or(0);
+
+    // Pages selection: priority 1) explicit pages vector 2) page_ranges syntax 3) auto
+    let mut targeted_pages: Vec<u32> = if let Some(ref vec_pages) = params.pages { vec_pages.clone() } else if let Some(ref ranges) = params.page_ranges { parse_page_ranges(ranges) } else { Vec::new() };
+    targeted_pages.sort_unstable();
+    targeted_pages.dedup();
+    if let Some(lim) = params.limit { targeted_pages.truncate(lim as usize); }
+    let dry_run = params.dry_run.unwrap_or(false);
+    let debug_enabled = params.debug.unwrap_or(false);
+    let mut auto_selected = false;
+    if targeted_pages.is_empty() {
+        auto_selected = true;
+        // Temporary auto strategy: will refine later after we know distribution
+        // We don't yet know total_pages; detect now (same logic reused below) so we perform a lightweight fetch first.
+        // We'll postpone selection until after pagination meta detection (we need total_pages). For now store placeholder; we'll fill after meta.
+    }
+
+    // ---- Discover site pagination meta (total_pages & items_on_last_page) ----
+    // Use lightweight HTTP client directly; fall back gracefully if detection fails.
+    let http_client = match crate::infrastructure::HttpClient::create_from_global_config() { Ok(c)=>c, Err(e)=> return Err(format!("http_client_init_failed: {e}")) };
+    let base_url = crate::infrastructure::config::utils::matter_products_page_url_simple(1); // page=1 URL (will adjust)
+    // 1) Fetch page 1 to detect total pages via regex over pagination links.
+    let first_html = match http_client.fetch_response(&base_url).await {
+        Ok(resp) => match resp.text().await { Ok(t)=>t, Err(e)=> return Err(format!("failed_read_page1: {e}")) },
+        Err(e) => return Err(format!("failed_fetch_page1: {e}"))
+    };
+    // NOTE: Previous regex was r"page/(\\d+)/" (incorrectly escaping \d) which matched literally "page/\d/" and always failed.
+    // Correct pattern should capture digits: /page/{number}/. Provide a fallback pattern without trailing slash.
+    let mut max_page_detected: u32 = 1;
+    let mut links_found = 0u32;
+    let primary_re = regex::Regex::new(r"/page/(\d+)/").map_err(|e| e.to_string())?;
+    for cap in primary_re.captures_iter(&first_html) {
+        if let Some(m) = cap.get(1) {
+            if let Ok(v) = m.as_str().parse::<u32>() { links_found += 1; if v > max_page_detected { max_page_detected = v; } }
+        }
+    }
+    if max_page_detected == 1 {
+        // Fallback: some themes omit trailing slash in links
+        let fallback_re = regex::Regex::new(r"/page/(\d+)\b").map_err(|e| e.to_string())?;
+        for cap in fallback_re.captures_iter(&first_html) {
+            if let Some(m) = cap.get(1) {
+                if let Ok(v) = m.as_str().parse::<u32>() { links_found += 1; if v > max_page_detected { max_page_detected = v; } }
+            }
+        }
+    }
+    if max_page_detected == 1 { debug!(links_found, "pagination_detection: no additional pages detected; treating as single page (verify this is expected)"); }
+    // 2) Fetch last page to count items (if >1)
+    let last_page_html = if max_page_detected > 1 {
+        let last_url = crate::infrastructure::config::utils::matter_products_page_url_simple(max_page_detected);
+        match http_client.fetch_response(&last_url).await {
+            Ok(resp) => match resp.text().await { Ok(t)=>Some(t), Err(e)=> { warn!(error=%e, page=max_page_detected, "failed_read_last_page_using_page1"); None } },
+            Err(e) => { warn!(error=%e, page=max_page_detected, "failed_fetch_last_page_using_page1"); None }
+        }
+    } else { None };
+
+    // Count items on last page: naive count of <article class..product> occurrences.
+    let count_items = |html: &str| -> u32 {
+        // very light heuristic; ProductListParser will refine later anyway
+        let mut c=0; let pat = "<article"; let mut s=html; while let Some(idx)=s.find(pat){ c+=1; s=&s[idx+pat.len()..]; } c
+    };
+    let products_per_full_page = 12u32; // assumed canonical size (could derive from config)
+    let items_on_last_page: u32 = if max_page_detected == 1 { count_items(&first_html) } else { last_page_html.as_ref().map(|h| count_items(h)).filter(|c| *c>0 && *c<=products_per_full_page).unwrap_or(products_per_full_page) };
+    info!(target="rehydrate", total_pages=max_page_detected, items_on_last_page, "pagination_meta_detected");
+
+    // If auto mode, now choose pages 1..=min(limit_or_default, total_pages)
+    if auto_selected {
+        let default_cap = params.limit.unwrap_or(40); // reduce default cap for faster feedback
+        let cap = std::cmp::min(default_cap, max_page_detected);
+        targeted_pages = (1..=cap).collect();
+    }
+    if targeted_pages.is_empty() {
+    return Ok(RehydrateListPagesResult { pages_targeted: 0, pages_processed: 0, products_with_null_coords_before: before as u64, products_filled: 0, products_already_had_coords: 0, products_still_null_after: before as u64, elapsed_ms: start.elapsed().as_millis(), note: "no pages targeted".into(), pages_failed: 0, http_errors: 0, mismatches_detected: 0, would_fill: 0, auto_selected, per_page: None });
+    }
+
+    // Prepare canonical pagination context
+    let pagination_context = crate::infrastructure::html_parser::PaginationContext { total_pages: max_page_detected, items_per_page: products_per_full_page, items_on_last_page, target_page_size: products_per_full_page };
+
+    // Concurrency (batched) implementation using join_all
+    use crate::infrastructure::parsing::{ProductListParser, ParseContext, ContextualParser};
+    let parser = match ProductListParser::new() { Ok(p)=>Arc::new(p), Err(e)=> return Err(format!("parser_init_failed: {e}")) };
+    let http_client = Arc::new(http_client);
+    let pagination_context = Arc::new(pagination_context);
+
+    #[derive(Debug)]
+    struct PageOutcome { page: u32, products_filled: u64, products_already: u64, mismatches: u64, would_fill: u64, failed: bool, http_error: bool, parsed_count: usize, updated_details: u64 }
+
+    // 동시성: 설정(AppConfig) 기반 list_page_max_concurrent 사용, 최소 1 보장, 상한 32 (안전)
+    let cfg_concurrency = {
+        let cfg = state.config.read().await.clone();
+        cfg.user.crawling.workers.list_page_max_concurrent
+    };
+    let max_concurrency: usize = cfg_concurrency.clamp(1, 32);
+    info!(target="rehydrate", max_concurrency, "using_config_concurrency");
+    let mut pages_processed = 0u32;
+    let mut products_filled = 0u64;
+    let mut products_already = 0u64;
+    let mut pages_failed = 0u32;
+    let mut mismatches_detected = 0u64;
+    let mut http_errors = 0u32;
+    let mut would_fill = 0u64;
+    let mut per_page_stats: Vec<PerPageDebugStat> = Vec::new();
+
+    let mut tasks: Vec<tokio::task::JoinHandle<PageOutcome>> = Vec::new();
+    for chunk in targeted_pages.chunks(max_concurrency) {
+        tasks.clear();
+        for p in chunk {
+            let page_no = *p;
+            let http = http_client.clone();
+            let parser_cl = parser.clone();
+            let pag_ctx = pagination_context.clone();
+            let pool_local = pool.clone();
+            let dry_run_local = dry_run;
+            tasks.push(tokio::spawn(async move {
+                let page_url = crate::infrastructure::config::utils::matter_products_page_url_simple(page_no);
+                let html = match http.fetch_response(&page_url).await { Ok(r)=> match r.text().await { Ok(t)=>t, Err(_)=> return PageOutcome{page:page_no,products_filled:0,products_already:0,mismatches:0,would_fill:0,failed:true,http_error:true, parsed_count:0, updated_details:0} }, Err(_)=> return PageOutcome{page:page_no,products_filled:0,products_already:0,mismatches:0,would_fill:0,failed:true,http_error:true, parsed_count:0, updated_details:0} };
+                let parse_ctx = ParseContext::new(page_no, page_url.clone());
+                let parsed_products = match parser_cl.parse_with_context(&scraper::Html::parse_document(&html), &parse_ctx) { Ok(v)=> v, Err(_)=> return PageOutcome{page:page_no,products_filled:0,products_already:0,mismatches:0,would_fill:0,failed:true,http_error:false, parsed_count:0, updated_details:0} };
+                let urls: Vec<String> = parsed_products.iter().map(|pp| pp.url.clone()).collect();
+                let now = chrono::Utc::now();
+                let mut local_products_filled=0u64; let mut local_products_already=0u64; let mut local_mismatches=0u64; let mut local_would_fill=0u64; let mut local_details_updated=0u64;
+                let mut tx_opt: Option<sqlx::Transaction<'_, sqlx::Sqlite>> = if !dry_run_local { match pool_local.begin().await { Ok(t)=>Some(t), Err(_)=>None } } else { None };
+                for (i,url) in urls.iter().enumerate() {
+                    let (canon_page_id, canon_index) = pag_ctx.calculate_page_index_canonical(page_no, i as u32);
+                    if let Ok(row_opt) = sqlx::query("SELECT page_id, index_in_page FROM products WHERE url = ?").bind(url).fetch_optional(&pool_local).await {
+                        if let Some(row) = row_opt.as_ref() {
+                            let ep: Option<i64> = row.get("page_id");
+                            let ei: Option<i64> = row.get("index_in_page");
+                            let need = ep.is_none() || ei.is_none();
+                            if need { if !dry_run_local { if let Some(tx)=tx_opt.as_mut(){ if sqlx::query("UPDATE products SET page_id = ?, index_in_page = ?, updated_at = ? WHERE url = ?") .bind(canon_page_id).bind(canon_index).bind(now).bind(url).execute(&mut **tx).await.is_ok(){ local_products_filled+=1; } } } else { local_would_fill+=1; } }
+                            else if ep.unwrap() as i32 != canon_page_id || ei.unwrap() as i32 != canon_index { local_mismatches+=1; local_products_already+=1; } else { local_products_already+=1; }
+                        }
+                    }
+                    if let Ok(drow_opt) = sqlx::query("SELECT page_id, index_in_page FROM product_details WHERE url = ?").bind(url).fetch_optional(&pool_local).await {
+                        if let Some(drow) = drow_opt.as_ref() {
+                            let ep: Option<i64> = drow.get("page_id");
+                            let ei: Option<i64> = drow.get("index_in_page");
+                            let need = ep.is_none() || ei.is_none();
+                            if need { if !dry_run_local { if let Some(tx)=tx_opt.as_mut(){ if sqlx::query("UPDATE product_details SET page_id = ?, index_in_page = ?, updated_at = ? WHERE url = ?") .bind(canon_page_id) .bind(canon_index) .bind(now) .bind(url) .execute(&mut **tx).await.is_ok(){ local_details_updated+=1; } } } else { local_would_fill+=1; } }
+                            else if ep.unwrap() as i32 != canon_page_id || ei.unwrap() as i32 != canon_index { local_mismatches+=1; }
+                        }
+                    }
+                }
+                if let Some(tx)=tx_opt { let _ = tx.commit().await; }
+                PageOutcome { page: page_no, products_filled: local_products_filled, products_already: local_products_already, mismatches: local_mismatches, would_fill: local_would_fill, failed:false, http_error:false, parsed_count: parsed_products.len(), updated_details: local_details_updated }
+            }));
+        }
+        for outcome in futures::future::join_all(tasks.drain(..)).await {
+            if let Ok(out) = outcome {
+                pages_processed += 1;
+                if out.failed { pages_failed += 1; if out.http_error { http_errors += 1; } }
+                else { products_filled += out.products_filled; products_already += out.products_already; mismatches_detected += out.mismatches; would_fill += out.would_fill; }
+                if debug_enabled { per_page_stats.push(PerPageDebugStat { page: out.page, parsed_count: out.parsed_count, updated_products: out.products_filled, updated_details: out.updated_details, mismatches: out.mismatches, would_fill: out.would_fill }); }
+                info!(target="rehydrate", page=out.page, products_filled_page=out.products_filled, products_already=out.products_already, parsed_count=out.parsed_count, updated_details=out.updated_details, dry_run, failed=out.failed, http_err=out.http_error, "rehydrate_page_done");
+            }
+        }
+    }
+
+
+    // After metrics
+    let after: i64 = sqlx::query_scalar(r"SELECT COUNT(*) FROM products p JOIN product_details d ON d.url = p.url
+        WHERE (p.page_id IS NULL OR p.index_in_page IS NULL)
+          AND (d.page_id IS NULL OR d.index_in_page IS NULL)")
+        .fetch_one(&pool).await.unwrap_or(0);
+
+    // Detect no-progress scenario (e.g., param mis-match or network blocked)
+    let no_progress = !dry_run && products_filled == 0 && pages_processed > 0;
+    let note = if dry_run {
+        format!("dry_run=true pages_failed={pages_failed} mismatches_detected={mismatches_detected} http_errors={http_errors}")
+    } else if no_progress {
+        format!("rehydrate_complete BUT no_rows_filled pages_failed={pages_failed} mismatches_detected={mismatches_detected} http_errors={http_errors} (check: dry_run flag, network, URL pattern)")
+    } else {
+        format!("rehydrate_complete pages_failed={pages_failed} mismatches_detected={mismatches_detected} http_errors={http_errors}")
+    };
+    Ok(RehydrateListPagesResult { pages_targeted: targeted_pages.len() as u32, pages_processed, products_with_null_coords_before: before as u64, products_filled, products_already_had_coords: products_already, products_still_null_after: after as u64, elapsed_ms: start.elapsed().as_millis(), note, pages_failed, http_errors, mismatches_detected, would_fill, auto_selected, per_page: if debug_enabled { Some(per_page_stats) } else { None } })
 }

@@ -43,6 +43,24 @@ pub struct DbPaginationMismatchReport {
     pub duplicate_positions: Vec<DuplicatePosition>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepass: Option<PrepassSummary>,
+    // Newly exposed coordinate reconciliation diagnostics
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coord_mismatch: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details_missing_coords: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub products_missing_coords: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coord_mismatch_samples: Option<Vec<CoordMismatchSample>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CoordMismatchSample {
+    pub url: String,
+    pub d_pid: Option<i32>,
+    pub d_idx: Option<i32>,
+    pub p_pid: Option<i32>,
+    pub p_idx: Option<i32>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -228,6 +246,10 @@ pub async fn scan_db_pagination_mismatches(
             group_summaries: vec![],
             duplicate_positions: vec![],
             prepass: Some(prepass),
+            coord_mismatch: None,
+            details_missing_coords: None,
+            products_missing_coords: None,
+            coord_mismatch_samples: None,
         });
     }
 
@@ -333,7 +355,7 @@ pub async fn scan_db_pagination_mismatches(
         });
     }
 
-    let report = DbPaginationMismatchReport {
+    let mut report = DbPaginationMismatchReport {
         total_products,
         max_page_id_db: Some(max_page_id_db),
         total_pages_site,
@@ -341,7 +363,60 @@ pub async fn scan_db_pagination_mismatches(
         group_summaries,
         duplicate_positions,
         prepass: Some(prepass),
+        coord_mismatch: None,
+        details_missing_coords: None,
+        products_missing_coords: None,
+        coord_mismatch_samples: None,
     };
+
+    // 추가 요약 로깅: 좌표 누락 / mismatch 상황 집계
+    if let Ok(coord_mismatch) = sqlx::query_scalar::<_, i64>(r"
+        SELECT COUNT(*) FROM product_details d
+        LEFT JOIN products p ON p.url = d.url
+        WHERE p.url IS NULL
+           OR p.page_id IS NULL OR p.index_in_page IS NULL
+           OR (p.page_id != d.page_id OR p.index_in_page != d.index_in_page)
+    ").fetch_one(&pool).await {
+        info!(target: "db_diagnostics", coord_mismatch, "coord_mismatch_summary");
+        report.coord_mismatch = u64::try_from(coord_mismatch).ok();
+    }
+    if let Ok(details_without_coords) = sqlx::query_scalar::<_, i64>(r"
+        SELECT COUNT(*) FROM product_details WHERE page_id IS NULL OR index_in_page IS NULL
+    ").fetch_one(&pool).await {
+        info!(target: "db_diagnostics", details_without_coords, "details_missing_coords_summary");
+        report.details_missing_coords = u64::try_from(details_without_coords).ok();
+    }
+    if let Ok(products_missing_coords) = sqlx::query_scalar::<_, i64>(r"
+        SELECT COUNT(*) FROM products WHERE page_id IS NULL OR index_in_page IS NULL
+    ").fetch_one(&pool).await {
+        info!(target: "db_diagnostics", products_missing_coords, "products_missing_coords_summary");
+        report.products_missing_coords = u64::try_from(products_missing_coords).ok();
+    }
+
+    // Sample detail holes: pick up to 5 URLs where detail has coords but product missing or mismatch
+    if let Ok(rows) = sqlx::query(r"
+        SELECT d.url, d.page_id as d_pid, d.index_in_page as d_idx, p.page_id as p_pid, p.index_in_page as p_idx
+        FROM product_details d
+        LEFT JOIN products p ON p.url = d.url
+        WHERE p.url IS NULL
+           OR p.page_id IS NULL OR p.index_in_page IS NULL
+           OR (p.page_id != d.page_id OR p.index_in_page != d.index_in_page)
+        LIMIT 5
+    ").fetch_all(&pool).await {
+        let mut samples: Vec<CoordMismatchSample> = Vec::new();
+        for row in rows {
+            let sample = CoordMismatchSample {
+                url: row.get("url"),
+                d_pid: row.get("d_pid"),
+                d_idx: row.get("d_idx"),
+                p_pid: row.get("p_pid"),
+                p_idx: row.get("p_idx"),
+            };
+            info!(target="db_diagnostics", url = sample.url, d_pid = sample.d_pid, d_idx = sample.d_idx, p_pid = sample.p_pid, p_idx = sample.p_idx, "coord_mismatch_sample");
+            samples.push(sample);
+        }
+        if !samples.is_empty() { report.coord_mismatch_samples = Some(samples); }
+    }
 
     info!(target: "db_diagnostics", total_products = report.total_products, groups = report.group_summaries.len(), dup_positions = report.duplicate_positions.len(), "scan_db_pagination_mismatches: done");
     Ok(report)

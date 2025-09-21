@@ -289,6 +289,12 @@ impl FailurePolicyConfig {
 pub struct AppManagedConfig {
     /// Last known maximum page number
     pub last_known_max_page: Option<u32>,
+    /// Last known stable total estimated products (monotonic non-decreasing)
+    pub last_known_max_total_products: Option<u32>,
+    /// Timestamp when a degradation (drop) was first observed
+    pub first_degradation_at: Option<String>,
+    /// Last observed degradation note (debug info)
+    pub last_degradation_note: Option<String>,
 
     /// Timestamp of last successful crawl
     pub last_successful_crawl: Option<String>,
@@ -396,6 +402,9 @@ impl Default for AppManagedConfig {
     fn default() -> Self {
         Self {
             last_known_max_page: None,
+            last_known_max_total_products: None,
+            first_degradation_at: None,
+            last_degradation_note: None,
             last_successful_crawl: None,
             last_crawl_product_count: None,
             avg_products_per_page: None,

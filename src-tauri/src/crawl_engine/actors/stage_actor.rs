@@ -762,11 +762,35 @@ impl StageActor {
                 // DataSaving 퍼시스턴스
                 if matches!(stage_type, StageType::DataSaving) {
                     tracing::info!(target: "data_saving_diag", "[DataSaving] Enter StageType::DataSaving for session={session_id} batch={:?}", batch_id);
+                    // 추가 진단: duplicate_policy / 입력 StageItem 좌표 샘플 / product_details vs products 좌표 누락 여부
+                    tracing::info!(target: "data_saving_diag", duplicate_policy=?deps.duplicate_policy, "[DataSaving] duplicate_policy snapshot");
                     let mut persist_events_count: u32 = 0; // count emitted persist related events (ProductLifecycle / Group)
                     let is_persist_target = matches!(lifecycle_item, StageItem::ProductDetails(_))
                         || matches!(lifecycle_item, StageItem::ValidatedProducts(_));
                     if is_persist_target {
                         tracing::info!(target: "data_saving_diag", "[DataSaving] lifecycle_item qualifies as persist target (ProductDetails|ValidatedProducts)");
+                        // 좌표 샘플 (page_id/index_in_page None 여부 확인)
+                        match &lifecycle_item {
+                            StageItem::ProductDetails(w) => {
+                                for (i, d) in w.products.iter().take(5).enumerate() {
+                                    if d.page_id.is_none() || d.index_in_page.is_none() {
+                                        tracing::warn!(target: "data_saving_diag", idx=i, url=%d.url, page_id=?d.page_id, index_in_page=?d.index_in_page, "[DataSaving] detail sample missing coords");
+                                    } else {
+                                        tracing::debug!(target: "data_saving_diag", idx=i, url=%d.url, page_id=?d.page_id, index_in_page=?d.index_in_page, "[DataSaving] detail sample coords");
+                                    }
+                                }
+                            }
+                            StageItem::ValidatedProducts(w) => {
+                                for (i, d) in w.products.iter().take(5).enumerate() {
+                                    if d.page_id.is_none() || d.index_in_page.is_none() {
+                                        tracing::warn!(target: "data_saving_diag", idx=i, url=%d.url, page_id=?d.page_id, index_in_page=?d.index_in_page, "[DataSaving] validated sample missing coords");
+                                    } else {
+                                        tracing::debug!(target: "data_saving_diag", idx=i, url=%d.url, page_id=?d.page_id, index_in_page=?d.index_in_page, "[DataSaving] validated sample coords");
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
                         let guard_key = format!(
                             "{}:{}:data_saving",
                             session_id,

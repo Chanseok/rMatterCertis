@@ -20,6 +20,42 @@ use sqlx::{Row, sqlite::SqlitePool};
 use std::sync::Arc;
 use tracing::{debug, info};
 
+// Lightweight retry helper for transient SQLITE_BUSY / locked situations.
+async fn retry_sqlite_busy<F, Fut, T>(label: &str, mut op: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let mut attempt = 0u32;
+    let max_attempts = 5u32;
+    let mut backoff = 80u64; // ms
+    loop {
+        match op().await {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                let msg = format!("{e}");
+                if (msg.contains("database is locked") || msg.contains("SQLITE_BUSY")) && attempt + 1 < max_attempts {
+                    attempt += 1;
+                    tracing::warn!(target="persistence", attempt, label, backoff_ms=backoff, "Retrying after SQLITE_BUSY");
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
+                    backoff = (backoff * 2).min(1500);
+                    continue;
+                }
+                if msg.contains("database is locked") || msg.contains("SQLITE_BUSY") {
+                    tracing::error!(target="persistence", attempts=attempt+1, label, "Retry exhaustion for SQLITE_BUSY");
+                    // Best-effort: try to increment global lock counter if AppState accessible via once_cell
+                    if let Some(app_state) = crate::application::app_handle_access::get_app_state() {
+                        // fire and forget
+                        let cloned = app_state.clone();
+                        tokio::spawn(async move { cloned.incr_lock_errors().await; });
+                    }
+                }
+                return Err(e);
+            }
+        }
+    }
+}
+
 // Helper enum for heterogeneous SQL binds in update operations
 enum BindValue<'a> {
     OptStr(&'a Option<String>),
@@ -38,6 +74,8 @@ pub struct UpsertOutcome {
 #[derive(Clone)]
 pub struct IntegratedProductRepository {
     pool: Arc<SqlitePool>,
+    // Optional global write serialization (enabled via env MC_SERIALIZE_WRITES=1)
+    write_mutex: Option<Arc<tokio::sync::Mutex<()>>>,
 }
 
 impl IntegratedProductRepository {
@@ -289,8 +327,10 @@ impl IntegratedProductRepository {
     }
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
+        let serialize = std::env::var("MC_SERIALIZE_WRITES").ok().is_some_and(|v| v=="1" || v.eq_ignore_ascii_case("true"));
         Self {
             pool: Arc::new(pool),
+            write_mutex: if serialize { Some(Arc::new(tokio::sync::Mutex::new(()))) } else { None },
         }
     }
 
@@ -484,6 +524,7 @@ impl IntegratedProductRepository {
         &self,
         detail: &ProductDetail,
     ) -> Result<(bool, bool)> {
+        let _guard = if let Some(m) = &self.write_mutex { Some(m.lock().await) } else { None }; // serialize writes if enabled
         let now = chrono::Utc::now();
 
         // 기존 ProductDetail 확인
@@ -596,6 +637,28 @@ impl IntegratedProductRepository {
             let id_mismatch = existing_detail.id != derived_id;
 
             if !updates.is_empty() || id_mismatch {
+                // Reconciliation: ensure products table coords are updated when detail has coords and product is stale or NULL
+                if detail.page_id.is_some() && detail.index_in_page.is_some() {
+                    // Fetch current product row coords
+                    if let Ok(row) = sqlx::query(r"SELECT page_id, index_in_page FROM products WHERE url = ?")
+                        .bind(&detail.url)
+                        .fetch_optional(&*self.pool).await {
+                        if let Some(r) = row {
+                            let p_pid: Option<i32> = r.get("page_id");
+                            let p_idx: Option<i32> = r.get("index_in_page");
+                            if p_pid != detail.page_id || p_idx != detail.index_in_page {
+                                tracing::info!(target="persist_detail_decision", url=%detail.url, old_p_pid=?p_pid, old_p_idx=?p_idx, new_p_pid=?detail.page_id, new_p_idx=?detail.index_in_page, "reconciling_products_coords");
+                                let _ = sqlx::query(r"UPDATE products SET page_id = ?, index_in_page = ?, updated_at = ? WHERE url = ?")
+                                    .bind(detail.page_id)
+                                    .bind(detail.index_in_page)
+                                    .bind(now)
+                                    .bind(&detail.url)
+                                    .execute(&*self.pool).await;
+                            }
+                        }
+                    }
+                }
+                tracing::info!(target="persist_detail_decision", url=%detail.url, id_mismatch, changes=?change_kinds, clearing_position = (change_kinds.iter().any(|k| k=="change:page_id") && detail.page_id.is_none()) || (change_kinds.iter().any(|k| k=="change:index_in_page") && detail.index_in_page.is_none()), "detail_update_applying");
                 // Before applying updates that change the position, vacate target slot to avoid UNIQUE violation
                 if (change_kinds.iter().any(|k| k == "change:page_id")
                     || change_kinds.iter().any(|k| k == "change:index_in_page"))
@@ -606,6 +669,7 @@ impl IntegratedProductRepository {
                         let _ = self
                             .vacate_position_if_occupied(pid, idx, &detail.url)
                             .await?;
+                        tracing::debug!(target="persist_detail_decision", url=%detail.url, pid, idx, "vacated_target_slot_before_update");
                     }
                 }
 
@@ -750,17 +814,20 @@ impl IntegratedProductRepository {
                     updates.join(", ")
                 );
 
-                let mut sql_query = sqlx::query(&query);
-                for bind in binds {
-                    sql_query = match bind {
-                        BindValue::OptStr(v) => sql_query.bind(v),
-                        BindValue::OptI32(v) => sql_query.bind(v),
-                        BindValue::OwnedStr(s) => sql_query.bind(s),
-                    };
-                }
-                sql_query = sql_query.bind(now).bind(&detail.url);
-
-                sql_query.execute(&*self.pool).await?;
+                let query_clone = query.clone();
+                // Retry execution building binds in the same order each attempt
+                retry_sqlite_busy("update_product_details", || {
+                    let mut q = sqlx::query(&query_clone);
+                    for bind in &binds {
+                        q = match bind {
+                            BindValue::OptStr(v) => q.bind(*v),
+                            BindValue::OptI32(v) => q.bind(*v),
+                            BindValue::OwnedStr(s) => q.bind(s),
+                        };
+                    }
+                    q = q.bind(now).bind(&detail.url);
+                    async move { q.execute(&*self.pool).await.map(|_| ()).map_err(|e| anyhow::Error::new(e)) }
+                }).await?;
 
                 // Keep products table in sync for pagination coordinates and id
                 if detail.page_id.is_some() || detail.index_in_page.is_some() || id_mismatch {
@@ -809,6 +876,9 @@ impl IntegratedProductRepository {
                 );
                 Ok((true, false)) // updated=true, created=false
             } else {
+                tracing::info!(target="persist_detail_decision", url=%detail.url, "detail_noop_no_changes_post_compare");
+                // 완전 no-op: 변경할 필드도 없고 id도 좌표와 일치 → diagnostics에서 계속 hole로 나타날 수 있는 잠재 지점
+                tracing::debug!(target: "persist_detail", url=%detail.url, page_id=?detail.page_id, index_in_page=?detail.index_in_page, id_mismatch, "detail_noop_no_changes");
                 if verbose {
                     debug!(
                         "✅ ProductDetail unchanged(noop): {} manufacturer={:?} model={:?} device_type={:?}",
@@ -872,8 +942,7 @@ impl IntegratedProductRepository {
                 }
             });
 
-            sqlx::query(
-                                r"
+            let insert_sql = r"
                                 INSERT INTO product_details 
                                 (url, page_id, index_in_page, id, manufacturer, model, device_type,
                                  certificate_id, certification_date, software_version, hardware_version,
@@ -907,36 +976,38 @@ impl IntegratedProductRepository {
                                     compliance_document_url = excluded.compliance_document_url,
                                     program_type = excluded.program_type,
                                     updated_at = excluded.updated_at
-                                ",
-                        )
-            .bind(&detail.url)
-            .bind(detail.page_id)
-            .bind(detail.index_in_page)
-            .bind(&generated_id)  // Use generated_id instead of detail.id
-            .bind(&detail.manufacturer)
-            .bind(&detail.model)
-            .bind(&detail.device_type)
-            .bind(&detail.certificate_id)
-            .bind(&Self::normalize_cert_date(&detail.certification_date))
-            .bind(&detail.software_version)
-            .bind(&detail.hardware_version)
-            .bind(detail.vid)
-            .bind(detail.pid)
-            .bind(&detail.family_sku)
-            .bind(&detail.family_variant_sku)
-            .bind(&detail.firmware_version)
-            .bind(&detail.family_id)
-            .bind(detail.tis_trp_tested.clone())
-            .bind(&detail.specification_version)
-            .bind(&detail.transport_interface)
-            .bind(&detail.application_categories)
-            .bind(&detail.description)
-            .bind(&detail.compliance_document_url)
-            .bind(&detail.program_type)
-            .bind(now)
-            .bind(now)
-            .execute(&*self.pool)
-            .await?;
+                                ";
+            let normalized_cert_date = Self::normalize_cert_date(&detail.certification_date);
+            retry_sqlite_busy("insert_product_details", || {
+                let q = sqlx::query(insert_sql)
+                    .bind(&detail.url)
+                    .bind(detail.page_id)
+                    .bind(detail.index_in_page)
+                    .bind(&generated_id)
+                    .bind(&detail.manufacturer)
+                    .bind(&detail.model)
+                    .bind(&detail.device_type)
+                    .bind(&detail.certificate_id)
+                    .bind(&normalized_cert_date)
+                    .bind(&detail.software_version)
+                    .bind(&detail.hardware_version)
+                    .bind(detail.vid)
+                    .bind(detail.pid)
+                    .bind(&detail.family_sku)
+                    .bind(&detail.family_variant_sku)
+                    .bind(&detail.firmware_version)
+                    .bind(&detail.family_id)
+                    .bind(detail.tis_trp_tested.clone())
+                    .bind(&detail.specification_version)
+                    .bind(&detail.transport_interface)
+                    .bind(&detail.application_categories)
+                    .bind(&detail.description)
+                    .bind(&detail.compliance_document_url)
+                    .bind(&detail.program_type)
+                    .bind(now)
+                    .bind(now);
+                async move { q.execute(&*self.pool).await.map(|_| ()).map_err(|e| anyhow::Error::new(e)) }
+            }).await?;
 
             let verbose = std::env::var("MC_PERSIST_VERBOSE")
                 .ok()
@@ -961,6 +1032,40 @@ impl IntegratedProductRepository {
             );
             Ok((false, true)) // updated=false, created=true
         }
+    }
+
+    /// Bulk repair: synchronize products.page_id/index_in_page from product_details when detail has coords and product is NULL or mismatched.
+    pub async fn repair_product_coordinates(&self, limit: Option<i64>) -> Result<u64> {
+        let _guard = if let Some(m) = &self.write_mutex { Some(m.lock().await) } else { None };
+        let lim_clause = limit.map(|_| "LIMIT ?").unwrap_or("");
+        let sql = format!(r"
+            SELECT d.url, d.page_id, d.index_in_page FROM product_details d
+            JOIN products p ON p.url = d.url
+            WHERE d.page_id IS NOT NULL AND d.index_in_page IS NOT NULL
+              AND (p.page_id IS NULL OR p.index_in_page IS NULL OR p.page_id != d.page_id OR p.index_in_page != d.index_in_page)
+            {}
+        ", lim_clause);
+        let rows = if let Some(l) = limit {
+            sqlx::query(&sql).bind(l).fetch_all(&*self.pool).await?
+        } else { sqlx::query(&sql).fetch_all(&*self.pool).await? };
+        let mut fixed = 0u64;
+        for row in &rows {
+            let url: String = row.get("url");
+            let pid: i32 = row.get("page_id");
+            let idx: i32 = row.get("index_in_page");
+            if let Err(e) = sqlx::query(r"UPDATE products SET page_id = ?, index_in_page = ?, updated_at = ? WHERE url = ?")
+                .bind(pid)
+                .bind(idx)
+                .bind(chrono::Utc::now())
+                .bind(&url)
+                .execute(&*self.pool).await {
+                tracing::warn!(target="repair_coords", url=%url, error=%e, "failed_to_update_product_coords");
+            } else {
+                fixed += 1;
+            }
+        }
+        tracing::info!(target="repair_coords", fixed, total_rows=rows.len(), "repair_product_coordinates_completed");
+        Ok(fixed)
     }
 
     /// 빠른 통계: `product_details` 전체 개수, `page_id` 범위, 마지막 업데이트 시각
