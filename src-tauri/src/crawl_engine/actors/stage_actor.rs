@@ -2439,3 +2439,109 @@ impl Actor for StageActor {
 impl StageActor {
     // ...existing code...
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_data_saving_guard_cleanup() {
+        // Initialize the guard with some test keys
+        {
+            if let Ok(mut guard) = DATA_SAVING_RUN_GUARD.lock() {
+                guard.insert("session1:batch1:data_saving".to_string());
+                guard.insert("session1:batch2:data_saving".to_string());
+                guard.insert("session2:batch1:data_saving".to_string());
+                guard.insert("other_session:batch1:data_saving".to_string());
+            }
+        }
+
+        // Verify initial state
+        {
+            if let Ok(guard) = DATA_SAVING_RUN_GUARD.lock() {
+                assert_eq!(guard.len(), 4);
+                assert!(guard.contains("session1:batch1:data_saving"));
+                assert!(guard.contains("session1:batch2:data_saving"));
+                assert!(guard.contains("session2:batch1:data_saving"));
+                assert!(guard.contains("other_session:batch1:data_saving"));
+            }
+        }
+
+        // Test cleanup for session1
+        StageActor::cleanup_data_saving_guards_for_session("session1");
+
+        // Verify session1 keys are removed, others remain
+        {
+            if let Ok(guard) = DATA_SAVING_RUN_GUARD.lock() {
+                assert_eq!(guard.len(), 2);
+                assert!(!guard.contains("session1:batch1:data_saving"));
+                assert!(!guard.contains("session1:batch2:data_saving"));
+                assert!(guard.contains("session2:batch1:data_saving"));
+                assert!(guard.contains("other_session:batch1:data_saving"));
+            }
+        }
+
+        // Test cleanup for session2
+        StageActor::cleanup_data_saving_guards_for_session("session2");
+
+        // Verify session2 keys are removed
+        {
+            if let Ok(guard) = DATA_SAVING_RUN_GUARD.lock() {
+                assert_eq!(guard.len(), 1);
+                assert!(guard.contains("other_session:batch1:data_saving"));
+            }
+        }
+
+        // Clean up remaining test data
+        StageActor::cleanup_data_saving_guards_for_session("other_session");
+
+        {
+            if let Ok(guard) = DATA_SAVING_RUN_GUARD.lock() {
+                assert_eq!(guard.len(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_data_saving_guard_cleanup_empty_session() {
+        // Test cleanup on non-existent session should not panic
+        StageActor::cleanup_data_saving_guards_for_session("non_existent_session");
+
+        // Verify no keys are affected
+        {
+            if let Ok(guard) = DATA_SAVING_RUN_GUARD.lock() {
+                assert_eq!(guard.len(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_data_saving_guard_cleanup_partial_match() {
+        // Test that only exact session prefix matches are cleaned
+        {
+            if let Ok(mut guard) = DATA_SAVING_RUN_GUARD.lock() {
+                guard.insert("session123:batch1:data_saving".to_string());
+                guard.insert("session1:batch1:data_saving".to_string());
+                guard.insert("session12:batch1:data_saving".to_string());
+            }
+        }
+
+        // Clean up session1 - should only remove exact prefix matches
+        StageActor::cleanup_data_saving_guards_for_session("session1");
+
+        {
+            if let Ok(guard) = DATA_SAVING_RUN_GUARD.lock() {
+                assert_eq!(guard.len(), 2);
+                assert!(guard.contains("session123:batch1:data_saving"));
+                assert!(guard.contains("session12:batch1:data_saving"));
+                assert!(!guard.contains("session1:batch1:data_saving"));
+            }
+        }
+
+        // Clean up remaining test data
+        if let Ok(mut guard) = DATA_SAVING_RUN_GUARD.lock() {
+            guard.clear();
+        }
+    }
+}
