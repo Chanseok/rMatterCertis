@@ -292,6 +292,23 @@ impl StageActor {
         let _ = context.emit_event(evt);
     }
 
+    /// Clean up DataSaving guard entries for a specific session.
+    /// This helps prevent stale guard entries from blocking future operations.
+    pub fn cleanup_data_saving_guards_for_session(session_id: &str) {
+        if let Ok(mut guard) = DATA_SAVING_RUN_GUARD.lock() {
+            let keys_to_remove: Vec<String> = guard
+                .iter()
+                .filter(|key| key.starts_with(&format!("{}:", session_id)))
+                .cloned()
+                .collect();
+
+            for key in keys_to_remove {
+                guard.remove(&key);
+                tracing::info!(target: "data_saving_diag", "[DataSaving] cleanup: removed stale guard key={key}");
+            }
+        }
+    }
+
     /// ProductUrls 번들을 개별 ProductUrl 아이템으로 분할
     /// 실시간 개별 URL 진행상황을 위한 핵심 로직
     fn expand_product_urls_to_individual_items(items: Vec<StageItem>) -> Vec<StageItem> {
@@ -1262,6 +1279,26 @@ impl StageActor {
                     }
                 }
 
+                // Clean up DataSaving guard after successful completion
+                if matches!(stage_type, StageType::DataSaving) {
+                    let is_persist_target = matches!(lifecycle_item, StageItem::ProductDetails(_))
+                        || matches!(lifecycle_item, StageItem::ValidatedProducts(_));
+                    if is_persist_target {
+                        let guard_key = format!(
+                            "{}:{}:data_saving",
+                            session_id,
+                            batch_id.clone().unwrap_or_else(|| "none".into())
+                        );
+                        if let Ok(mut guard) = DATA_SAVING_RUN_GUARD.lock() {
+                            if guard.remove(&guard_key) {
+                                tracing::info!(target: "data_saving_diag", "[DataSaving] guard cleanup successful for key={guard_key}");
+                            } else {
+                                tracing::warn!(target: "data_saving_diag", "[DataSaving] guard cleanup: key not found key={guard_key}");
+                            }
+                        }
+                    }
+                }
+
                 // Estimate collected count from typed result data for telemetry
                 let collected_count = {
                     use crate::crawl_engine::actors::types::StageResultData as SRD;
@@ -1280,6 +1317,27 @@ impl StageActor {
             }
             Err(err) => {
                 guard.record_err(format!("{:?}", err));
+                
+                // Clean up DataSaving guard after failed completion
+                if matches!(stage_type, StageType::DataSaving) {
+                    let is_persist_target = matches!(lifecycle_item, StageItem::ProductDetails(_))
+                        || matches!(lifecycle_item, StageItem::ValidatedProducts(_));
+                    if is_persist_target {
+                        let guard_key = format!(
+                            "{}:{}:data_saving",
+                            session_id,
+                            batch_id.clone().unwrap_or_else(|| "none".into())
+                        );
+                        if let Ok(mut guard) = DATA_SAVING_RUN_GUARD.lock() {
+                            if guard.remove(&guard_key) {
+                                tracing::info!(target: "data_saving_diag", "[DataSaving] guard cleanup after error for key={guard_key}");
+                            } else {
+                                tracing::warn!(target: "data_saving_diag", "[DataSaving] guard cleanup after error: key not found key={guard_key}");
+                            }
+                        }
+                    }
+                }
+                
                 if let (StageType::ListPageCrawling, StageItem::Page(pn)) =
                     (&stage_type, &lifecycle_item)
                 {
@@ -1525,6 +1583,13 @@ impl StageActor {
             return Err(StageError::GenericError {
                 message: format!("Stage already processing: {}", sid),
             });
+        }
+
+        // Clean up any stale DataSaving guards for this session at the start of stage processing
+        if matches!(stage_type, StageType::DataSaving) {
+            if let Some(ref session_id) = &context.session_id {
+                Self::cleanup_data_saving_guards_for_session(session_id);
+            }
         }
 
         let stage_id = Uuid::new_v4().to_string();
