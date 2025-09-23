@@ -217,6 +217,7 @@ pub mod commands {
         #[cfg(feature = "dev-tools")]
         pub mod actor_system_monitoring;
     pub mod db_diagnostics; // 🧪 DB pagination mismatch scan (enabled in release)
+    pub mod lock_detector; // 🔒 Active writer lock detector (debug/build)
         #[cfg(feature = "dev-tools")]
         pub mod debug_commands; // 🔎 UI debug logging helpers
         #[cfg(feature = "dev-tools")]
@@ -285,6 +286,10 @@ pub mod commands {
     pub use devtools::db_diagnostics;
     #[cfg(any(feature = "dev-tools", debug_assertions))]
     pub use devtools::db_diagnostics::*; // DB diagnostics 명령어 export
+    #[cfg(any(feature = "dev-tools", debug_assertions))]
+    pub use devtools::lock_detector;
+    #[cfg(any(feature = "dev-tools", debug_assertions))]
+    pub use devtools::lock_detector::*; // Active writer lock detector export
     #[cfg(feature = "dev-tools")]
     pub use devtools::debug_commands;
     #[cfg(feature = "dev-tools")]
@@ -572,37 +577,35 @@ pub fn run() {
                                                                 ).fetch_optional(&pool).await {
                                                                         if col_present.is_none() {
                                                                                 info!("🛠️ Upgrading device_types schema inline (add category,introduced_in; drop description)");
-                                                                                let upgrade_sql = r#"
-BEGIN TRANSACTION;
-CREATE TABLE IF NOT EXISTS device_types_new (
-    id INTEGER PRIMARY KEY,
-    code_hex TEXT,
-    name TEXT NOT NULL,
-    category TEXT,
-    introduced_in TEXT,
-     type_id INTEGER,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-INSERT OR IGNORE INTO device_types_new (id, code_hex, name, created_at, updated_at)
-    SELECT id, code_hex, name, created_at, updated_at FROM device_types;
-DROP TABLE device_types;
-ALTER TABLE device_types_new RENAME TO device_types;
-CREATE UNIQUE INDEX IF NOT EXISTS ux_device_types_name ON device_types(name);
-CREATE UNIQUE INDEX IF NOT EXISTS ux_device_types_code_hex ON device_types(code_hex);
- CREATE UNIQUE INDEX IF NOT EXISTS ux_device_types_type_id ON device_types(type_id);
-CREATE TRIGGER IF NOT EXISTS device_types_updated_at
-AFTER UPDATE ON device_types
-FOR EACH ROW BEGIN
-    UPDATE device_types SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
-END;
-COMMIT;"#;
-                                                                                if let Err(e) = sqlx::query(upgrade_sql).execute(&pool).await {
-                                                                                        warn!("Inline device_types schema upgrade failed: {}", e);
-                                                                                } else {
-                                                                                        info!("✅ Inline device_types schema upgrade applied");
-                                                                                                                     // Backfill type_id from legacy id if still NULL
-                                                                                                                     if let Err(e) = sqlx::query("UPDATE device_types SET type_id = id WHERE type_id IS NULL;").execute(&pool).await { warn!("Failed to backfill type_id inline: {}", e); }
+                                                                                let t0 = std::time::Instant::now();
+                                                                                info!("⏱️ device_types inline upgrade (tx) start");
+                                                                                match pool.begin().await {
+                                                                                    Ok(mut tx) => {
+                                                                                        let steps = [
+                                                                                            "CREATE TABLE IF NOT EXISTS device_types_new (\n    id INTEGER PRIMARY KEY,\n    code_hex TEXT,\n    name TEXT NOT NULL,\n    category TEXT,\n    introduced_in TEXT,\n    type_id INTEGER,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n);",
+                                                                                            "INSERT OR IGNORE INTO device_types_new (id, code_hex, name, created_at, updated_at) SELECT id, code_hex, name, created_at, updated_at FROM device_types;",
+                                                                                            "DROP TABLE device_types;",
+                                                                                            "ALTER TABLE device_types_new RENAME TO device_types;",
+                                                                                            "CREATE UNIQUE INDEX IF NOT EXISTS ux_device_types_name ON device_types(name);",
+                                                                                            "CREATE UNIQUE INDEX IF NOT EXISTS ux_device_types_code_hex ON device_types(code_hex);",
+                                                                                            "CREATE UNIQUE INDEX IF NOT EXISTS ux_device_types_type_id ON device_types(type_id);",
+                                                                                            "CREATE TRIGGER IF NOT EXISTS device_types_updated_at\nAFTER UPDATE ON device_types\nFOR EACH ROW BEGIN\n    UPDATE device_types SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;\nEND;",
+                                                                                        ];
+                                                                                        let mut step_ok = true;
+                                                                                        for (i, s) in steps.iter().enumerate() {
+                                                                                            if let Err(e) = sqlx::query(s).execute(&mut *tx).await { warn!(step=i, err=%e, "device_types inline upgrade step failed"); step_ok = false; break; }
+                                                                                        }
+                                                                                        if step_ok {
+                                                                                            if let Err(e) = tx.commit().await { warn!("device_types upgrade commit failed: {}", e); } else {
+                                                                                                let elapsed = t0.elapsed().as_millis();
+                                                                                                info!(elapsed_ms = elapsed, "✅ Inline device_types schema upgrade applied (tx)");
+                                                                                                // Backfill type_id from legacy id if still NULL
+                                                                                                let t1 = std::time::Instant::now();
+                                                                                                if let Err(e) = sqlx::query("UPDATE device_types SET type_id = id WHERE type_id IS NULL;").execute(&pool).await { warn!("Failed to backfill type_id inline: {}", e); } else { debug!(elapsed_ms = t1.elapsed().as_millis(), "Inline type_id backfill completed"); }
+                                                                                            }
+                                                                                        } else { let _ = tx.rollback().await; }
+                                                                                    }
+                                                                                    Err(e) => warn!("device_types inline upgrade tx begin failed: {}", e)
                                                                                 }
                                                                         }
                                                                 }
@@ -728,6 +731,8 @@ WHERE pd.primary_device_type_ids IS NOT NULL
                                             Some(Ok(serde_json::Value::Array(items))) => {
                                                 let mut inserted = 0u32;
                                                 let has_type_id: Option<i64> = sqlx::query_scalar("SELECT 1 FROM pragma_table_info('device_types') WHERE name='type_id' LIMIT 1;").fetch_optional(&pool).await.ok().flatten();
+                                                let mut batch_counter = 0usize;
+                                                let loop_start = std::time::Instant::now();
                                                 for item in items {
                                                     if let (Some(id), Some(name)) = (item.get("id").and_then(|v| v.as_i64()), item.get("name").and_then(|v| v.as_str())) {
                                                         let id_i64 = id;
@@ -750,6 +755,12 @@ WHERE pd.primary_device_type_ids IS NOT NULL
                                                         if let Err(e) = q.execute(&pool).await {
                                                             warn!("device_type upsert failed id={} name={} err={}", id, name, e);
                                                         } else { inserted += 1; }
+                                                    }
+                                                    batch_counter += 1;
+                                                    if batch_counter % 100 == 0 { // yield every 100 rows
+                                                        let elapsed = loop_start.elapsed().as_millis();
+                                                        debug!(inserted_rows = inserted, batch_counter, elapsed_ms = elapsed, "device_types seeding progress");
+                                                        tokio::task::yield_now().await;
                                                     }
                                                 }
                                                 info!("✅ Seeded {} device_types", inserted);
@@ -942,6 +953,8 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             commands::actor_system::start_manual_crawl_pages_actor,
             // Legacy invoke compatibility wrappers removed (FE migrated to actor_system)
             commands::devtools::db_diagnostics::scan_db_pagination_mismatches,
+            commands::devtools::db_diagnostics::diagnose_database_connection,
+            commands::devtools::lock_detector::debug_active_writer_lock,
             #[cfg(feature = "dev-tools")]
             commands::devtools::debug_commands::ui_debug_log,
             #[cfg(feature = "dev-tools")]

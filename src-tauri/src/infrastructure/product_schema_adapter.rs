@@ -9,12 +9,15 @@ impl ProductSchemaAdapter {
     /// Convert MatterProduct to Product (for products table)
     pub fn matter_product_to_product(matter_product: &MatterProduct) -> Product {
         Product {
+            id: None,
             url: matter_product.detail_url.clone(),
             manufacturer: Some(matter_product.company_name.clone()),
             model: Some(matter_product.product_name.clone()),
             certificate_id: Some(matter_product.certificate_id.clone()),
             page_id: matter_product.page_number,
             index_in_page: matter_product.position_in_page,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
         }
     }
 
@@ -28,27 +31,36 @@ impl ProductSchemaAdapter {
             manufacturer: Some(matter_product.company_name.clone()),
             model: Some(matter_product.product_name.clone()),
             device_type: matter_product.device_type.clone(),
-            certification_id: Some(matter_product.certificate_id.clone()),
-            certification_date: matter_product.certified_date.map(|dt| dt.format("%m/%d/%Y").to_string()),
-            software_version: None, // Not available in MatterProduct
+            certificate_id: Some(matter_product.certificate_id.clone()),
+            certification_date: matter_product
+                .certified_date
+                .map(|dt| dt.format("%m/%d/%Y").to_string()),
+            software_version: None,
             hardware_version: matter_product.hardware_version.clone(),
             vid: Self::parse_hex_to_int(&matter_product.vendor_id),
             pid: Self::parse_hex_to_int(&matter_product.product_id),
-            family_sku: None, // Not available in MatterProduct
-            family_variant_sku: None, // Not available in MatterProduct
+            family_sku: None,
+            family_variant_sku: None,
             firmware_version: matter_product.firmware_version.clone(),
-            family_id: None, // Not available in MatterProduct
-            tis_trp_tested: matter_product.tis_trp_tested.map(|b| if b { "Yes".to_string() } else { "No".to_string() }),
+            family_id: None,
+            tis_trp_tested: matter_product
+                .tis_trp_tested
+                .map(|b| if b { "Yes".to_string() } else { "No".to_string() }),
             specification_version: matter_product.specification_version.clone(),
             transport_interface: matter_product.transport_interface.clone(),
-            // primary_device_type_id removed
-            application_categories: None, // Not available in MatterProduct, but could be derived from device_type
+            primary_device_type_ids: None,
+            application_categories: None,
+            description: None,
+            compliance_document_url: None,
+            program_type: Some("Matter".to_string()),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
         }
     }
 
     /// Convert Product and ProductDetail back to MatterProduct
     pub fn legacy_to_matter_product(product: &Product, detail: Option<&ProductDetail>) -> MatterProduct {
-        let detail = detail.unwrap_or(&ProductDetail {
+        let fallback_detail = ProductDetail {
             url: product.url.clone(),
             page_id: product.page_id,
             index_in_page: product.index_in_page,
@@ -56,7 +68,7 @@ impl ProductSchemaAdapter {
             manufacturer: product.manufacturer.clone(),
             model: product.model.clone(),
             device_type: None,
-            certification_id: product.certificate_id.clone(),
+            certificate_id: product.certificate_id.clone(),
             certification_date: None,
             software_version: None,
             hardware_version: None,
@@ -69,9 +81,15 @@ impl ProductSchemaAdapter {
             tis_trp_tested: None,
             specification_version: None,
             transport_interface: None,
-            // primary_device_type_id removed
+            primary_device_type_ids: None,
             application_categories: None,
-        });
+            description: None,
+            compliance_document_url: None,
+            program_type: Some("Matter".to_string()),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let detail = detail.unwrap_or(&fallback_detail);
 
         MatterProduct {
             id: None,

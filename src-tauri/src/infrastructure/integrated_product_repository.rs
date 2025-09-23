@@ -18,7 +18,9 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::{Row, sqlite::SqlitePool};
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::{debug, info};
+use super::write_lock_tracker; // for snapshot during tx begin
 
 // Lightweight retry helper for transient SQLITE_BUSY / locked situations.
 async fn retry_sqlite_busy<F, Fut, T>(label: &str, mut op: F) -> Result<T>
@@ -29,9 +31,18 @@ where
     let mut attempt = 0u32;
     let max_attempts = 5u32;
     let mut backoff = 80u64; // ms
+    let started = Instant::now();
     loop {
         match op().await {
-            Ok(v) => return Ok(v),
+            Ok(v) => {
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                if attempt > 0 {
+                    tracing::info!(target="persistence", label, attempts=attempt+1, elapsed_ms, "Operation succeeded after retries");
+                } else {
+                    tracing::debug!(target="persistence", label, elapsed_ms, "Operation succeeded (no retries)");
+                }
+                return Ok(v);
+            }
             Err(e) => {
                 let msg = format!("{e}");
                 if (msg.contains("database is locked") || msg.contains("SQLITE_BUSY")) && attempt + 1 < max_attempts {
@@ -42,7 +53,8 @@ where
                     continue;
                 }
                 if msg.contains("database is locked") || msg.contains("SQLITE_BUSY") {
-                    tracing::error!(target="persistence", attempts=attempt+1, label, "Retry exhaustion for SQLITE_BUSY");
+                    let elapsed_ms = started.elapsed().as_millis() as u64;
+                    tracing::error!(target="persistence", attempts=attempt+1, label, elapsed_ms, "Retry exhaustion for SQLITE_BUSY");
                     // Best-effort: try to increment global lock counter if AppState accessible via once_cell
                     if let Some(app_state) = crate::application::app_handle_access::get_app_state() {
                         // fire and forget
@@ -1032,6 +1044,281 @@ impl IntegratedProductRepository {
             );
             Ok((false, true)) // updated=false, created=true
         }
+    }
+
+    /// Bulk create or update multiple ProductDetails in a single transaction
+    /// This method processes all details together to avoid SQLITE_BUSY errors
+    /// Returns total counts: (`total_updated`: usize, `total_created`: usize)
+    ///
+    /// # Errors
+    /// Returns an error if the transaction or any database operations fail.
+    pub async fn bulk_create_or_update_product_details(
+        &self,
+        details: &[ProductDetail],
+    ) -> Result<(usize, usize)> {
+        if details.is_empty() {
+            return Ok((0, 0));
+        }
+
+        let _guard = if let Some(m) = &self.write_mutex { Some(m.lock().await) } else { None };
+        
+        // Use retry logic for the entire bulk operation to handle SQLITE_BUSY
+        retry_sqlite_busy("bulk_create_or_update_product_details", || async {
+            self.bulk_create_or_update_product_details_impl(details).await
+        }).await
+    }
+
+    /// Internal implementation of bulk operations (wrapped by retry logic)
+    async fn bulk_create_or_update_product_details_impl(
+        &self,
+        details: &[ProductDetail],
+    ) -> Result<(usize, usize)> {
+        let chunk_size: usize = std::env::var("MC_BULK_TX_CHUNK_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100);
+
+        let mut total_updated = 0;
+        let mut total_created = 0;
+
+        let overall_started = Instant::now();
+        for (chunk_index, chunk) in details.chunks(chunk_size).enumerate() {
+            // Transaction begin with focused retry (instead of retrying whole bulk logic)
+            let chunk_started = Instant::now();
+            let begin_max_attempts: u32 = std::env::var("MC_TX_BEGIN_MAX_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(6);
+            let initial_backoff_ms: u64 = std::env::var("MC_TX_BEGIN_INITIAL_BACKOFF_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(30);
+            let backoff_factor: u64 = std::env::var("MC_TX_BEGIN_BACKOFF_FACTOR").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+            let mut attempt: u32 = 0;
+            let mut backoff = initial_backoff_ms;
+            let mut tx_opt = None;
+            while attempt < begin_max_attempts {
+                let lock_snapshot = write_lock_tracker::snapshot();
+                let snapshot_count = lock_snapshot.len();
+                // Try to begin
+                match self.pool.begin().await {
+                    Ok(t) => {
+                        tracing::info!(target="bulk_persist", chunk_index, attempt, snapshot_count, "tx_begin_success");
+                        tx_opt = Some(t);
+                        break;
+                    }
+                    Err(e) => {
+                        let now = Utc::now();
+                        let ls: Vec<String> = lock_snapshot.into_iter().map(|i| {
+                            let age_ms = (now - i.started_at).num_milliseconds();
+                            format!("id={} label={} age_ms={}", i.id, i.label, age_ms)
+                        }).collect();
+                        tracing::warn!(target="bulk_persist", chunk_index, attempt, error=%e, snapshot_count, active_writes=%ls.join(";"), backoff_ms=backoff, "tx_begin_busy_or_error");
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
+                        backoff = backoff.saturating_mul(backoff_factor).min(1500);
+                    }
+                }
+                attempt += 1;
+            }
+            let mut tx = match tx_opt { Some(t) => t, None => {
+                return Err(anyhow::anyhow!("Failed to begin transaction after {} attempts", attempt));
+            }};
+            // Register per-chunk write transaction for diagnostics (dropped when chunk scope ends)
+            let tx_guard = write_lock_tracker::register("bulk_chunk", "product detail bulk chunk tx");
+            tracing::info!(target="bulk_persist", chunk_index, count=chunk.len(), guard_id=%tx_guard.id(), "Starting bulk product detail persistence chunk");
+
+            let before_updated = total_updated;
+            let before_created = total_created;
+
+            for detail in chunk {
+                // Apply URL normalization
+                let normalized_url = Self::normalize_url(&detail.url);
+                let mut detail = detail.clone();
+                detail.url = normalized_url;
+
+                // Check if record exists using a more efficient EXISTS query
+                let existing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM product_details WHERE url = ?)")
+                    .bind(&detail.url)
+                    .fetch_one(&mut *tx)
+                    .await?;
+
+                let now = chrono::Utc::now();
+
+                if existing {
+                    // Update existing record
+                    let certification_date = Self::normalize_cert_date(&detail.certification_date);
+                    let primary_device_type_ids_json = detail.primary_device_type_ids.as_ref()
+                        .map(|ids| serde_json::to_string(ids).unwrap_or_default());
+
+                    let derived_id: Option<String> = match (detail.page_id, detail.index_in_page) {
+                        (Some(pid), Some(idx)) => Some(format!("p{:04}i{:02}", pid, idx)),
+                        _ => None,
+                    };
+
+                    if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
+                        let occupant: Option<String> = sqlx::query_scalar(
+                            "SELECT url FROM product_details WHERE page_id = ? AND index_in_page = ? AND url != ?"
+                        )
+                        .bind(pid)
+                        .bind(idx)
+                        .bind(&detail.url)
+                        .fetch_optional(&mut *tx)
+                        .await?;
+
+                        if let Some(occupant_url) = occupant {
+                            sqlx::query(
+                                "UPDATE product_details SET page_id = NULL, index_in_page = NULL, id = NULL, updated_at = ? WHERE url = ?"
+                            )
+                            .bind(now)
+                            .bind(&occupant_url)
+                            .execute(&mut *tx)
+                            .await?;
+                            tracing::debug!(target="bulk_persist", occupant=%occupant_url, pid, idx, "vacated_slot_for_bulk_update");
+                        }
+                    }
+
+                    sqlx::query(
+                        r"
+                        UPDATE product_details SET
+                            page_id = ?, index_in_page = ?, id = ?, manufacturer = ?, model = ?, device_type = ?,
+                            certificate_id = ?, certification_date = ?, software_version = ?, hardware_version = ?,
+                            vid = ?, pid = ?, family_sku = ?, family_variant_sku = ?, firmware_version = ?, family_id = ?,
+                            tis_trp_tested = ?, specification_version = ?, transport_interface = ?,
+                            primary_device_type_ids = ?, application_categories = ?, description = ?,
+                            compliance_document_url = ?, program_type = ?, updated_at = ?
+                        WHERE url = ?
+                        "
+                    )
+                    .bind(detail.page_id)
+                    .bind(detail.index_in_page)
+                    .bind(derived_id)
+                    .bind(&detail.manufacturer)
+                    .bind(&detail.model)
+                    .bind(&detail.device_type)
+                    .bind(&detail.certificate_id)
+                    .bind(certification_date)
+                    .bind(&detail.software_version)
+                    .bind(&detail.hardware_version)
+                    .bind(detail.vid)
+                    .bind(detail.pid)
+                    .bind(&detail.family_sku)
+                    .bind(&detail.family_variant_sku)
+                    .bind(&detail.firmware_version)
+                    .bind(&detail.family_id)
+                    .bind(&detail.tis_trp_tested)
+                    .bind(&detail.specification_version)
+                    .bind(&detail.transport_interface)
+                    .bind(primary_device_type_ids_json)
+                    .bind(&detail.application_categories)
+                    .bind(&detail.description)
+                    .bind(&detail.compliance_document_url)
+                    .bind(&detail.program_type)
+                    .bind(now)
+                    .bind(&detail.url)
+                    .execute(&mut *tx)
+                    .await?;
+
+                    if detail.page_id.is_some() && detail.index_in_page.is_some() {
+                        sqlx::query(
+                            "UPDATE products SET page_id = ?, index_in_page = ?, updated_at = ? WHERE url = ?"
+                        )
+                        .bind(detail.page_id)
+                        .bind(detail.index_in_page)
+                        .bind(now)
+                        .bind(&detail.url)
+                        .execute(&mut *tx)
+                        .await
+                        .ok();
+                    }
+
+                    total_updated += 1;
+                } else {
+                    // Insert new record
+                    let certification_date = Self::normalize_cert_date(&detail.certification_date);
+                    let primary_device_type_ids_json = detail.primary_device_type_ids.as_ref()
+                        .map(|ids| serde_json::to_string(ids).unwrap_or_default());
+
+                    let derived_id: Option<String> = match (detail.page_id, detail.index_in_page) {
+                        (Some(pid), Some(idx)) => Some(format!("p{:04}i{:02}", pid, idx)),
+                        _ => None,
+                    };
+
+                    if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
+                        let occupant: Option<String> = sqlx::query_scalar(
+                            "SELECT url FROM product_details WHERE page_id = ? AND index_in_page = ?"
+                        )
+                        .bind(pid)
+                        .bind(idx)
+                        .fetch_optional(&mut *tx)
+                        .await?;
+
+                        if let Some(occupant_url) = occupant {
+                            sqlx::query(
+                                "UPDATE product_details SET page_id = NULL, index_in_page = NULL, id = NULL, updated_at = ? WHERE url = ?"
+                            )
+                            .bind(now)
+                            .bind(&occupant_url)
+                            .execute(&mut *tx)
+                            .await?;
+                            tracing::debug!(target="bulk_persist", occupant=%occupant_url, pid, idx, "vacated_slot_for_bulk_insert");
+                        }
+                    }
+
+                    sqlx::query(
+                        r"
+                        INSERT INTO product_details (
+                            url, page_id, index_in_page, id, manufacturer, model, device_type,
+                            certificate_id, certification_date, software_version, hardware_version,
+                            vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
+                            tis_trp_tested, specification_version, transport_interface,
+                            primary_device_type_ids, application_categories, description,
+                            compliance_document_url, program_type, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        "
+                    )
+                    .bind(&detail.url)
+                    .bind(detail.page_id)
+                    .bind(detail.index_in_page)
+                    .bind(derived_id)
+                    .bind(&detail.manufacturer)
+                    .bind(&detail.model)
+                    .bind(&detail.device_type)
+                    .bind(&detail.certificate_id)
+                    .bind(certification_date)
+                    .bind(&detail.software_version)
+                    .bind(&detail.hardware_version)
+                    .bind(detail.vid)
+                    .bind(detail.pid)
+                    .bind(&detail.family_sku)
+                    .bind(&detail.family_variant_sku)
+                    .bind(&detail.firmware_version)
+                    .bind(&detail.family_id)
+                    .bind(&detail.tis_trp_tested)
+                    .bind(&detail.specification_version)
+                    .bind(&detail.transport_interface)
+                    .bind(primary_device_type_ids_json)
+                    .bind(&detail.application_categories)
+                    .bind(&detail.description)
+                    .bind(&detail.compliance_document_url)
+                    .bind(&detail.program_type)
+                    .bind(now)
+                    .bind(now)
+                    .execute(&mut *tx)
+                    .await?;
+
+                    total_created += 1;
+                }
+            }
+
+            // Commit the transaction for the chunk
+            if let Err(e) = tx.commit().await {
+                let chunk_elapsed_ms = chunk_started.elapsed().as_millis() as u64;
+                tracing::error!(target="bulk_persist", chunk_index, count=chunk.len(), guard_id=%tx_guard.id(), updated_in_chunk=total_updated-before_updated, created_in_chunk=total_created-before_created, chunk_elapsed_ms, error=%e, "Chunk commit failed");
+                return Err(e.into());
+            } else {
+                let chunk_elapsed_ms = chunk_started.elapsed().as_millis() as u64;
+                tracing::info!(target="bulk_persist", chunk_index, count=chunk.len(), guard_id=%tx_guard.id(), updated_in_chunk=total_updated-before_updated, created_in_chunk=total_created-before_created, chunk_elapsed_ms, "Chunk committed");
+            }
+        }
+        
+        let overall_elapsed_ms = overall_started.elapsed().as_millis() as u64;
+        tracing::info!(target="bulk_persist", updated=total_updated, created=total_created, total=details.len(), overall_elapsed_ms, "Bulk product detail persistence completed");
+
+        Ok((total_updated, total_created))
     }
 
     /// Bulk repair: synchronize products.page_id/index_in_page from product_details when detail has coords and product is NULL or mismatched.
@@ -2274,5 +2561,185 @@ impl IntegratedProductRepository {
             .collect();
 
         Ok(products)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::product::ProductDetail;
+    use chrono::Utc;
+    use sqlx::SqlitePool;
+
+    async fn create_test_db() -> SqlitePool {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        
+        // Create the product_details table for testing
+        sqlx::query(r"
+            CREATE TABLE IF NOT EXISTS product_details (
+                url TEXT PRIMARY KEY,
+                page_id INTEGER,
+                index_in_page INTEGER,
+                id TEXT,
+                manufacturer TEXT,
+                model TEXT,
+                device_type TEXT,
+                certificate_id TEXT,
+                certification_date TEXT,
+                software_version TEXT,
+                hardware_version TEXT,
+                vid INTEGER,
+                pid INTEGER,
+                family_sku TEXT,
+                family_variant_sku TEXT,
+                firmware_version TEXT,
+                family_id TEXT,
+                tis_trp_tested TEXT,
+                specification_version TEXT,
+                transport_interface TEXT,
+                primary_device_type_ids TEXT,
+                application_categories TEXT,
+                description TEXT,
+                compliance_document_url TEXT,
+                program_type TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(page_id, index_in_page)
+            )
+        ")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Create the products table for testing (order must match INSERT statement)
+        sqlx::query(r"
+            CREATE TABLE IF NOT EXISTS products (
+                id TEXT,
+                url TEXT PRIMARY KEY,
+                manufacturer TEXT,
+                model TEXT,
+                certificate_id TEXT,
+                page_id INTEGER,
+                index_in_page INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(page_id, index_in_page)
+            )
+        ")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        pool
+    }
+
+    fn create_test_product_detail(url: &str, page_id: Option<i32>, index_in_page: Option<i32>) -> ProductDetail {
+        ProductDetail {
+            url: url.to_string(),
+            page_id,
+            index_in_page,
+            id: None,
+            manufacturer: Some("Test Manufacturer".to_string()),
+            model: Some("Test Model".to_string()),
+            device_type: Some("Light Bulb".to_string()),
+            certificate_id: Some("TEST123".to_string()),
+            certification_date: Some("2024-01-01".to_string()),
+            software_version: Some("1.0.0".to_string()),
+            hardware_version: Some("1.0.0".to_string()),
+            vid: Some(1234),
+            pid: Some(5678),
+            family_sku: Some("FAM-SKU".to_string()),
+            family_variant_sku: Some("FAM-VAR-SKU".to_string()),
+            firmware_version: Some("1.0.0".to_string()),
+            family_id: Some("FAM-ID".to_string()),
+            tis_trp_tested: Some("Yes".to_string()),
+            specification_version: Some("1.0".to_string()),
+            transport_interface: Some("WiFi".to_string()),
+            primary_device_type_ids: Some(vec![256, 257]),
+            application_categories: Some("Lighting".to_string()),
+            description: Some("Test product description".to_string()),
+            compliance_document_url: Some("https://example.com/doc.pdf".to_string()),
+            program_type: Some("Matter".to_string()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_bulk_create_product_details() {
+        let pool = create_test_db().await;
+        let repo = IntegratedProductRepository::new(pool);
+        
+        // Create test products
+        let products = vec![
+            create_test_product_detail("https://example.com/product1", Some(1), Some(0)),
+            create_test_product_detail("https://example.com/product2", Some(1), Some(1)),
+            create_test_product_detail("https://example.com/product3", Some(1), Some(2)),
+        ];
+        
+        // Test bulk insert
+        let (updated, created) = repo.bulk_create_or_update_product_details(&products).await.unwrap();
+        
+        assert_eq!(updated, 0, "Should have 0 updates for new records");
+        assert_eq!(created, 3, "Should have created 3 new records");
+        
+        // Verify records were inserted
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_details")
+            .fetch_one(&*repo.pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 3, "Should have 3 records in the database");
+    }
+
+    #[tokio::test]
+    async fn test_bulk_update_product_details() {
+        let pool = create_test_db().await;
+        let repo = IntegratedProductRepository::new(pool);
+        
+        // First, insert some products
+        let initial_products = vec![
+            create_test_product_detail("https://example.com/product1", Some(1), Some(0)),
+            create_test_product_detail("https://example.com/product2", Some(1), Some(1)),
+        ];
+        
+        let (_, created) = repo.bulk_create_or_update_product_details(&initial_products).await.unwrap();
+        assert_eq!(created, 2);
+        
+        // Now update the same products with different data
+        let mut updated_products = initial_products.clone();
+        updated_products[0].manufacturer = Some("Updated Manufacturer 1".to_string());
+        updated_products[1].manufacturer = Some("Updated Manufacturer 2".to_string());
+        
+        let (updated, created) = repo.bulk_create_or_update_product_details(&updated_products).await.unwrap();
+        
+        assert_eq!(updated, 2, "Should have updated 2 existing records");
+        assert_eq!(created, 0, "Should have created 0 new records");
+        
+        // Verify the updates
+        let manufacturer: String = sqlx::query_scalar("SELECT manufacturer FROM product_details WHERE url = ?")
+            .bind("https://example.com/product1")
+            .fetch_one(&*repo.pool)
+            .await
+            .unwrap();
+        assert_eq!(manufacturer, "Updated Manufacturer 1");
+    }
+
+    #[tokio::test] 
+    async fn test_bulk_empty_list() {
+        let pool = create_test_db().await;
+        let repo = IntegratedProductRepository::new(pool);
+        
+        // Test empty list
+        let (updated, created) = repo.bulk_create_or_update_product_details(&[]).await.unwrap();
+        
+        assert_eq!(updated, 0, "Should have 0 updates for empty list");
+        assert_eq!(created, 0, "Should have 0 creations for empty list");
+        
+        // Verify no records were created
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_details")
+            .fetch_one(&*repo.pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "Should have 0 records in the database");
     }
 }

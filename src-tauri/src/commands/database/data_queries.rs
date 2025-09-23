@@ -788,6 +788,75 @@ pub struct PerPageDebugStat {
     pub would_fill: u64,
 }
 
+// -----------------------------------------------------------------------------
+// Page coverage diagnostic: both_null 대상이 어느 (추정) 페이지 구간에 분포하는지 빠르게 계산
+// products.created_at DESC 순서를 페이지 단위(12개)로 가정하여 approximate_page 계산.
+// 사이트 페이지 사이즈(12)는 rehydrate 와 동일 가정.
+// -----------------------------------------------------------------------------
+#[derive(serde::Serialize, Clone)]
+pub struct PageCoverageBucket { pub page: u32, pub both_null_count: u32 }
+#[derive(serde::Serialize)]
+pub struct PageCoverageDiagnosticResult {
+    pub total_both_null: u32,
+    pub distinct_urls: u32,
+    pub buckets: Vec<PageCoverageBucket>,
+    pub top_pages: Vec<PageCoverageBucket>,
+    pub suggested_ranges: Vec<String>,
+    pub note: String,
+}
+
+#[tauri::command]
+pub async fn page_coverage_diagnostic(state: State<'_, _AppStateForRepair>, limit_pages: Option<u32>, top_n: Option<usize>) -> Result<PageCoverageDiagnosticResult, String> {
+    let pool = state.get_database_pool().await.map_err(|e| e.to_string())?;
+    // 1. 대상 URL 수집 (both_null)
+    let rows = sqlx::query(r"SELECT p.url, p.created_at FROM products p JOIN product_details d ON d.url = p.url
+        WHERE (p.page_id IS NULL OR p.index_in_page IS NULL)
+          AND (d.page_id IS NULL OR d.index_in_page IS NULL)")
+        .fetch_all(&pool).await.map_err(|e| e.to_string())?;
+    let total_both_null = rows.len() as u32;
+    if total_both_null == 0 {
+        return Ok(PageCoverageDiagnosticResult { total_both_null: 0, distinct_urls: 0, buckets: vec![], top_pages: vec![], suggested_ranges: vec![], note: "no both_null targets".into() });
+    }
+    // 2. created_at 내림차순 rank 계산을 위해 전체 products ordering (필요 최소 칼럼) 가져오기
+    //    메모리 비용을 줄이기 위해 최대 페이지 제한(limit_pages) 적용: limit_pages * 12 * 2 (여유) 정도만.
+    let page_size = 12u32; // 사이트 canonical
+    let scan_pages = limit_pages.unwrap_or(500).max(10); // 기본 500페이지 스캔(6000 row) 충분히 작을 것
+    let scan_rows_cap = (scan_pages * page_size * 2) as i64; // 여유
+    let product_rows = sqlx::query("SELECT url FROM products ORDER BY created_at DESC LIMIT ?")
+        .bind(scan_rows_cap)
+        .fetch_all(&pool).await.map_err(|e| e.to_string())?;
+    // 3. URL -> approx_page 매핑
+    use std::collections::HashMap;
+    let mut approx: HashMap<String, u32> = HashMap::new();
+    for (idx, r) in product_rows.iter().enumerate() { if let Ok(u) = r.try_get::<String, _>("url") { approx.insert(u, (idx as u32)/page_size + 1); } }
+    // 4. buckets
+    let mut bucket_map: HashMap<u32, u32> = HashMap::new();
+    let mut unmatched = 0u32;
+    for r in &rows { if let Ok(u) = r.try_get::<String,_>("url") { if let Some(p) = approx.get(&u) { *bucket_map.entry(*p).or_insert(0) += 1; } else { unmatched+=1; } } }
+    let mut buckets: Vec<PageCoverageBucket> = bucket_map.iter().map(|(p,c)| PageCoverageBucket { page:*p, both_null_count:*c }).collect();
+    buckets.sort_by_key(|b| b.page);
+    // 5. top pages by descending count
+    let mut top_pages = buckets.clone();
+    top_pages.sort_by(|a,b| b.both_null_count.cmp(&a.both_null_count));
+    let top_n_val = top_n.unwrap_or(10).min(50);
+    top_pages.truncate(top_n_val);
+    // 6. suggested ranges (그룹 연속 페이지 묶음)
+    let mut suggested_ranges: Vec<String> = Vec::new();
+    if !buckets.is_empty() {
+        let mut start = buckets[0].page;
+        let mut prev = start;
+        for b in buckets.iter().skip(1) {
+            if b.page == prev + 1 { prev = b.page; continue; }
+            // flush
+            if start == prev { suggested_ranges.push(format!("{}", start)); } else { suggested_ranges.push(format!("{}-{}", start, prev)); }
+            start = b.page; prev = b.page;
+        }
+        if start == prev { suggested_ranges.push(format!("{}", start)); } else { suggested_ranges.push(format!("{}-{}", start, prev)); }
+    }
+    let note = if unmatched > 0 { format!("unmatched_urls={unmatched} (urls outside scanned range or very old)") } else { "ok".into() };
+    Ok(PageCoverageDiagnosticResult { total_both_null, distinct_urls: total_both_null, buckets, top_pages, suggested_ranges, note })
+}
+
 fn parse_page_ranges(expr: &str) -> Vec<u32> {
     // 허용 패턴: 콤마 구분, 각 토큰은 단일 숫자 또는 start-end
     let mut out = Vec::new();

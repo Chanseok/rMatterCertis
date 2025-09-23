@@ -186,10 +186,26 @@ export default function CrawlingEngineTabSimple() {
       })
       .map((g: any) => g.current_page_number)
       .filter((p: any) => typeof p === "number" && p > 0);
-    if (pages.length === 0) return null;
+    
+    // Add missing pages from page sequence gaps
+    const missingPages: number[] = [];
+    if (diag.missing_pages && Array.isArray(diag.missing_pages)) {
+      for (const gap of diag.missing_pages) {
+        if (gap.start_physical_page != null && gap.end_physical_page != null) {
+          // Add all pages in the gap range
+          for (let p = gap.end_physical_page; p <= gap.start_physical_page; p++) {
+            if (p > 0) missingPages.push(p);
+          }
+        }
+      }
+    }
+    
+    // Combine existing problematic pages with missing pages
+    const allPages = [...pages, ...missingPages];
+    if (allPages.length === 0) return null;
     // Unique and neighbor expansion (±1) within site bounds
     const set = new Set<number>();
-    for (const p of pages) set.add(p);
+    for (const p of allPages) set.add(p);
     if (totalPages && totalPages > 1) {
       for (const p of Array.from(set)) {
         if (p - 1 >= 1) set.add(p - 1);

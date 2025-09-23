@@ -64,3 +64,6 @@ out/
 
 # dep graphs
 docs/dep-graphs/
+ 
+# Prevent accidental recreation of file-module twin (must use directory style)
+src-tauri/src/infrastructure.rs

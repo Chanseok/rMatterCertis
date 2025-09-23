@@ -48,24 +48,23 @@ impl StageLogic for DataSavingLogic {
             }
         };
 
-        // Persist each product detail; count inserts/updates using repository helpers
+        // Persist all product details in a single bulk transaction to avoid SQLITE_BUSY errors
         let repo = deps.repo;
         let policy = deps.duplicate_policy.clone();
-        let mut inserted: u32 = 0;
-        let mut updated: u32 = 0;
-        for detail in products {
-            match repo.create_or_update_product_detail(detail).await {
-                Ok((was_updated, was_created)) => {
-                    if was_created {
-                        inserted = inserted.saturating_add(1);
-                    }
-                    if was_updated {
-                        updated = updated.saturating_add(1);
-                    }
-                    if !was_created
-                        && !was_updated
-                        && policy == DuplicatePersistencePolicy::UpdateIdIndexOnly
-                    {
+        
+        // Use bulk operation for better performance and reliability
+        let (updated, inserted) = match repo.bulk_create_or_update_product_details(&products).await {
+            Ok((updated, inserted)) => {
+                let updated = updated as u32;
+                let inserted = inserted as u32;
+                
+                // Handle UpdateIdIndexOnly policy for products that weren't updated/created
+                let total_processed = updated + inserted;
+                let attempted = products.len() as u32;
+                
+                if policy == DuplicatePersistencePolicy::UpdateIdIndexOnly && total_processed < attempted {
+                    // For products that weren't updated/created, force update their position if they have coordinates
+                    for detail in products.iter() {
                         if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
                             let _ = repo
                                 .force_update_position_by_url(&detail.url, pid, idx)
@@ -73,14 +72,16 @@ impl StageLogic for DataSavingLogic {
                         }
                     }
                 }
-                Err(e) => {
-                    return Err(StageLogicError::Internal(format!(
-                        "Persistence failed for URL {}: {}",
-                        detail.url, e
-                    )));
-                }
+                
+                (updated, inserted)
             }
-        }
+            Err(e) => {
+                return Err(StageLogicError::Internal(format!(
+                    "Bulk persistence failed for {} products: {}",
+                    products.len(), e
+                )));
+            }
+        };
         let attempted = products.len() as u32;
         let duration_ms = start.elapsed().as_millis() as u64;
         let enhanced = StageItemResult {

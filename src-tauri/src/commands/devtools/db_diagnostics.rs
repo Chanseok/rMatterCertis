@@ -8,6 +8,151 @@ use std::collections::{BTreeMap, HashMap};
 use tauri::Manager; // for try_state
 use tauri::{AppHandle, State};
 use tracing::{debug, info};
+use chrono::{DateTime, Utc};
+
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../../generated-types/")]
+pub struct DbConnectionDiagnostics {
+    pub timestamp_utc: String,
+    pub pool_closed: bool,
+    pub acquire_timeout_ms: u64,
+    pub simple_select_ok: bool,
+    pub concurrent_connections: Option<u32>,
+    pub busy_immediate: bool,
+    pub write_probe_ok: bool,
+    pub write_probe_elapsed_ms: Option<u64>,
+    pub write_probe_error: Option<String>,
+    pub notes: Vec<String>,
+}
+
+/// Lightweight DB connection health check.
+/// - Attempts immediate PRAGMA busy_timeout=1 then a SELECT 1.
+/// - Reports whether pool is closed and captures active connection count if possible.
+#[tauri::command(async)]
+pub async fn diagnose_database_connection(app_state: tauri::State<'_, AppState>) -> Result<DbConnectionDiagnostics, String> {
+    let t_start = std::time::Instant::now();
+    info!(target: "db_diag", "🔍 diagnose_database_connection invoked");
+    let pool = app_state
+        .get_database_pool()
+        .await
+        .map_err(|e| format!("db pool error: {e}"))?;
+
+    let mut notes = Vec::new();
+    let pool_closed = pool.is_closed();
+    if pool_closed { notes.push("Pool is marked closed".into()); }
+
+    // 전용 커넥션을 따로 획득하여 busy_timeout 변형을 그 안에만 국한
+    let mut dedicated_conn = match pool.acquire().await {
+        Ok(c) => c,
+        Err(e) => return Err(format!("acquire failed: {e}")),
+    };
+
+    // Set extremely small timeout to probe for immediate lock contention (read) - isolated
+    let _ = sqlx::query("PRAGMA busy_timeout=1").execute(&mut *dedicated_conn).await;
+    let busy_immediate = match sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&mut *dedicated_conn).await {
+        Ok(_) => true,
+        Err(e) => { notes.push(format!("Immediate SELECT failed: {e}")); false }
+    };
+
+    // Restore normal timeout on the dedicated connection only
+    let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(&mut *dedicated_conn).await;
+
+    // Run a second simple select to confirm operational
+    let simple_select_ok = match sqlx::query_scalar::<_, i64>("SELECT 42").fetch_one(&mut *dedicated_conn).await {
+        Ok(v) => v == 42,
+        Err(e) => { notes.push(format!("Second SELECT failed: {e}")); false }
+    };
+
+    // Active connection count not directly available for SQLite (leave None for now)
+    let concurrent_connections: Option<u32> = None;
+
+    // --- Write probe (BEGIN IMMEDIATE with small retry window) ---
+    let mut write_probe_ok = false;
+    let mut write_probe_elapsed_ms: Option<u64> = None;
+    let mut write_probe_error: Option<String> = None;
+    {
+        let start = std::time::Instant::now();
+        let max_attempts = 3u8;
+        for attempt in 1..=max_attempts {
+            let attempt_start = std::time::Instant::now();
+            match pool.acquire().await {
+                Ok(mut conn) => {
+                    // Force aggressive immediate lock detection for this probe attempt
+                    let _ = sqlx::query("PRAGMA busy_timeout=1").execute(&mut *conn).await;
+                    match sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await {
+                        Ok(_) => {
+                            write_probe_ok = true;
+                            // Release lock immediately
+                            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                            let elapsed = start.elapsed().as_millis() as u64;
+                            write_probe_elapsed_ms = Some(elapsed);
+                            notes.push(format!("Write probe success (attempt {} in {} ms)", attempt, elapsed));
+                            break;
+                        }
+                        Err(e) => {
+                            let err_str = e.to_string();
+                            // Attempt rollback in case partial BEGIN succeeded
+                            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                            // Classify busy/locked vs other errors
+                            let lower = err_str.to_lowercase();
+                            let is_locked = lower.contains("locked") || lower.contains("busy");
+                            if attempt == max_attempts {
+                                write_probe_error = Some(err_str.clone());
+                                let elapsed_total = start.elapsed().as_millis() as u64;
+                                write_probe_elapsed_ms = Some(elapsed_total);
+                                if is_locked {
+                                    notes.push(format!("Write probe busy after {} attempts ({} ms total)", attempt, elapsed_total));
+                                } else {
+                                    notes.push(format!("Write probe failed (non-lock error) after {} attempts: {}", attempt, err_str));
+                                }
+                            } else {
+                                // Intermediate attempt note (only if non-lock error to help debugging)
+                                if !is_locked {
+                                    notes.push(format!("Write probe attempt {} non-lock error: {}", attempt, err_str));
+                                }
+                                // Small backoff (cumulative elapsed is short < ~400ms)
+                                tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    let err_str = format!("acquire failed: {e}");
+                    if attempt == max_attempts {
+                        write_probe_error = Some(err_str.clone());
+                        let elapsed_total = start.elapsed().as_millis() as u64;
+                        write_probe_elapsed_ms = Some(elapsed_total);
+                        notes.push(format!("Write probe aborted: connection acquire failed after {} attempts ({} ms): {}", attempt, elapsed_total, err_str));
+                    } else {
+                        notes.push(format!("Write probe acquire attempt {} failed: {}", attempt, err_str));
+                        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                    }
+                }
+            }
+            // record per-attempt elapsed if success did not occur
+            if write_probe_ok { break; }
+            let _attempt_elapsed = attempt_start.elapsed();
+        }
+        if write_probe_ok && write_probe_error.is_none() && write_probe_elapsed_ms.is_none() {
+            write_probe_elapsed_ms = Some(start.elapsed().as_millis() as u64);
+        }
+    }
+
+    let elapsed_total = t_start.elapsed().as_millis() as u64;
+    info!(target: "db_diag", busy_immediate, simple_select_ok, write_probe_ok, write_probe_elapsed_ms = write_probe_elapsed_ms.unwrap_or(0), write_probe_error = write_probe_error.as_deref().unwrap_or(""), elapsed_ms = elapsed_total, "diagnose_database_connection completed");
+    Ok(DbConnectionDiagnostics {
+        timestamp_utc: DateTime::<Utc>::from(Utc::now()).to_rfc3339(),
+        pool_closed,
+        acquire_timeout_ms: 1,
+        simple_select_ok,
+        concurrent_connections,
+        busy_immediate,
+        write_probe_ok,
+        write_probe_elapsed_ms,
+        write_probe_error,
+        notes,
+    })
+}
 
 #[derive(Debug, Serialize)]
 pub struct DuplicatePosition {
@@ -52,6 +197,9 @@ pub struct DbPaginationMismatchReport {
     pub products_missing_coords: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coord_mismatch_samples: Option<Vec<CoordMismatchSample>>,
+    // Missing page sequence detection
+    pub missing_pages: Vec<PageSequenceGap>,
+    pub total_missing_pages: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -61,6 +209,16 @@ pub struct CoordMismatchSample {
     pub d_idx: Option<i32>,
     pub p_pid: Option<i32>,
     pub p_idx: Option<i32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PageSequenceGap {
+    pub start_page: i32,
+    pub end_page: i32,
+    pub missing_count: u32,
+    pub gap_type: String, // "single" or "range"
+    pub start_physical_page: Option<u32>,
+    pub end_physical_page: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -91,94 +249,138 @@ pub async fn scan_db_pagination_mismatches(
         .await
         .map_err(|e| format!("DB pool unavailable: {e}"))?;
 
-    // === Pre-pass (best effort). If DB is busy (crawler writing), skip instead of failing. ===
+    // 🔧 Quick DB lock test (전용 커넥션 사용) - 풀의 기본 timeout 오염 방지
+    let mut diag_conn = match pool.acquire().await {
+        Ok(c) => c,
+        Err(e) => return Err(format!("acquire failed: {e}")),
+    };
+    let _ = sqlx::query("PRAGMA busy_timeout=10").execute(&mut *diag_conn).await; // Very short timeout
+    match sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&mut *diag_conn).await {
+        Ok(_) => {
+            // DB is available, continue with diagnostics
+        }
+        Err(e) if e.to_string().contains("locked") || e.to_string().contains("busy") => {
+            info!(target: "db_diagnostics", "DB is currently locked - skipping diagnostics to avoid interfering with crawling");
+            // busy_timeout 조정은 전용 커넥션에만 적용되었으므로 별도 복구 불필요
+            return Ok(DbPaginationMismatchReport {
+                total_products: 0,
+                max_page_id_db: None,
+                total_pages_site: None,
+                items_on_last_page: None,
+                group_summaries: vec![],
+                duplicate_positions: vec![],
+                prepass: None,
+                coord_mismatch: None,
+                details_missing_coords: None,
+                products_missing_coords: None,
+                coord_mismatch_samples: None,
+                missing_pages: vec![],
+                total_missing_pages: 0,
+            });
+        }
+        Err(e) => return Err(e.to_string()),
+    }
+
+    // === Pre-pass (best effort). 쓰기 작업은 환경 변수로 명시적으로 허용된 경우에만 수행. ===
     let mut prepass = PrepassSummary::default();
-    // Small busy timeout to wait briefly for writer release
-    let _ = sqlx::query("PRAGMA busy_timeout=2500").execute(&pool).await;
-    if let Ok(mut tx) = pool.begin().await {
-        // Wrap the whole aligning logic so any lock/busy error just skips
-        match async {
-            let res0 = sqlx::query_scalar::<_, i64>(r"
-                SELECT COUNT(*) FROM product_details pd
-                WHERE EXISTS (SELECT 1 FROM products WHERE products.url = pd.url)
-                  AND (SELECT page_id FROM products WHERE products.url = pd.url) IS NOT NULL
-                  AND (SELECT index_in_page FROM products WHERE products.url = pd.url) IS NOT NULL
-                  AND EXISTS (
-                        SELECT 1 FROM product_details AS pd2
-                        WHERE pd2.page_id = (SELECT page_id FROM products WHERE products.url = pd.url)
-                          AND pd2.index_in_page = (SELECT index_in_page FROM products WHERE products.url = pd.url)
-                  )
-                  AND (
-                        COALESCE(pd.page_id, -1) != COALESCE((SELECT page_id FROM products WHERE products.url = pd.url), -1)
-                     OR COALESCE(pd.index_in_page, -1) != COALESCE((SELECT index_in_page FROM products WHERE products.url = pd.url), -1)
-                     OR pd.id != printf('p%04di%02d',
-                                (SELECT page_id FROM products WHERE products.url = pd.url),
-                                (SELECT index_in_page FROM products WHERE products.url = pd.url))
-                  )
-            ").fetch_one(&mut *tx).await.unwrap_or(0);
+    let prepass_writes_enabled = std::env::var("MC_DIAGNOSTICS_PREPASS_WRITE").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+    if prepass_writes_enabled {
+        // 전용 커넥션 위에서만 timeout 조정
+        let prepass_conn = match pool.acquire().await { Ok(c) => Some(c), Err(e) => { info!(target="db_diagnostics", "prepass acquire failed: {e}"); None } };
+        if let Some(mut prepass_conn) = prepass_conn {
+            let _ = sqlx::query("PRAGMA busy_timeout=300").execute(&mut *prepass_conn).await;
+            // Manual transaction (BEGIN/COMMIT) to avoid needing trait-based begin()
+            if let Ok(_) = sqlx::query("BEGIN").execute(&mut *prepass_conn).await {
+                // Wrap the whole aligning logic so any lock/busy error just skips
+                let tx_result = async {
+                    let res0 = sqlx::query_scalar::<_, i64>(r"
+                        SELECT COUNT(*) FROM product_details pd
+                        WHERE EXISTS (SELECT 1 FROM products WHERE products.url = pd.url)
+                          AND (SELECT page_id FROM products WHERE products.url = pd.url) IS NOT NULL
+                          AND (SELECT index_in_page FROM products WHERE products.url = pd.url) IS NOT NULL
+                          AND EXISTS (
+                                SELECT 1 FROM product_details AS pd2
+                                WHERE pd2.page_id = (SELECT page_id FROM products WHERE products.url = pd.url)
+                                  AND pd2.index_in_page = (SELECT index_in_page FROM products WHERE products.url = pd.url)
+                          )
+                          AND (
+                                COALESCE(pd.page_id, -1) != COALESCE((SELECT page_id FROM products WHERE products.url = pd.url), -1)
+                             OR COALESCE(pd.index_in_page, -1) != COALESCE((SELECT index_in_page FROM products WHERE products.url = pd.url), -1)
+                             OR pd.id != printf('p%04di%02d',
+                                        (SELECT page_id FROM products WHERE products.url = pd.url),
+                                        (SELECT index_in_page FROM products WHERE products.url = pd.url))
+                          )
+                    ").fetch_one(&mut *prepass_conn).await.unwrap_or(0);
 
-            let res1 = sqlx::query(r"
-                UPDATE product_details
-                SET
-                    page_id = (SELECT page_id FROM products WHERE products.url = product_details.url),
-                    index_in_page = (SELECT index_in_page FROM products WHERE products.url = product_details.url),
-                    id = printf('p%04di%02d',
-                                (SELECT page_id FROM products WHERE products.url = product_details.url),
-                                (SELECT index_in_page FROM products WHERE products.url = product_details.url))
-                WHERE
-                    EXISTS (SELECT 1 FROM products WHERE products.url = product_details.url)
-                    AND (SELECT page_id FROM products WHERE products.url = product_details.url) IS NOT NULL
-                    AND (SELECT index_in_page FROM products WHERE products.url = product_details.url) IS NOT NULL
-                    AND product_details.rowid = (
-                        SELECT MIN(rowid) FROM product_details AS pdsame WHERE pdsame.url = product_details.url
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1 FROM product_details AS pd2
-                        WHERE pd2.page_id = (SELECT page_id FROM products WHERE products.url = product_details.url)
-                          AND pd2.index_in_page = (SELECT index_in_page FROM products WHERE products.url = product_details.url)
-                    )
-                    AND (
-                        COALESCE(product_details.page_id, -1) != COALESCE((SELECT page_id FROM products WHERE products.url = product_details.url), -1)
-                     OR COALESCE(product_details.index_in_page, -1) != COALESCE((SELECT index_in_page FROM products WHERE products.url = product_details.url), -1)
-                     OR product_details.id != printf('p%04di%02d',
-                                (SELECT page_id FROM products WHERE products.url = product_details.url),
-                                (SELECT index_in_page FROM products WHERE products.url = product_details.url))
-                    )
-            ").execute(&mut *tx).await?;
-            prepass.details_aligned = res1.rows_affected();
-            prepass.details_align_skipped_due_to_slot_taken = Some(u64::try_from(res0).unwrap_or_default());
-            debug!(target: "db_diagnostics", details_aligned = prepass.details_aligned, "prepass: details aligned");
+                    let res1 = if prepass_writes_enabled { sqlx::query(r"
+                        UPDATE product_details
+                        SET
+                            page_id = (SELECT page_id FROM products WHERE products.url = product_details.url),
+                            index_in_page = (SELECT index_in_page FROM products WHERE products.url = product_details.url),
+                            id = printf('p%04di%02d',
+                                        (SELECT page_id FROM products WHERE products.url = product_details.url),
+                                        (SELECT index_in_page FROM products WHERE products.url = product_details.url))
+                        WHERE
+                            EXISTS (SELECT 1 FROM products WHERE products.url = product_details.url)
+                            AND (SELECT page_id FROM products WHERE products.url = product_details.url) IS NOT NULL
+                            AND (SELECT index_in_page FROM products WHERE products.url = product_details.url) IS NOT NULL
+                            AND product_details.rowid = (
+                                SELECT MIN(rowid) FROM product_details AS pdsame WHERE pdsame.url = product_details.url
+                            )
+                            AND NOT EXISTS (
+                                SELECT 1 FROM product_details AS pd2
+                                WHERE pd2.page_id = (SELECT page_id FROM products WHERE products.url = product_details.url)
+                                  AND pd2.index_in_page = (SELECT index_in_page FROM products WHERE products.url = product_details.url)
+                            )
+                            AND (
+                                COALESCE(product_details.page_id, -1) != COALESCE((SELECT page_id FROM products WHERE products.url = product_details.url), -1)
+                             OR COALESCE(product_details.index_in_page, -1) != COALESCE((SELECT index_in_page FROM products WHERE products.url = product_details.url), -1)
+                             OR product_details.id != printf('p%04di%02d',
+                                        (SELECT page_id FROM products WHERE products.url = product_details.url),
+                                        (SELECT index_in_page FROM products WHERE products.url = product_details.url))
+                            )
+                    ").execute(&mut *prepass_conn).await? } else { sqlx::query("SELECT 0").execute(&mut *prepass_conn).await? };
+                    if prepass_writes_enabled { prepass.details_aligned = res1.rows_affected(); } else { prepass.details_aligned = 0; }
+                    prepass.details_align_skipped_due_to_slot_taken = Some(u64::try_from(res0).unwrap_or_default());
+                    debug!(target: "db_diagnostics", details_aligned = prepass.details_aligned, "prepass: details aligned");
 
-            let res2 = sqlx::query(r"
-                UPDATE products
-                SET id = (SELECT id FROM product_details WHERE product_details.url = products.url)
-                WHERE (id IS NULL OR id = '')
-                  AND EXISTS (
-                        SELECT 1 FROM product_details 
-                        WHERE product_details.url = products.url 
-                          AND product_details.id IS NOT NULL 
-                          AND product_details.id <> ''
-                  )
-            ").execute(&mut *tx).await?;
-            prepass.products_id_backfilled = res2.rows_affected();
-            debug!(target: "db_diagnostics", products_id_backfilled = prepass.products_id_backfilled, "prepass: products.id backfilled");
-            tx.commit().await?;
-            Ok::<(), sqlx::Error>(())
-        }.await {
-            Ok(_) => {},
-            Err(e) => {
-                if e.to_string().contains("locked") || e.to_string().contains("busy") {
-                    // Downgrade to info: we still return a report; mark prepass as None later if desired
-                    info!(target: "db_diagnostics", "prepass skipped due to busy/lock: {e}");
-                    prepass = PrepassSummary::default();
-                } else {
-                    // Unexpected error: include partial prepass so far but continue (non-fatal)
-                    info!(target: "db_diagnostics", error = %e, "prepass encountered non-lock error; continuing without abort");
+                    let res2 = if prepass_writes_enabled { sqlx::query(r"
+                        UPDATE products
+                        SET id = (SELECT id FROM product_details WHERE product_details.url = products.url)
+                        WHERE (id IS NULL OR id = '')
+                          AND EXISTS (
+                                SELECT 1 FROM product_details 
+                                WHERE product_details.url = products.url 
+                                  AND product_details.id IS NOT NULL 
+                                  AND product_details.id <> ''
+                          )
+                    ").execute(&mut *prepass_conn).await? } else { sqlx::query("SELECT 0").execute(&mut *prepass_conn).await? };
+                    if prepass_writes_enabled { prepass.products_id_backfilled = res2.rows_affected(); }
+                    debug!(target: "db_diagnostics", products_id_backfilled = prepass.products_id_backfilled, "prepass: products.id backfilled");
+                    Ok::<(), sqlx::Error>(())
+                }.await;
+
+                match tx_result {
+                    Ok(_) => { let _ = sqlx::query("COMMIT").execute(&mut *prepass_conn).await; },
+                    Err(e) => {
+                        if e.to_string().contains("locked") || e.to_string().contains("busy") {
+                            info!(target: "db_diagnostics", "prepass skipped due to busy/lock: {e}");
+                            let _ = sqlx::query("ROLLBACK").execute(&mut *prepass_conn).await;
+                            prepass = PrepassSummary::default();
+                        } else {
+                            info!(target: "db_diagnostics", error = %e, "prepass encountered non-lock error; continuing without abort");
+                            let _ = sqlx::query("ROLLBACK").execute(&mut *prepass_conn).await;
+                        }
+                    }
                 }
+            } else {
+                info!(target: "db_diagnostics", "prepass BEGIN failed (possibly locked); skipping prepass mutations");
             }
+        } else {
+            info!(target: "db_diagnostics", "prepass transaction begin failed (possibly locked or acquire failed); skipping prepass mutations");
         }
     } else {
-        info!(target: "db_diagnostics", "prepass transaction begin failed (possibly locked); skipping prepass mutations");
+        info!(target="db_diagnostics", "prepass writes disabled (MC_DIAGNOSTICS_PREPASS_WRITE != 1)");
     }
 
     // Skip network calls in diagnostics to avoid stalling; derive site meta from cache/config only.
@@ -200,7 +402,8 @@ pub async fn scan_db_pagination_mismatches(
         // items_on_last_page not available from config; leave as None
     }
 
-    // Load all relevant rows
+    // Load all relevant rows - 기본 busy_timeout (풀 설정보다 변경 X); 필요시 전용 커넥션 사용 고려 가능
+    
     let mut total_products: u64 = 0;
     if let Ok(c) = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products")
         .fetch_one(&pool)
@@ -210,11 +413,34 @@ pub async fn scan_db_pagination_mismatches(
     }
 
     // Fetch url, page_id, index_in_page; ignore rows with NULL url
-    let rows =
-        sqlx::query("SELECT url, page_id, index_in_page FROM products WHERE url IS NOT NULL")
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| e.to_string())?;
+    // If database is busy (locked by crawling), return early with minimal report
+    let rows = match sqlx::query("SELECT url, page_id, index_in_page FROM products WHERE url IS NOT NULL")
+        .fetch_all(&pool)
+        .await
+    {
+        Ok(rows) => rows,
+        Err(e) if e.to_string().contains("locked") || e.to_string().contains("busy") => {
+            info!(target: "db_diagnostics", "Main query skipped due to DB lock - crawling in progress");
+            // Restore default busy_timeout before returning.
+            let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(&pool).await;
+            return Ok(DbPaginationMismatchReport {
+                total_products,
+                max_page_id_db: None,
+                total_pages_site,
+                items_on_last_page,
+                group_summaries: vec![],
+                duplicate_positions: vec![],
+                prepass: Some(prepass),
+                coord_mismatch: None,
+                details_missing_coords: None,
+                products_missing_coords: None,
+                coord_mismatch_samples: None,
+                missing_pages: vec![],
+                total_missing_pages: 0,
+            });
+        },
+        Err(e) => return Err(e.to_string()),
+    };
 
     // Organize by page_id
     let mut by_pid: BTreeMap<i32, Vec<(String, Option<i32>)>> = BTreeMap::new();
@@ -238,6 +464,8 @@ pub async fn scan_db_pagination_mismatches(
     }
 
     if by_pid.is_empty() {
+        // Restore default busy_timeout before returning.
+        let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(&pool).await;
         return Ok(DbPaginationMismatchReport {
             total_products,
             max_page_id_db: None,
@@ -250,6 +478,8 @@ pub async fn scan_db_pagination_mismatches(
             details_missing_coords: None,
             products_missing_coords: None,
             coord_mismatch_samples: None,
+            missing_pages: vec![],
+            total_missing_pages: 0,
         });
     }
 
@@ -355,6 +585,52 @@ pub async fn scan_db_pagination_mismatches(
         });
     }
 
+    // Detect page sequence gaps
+    let existing_pages: std::collections::HashSet<i32> = by_pid.keys().copied().collect();
+    let mut missing_pages = Vec::new();
+    let mut total_missing_pages = 0u32;
+    
+    // Find gaps in page sequence from 0 to max_page_id_db
+    let mut current = 0i32;
+    while current <= max_page_id_db {
+        if !existing_pages.contains(&current) {
+            // Found a gap, determine the range
+            let start_gap = current;
+            while current <= max_page_id_db && !existing_pages.contains(&current) {
+                current += 1;
+                total_missing_pages += 1;
+            }
+            let end_gap = current - 1;
+            
+            // Calculate physical page numbers for missing pages
+            let start_physical = total_pages_site.and_then(|tp| {
+                if start_gap >= 0 {
+                    u32::try_from(start_gap).ok().map(|pg| tp.saturating_sub(pg))
+                } else {
+                    None
+                }
+            });
+            let end_physical = total_pages_site.and_then(|tp| {
+                if end_gap >= 0 {
+                    u32::try_from(end_gap).ok().map(|pg| tp.saturating_sub(pg))
+                } else {
+                    None
+                }
+            });
+
+            missing_pages.push(PageSequenceGap {
+                start_page: start_gap,
+                end_page: end_gap,
+                missing_count: u32::try_from(end_gap - start_gap + 1).unwrap_or(0),
+                gap_type: if start_gap == end_gap { "single".to_string() } else { "range".to_string() },
+                start_physical_page: start_physical,
+                end_physical_page: end_physical,
+            });
+        } else {
+            current += 1;
+        }
+    }
+
     let mut report = DbPaginationMismatchReport {
         total_products,
         max_page_id_db: Some(max_page_id_db),
@@ -363,38 +639,42 @@ pub async fn scan_db_pagination_mismatches(
         group_summaries,
         duplicate_positions,
         prepass: Some(prepass),
+        missing_pages,
+        total_missing_pages,
         coord_mismatch: None,
         details_missing_coords: None,
         products_missing_coords: None,
         coord_mismatch_samples: None,
     };
 
-    // 추가 요약 로깅: 좌표 누락 / mismatch 상황 집계
-    if let Ok(coord_mismatch) = sqlx::query_scalar::<_, i64>(r"
+    // 추가 요약 로깅: 좌표 누락 / mismatch 상황 집계 (전용 커넥션 사용)
+    if let Ok(mut summary_conn) = pool.acquire().await {
+        let _ = sqlx::query("PRAGMA busy_timeout=50").execute(&mut *summary_conn).await;
+        if let Ok(coord_mismatch) = sqlx::query_scalar::<_, i64>(r"
         SELECT COUNT(*) FROM product_details d
         LEFT JOIN products p ON p.url = d.url
         WHERE p.url IS NULL
            OR p.page_id IS NULL OR p.index_in_page IS NULL
            OR (p.page_id != d.page_id OR p.index_in_page != d.index_in_page)
-    ").fetch_one(&pool).await {
+    ").fetch_one(&mut *summary_conn).await {
         info!(target: "db_diagnostics", coord_mismatch, "coord_mismatch_summary");
         report.coord_mismatch = u64::try_from(coord_mismatch).ok();
     }
-    if let Ok(details_without_coords) = sqlx::query_scalar::<_, i64>(r"
+        if let Ok(details_without_coords) = sqlx::query_scalar::<_, i64>(r"
         SELECT COUNT(*) FROM product_details WHERE page_id IS NULL OR index_in_page IS NULL
-    ").fetch_one(&pool).await {
+    ").fetch_one(&mut *summary_conn).await {
         info!(target: "db_diagnostics", details_without_coords, "details_missing_coords_summary");
         report.details_missing_coords = u64::try_from(details_without_coords).ok();
     }
-    if let Ok(products_missing_coords) = sqlx::query_scalar::<_, i64>(r"
+        if let Ok(products_missing_coords) = sqlx::query_scalar::<_, i64>(r"
         SELECT COUNT(*) FROM products WHERE page_id IS NULL OR index_in_page IS NULL
-    ").fetch_one(&pool).await {
+    ").fetch_one(&mut *summary_conn).await {
         info!(target: "db_diagnostics", products_missing_coords, "products_missing_coords_summary");
         report.products_missing_coords = u64::try_from(products_missing_coords).ok();
     }
 
     // Sample detail holes: pick up to 5 URLs where detail has coords but product missing or mismatch
-    if let Ok(rows) = sqlx::query(r"
+        if let Ok(rows) = sqlx::query(r"
         SELECT d.url, d.page_id as d_pid, d.index_in_page as d_idx, p.page_id as p_pid, p.index_in_page as p_idx
         FROM product_details d
         LEFT JOIN products p ON p.url = d.url
@@ -402,7 +682,7 @@ pub async fn scan_db_pagination_mismatches(
            OR p.page_id IS NULL OR p.index_in_page IS NULL
            OR (p.page_id != d.page_id OR p.index_in_page != d.index_in_page)
         LIMIT 5
-    ").fetch_all(&pool).await {
+    ").fetch_all(&mut *summary_conn).await {
         let mut samples: Vec<CoordMismatchSample> = Vec::new();
         for row in rows {
             let sample = CoordMismatchSample {
@@ -416,8 +696,46 @@ pub async fn scan_db_pagination_mismatches(
             samples.push(sample);
         }
         if !samples.is_empty() { report.coord_mismatch_samples = Some(samples); }
+        }
+    } // summary_conn scope 종료
+
+    // Log page sequence gaps for visibility
+    if !report.missing_pages.is_empty() {
+        info!(target: "db_diagnostics", 
+              total_missing_pages = report.total_missing_pages, 
+              gap_count = report.missing_pages.len(), 
+              "page_sequence_gaps_detected");
+        for gap in &report.missing_pages {
+            if gap.gap_type == "single" {
+                info!(target: "db_diagnostics", missing_page = gap.start_page, "single_page_gap");
+            } else {
+                info!(target: "db_diagnostics", 
+                      gap_start = gap.start_page, 
+                      gap_end = gap.end_page, 
+                      gap_size = gap.missing_count, 
+                      "page_range_gap");
+            }
+        }
     }
 
-    info!(target: "db_diagnostics", total_products = report.total_products, groups = report.group_summaries.len(), dup_positions = report.duplicate_positions.len(), "scan_db_pagination_mismatches: done");
+    info!(target: "db_diagnostics", 
+          total_products = report.total_products, 
+          groups = report.group_summaries.len(), 
+          dup_positions = report.duplicate_positions.len(),
+          missing_pages = report.total_missing_pages,
+          "scan_db_pagination_mismatches: done");
+
+    // 🔧 Enhanced connection cleanup for diagnostics
+    // Reset busy timeout to default and run a lightweight query to force connection release
+    let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(&pool).await;
+    let _ = sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&pool).await;
+    
+    // Small delay to ensure any background operations complete
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    
+    info!(target: "db_diagnostics", "Connection cleanup completed after diagnostics");
+    
     Ok(report)
 }
+
+// END scan_db_pagination_mismatches

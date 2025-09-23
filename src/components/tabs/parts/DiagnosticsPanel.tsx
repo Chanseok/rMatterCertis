@@ -42,6 +42,28 @@ const DiagnosticsPanel: Component<Props> = (p) => {
           >
             products→details 동기화
           </button>
+          <button
+            class="px-3 py-1.5 text-sm rounded-lg shadow bg-emerald-600 text-white hover:bg-emerald-700"
+            onClick={async () => {
+              p.addLog('🔍 DB 연결 진단 실행...');
+              try {
+                const res: any = await (window as any).__TAURI_INVOKE__?.('diagnose_database_connection')
+                  || await (await import('@tauri-apps/api/core')).invoke('diagnose_database_connection');
+                p.addLog(`✅ DB 연결 상태: closed=${res.pool_closed} select_ok=${res.simple_select_ok} busy_immediate=${res.busy_immediate}`);
+                if (res.notes && res.notes.length) {
+                  for (const n of res.notes) p.addLog('📝 ' + n);
+                }
+                if (res.write_probe_error) {
+                  p.addLog('⚠️ write_probe_error: ' + res.write_probe_error);
+                }
+              } catch (e:any) {
+                p.addLog('❌ DB 연결 진단 실패: ' + (e?.message || e));
+              }
+            }}
+            title="풀 closed 여부, 단순 SELECT 가능 여부 등을 확인"
+          >
+            DB 연결 진단
+          </button>
         </div>
       </div>
       <Show when={p.diagResult()} fallback={<p class="text-xs text-gray-500">로컬 DB의 page_id/index_in_page 정합성을 검사합니다. 실행을 눌러 결과를 확인하세요.</p>}>
@@ -100,6 +122,26 @@ const DiagnosticsPanel: Component<Props> = (p) => {
               </For>
             </ul>
           </div>
+          <Show when={(p.diagResult()?.missing_pages ?? []).length > 0}>
+            <div class="bg-red-50 border border-red-200 rounded p-2">
+              <b class="text-red-800">🚨 누락된 페이지 시퀀스</b> (총 {p.diagResult()?.total_missing_pages ?? 0}개 페이지)
+              <ul class="list-disc ml-5 text-red-700">
+                <For each={(p.diagResult()?.missing_pages ?? []).slice(0, 20)}>
+                  {(gap: any) => (
+                    <li>
+                      {gap.gap_type === 'single' 
+                        ? `page_id ${gap.start_page}${gap.start_physical_page != null ? ` (물리 ${gap.start_physical_page})` : ''} 누락`
+                        : `page_id ${gap.start_page}~${gap.end_page}${gap.start_physical_page != null && gap.end_physical_page != null ? ` (물리 ${gap.end_physical_page}~${gap.start_physical_page})` : ''} 범위 누락 (${gap.missing_count}개 페이지)`
+                      }
+                    </li>
+                  )}
+                </For>
+                <Show when={(p.diagResult()?.missing_pages ?? []).length > 20}>
+                  <li class="text-gray-600">... 추가 {(p.diagResult()?.missing_pages ?? []).length - 20}개 갭</li>
+                </Show>
+              </ul>
+            </div>
+          </Show>
           <Show when={(p.diagResult()?.duplicate_positions ?? []).length > 0}>
             <div>
               <b>중복 위치 샘플</b>

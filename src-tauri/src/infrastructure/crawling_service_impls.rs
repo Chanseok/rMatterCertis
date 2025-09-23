@@ -133,31 +133,37 @@ impl StatusChecker for StatusCheckerImpl {
         // Step 1: 기본 사이트 접근성 확인
         let url = config_utils::matter_products_page_url_simple(1);
 
-        // 접근성 테스트
-        let access_test = {
-            // Use configured HttpClient instead of hardcoded default
-            let _client = self.create_configured_http_client()?;
-
-            self.http_client.fetch_response(&url).await?.text().await
+        // 접근성 테스트 (네트워크/HTTP 오류를 사용자 친화적으로 처리)
+        // 이전 구현은 fetch_response() 뒤 '?'로 인해 네트워크 오류가 상위로 전파되어
+        // 프론트엔드에 즉시 실패로 표시되었습니다. 여기서는 재시도 정책을 가진
+        // fetch_response_with_policy()를 사용하고, 모든 오류를 "접근 불가"로 매핑합니다.
+        let accessibility_result = {
+            let _client = self.create_configured_http_client()?; // config 검증 목적
+            match self.http_client.fetch_response_with_policy(&url).await {
+                Ok(resp) => {
+                    // 본 단계에서는 본문 파싱이 필요 없으므로 body 를 소비하지 않고 성공 처리
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
         };
 
-        match access_test {
-            Ok(_) => info!("Site is accessible"),
-            Err(e) => {
-                error!("Failed to access site: {}", e);
-                return Ok(SiteStatus {
-                    is_accessible: false,
-                    response_time_ms: start_time.elapsed().as_millis() as u64,
-                    total_pages: 0,
-                    estimated_products: 0,
-                    products_on_last_page: 0,
-                    last_check_time: chrono::Utc::now(),
-                    health_score: 0.0,
-                    data_change_status: SiteDataChangeStatus::Inaccessible,
-                    decrease_recommendation: None,
-                    crawling_range_recommendation: CrawlingRangeRecommendation::None,
-                });
-            }
+        if let Err(e) = accessibility_result {
+            error!("Failed to access site (treated as inaccessible): {}", e);
+            return Ok(SiteStatus {
+                is_accessible: false,
+                response_time_ms: start_time.elapsed().as_millis() as u64,
+                total_pages: 0,
+                estimated_products: 0,
+                products_on_last_page: 0,
+                last_check_time: chrono::Utc::now(),
+                health_score: 0.0,
+                data_change_status: SiteDataChangeStatus::Inaccessible,
+                decrease_recommendation: None,
+                crawling_range_recommendation: CrawlingRangeRecommendation::None,
+            });
+        } else {
+            info!("Site is accessible");
         }
 
         // Step 2: 페이지 수 탐지 및 마지막 페이지 제품 수 확인
