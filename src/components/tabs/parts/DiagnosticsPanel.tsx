@@ -49,7 +49,7 @@ const DiagnosticsPanel: Component<Props> = (p) => {
               try {
                 const res: any = await (window as any).__TAURI_INVOKE__?.('diagnose_database_connection')
                   || await (await import('@tauri-apps/api/core')).invoke('diagnose_database_connection');
-                p.addLog(`✅ DB 연결 상태: closed=${res.pool_closed} select_ok=${res.simple_select_ok} busy_immediate=${res.busy_immediate}`);
+                p.addLog(`✅ DB 연결 상태: closed=${res.pool_closed} select_ok=${res.simple_select_ok} immediate_select_ok=${res.immediate_select_ok}`);
                 if (res.notes && res.notes.length) {
                   for (const n of res.notes) p.addLog('📝 ' + n);
                 }

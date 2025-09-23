@@ -429,6 +429,18 @@ pub fn run() {
             .await
             .expect("Failed to verify database schema");
 
+        // Cleanup: if legacy bridge table was removed (post-022), drop obsolete triggers that reference it.
+        {
+            if let Ok(pool) = crate::infrastructure::database_connection::get_or_init_global_pool().await {
+                if let Ok(absent) = sqlx::query_scalar::<_, i64>("SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_primary_device_types' LIMIT 1;")
+                    .fetch_optional(&pool).await { if absent.is_none() {
+                        let _ = sqlx::query("DROP TRIGGER IF EXISTS trg_ppt_after_insert;").execute(&pool).await;
+                        let _ = sqlx::query("DROP TRIGGER IF EXISTS trg_ppt_after_update;").execute(&pool).await;
+                        tracing::debug!("dropped_legacy_bridge_triggers");
+                    }}
+            }
+        }
+
         if concise {
             debug!("✅ Database connection established successfully");
         } else {

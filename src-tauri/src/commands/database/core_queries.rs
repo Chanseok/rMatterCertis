@@ -45,8 +45,13 @@ pub struct CoreDiagnosticsAnalytics {
 pub async fn core_diagnostics_analytics_mapping(pool: &SqlitePool) -> CoreDiagnosticsAnalytics {
     let product_details_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_details").fetch_one(pool).await.unwrap_or(0);
     let product_details_with_ids: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_details WHERE primary_device_type_ids IS NOT NULL AND primary_device_type_ids <> ''").fetch_one(pool).await.unwrap_or(0);
-    let bridge_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_primary_device_types").fetch_one(pool).await.unwrap_or(0);
-    let distinct_bridge_products: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT product_detail_id) FROM product_primary_device_types WHERE product_detail_id IS NOT NULL").fetch_one(pool).await.unwrap_or(0);
+    let bridge_exists: bool = sqlx::query_scalar::<_, i64>("SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_primary_device_types' LIMIT 1")
+        .fetch_optional(pool).await.unwrap_or(None).is_some();
+    let (bridge_rows, distinct_bridge_products) = if bridge_exists {
+        let br: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_primary_device_types").fetch_one(pool).await.unwrap_or(0);
+        let dbp: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT product_detail_id) FROM product_primary_device_types WHERE product_detail_id IS NOT NULL").fetch_one(pool).await.unwrap_or(0);
+        (br, dbp)
+    } else { (0, 0) };
     let device_types_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_types").fetch_one(pool).await.unwrap_or(0);
     let device_types_with_type_id: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_types WHERE type_id IS NOT NULL").fetch_one(pool).await.unwrap_or(0);
     let device_types_type_id_null: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_types WHERE type_id IS NULL").fetch_one(pool).await.unwrap_or(0);

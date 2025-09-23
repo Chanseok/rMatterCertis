@@ -18,7 +18,7 @@ pub struct DbConnectionDiagnostics {
     pub acquire_timeout_ms: u64,
     pub simple_select_ok: bool,
     pub concurrent_connections: Option<u32>,
-    pub busy_immediate: bool,
+    pub immediate_select_ok: bool,
     pub write_probe_ok: bool,
     pub write_probe_elapsed_ms: Option<u64>,
     pub write_probe_error: Option<String>,
@@ -49,7 +49,7 @@ pub async fn diagnose_database_connection(app_state: tauri::State<'_, AppState>)
 
     // Set extremely small timeout to probe for immediate lock contention (read) - isolated
     let _ = sqlx::query("PRAGMA busy_timeout=1").execute(&mut *dedicated_conn).await;
-    let busy_immediate = match sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&mut *dedicated_conn).await {
+    let immediate_select_ok = match sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&mut *dedicated_conn).await {
         Ok(_) => true,
         Err(e) => { notes.push(format!("Immediate SELECT failed: {e}")); false }
     };
@@ -139,14 +139,14 @@ pub async fn diagnose_database_connection(app_state: tauri::State<'_, AppState>)
     }
 
     let elapsed_total = t_start.elapsed().as_millis() as u64;
-    info!(target: "db_diag", busy_immediate, simple_select_ok, write_probe_ok, write_probe_elapsed_ms = write_probe_elapsed_ms.unwrap_or(0), write_probe_error = write_probe_error.as_deref().unwrap_or(""), elapsed_ms = elapsed_total, "diagnose_database_connection completed");
+    info!(target: "db_diag", immediate_select_ok, simple_select_ok, write_probe_ok, write_probe_elapsed_ms = write_probe_elapsed_ms.unwrap_or(0), write_probe_error = write_probe_error.as_deref().unwrap_or(""), elapsed_ms = elapsed_total, "diagnose_database_connection completed");
     Ok(DbConnectionDiagnostics {
         timestamp_utc: DateTime::<Utc>::from(Utc::now()).to_rfc3339(),
         pool_closed,
         acquire_timeout_ms: 1,
         simple_select_ok,
         concurrent_connections,
-        busy_immediate,
+    immediate_select_ok,
         write_probe_ok,
         write_probe_elapsed_ms,
         write_probe_error,

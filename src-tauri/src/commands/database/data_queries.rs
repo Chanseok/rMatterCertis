@@ -489,31 +489,16 @@ pub async fn diagnostics_analytics_mapping(state: State<'_, DatabaseConnection>)
     let pool = state.pool();
     // Allow some wait if crawler holds a write lock
     let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(pool).await;
-    // Opportunistic on-demand backfill if bridge still empty (idempotent)
-    if let Ok(br) = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM product_primary_device_types").fetch_one(pool).await {
-        if br == 0 {
-            // Attempt inside a transaction; ignore errors (diagnostics must not panic)
-            if let Err(e) = sqlx::query("BEGIN IMMEDIATE").execute(pool).await { error!(?e, "diag backfill: begin failed"); } else {
-                // Normalize type_id just in case
-                if let Err(e) = sqlx::query("UPDATE device_types SET type_id = id WHERE type_id IS NULL").execute(pool).await { error!(?e, "diag backfill: normalize type_id failed"); }
-                let insert_sql = r#"
-                    INSERT OR IGNORE INTO product_primary_device_types(product_detail_id, device_type_id)
-                    SELECT pd.url, dt.type_id
-                    FROM product_details pd
-                    JOIN json_each(pd.primary_device_type_ids) je
-                    JOIN device_types dt ON dt.type_id = je.value
-                    WHERE pd.primary_device_type_ids IS NOT NULL
-                      AND json_valid(pd.primary_device_type_ids)
-                "#;
-                if let Err(e) = sqlx::query(insert_sql).execute(pool).await { error!(?e, "diag backfill: insert failed"); }
-                let _ = sqlx::query("COMMIT").execute(pool).await; // ignore commit errors
-            }
-        }
-    }
+    // Detect legacy bridge presence (post-022 migration it should be removed)
+    let bridge_exists: bool = sqlx::query_scalar::<_, i64>("SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_primary_device_types' LIMIT 1")
+        .fetch_optional(pool).await.unwrap_or(None).is_some();
     let product_details_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_details").fetch_one(pool).await.unwrap_or(0);
     let product_details_with_ids: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_details WHERE primary_device_type_ids IS NOT NULL AND primary_device_type_ids <> ''").fetch_one(pool).await.unwrap_or(0);
-    let bridge_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_primary_device_types").fetch_one(pool).await.unwrap_or(0);
-    let distinct_bridge_products: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT product_detail_id) FROM product_primary_device_types WHERE product_detail_id IS NOT NULL").fetch_one(pool).await.unwrap_or(0);
+    let (bridge_rows, distinct_bridge_products) = if bridge_exists {
+        let br: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_primary_device_types").fetch_one(pool).await.unwrap_or(0);
+        let dbp: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT product_detail_id) FROM product_primary_device_types WHERE product_detail_id IS NOT NULL").fetch_one(pool).await.unwrap_or(0);
+        (br, dbp)
+    } else { (0, 0) };
     let device_types_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_types").fetch_one(pool).await.unwrap_or(0);
     let device_types_with_type_id: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_types WHERE type_id IS NOT NULL").fetch_one(pool).await.unwrap_or(0);
     let device_types_type_id_null: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_types WHERE type_id IS NULL").fetch_one(pool).await.unwrap_or(0);

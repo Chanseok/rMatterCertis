@@ -1056,6 +1056,16 @@ impl IntegratedProductRepository {
         &self,
         details: &[ProductDetail],
     ) -> Result<(usize, usize)> {
+        // Detect legacy bridge table once per bulk call (outside chunk loop)
+        let bridge_exists: bool = sqlx::query_scalar::<_, i64>(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_primary_device_types' LIMIT 1;"
+        )
+        .fetch_optional(&*self.pool)
+        .await?
+        .is_some();
+        if !bridge_exists {
+            tracing::debug!(target="bulk_persist", "bridge_table_absent_skipping_bridge_sync");
+        }
         if details.is_empty() {
             return Ok((0, 0));
         }
@@ -1226,6 +1236,7 @@ impl IntegratedProductRepository {
                     }
 
                     total_updated += 1;
+                    // Bridge sync removed: analytics view now derives mapping directly from JSON (022+)
                 } else {
                     // Insert new record
                     let certification_date = Self::normalize_cert_date(&detail.certification_date);
@@ -1300,7 +1311,8 @@ impl IntegratedProductRepository {
                     .execute(&mut *tx)
                     .await?;
 
-                    total_created += 1;
+            total_created += 1;
+            // Bridge sync removed (see above)
                 }
             }
 

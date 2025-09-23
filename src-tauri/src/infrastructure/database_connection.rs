@@ -85,22 +85,57 @@ impl DatabaseConnection {
             .execute(&self.pool)
             .await;
 
-        // Load and run the integrated schema SQL (003_integrated_schema.sql)
-        if concise {
-            debug!("📦 Checking database schema (CREATE TABLE IF NOT EXISTS)...");
-        } else {
-            info!("📦 Checking database schema (CREATE TABLE IF NOT EXISTS)...");
-        }
-        let schema_path = std::path::Path::new("migrations/003_integrated_schema.sql");
+        // Baseline detection (new installs use 001_baseline.sql)
+        let baseline_exists = std::path::Path::new("src-tauri/migrations/001_baseline.sql").exists() || std::path::Path::new("migrations/001_baseline.sql").exists();
+        let is_fresh_db: bool = {
+            // Heuristic: products table empty & no legacy marker tables
+            let has_products = sqlx::query_scalar::<_, Option<i64>>("SELECT 1 FROM sqlite_master WHERE type='table' AND name='products' LIMIT 1")
+                .fetch_optional(&self.pool).await?.flatten().is_some();
+            if !has_products { true } else { 
+                let product_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products").fetch_one(&self.pool).await.unwrap_or(0);
+                product_count == 0
+            }
+        };
+        let legacy_markers_present = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sqlite_master WHERE name='product_primary_device_types' OR name='matter_products' LIMIT 1")
+            .fetch_one(&self.pool).await.unwrap_or(0) > 0;
+        let has_type_id_text = sqlx::query_scalar::<_, Option<String>>("SELECT sql FROM sqlite_master WHERE type='table' AND name='device_types' LIMIT 1")
+            .fetch_optional(&self.pool).await?.flatten().map(|sql| sql.to_lowercase().contains("type_id text")).unwrap_or(false);
 
+        let use_baseline = baseline_exists && is_fresh_db && !legacy_markers_present && has_type_id_text; // final guard
+
+        if use_baseline {
+            if concise { debug!("📦 Applying baseline schema (001_baseline.sql)"); } else { info!("📦 Applying baseline schema (001_baseline.sql)"); }
+            let baseline_path_fs = std::path::Path::new("migrations/001_baseline.sql");
+            if baseline_path_fs.exists() {
+                let baseline_sql = fs::read_to_string(baseline_path_fs)?;
+                self.exec_multi_statement(&baseline_sql, false, "001_baseline").await?;
+            } else {
+                let baseline_sql = include_str!("../../migrations/001_baseline.sql");
+                self.exec_multi_statement(baseline_sql, false, "001_baseline_embedded").await?;
+            }
+            self.sanity_check_post_migration("001_baseline").await;
+            if concise { debug!("✅ Baseline schema applied"); } else { info!("✅ Baseline schema applied"); }
+            // Skip legacy chain entirely
+            let product_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products")
+                .fetch_one(&self.pool)
+                .await.unwrap_or(0);
+            let details_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM product_details")
+                .fetch_one(&self.pool)
+                .await.unwrap_or(0);
+            if concise { info!("🗄️ DB ready (baseline): products={}, details={}", product_count, details_count); }
+            else { info!("📊 Database initialized (baseline) with {} products and {} details", product_count, details_count); }
+            return Ok(());
+        }
+
+        // Legacy path: Load and run the integrated schema SQL (003_integrated_schema.sql)
+        if concise { debug!("📦 Checking database schema (CREATE TABLE IF NOT EXISTS)..."); } else { info!("📦 Checking database schema (CREATE TABLE IF NOT EXISTS)..."); }
+        let schema_path = std::path::Path::new("migrations/003_integrated_schema.sql");
         if schema_path.exists() {
             let schema_sql = fs::read_to_string(schema_path)?;
-            // Use multi-statement executor to avoid sqlite multi-statement single-query issues
             self.exec_multi_statement(&schema_sql, false, "003_integrated_schema").await?;
             self.sanity_check_post_migration("003_integrated_schema").await;
             if concise { debug!("✅ Database schema verified successfully"); } else { info!("✅ Database schema verified successfully"); }
         } else {
-            // Fallback to embedded schema if file doesn't exist
             warn!("⚠️ Schema file not found, using embedded schema");
             let schema_sql = include_str!("../../migrations/003_integrated_schema.sql");
             self.exec_multi_statement(schema_sql, false, "003_integrated_schema_embedded").await?;
