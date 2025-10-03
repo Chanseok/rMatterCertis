@@ -18,6 +18,8 @@ import { getCrawlEventsStore } from '../../events/crawlEventsStore';
 
 export default function CrawlingEngineTabSimple() {
   const [isRunning, setIsRunning] = createSignal(false);
+  // Basic/Advanced toggle: default to basic view (advanced off)
+  const [showAdvanced, setShowAdvanced] = createSignal(false);
   const [crawlingRange, setCrawlingRange] = createSignal<any | null>(null);
   const [statusMessage, setStatusMessage] =
     createSignal<string>("크롤링 준비 완료");
@@ -326,6 +328,7 @@ export default function CrawlingEngineTabSimple() {
   const [dbFlash, setDbFlash] = createSignal(false);
   // Preflight diagnostics (site totals) to improve expected counts
   const [preflight, setPreflight] = createSignal<{ site_total_pages?: number; products_on_last_page?: number } | null>(null);
+  
   // Global effects toggle
   const [effectsOn, setEffectsOn] = createSignal(true);
   // Stage2 discrepancy handling flags
@@ -1637,6 +1640,12 @@ export default function CrawlingEngineTabSimple() {
           <h3 class="text-lg font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent tracking-tight">📊 계산된 크롤링 플랜 개요</h3>
           <div class="flex items-center gap-2 text-[11px] text-gray-500">
             <span class="px-2 py-1 rounded-full bg-gray-100 border border-gray-200">Site + LocalDB + Settings 분석</span>
+            <button
+              class="text-[11px] px-2.5 py-1 rounded border border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
+              onClick={() => setShowAdvanced(v => !v)}
+            >
+              {showAdvanced() ? '고급 숨기기' : '고급 보기'}
+            </button>
           </div>
         </div>
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
@@ -1675,18 +1684,20 @@ export default function CrawlingEngineTabSimple() {
             <div class="text-2xl font-bold text-teal-700 tabular-nums">{(() => { const info = crawlingRange()?.crawling_info; const est = Number(info?.estimated_new_products ?? 0); if(est>0) return est; const pages = Number(info?.pages_to_crawl ?? 0); return pages>0? pages*12 : '-'; })()}</div>
             <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_70%_70%,rgba(255,255,255,.9),transparent_60%)]" />
           </div>
-          <div class="group relative overflow-hidden rounded-xl border border-gray-200/60 bg-gradient-to-br from-gray-50 to-gray-100 p-4 shadow hover:shadow-lg transition sm:col-span-2 lg:col-span-3">
-            <div class="flex items-center justify-between mb-2">
-              <div class="text-[11px] font-medium text-gray-600">사이트 메타</div>
-              <div class="text-[10px] text-gray-400">preflight</div>
+          <Show when={showAdvanced()}>
+            <div class="group relative overflow-hidden rounded-xl border border-gray-200/60 bg-gradient-to-br from-gray-50 to-gray-100 p-4 shadow hover:shadow-lg transition sm:col-span-2 lg:col-span-3">
+              <div class="flex items-center justify-between mb-2">
+                <div class="text-[11px] font-medium text-gray-600">사이트 메타</div>
+                <div class="text-[10px] text-gray-400">preflight</div>
+              </div>
+              <div class="flex flex-wrap gap-4 text-xs text-gray-700">
+                <div>총페이지: <span class="font-semibold">{(() => { const p = preflight(); const v = Number(p?.site_total_pages ?? 0); return v>0? v: '-'; })()}</span></div>
+                <div>마지막페이지제품: <span class="font-semibold">{(() => { const p = preflight(); const v = Number(p?.products_on_last_page ?? 0); return v>0? v: '-'; })()}</span></div>
+                <div>범위: <span class="font-semibold">{(() => { const r = crawlingRange(); const s=r?.range?.[0]; const e=r?.range?.[1]; return (s&&e)? `${s}→${e}`:'-'; })()}</span></div>
+                <div>설정 효과: <span class="font-semibold">{effectsOn() ? 'ON' : 'OFF'}</span></div>
+              </div>
             </div>
-            <div class="flex flex-wrap gap-4 text-xs text-gray-700">
-              <div>총페이지: <span class="font-semibold">{(() => { const p = preflight(); const v = Number(p?.site_total_pages ?? 0); return v>0? v: '-'; })()}</span></div>
-              <div>마지막페이지제품: <span class="font-semibold">{(() => { const p = preflight(); const v = Number(p?.products_on_last_page ?? 0); return v>0? v: '-'; })()}</span></div>
-              <div>범위: <span class="font-semibold">{(() => { const r = crawlingRange(); const s=r?.range?.[0]; const e=r?.range?.[1]; return (s&&e)? `${s}→${e}`:'-'; })()}</span></div>
-              <div>설정 효과: <span class="font-semibold">{effectsOn() ? 'ON' : 'OFF'}</span></div>
-            </div>
-          </div>
+          </Show>
         </div>
       </div>
     </Show>

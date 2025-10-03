@@ -191,15 +191,12 @@ impl StatusChecker for StatusCheckerImpl {
         // 정확한 제품 수 계산: (마지막 페이지 - 1) * 페이지당 제품 수 + 마지막 페이지 제품 수
         let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
 
-        let estimated_products = if total_pages > 1 {
-            ((total_pages - 1) * products_per_page) + products_on_last_page
-        } else {
-            products_on_last_page
-        };
+        let estimated_products =
+            total_pages.saturating_sub(1) * products_per_page + products_on_last_page;
 
         info!(
             "Accurate product estimation: ({} full pages * {} products) + {} products on last page = {} total products",
-            total_pages - 1,
+            total_pages.saturating_sub(1),
             products_per_page,
             products_on_last_page,
             estimated_products
@@ -1523,7 +1520,7 @@ impl StatusCheckerImpl {
 
         // 3단계: '역순 절대 인덱스'를 웹사이트 페이지 번호로 변환
         let total_products =
-            ((total_pages_on_site - 1) * products_per_page) + products_on_last_page;
+            (total_pages_on_site.saturating_sub(1) * products_per_page) + products_on_last_page;
 
         // 다음 제품이 전체 제품 수를 초과하는 경우 (모든 제품 크롤링 완료)
         if next_product_index >= total_products {
@@ -1532,7 +1529,9 @@ impl StatusCheckerImpl {
         }
 
         // '순차 인덱스'로 변환 (최신 제품이 0)
-        let forward_index = (total_products - 1) - next_product_index;
+        let forward_index = total_products
+            .saturating_sub(1)
+            .saturating_sub(next_product_index);
 
         // 웹사이트 페이지 번호 계산
         let target_page_number = (forward_index / products_per_page) + 1;
@@ -1543,13 +1542,13 @@ impl StatusCheckerImpl {
         let max_crawl_pages = self.config.user.crawling.page_range_limit;
         let start_page = target_page_number;
         let end_page = if start_page >= max_crawl_pages {
-            start_page - max_crawl_pages + 1
+            start_page.saturating_sub(max_crawl_pages).saturating_add(1)
         } else {
             1
         };
 
         let actual_pages_to_crawl = if start_page >= end_page {
-            start_page - end_page + 1
+            start_page.saturating_sub(end_page).saturating_add(1)
         } else {
             start_page
         };
@@ -2221,7 +2220,9 @@ impl ProductListCollector for ProductListCollectorImpl {
 
         use tracing::{debug, info, warn};
 
-        const EXPECTED_PER_PAGE: usize = 12; // 도메인 규칙: 비마지막 페이지는 12개
+    // 기대 규칙: 비말단(마지막이 아닌) 페이지는 정확히 PRODUCTS_PER_PAGE 개(현재 12)여야 하며
+    // index_in_page 는 0..PRODUCTS_PER_PAGE-1 범위에서 중복 없이 채워져야 함.
+    let expected_per_page: usize = crate::domain::constants::site::PRODUCTS_PER_PAGE as usize;
         let max_retries = self.config.retry_attempts.max(1); // 최소 1회는 시도
         let base_delay_ms: u64 = self.config.delay_ms.max(300);
         let max_delay_ms: u64 = 8_000;
@@ -2237,14 +2238,59 @@ impl ProductListCollector for ProductListCollectorImpl {
         let is_last_page = page >= total_pages;
 
         let mut last_error: Option<anyhow::Error> = None;
+        // Determine if persistent attempt logging is enabled (default: disabled for simple retry control stage)
+        let attempt_log_enabled = std::env::var("MC_ATTEMPT_LOG_SQLITE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let pool_opt = if attempt_log_enabled {
+            match crate::infrastructure::database_connection::get_or_init_global_pool().await {
+                Ok(p) => Some(p),
+                Err(e) => { tracing::debug!(target="crawler", error=%e, "attempt_log_pool_unavailable"); None }
+            }
+        } else { None };
         for attempt in 0..=max_retries {
+            let attempt_start = std::time::Instant::now();
+            // Predeclare attempt metrics for logging (filled progressively)
+            let mut product_count: usize = 0;
+            let mut distinct_indices: usize = 0;
+            let mut contiguous_ok: bool = false;
+            let mut count_mismatch_flag: bool = false;
+            let mut index_mismatch_flag: bool = false;
+            let mut success_final: bool = false;
+            let mut error_code: Option<String> = None;
+            let mut error_detail: Option<String> = None;
+            let mut retry_scheduled: bool = false;
             let url = crate::infrastructure::config::utils::matter_products_page_url_simple(page);
-            // 정책 기반 HttpClient 사용 (상태 기반 재시도, Retry-After 준수)
-            let response = match self.http_client.fetch_response_with_policy(&url).await {
+            // 변형 전략: 재시도 시 UA/Referer를 회전하고 캐시 버스터 파라미터를 추가하여 서버측 변동 가능성 증가
+            let ua_pool: &[&str] = &[
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36",
+            ];
+            let referer_base = "https://csa-iot.org/csa-iot_products/";
+            let variant_suffix = if attempt == 0 { String::new() } else { format!("&mc_variant={}", attempt) };
+            let url_with_variant = format!("{}{}", url, variant_suffix);
+            let opts = if attempt == 0 {
+                crate::infrastructure::simple_http_client::RequestOptions::default()
+            } else {
+                let ua = ua_pool[(attempt as usize) % ua_pool.len()].to_string();
+                let mut o = crate::infrastructure::simple_http_client::RequestOptions::default();
+                o.user_agent_override = Some(ua);
+                o.referer = Some(referer_base.to_string());
+                // Removed trivial numeric casts (attempt/max_retries already u32)
+                o.attempt = Some(attempt + 1);
+                o.max_attempts = Some(max_retries + 1);
+                o
+            };
+            // 정책 기반 HttpClient 사용 (상태 기반 재시도, Retry-After 준수) + 옵션 적용
+            let response = match self.http_client.fetch_response_with_options(&url_with_variant, &opts).await {
                 Ok(r) => r,
                 Err(e) => {
                     last_error = Some(e);
+                    error_code = Some("network_fetch_failed".to_string());
                     if attempt < max_retries {
+                        retry_scheduled = true;
                         // 지수 백오프 + 지터
                         let shift = attempt.min(20);
                         let factor = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
@@ -2264,7 +2310,29 @@ impl ProductListCollector for ProductListCollectorImpl {
                             let () = crate::infrastructure::simple_http_client::HttpClient::set_global_max_rps(8).await;
                         }
                         tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        // Attempt log (network failure) before continue
+                        let duration_ms = attempt_start.elapsed().as_millis() as i64;
+                        if attempt_log_enabled {
+                            if let Some(pool) = &pool_opt {
+                            let _ = sqlx::query("INSERT OR IGNORE INTO page_fetch_attempts (logical_page_id, attempt_no, product_count, distinct_indices, contiguous_ok, count_mismatch, index_mismatch, is_terminal_guess, success_final, error_code, error_detail, duration_ms, retry_scheduled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)")
+                                .bind(page as i64).bind(attempt as i64).bind(product_count as i64).bind(distinct_indices as i64).bind(contiguous_ok as i64)
+                                .bind(count_mismatch_flag as i64).bind(index_mismatch_flag as i64).bind(is_last_page as i64).bind(success_final as i64)
+                                .bind(error_code.as_deref()).bind(error_detail.as_deref()).bind(duration_ms).bind(retry_scheduled as i64)
+                                .execute(pool).await;
+                            }
+                        }
                         continue;
+                    }
+                    // Final network failure (no retry)
+                    let duration_ms = attempt_start.elapsed().as_millis() as i64;
+                    if attempt_log_enabled {
+                        if let Some(pool) = &pool_opt {
+                        let _ = sqlx::query("INSERT OR IGNORE INTO page_fetch_attempts (logical_page_id, attempt_no, product_count, distinct_indices, contiguous_ok, count_mismatch, index_mismatch, is_terminal_guess, success_final, error_code, error_detail, duration_ms, retry_scheduled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)")
+                            .bind(page as i64).bind(attempt as i64).bind(product_count as i64).bind(distinct_indices as i64).bind(contiguous_ok as i64)
+                            .bind(count_mismatch_flag as i64).bind(index_mismatch_flag as i64).bind(is_last_page as i64).bind(success_final as i64)
+                            .bind(error_code.as_deref()).bind(error_detail.as_deref()).bind(duration_ms).bind(retry_scheduled as i64)
+                            .execute(pool).await;
+                        }
                     }
                     break;
                 }
@@ -2274,7 +2342,9 @@ impl ProductListCollector for ProductListCollectorImpl {
                 Ok(s) => s,
                 Err(e) => {
                     last_error = Some(anyhow::anyhow!(e));
+                    error_code = Some("body_read_failed".to_string());
                     if attempt < max_retries {
+                        retry_scheduled = true;
                         let shift = attempt.min(20);
                         let factor = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
                         let base = (base_delay_ms.saturating_mul(factor)).min(max_delay_ms);
@@ -2291,7 +2361,27 @@ impl ProductListCollector for ProductListCollectorImpl {
                             let () = crate::infrastructure::simple_http_client::HttpClient::set_global_max_rps(8).await;
                         }
                         tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        let duration_ms = attempt_start.elapsed().as_millis() as i64;
+                        if attempt_log_enabled {
+                            if let Some(pool) = &pool_opt {
+                            let _ = sqlx::query("INSERT OR IGNORE INTO page_fetch_attempts (logical_page_id, attempt_no, product_count, distinct_indices, contiguous_ok, count_mismatch, index_mismatch, is_terminal_guess, success_final, error_code, error_detail, duration_ms, retry_scheduled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)")
+                                .bind(page as i64).bind(attempt as i64).bind(product_count as i64).bind(distinct_indices as i64).bind(contiguous_ok as i64)
+                                .bind(count_mismatch_flag as i64).bind(index_mismatch_flag as i64).bind(is_last_page as i64).bind(success_final as i64)
+                                .bind(error_code.as_deref()).bind(error_detail.as_deref()).bind(duration_ms).bind(retry_scheduled as i64)
+                                .execute(pool).await;
+                            }
+                        }
                         continue;
+                    }
+                    let duration_ms = attempt_start.elapsed().as_millis() as i64;
+                    if attempt_log_enabled {
+                        if let Some(pool) = &pool_opt {
+                        let _ = sqlx::query("INSERT OR IGNORE INTO page_fetch_attempts (logical_page_id, attempt_no, product_count, distinct_indices, contiguous_ok, count_mismatch, index_mismatch, is_terminal_guess, success_final, error_code, error_detail, duration_ms, retry_scheduled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)")
+                            .bind(page as i64).bind(attempt as i64).bind(product_count as i64).bind(distinct_indices as i64).bind(contiguous_ok as i64)
+                            .bind(count_mismatch_flag as i64).bind(index_mismatch_flag as i64).bind(is_last_page as i64).bind(success_final as i64)
+                            .bind(error_code.as_deref()).bind(error_detail.as_deref()).bind(duration_ms).bind(retry_scheduled as i64)
+                            .execute(pool).await;
+                        }
                     }
                     break;
                 }
@@ -2342,6 +2432,7 @@ impl ProductListCollector for ProductListCollectorImpl {
                         .collect();
 
                     let count = product_urls.len();
+                    product_count = count;
                     debug!(
                         "🔗 Extracted {} URLs from page {} (attempt {}/{})",
                         count,
@@ -2350,31 +2441,50 @@ impl ProductListCollector for ProductListCollectorImpl {
                         max_retries + 1
                     );
 
-                    // 성공 판정: 마지막 페이지는 수량 강제하지 않음. 그 외는 12개 충족 필요
+                    // 성공 판정:
+                    //  - 마지막 페이지: 개수 제한 없음 (단 음수 불가)
+                    //  - 비말단 페이지: 정확히 expected_per_page 개 AND 인덱스 커버리지(0..expected_per_page-1) 유니크 충족
+                    use std::collections::HashSet;
+                    let mut count_mismatch = false;
+                    let mut index_mismatch = false;
                     let success = if is_last_page {
                         true
+                    } else if count == expected_per_page {
+                        let indices: HashSet<i32> = product_urls.iter().map(|p| p.index_in_page).collect();
+                        distinct_indices = indices.len();
+                        // 커버리지: 0..expected-1 모두 포함 여부
+                        let has_full_coverage = distinct_indices == expected_per_page
+                            && (0..expected_per_page as i32).all(|v| indices.contains(&v));
+                        index_mismatch = !has_full_coverage;
+                        has_full_coverage
                     } else {
-                        count >= EXPECTED_PER_PAGE
+                        count_mismatch = true;
+                        false
                     };
+                    // 기록용 플래그/지표
+                    if distinct_indices == 0 { distinct_indices = product_urls.iter().map(|p| p.index_in_page).collect::<HashSet<_>>().len(); }
+                    contiguous_ok = !is_last_page && count == expected_per_page && !index_mismatch;
+                    count_mismatch_flag = count_mismatch;
+                    index_mismatch_flag = index_mismatch;
+                    success_final = success;
                     if success {
                         out_urls = Some(product_urls);
                     } else {
                         // 미충족: 재시도 필요 표시
-                        if attempt < max_retries {
-                            retry_needed = true;
-                            last_error = Some(anyhow::anyhow!(
-                                "Insufficient products on page {}: expected >= {}, got {}",
-                                page,
-                                EXPECTED_PER_PAGE,
-                                count
-                            ));
+                        if !is_last_page {
+                            let reason = if count_mismatch { "count_mismatch" } else if index_mismatch { "index_mismatch" } else { "unknown_mismatch" };
+                            let msg = format!(
+                                "Page validation failed ({reason}): page={} expected_count={} actual_count={} attempt={}/{}",
+                                page, expected_per_page, count, attempt+1, max_retries+1
+                            );
+                            if attempt < max_retries { retry_needed = true; }
+                            last_error = Some(anyhow::anyhow!(msg.clone()));
+                            error_code = Some(reason.to_string());
+                            error_detail = Some(msg);
+                            tracing::warn!(target="crawler", page, attempt=attempt+1, max_attempts=max_retries+1, reason, actual=count, expected=expected_per_page, "List page retry classification");
                         } else {
-                            last_error = Some(anyhow::anyhow!(
-                                "Insufficient products on page {}: expected >= {}, got {}",
-                                page,
-                                EXPECTED_PER_PAGE,
-                                count
-                            ));
+                            // Last page shouldn't come here; log defensively
+                            tracing::warn!(target="crawler", page, actual=count, expected=expected_per_page, "Last page unexpected validation branch");
                         }
                     }
                 }
@@ -2382,6 +2492,17 @@ impl ProductListCollector for ProductListCollectorImpl {
 
             // 스코프 밖: 비-Send 해제됨
             if let Some(urls) = out_urls {
+                // Successful attempt log
+                let duration_ms = attempt_start.elapsed().as_millis() as i64;
+                if attempt_log_enabled {
+                    if let Some(pool) = &pool_opt {
+                    let _ = sqlx::query("INSERT OR IGNORE INTO page_fetch_attempts (logical_page_id, attempt_no, product_count, distinct_indices, contiguous_ok, count_mismatch, index_mismatch, is_terminal_guess, success_final, error_code, error_detail, duration_ms, retry_scheduled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)")
+                        .bind(page as i64).bind(attempt as i64).bind(product_count as i64).bind(distinct_indices as i64).bind(contiguous_ok as i64)
+                        .bind(count_mismatch_flag as i64).bind(index_mismatch_flag as i64).bind(is_last_page as i64).bind(success_final as i64)
+                        .bind(error_code.as_deref()).bind(error_detail.as_deref()).bind(duration_ms).bind(retry_scheduled as i64)
+                        .execute(pool).await;
+                    }
+                }
                 return Ok(urls);
             }
             if retry_needed {
@@ -2405,21 +2526,54 @@ impl ProductListCollector for ProductListCollectorImpl {
                         .await;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                // Failed attempt with retry scheduled
+                let duration_ms = attempt_start.elapsed().as_millis() as i64;
+                if attempt_log_enabled {
+                    if let Some(pool) = &pool_opt {
+                    let _ = sqlx::query("INSERT OR IGNORE INTO page_fetch_attempts (logical_page_id, attempt_no, product_count, distinct_indices, contiguous_ok, count_mismatch, index_mismatch, is_terminal_guess, success_final, error_code, error_detail, duration_ms, retry_scheduled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)")
+                        .bind(page as i64).bind(attempt as i64).bind(product_count as i64).bind(distinct_indices as i64).bind(contiguous_ok as i64)
+                        .bind(count_mismatch_flag as i64).bind(index_mismatch_flag as i64).bind(is_last_page as i64).bind(success_final as i64)
+                        .bind(error_code.as_deref()).bind(error_detail.as_deref()).bind(duration_ms).bind(true as i64)
+                        .execute(pool).await;
+                    }
+                }
                 continue;
             }
             // 에러가 있으나 재시도 불가하면 종료
             if last_error.is_some() {
+                let duration_ms = attempt_start.elapsed().as_millis() as i64;
+                if attempt_log_enabled {
+                    if let Some(pool) = &pool_opt {
+                    let _ = sqlx::query("INSERT OR IGNORE INTO page_fetch_attempts (logical_page_id, attempt_no, product_count, distinct_indices, contiguous_ok, count_mismatch, index_mismatch, is_terminal_guess, success_final, error_code, error_detail, duration_ms, retry_scheduled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)")
+                        .bind(page as i64).bind(attempt as i64).bind(product_count as i64).bind(distinct_indices as i64).bind(contiguous_ok as i64)
+                        .bind(count_mismatch_flag as i64).bind(index_mismatch_flag as i64).bind(is_last_page as i64).bind(success_final as i64)
+                        .bind(error_code.as_deref()).bind(error_detail.as_deref()).bind(duration_ms).bind(retry_scheduled as i64)
+                        .execute(pool).await;
+                    }
+                }
                 break;
             }
         }
 
         // 최종 실패
-        Err(last_error.unwrap_or_else(|| {
-            anyhow::anyhow!(
-                "List page collection failed for page {} (unknown error)",
-                page
-            )
-        }))
+        let final_err = last_error.unwrap_or_else(|| anyhow::anyhow!("List page collection failed for page {} (unknown error)", page));
+        tracing::warn!(target="crawler", page, error=%final_err, "List page final failure after retries");
+        // Final failure post-loop log already recorded; ensure a terminal attempt row exists if none captured success
+        // (If loop broke due to last_error on final attempt we inserted above; otherwise insert here as safeguard.)
+        if attempt_log_enabled {
+            if let Some(pool) = &pool_opt {
+                let safeguard_exists: Option<i64> = sqlx::query_scalar::<_, Option<i64>>("SELECT 1 FROM page_fetch_attempts WHERE logical_page_id=?1 AND attempt_no=?2 LIMIT 1")
+                    .bind(page as i64).bind(max_retries as i64)
+                    .fetch_optional(pool).await?
+                    .flatten();
+                if safeguard_exists.is_none() {
+                    let _ = sqlx::query("INSERT OR IGNORE INTO page_fetch_attempts (logical_page_id, attempt_no, product_count, distinct_indices, contiguous_ok, count_mismatch, index_mismatch, is_terminal_guess, success_final, error_code, error_detail, duration_ms, retry_scheduled) VALUES (?1, ?2, 0, 0, 0, 0, 0, ?3, 0, 'unknown_final_failure', ?4, 0, 0)")
+                        .bind(page as i64).bind(max_retries as i64).bind(is_last_page as i64).bind(format!("final failure: {final_err}"))
+                        .execute(pool).await;
+                }
+            }
+        }
+        Err(final_err)
     }
 
     async fn collect_page_range_with_cancellation(

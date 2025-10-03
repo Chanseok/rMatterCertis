@@ -811,9 +811,10 @@ impl StageActor {
                         let guard_hit = {
                             if let Ok(mut guard) = DATA_SAVING_RUN_GUARD.lock() {
                                 if guard.contains(&guard_key) {
+                                    tracing::warn!(target: "data_saving_guard", session_id=%session_id, batch_id=?batch_id, key=%guard_key, "duplicate DataSaving detected; skipping");
                                     true
                                 } else {
-                                    tracing::info!(target: "data_saving_diag", "[DataSaving] guard insert key={guard_key}");
+                                    tracing::debug!(target: "data_saving_guard", session_id=%session_id, batch_id=?batch_id, key=%guard_key, "first DataSaving attempt; guard inserted");
                                     guard.insert(guard_key.clone());
                                     false
                                 }
@@ -1620,6 +1621,7 @@ impl StageActor {
 
         match processing_result {
             Ok(stage_result) => {
+                // Emit Completed event first with aggregated results
                 self.state = StageState::Completed;
                 let completion_event = AppEvent::StageCompleted {
                     stage_type: stage_type.clone(),
@@ -1629,10 +1631,30 @@ impl StageActor {
                     timestamp: Utc::now(),
                 };
                 self.emit(context, completion_event)?;
-                info!(
-                    "✅ Stage {:?} completed successfully: {}/{} items processed",
-                    stage_type, self.success_count, self.total_items
-                );
+
+                if self.failure_count > 0 {
+                    // Surface failure explicitly for better visibility in logs/UI
+                    let failure_event = AppEvent::StageFailed {
+                        stage_type: stage_type.clone(),
+                        session_id: context.session_id.clone(),
+                        batch_id: Some(self.batch_id.clone()),
+                        error: format!(
+                            "{} of {} items failed",
+                            self.failure_count, self.total_items
+                        ),
+                        timestamp: Utc::now(),
+                    };
+                    self.emit(context, failure_event).ok();
+                    warn!(
+                        "⚠️ Stage {:?} completed with failures: success={}/{} failed={}",
+                        stage_type, self.success_count, self.total_items, self.failure_count
+                    );
+                } else {
+                    info!(
+                        "✅ Stage {:?} completed successfully: {}/{} items processed",
+                        stage_type, self.success_count, self.total_items
+                    );
+                }
                 Ok(())
             }
             Err(StageError::TimeoutError { .. }) => {
@@ -1911,14 +1933,30 @@ impl StageActor {
                         i, d.url, d.page_id, d.index_in_page
                     );
                 }
-                let products = &wrapper.products;
+                // Partial-save filtering: persist only items with valid pagination coordinates
+                let products: Vec<crate::domain::product::ProductDetail> = wrapper
+                    .products
+                    .iter()
+                    .cloned()
+                    .filter(|d| d.page_id.is_some() && d.index_in_page.is_some())
+                    .collect();
+                let filtered_out = wrapper.products.len().saturating_sub(products.len());
+                if filtered_out > 0 {
+                    warn!(
+                        target: "data_saving_diag",
+                        filtered_out,
+                        attempted = wrapper.products.len(),
+                        saved_candidates = products.len(),
+                        "[PersistExec] partial-save: filtering out items missing coords"
+                    );
+                }
                 if products.is_empty() {
                     return Ok((0, 0, 0));
                 }
                 // Duplicate detection by URL
                 let mut seen = std::collections::HashSet::new();
                 let mut duplicates: Vec<String> = Vec::new();
-                for d in products {
+                for d in products.iter() {
                     if !seen.insert(d.url.clone()) {
                         duplicates.push(d.url.clone());
                     }
@@ -1995,13 +2033,29 @@ impl StageActor {
                         i, d.url, d.page_id, d.index_in_page
                     );
                 }
-                let products = &wrapper.products;
+                // Partial-save filtering for validated products as well
+                let products: Vec<crate::domain::product::ProductDetail> = wrapper
+                    .products
+                    .iter()
+                    .cloned()
+                    .filter(|d| d.page_id.is_some() && d.index_in_page.is_some())
+                    .collect();
+                let filtered_out = wrapper.products.len().saturating_sub(products.len());
+                if filtered_out > 0 {
+                    warn!(
+                        target: "data_saving_diag",
+                        filtered_out,
+                        attempted = wrapper.products.len(),
+                        saved_candidates = products.len(),
+                        "[PersistExec] partial-save(validated): filtering out items missing coords"
+                    );
+                }
                 if products.is_empty() {
                     return Ok((0, 0, 0));
                 }
                 let mut seen = std::collections::HashSet::new();
                 let mut duplicates: Vec<String> = Vec::new();
-                for d in products {
+                for d in products.iter() {
                     if !seen.insert(d.url.clone()) {
                         duplicates.push(d.url.clone());
                     }

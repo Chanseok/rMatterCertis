@@ -687,12 +687,22 @@ pub struct RecrawlPagesResponse { pub accepted: bool, pub count: usize }
 
 #[tauri::command]
 pub async fn recrawl_physical_pages(app: tauri::AppHandle, req: RecrawlPagesRequest) -> Result<RecrawlPagesResponse, String> {
-    if req.physical_pages.is_empty() { return Ok(RecrawlPagesResponse { accepted: false, count: 0 }); }
+    tracing::info!(target="orchestration", pages=?req.physical_pages, "recrawl_physical_pages invoked");
+    if req.physical_pages.is_empty() {
+        tracing::warn!(target="orchestration", "recrawl_physical_pages rejected: empty pages list");
+        return Ok(RecrawlPagesResponse { accepted: false, count: 0 });
+    }
     // Convert to u32 (site page numbers assumed >=0)
     let pages: Vec<u32> = req.physical_pages.iter().cloned().filter(|p| *p >= 0).map(|p| p as u32).collect();
-    if pages.is_empty() { return Ok(RecrawlPagesResponse { accepted: false, count: 0 }); }
+    if pages.is_empty() {
+        tracing::warn!(target="orchestration", "recrawl_physical_pages rejected: all pages were negative/invalid after filtering");
+        return Ok(RecrawlPagesResponse { accepted: false, count: 0 });
+    }
     let count = pages.len();
-    start_manual_crawl_pages_actor(app, pages, Some(true)).await.map_err(|e| e.to_string())?;
+    if let Err(e) = start_manual_crawl_pages_actor(app.clone(), pages.clone(), Some(true)).await {
+        tracing::error!(target="orchestration", error=%e, pages=?pages, "recrawl_physical_pages failed to start manual crawl");
+        return Err(e);
+    }
     Ok(RecrawlPagesResponse { accepted: true, count })
 }
 

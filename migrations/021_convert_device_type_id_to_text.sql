@@ -1,8 +1,7 @@
--- Migration 021: Convert device_types.type_id from INTEGER to TEXT
--- This fixes the JSON string to INTEGER matching issue
 
--- Step 1: Create a new table with TEXT type_id
-CREATE TABLE IF NOT EXISTS device_types_new (
+-- Archived legacy migration 021: Convert device_types.type_id from INTEGER to TEXT
+-- Superseded by consolidated baseline (device_types.type_id is already TEXT there).
+-- Original logic retained in archive/021_convert_device_type_id_to_text.sql (trimmed stub) and git history.
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code_hex TEXT,
     name TEXT NOT NULL,

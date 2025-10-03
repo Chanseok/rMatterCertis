@@ -928,6 +928,10 @@ pub struct SessionSummary {
 
     /// 타임스탬프
     pub timestamp: DateTime<Utc>,
+
+    /// Optional reasons why certain stages were skipped (for postmortem/debug)
+    #[serde(default)]
+    pub skip_reasons: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

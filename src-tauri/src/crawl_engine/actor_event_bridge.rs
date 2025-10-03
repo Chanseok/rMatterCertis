@@ -382,18 +382,25 @@ impl ActorEventBridge {
 
         // 보강: SessionCompleted(summary) 수신 시에도 메인 로그에 인간 친화적 요약을 남긴다.
         if let AppEvent::SessionCompleted { summary, .. } = &actor_event {
-            info!(
-                "📊 Session Final Summary | session_id={} state={} batches(planned/executed)={}/{} failed_pages={} inserted={} updated={} duplicates={} ts={}",
-                summary.session_id,
-                summary.final_state,
-                summary.planned_list_batches,
-                summary.executed_list_batches,
-                summary.failed_pages_count,
-                summary.products_inserted,
-                summary.products_updated,
-                summary.duplicates_skipped,
-                chrono::Utc::now().to_rfc3339()
-            );
+            let suppress = std::env::var("MC_SUPPRESS_BRIDGE_SESSION_SUMMARY")
+                .ok()
+                .is_some_and(|v| v=="1" || v.eq_ignore_ascii_case("true"));
+            if !suppress {
+                info!(
+                    "📊 Session Final Summary | session_id={} state={} batches(planned/executed)={}/{} failed_pages={} inserted={} updated={} duplicates={} ts={}",
+                    summary.session_id,
+                    summary.final_state,
+                    summary.planned_list_batches,
+                    summary.executed_list_batches,
+                    summary.failed_pages_count,
+                    summary.products_inserted,
+                    summary.products_updated,
+                    summary.duplicates_skipped,
+                    chrono::Utc::now().to_rfc3339()
+                );
+            } else {
+                debug!("SessionCompleted summary log suppressed by MC_SUPPRESS_BRIDGE_SESSION_SUMMARY=1");
+            }
         }
 
         debug!(

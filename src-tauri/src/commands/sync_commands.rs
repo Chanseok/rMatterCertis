@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tauri::{AppHandle, State};
 use tokio::sync::Semaphore;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 // Reuse helper to emit events
 use super::validation_commands::emit_actor_event;
@@ -830,7 +830,7 @@ pub async fn start_basic_sync_pages(
     let mut deleted_total: u32 = 0;
     if !dry_run.unwrap_or(false) && pages_processed > 0 {
         // Merge and normalize ranges again for safety
-        let mut sweep_ranges: Vec<(u32, u32)> = Vec::new();
+    let sweep_ranges: Vec<(u32, u32)> = Vec::new();
         // parse_ranges removed (temporarily disabled)
 
         // Sweep only within ranges, but additionally limit to page_ids actually observed in this session,

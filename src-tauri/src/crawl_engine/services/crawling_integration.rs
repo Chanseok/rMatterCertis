@@ -505,7 +505,7 @@ impl CrawlingIntegrationService {
             }
         };
         let mut last_error = None;
-        let expected_per_page: usize = 12;
+    let expected_per_page: usize = crate::domain::constants::site::PRODUCTS_PER_PAGE as usize;
 
         for attempt in 0..=max_retries {
             match self
@@ -520,9 +520,9 @@ impl CrawlingIntegrationService {
                 Ok(urls) => {
                     // 성공 판정 강화: 비마지막 페이지는 최소 12개를 기대
                     let is_last = page >= site_status.total_pages;
-                    if !is_last && urls.len() < expected_per_page {
+                    if !is_last && urls.len() != expected_per_page {
                         last_error = Some(anyhow::anyhow!(
-                            "Insufficient products on page {}: expected >= {}, got {}",
+                            "Insufficient products on page {}: expected exactly {}, got {}",
                             page,
                             expected_per_page,
                             urls.len()
@@ -600,7 +600,7 @@ impl CrawlingIntegrationService {
         };
 
         let mut last_error = None;
-        let expected_per_page: usize = 12;
+    let expected_per_page: usize = crate::domain::constants::site::PRODUCTS_PER_PAGE as usize;
         let started = std::time::Instant::now();
 
         for attempt in 0..=max_retries {
@@ -616,9 +616,9 @@ impl CrawlingIntegrationService {
                 Ok(urls) => {
                     // 성공 판정 강화: 비마지막 페이지는 최소 12개를 기대
                     let is_last = page >= site_status.total_pages;
-                    if !is_last && urls.len() < expected_per_page {
+                    if !is_last && urls.len() != expected_per_page {
                         last_error = Some(anyhow::anyhow!(
-                            "Insufficient products on page {}: expected >= {}, got {}",
+                            "Insufficient products on page {}: expected exactly {}, got {}",
                             page,
                             expected_per_page,
                             urls.len()

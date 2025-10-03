@@ -522,6 +522,7 @@ impl SessionActor {
             failed_page_ids: Vec::new(),
             final_state: "completed".to_string(),
             timestamp: Utc::now(),
+            skip_reasons: Vec::new(),
         });
 
         let sid = session_id.to_string();
@@ -848,12 +849,22 @@ impl SessionActor {
         let timeout_secs = app_config.user.crawling.timing.operation_timeout_seconds;
 
         // Build StageDeps and StageActor
+        // Duplicate policy can be tuned via env for manual runs:
+        //  - MC_DUP_POLICY=update_id_index_only → force id/position update on duplicates
+        //  - otherwise defaults to Skip
+        let dup_policy_env = std::env::var("MC_DUP_POLICY").unwrap_or_default();
+        let duplicate_policy = if dup_policy_env.eq_ignore_ascii_case("update_id_index_only") {
+            crate::crawl_engine::actors::types::DuplicatePersistencePolicy::UpdateIdIndexOnly
+        } else {
+            crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip
+        };
+
         let deps_stage = crate::crawl_engine::actors::stage_actor::StageDeps {
             http_client: Arc::clone(&deps.http_client),
             data_extractor: Arc::clone(&deps.data_extractor),
             product_repo: Arc::clone(&deps.product_repo),
             app_config: app_config.clone(),
-            duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
+            duplicate_policy,
         };
         let mut stage_actor = StageActor::new_with_deps(
             format!("stage_list_{}", batch_id),
@@ -901,6 +912,18 @@ impl SessionActor {
             all_urls.len()
         );
 
+        // Orchestration toggles (env-driven) for controlled execution in manual runs
+    let list_only = std::env::var("MC_LIST_ONLY").ok().is_some_and(|v| v=="1" || v.eq_ignore_ascii_case("true"));
+    // Back-compat: env wins; otherwise consult runtime hint
+    let skip_validation_env = std::env::var("MC_SKIP_VALIDATION").ok().is_some_and(|v| v=="1" || v.eq_ignore_ascii_case("true"));
+    let skip_validation = if skip_validation_env { true } else { crate::crawl_engine::integrated_context::IntegratedContext::validation_skip_hint() };
+        let skip_saving = std::env::var("MC_SKIP_SAVING").ok().is_some_and(|v| v=="1" || v.eq_ignore_ascii_case("true"));
+
+        if list_only {
+            info!("[Chaining] Batch {batch_id}: MC_LIST_ONLY=1 → stopping after list stage");
+            return Ok(());
+        }
+
         if all_urls.is_empty() {
             info!(
                 "🪙 No product URLs collected in batch {} – skipping detail/validation/saving",
@@ -944,8 +967,7 @@ impl SessionActor {
         );
 
         // Collect ProductDetails for subsequent stages
-        let mut collected_details: Vec<crate::domain::integrated_product::ProductDetail> =
-            Vec::new();
+        let mut collected_details: Vec<crate::domain::integrated_product::ProductDetail> = Vec::new();
         let mut successful_count: u32 = 0;
         let mut failed_count: u32 = 0;
         for it in &detail_res.details {
@@ -961,6 +983,39 @@ impl SessionActor {
             }
         }
 
+        // Safety: if any details are missing pagination coordinates, restore them
+        // from the Stage 1 URL mapping to ensure DataSaving isn't a no-op.
+        if collected_details.iter().any(|d| d.page_id.is_none() || d.index_in_page.is_none()) {
+            use std::collections::HashMap;
+            let mut url_to_coords: HashMap<&str, (i32, i32)> = HashMap::new();
+            for u in &all_urls {
+                url_to_coords.insert(u.url.as_str(), (u.page_id, u.index_in_page));
+            }
+            for d in &mut collected_details {
+                if d.page_id.is_none() || d.index_in_page.is_none() {
+                    if let Some((pid, idx)) = url_to_coords.get(d.url.as_str()) {
+                        d.page_id = Some(*pid);
+                        d.index_in_page = Some(*idx);
+                        // Also set canonical id if absent
+                        if d.id.is_none() {
+                            d.id = Some(format!("p{:04}i{:02}", pid, idx));
+                        }
+                    }
+                }
+            }
+            // Emit a concise orchestration log for observability
+            let restored = collected_details
+                .iter()
+                .filter(|d| d.page_id.is_some() && d.index_in_page.is_some())
+                .count();
+            info!(
+                target: "orchestration",
+                restored_coords = restored,
+                total_details = collected_details.len(),
+                "Applied URL→coords mapping to fill missing pagination coordinates in details"
+            );
+        }
+
         // Wrap into ProductDetails payload
         let detail_payload = ch::ProductDetails {
             products: collected_details.clone(),
@@ -974,19 +1029,32 @@ impl SessionActor {
         };
 
         // Stage 4: DataValidation (read-only, for UI progress metrics)
-        info!("[Chaining] Batch {batch_id}: starting DataValidation");
-        let _validate_res = stage_actor
-            .execute_stage(
-                StageType::DataValidation,
-                vec![StageItem::ProductDetails(detail_payload.clone())],
-                1,
-                timeout_secs,
-                context,
-            )
-            .await
-            .map_err(|e| {
-                SessionError::ContextError(format!("StageActor validation run failed: {e:?}"))
-            })?;
+        if skip_validation {
+            info!("[Chaining] Batch {batch_id}: MC_SKIP_VALIDATION=1 → skipping DataValidation stage");
+            // Emit a lightweight ValidationSkipped event via StageResult-like mapping using Progress
+            let _ = context.emit_event(AppEvent::Progress {
+                session_id: context.session_id.clone(),
+                current_step: 4,
+                total_steps: 5,
+                message: format!("Validation skipped for batch {batch_id}"),
+                percentage: 80.0,
+                timestamp: Utc::now(),
+            });
+        } else {
+            info!("[Chaining] Batch {batch_id}: starting DataValidation");
+            let _validate_res = stage_actor
+                .execute_stage(
+                    StageType::DataValidation,
+                    vec![StageItem::ProductDetails(detail_payload.clone())],
+                    1,
+                    timeout_secs,
+                    context,
+                )
+                .await
+                .map_err(|e| {
+                    SessionError::ContextError(format!("StageActor validation run failed: {e:?}"))
+                })?;
+        }
 
         // Fallback DB stats emit right after validation (for UI Stage 4 snapshot)
         if let Ok((cnt, minp, maxp, _)) = stage_actor.try_product_detail_stats().await {
@@ -998,7 +1066,7 @@ impl SessionActor {
                     total_product_details: cnt,
                     min_page: minp,
                     max_page: maxp,
-                    note: Some("post_validation:fallback".into()),
+                    note: Some(if skip_validation { "post_validation:skipped".into() } else { "post_validation:fallback".into() }),
                     timestamp: chrono::Utc::now(),
                 });
             } else {
@@ -1007,19 +1075,23 @@ impl SessionActor {
         }
 
         // Stage 5: DataSaving (persist to DB)
-        info!("[Chaining] Batch {batch_id}: starting DataSaving");
-        let _save_res = stage_actor
-            .execute_stage(
-                StageType::DataSaving,
-                vec![StageItem::ProductDetails(detail_payload)],
-                1,
-                timeout_secs,
-                context,
-            )
-            .await
-            .map_err(|e| {
-                SessionError::ContextError(format!("StageActor saving run failed: {e:?}"))
-            })?;
+        if skip_saving {
+            info!("[Chaining] Batch {batch_id}: MC_SKIP_SAVING=1 → skipping DataSaving stage");
+        } else {
+            info!("[Chaining] Batch {batch_id}: starting DataSaving");
+            let _save_res = stage_actor
+                .execute_stage(
+                    StageType::DataSaving,
+                    vec![StageItem::ProductDetails(detail_payload)],
+                    1,
+                    timeout_secs,
+                    context,
+                )
+                .await
+                .map_err(|e| {
+                    SessionError::ContextError(format!("StageActor saving run failed: {e:?}"))
+                })?;
+        }
 
         Ok(())
     }
@@ -1190,6 +1262,14 @@ impl SessionActor {
             failed_page_ids: Vec::new(),
             final_state: format!("{:?}", self.state),
             timestamp: Utc::now(),
+            skip_reasons: {
+                let mut v = Vec::new();
+                if std::env::var("MC_LIST_ONLY").ok().is_some_and(|x| x=="1" || x.eq_ignore_ascii_case("true")) { v.push("list_only".into()); }
+                if std::env::var("MC_SKIP_SAVING").ok().is_some_and(|x| x=="1" || x.eq_ignore_ascii_case("true")) { v.push("skip_saving".into()); }
+                let skip_validation_env = std::env::var("MC_SKIP_VALIDATION").ok().is_some_and(|x| x=="1" || x.eq_ignore_ascii_case("true"));
+                if skip_validation_env || crate::crawl_engine::integrated_context::IntegratedContext::validation_skip_hint() { v.push("skip_validation".into()); }
+                v
+            },
         })
     }
 }
@@ -1439,15 +1519,55 @@ impl Actor for SessionActor {
                     }
                 }
 
-                // 이벤트 스트림 수신 (BatchReport -> duplicates_skipped 누적)
+                // 이벤트 스트림 수신 (BatchReport -> duplicates_skipped 누적, ProductLifecycle persist_result 누적)
                 Ok(evt) = event_rx.recv() => {
-                    if let AppEvent::BatchReport { duplicates_skipped, .. } = evt {
-                        if duplicates_skipped > 0 {
-                            let before = self.duplicates_skipped;
-                            self.duplicates_skipped = self.duplicates_skipped.saturating_add(duplicates_skipped);
-                            debug!("🧮 SessionActor {} accumulated duplicates_skipped: +{} ({} -> {})", self.actor_id, duplicates_skipped, before, self.duplicates_skipped);
+                    match evt {
+                        AppEvent::BatchReport { duplicates_skipped, .. } => {
+                            if duplicates_skipped > 0 {
+                                let before = self.duplicates_skipped;
+                                self.duplicates_skipped = self.duplicates_skipped.saturating_add(duplicates_skipped);
+                                debug!("🧮 SessionActor {} accumulated duplicates_skipped: +{} ({} -> {})", self.actor_id, duplicates_skipped, before, self.duplicates_skipped);
+                            }
                         }
-                    } else { /* ignore other events */ }
+                        AppEvent::ProductLifecycle { ref status, ref metrics, .. } => {
+                            // persist_result 메트릭만 파싱
+                            if let Some(crate::crawl_engine::actors::types::SimpleMetrics::Generic { key, value }) = metrics {
+                                if key == "persist_result" {
+                                    // expected pattern: attempted=120,inserted=0,updated=120,duplicates=0,unchanged=0
+                                    let mut ins: u32 = 0;
+                                    let mut upd: u32 = 0;
+                                    let mut dups: u32 = 0;
+                                    let mut saw_any_key = false;
+                                    for part in value.split(',') {
+                                        if let Some((k,v)) = part.split_once('=') {
+                                            match k.trim() {
+                                                "inserted" => { if let Ok(n) = v.trim().parse::<u32>() { ins = n; saw_any_key = true; } },
+                                                "updated" => { if let Ok(n) = v.trim().parse::<u32>() { upd = n; saw_any_key = true; } },
+                                                "duplicates" => { if let Ok(n) = v.trim().parse::<u32>() { dups = n; saw_any_key = true; } },
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    if !saw_any_key {
+                                        warn!("⚠️ SessionActor {} persist_result malformed (no expected keys) raw='{}'", self.actor_id, value);
+                                    } else {
+                                        if ins > 0 || upd > 0 || dups > 0 {
+                                            let before_i = self.products_inserted;
+                                            let before_u = self.products_updated;
+                                            let before_d = self.duplicates_skipped;
+                                            if ins > 0 { self.products_inserted = self.products_inserted.saturating_add(ins); }
+                                            if upd > 0 { self.products_updated = self.products_updated.saturating_add(upd); }
+                                            if dups > 0 { self.duplicates_skipped = self.duplicates_skipped.saturating_add(dups); }
+                                            debug!("📈 SessionActor {} persist_result accu status={} +ins={} +upd={} +dup={} (ins {}->{}, upd {}->{}, dup {}->{})", self.actor_id, status, ins, upd, dups, before_i, self.products_inserted, before_u, self.products_updated, before_d, self.duplicates_skipped);
+                                        } else {
+                                            debug!("📈 SessionActor {} persist_result status={} no deltas (raw='{}')", self.actor_id, status, value);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => { /* ignore others */ }
+                    }
                 }
 
                 // 취소 신호 확인

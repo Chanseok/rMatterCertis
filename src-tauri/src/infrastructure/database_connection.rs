@@ -11,6 +11,15 @@ use std::path::Path;
 use std::sync::OnceLock;
 use tracing::{debug, info, warn};
 
+// Global flag for legacy slot unique index presence (set at startup migration)
+static LEGACY_SLOT_UNIQUE_INDEX_PRESENT: OnceLock<bool> = OnceLock::new();
+
+/// Expose whether a legacy unique slot index (products(page_id,index_in_page)) was detected.
+#[must_use]
+pub fn legacy_slot_unique_index_present() -> bool {
+    *LEGACY_SLOT_UNIQUE_INDEX_PRESENT.get().unwrap_or(&false)
+}
+
 #[derive(Clone)]
 pub struct DatabaseConnection {
     pool: SqlitePool,
@@ -49,7 +58,12 @@ impl DatabaseConnection {
             .connect(database_url)
             .await?;
         // Standardize busy_timeout & journal/wal pragmas (best effort)
-        let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(&pool).await;
+        // busy_timeout now configurable via MC_DB_BUSY_TIMEOUT_MS (milliseconds)
+        // Rationale: 15000ms(15s) was too long; we prefer shorter waits + explicit retry loops.
+        let busy_timeout_ms = resolve_busy_timeout_ms();
+        let _ = sqlx::query(&format!("PRAGMA busy_timeout={busy_timeout_ms}"))
+            .execute(&pool)
+            .await;
         let _ = sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await;
         let _ = sqlx::query("PRAGMA synchronous=NORMAL").execute(&pool).await;
 
@@ -67,6 +81,8 @@ impl DatabaseConnection {
     /// Returns an error if reading migration files fails or executing SQL statements fails.
     pub async fn migrate(&self) -> Result<()> {
         use std::fs;
+
+        // Concise logging flags
         let concise_all = std::env::var("MC_CONCISE_ALL")
             .ok()
             .is_none_or(|v| !(v == "0" || v.eq_ignore_ascii_case("false")));
@@ -75,593 +91,168 @@ impl DatabaseConnection {
                 .ok()
                 .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
 
-        // Enable foreign key constraints
-        sqlx::query("PRAGMA foreign_keys = ON")
-            .execute(&self.pool)
-            .await?;
+        // Always enable FK constraints (idempotent)
+        let _ = sqlx::query("PRAGMA foreign_keys=ON").execute(&self.pool).await;
 
-        // Pre-clean: drop legacy compatibility view if it exists to avoid schema validation errors
-        let _ = sqlx::query("DROP VIEW IF EXISTS matter_products_legacy;")
-            .execute(&self.pool)
-            .await;
+        // Baseline version we stamp into PRAGMA user_version after success
+        const BASELINE_VERSION: i64 = 1001; // 1xxx reserved for consolidated milestones
 
-        // Baseline detection (new installs use 001_baseline.sql)
-        let baseline_exists = std::path::Path::new("src-tauri/migrations/001_baseline.sql").exists() || std::path::Path::new("migrations/001_baseline.sql").exists();
-        let is_fresh_db: bool = {
-            // Heuristic: products table empty & no legacy marker tables
-            let has_products = sqlx::query_scalar::<_, Option<i64>>("SELECT 1 FROM sqlite_master WHERE type='table' AND name='products' LIMIT 1")
-                .fetch_optional(&self.pool).await?.flatten().is_some();
-            if !has_products { true } else { 
-                let product_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products").fetch_one(&self.pool).await.unwrap_or(0);
-                product_count == 0
-            }
-        };
-        let legacy_markers_present = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sqlite_master WHERE name='product_primary_device_types' OR name='matter_products' LIMIT 1")
-            .fetch_one(&self.pool).await.unwrap_or(0) > 0;
-        let has_type_id_text = sqlx::query_scalar::<_, Option<String>>("SELECT sql FROM sqlite_master WHERE type='table' AND name='device_types' LIMIT 1")
-            .fetch_optional(&self.pool).await?.flatten().map(|sql| sql.to_lowercase().contains("type_id text")).unwrap_or(false);
+        // Read current user_version (0 if unset)
+        let current_version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or(0);
 
-        let use_baseline = baseline_exists && is_fresh_db && !legacy_markers_present && has_type_id_text; // final guard
-
-        if use_baseline {
-            if concise { debug!("📦 Applying baseline schema (001_baseline.sql)"); } else { info!("📦 Applying baseline schema (001_baseline.sql)"); }
-            let baseline_path_fs = std::path::Path::new("migrations/001_baseline.sql");
-            if baseline_path_fs.exists() {
-                let baseline_sql = fs::read_to_string(baseline_path_fs)?;
-                self.exec_multi_statement(&baseline_sql, false, "001_baseline").await?;
-            } else {
-                let baseline_sql = include_str!("../../migrations/001_baseline.sql");
-                self.exec_multi_statement(baseline_sql, false, "001_baseline_embedded").await?;
-            }
-            self.sanity_check_post_migration("001_baseline").await;
-            if concise { debug!("✅ Baseline schema applied"); } else { info!("✅ Baseline schema applied"); }
-            // Skip legacy chain entirely
-            let product_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products")
-                .fetch_one(&self.pool)
-                .await.unwrap_or(0);
-            let details_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM product_details")
-                .fetch_one(&self.pool)
-                .await.unwrap_or(0);
-            if concise { info!("🗄️ DB ready (baseline): products={}, details={}", product_count, details_count); }
-            else { info!("📊 Database initialized (baseline) with {} products and {} details", product_count, details_count); }
-            return Ok(());
-        }
-
-        // Legacy path: Load and run the integrated schema SQL (003_integrated_schema.sql)
-        if concise { debug!("📦 Checking database schema (CREATE TABLE IF NOT EXISTS)..."); } else { info!("📦 Checking database schema (CREATE TABLE IF NOT EXISTS)..."); }
-        let schema_path = std::path::Path::new("migrations/003_integrated_schema.sql");
-        if schema_path.exists() {
-            let schema_sql = fs::read_to_string(schema_path)?;
-            self.exec_multi_statement(&schema_sql, false, "003_integrated_schema").await?;
-            self.sanity_check_post_migration("003_integrated_schema").await;
-            if concise { debug!("✅ Database schema verified successfully"); } else { info!("✅ Database schema verified successfully"); }
+        if current_version >= BASELINE_VERSION {
+            if concise { debug!(current_version, "🆗 Schema baseline already applied (user_version)"); }
+            else { info!(current_version, "🆗 Schema baseline already applied (user_version)"); }
         } else {
-            warn!("⚠️ Schema file not found, using embedded schema");
-            let schema_sql = include_str!("../../migrations/003_integrated_schema.sql");
-            self.exec_multi_statement(schema_sql, false, "003_integrated_schema_embedded").await?;
-            self.sanity_check_post_migration("003_integrated_schema_embedded").await;
-            if concise { debug!("✅ Database schema verified with embedded version"); } else { info!("✅ Database schema verified with embedded version"); }
-        }
-
-        // Check if we need to migrate legacy data
-        let has_legacy_data = sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='matter_products'",
-        )
-        .fetch_one(&self.pool)
-        .await?;
-
-        if has_legacy_data > 0 {
-            // Check if there's data to migrate
-            let legacy_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM matter_products")
-                .fetch_one(&self.pool)
-                .await?;
-
-            if legacy_count > 0 {
-                if concise {
-                    debug!("🔄 Found {} legacy records to migrate", legacy_count);
-                } else {
-                    info!("🔄 Found {} legacy records to migrate", legacy_count);
-                }
-
-                // Apply data migration script
-                let migration_path = std::path::Path::new("migrations/004_migrate_legacy_data.sql");
-
-                if migration_path.exists() {
-                    let migration_sql = fs::read_to_string(migration_path)?;
-                    self.exec_multi_statement(&migration_sql, false, "004_migrate_legacy_data").await?;
-                } else {
-                    let migration_sql = include_str!("../../migrations/004_migrate_legacy_data.sql");
-                    self.exec_multi_statement(migration_sql, false, "004_migrate_legacy_data_embedded").await?;
-                }
-                if concise { debug!("✅ Migrated legacy data (multi-exec)"); } else { info!("✅ Migrated legacy data (multi-exec)"); }
-            } else if concise {
-                debug!("ℹ️ No legacy data to migrate");
-            } else {
-                info!("ℹ️ No legacy data to migrate");
-            }
-        } else if concise {
-            debug!("ℹ️ No legacy migration needed (modern schema already in use)");
-        } else {
-            info!("ℹ️ No legacy migration needed (modern schema already in use)");
-        }
-
-        // Apply 005_add_product_id.sql if products.id is missing
-        let has_products_id_col: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM pragma_table_info('products') WHERE name='id' LIMIT 1;",
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        .flatten();
-
-        if has_products_id_col.is_none() {
-            if concise {
-                debug!("🧩 Applying migration 005_add_product_id.sql (products.id)");
-            } else {
-                info!("🧩 Applying migration 005_add_product_id.sql (products.id)");
-            }
-            let migration_path = std::path::Path::new("migrations/005_add_product_id.sql");
-            if migration_path.exists() {
-                let migration_sql = fs::read_to_string(migration_path)?;
-                self.exec_multi_statement(&migration_sql, false, "005_add_product_id").await?;
-            } else {
-                let migration_sql = include_str!("../../migrations/005_add_product_id.sql");
-                self.exec_multi_statement(migration_sql, false, "005_add_product_id_embedded").await?;
-            }
-            if concise {
-                debug!("✅ Migration 005 applied");
-            } else {
-                info!("✅ Migration 005 applied");
-            }
-        } else if !concise {
-            debug!("ℹ️ Migration 005 not needed (products.id exists)");
-        }
-
-        // Apply 006_add_unique_slot_index.sql if unique slot indexes are missing
-        let has_ux_products_slot: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='ux_products_slot' LIMIT 1;",
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        .flatten();
-
-        let has_ux_product_details_slot: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='ux_product_details_slot' LIMIT 1;",
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        .flatten();
-
-        if has_ux_products_slot.is_none() || has_ux_product_details_slot.is_none() {
-            if concise {
-                debug!("🧩 Applying migration 006_add_unique_slot_index.sql (unique slot indexes)");
-            } else {
-                info!("🧩 Applying migration 006_add_unique_slot_index.sql (unique slot indexes)");
-            }
-            let migration_path = std::path::Path::new("migrations/006_add_unique_slot_index.sql");
-            if migration_path.exists() {
-                let migration_sql = fs::read_to_string(migration_path)?;
-                self.exec_multi_statement(&migration_sql, false, "006_add_unique_slot_index").await?;
-            } else {
-                let migration_sql = include_str!("../../migrations/006_add_unique_slot_index.sql");
-                self.exec_multi_statement(migration_sql, false, "006_add_unique_slot_index_embedded").await?;
-            }
-            if concise {
-                debug!("✅ Migration 006 applied");
-            } else {
-                info!("✅ Migration 006 applied");
-            }
-        } else if !concise {
-            debug!("ℹ️ Migration 006 not needed (unique slot indexes exist)");
-        }
-
-        // Apply 007_primary_device_type_ids.sql if normalized column is missing
-        let has_primary_device_type_ids_col: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM pragma_table_info('product_details') WHERE name='primary_device_type_ids' LIMIT 1;",
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        .flatten();
-
-        if has_primary_device_type_ids_col.is_none() {
-            if concise {
-                debug!(
-                    "🧩 Applying migration 007_primary_device_type_ids.sql (normalized device type ids)"
-                );
-            } else {
-                info!(
-                    "🧩 Applying migration 007_primary_device_type_ids.sql (normalized device type ids)"
-                );
-            }
-            let migration_path = std::path::Path::new("migrations/007_primary_device_type_ids.sql");
-            if migration_path.exists() {
-                let migration_sql = fs::read_to_string(migration_path)?;
-                self.exec_multi_statement(&migration_sql, false, "007_primary_device_type_ids").await?;
-            } else {
-                let migration_sql = include_str!("../../migrations/007_primary_device_type_ids.sql");
-                self.exec_multi_statement(migration_sql, false, "007_primary_device_type_ids_embedded").await?;
-            }
-            if concise {
-                debug!("✅ Migration 007 applied");
-            } else {
-                info!("✅ Migration 007 applied");
-            }
-        } else if !concise {
-            debug!("ℹ️ Migration 007 not needed (primary_device_type_ids exists)");
-        }
-
-        // Apply 008_fix_primary_device_type_ids.sql if present (idempotent corrective backfill)
-        let mig008_path = std::path::Path::new("migrations/008_fix_primary_device_type_ids.sql");
-    if mig008_path.exists() {
-            // Only apply 008 if legacy column exists; otherwise skip (fresh installs)
-            let has_legacy_col_008: Option<i64> = sqlx::query_scalar(
-                "SELECT 1 FROM pragma_table_info('product_details') WHERE name='primary_device_type_id' LIMIT 1;",
-            )
-            .fetch_optional(&self.pool)
-            .await?
-            .flatten();
-            if has_legacy_col_008.is_some() {
-                if concise {
-                    debug!(
-                        "🧩 Applying migration 008_fix_primary_device_type_ids.sql (corrective backfill + trigger refresh)"
-                    );
-                } else {
-                    info!(
-                        "🧩 Applying migration 008_fix_primary_device_type_ids.sql (corrective backfill + trigger refresh)"
-                    );
-                }
-                let migration_sql = std::fs::read_to_string(mig008_path)?;
-                self.exec_multi_statement(&migration_sql, true, "008_fix_primary_device_type_ids").await?;
-                self.sanity_check_post_migration("008_fix_primary_device_type_ids").await;
-                if concise {
-                    debug!("✅ Migration 008 applied");
-                } else {
-                    info!("✅ Migration 008 applied");
-                }
-            } else if !concise {
-                debug!("ℹ️ Migration 008 not needed (legacy column absent)");
-            }
-        }
-
-        // Apply 009_drop_legacy_primary_device_type_id.sql if present and legacy column exists
-        let mig009_path =
-            std::path::Path::new("migrations/009_drop_legacy_primary_device_type_id.sql");
-        if mig009_path.exists() {
-            // Check if legacy column still exists to avoid unnecessary rebuild on fresh installs
-            let has_legacy_col: Option<i64> = sqlx::query_scalar(
-                "SELECT 1 FROM pragma_table_info('product_details') WHERE name='primary_device_type_id' LIMIT 1;",
-            )
-            .fetch_optional(&self.pool)
-            .await?
-            .flatten();
-
-            if has_legacy_col.is_some() {
-                if concise {
-                    debug!(
-                        "🧩 Applying migration 009_drop_legacy_primary_device_type_id.sql (remove legacy column)"
-                    );
-                } else {
-                    info!(
-                        "🧩 Applying migration 009_drop_legacy_primary_device_type_id.sql (remove legacy column)"
-                    );
-                }
-                let migration_sql = std::fs::read_to_string(mig009_path)?;
-                self.exec_multi_statement(&migration_sql, false, "009_drop_legacy_primary_device_type_id").await?;
-                self.sanity_check_post_migration("009_drop_legacy_primary_device_type_id").await;
-                if concise {
-                    debug!("✅ Migration 009 applied");
-                } else {
-                    info!("✅ Migration 009 applied");
-                }
-            } else if !concise {
-                debug!("ℹ️ Migration 009 not needed (legacy column already absent)");
-            }
-        } else {
-            // Fallback to embedded migration when available in packaged builds
-            let has_legacy_col: Option<i64> = sqlx::query_scalar(
-                "SELECT 1 FROM pragma_table_info('product_details') WHERE name='primary_device_type_id' LIMIT 1;",
-            )
-            .fetch_optional(&self.pool)
-            .await?
-            .flatten();
-            if has_legacy_col.is_some() {
-                if concise {
-                    debug!(
-                        "🧩 Applying embedded migration 009_drop_legacy_primary_device_type_id.sql"
-                    );
-                } else {
-                    info!(
-                        "🧩 Applying embedded migration 009_drop_legacy_primary_device_type_id.sql"
-                    );
-                }
-                let migration_sql = include_str!("../../migrations/009_drop_legacy_primary_device_type_id.sql");
-                self.exec_multi_statement(migration_sql, false, "009_drop_legacy_primary_device_type_id_embedded").await?;
-                self.sanity_check_post_migration("009_drop_legacy_primary_device_type_id_embedded").await;
-                if concise {
-                    debug!("✅ Migration 009 applied (embedded)");
-                } else {
-                    info!("✅ Migration 009 applied (embedded)");
+            // Apply consolidated baseline file (FS first, then embedded). We prefer the new
+            // 001_baseline_consolidated.sql naming; keep legacy 001_baseline.sql as optional fallback.
+            let baseline_candidates = [
+                "migrations/001_baseline_consolidated.sql",
+                "migrations/001_baseline.sql",
+                "src-tauri/migrations/001_baseline_consolidated.sql",
+                "src-tauri/migrations/001_baseline.sql",
+            ];
+            let mut applied_label = "001_baseline_consolidated".to_string();
+            let mut applied_sql: Option<String> = None;
+            for path in baseline_candidates.iter() {
+                let p = std::path::Path::new(path);
+                if p.exists() {
+                    match fs::read_to_string(p) {
+                        Ok(s) => { applied_sql = Some(s); applied_label = p.file_name().unwrap().to_string_lossy().into_owned(); break; }
+                        Err(e) => { warn!(path=%path, error=%e, "failed_read_baseline_candidate"); }
+                    }
                 }
             }
-        }
-
-        // Apply 010_device_types.sql if device_types table missing
-        let has_device_types: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='device_types' LIMIT 1;",
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        .flatten();
-        if has_device_types.is_none() {
-            if concise {
-                debug!("🧩 Applying migration 010_device_types.sql (device_types reference table)");
-            } else {
-                info!("🧩 Applying migration 010_device_types.sql (device_types reference table)");
+            if applied_sql.is_none() {
+                // Fallback embedded include (must exist in repo – we embed the consolidated one only)
+                applied_sql = Some(include_str!("../../../migrations/001_baseline_consolidated.sql").to_string());
             }
-            let migration_path = std::path::Path::new("migrations/010_device_types.sql");
-            if migration_path.exists() {
-                let migration_sql = std::fs::read_to_string(migration_path)?;
-                self.exec_multi_statement(&migration_sql, false, "010_device_types").await?;
-            } else {
-                let migration_sql = include_str!("../../migrations/010_device_types.sql");
-                self.exec_multi_statement(migration_sql, false, "010_device_types_embedded").await?;
-            }
-            self.sanity_check_post_migration("010_device_types").await;
-            if concise {
-                debug!("✅ Migration 010 applied");
-            } else {
-                info!("✅ Migration 010 applied");
-            }
-        } else if !concise {
-            debug!("ℹ️ Migration 010 not needed (device_types table exists)");
+            if concise { debug!(label=%applied_label, "📦 Applying consolidated baseline schema"); }
+            else { info!(label=%applied_label, "📦 Applying consolidated baseline schema"); }
+            if let Some(sql) = applied_sql { self.exec_multi_statement(&sql, false, &applied_label).await?; }
+            self.sanity_check_post_migration(&applied_label).await;
+            // Stamp version
+            let _ = sqlx::query(&format!("PRAGMA user_version={BASELINE_VERSION}"))
+                .execute(&self.pool)
+                .await;
+            if concise { debug!(version=BASELINE_VERSION, "✅ Consolidated baseline applied"); }
+            else { info!(version=BASELINE_VERSION, "✅ Consolidated baseline applied"); }
         }
 
-        // Apply 011_device_types_add_category_introduced_in.sql if category column missing
-        let has_category_col: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM pragma_table_info('device_types') WHERE name='category' LIMIT 1;",
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        .flatten();
-        if has_device_types.is_some() && has_category_col.is_none() {
-            if concise { debug!("🧩 Applying migration 011_device_types_add_category_introduced_in.sql"); } else { info!("🧩 Applying migration 011_device_types_add_category_introduced_in.sql"); }
-            let migration_path = std::path::Path::new("migrations/011_device_types_add_category_introduced_in.sql");
-            if migration_path.exists() {
-                let migration_sql = std::fs::read_to_string(migration_path)?;
-                self.exec_multi_statement(&migration_sql, false, "011_device_types_add_category_introduced_in").await?;
-            } else {
-                let migration_sql = include_str!("../../migrations/011_device_types_add_category_introduced_in.sql");
-                self.exec_multi_statement(migration_sql, false, "011_device_types_add_category_introduced_in_embedded").await?;
-            }
-            self.sanity_check_post_migration("011_device_types_add_category_introduced_in").await;
-            if concise { debug!("✅ Migration 011 applied"); } else { info!("✅ Migration 011 applied"); }
-        } else if has_device_types.is_some() && has_category_col.is_some() && !concise {
-            debug!("ℹ️ Migration 011 not needed (category column present)");
-        }
-
-        // Apply 012_device_types_add_type_id.sql if type_id column missing
-        let has_type_id_col: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM pragma_table_info('device_types') WHERE name='type_id' LIMIT 1;",
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        .flatten();
-        if has_device_types.is_some() && has_type_id_col.is_none() {
-            if concise { debug!("🧩 Applying migration 012_device_types_add_type_id.sql"); } else { info!("🧩 Applying migration 012_device_types_add_type_id.sql"); }
-            let migration_path = std::path::Path::new("migrations/012_device_types_add_type_id.sql");
-            if migration_path.exists() {
-                let migration_sql = std::fs::read_to_string(migration_path)?;
-                self.exec_multi_statement(&migration_sql, false, "012_device_types_add_type_id").await?;
-            } else {
-                let migration_sql = include_str!("../../migrations/012_device_types_add_type_id.sql");
-                self.exec_multi_statement(migration_sql, false, "012_device_types_add_type_id_embedded").await?;
-            }
-            self.sanity_check_post_migration("012_device_types_add_type_id").await;
-            if concise { debug!("✅ Migration 012 applied"); } else { info!("✅ Migration 012 applied"); }
-        } else if has_device_types.is_some() && has_type_id_col.is_some() && !concise {
-            debug!("ℹ️ Migration 012 not needed (type_id column present)");
-        }
-
-        // Apply 013_product_primary_device_types_and_analytics_view.sql
-        // Guard: run if bridge table missing OR analytics view missing
-        let has_ppt: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_primary_device_types' LIMIT 1;",
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        .flatten();
-        let has_view: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM sqlite_master WHERE type='view' AND name='v_product_detail_analytics' LIMIT 1;",
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        .flatten();
-        if has_ppt.is_none() || has_view.is_none() {
-            if concise { debug!("🧩 Applying migration 013_product_primary_device_types_and_analytics_view.sql"); } else { info!("🧩 Applying migration 013_product_primary_device_types_and_analytics_view.sql"); }
-            let migration_path = std::path::Path::new("migrations/013_product_primary_device_types_and_analytics_view.sql");
-            if migration_path.exists() {
-                let migration_sql = std::fs::read_to_string(migration_path)?;
-                self.exec_multi_statement(&migration_sql, false, "013_product_primary_device_types_and_analytics_view").await?;
-            } else {
-                let migration_sql = include_str!("../../migrations/013_product_primary_device_types_and_analytics_view.sql");
-                self.exec_multi_statement(migration_sql, false, "013_product_primary_device_types_and_analytics_view_embedded").await?;
-            }
-            self.sanity_check_post_migration("013_product_primary_device_types_and_analytics_view").await;
-            if concise { debug!("✅ Migration 013 applied"); } else { info!("✅ Migration 013 applied"); }
-        } else if !concise {
-            debug!("ℹ️ Migration 013 not needed (bridge + view present)");
-        }
-
-        // Apply 014_product_primary_device_types_backfill_and_triggers.sql (always run to ensure triggers/backfill)
-        if concise { debug!("🧩 Applying migration 014_product_primary_device_types_backfill_and_triggers.sql"); } else { info!("🧩 Applying migration 014_product_primary_device_types_backfill_and_triggers.sql"); }
-        let migration_014_path = std::path::Path::new("migrations/014_product_primary_device_types_backfill_and_triggers.sql");
-        if migration_014_path.exists() {
-            if let Ok(migration_sql) = std::fs::read_to_string(migration_014_path) { let _ = self.exec_multi_statement(&migration_sql, true, "014_product_primary_device_types_backfill_and_triggers").await; }
-        } else {
-            let migration_sql = include_str!("../../migrations/014_product_primary_device_types_backfill_and_triggers.sql");
-            let _ = self.exec_multi_statement(migration_sql, true, "014_product_primary_device_types_backfill_and_triggers_embedded").await;
-        }
-        self.sanity_check_post_migration("014_product_primary_device_types_backfill_and_triggers").await;
-        if concise { debug!("✅ Migration 014 applied (idempotent)"); } else { info!("✅ Migration 014 applied (idempotent)"); }
-
-        // Apply 015_backfill_primary_device_type_ids_from_device_type.sql (fallback mapping from device_type text)
-        if concise { debug!("🧩 Applying migration 015_backfill_primary_device_type_ids_from_device_type.sql"); } else { info!("🧩 Applying migration 015_backfill_primary_device_type_ids_from_device_type.sql"); }
-        let migration_015_path = std::path::Path::new("migrations/015_backfill_primary_device_type_ids_from_device_type.sql");
-        if migration_015_path.exists() {
-            if let Ok(migration_sql) = std::fs::read_to_string(migration_015_path) { let _ = self.exec_multi_statement(&migration_sql, true, "015_backfill_primary_device_type_ids_from_device_type").await; }
-        } else {
-            let migration_sql = include_str!("../../migrations/015_backfill_primary_device_type_ids_from_device_type.sql");
-            let _ = self.exec_multi_statement(migration_sql, true, "015_backfill_primary_device_type_ids_from_device_type_embedded").await;
-        }
-        self.sanity_check_post_migration("015_backfill_primary_device_type_ids_from_device_type").await;
-        if concise { debug!("✅ Migration 015 applied (idempotent)"); } else { info!("✅ Migration 015 applied (idempotent)"); }
-
-        // Apply 016_rebuild_bridge_dual_mapping.sql (ensure bridge rows using type_id OR id)
-        if concise { debug!("🧩 Applying migration 016_rebuild_bridge_dual_mapping.sql"); } else { info!("🧩 Applying migration 016_rebuild_bridge_dual_mapping.sql"); }
-        let migration_016_path = std::path::Path::new("migrations/016_rebuild_bridge_dual_mapping.sql");
-        if migration_016_path.exists() {
-            if let Ok(migration_sql) = std::fs::read_to_string(migration_016_path) { let _ = self.exec_multi_statement(&migration_sql, true, "016_rebuild_bridge_dual_mapping").await; }
-        } else {
-            let migration_sql = include_str!("../../migrations/016_rebuild_bridge_dual_mapping.sql");
-            let _ = self.exec_multi_statement(migration_sql, true, "016_rebuild_bridge_dual_mapping_embedded").await;
-        }
-        self.sanity_check_post_migration("016_rebuild_bridge_dual_mapping").await;
-        if concise { debug!("✅ Migration 016 applied (idempotent)"); } else { info!("✅ Migration 016 applied (idempotent)"); }
-
-        // Apply 017_backfill_bridge_using_type_id_values.sql (map JSON codes directly to type_id)
-        if concise { debug!("🧩 Applying migration 017_backfill_bridge_using_type_id_values.sql"); } else { info!("🧩 Applying migration 017_backfill_bridge_using_type_id_values.sql"); }
-        let migration_017_path = std::path::Path::new("migrations/017_backfill_bridge_using_type_id_values.sql");
-        if migration_017_path.exists() {
-            if let Ok(migration_sql) = std::fs::read_to_string(migration_017_path) { let _ = self.exec_multi_statement(&migration_sql, true, "017_backfill_bridge_using_type_id_values").await; }
-        } else {
-            let migration_sql = include_str!("../../migrations/017_backfill_bridge_using_type_id_values.sql");
-            let _ = self.exec_multi_statement(migration_sql, true, "017_backfill_bridge_using_type_id_values_embedded").await;
-        }
-        self.sanity_check_post_migration("017_backfill_bridge_using_type_id_values").await;
-        if concise { debug!("✅ Migration 017 applied (idempotent)"); } else { info!("✅ Migration 017 applied (idempotent)"); }
-
-        // Apply 018_resilient_analytics_view.sql (fallback direct JSON mapping)
-        if concise { debug!("🧩 Applying migration 018_resilient_analytics_view.sql"); } else { info!("🧩 Applying migration 018_resilient_analytics_view.sql"); }
-        let migration_018_path = std::path::Path::new("migrations/018_resilient_analytics_view.sql");
-        if migration_018_path.exists() {
-            if let Ok(migration_sql) = std::fs::read_to_string(migration_018_path) { let _ = self.exec_multi_statement(&migration_sql, true, "018_resilient_analytics_view").await; }
-        } else {
-            let migration_sql = include_str!("../../migrations/018_resilient_analytics_view.sql");
-            let _ = self.exec_multi_statement(migration_sql, true, "018_resilient_analytics_view_embedded").await;
-        }
-        self.sanity_check_post_migration("018_resilient_analytics_view").await;
-        if concise { debug!("✅ Migration 018 applied (idempotent)"); } else { info!("✅ Migration 018 applied (idempotent)"); }
-
-        // DISABLED: Migrations 019, 020, 021 replaced by comprehensive migration 022
-        // Apply 019_fix_device_type_mapping_in_analytics_view.sql (strict mapping + multi-value aggregation)
-        // let migration_019_path = std::path::Path::new("migrations/019_fix_device_type_mapping_in_analytics_view.sql");
-        // if migration_019_path.exists() {
-        //     if let Ok(migration_sql) = std::fs::read_to_string(migration_019_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
-        // } else {
-        //     // Fallback to bundled version if not present on FS
-        //     let migration_sql = include_str!("../../migrations/019_fix_device_type_mapping_in_analytics_view.sql");
-        //     let _ = sqlx::query(migration_sql).execute(&self.pool).await;
-        // }
-        if concise { debug!("✅ Migration 019 skipped (replaced by 022)"); } else { info!("✅ Migration 019 skipped (replaced by 022)"); }
-
-        // Apply 020_populate_bridge_table_and_fix_mappings.sql (populate bridge table and fix JSON mappings)
-        // let migration_020_path = std::path::Path::new("migrations/020_populate_bridge_table_and_fix_mappings.sql");
-        // if migration_020_path.exists() {
-        //     if let Ok(migration_sql) = std::fs::read_to_string(migration_020_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
-        // } else {
-        //     // Fallback to bundled version if not present on FS
-        //     let migration_sql = include_str!("../../../migrations/020_populate_bridge_table_and_fix_mappings.sql");
-        //     let _ = sqlx::query(migration_sql).execute(&self.pool).await;
-        // }
-        if concise { debug!("✅ Migration 020 skipped (replaced by 022)"); } else { info!("✅ Migration 020 skipped (replaced by 022)"); }
-
-        // Apply 021_convert_device_type_id_to_text.sql (convert type_id from INTEGER to TEXT)
-        // let migration_021_path = std::path::Path::new("migrations/021_convert_device_type_id_to_text.sql");
-        // if migration_021_path.exists() {
-        //     if let Ok(migration_sql) = std::fs::read_to_string(migration_021_path) { let _ = sqlx::query(&migration_sql).execute(&self.pool).await; }
-        // } else {
-        //     // Fallback to bundled version if not present on FS
-        //     let migration_sql = include_str!("../../../migrations/021_convert_device_type_id_to_text.sql");
-        //     let _ = sqlx::query(migration_sql).execute(&self.pool).await;
-        // }
-        if concise { debug!("✅ Migration 021 skipped (replaced by 022)"); } else { info!("✅ Migration 021 skipped (replaced by 022)"); }
-
-        // Apply 022_final_cleanup_and_optimization.sql (remove bridge table, optimize analytics view)
-        let migration_022_path = std::path::Path::new("migrations/022_final_cleanup_and_optimization.sql");
-        if migration_022_path.exists() {
-            if let Ok(migration_sql) = std::fs::read_to_string(migration_022_path) { let _ = self.exec_multi_statement(&migration_sql, true, "022_final_cleanup_and_optimization").await; }
-        } else {
-            let migration_sql = include_str!("../../../migrations/022_final_cleanup_and_optimization.sql");
-            let _ = self.exec_multi_statement(migration_sql, true, "022_final_cleanup_and_optimization_embedded").await;
-        }
-        self.sanity_check_post_migration("022_final_cleanup_and_optimization").await;
-        if concise { debug!("✅ Migration 022 applied (idempotent)"); } else { info!("✅ Migration 022 applied (idempotent)"); }
-
-        // Apply 023_enhance_analytics_view_transport_and_introduced_in.sql (ensure transport_interface + introduced_in)
-        let migration_023_path = std::path::Path::new("migrations/023_enhance_analytics_view_transport_and_introduced_in.sql");
-        if migration_023_path.exists() {
-            if let Ok(migration_sql) = std::fs::read_to_string(migration_023_path) { let _ = self.exec_multi_statement(&migration_sql, true, "023_enhance_analytics_view_transport_and_introduced_in").await; }
-        } else {
-            let migration_sql = include_str!("../../../migrations/023_enhance_analytics_view_transport_and_introduced_in.sql");
-            let _ = self.exec_multi_statement(migration_sql, true, "023_enhance_analytics_view_transport_and_introduced_in_embedded").await;
-        }
-        self.sanity_check_post_migration("023_enhance_analytics_view_transport_and_introduced_in").await;
-        if concise { debug!("✅ Migration 023 applied (idempotent)"); } else { info!("✅ Migration 023 applied (idempotent)"); }
-
-        // Apply 024_change_certification_date_to_date.sql (change column type TEXT->DATE via table rebuild)
-        // Guard: only run if current column declared type != 'DATE'
-        if let Ok(current_type) = sqlx::query_scalar::<_, Option<String>>("SELECT type FROM pragma_table_info('product_details') WHERE name='certification_date' LIMIT 1;")
-            .fetch_one(&self.pool).await {
-            let needs = current_type.map(|t| t.to_uppercase() != "DATE").unwrap_or(false);
-            if needs {
-                let mig024_path = std::path::Path::new("migrations/024_change_certification_date_to_date.sql");
-                if mig024_path.exists() {
-                    if let Ok(migration_sql) = std::fs::read_to_string(mig024_path) { let _ = self.exec_multi_statement(&migration_sql, true, "024_change_certification_date_to_date").await; }
-                } else {
-                    let migration_sql = include_str!("../../../migrations/024_change_certification_date_to_date.sql");
-                    let _ = self.exec_multi_statement(migration_sql, true, "024_change_certification_date_to_date_embedded").await;
+        // -----------------------------------------------------------------
+        // Incremental migrations (> current user_version) application logic
+        // -----------------------------------------------------------------
+        // We introduced consolidated baseline (1001). Any subsequent schema changes should live
+        // in files named like: 1002_description.sql, 1003_something.sql etc.
+        // Prior code DID NOT auto-apply these (reason the user still has legacy index). We fix it here.
+        let mut applied_incrementals: Vec<i64> = Vec::new();
+        let mut latest_version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or(current_version);
+        // Allow opt-out for safety (e.g., during experiments) via MC_SKIP_INCREMENTAL_MIGRATIONS=1
+        let skip_incr = std::env::var("MC_SKIP_INCREMENTAL_MIGRATIONS")
+            .ok()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        if !skip_incr {
+            let search_dirs = ["migrations", "src-tauri/migrations"]; // search order
+            let mut candidates: Vec<(i64, std::path::PathBuf)> = Vec::new();
+            for dir in &search_dirs {
+                if let Ok(rd) = std::fs::read_dir(dir) {
+                    for entry in rd.flatten() {
+                        let path = entry.path();
+                        if !path.is_file() { continue; }
+                        if let Some(ext) = path.extension() { if ext != "sql" { continue; } } else { continue; }
+                        if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
+                            // Parse leading digits until first non-digit/underscore
+                            let mut digits = String::new();
+                            for ch in fname.chars() { if ch.is_ascii_digit() { digits.push(ch); } else { break; } }
+                            if digits.is_empty() { continue; }
+                            if let Ok(ver) = digits.parse::<i64>() { if ver > latest_version { candidates.push((ver, path.clone())); } }
+                        }
+                    }
                 }
-                self.sanity_check_post_migration("024_change_certification_date_to_date").await;
-                if concise { debug!("✅ Migration 024 applied (certification_date -> DATE)"); } else { info!("✅ Migration 024 applied (certification_date -> DATE)"); }
-            } else if concise { debug!("ℹ️ Migration 024 skipped (certification_date already DATE)"); }
-        }
-
-        // Apply 025_normalize_certification_date_iso.sql (normalize MM/DD/YYYY -> YYYY-MM-DD)
-        // Guard: run if any value matches slash pattern and any value not already ISO.
-        if let (Ok(slash_cnt), Ok(any_rows)) = (
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM product_details WHERE certification_date LIKE '%/%'").fetch_one(&self.pool).await,
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM product_details WHERE certification_date IS NOT NULL AND certification_date <> ''").fetch_one(&self.pool).await,
-        ) {
-            if slash_cnt > 0 && any_rows > 0 {
-                let mig025_path = std::path::Path::new("migrations/025_normalize_certification_date_iso.sql");
-                if mig025_path.exists() {
-                    if let Ok(migration_sql) = std::fs::read_to_string(mig025_path) { let _ = self.exec_multi_statement(&migration_sql, true, "025_normalize_certification_date_iso").await; }
-                } else {
-                    let migration_sql = include_str!("../../../migrations/025_normalize_certification_date_iso.sql");
-                    let _ = self.exec_multi_statement(migration_sql, true, "025_normalize_certification_date_iso_embedded").await;
+            }
+            // Sort by version ascending
+            candidates.sort_by_key(|(v, _)| *v);
+            for (ver, path) in candidates {
+                match std::fs::read_to_string(&path) {
+                    Ok(contents) => {
+                        let label = path.file_name().unwrap().to_string_lossy().to_string();
+                        info!(version=ver, file=%label, "📦 Applying incremental migration");
+                        if let Err(e) = self.exec_multi_statement(&contents, false, &label).await {
+                            warn!(version=ver, file=%label, error=%e, "incremental_migration_failed_abort_chain");
+                            break; // stop applying further to preserve order/atomic progression semantics
+                        }
+                        self.sanity_check_post_migration(&label).await;
+                        // Stamp user_version explicitly (even if script did it) for canonical version tracking
+                        let _ = sqlx::query(&format!("PRAGMA user_version={ver}")).execute(&self.pool).await;
+                        latest_version = ver;
+                        applied_incrementals.push(ver);
+                        info!(version=ver, "✅ Incremental migration applied");
+                    }
+                    Err(e) => {
+                        warn!(path=%path.display(), error=%e, "failed_read_incremental_migration");
+                    }
                 }
-                self.sanity_check_post_migration("025_normalize_certification_date_iso").await;
-                if concise { debug!("✅ Migration 025 applied (normalize certification_date)"); } else { info!("✅ Migration 025 applied (normalize certification_date)"); }
-            } else if concise { debug!("ℹ️ Migration 025 skipped (no slash-form dates)"); }
+            }
+        } else {
+            debug!("Skipped incremental migrations due to MC_SKIP_INCREMENTAL_MIGRATIONS=1");
         }
 
-        // Report on database status
+        if !applied_incrementals.is_empty() {
+            info!(applied=?applied_incrementals, final_user_version=latest_version, "🧩 Incremental migrations chain completed");
+        }
+
+        // Final report
         let product_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products")
             .fetch_one(&self.pool)
-            .await?;
-
+            .await
+            .unwrap_or(0);
         let details_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM product_details")
             .fetch_one(&self.pool)
-            .await?;
-        if concise {
-            info!(
-                "🗄️ DB ready: products={}, details={}",
-                product_count, details_count
-            );
+            .await
+            .unwrap_or(0);
+        if concise { info!("🗄️ DB ready: products={}, details={}", product_count, details_count); }
+        else { info!("📊 Database initialized (consolidated) with {} products and {} detailed records", product_count, details_count); }
+
+        // Detect legacy unique slot index (may cause UNIQUE conflicts until dropped)
+        // Name in older migrations assumed 'ux_products_slot' but we also verify by SQL definition signature.
+        let legacy_idx: Option<(String, String)> = sqlx::query_as(
+            "SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='products' AND sql LIKE '%UNIQUE%'"
+        ).fetch_all(&self.pool).await.ok()
+            .map(|rows: Vec<(String,String)>| {
+                rows.into_iter()
+                    .find(|(_, s)| s.to_lowercase().contains("(page_id, index_in_page)"))
+            })
+            .flatten();
+        let present = legacy_idx.is_some();
+        let _ = LEGACY_SLOT_UNIQUE_INDEX_PRESENT.set(present);
+        if let Some((ref name, _)) = legacy_idx {
+            warn!(index=%name, "⚠️ Legacy unique slot index detected (products(page_id,index_in_page)); may trigger conflicts. Consider dropping after verification.");
+            // Optional auto-drop (escape hatch) if migration scanning failed or immediate removal desired.
+            // Controlled by MC_AUTO_DROP_LEGACY_SLOT=1
+            let auto_drop = std::env::var("MC_AUTO_DROP_LEGACY_SLOT").ok().is_some_and(|v| v=="1" || v.eq_ignore_ascii_case("true"));
+            if auto_drop {
+                // Clone name for ownership in format! while we still have borrowed pattern
+                let drop_name = name.clone();
+                match sqlx::query(&format!("DROP INDEX IF EXISTS {drop_name}")).execute(&self.pool).await {
+                    Ok(_) => {
+                        warn!(index=%name, "✅ Legacy unique slot index auto-dropped (MC_AUTO_DROP_LEGACY_SLOT=1)");
+                        // Ensure user_version advanced at least to 1002 (so future scripts referencing it can rely on drop)
+                        let current_uv: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&self.pool).await.unwrap_or(0);
+                        if current_uv < 1002 { let _ = sqlx::query("PRAGMA user_version=1002").execute(&self.pool).await; }
+                    }
+                    Err(e) => {
+                        warn!(index=%name, error=%e, "failed_auto_drop_legacy_slot_index");
+                    }
+                }
+            }
         } else {
-            info!(
-                "📊 Database initialized with {} products and {} detailed records",
-                product_count, details_count
-            );
+            debug!("No legacy unique slot index present");
         }
 
         Ok(())
@@ -842,13 +433,32 @@ pub async fn get_or_init_global_pool() -> Result<SqlitePool> {
         .connect(&database_url)
         .await?;
     // Apply pragmas once per global pool init
-    let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(&pool).await;
+    let busy_timeout_ms = resolve_busy_timeout_ms();
+    let _ = sqlx::query(&format!("PRAGMA busy_timeout={busy_timeout_ms}"))
+        .execute(&pool)
+        .await;
     let _ = sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await;
     let _ = sqlx::query("PRAGMA synchronous=NORMAL").execute(&pool).await;
 
     // Best-effort set; if already set by a racy concurrent init, prefer the existing one
     let _ = GLOBAL_SQLITE_POOL.set(pool.clone());
     Ok(pool)
+}
+
+// -----------------------------------------------------------------------------
+// Busy timeout resolution helper
+// -----------------------------------------------------------------------------
+// Environment variable: MC_DB_BUSY_TIMEOUT_MS (milliseconds)
+// Defaults to 3000 (3s) if unset or invalid. Clamped to [100, 20000].
+// Shorter timeouts surface SQLITE_BUSY quickly so our higher-level retry /
+// fallback logic can adapt (e.g., switching from IMMEDIATE to DEFERRED) rather
+// than letting the SQLite internal wait block threads for 15s.
+fn resolve_busy_timeout_ms() -> u64 {
+    const DEFAULT_MS: u64 = 3000; // Previously 15000; reduced for responsiveness
+    let raw = std::env::var("MC_DB_BUSY_TIMEOUT_MS").ok();
+    let parsed = raw.as_deref().and_then(|s| s.parse::<u64>().ok()).unwrap_or(DEFAULT_MS);
+    let clamped = parsed.clamp(100, 20_000);
+    clamped
 }
 
 #[cfg(test)]

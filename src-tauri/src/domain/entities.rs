@@ -234,7 +234,8 @@ impl Default for CrawlerConfig {
             product_list_retry_count: 9,
             product_detail_retry_count: 9,
             products_per_page: crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE,
-            auto_add_to_local_db: false,
+            // Default to saving ON to prevent accidental dry runs
+            auto_add_to_local_db: true,
             auto_status_check: true,
             headless_browser: Some(true),
             crawler_type: Some(CrawlerType::Reqwest),

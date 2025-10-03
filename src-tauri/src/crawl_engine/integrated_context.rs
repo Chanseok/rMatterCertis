@@ -12,6 +12,11 @@ use crate::crawl_engine::{
 };
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Runtime-wide, process-local flag to hint that validation should be skipped for the current run.
+/// This avoids mutating OS environment and is cleared by default at process start.
+static VALIDATION_SKIP_HINT: AtomicBool = AtomicBool::new(false);
 
 /// 취소 채널 타입 정의
 pub type CancellationReceiver = tokio::sync::watch::Receiver<bool>;
@@ -187,6 +192,17 @@ impl IntegratedContext {
     #[must_use]
     pub fn subscribe_events(&self) -> broadcast::Receiver<AppEvent> {
         self.event_tx.subscribe()
+    }
+
+    /// Enable or disable runtime validation skip hint for subsequent stages in this process.
+    pub fn set_validation_skip_hint(skip: bool) {
+        VALIDATION_SKIP_HINT.store(skip, Ordering::SeqCst);
+    }
+
+    /// Read current validation skip hint.
+    #[must_use]
+    pub fn validation_skip_hint() -> bool {
+        VALIDATION_SKIP_HINT.load(Ordering::SeqCst)
     }
 }
 

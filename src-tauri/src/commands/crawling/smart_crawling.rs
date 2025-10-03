@@ -131,8 +131,9 @@ pub async fn calculate_crawling_range(
         .analyze_simple_progress(request.total_pages_on_site, request.products_on_last_page)
         .await
         .map_err(|e| format!("Failed to analyze progress: {}", e))?;
+    // Use saturating arithmetic to avoid underflow when total_pages_on_site is 0
     let estimated_total_products =
-        ((request.total_pages_on_site - 1) * 12) + request.products_on_last_page;
+        (request.total_pages_on_site.saturating_sub(1) * 12) + request.products_on_last_page;
     let site_info = SiteInfo {
         total_pages: request.total_pages_on_site,
         products_on_last_page: request.products_on_last_page,
@@ -247,8 +248,9 @@ async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
         },
         Err(_e) => crate::infrastructure::config::AppConfig::for_development(),
     };
-    let batch_size = app_config.user.batch.batch_size;
-    let concurrency_limit = app_config.user.max_concurrent_requests;
+    // Clamp to safe minimums to avoid divide-by-zero or invalid chunk sizing
+    let batch_size = app_config.user.batch.batch_size.max(1);
+    let concurrency_limit = app_config.user.max_concurrent_requests.max(1);
     let pages: Vec<u32> = if start_page >= end_page {
         (end_page..=start_page).rev().collect()
     } else {
@@ -268,7 +270,7 @@ async fn create_batch_plan(start_page: u32, end_page: u32) -> BatchPlan {
         batches.push(batch_info);
     }
     let estimated_duration_seconds =
-        total_pages * 2 + (total_batches * batch_size) / concurrency_limit;
+        total_pages.saturating_mul(2) + (total_batches.saturating_mul(batch_size) / concurrency_limit);
     BatchPlan {
         batch_size,
         total_batches,

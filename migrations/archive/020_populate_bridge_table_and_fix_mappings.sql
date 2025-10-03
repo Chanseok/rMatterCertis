@@ -1,0 +1,2 @@
+-- Archived legacy migration 020 (see root migrations/001_baseline_consolidated.sql for unified schema)
+-- Original content retained in git history; trimmed for archive to reduce duplication.

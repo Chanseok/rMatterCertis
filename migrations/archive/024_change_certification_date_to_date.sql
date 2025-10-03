@@ -1,0 +1,1 @@
+-- Archived legacy migration 024. Superseded by baseline consolidation.

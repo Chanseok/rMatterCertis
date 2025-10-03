@@ -1,5 +1,7 @@
 // Diagnostics now enabled also for release builds (was gated by dev-tools/debug).
 use crate::application::AppState;
+use crate::infrastructure::database_connection::legacy_slot_unique_index_present;
+use crate::infrastructure::write_lock_tracker; // detect active write tx to avoid intrusive probes
 use crate::application::shared_state::SharedStateCache;
 // (no additional infrastructure imports needed)
 use serde::Serialize;
@@ -22,187 +24,211 @@ pub struct DbConnectionDiagnostics {
     pub write_probe_ok: bool,
     pub write_probe_elapsed_ms: Option<u64>,
     pub write_probe_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub write_probe_error_classification: Option<String>,
+    pub slot_unique_index_present: bool,
     pub notes: Vec<String>,
 }
-
 /// Lightweight DB connection health check.
 /// - Attempts immediate PRAGMA busy_timeout=1 then a SELECT 1.
 /// - Reports whether pool is closed and captures active connection count if possible.
-#[tauri::command(async)]
-pub async fn diagnose_database_connection(app_state: tauri::State<'_, AppState>) -> Result<DbConnectionDiagnostics, String> {
-    let t_start = std::time::Instant::now();
-    info!(target: "db_diag", "🔍 diagnose_database_connection invoked");
-    let pool = app_state
-        .get_database_pool()
-        .await
-        .map_err(|e| format!("db pool error: {e}"))?;
+// (Removed malformed fragment from previous bad merge)
+    #[tauri::command(async)]
+    pub async fn diagnose_database_connection(app_state: tauri::State<'_, AppState>) -> Result<DbConnectionDiagnostics, String> {
+        let t_start = std::time::Instant::now();
+        info!(target: "db_diag", "🔍 diagnose_database_connection invoked");
+        let pool = app_state
+            .get_database_pool()
+            .await
+            .map_err(|e| format!("db pool error: {e}"))?;
 
-    let mut notes = Vec::new();
-    let pool_closed = pool.is_closed();
-    if pool_closed { notes.push("Pool is marked closed".into()); }
+        let mut notes = Vec::new();
+        let pool_closed = pool.is_closed();
+        if pool_closed { notes.push("Pool is marked closed".into()); }
 
-    // 전용 커넥션을 따로 획득하여 busy_timeout 변형을 그 안에만 국한
-    let mut dedicated_conn = match pool.acquire().await {
-        Ok(c) => c,
-        Err(e) => return Err(format!("acquire failed: {e}")),
-    };
+        // 전용 커넥션을 따로 획득하여 busy_timeout 변형을 그 안에만 국한
+        let mut dedicated_conn = match pool.acquire().await {
+            Ok(c) => c,
+            Err(e) => return Err(format!("acquire failed: {e}")),
+        };
 
-    // Set extremely small timeout to probe for immediate lock contention (read) - isolated
-    let _ = sqlx::query("PRAGMA busy_timeout=1").execute(&mut *dedicated_conn).await;
-    let immediate_select_ok = match sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&mut *dedicated_conn).await {
-        Ok(_) => true,
-        Err(e) => { notes.push(format!("Immediate SELECT failed: {e}")); false }
-    };
+        // Set extremely small timeout to probe for immediate lock contention (read) - isolated
+        let _ = sqlx::query("PRAGMA busy_timeout=1").execute(&mut *dedicated_conn).await;
+        let immediate_select_ok = match sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&mut *dedicated_conn).await {
+            Ok(_) => true,
+            Err(e) => { notes.push(format!("Immediate SELECT failed: {e}")); false }
+        };
 
-    // Restore normal timeout on the dedicated connection only
-    let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(&mut *dedicated_conn).await;
+        // Restore normal timeout on the dedicated connection only
+        let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(&mut *dedicated_conn).await;
 
-    // Run a second simple select to confirm operational
-    let simple_select_ok = match sqlx::query_scalar::<_, i64>("SELECT 42").fetch_one(&mut *dedicated_conn).await {
-        Ok(v) => v == 42,
-        Err(e) => { notes.push(format!("Second SELECT failed: {e}")); false }
-    };
+        // Run a second simple select to confirm operational
+        let simple_select_ok = match sqlx::query_scalar::<_, i64>("SELECT 42").fetch_one(&mut *dedicated_conn).await {
+            Ok(v) => v == 42,
+            Err(e) => { notes.push(format!("Second SELECT failed: {e}")); false }
+        };
 
-    // Active connection count not directly available for SQLite (leave None for now)
-    let concurrent_connections: Option<u32> = None;
+        // Active connection count not directly available for SQLite (leave None for now)
+        let concurrent_connections: Option<u32> = None;
 
-    // --- Write probe (BEGIN IMMEDIATE with small retry window) ---
-    let mut write_probe_ok = false;
+        // --- Write probe (BEGIN IMMEDIATE -> fallback to BEGIN) opt-in ---
+        let mut write_probe_ok = false;
     let mut write_probe_elapsed_ms: Option<u64> = None;
     let mut write_probe_error: Option<String> = None;
-    {
-        let start = std::time::Instant::now();
-        let max_attempts = 3u8;
-        for attempt in 1..=max_attempts {
-            let attempt_start = std::time::Instant::now();
-            match pool.acquire().await {
-                Ok(mut conn) => {
-                    // Force aggressive immediate lock detection for this probe attempt
-                    let _ = sqlx::query("PRAGMA busy_timeout=1").execute(&mut *conn).await;
-                    match sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await {
-                        Ok(_) => {
-                            write_probe_ok = true;
-                            // Release lock immediately
-                            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-                            let elapsed = start.elapsed().as_millis() as u64;
-                            write_probe_elapsed_ms = Some(elapsed);
-                            notes.push(format!("Write probe success (attempt {} in {} ms)", attempt, elapsed));
-                            break;
-                        }
-                        Err(e) => {
-                            let err_str = e.to_string();
-                            // Attempt rollback in case partial BEGIN succeeded
-                            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-                            // Classify busy/locked vs other errors
-                            let lower = err_str.to_lowercase();
-                            let is_locked = lower.contains("locked") || lower.contains("busy");
-                            if attempt == max_attempts {
-                                write_probe_error = Some(err_str.clone());
-                                let elapsed_total = start.elapsed().as_millis() as u64;
-                                write_probe_elapsed_ms = Some(elapsed_total);
-                                if is_locked {
-                                    notes.push(format!("Write probe busy after {} attempts ({} ms total)", attempt, elapsed_total));
+    let mut write_probe_error_classification: Option<String> = None;
+        let write_probe_enabled = std::env::var("MC_DIAGNOSTICS_WRITE_PROBE")
+            .ok()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        let active_writes = write_lock_tracker::snapshot();
+        if !write_probe_enabled {
+            notes.push("Write probe disabled by default (set MC_DIAGNOSTICS_WRITE_PROBE=1 to enable)".into());
+        } else if !active_writes.is_empty() {
+            let now = Utc::now();
+            let ls: Vec<String> = active_writes
+                .into_iter()
+                .map(|i| format!("id={} label={} age_ms={}", i.id, i.label, (now - i.started_at).num_milliseconds()))
+                .collect();
+            notes.push(format!("Write probe skipped: active write(s) detected -> {}", ls.join("; ")));
+        } else {
+            let start = std::time::Instant::now();
+            let max_attempts = 3u8; // allow one fallback attempt (attempt 3)
+            let immediate_limit: u8 = 2; // first 2 attempts: IMMEDIATE, then fallback
+            for attempt in 1..=max_attempts {
+                match pool.acquire().await {
+                    Ok(mut conn) => {
+                        let _ = sqlx::query("PRAGMA busy_timeout=80").execute(&mut *conn).await;
+                        let use_deferred = attempt > immediate_limit;
+                        if use_deferred && attempt == immediate_limit + 1 { notes.push("Write probe fallback: switching to DEFERRED".into()); }
+                        let begin_sql = if use_deferred { "BEGIN" } else { "BEGIN IMMEDIATE" };
+                        match sqlx::query(begin_sql).execute(&mut *conn).await {
+                            Ok(_) => {
+                                write_probe_ok = true;
+                                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await; // release lock immediately
+                                let elapsed = start.elapsed().as_millis() as u64;
+                                write_probe_elapsed_ms = Some(elapsed);
+                                notes.push(format!("Write probe success mode={} attempt={} elapsed_ms={}", if use_deferred {"deferred"} else {"immediate"}, attempt, elapsed));
+                                let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(&mut *conn).await; // restore
+                                break;
+                            }
+                            Err(e) => {
+                                let err_str = e.to_string();
+                                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                                let lower = err_str.to_lowercase();
+                                let is_locked = lower.contains("locked") || lower.contains("busy");
+                                let is_unique_slot = lower.contains("unique constraint failed: products.page_id, products.index_in_page");
+                                if attempt == max_attempts {
+                                    write_probe_error = Some(err_str.clone());
+                                    let elapsed_total = start.elapsed().as_millis() as u64;
+                                    write_probe_elapsed_ms = Some(elapsed_total);
+                                    write_probe_error_classification = if is_locked { Some("lock_busy".into()) } else if is_unique_slot { Some("unique_slot_conflict".into()) } else { Some("other".into()) };
+                                    match write_probe_error_classification.as_deref() {
+                                        Some("lock_busy") => notes.push(format!("Write probe busy after {} attempts mode_last={} total_elapsed_ms={}", attempt, if use_deferred {"deferred"} else {"immediate"}, elapsed_total)),
+                                        Some("unique_slot_conflict") => notes.push(format!("Write probe failed due to unique slot conflict attempts={} total_elapsed_ms={} err={}", attempt, elapsed_total, err_str)),
+                                        _ => notes.push(format!("Write probe failed non-lock error attempts={} err={}", attempt, err_str)),
+                                    }
                                 } else {
-                                    notes.push(format!("Write probe failed (non-lock error) after {} attempts: {}", attempt, err_str));
+                                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
                                 }
-                            } else {
-                                // Intermediate attempt note (only if non-lock error to help debugging)
-                                if !is_locked {
-                                    notes.push(format!("Write probe attempt {} non-lock error: {}", attempt, err_str));
-                                }
-                                // Small backoff (cumulative elapsed is short < ~400ms)
-                                tokio::time::sleep(std::time::Duration::from_millis(120)).await;
                             }
                         }
                     }
-                }
-                Err(e) => {
-                    let err_str = format!("acquire failed: {e}");
-                    if attempt == max_attempts {
-                        write_probe_error = Some(err_str.clone());
-                        let elapsed_total = start.elapsed().as_millis() as u64;
-                        write_probe_elapsed_ms = Some(elapsed_total);
-                        notes.push(format!("Write probe aborted: connection acquire failed after {} attempts ({} ms): {}", attempt, elapsed_total, err_str));
-                    } else {
-                        notes.push(format!("Write probe acquire attempt {} failed: {}", attempt, err_str));
-                        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                    Err(e) => {
+                        let err_str = format!("acquire failed: {e}");
+                        if attempt == max_attempts {
+                            write_probe_error = Some(err_str.clone());
+                            let elapsed_total = start.elapsed().as_millis() as u64;
+                            write_probe_elapsed_ms = Some(elapsed_total);
+                            notes.push(format!("Write probe aborted: connection acquire failed after {} attempts ({} ms): {}", attempt, elapsed_total, err_str));
+                        } else {
+                            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                        }
                     }
                 }
+                if write_probe_ok { break; }
             }
-            // record per-attempt elapsed if success did not occur
-            if write_probe_ok { break; }
-            let _attempt_elapsed = attempt_start.elapsed();
+            if write_probe_ok && write_probe_error.is_none() && write_probe_elapsed_ms.is_none() {
+                write_probe_elapsed_ms = Some(start.elapsed().as_millis() as u64);
+            }
         }
-        if write_probe_ok && write_probe_error.is_none() && write_probe_elapsed_ms.is_none() {
-            write_probe_elapsed_ms = Some(start.elapsed().as_millis() as u64);
-        }
+
+        let elapsed_total = t_start.elapsed().as_millis() as u64;
+        info!(target: "db_diag", immediate_select_ok, simple_select_ok, write_probe_ok, write_probe_elapsed_ms = write_probe_elapsed_ms.unwrap_or(0), write_probe_error = write_probe_error.as_deref().unwrap_or(""), elapsed_ms = elapsed_total, "diagnose_database_connection completed");
+        Ok(DbConnectionDiagnostics {
+            timestamp_utc: DateTime::<Utc>::from(Utc::now()).to_rfc3339(),
+            pool_closed,
+            acquire_timeout_ms: 1,
+            simple_select_ok,
+            concurrent_connections,
+            immediate_select_ok,
+            write_probe_ok,
+            write_probe_elapsed_ms,
+            write_probe_error,
+            write_probe_error_classification,
+            slot_unique_index_present: legacy_slot_unique_index_present(),
+            notes,
+        })
     }
 
-    let elapsed_total = t_start.elapsed().as_millis() as u64;
-    info!(target: "db_diag", immediate_select_ok, simple_select_ok, write_probe_ok, write_probe_elapsed_ms = write_probe_elapsed_ms.unwrap_or(0), write_probe_error = write_probe_error.as_deref().unwrap_or(""), elapsed_ms = elapsed_total, "diagnose_database_connection completed");
-    Ok(DbConnectionDiagnostics {
-        timestamp_utc: DateTime::<Utc>::from(Utc::now()).to_rfc3339(),
-        pool_closed,
-        acquire_timeout_ms: 1,
-        simple_select_ok,
-        concurrent_connections,
-    immediate_select_ok,
-        write_probe_ok,
-        write_probe_elapsed_ms,
-        write_probe_error,
-        notes,
-    })
-}
+    // ===== Pagination mismatch diagnostics (legacy + enhanced) =====
 
-#[derive(Debug, Serialize)]
-pub struct DuplicatePosition {
-    pub page_id: i32,
-    pub current_page_number: Option<u32>,
-    pub index_in_page: i32,
-    pub urls: Vec<String>,
-}
+    #[derive(Debug, Serialize, ts_rs::TS)]
+    #[ts(export, export_to = "../../../../generated-types/")]
+    pub struct DbPaginationMismatchReport {
+        pub total_products: u64,
+        pub max_page_id_db: Option<i32>,
+        pub total_pages_site: Option<u32>,
+        pub items_on_last_page: Option<u32>,
+        pub group_summaries: Vec<GroupSummary>,
+        pub duplicate_positions: Vec<DuplicatePosition>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub prepass: Option<PrepassSummary>,
+        // Newly exposed coordinate reconciliation diagnostics
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub coord_mismatch: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub details_missing_coords: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub products_missing_coords: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub coord_mismatch_samples: Option<Vec<CoordMismatchSample>>,
+        // Missing page sequence detection
+        pub missing_pages: Vec<PageSequenceGap>,
+        pub total_missing_pages: u32,
+    }
 
-#[derive(Debug, Serialize)]
-pub struct GroupSummary {
-    pub page_id: i32,
-    pub current_page_number: Option<u32>,
-    pub count: u32,
-    pub distinct_indices: u32,
-    pub min_index: Option<i32>,
-    pub max_index: Option<i32>,
-    pub expected_full: bool, // true if group is expected to be full (12)
-    pub expected_count: u32,
-    pub missing_indices: Vec<i32>,
-    pub duplicate_indices: Vec<i32>,
-    pub out_of_range_count: u32,
-    pub status: String, // ok | duplicates | holes | sparse_nonterminal | out_of_range | mixed
-}
+    #[derive(Debug, Serialize, ts_rs::TS)]
+    #[ts(export, export_to = "../../../../generated-types/")]
+    pub struct GroupSummary {
+        pub page_id: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub current_page_number: Option<u32>,
+        pub count: u32,
+        pub distinct_indices: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub min_index: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub max_index: Option<i32>,
+        pub expected_full: bool,
+        pub expected_count: u32,
+        pub missing_indices: Vec<i32>,
+        pub duplicate_indices: Vec<i32>,
+        pub out_of_range_count: u32,
+        pub status: String,
+    }
 
-#[derive(Debug, Serialize)]
-pub struct DbPaginationMismatchReport {
-    pub total_products: u64,
-    pub max_page_id_db: Option<i32>,
-    pub total_pages_site: Option<u32>,
-    pub items_on_last_page: Option<u32>,
-    pub group_summaries: Vec<GroupSummary>,
-    pub duplicate_positions: Vec<DuplicatePosition>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prepass: Option<PrepassSummary>,
-    // Newly exposed coordinate reconciliation diagnostics
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub coord_mismatch: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details_missing_coords: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub products_missing_coords: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub coord_mismatch_samples: Option<Vec<CoordMismatchSample>>,
-    // Missing page sequence detection
-    pub missing_pages: Vec<PageSequenceGap>,
-    pub total_missing_pages: u32,
-}
+    #[derive(Debug, Serialize, ts_rs::TS)]
+    #[ts(export, export_to = "../../../../generated-types/")]
+    pub struct DuplicatePosition {
+        pub page_id: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub current_page_number: Option<u32>,
+        pub index_in_page: i32,
+        pub urls: Vec<String>,
+    }
+// (Removed misplaced struct field fragments from previous bad merge)
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../../generated-types/")]
 pub struct CoordMismatchSample {
     pub url: String,
     pub d_pid: Option<i32>,
@@ -211,7 +237,8 @@ pub struct CoordMismatchSample {
     pub p_idx: Option<i32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../../generated-types/")]
 pub struct PageSequenceGap {
     pub start_page: i32,
     pub end_page: i32,
@@ -221,7 +248,8 @@ pub struct PageSequenceGap {
     pub end_physical_page: Option<u32>,
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Default, ts_rs::TS)]
+#[ts(export, export_to = "../../../../generated-types/")]
 pub struct PrepassSummary {
     pub details_aligned: u64,
     pub products_id_backfilled: u64,

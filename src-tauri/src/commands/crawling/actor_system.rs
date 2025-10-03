@@ -1206,11 +1206,22 @@ pub async fn start_manual_crawl_pages_actor(
     pages: Vec<u32>,
     _skip_validation: Option<bool>,
 ) -> Result<ActorSystemResponse, String> {
+    tracing::info!(target="orchestration", pages=?pages, "start_manual_crawl_pages_actor invoked");
     if pages.is_empty() {
+        tracing::warn!(target="orchestration", "start_manual_crawl_pages_actor rejected: empty pages");
         return Err("No pages provided".into());
     }
+    // Honor skipValidation hint from FE: set runtime flag (no env mutation)
+    if let Some(skip) = _skip_validation {
+        tracing::info!(target="orchestration", skip, "Manual crawl param: skipValidation");
+        crate::crawl_engine::integrated_context::IntegratedContext::set_validation_skip_hint(skip);
+        tracing::info!(target="orchestration", "Runtime validation skip hint set to {}", skip);
+    }
     let (execution_plan, app_config, _site_status) =
-        build_execution_plan_from_explicit_pages(&app, pages).await?;
+        build_execution_plan_from_explicit_pages(&app, pages.clone()).await.map_err(|e| {
+            tracing::error!(target="orchestration", error=%e, pages=?pages, "Failed to build execution plan from explicit pages");
+            e
+        })?;
 
     // Health gate: if degradation note present, block unless MC_FORCE_CRAWL=1
     let degraded = if let Some(state) = app.try_state::<crate::application::AppState>() {
@@ -1233,9 +1244,20 @@ pub async fn start_manual_crawl_pages_actor(
         execution_plan.crawling_ranges.len(),
         execution_plan.plan_hash
     );
+    if let Some(first_range) = execution_plan.crawling_ranges.first() {
+        tracing::info!(target="orchestration", session_id=%execution_plan.session_id, plan_id=%execution_plan.plan_id, start=first_range.start_page, end=first_range.end_page, total_ranges=execution_plan.crawling_ranges.len(), "Manual crawl invocation received");
+    } else {
+        tracing::info!(target="orchestration", session_id=%execution_plan.session_id, plan_id=%execution_plan.plan_id, total_ranges=execution_plan.crawling_ranges.len(), "Manual crawl invocation received with empty ranges (unexpected)");
+    }
 
     let (sid, exec_clone) =
-        bootstrap_and_spawn_session(&app, execution_plan.clone(), app_config.clone()).await?;
+        match bootstrap_and_spawn_session(&app, execution_plan.clone(), app_config.clone()).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(target="orchestration", error=%e, session_id=%execution_plan.session_id, plan_id=%execution_plan.plan_id, "Failed to bootstrap and spawn session");
+                return Err(e);
+            }
+        };
 
     Ok(ActorSystemResponse {
         success: true,

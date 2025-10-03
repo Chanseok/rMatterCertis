@@ -1,0 +1,1 @@
+-- Archived legacy migration 022. Superseded by baseline consolidation.

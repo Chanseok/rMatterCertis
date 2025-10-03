@@ -1,6 +1,5 @@
 use crate::domain::matter_product::MatterProduct;
-use crate::domain::product::{Product, ProductDetail, ProductWithDetails};
-use anyhow::Result;
+use crate::domain::product::{Product, ProductDetail};
 
 /// Adapter to convert between new MatterProduct model and existing database schema
 pub struct ProductSchemaAdapter;

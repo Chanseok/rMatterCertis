@@ -13,10 +13,11 @@ use crate::domain::integrated_product::DatabaseStatistics;
 use crate::domain::product::{
     Product, ProductDetail, ProductSearchCriteria, ProductSearchResult, ProductWithDetails, Vendor,
 };
+use sqlx::{Row, sqlite::SqlitePool};
 use crate::domain::session_manager::CrawlingResult;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use sqlx::{Row, sqlite::SqlitePool};
+// duplicate/legacy imports removed
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info};
@@ -29,8 +30,9 @@ where
     Fut: std::future::Future<Output = Result<T>>,
 {
     let mut attempt = 0u32;
-    let max_attempts = 5u32;
-    let mut backoff = 80u64; // ms
+    // Extend retries to better absorb transient writer contention.
+    let max_attempts = 8u32;
+    let mut backoff = 120u64; // ms
     let started = Instant::now();
     loop {
         match op().await {
@@ -49,7 +51,7 @@ where
                     attempt += 1;
                     tracing::warn!(target="persistence", attempt, label, backoff_ms=backoff, "Retrying after SQLITE_BUSY");
                     tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
-                    backoff = (backoff * 2).min(1500);
+                    backoff = (backoff * 2).min(2000);
                     continue;
                 }
                 if msg.contains("database is locked") || msg.contains("SQLITE_BUSY") {
@@ -117,7 +119,7 @@ impl IntegratedProductRepository {
     /// Returns an error if the query fails.
     pub async fn count_vendors(&self) -> Result<i64> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vendors")
-            .fetch_one(&*self.pool)
+                                .fetch_one(&*self.pool)
             .await?;
         Ok(count)
     }
@@ -139,7 +141,7 @@ impl IntegratedProductRepository {
             r"SELECT vendor_name, company_legal_name FROM vendors WHERE vendor_number = ?",
         )
         .bind(vendor_number)
-        .fetch_optional(&*self.pool)
+            .fetch_optional(&*self.pool)
         .await?;
 
         if let Some(row) = existing {
@@ -160,7 +162,7 @@ impl IntegratedProductRepository {
                 .bind(vendor_name)
                 .bind(company_legal_name)
                 .bind(vendor_number)
-                .execute(&*self.pool)
+                    .execute(&*self.pool)
                 .await?;
 
                 Ok(UpsertOutcome {
@@ -183,7 +185,7 @@ impl IntegratedProductRepository {
             .bind(vendor_number)
             .bind(vendor_name)
             .bind(company_legal_name)
-            .execute(&*self.pool)
+                .execute(&*self.pool)
             .await?;
 
             Ok(UpsertOutcome {
@@ -214,7 +216,7 @@ impl IntegratedProductRepository {
         .bind(page_id)
         .bind(index_in_page)
         .bind(&keep_norm)
-        .fetch_optional(&*self.pool)
+            .fetch_optional(&*self.pool)
         .await?;
         if occupant_url.is_none() {
             occupant_url = sqlx::query_scalar(
@@ -225,7 +227,7 @@ impl IntegratedProductRepository {
             .bind(page_id)
             .bind(index_in_page)
             .bind(&keep_norm)
-            .fetch_optional(&*self.pool)
+                .fetch_optional(&*self.pool)
             .await?;
         }
 
@@ -238,7 +240,7 @@ impl IntegratedProductRepository {
             )
             .bind(now)
             .bind(&occ_url)
-            .execute(&*self.pool)
+                .execute(&*self.pool)
             .await?;
 
             // Keep products table in sync
@@ -249,7 +251,7 @@ impl IntegratedProductRepository {
             )
             .bind(now)
             .bind(&occ_url)
-            .execute(&*self.pool)
+                .execute(&*self.pool)
             .await?;
 
             debug!(
@@ -292,7 +294,7 @@ impl IntegratedProductRepository {
         .bind(&forced_id)
         .bind(now)
         .bind(&normalized)
-        .execute(&*self.pool)
+            .execute(&*self.pool)
         .await?;
         let prod_rows = u32::try_from(prod_res.rows_affected()).unwrap_or(u32::MAX);
 
@@ -307,7 +309,7 @@ impl IntegratedProductRepository {
         .bind(&forced_id)
         .bind(now)
         .bind(&normalized)
-        .execute(&*self.pool)
+            .execute(&*self.pool)
         .await?;
         let det_rows = u32::try_from(det_res.rows_affected()).unwrap_or(u32::MAX);
 
@@ -339,7 +341,11 @@ impl IntegratedProductRepository {
     }
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
-        let serialize = std::env::var("MC_SERIALIZE_WRITES").ok().is_some_and(|v| v=="1" || v.eq_ignore_ascii_case("true"));
+        // Default to serialized writes for reliability; allow opt-out via MC_SERIALIZE_WRITES=0/false
+        let serialize = match std::env::var("MC_SERIALIZE_WRITES") {
+            Ok(v) => !(v=="0" || v.eq_ignore_ascii_case("false")),
+            Err(_) => true,
+        };
         Self {
             pool: Arc::new(pool),
             write_mutex: if serialize { Some(Arc::new(tokio::sync::Mutex::new(()))) } else { None },
@@ -435,29 +441,130 @@ impl IntegratedProductRepository {
                 || existing_product.index_in_page != product.index_in_page;
 
             if needs_update {
+                // -----------------------------------------------------------------
+                // Vacate logic for update path (symmetry with insert path)
+                // If coordinates are changing and target slot is occupied by a different URL,
+                // proactively vacate occupant to avoid UNIQUE constraint failure on legacy
+                // products(page_id,index_in_page) index that may remain in older DBs.
+                // Controlled by MC_AUTO_VACATE_ON_SLOT_CONFLICT (default enabled).
+                // -----------------------------------------------------------------
+                let auto_vacate = std::env::var("MC_AUTO_VACATE_ON_SLOT_CONFLICT")
+                    .ok()
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(true);
+                let coords_changed = existing_product.page_id != product.page_id
+                    || existing_product.index_in_page != product.index_in_page;
+                if auto_vacate && coords_changed {
+                    if let (Some(pid), Some(idx)) = (product.page_id, product.index_in_page) {
+                        // Check occupant other than current URL
+                        if let Some(occ_url) = sqlx::query_scalar::<_, String>(
+                            "SELECT url FROM products WHERE page_id = ? AND index_in_page = ? AND url != ? LIMIT 1",
+                        )
+                        .bind(pid)
+                        .bind(idx)
+                        .bind(&normalized_url)
+                        .fetch_optional(&*self.pool)
+                        .await? {
+                            let vacated = sqlx::query(
+                                r#"UPDATE products SET page_id=NULL, index_in_page=NULL, id=NULL, updated_at=CURRENT_TIMESTAMP WHERE url = ?"#,
+                            )
+                            .bind(&occ_url)
+                            .execute(&*self.pool)
+                            .await?;
+                            tracing::warn!(target="persist_update", page_id=pid, index_in_page=idx, occupant=%occ_url, rows=vacated.rows_affected(), "slot_vacated_pre_update");
+                        }
+                    }
+                }
+
                 // Derive id depending on page fields: set p####i## if both present, else NULL
                 let new_id: Option<String> = match (product.page_id, product.index_in_page) {
                     (Some(pid), Some(idx)) => Some(format!("p{:04}i{:02}", pid, idx)),
                     _ => None,
                 };
-                // 📝 실제 변경사항이 있을 때만 업데이트
-                sqlx::query(
-                    r"
-                    UPDATE products 
-                    SET manufacturer = ?, model = ?, certificate_id = ?, page_id = ?, index_in_page = ?, id = ?, updated_at = ?
-                    WHERE url = ?
-                    ",
-                )
-                .bind(&product.manufacturer)
-                .bind(&product.model)
-                .bind(&product.certificate_id)
-                .bind(product.page_id)
-                .bind(product.index_in_page)
-                .bind(new_id)
-                .bind(now)
-                .bind(&normalized_url)
-                .execute(&*self.pool)
-                .await?;
+                // 📝 실제 변경사항이 있을 때만 업데이트 (with retry on UNIQUE conflict)
+                // First attempt update
+                    let mut res = sqlx::query(
+                        r"
+                        UPDATE products 
+                        SET manufacturer = ?, model = ?, certificate_id = ?, page_id = ?, index_in_page = ?, id = ?, updated_at = ?
+                        WHERE url = ?
+                        ",
+                    )
+                    .bind(&product.manufacturer)
+                    .bind(&product.model)
+                    .bind(&product.certificate_id)
+                    .bind(product.page_id)
+                    .bind(product.index_in_page)
+                    .bind(&new_id)
+                    .bind(now)
+                    .bind(&normalized_url)
+                    .execute(&*self.pool)
+                    .await;
+                if let Err(e) = &res {
+                    let is_unique = e
+                        .to_string()
+                        .contains("UNIQUE constraint failed: products.page_id, products.index_in_page");
+                    if is_unique {
+                        // Optional detailed conflict logging (before retry)
+                        let trace_slot = std::env::var("MC_LOG_SLOT_COORD_TRACE").ok().is_some_and(|v| v=="1" || v.eq_ignore_ascii_case("true"));
+                        if trace_slot {
+                            if let (Some(pid), Some(idx)) = (product.page_id, product.index_in_page) {
+                                if let Ok(conflicts) = sqlx::query("SELECT url, id, page_id, index_in_page FROM products WHERE page_id = ? AND index_in_page = ?")
+                                    .bind(pid)
+                                    .bind(idx)
+                                    .fetch_all(&*self.pool).await {
+                                        for row in conflicts {
+                                            let c_url: String = row.get("url");
+                                            let c_id: Option<String> = row.get("id");
+                                            let c_pid: Option<i64> = row.get("page_id");
+                                            let c_idx: Option<i64> = row.get("index_in_page");
+                                            tracing::warn!(target="persist_update", conflict_url=%c_url, conflict_id=?c_id, c_pid=?c_pid, c_idx=?c_idx, pid=pid, idx=idx, url=%normalized_url, "product_slot_conflict_detected_before_retry");
+                                        }
+                                }
+                            }
+                        }
+                        // Race occupant might have landed after pre-vacate; re-vacate & retry once
+                        if auto_vacate {
+                            if let (Some(pid), Some(idx)) = (product.page_id, product.index_in_page) {
+                                if let Some(occ_url) = sqlx::query_scalar::<_, String>(
+                                    "SELECT url FROM products WHERE page_id = ? AND index_in_page = ? AND url != ? LIMIT 1",
+                                )
+                                .bind(pid)
+                                .bind(idx)
+                                .bind(&normalized_url)
+                                .fetch_optional(&*self.pool)
+                                .await? {
+                                    let vacated = sqlx::query(
+                                        r#"UPDATE products SET page_id=NULL, index_in_page=NULL, id=NULL, updated_at=CURRENT_TIMESTAMP WHERE url = ?"#,
+                                    )
+                                    .bind(&occ_url)
+                                    .execute(&*self.pool)
+                                    .await?;
+                                    tracing::warn!(target="persist_update", page_id=pid, index_in_page=idx, occupant=%occ_url, rows=vacated.rows_affected(), "slot_vacated_retry_after_conflict");
+                                    // Retry the update after vacating
+                                    res = sqlx::query(
+                                        r"
+                                        UPDATE products 
+                                        SET manufacturer = ?, model = ?, certificate_id = ?, page_id = ?, index_in_page = ?, id = ?, updated_at = ?
+                                        WHERE url = ?
+                                        ",
+                                    )
+                                    .bind(&product.manufacturer)
+                                    .bind(&product.model)
+                                    .bind(&product.certificate_id)
+                                    .bind(product.page_id)
+                                    .bind(product.index_in_page)
+                                    .bind(&new_id)
+                                    .bind(now)
+                                    .bind(&normalized_url)
+                                    .execute(&*self.pool)
+                                    .await;
+                                }
+                            }
+                        }
+                    }
+                }
+                res?;
 
                 info!(
                     "[Persist] products: url={} pid={:?} idx={:?} action=update",
@@ -497,15 +604,54 @@ impl IntegratedProductRepository {
                 }
             });
 
-            sqlx::query(
-                r"
-                INSERT INTO products 
-                (id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ",
+            // -----------------------------------------------------------------
+            // Pre-vacate slot if another product already occupies (page_id,index)
+            // This addresses legacy UNIQUE index (ux_products_slot) still present in
+            // existing databases from pre-baseline migrations. Baseline removed
+            // explicit creation, but existing DB retains it; without vacating we get
+            // 2067 UNIQUE constraint errors when a different URL claims same slot.
+            // Controlled by env: MC_AUTO_VACATE_ON_SLOT_CONFLICT (default 1).
+            // -----------------------------------------------------------------
+            let auto_vacate = std::env::var("MC_AUTO_VACATE_ON_SLOT_CONFLICT")
+                .ok()
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(true);
+            if auto_vacate {
+                if let (Some(pid), Some(idx)) = (product.page_id, product.index_in_page) {
+                    // Check if some OTHER product (different url) already occupies that slot
+                    let occupant: Option<String> = sqlx::query_scalar(
+                        "SELECT url FROM products WHERE page_id = ? AND index_in_page = ? AND url != ? LIMIT 1",
+                    )
+                    .bind(pid)
+                    .bind(idx)
+                    .bind(&normalized_url)
+                    .fetch_optional(&*self.pool)
+                    .await?;
+                    if let Some(occ_url) = occupant {
+                        // Vacate: null out page coordinates & id for the occupant (retaining product)
+                        // Using a lightweight UPDATE; later a repair routine can reassign if needed.
+                        let vacated = sqlx::query(
+                            r#"UPDATE products SET page_id=NULL, index_in_page=NULL, id=NULL, updated_at=CURRENT_TIMESTAMP WHERE url = ?"#,
+                        )
+                        .bind(&occ_url)
+                        .execute(&*self.pool)
+                        .await?;
+                        tracing::warn!(target="bulk_persist", page_id=pid, index_in_page=idx, occupant=%occ_url, rows=vacated.rows_affected(), "slot_vacated_pre_insert");
+                    }
+                }
+            }
+
+            // Helper closure to perform the actual insert (so we can retry after conflict)
+            let normalized_url_clone = normalized_url.clone();
+            let mut inserted = sqlx::query(
+                r#"
+            INSERT INTO products 
+            (id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            "#,
             )
-            .bind(&generated_id)  // Add generated_id
-            .bind(&normalized_url)
+            .bind(&generated_id)
+            .bind(&normalized_url_clone)
             .bind(&product.manufacturer)
             .bind(&product.model)
             .bind(&product.certificate_id)
@@ -514,7 +660,72 @@ impl IntegratedProductRepository {
             .bind(now)
             .bind(now)
             .execute(&*self.pool)
-            .await?;
+            .await;
+
+            // If still UNIQUE violation (e.g., race), attempt targeted vacate then retry once
+            if let Err(e) = &inserted {
+                let is_unique = e.to_string().contains("UNIQUE constraint failed: products.page_id, products.index_in_page");
+                if is_unique && auto_vacate {
+                    let trace_slot = std::env::var("MC_LOG_SLOT_COORD_TRACE").ok().is_some_and(|v| v=="1" || v.eq_ignore_ascii_case("true"));
+                    if trace_slot {
+                        if let (Some(pid), Some(idx)) = (product.page_id, product.index_in_page) {
+                            if let Ok(conflicts) = sqlx::query("SELECT url, id, page_id, index_in_page FROM products WHERE page_id = ? AND index_in_page = ?")
+                                .bind(pid)
+                                .bind(idx)
+                                .fetch_all(&*self.pool).await {
+                                    for row in conflicts {
+                                        let c_url: String = row.get("url");
+                                        let c_id: Option<String> = row.get("id");
+                                        let c_pid: Option<i64> = row.get("page_id");
+                                        let c_idx: Option<i64> = row.get("index_in_page");
+                                        tracing::warn!(target="bulk_persist", conflict_url=%c_url, conflict_id=?c_id, c_pid=?c_pid, c_idx=?c_idx, pid=pid, idx=idx, url=%normalized_url, "product_slot_conflict_detected_before_retry_insert");
+                                    }
+                            }
+                        }
+                    }
+                    if let (Some(pid), Some(idx)) = (product.page_id, product.index_in_page) {
+                        // Second chance vacate (race winner inserted after initial check)
+                        let occupant: Option<String> = sqlx::query_scalar(
+                            "SELECT url FROM products WHERE page_id = ? AND index_in_page = ? AND url != ? LIMIT 1",
+                        )
+                        .bind(pid)
+                        .bind(idx)
+                        .bind(&normalized_url)
+                        .fetch_optional(&*self.pool)
+                        .await?;
+                        if let Some(occ_url) = occupant {
+                            let vacated = sqlx::query(
+                                r#"UPDATE products SET page_id=NULL, index_in_page=NULL, id=NULL, updated_at=CURRENT_TIMESTAMP WHERE url = ?"#,
+                            )
+                            .bind(&occ_url)
+                            .execute(&*self.pool)
+                            .await?;
+                            tracing::warn!(target="bulk_persist", page_id=pid, index_in_page=idx, occupant=%occ_url, rows=vacated.rows_affected(), "slot_vacated_retry_after_conflict");
+                            let normalized_url_retry = normalized_url.clone();
+                            inserted = sqlx::query(
+                                r#"
+                            INSERT INTO products 
+                            (id, url, manufacturer, model, certificate_id, page_id, index_in_page, created_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                            "#,
+                            )
+                            .bind(&generated_id)
+                            .bind(&normalized_url_retry)
+                            .bind(&product.manufacturer)
+                            .bind(&product.model)
+                            .bind(&product.certificate_id)
+                            .bind(product.page_id.map(i64::from))
+                            .bind(product.index_in_page.map(i64::from))
+                            .bind(now)
+                            .bind(now)
+                            .execute(&*self.pool)
+                            .await;
+                        }
+                    }
+                }
+            }
+
+            inserted?; // Propagate error if still failing
 
             info!(
                 "[Persist] products: url={} pid={:?} idx={:?} action=insert",
@@ -1086,46 +1297,77 @@ impl IntegratedProductRepository {
         let chunk_size: usize = std::env::var("MC_BULK_TX_CHUNK_SIZE")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(100);
+            .unwrap_or(20);
 
-        let mut total_updated = 0;
-        let mut total_created = 0;
+    let mut total_updated = 0;
+    let mut total_created = 0;
+    // New instrumentation counters (env gated emission later)
+    let mut total_product_coord_updates_attempted: u64 = 0;
+    let mut total_product_coord_update_conflicts: u64 = 0;
+    let mut total_detail_slot_vacates: u64 = 0; // product_details table vacates
+    let total_product_slot_vacates: u64 = 0; // products table vacates triggered indirectly (not here yet)
 
         let overall_started = Instant::now();
         for (chunk_index, chunk) in details.chunks(chunk_size).enumerate() {
-            // Transaction begin with focused retry (instead of retrying whole bulk logic)
+            // Transaction begin with focused retry (BEGIN IMMEDIATE to acquire write lock up front)
             let chunk_started = Instant::now();
-            let begin_max_attempts: u32 = std::env::var("MC_TX_BEGIN_MAX_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(6);
-            let initial_backoff_ms: u64 = std::env::var("MC_TX_BEGIN_INITIAL_BACKOFF_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(30);
+            let begin_max_attempts: u32 = std::env::var("MC_TX_BEGIN_MAX_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(15);
+            let initial_backoff_ms: u64 = std::env::var("MC_TX_BEGIN_INITIAL_BACKOFF_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(80);
             let backoff_factor: u64 = std::env::var("MC_TX_BEGIN_BACKOFF_FACTOR").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+            // How many attempts should use IMMEDIATE before falling back to DEFERRED (BEGIN)
+            let immediate_attempt_limit: u32 = std::env::var("MC_TX_IMMEDIATE_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
             let mut attempt: u32 = 0;
             let mut backoff = initial_backoff_ms;
-            let mut tx_opt = None;
+            let mut conn_opt: Option<sqlx::pool::PoolConnection<sqlx::Sqlite>> = None;
             while attempt < begin_max_attempts {
                 let lock_snapshot = write_lock_tracker::snapshot();
                 let snapshot_count = lock_snapshot.len();
-                // Try to begin
-                match self.pool.begin().await {
-                    Ok(t) => {
-                        tracing::info!(target="bulk_persist", chunk_index, attempt, snapshot_count, "tx_begin_success");
-                        tx_opt = Some(t);
-                        break;
+                match self.pool.acquire().await {
+                    Ok(mut c) => {
+                        // Set (or refresh) busy_timeout for this connection.
+                        // Use same resolver as global (env: MC_DB_BUSY_TIMEOUT_MS) but permit an optional multiplier.
+                        let base_ms: u64 = std::env::var("MC_DB_BUSY_TIMEOUT_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(3000);
+                        let mult: u64 = std::env::var("MC_BULK_BUSY_TIMEOUT_MULT").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+                        let eff = (base_ms.saturating_mul(mult)).clamp(100, 20_000);
+                        let _ = sqlx::query(&format!("PRAGMA busy_timeout={eff}")).execute(&mut *c).await;
+                        let use_deferred = attempt >= immediate_attempt_limit;
+                        let begin_sql = if use_deferred { "BEGIN" } else { "BEGIN IMMEDIATE" };
+                        if use_deferred && attempt == immediate_attempt_limit {
+                            tracing::warn!(target="bulk_persist", chunk_index, attempt, immediate_attempt_limit, "tx_begin_fallback_deferred_mode");
+                        }
+                        match sqlx::query(begin_sql).execute(&mut *c).await {
+                            Ok(_) => {
+                                let mode = if use_deferred { "deferred" } else { "immediate" };
+                                tracing::info!(target="bulk_persist", chunk_index, attempt, snapshot_count, mode, "tx_begin_success");
+                                // hand off the connection for transaction body
+                                conn_opt = Some(c);
+                                break;
+                            }
+                            Err(e) => {
+                                // Log active writer info for visibility
+                                let now = Utc::now();
+                                let ls: Vec<String> = lock_snapshot.into_iter().map(|i| {
+                                    let age_ms = (now - i.started_at).num_milliseconds();
+                                    format!("id={} label={} age_ms={}", i.id, i.label, age_ms)
+                                }).collect();
+                                let mode = if use_deferred { "deferred" } else { "immediate" };
+                                tracing::warn!(target="bulk_persist", chunk_index, attempt, mode, error=%e, snapshot_count, active_writes=%ls.join(";"), backoff_ms=backoff, "tx_begin_busy_or_error");
+                                // Short backoff and retry
+                                tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
+                                backoff = backoff.saturating_mul(backoff_factor).min(2000);
+                            }
+                        }
                     }
                     Err(e) => {
-                        let now = Utc::now();
-                        let ls: Vec<String> = lock_snapshot.into_iter().map(|i| {
-                            let age_ms = (now - i.started_at).num_milliseconds();
-                            format!("id={} label={} age_ms={}", i.id, i.label, age_ms)
-                        }).collect();
-                        tracing::warn!(target="bulk_persist", chunk_index, attempt, error=%e, snapshot_count, active_writes=%ls.join(";"), backoff_ms=backoff, "tx_begin_busy_or_error");
+                        tracing::warn!(target="bulk_persist", chunk_index, attempt, error=%e, backoff_ms=backoff, "tx_conn_acquire_failed");
                         tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
-                        backoff = backoff.saturating_mul(backoff_factor).min(1500);
+                        backoff = backoff.saturating_mul(backoff_factor).min(2000);
                     }
                 }
                 attempt += 1;
             }
-            let mut tx = match tx_opt { Some(t) => t, None => {
-                return Err(anyhow::anyhow!("Failed to begin transaction after {} attempts", attempt));
+            let mut tx_conn = match conn_opt { Some(c) => c, None => {
+                return Err(anyhow::anyhow!("Failed to BEGIN (immediate+deferred fallback) after {} attempts (immediate_limit={})", attempt, immediate_attempt_limit));
             }};
             // Register per-chunk write transaction for diagnostics (dropped when chunk scope ends)
             let tx_guard = write_lock_tracker::register("bulk_chunk", "product detail bulk chunk tx");
@@ -1134,6 +1376,8 @@ impl IntegratedProductRepository {
             let before_updated = total_updated;
             let before_created = total_created;
 
+            // Run the body of the transaction; on any error, rollback and bubble up
+            let mut body_err: Option<anyhow::Error> = None;
             for detail in chunk {
                 // Apply URL normalization
                 let normalized_url = Self::normalize_url(&detail.url);
@@ -1141,10 +1385,11 @@ impl IntegratedProductRepository {
                 detail.url = normalized_url;
 
                 // Check if record exists using a more efficient EXISTS query
-                let existing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM product_details WHERE url = ?)")
+                let existing_res = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM product_details WHERE url = ?)")
                     .bind(&detail.url)
-                    .fetch_one(&mut *tx)
-                    .await?;
+                    .fetch_one(&mut *tx_conn)
+                    .await;
+                let existing: bool = match existing_res { Ok(v) => v, Err(e) => { body_err = Some(e.into()); break; } };
 
                 let now = chrono::Utc::now();
 
@@ -1160,28 +1405,31 @@ impl IntegratedProductRepository {
                     };
 
                     if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
-                        let occupant: Option<String> = sqlx::query_scalar(
+                        let occ_res = sqlx::query_scalar(
                             "SELECT url FROM product_details WHERE page_id = ? AND index_in_page = ? AND url != ?"
                         )
                         .bind(pid)
                         .bind(idx)
                         .bind(&detail.url)
-                        .fetch_optional(&mut *tx)
-                        .await?;
+                        .fetch_optional(&mut *tx_conn)
+                        .await;
+                        let occupant: Option<String> = match occ_res { Ok(v) => v, Err(e) => { body_err = Some(e.into()); break; } };
 
                         if let Some(occupant_url) = occupant {
-                            sqlx::query(
+                            let res = sqlx::query(
                                 "UPDATE product_details SET page_id = NULL, index_in_page = NULL, id = NULL, updated_at = ? WHERE url = ?"
                             )
                             .bind(now)
                             .bind(&occupant_url)
-                            .execute(&mut *tx)
-                            .await?;
+                            .execute(&mut *tx_conn)
+                            .await;
+                            if let Err(e) = res { body_err = Some(e.into()); break; }
                             tracing::debug!(target="bulk_persist", occupant=%occupant_url, pid, idx, "vacated_slot_for_bulk_update");
+                            total_detail_slot_vacates += 1;
                         }
                     }
 
-                    sqlx::query(
+                    let res = sqlx::query(
                         r"
                         UPDATE product_details SET
                             page_id = ?, index_in_page = ?, id = ?, manufacturer = ?, model = ?, device_type = ?,
@@ -1219,20 +1467,48 @@ impl IntegratedProductRepository {
                     .bind(&detail.program_type)
                     .bind(now)
                     .bind(&detail.url)
-                    .execute(&mut *tx)
-                    .await?;
+                    .execute(&mut *tx_conn)
+                    .await;
+                    if let Err(e) = res { body_err = Some(e.into()); break; }
 
                     if detail.page_id.is_some() && detail.index_in_page.is_some() {
-                        sqlx::query(
+                        let trace_slot = std::env::var("MC_LOG_SLOT_COORD_TRACE").ok().is_some_and(|v| v=="1" || v.eq_ignore_ascii_case("true"));
+                        if trace_slot {
+                            tracing::debug!(target="bulk_persist", url=%detail.url, pid=?detail.page_id, idx=?detail.index_in_page, "product_coord_update_attempt_from_detail_bulk");
+                        }
+                        total_product_coord_updates_attempted += 1;
+                        let res = sqlx::query(
                             "UPDATE products SET page_id = ?, index_in_page = ?, updated_at = ? WHERE url = ?"
                         )
                         .bind(detail.page_id)
                         .bind(detail.index_in_page)
                         .bind(now)
                         .bind(&detail.url)
-                        .execute(&mut *tx)
-                        .await
-                        .ok();
+                        .execute(&mut *tx_conn)
+                        .await;
+                        if let Err(e) = &res {
+                            let is_unique = e.to_string().contains("UNIQUE constraint failed: products.page_id, products.index_in_page");
+                            if is_unique {
+                                total_product_coord_update_conflicts += 1;
+                                if trace_slot {
+                                    if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
+                                        if let Ok(conflicts) = sqlx::query("SELECT url, id, page_id, index_in_page FROM products WHERE page_id = ? AND index_in_page = ?")
+                                            .bind(pid)
+                                            .bind(idx)
+                                            .fetch_all(&mut *tx_conn).await {
+                                                for row in conflicts {
+                                                    let c_url: String = row.get("url");
+                                                    let c_id: Option<String> = row.get("id");
+                                                    let c_pid: Option<i64> = row.get("page_id");
+                                                    let c_idx: Option<i64> = row.get("index_in_page");
+                                                    tracing::warn!(target="bulk_persist", conflict_url=%c_url, conflict_id=?c_id, c_pid=?c_pid, c_idx=?c_idx, pid=pid, idx=idx, url=%detail.url, chunk_index, "product_slot_conflict_in_bulk_coord_update");
+                                                }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if let Err(e) = res { body_err = Some(e.into()); break; }
                     }
 
                     total_updated += 1;
@@ -1249,27 +1525,30 @@ impl IntegratedProductRepository {
                     };
 
                     if let (Some(pid), Some(idx)) = (detail.page_id, detail.index_in_page) {
-                        let occupant: Option<String> = sqlx::query_scalar(
+                        let occ_res = sqlx::query_scalar(
                             "SELECT url FROM product_details WHERE page_id = ? AND index_in_page = ?"
                         )
                         .bind(pid)
                         .bind(idx)
-                        .fetch_optional(&mut *tx)
-                        .await?;
+                        .fetch_optional(&mut *tx_conn)
+                        .await;
+                        let occupant: Option<String> = match occ_res { Ok(v) => v, Err(e) => { body_err = Some(e.into()); break; } };
 
                         if let Some(occupant_url) = occupant {
-                            sqlx::query(
+                            let res = sqlx::query(
                                 "UPDATE product_details SET page_id = NULL, index_in_page = NULL, id = NULL, updated_at = ? WHERE url = ?"
                             )
                             .bind(now)
                             .bind(&occupant_url)
-                            .execute(&mut *tx)
-                            .await?;
+                            .execute(&mut *tx_conn)
+                            .await;
+                            if let Err(e) = res { body_err = Some(e.into()); break; }
                             tracing::debug!(target="bulk_persist", occupant=%occupant_url, pid, idx, "vacated_slot_for_bulk_insert");
+                            total_detail_slot_vacates += 1;
                         }
                     }
 
-                    sqlx::query(
+                    let res = sqlx::query(
                         r"
                         INSERT INTO product_details (
                             url, page_id, index_in_page, id, manufacturer, model, device_type,
@@ -1308,18 +1587,29 @@ impl IntegratedProductRepository {
                     .bind(&detail.program_type)
                     .bind(now)
                     .bind(now)
-                    .execute(&mut *tx)
-                    .await?;
+                    .execute(&mut *tx_conn)
+                    .await;
+                    if let Err(e) = res { body_err = Some(e.into()); break; }
 
             total_created += 1;
             // Bridge sync removed (see above)
                 }
             }
 
+            // If any step errored, rollback
+            if let Some(err) = body_err {
+                // Transaction will rollback on drop; do it explicitly for clarity
+                let _ = sqlx::query("ROLLBACK").execute(&mut *tx_conn).await; // best-effort
+                let chunk_elapsed_ms = chunk_started.elapsed().as_millis() as u64;
+                tracing::error!(target="bulk_persist", chunk_index, count=chunk.len(), guard_id=%tx_guard.id(), updated_in_chunk=total_updated-before_updated, created_in_chunk=total_created-before_created, chunk_elapsed_ms, error=%err, "Chunk rolled back due to error");
+                return Err(err);
+            }
+
             // Commit the transaction for the chunk
-            if let Err(e) = tx.commit().await {
+            if let Err(e) = sqlx::query("COMMIT").execute(&mut *tx_conn).await {
                 let chunk_elapsed_ms = chunk_started.elapsed().as_millis() as u64;
                 tracing::error!(target="bulk_persist", chunk_index, count=chunk.len(), guard_id=%tx_guard.id(), updated_in_chunk=total_updated-before_updated, created_in_chunk=total_created-before_created, chunk_elapsed_ms, error=%e, "Chunk commit failed");
+                // Best-effort rollback in case of partial commit failure is not meaningful; connection will drop.
                 return Err(e.into());
             } else {
                 let chunk_elapsed_ms = chunk_started.elapsed().as_millis() as u64;
@@ -1328,7 +1618,7 @@ impl IntegratedProductRepository {
         }
         
         let overall_elapsed_ms = overall_started.elapsed().as_millis() as u64;
-        tracing::info!(target="bulk_persist", updated=total_updated, created=total_created, total=details.len(), overall_elapsed_ms, "Bulk product detail persistence completed");
+    tracing::info!(target="bulk_persist", updated=total_updated, created=total_created, total=details.len(), overall_elapsed_ms, product_coord_updates_attempted=total_product_coord_updates_attempted, product_coord_update_conflicts=total_product_coord_update_conflicts, detail_slot_vacates=total_detail_slot_vacates, product_slot_vacates=total_product_slot_vacates, "Bulk product detail persistence completed");
 
         Ok((total_updated, total_created))
     }
@@ -2333,10 +2623,10 @@ impl IntegratedProductRepository {
         // Formula: nextProductIndex = lastSavedIndex + 1
         let next_product_index = last_saved_index + 1;
 
-        // Step 4: Calculate total products on the site
+        // Step 4: Calculate total products on the site (safely)
         // Formula: totalProducts = ((totalPagesOnSite - 1) * productsPerPage) + productsOnLastPage
         let total_products =
-            ((total_pages_on_site - 1) * products_per_page) + products_on_last_page;
+            (total_pages_on_site.saturating_sub(1) * products_per_page) + products_on_last_page;
 
         // Check if we've already crawled all products
         if next_product_index >= total_products {
@@ -2348,9 +2638,9 @@ impl IntegratedProductRepository {
             return Ok(None);
         }
 
-        // Step 5: Convert next product index to website page number
-        // Formula: forwardIndex = (totalProducts - 1) - nextProductIndex
-        let forward_index = (total_products - 1) - next_product_index;
+    // Step 5: Convert next product index to website page number
+    // Formula: forwardIndex = (totalProducts - 1) - nextProductIndex
+    let forward_index = total_products.saturating_sub(1).saturating_sub(next_product_index);
 
         // Formula: targetPageNumber = floor(forwardIndex / productsPerPage) + 1
         let target_page_number = (forward_index / products_per_page) + 1;
