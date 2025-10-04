@@ -188,6 +188,7 @@ pub mod commands {
     pub mod crawling {
         pub mod actor_system; // moved here physically
         pub mod real_crawling_commands;
+        pub mod shallow_sync_commands; // 🏃 얕은 크롤링 + 진단 기반 보완
         #[cfg(feature = "dev-tools")]
         pub mod simple_actor_test;
         pub mod smart_crawling;
@@ -835,6 +836,11 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             // 🔧 참조/레거시 ServiceBased 명령어는 노출 중단 (엔트리포인트 통일)
             // commands::service_based_reference::start_service_based_crawling_reference,
             // commands::real_actor_commands::start_legacy_service_based_crawling,
+
+            // 🏃 Shallow Sync commands (얕은 크롤링 + 진단 기반 보완)
+            commands::crawling::shallow_sync_commands::start_shallow_sync,
+            commands::crawling::shallow_sync_commands::analyze_missing_details,
+            commands::crawling::shallow_sync_commands::start_smart_sync,
 
             // Legacy v4 commands removed (init/start/stop/etc.) – replaced by unified_crawling + real_crawling_commands
 

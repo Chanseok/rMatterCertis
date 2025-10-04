@@ -93,6 +93,9 @@ pub enum AppEvent {
     SessionStarted {
         session_id: String,
         config: CrawlingConfig,
+        /// 전체 크롤링 대상 페이지 목록 (UI에서 전체 범위 표시용)
+        #[serde(default)]
+        planned_pages: Vec<u32>,
         timestamp: DateTime<Utc>,
     },
 
@@ -495,6 +498,41 @@ pub enum AppEvent {
         products_checked: u64,
         divergences: u32,
         anomalies: u32,
+        duration_ms: u64,
+        timestamp: DateTime<Utc>,
+    },
+
+    // === ListPageCrawling 진행상황 이벤트 (UI 실시간 피드백) ===
+    /// ListPageCrawling 배치 시작
+    ListPageBatchStarted {
+        session_id: String,
+        batch_id: String,
+        total_pages: u32,
+        page_numbers: Vec<u32>, // 물리 페이지 번호 목록 (예: [507, 506, 505])
+        timestamp: DateTime<Utc>,
+    },
+    /// ListPageCrawling 개별 페이지 진행상황
+    ListPageProgress {
+        session_id: String,
+        batch_id: String,
+        page_number: u32,
+        page_id: String, // "page_123" 형태
+        collected_urls: u32,
+        expected_urls: u32,
+        status: String, // "success" | "partial" | "failed"
+        retry_count: u32,
+        error: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
+    /// ListPageCrawling 배치 완료 요약
+    ListPageBatchCompleted {
+        session_id: String,
+        batch_id: String,
+        total_pages: u32,
+        successful_pages: u32,
+        partial_pages: u32,
+        failed_pages: u32,
+        total_urls_collected: u32,
         duration_ms: u64,
         timestamp: DateTime<Utc>,
     },
@@ -1212,6 +1250,9 @@ pub struct ExecutionPlan {
     pub contract_version: u32,
     /// 사전 계산된 논리적 page slot 목록 (역순/정순 혼합 시 순서 유지)
     pub page_slots: Vec<PageSlot>,
+    /// 얕은 크롤링 모드: ListPageCrawling만 수행, ProductDetailCrawling 스킵
+    #[serde(default)]
+    pub list_only: bool,
 }
 
 /// 중복 URL(로컬 DB에 이미 존재) 처리 정책
@@ -1254,6 +1295,15 @@ pub struct ExecutionPlanKpi {
 }
 
 impl ExecutionPlan {
+    /// 전체 크롤링 대상 페이지 번호 목록 추출 (UI 표시용)
+    #[must_use]
+    pub fn get_all_planned_pages(&self) -> Vec<u32> {
+        self.page_slots
+            .iter()
+            .map(|slot| slot.physical_page)
+            .collect()
+    }
+    
     /// Preplanned 실행 시 최소한의 `SiteStatus` 형태를 구성 (페이지 처리 통계용)
     #[must_use]
     pub fn input_snapshot_to_site_status(&self) -> crate::domain::services::SiteStatus {
@@ -1364,6 +1414,7 @@ mod tests {
         let event = AppEvent::SessionStarted {
             session_id: "test-session".to_string(),
             config: CrawlingConfig::default(),
+            planned_pages: vec![10, 9, 8, 7, 6],
             timestamp: Utc::now(),
         };
 
@@ -1432,6 +1483,7 @@ mod tests {
         let event = AppEvent::SessionStarted {
             session_id: "s1".to_string(),
             config: CrawlingConfig::default(),
+            planned_pages: vec![5, 4, 3, 2, 1],
             timestamp: Utc::now(),
         };
         let v: Value = serde_json::to_value(&event).unwrap();

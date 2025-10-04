@@ -1384,14 +1384,44 @@ impl IntegratedProductRepository {
                 let mut detail = detail.clone();
                 detail.url = normalized_url;
 
+                let now = chrono::Utc::now();
+
+                // CRITICAL: Ensure products table has a record BEFORE inserting into product_details (FK constraint)
+                // If URL exists, update its coordinates; if not, create new record
+                let derived_id = match (detail.page_id, detail.index_in_page) {
+                    (Some(pid), Some(idx)) => Some(format!("p{:04}i{:02}", pid, idx)),
+                    _ => None,
+                };
+                
+                let products_ensure_res = sqlx::query(
+                    r"INSERT INTO products (url, page_id, index_in_page, id, created_at, updated_at) 
+                      VALUES (?, ?, ?, ?, ?, ?)
+                      ON CONFLICT(url) DO UPDATE SET
+                        page_id = excluded.page_id,
+                        index_in_page = excluded.index_in_page,
+                        id = excluded.id,
+                        updated_at = excluded.updated_at"
+                )
+                .bind(&detail.url)
+                .bind(detail.page_id)
+                .bind(detail.index_in_page)
+                .bind(&derived_id)
+                .bind(now)
+                .bind(now)
+                .execute(&mut *tx_conn)
+                .await;
+                if let Err(e) = products_ensure_res { 
+                    tracing::error!(target="bulk_persist", url=%detail.url, error=%e, "Failed to ensure products record");
+                    body_err = Some(e.into()); 
+                    break; 
+                }
+
                 // Check if record exists using a more efficient EXISTS query
                 let existing_res = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM product_details WHERE url = ?)")
                     .bind(&detail.url)
                     .fetch_one(&mut *tx_conn)
                     .await;
                 let existing: bool = match existing_res { Ok(v) => v, Err(e) => { body_err = Some(e.into()); break; } };
-
-                let now = chrono::Utc::now();
 
                 if existing {
                     // Update existing record

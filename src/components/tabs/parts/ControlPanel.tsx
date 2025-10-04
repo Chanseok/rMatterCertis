@@ -16,6 +16,10 @@ interface ControlPanelProps {
   setCrawlingRange: (updater: any) => void;
   addLog: (msg: string) => void;
   tauriApi: any;
+  // 🏃 Shallow Sync handlers
+  handleShallowSync?: () => Promise<void> | void;
+  handleSmartSync?: () => Promise<void> | void;
+  handleAnalyzeMissing?: () => Promise<void> | void;
 }
 
 const ControlPanel: Component<ControlPanelProps> = (p) => {
@@ -38,6 +42,40 @@ const ControlPanel: Component<ControlPanelProps> = (p) => {
         >
           📊 범위 다시 계산
         </button>
+
+        {/* 🏃 Shallow Sync buttons */}
+        {p.handleShallowSync && (
+          <button
+            onClick={() => p.handleShallowSync?.()}
+            disabled={p.isRunning()}
+            class="px-6 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed ripple shadow-md hover:shadow-lg transition"
+            title="전체 페이지 좌표만 빠르게 동기화 (5-8분)"
+          >
+            🏃 빠른 동기화
+          </button>
+        )}
+
+        {p.handleSmartSync && (
+          <button
+            onClick={() => p.handleSmartSync?.()}
+            disabled={p.isRunning()}
+            class="px-6 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed ripple shadow-md hover:shadow-lg transition"
+            title="얕은 크롤링 + 진단 + 누락 보완 (8-12분)"
+          >
+            🧠 스마트 동기화
+          </button>
+        )}
+
+        {p.handleAnalyzeMissing && (
+          <button
+            onClick={() => p.handleAnalyzeMissing?.()}
+            disabled={p.isRunning()}
+            class="px-5 py-2 rounded-lg font-medium text-gray-700 bg-white border-2 border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed ripple shadow"
+            title="누락된 제품 분석"
+          >
+            📊 누락 분석
+          </button>
+        )}
 
         <div class="h-10 w-px bg-gray-300 dark:bg-gray-600" />
 

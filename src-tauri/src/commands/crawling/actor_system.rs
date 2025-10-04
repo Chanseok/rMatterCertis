@@ -87,7 +87,7 @@ pub struct ActorSystemResponse {
 }
 
 /// Bootstrap common wiring and spawn `SessionActor` to execute a pre-planned plan
-async fn bootstrap_and_spawn_session(
+pub async fn bootstrap_and_spawn_session(
     app: &AppHandle,
     execution_plan: ExecutionPlan,
     app_config: AppConfig,
@@ -755,6 +755,7 @@ pub async fn resume_from_token(
         kpi_meta: None,
         contract_version: ACTOR_CONTRACT_VERSION,
         page_slots,
+        list_only: false,
     };
     let site_status = execution_plan.input_snapshot_to_site_status();
     let cfg_manager =
@@ -1189,6 +1190,7 @@ async fn build_execution_plan_from_explicit_pages(
         }),
         contract_version: ACTOR_CONTRACT_VERSION,
         page_slots,
+        list_only: false,
     };
     if let Some(ref mut kpi) = execution_plan.kpi_meta {
         kpi.total_ranges = execution_plan.crawling_ranges.len();

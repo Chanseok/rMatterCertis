@@ -355,7 +355,7 @@ impl SessionActor {
 
             // Always use StageActor path (legacy BatchActor retired)
             let run_result = {
-                self.run_batch_with_stage_actor(&batch_id, &pages, context, deps, site_status)
+                self.run_batch_with_stage_actor(&batch_id, &pages, context, deps, site_status, None)
                     .await
             };
 
@@ -411,7 +411,7 @@ impl SessionActor {
             let batch_id = format!("{}-pre-{}", session_id, idx + 1);
             // Execute via StageActor (legacy path retired) so preplanned runs process pages.
             let run_result: Result<(), SessionError> = {
-                self.run_batch_with_stage_actor(&batch_id, &pages, context, deps, site_status)
+                self.run_batch_with_stage_actor(&batch_id, &pages, context, deps, site_status, Some(plan))
                     .await
             };
 
@@ -656,10 +656,21 @@ impl SessionActor {
         self.transition(SessionState::Starting)?;
         self.start_time = Some(Instant::now());
 
+        // 크롤링 범위에서 페이지 목록 생성
+        let planned_pages: Vec<u32> = if config.start_page >= config.end_page {
+            // 역순 (예: 100 -> 95)
+            (config.end_page..=config.start_page).rev().collect()
+        } else {
+            // 정순 (예: 1 -> 10)
+            (config.start_page..=config.end_page).collect()
+        };
+        tracing::info!("📋 Session planned pages (total={}): {:?}", planned_pages.len(), planned_pages);
+
         // 세션 시작 이벤트 발행
         let start_event = AppEvent::SessionStarted {
             session_id: session_id.clone(),
             config: config.clone(),
+            planned_pages,
             timestamp: Utc::now(),
         };
 
@@ -837,6 +848,7 @@ impl SessionActor {
         context: &AppContext,
         deps: &SessionDeps,
         site_status: &crate::domain::services::SiteStatus,
+        plan: Option<&crate::crawl_engine::actors::types::ExecutionPlan>,
     ) -> Result<(), SessionError> {
         use crate::crawl_engine::actors::types::StageResultData as SRD;
         use crate::crawl_engine::actors::types::StageType;
@@ -885,6 +897,50 @@ impl SessionActor {
         // Map pages to StageItems
         let items: Vec<StageItem> = pages.iter().copied().map(StageItem::Page).collect();
 
+        // 배치 시작 시간 기록
+        let batch_start_time = Instant::now();
+        let total_pages_in_batch = pages.len() as u32;
+        
+        // 전체 크롤링 대상 페이지 목록 추출 (스테이지 시작 전에 미리 추출)
+        let page_numbers: Vec<u32> = pages.iter().copied().collect();
+        
+        tracing::info!("📋 ListPageBatchStarted: total={}, pages={:?}", total_pages_in_batch, page_numbers);
+        
+        // ListPageBatchStarted 이벤트 발행 (스테이지 실행 전!)
+        let _ = self.emit(
+            context,
+            AppEvent::ListPageBatchStarted {
+                session_id: self.session_id.clone().unwrap_or_default(),
+                batch_id: batch_id.to_string(),
+                total_pages: total_pages_in_batch,
+                page_numbers: page_numbers.clone(), // 물리 페이지 번호 목록 추가
+                timestamp: Utc::now(),
+            },
+        );
+        
+        // 각 페이지를 "processing" 상태로 설정 (크롤링 시작 전)
+        for &page_num in &page_numbers {
+            let _ = self.emit(
+                context,
+                AppEvent::ListPageProgress {
+                    session_id: self.session_id.clone().unwrap_or_default(),
+                    batch_id: batch_id.to_string(),
+                    page_number: page_num,
+                    page_id: format!("page_{}", page_num),
+                    collected_urls: 0,
+                    expected_urls: if page_num == site_status.total_pages { 
+                        site_status.products_on_last_page 
+                    } else { 
+                        12 
+                    },
+                    status: "processing".to_string(),
+                    retry_count: 0,
+                    error: None,
+                    timestamp: Utc::now(),
+                },
+            );
+        }
+
         // Execute list-page stage
         let list_res = stage_actor
             .execute_stage(
@@ -901,15 +957,130 @@ impl SessionActor {
 
         // Extract product URLs from list stage results (typed)
         let mut all_urls: Vec<crate::domain::product_url::ProductUrl> = Vec::new();
+        let mut page_collection_summary: Vec<(String, usize, &str)> = Vec::new(); // (page_id, collected_count, status)
+        
         for it in &list_res.details {
             if let Some(SRD::ProductUrls { urls, .. }) = &it.collected_data {
+                // 각 페이지별 수집 결과 추출
+                let page_id = &it.item_id;
+                let collected = urls.len();
+                
+                // item_id는 "page_123" 형태이므로 파싱
+                let page_num: Option<u32> = page_id
+                    .strip_prefix("page_")
+                    .and_then(|s| s.parse().ok());
+                
+                let expected = if let Some(pn) = page_num {
+                    if pn == site_status.total_pages {
+                        site_status.products_on_last_page
+                    } else {
+                        12 // 기본 페이지당 제품 수
+                    }
+                } else {
+                    12
+                };
+                
+                let status = if collected == expected as usize {
+                    "success"
+                } else if collected > 0 {
+                    "partial"  // 부분 수집
+                } else {
+                    "failed"  // 수집 실패
+                };
+                
+                page_collection_summary.push((page_id.clone(), collected, status));
+                
+                // ListPageProgress 이벤트 발행 (UI 실시간 업데이트)
+                let _ = self.emit(
+                    context,
+                    AppEvent::ListPageProgress {
+                        session_id: self.session_id.clone().unwrap_or_default(),
+                        batch_id: batch_id.to_string(),
+                        page_number: page_num.unwrap_or(0),
+                        page_id: page_id.clone(),
+                        collected_urls: collected as u32,
+                        expected_urls: expected,
+                        status: status.to_string(),
+                        retry_count: it.retry_count,
+                        error: it.error.clone(),
+                        timestamp: Utc::now(),
+                    },
+                );
+                
+                // 각 페이지별 상세 로그
+                if collected == expected as usize {
+                    info!(
+                        "📄 Page {} ({}): {}/{} products collected ✅ (retry: {})",
+                        page_num.map_or("?".to_string(), |n| n.to_string()),
+                        page_id, collected, expected, it.retry_count
+                    );
+                } else {
+                    warn!(
+                        "📄 Page {} ({}): {}/{} products collected ⚠️ (PARTIAL/FAILED - retry: {})",
+                        page_num.map_or("?".to_string(), |n| n.to_string()),
+                        page_id, collected, expected, it.retry_count
+                    );
+                }
                 all_urls.extend(urls.clone());
+            } else {
+                // 수집 데이터가 없는 경우 (에러 발생)
+                let page_id = &it.item_id;
+                let page_num: Option<u32> = page_id
+                    .strip_prefix("page_")
+                    .and_then(|s| s.parse().ok());
+                    
+                // ListPageProgress 이벤트 발행 (실패 케이스)
+                let _ = self.emit(
+                    context,
+                    AppEvent::ListPageProgress {
+                        session_id: self.session_id.clone().unwrap_or_default(),
+                        batch_id: batch_id.to_string(),
+                        page_number: page_num.unwrap_or(0),
+                        page_id: page_id.clone(),
+                        collected_urls: 0,
+                        expected_urls: 12,
+                        status: "failed".to_string(),
+                        retry_count: it.retry_count,
+                        error: it.error.clone(),
+                        timestamp: Utc::now(),
+                    },
+                );
+                    
+                warn!(
+                    "📄 Page {} ({}): 0/12 products collected ❌ (FAILED - no data, retry: {}, error: {:?})",
+                    page_num.map_or("?".to_string(), |n| n.to_string()),
+                    page_id, it.retry_count, it.error
+                );
+                page_collection_summary.push((page_id.clone(), 0, "failed"));
             }
         }
 
+        // 배치 전체 요약
+        let total_pages = page_collection_summary.len();
+        let successful_pages = page_collection_summary.iter().filter(|(_, _, s)| *s == "success").count();
+        let partial_pages = page_collection_summary.iter().filter(|(_, _, s)| *s == "partial").count();
+        let failed_pages = page_collection_summary.iter().filter(|(_, _, s)| *s == "failed").count();
+        let batch_duration_ms = batch_start_time.elapsed().as_millis() as u64;
+        
+        // ListPageBatchCompleted 이벤트 발행
+        let _ = self.emit(
+            context,
+            AppEvent::ListPageBatchCompleted {
+                session_id: self.session_id.clone().unwrap_or_default(),
+                batch_id: batch_id.to_string(),
+                total_pages: total_pages as u32,
+                successful_pages: successful_pages as u32,
+                partial_pages: partial_pages as u32,
+                failed_pages: failed_pages as u32,
+                total_urls_collected: all_urls.len() as u32,
+                duration_ms: batch_duration_ms,
+                timestamp: Utc::now(),
+            },
+        );
+        
         info!(
-            "[Chaining] Batch {batch_id}: collected product URLs from list stage = {}",
-            all_urls.len()
+            "📊 [Batch Summary] {}: {} pages processed | ✅ {} successful | ⚠️ {} partial | ❌ {} failed | Total URLs: {}",
+            batch_id, total_pages, successful_pages, partial_pages, failed_pages, all_urls.len()
         );
 
         // Orchestration toggles (env-driven) for controlled execution in manual runs
@@ -919,8 +1090,52 @@ impl SessionActor {
     let skip_validation = if skip_validation_env { true } else { crate::crawl_engine::integrated_context::IntegratedContext::validation_skip_hint() };
         let skip_saving = std::env::var("MC_SKIP_SAVING").ok().is_some_and(|v| v=="1" || v.eq_ignore_ascii_case("true"));
 
-        if list_only {
-            info!("[Chaining] Batch {batch_id}: MC_LIST_ONLY=1 → stopping after list stage");
+        // 🏃 Shallow crawl mode: ExecutionPlan.list_only flag OR env vars (MC_LIST_ONLY / MC_SHALLOW_MODE)
+        // Stops after ListPageCrawling to quickly sync coordinates (page_id, index_in_page)
+        // without fetching product details. Useful for detecting missing/duplicate products.
+        let shallow_mode = plan.map(|p| p.list_only).unwrap_or(false)
+            || list_only 
+            || std::env::var("MC_SHALLOW_MODE")
+                .ok()
+                .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+
+        if shallow_mode {
+            info!(
+                "🏃 [Shallow Mode] Batch {batch_id}: updating coordinates for {} URLs",
+                all_urls.len()
+            );
+            
+            // 좌표 업데이트: URL별로 page_id와 index_in_page를 DB에 저장
+            let mut updated_products = 0u32;
+            let mut updated_details = 0u32;
+            let mut failed_updates = 0;
+            
+            for url_info in &all_urls {
+                match deps.product_repo.force_update_position_by_url(
+                    &url_info.url,
+                    url_info.page_id,
+                    url_info.index_in_page,
+                ).await {
+                    Ok((prod_rows, det_rows)) => {
+                        updated_products += prod_rows;
+                        updated_details += det_rows;
+                    }
+                    Err(e) => {
+                        failed_updates += 1;
+                        warn!(
+                            "Failed to update coordinates for URL {} (page_id={}, index={}): {}",
+                            url_info.url, url_info.page_id, url_info.index_in_page, e
+                        );
+                    }
+                }
+            }
+            
+            info!(
+                "🏃 [Shallow Mode] Batch {batch_id}: coordinate update complete. \
+                Products updated: {}, Details updated: {}, Failed: {}, Total URLs: {}",
+                updated_products, updated_details, failed_updates, all_urls.len()
+            );
+            
             return Ok(());
         }
 
@@ -1415,7 +1630,16 @@ impl Actor for SessionActor {
                                             max_retries: 3,
                                             strategy: crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst,
                                         };
-                                        if let Err(e) = self.emit(&context, AppEvent::SessionStarted { session_id: session_id.clone(), config: start_cfg, timestamp: Utc::now() }) {
+                                        // 전체 크롤링 대상 페이지 목록 추출
+                                        let planned_pages = plan.get_all_planned_pages();
+                                        tracing::info!("📋 Session planned pages (total={}): {:?}", planned_pages.len(), planned_pages);
+                                        
+                                        if let Err(e) = self.emit(&context, AppEvent::SessionStarted { 
+                                            session_id: session_id.clone(), 
+                                            config: start_cfg, 
+                                            planned_pages,
+                                            timestamp: Utc::now() 
+                                        }) {
                                             error!("Failed to emit SessionStarted: {}", e);
                                         }
                                     }

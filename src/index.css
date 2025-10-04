@@ -256,6 +256,28 @@
   }
 }
 
+/* Spin animation for progress indicators */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Pulse animation for active states */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(0.95);
+  }
+}
+
 /* Accordion (height/opacity) */
 @keyframes accordionIn {
   from { opacity: 0; transform: translateY(-4px); }

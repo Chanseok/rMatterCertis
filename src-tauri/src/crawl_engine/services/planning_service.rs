@@ -546,6 +546,7 @@ impl PlanningStrategy for IntelligentPlanningStrategy {
             }),
             contract_version: ACTOR_CONTRACT_VERSION,
             page_slots,
+            list_only: false,
         };
         // Fix kpi_meta using actual ranges
         if let Some(kpi) = &mut execution_plan.kpi_meta {
@@ -770,6 +771,7 @@ impl PlanningStrategy for ManualPlanningStrategy {
             }),
             contract_version: ACTOR_CONTRACT_VERSION,
             page_slots,
+            list_only: false,
         };
         if let Some(kpi) = &mut execution_plan.kpi_meta {
             kpi.total_ranges = execution_plan.crawling_ranges.len();
@@ -860,6 +862,7 @@ mod tests {
             }),
             contract_version: ACTOR_CONTRACT_VERSION,
             page_slots: vec![],
+            list_only: false,
         };
         // Keep only 2 newest pages overall => pages [10,9]
         let res = IntelligentPlanningStrategy::adjust_execution_plan_with_page_overrides(
@@ -918,6 +921,7 @@ mod tests {
             }),
             contract_version: ACTOR_CONTRACT_VERSION,
             page_slots: vec![],
+            list_only: false,
         };
         // start_page(lower bound via overrides set higher than end_page => invalid
         let res = IntelligentPlanningStrategy::adjust_execution_plan_with_page_overrides(

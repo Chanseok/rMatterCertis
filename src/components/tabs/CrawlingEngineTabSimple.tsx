@@ -4,6 +4,7 @@ import SessionStatusCard from "./parts/SessionStatusCard";
 import ControlPanel from "./parts/ControlPanel";
 import StageStatsPanels from "./parts/StageStatsPanels";
 import DiagnosticsPanel from "./parts/DiagnosticsPanel";
+import ListPageProgressPanel from "../ListPageProgressPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 // Types are relaxed locally to avoid tight coupling during integration
@@ -466,6 +467,122 @@ export default function CrawlingEngineTabSimple() {
       console.error("통합 파이프라인(하이) 시작 실패:", error);
       addLog(`❌ 통합 파이프라인(하이) 시작 실패: ${error}`);
       setStatusMessage("크롤링 실패");
+      setIsRunning(false);
+    }
+  };
+
+  // 🏃 얕은 동기화: 전체 페이지 좌표만 빠르게 갱신
+  const handleShallowSync = async () => {
+    if (isRunning()) {
+      addLog("⚠️ 이미 크롤링이 진행 중입니다.");
+      return;
+    }
+
+    setIsRunning(true);
+    setStatusMessage("🏃 빠른 동기화 시작 중...");
+    addLog("🏃 빠른 동기화 시작 (좌표 갱신만)");
+
+    try {
+      const result = await invoke<any>("start_shallow_sync");
+      addLog(`✅ 빠른 동기화 완료: ${result.pages_scanned}페이지, ${result.urls_synced}개 URL 동기화 (${result.duration_ms}ms)`);
+      setStatusMessage(`✅ 빠른 동기화 완료 (${result.pages_scanned}p)`);
+      
+      // 진단 실행 제안
+      setTimeout(() => {
+        addLog("💡 이제 '📊 누락 분석' 또는 '🧠 스마트 동기화'를 실행하세요.");
+      }, 500);
+    } catch (error) {
+      console.error("빠른 동기화 실패:", error);
+      addLog(`❌ 빠른 동기화 실패: ${error}`);
+      setStatusMessage("빠른 동기화 실패");
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  // 📊 누락 분석: 누락된 product_details 확인
+  const handleAnalyzeMissing = async () => {
+    if (isRunning()) {
+      addLog("⚠️ 이미 크롤링이 진행 중입니다.");
+      return;
+    }
+
+    setIsRunning(true);
+    addLog("📊 누락 제품 분석 중...");
+
+    try {
+      const result = await invoke<any>("analyze_missing_details");
+      const missing = result.missing_details || [];
+      const total = result.total_products || 0;
+      const complete = result.complete_products || 0;
+
+      addLog(`📊 분석 완료: 전체=${total}, 완료=${complete}, 누락=${missing.length}`);
+      
+      if (missing.length > 0) {
+        addLog(`⚠️ ${missing.length}개 제품의 상세 정보가 누락되었습니다.`);
+        addLog(`💡 '🧠 스마트 동기화'로 자동 보완 가능합니다.`);
+        
+        // 처음 5개만 로그
+        const sample = missing.slice(0, 5);
+        sample.forEach((item: any) => {
+          addLog(`  - ${item.manufacturer || 'Unknown'} ${item.model || ''} (${item.url})`);
+        });
+        if (missing.length > 5) {
+          addLog(`  ... 외 ${missing.length - 5}개`);
+        }
+      } else {
+        addLog(`✨ 누락된 제품이 없습니다. 데이터가 완전합니다!`);
+      }
+    } catch (error) {
+      console.error("누락 분석 실패:", error);
+      addLog(`❌ 누락 분석 실패: ${error}`);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  // 🧠 스마트 동기화: 얕은 + 진단 + 보완 통합
+  const handleSmartSync = async () => {
+    if (isRunning()) {
+      addLog("⚠️ 이미 크롤링이 진행 중입니다.");
+      return;
+    }
+
+    setIsRunning(true);
+    setStatusMessage("🧠 스마트 동기화 시작 중...");
+    addLog("🧠 스마트 동기화 시작 (얕은 크롤링 + 진단 + 보완)");
+
+    try {
+      const result = await invoke<any>("start_smart_sync");
+      
+      // Phase 1: 얕은 크롤링 결과
+      const shallow = result.shallow_crawl || {};
+      addLog(`📝 Phase 1 완료: ${shallow.pages_scanned}페이지 동기화 (${shallow.duration_ms}ms)`);
+      
+      // Phase 2: 진단 결과
+      const analysis = result.missing_analysis || {};
+      const missing = analysis.missing_details || [];
+      addLog(`📊 Phase 2 완료: ${missing.length}개 누락 발견`);
+      
+      // Phase 3: 보완 크롤링 결과
+      const complement = result.complement_crawl;
+      if (complement) {
+        addLog(`🔧 Phase 3 완료: ${complement.urls_completed}/${complement.urls_targeted}개 보완 (${complement.duration_ms}ms)`);
+        if (complement.urls_failed > 0) {
+          addLog(`⚠️ ${complement.urls_failed}개 실패`);
+        }
+      } else {
+        addLog(`✨ Phase 3 스킵: 누락 없음`);
+      }
+      
+      const totalMs = result.total_duration_ms || 0;
+      addLog(`🎉 스마트 동기화 완료! (총 ${(totalMs / 1000).toFixed(1)}초)`);
+      setStatusMessage(`✅ 스마트 동기화 완료`);
+    } catch (error) {
+      console.error("스마트 동기화 실패:", error);
+      addLog(`❌ 스마트 동기화 실패: ${error}`);
+      setStatusMessage("스마트 동기화 실패");
+    } finally {
       setIsRunning(false);
     }
   };
@@ -1633,6 +1750,8 @@ export default function CrawlingEngineTabSimple() {
         </div>
     <SyncPanel syncLive={syncLive} />
     <SessionStatusCard isRunning={isRunning} statusMessage={statusMessage} batchInfo={batchInfo} />
+    {/* ListPageCrawling 실시간 진행상황 패널 */}
+    <ListPageProgressPanel />
     {/* 복원: 계산된 크롤링 범위 & 사전 분석 Premium Cards */}
     <Show when={!isRunning()}>
       <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 -mt-4 space-y-6">
@@ -1729,6 +1848,9 @@ export default function CrawlingEngineTabSimple() {
             setCrawlingRange={setCrawlingRange}
             addLog={addLog}
             tauriApi={tauriApi}
+            handleShallowSync={handleShallowSync}
+            handleSmartSync={handleSmartSync}
+            handleAnalyzeMissing={handleAnalyzeMissing}
         />
 
         <DiagnosticsPanel

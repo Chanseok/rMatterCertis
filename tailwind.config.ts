@@ -40,6 +40,7 @@ export default {
         'slide-in-right': 'slideInRight 0.4s ease-out',
         'bounce-subtle': 'bounceSubtle 2s infinite',
         'pulse-slow': 'pulse 3s infinite',
+        'pulse-fast': 'pulseFast 0.8s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'glow': 'glow 2s ease-in-out infinite alternate',
         'shimmer': 'shimmer 2s infinite',
       },
@@ -52,6 +53,16 @@ export default {
           to: {
             opacity: '1',
             transform: 'translateY(0)',
+          },
+        },
+        pulseFast: {
+          '0%, 100%': {
+            opacity: '1',
+            transform: 'scale(1)',
+          },
+          '50%': {
+            opacity: '0.7',
+            transform: 'scale(0.95)',
           },
         },
         slideUp: {

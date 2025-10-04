@@ -13,7 +13,10 @@ export type CrawlEvent =
   | StageItemCompleted
   | StageItemFailed
   | StageItemRetrying
-  | OverallProgressUpdate;
+  | OverallProgressUpdate
+  | ListPageBatchStarted
+  | ListPageProgress
+  | ListPageBatchCompleted;
 
 export type EventType = CrawlEvent['event_type'];
 
@@ -99,6 +102,37 @@ export interface OverallProgressUpdate extends BaseEvent {
   overall_progress_percentage?: number;
   completed_items_count?: number;
   total_items_count?: number;
+}
+
+// === ListPageCrawling 진행상황 이벤트 ===
+export interface ListPageBatchStarted extends BaseEvent {
+  event_type: 'ListPageBatchStarted';
+  batch_id: string;
+  total_pages: number;
+  page_numbers: number[]; // 물리 페이지 번호 목록
+}
+
+export interface ListPageProgress extends BaseEvent {
+  event_type: 'ListPageProgress';
+  batch_id: string;
+  page_number: number;
+  page_id: string;
+  collected_urls: number;
+  expected_urls: number;
+  status: 'success' | 'partial' | 'failed';
+  retry_count: number;
+  error?: string;
+}
+
+export interface ListPageBatchCompleted extends BaseEvent {
+  event_type: 'ListPageBatchCompleted';
+  batch_id: string;
+  total_pages: number;
+  successful_pages: number;
+  partial_pages: number;
+  failed_pages: number;
+  total_urls_collected: number;
+  duration_ms: number;
 }
 
 // Type guard helper

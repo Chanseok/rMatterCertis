@@ -502,6 +502,10 @@ pub(crate) fn convert_actor_event_to_frontend_value(
         AppEvent::ValidationDivergenceFound { .. } => "actor-validation-divergence",
         AppEvent::ValidationAnomaly { .. } => "actor-validation-anomaly",
         AppEvent::ValidationCompleted { .. } => "actor-validation-completed",
+        // ListPage 진행상황 이벤트
+        AppEvent::ListPageBatchStarted { .. } => "actor-list-page-batch-started",
+        AppEvent::ListPageProgress { .. } => "actor-list-page-progress",
+        AppEvent::ListPageBatchCompleted { .. } => "actor-list-page-batch-completed",
         // Sync events
         AppEvent::SyncStarted { .. } => "actor-sync-started",
         AppEvent::SyncPageStarted { .. } => "actor-sync-page-started",
