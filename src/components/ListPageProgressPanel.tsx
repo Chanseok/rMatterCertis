@@ -230,7 +230,7 @@ export default function ListPageProgressPanel() {
 
   const getStatusIcon = (status: PageProgress['status']) => {
     switch (status) {
-      case 'success': return '🚩'; // 완료 깃발
+      case 'success': return '✓'; // 체크마크 (현대적)
       case 'partial': return '⚠'; // 부분 수집 경고
       case 'failed': return '✗'; // 실패
       case 'processing': return '⟳'; // 진행 중 (회전 애니메이션 대상)
@@ -241,7 +241,7 @@ export default function ListPageProgressPanel() {
 
   const getStatusColor = (status: PageProgress['status'], retryCount: number) => {
     switch (status) {
-      case 'success': return 'bg-emerald-500 border-emerald-600 shadow-emerald-200';
+      case 'success': return 'bg-gradient-to-br from-blue-500 to-emerald-500 border-blue-400 shadow-lg shadow-blue-200/50';
       case 'partial': return 'bg-amber-500 border-amber-600 shadow-amber-200';
       case 'failed': return 'bg-rose-600 border-rose-700 shadow-rose-200';
       case 'processing': 
@@ -249,7 +249,8 @@ export default function ListPageProgressPanel() {
         if (retryCount > 0) {
           return 'bg-orange-500 border-orange-600 shadow-orange-300';
         }
-        return 'bg-blue-500 border-blue-600 shadow-blue-300';
+        // 일반 진행 중: 노란색 계열로 완료와 명확히 구분
+        return 'bg-gradient-to-br from-yellow-400 to-amber-400 border-yellow-500 shadow-lg shadow-yellow-300/50';
       case 'pending': return 'bg-gray-100 border-gray-300 border-dashed'; // 빈 공터 느낌
       default: return 'bg-gray-100 border-gray-300 border-dashed';
     }
@@ -371,7 +372,7 @@ export default function ListPageProgressPanel() {
                             page.status === 'success' ? 'text-emerald-400' :
                             page.status === 'partial' ? 'text-amber-400' :
                             page.status === 'failed' ? 'text-rose-400' :
-                            page.status === 'processing' ? (page.retryCount > 0 ? 'text-orange-400' : 'text-blue-400') :
+                            page.status === 'processing' ? (page.retryCount > 0 ? 'text-orange-400' : 'text-yellow-300') :
                             'text-gray-400'
                           }`}>
                             {getStatusLabel(page.status, page.retryCount)}

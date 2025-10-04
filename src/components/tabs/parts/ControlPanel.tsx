@@ -19,18 +19,48 @@ interface ControlPanelProps {
   // 🏃 Shallow Sync handlers
   handleShallowSync?: () => Promise<void> | void;
   handleSmartSync?: () => Promise<void> | void;
-  handleAnalyzeMissing?: () => Promise<void> | void;
+  // 도움말 패널
+  onHelpClick?: () => void;
+  // 정지 기능
+  onStop?: () => Promise<void> | void;
 }
 
 const ControlPanel: Component<ControlPanelProps> = (p) => {
   return (
-    <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8 flex flex-wrap gap-4 items-end">
-      {/* Sync Controls */}
-      <div class="flex items-center gap-3">
+    <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8">
+      {/* 상단 헤더 with 도움말 버튼 */}
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-semibold text-gray-600">크롤링 컨트롤</h3>
+        {p.onHelpClick && (
+          <button
+            onClick={p.onHelpClick}
+            class="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+            title="버튼 사용 가이드"
+          >
+            <span>❓</span>
+            <span>사용 가이드</span>
+          </button>
+        )}
+      </div>
+
+      {/* 버튼 그룹 */}
+      <div class="flex flex-wrap gap-3 items-end">
+        {/* 정지 버튼 (실행 중일 때만 표시) */}
+        {p.isRunning() && p.onStop && (
+          <button
+            onClick={() => p.onStop?.()}
+            class="px-6 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-red-500 to-rose-500 hover:from-red-600 hover:to-rose-600 ripple shadow-md hover:shadow-lg transition animate-pulse"
+            title="현재 실행 중인 작업 중지"
+          >
+            🛑 정지
+          </button>
+        )}
+
         <button
           onClick={() => { p.startUnifiedAdvanced(); }}
           disabled={p.isRunning()}
           class={`px-6 py-3 rounded-xl font-semibold text-white ripple shadow-md hover:shadow-lg transition ${p.isRunning() ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700'}`}
+          title="전체 통합 파이프라인 실행 (Stage 1~5)"
         >
           {p.isRunning() ? '통합 파이프라인 실행 중...' : '🎭 크롤링'}
         </button>
@@ -38,7 +68,8 @@ const ControlPanel: Component<ControlPanelProps> = (p) => {
         <button
           onClick={p.calculateCrawlingRange}
           disabled={p.isRunning()}
-          class="px-6 py-3 rounded-xl font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 disabled:opacity-50 ripple shadow"
+          class="px-6 py-3 rounded-xl font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed ripple shadow"
+          title="사이트 상태를 다시 분석하여 크롤링 범위 재계산"
         >
           📊 범위 다시 계산
         </button>
@@ -47,9 +78,9 @@ const ControlPanel: Component<ControlPanelProps> = (p) => {
         {p.handleShallowSync && (
           <button
             onClick={() => p.handleShallowSync?.()}
-            disabled={p.isRunning()}
+            disabled={p.isRunning() || p.isSyncing()}
             class="px-6 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed ripple shadow-md hover:shadow-lg transition"
-            title="전체 페이지 좌표만 빠르게 동기화 (5-8분)"
+            title="전체 페이지의 좌표만 빠르게 동기화 (상세 정보 제외, 5-8분)"
           >
             🏃 빠른 동기화
           </button>
@@ -58,22 +89,11 @@ const ControlPanel: Component<ControlPanelProps> = (p) => {
         {p.handleSmartSync && (
           <button
             onClick={() => p.handleSmartSync?.()}
-            disabled={p.isRunning()}
+            disabled={p.isRunning() || p.isSyncing()}
             class="px-6 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed ripple shadow-md hover:shadow-lg transition"
-            title="얕은 크롤링 + 진단 + 누락 보완 (8-12분)"
+            title="좌표 동기화 + 누락 분석 + 자동 보완 (8-12분)"
           >
             🧠 스마트 동기화
-          </button>
-        )}
-
-        {p.handleAnalyzeMissing && (
-          <button
-            onClick={() => p.handleAnalyzeMissing?.()}
-            disabled={p.isRunning()}
-            class="px-5 py-2 rounded-lg font-medium text-gray-700 bg-white border-2 border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed ripple shadow"
-            title="누락된 제품 분석"
-          >
-            📊 누락 분석
           </button>
         )}
 
@@ -85,6 +105,7 @@ const ControlPanel: Component<ControlPanelProps> = (p) => {
           placeholder="Sync 범위 (예: 498-492,489,487-485)"
           value={p.syncRanges()}
           onInput={(e) => p.setSyncRanges(e.currentTarget.value)}
+          title="페이지 범위 입력: 498-492 (범위), 489 (단일), 498-492,489 (복합)"
         />
 
         <button
@@ -146,16 +167,16 @@ const ControlPanel: Component<ControlPanelProps> = (p) => {
           }}
           disabled={p.isSyncing()}
           class={`px-5 py-2.5 rounded-xl font-semibold text-white ripple shadow-md hover:shadow-lg transition ${p.isSyncing() ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700'}`}
-          title="기본 엔진으로 명시적 페이지 배열을 실행"
+          title="특정 페이지 범위를 직접 지정하여 크롤링 (진단 결과 기반 자동 범위 지원)"
         >
           수동 크롤링
         </button>
-      </div>
 
-      <label class="flex items-center gap-2 text-sm text-gray-700 select-none">
-        <input type="checkbox" checked={p.effectsOn()} onInput={(e) => p.setEffectsOn(e.currentTarget.checked)} />
-        애니메이션 효과
-      </label>
+        <label class="flex items-center gap-2 text-sm text-gray-700 select-none">
+          <input type="checkbox" checked={p.effectsOn()} onInput={(e) => p.setEffectsOn(e.currentTarget.checked)} />
+          애니메이션 효과
+        </label>
+      </div>
     </div>
   );
 };

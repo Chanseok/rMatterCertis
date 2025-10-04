@@ -4,6 +4,7 @@ import SessionStatusCard from "./parts/SessionStatusCard";
 import ControlPanel from "./parts/ControlPanel";
 import StageStatsPanels from "./parts/StageStatsPanels";
 import DiagnosticsPanel from "./parts/DiagnosticsPanel";
+import HelpPanel from "./parts/HelpPanel";
 import ListPageProgressPanel from "../ListPageProgressPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -21,6 +22,9 @@ export default function CrawlingEngineTabSimple() {
   const [isRunning, setIsRunning] = createSignal(false);
   // Basic/Advanced toggle: default to basic view (advanced off)
   const [showAdvanced, setShowAdvanced] = createSignal(false);
+  const [diagnosticsExpanded, setDiagnosticsExpanded] = createSignal(false); // Stage X 진단 패널 확장/축소
+  const [helpPanelOpen, setHelpPanelOpen] = createSignal(false); // 도움말 패널
+  const [planExpanded, setPlanExpanded] = createSignal(true); // 크롤링 플랜 확장/축소 (기본: 펼침)
   const [crawlingRange, setCrawlingRange] = createSignal<any | null>(null);
   const [statusMessage, setStatusMessage] =
     createSignal<string>("크롤링 준비 완료");
@@ -28,7 +32,10 @@ export default function CrawlingEngineTabSimple() {
   const [showConsole] = createSignal<boolean>(true);
   const [consoleExpanded, setConsoleExpanded] = createSignal<boolean>(false); // Actor 이벤트 콘솔 확장/축소 상태 (기본: 축소)
   // isValidating: 제거됨 (미사용)
+  // Syncing flag (여러 단계 작업 중)
   const [isSyncing, setIsSyncing] = createSignal(false);
+  // Shallow mode flag (좌표 갱신만 수행 중 - Stage 2 통계 업데이트 방지)
+  const [isShallowMode, setIsShallowMode] = createSignal(false);
   const [syncRanges, setSyncRanges] = createSignal<string>("");
   // Stage 1: Page stats (runtime incremental)
   const [pageStats, setPageStats] = createSignal<{
@@ -473,12 +480,14 @@ export default function CrawlingEngineTabSimple() {
 
   // 🏃 얕은 동기화: 전체 페이지 좌표만 빠르게 갱신
   const handleShallowSync = async () => {
-    if (isRunning()) {
+    if (isRunning() || isSyncing()) {
       addLog("⚠️ 이미 크롤링이 진행 중입니다.");
       return;
     }
 
     setIsRunning(true);
+    setIsSyncing(true);
+    setIsShallowMode(true);
     setStatusMessage("🏃 빠른 동기화 시작 중...");
     addLog("🏃 빠른 동기화 시작 (좌표 갱신만)");
 
@@ -486,78 +495,37 @@ export default function CrawlingEngineTabSimple() {
       const result = await invoke<any>("start_shallow_sync");
       addLog(`✅ 빠른 동기화 완료: ${result.pages_scanned}페이지, ${result.urls_synced}개 URL 동기화 (${result.duration_ms}ms)`);
       setStatusMessage(`✅ 빠른 동기화 완료 (${result.pages_scanned}p)`);
-      
-      // 진단 실행 제안
-      setTimeout(() => {
-        addLog("💡 이제 '📊 누락 분석' 또는 '🧠 스마트 동기화'를 실행하세요.");
-      }, 500);
     } catch (error) {
       console.error("빠른 동기화 실패:", error);
       addLog(`❌ 빠른 동기화 실패: ${error}`);
       setStatusMessage("빠른 동기화 실패");
     } finally {
       setIsRunning(false);
-    }
-  };
-
-  // 📊 누락 분석: 누락된 product_details 확인
-  const handleAnalyzeMissing = async () => {
-    if (isRunning()) {
-      addLog("⚠️ 이미 크롤링이 진행 중입니다.");
-      return;
-    }
-
-    setIsRunning(true);
-    addLog("📊 누락 제품 분석 중...");
-
-    try {
-      const result = await invoke<any>("analyze_missing_details");
-      const missing = result.missing_details || [];
-      const total = result.total_products || 0;
-      const complete = result.complete_products || 0;
-
-      addLog(`📊 분석 완료: 전체=${total}, 완료=${complete}, 누락=${missing.length}`);
-      
-      if (missing.length > 0) {
-        addLog(`⚠️ ${missing.length}개 제품의 상세 정보가 누락되었습니다.`);
-        addLog(`💡 '🧠 스마트 동기화'로 자동 보완 가능합니다.`);
-        
-        // 처음 5개만 로그
-        const sample = missing.slice(0, 5);
-        sample.forEach((item: any) => {
-          addLog(`  - ${item.manufacturer || 'Unknown'} ${item.model || ''} (${item.url})`);
-        });
-        if (missing.length > 5) {
-          addLog(`  ... 외 ${missing.length - 5}개`);
-        }
-      } else {
-        addLog(`✨ 누락된 제품이 없습니다. 데이터가 완전합니다!`);
-      }
-    } catch (error) {
-      console.error("누락 분석 실패:", error);
-      addLog(`❌ 누락 분석 실패: ${error}`);
-    } finally {
-      setIsRunning(false);
+      setIsSyncing(false);
+      setIsShallowMode(false);
     }
   };
 
   // 🧠 스마트 동기화: 얕은 + 진단 + 보완 통합
   const handleSmartSync = async () => {
-    if (isRunning()) {
+    if (isRunning() || isSyncing()) {
       addLog("⚠️ 이미 크롤링이 진행 중입니다.");
       return;
     }
 
     setIsRunning(true);
-    setStatusMessage("🧠 스마트 동기화 시작 중...");
+    setIsSyncing(true);
+    setIsShallowMode(true);
+    setStatusMessage("🧠 스마트 동기화 진행 중...");
     addLog("🧠 스마트 동기화 시작 (얕은 크롤링 + 진단 + 보완)");
 
+    let hasError = false;
     try {
       const result = await invoke<any>("start_smart_sync");
       
       // Phase 1: 얕은 크롤링 결과
       const shallow = result.shallow_crawl || {};
-      addLog(`📝 Phase 1 완료: ${shallow.pages_scanned}페이지 동기화 (${shallow.duration_ms}ms)`);
+      addLog(`📝 Phase 1 완료: ${shallow.pages_scanned || 'N/A'}페이지 동기화 (백그라운드 실행)`);
       
       // Phase 2: 진단 결과
       const analysis = result.missing_analysis || {};
@@ -576,14 +544,46 @@ export default function CrawlingEngineTabSimple() {
       }
       
       const totalMs = result.total_duration_ms || 0;
-      addLog(`🎉 스마트 동기화 완료! (총 ${(totalMs / 1000).toFixed(1)}초)`);
-      setStatusMessage(`✅ 스마트 동기화 완료`);
+      addLog(`🎉 스마트 동기화 요청 완료! (${(totalMs / 1000).toFixed(1)}초)`);
+      addLog(`💡 백그라운드에서 좌표 갱신이 계속 진행됩니다.`);
+      
+      // 백그라운드 작업이 완료될 때까지 대기하지 않고 즉시 종료
+      // (실제 완료는 actor-session-completed 이벤트로 감지)
     } catch (error) {
+      hasError = true;
       console.error("스마트 동기화 실패:", error);
       addLog(`❌ 스마트 동기화 실패: ${error}`);
-      setStatusMessage("스마트 동기화 실패");
+      setStatusMessage("❌ 스마트 동기화 실패");
     } finally {
+      // 주의: isShallowMode는 여기서 false로 바꾸지 않음!
+      // 백그라운드 세션이 완료되면 actor-session-completed에서 처리
+      
+      if (hasError) {
+        setIsRunning(false);
+        setIsSyncing(false);
+        setIsShallowMode(false); // 에러 시에만 즉시 리셋
+      } else {
+        // 성공 시: 상태는 "진행 중" 유지, actor-session-completed에서 종료
+        setStatusMessage("🧠 스마트 동기화 완료 (백그라운드 작업 진행 중...)");
+        addLog("💡 세션 완료 대기 중...");
+      }
+    }
+  };
+
+  // 🛑 정지 핸들러
+  const handleStop = async () => {
+    addLog("🛑 작업 중지 요청...");
+    setStatusMessage("작업 중지 중...");
+    
+    try {
+      // Tauri에 정지 명령 전송 (실제 구현 필요)
+      // await invoke("stop_current_operation");
+      addLog("⚠️ 정지 기능은 아직 구현되지 않았습니다.");
       setIsRunning(false);
+      setStatusMessage("작업 중지됨");
+    } catch (error) {
+      console.error("정지 실패:", error);
+      addLog(`❌ 정지 실패: ${error}`);
     }
   };
 
@@ -764,7 +764,10 @@ export default function CrawlingEngineTabSimple() {
         }
         if (name === "actor-session-started") {
           setIsRunning(true);
-          setStatusMessage("크롤링 실행 중 (세션 시작)");
+          // isSyncing 중이면 상태 메시지를 보호 (스마트 동기화 등 상위 작업 진행 중)
+          if (!isSyncing()) {
+            setStatusMessage("크롤링 실행 중 (세션 시작)");
+          }
           addLog("🎬 세션 시작");
           // reset runtime stats
           setPageStats({
@@ -839,8 +842,24 @@ export default function CrawlingEngineTabSimple() {
           });
         }
         if (name === "actor-session-completed") {
-          setIsRunning(false);
-          setStatusMessage("크롤링 완료");
+          // Shallow Mode는 첫 번째 세션 완료 시 해제 (이후 세션은 실제 Detail 크롤링 가능)
+          if (isShallowMode()) {
+            setIsShallowMode(false);
+            console.log('[ShallowMode] Turned off after first session completion');
+          }
+          
+          // isSyncing 중이면서 isShallowMode가 false → 백그라운드 작업 완료
+          if (isSyncing() && !isShallowMode()) {
+            setIsRunning(false);
+            setIsSyncing(false);
+            setStatusMessage("✅ 스마트 동기화 완료");
+            addLog("🏁 백그라운드 세션 완료");
+          } else if (!isSyncing()) {
+            // 일반 크롤링 완료
+            setIsRunning(false);
+            setStatusMessage("크롤링 완료");
+          }
+          // isSyncing 중이어도 로그는 남김
           addLog("🏁 세션 완료");
           setBatchInfo((prev) => ({ ...prev }));
           // Play transition on session complete as well (helps visibility)
@@ -858,8 +877,16 @@ export default function CrawlingEngineTabSimple() {
           }
         }
         if (name === "actor-session-failed") {
-          setIsRunning(false);
-          setStatusMessage("크롤링 실패");
+          // isSyncing 중이면 isRunning을 유지
+          if (!isSyncing()) {
+            setIsRunning(false);
+            setStatusMessage("크롤링 실패");
+          }
+          // Shallow Mode 리셋
+          if (isShallowMode()) {
+            setIsShallowMode(false);
+            console.log('[ShallowMode] Turned off after session failure');
+          }
           addLog(`❌ 세션 실패: ${JSON.stringify(payload)}`);
           setBatchInfo((prev) => ({ ...prev }));
         }
@@ -867,8 +894,16 @@ export default function CrawlingEngineTabSimple() {
           name === "actor-session-timeout" ||
           name === "actor-shutdown-completed"
         ) {
-          setIsRunning(false);
-          setStatusMessage("크롤링 종료");
+          // isSyncing 중이면 isRunning을 유지
+          if (!isSyncing()) {
+            setIsRunning(false);
+            setStatusMessage("크롤링 종료");
+          }
+          // Shallow Mode 리셋
+          if (isShallowMode()) {
+            setIsShallowMode(false);
+            console.log('[ShallowMode] Turned off after session timeout/shutdown');
+          }
           addLog("🛑 세션 종료");
           setBatchInfo((prev) => ({ ...prev }));
           // Refresh planned range after abnormal end as well
@@ -1019,7 +1054,15 @@ export default function CrawlingEngineTabSimple() {
           const pageNum = Number(payload?.page_number ?? NaN);
           if (!Number.isFinite(pageNum)) return;
           // Stage 2 start accounting from mapping/schedule signals
+          // CRITICAL: Skip during shallow mode (coordinate-only updates, no actual detail fetching)
           if (status === "detail_scheduled" || status === "detail_mapping_emitted") {
+            console.log('[DIAG][ShallowMode] detail event:', { status, isShallowMode: isShallowMode(), pageNum });
+            if (isShallowMode()) {
+              console.log('[DIAG][ShallowMode] SKIPPING Stage 2 update (shallow mode active)');
+              return; // Skip Stage 2 updates during shallow mode
+            }
+          }
+          if ((status === "detail_scheduled" || status === "detail_mapping_emitted") && !isShallowMode()) {
             // NEW LOGIC: mapping events may arrive multiple times with cumulative url counts for the whole batch (not per page)
             // We switch to per-batch delta tracking instead of per-page single-shot to avoid undercount when subsequent
             // mapping updates add more URLs (previous logic ignored duplicates via Set).
@@ -1158,7 +1201,12 @@ export default function CrawlingEngineTabSimple() {
           name === "actor-product-lifecycle-group" &&
           payload?.phase === "fetch" && !detailTrackerActive
         ) {
-          if (!detailGroupFetchEventsSeen) detailGroupFetchEventsSeen = true;
+          // Shallow Mode 체크: 좌표 전용 업데이트 시에는 Stage 2 스킵
+          if (isShallowMode()) {
+            console.log('[DIAG][ShallowMode] SKIPPING actor-product-lifecycle-group (shallow mode active)');
+            // Early return - skip all Stage 2 processing
+          } else {
+            if (!detailGroupFetchEventsSeen) detailGroupFetchEventsSeen = true;
           const batchId = String(payload?.batch_id || "");
           const cumSucc = Number(payload?.succeeded ?? 0) || 0;
           const cumFail = Number(payload?.failed ?? 0) || 0;
@@ -1218,8 +1266,9 @@ export default function CrawlingEngineTabSimple() {
             });
             if (effectsOn()) triggerStage2Pulse();
           }
+          } // Close isShallowMode() else block
         }
-        if (name === "actor-product-lifecycle") {
+        if (name === "actor-product-lifecycle" && !isShallowMode()) {
           const status = String(payload?.status || "").toLowerCase();
           if (status === "failed") {
             setDetailStats((prev) => {
@@ -1755,75 +1804,95 @@ export default function CrawlingEngineTabSimple() {
     {/* 복원: 계산된 크롤링 범위 & 사전 분석 Premium Cards */}
     <Show when={!isRunning()}>
       <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 -mt-4 space-y-6">
-        <div class="flex items-center justify-between">
-          <h3 class="text-lg font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent tracking-tight">📊 계산된 크롤링 플랜 개요</h3>
+        <div class="flex items-center justify-between cursor-pointer" onClick={() => setPlanExpanded(v => !v)}>
+          <div class="flex items-center gap-2">
+            <span class={`text-gray-500 transition-transform ${planExpanded() ? 'rotate-90' : ''}`}>▶</span>
+            <h3 class="text-lg font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent tracking-tight">📊 계산된 크롤링 플랜 개요</h3>
+          </div>
           <div class="flex items-center gap-2 text-[11px] text-gray-500">
             <span class="px-2 py-1 rounded-full bg-gray-100 border border-gray-200">Site + LocalDB + Settings 분석</span>
             <button
               class="text-[11px] px-2.5 py-1 rounded border border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
-              onClick={() => setShowAdvanced(v => !v)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowAdvanced(v => !v);
+              }}
             >
               {showAdvanced() ? '고급 숨기기' : '고급 보기'}
             </button>
           </div>
         </div>
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
-          <div class="group relative overflow-hidden rounded-xl border border-blue-200/60 bg-gradient-to-br from-blue-50 to-blue-100 p-4 shadow hover:shadow-lg transition">
-            <div class="text-[11px] font-medium text-blue-700 mb-1">시작 페이지</div>
-            <div class="text-2xl font-bold text-blue-700 tabular-nums">{(() => { const r = crawlingRange(); return r?.range?.[0] ?? '-'; })()}</div>
-            <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_70%_20%,rgba(255,255,255,.9),transparent_60%)]" />
-          </div>
-          <div class="group relative overflow-hidden rounded-xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50 to-emerald-100 p-4 shadow hover:shadow-lg transition">
-            <div class="text-[11px] font-medium text-emerald-700 mb-1">종료 페이지</div>
-            <div class="text-2xl font-bold text-emerald-700 tabular-nums">{(() => { const r = crawlingRange(); return r?.range?.[1] ?? '-'; })()}</div>
-            <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_30%_80%,rgba(255,255,255,.85),transparent_65%)]" />
-          </div>
-          <div class="group relative overflow-hidden rounded-xl border border-purple-200/60 bg-gradient-to-br from-purple-50 to-purple-100 p-4 shadow hover:shadow-lg transition">
-            <div class="text-[11px] font-medium text-purple-700 mb-1">페이지 수</div>
-            <div class="text-2xl font-bold text-purple-700 tabular-nums">{(() => { const v = Number(crawlingRange()?.crawling_info?.pages_to_crawl ?? 0); return v>0? v: '-'; })()}</div>
-            <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,.9),transparent_60%)]" />
-          </div>
-          <div class="group relative overflow-hidden rounded-xl border border-indigo-200/60 bg-gradient-to-br from-indigo-50 to-indigo-100 p-4 shadow hover:shadow-lg transition">
-            <div class="text-[11px] font-medium text-indigo-700 mb-1">로컬DB 제품</div>
-            <div class="text-2xl font-bold text-indigo-700 tabular-nums">{(() => { const v = Number(crawlingRange()?.local_db_info?.total_saved_products ?? 0); return v>0? v: '-'; })()}</div>
-            <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_80%_30%,rgba(255,255,255,.95),transparent_65%)]" />
-          </div>
-          <div class="group relative overflow-hidden rounded-xl border border-orange-200/60 bg-gradient-to-br from-orange-50 to-orange-100 p-4 shadow hover:shadow-lg transition">
-            <div class="flex items-center justify-between mb-1">
-              <div class="text-[11px] font-medium text-orange-700">커버리지</div>
-              <Show when={(() => Number(crawlingRange()?.progress?.progress_percentage ?? 0) > 0)()}>
-                <span class="text-[10px] text-orange-600/70">progress</span>
-              </Show>
+        <Show when={planExpanded()}>
+          <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+            <div class="group relative overflow-hidden rounded-xl border border-blue-200/60 bg-gradient-to-br from-blue-50 to-blue-100 p-4 shadow hover:shadow-lg transition">
+              <div class="text-[11px] font-medium text-blue-700 mb-1">시작 페이지</div>
+              <div class="text-2xl font-bold text-blue-700 tabular-nums">{(() => { const r = crawlingRange(); return r?.range?.[0] ?? '-'; })()}</div>
+              <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_70%_20%,rgba(255,255,255,.9),transparent_60%)]" />
             </div>
-            <div class="text-2xl font-bold text-orange-700 tabular-nums">{(() => { const p = Number(crawlingRange()?.progress?.progress_percentage ?? 0); return p>0? `${p.toFixed(1)}%` : '-'; })()}</div>
-            <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_20%_40%,rgba(255,255,255,.9),transparent_65%)]" />
-          </div>
-          <div class="group relative overflow-hidden rounded-xl border border-teal-200/60 bg-gradient-to-br from-teal-50 to-teal-100 p-4 shadow hover:shadow-lg transition">
-            <div class="text-[11px] font-medium text-teal-700 mb-1">예상 신규 세부</div>
-            <div class="text-2xl font-bold text-teal-700 tabular-nums">{(() => { const info = crawlingRange()?.crawling_info; const est = Number(info?.estimated_new_products ?? 0); if(est>0) return est; const pages = Number(info?.pages_to_crawl ?? 0); return pages>0? pages*12 : '-'; })()}</div>
-            <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_70%_70%,rgba(255,255,255,.9),transparent_60%)]" />
-          </div>
-          <Show when={showAdvanced()}>
-            <div class="group relative overflow-hidden rounded-xl border border-gray-200/60 bg-gradient-to-br from-gray-50 to-gray-100 p-4 shadow hover:shadow-lg transition sm:col-span-2 lg:col-span-3">
-              <div class="flex items-center justify-between mb-2">
-                <div class="text-[11px] font-medium text-gray-600">사이트 메타</div>
-                <div class="text-[10px] text-gray-400">preflight</div>
-              </div>
-              <div class="flex flex-wrap gap-4 text-xs text-gray-700">
-                <div>총페이지: <span class="font-semibold">{(() => { const p = preflight(); const v = Number(p?.site_total_pages ?? 0); return v>0? v: '-'; })()}</span></div>
-                <div>마지막페이지제품: <span class="font-semibold">{(() => { const p = preflight(); const v = Number(p?.products_on_last_page ?? 0); return v>0? v: '-'; })()}</span></div>
-                <div>범위: <span class="font-semibold">{(() => { const r = crawlingRange(); const s=r?.range?.[0]; const e=r?.range?.[1]; return (s&&e)? `${s}→${e}`:'-'; })()}</span></div>
-                <div>설정 효과: <span class="font-semibold">{effectsOn() ? 'ON' : 'OFF'}</span></div>
-              </div>
+            <div class="group relative overflow-hidden rounded-xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50 to-emerald-100 p-4 shadow hover:shadow-lg transition">
+              <div class="text-[11px] font-medium text-emerald-700 mb-1">종료 페이지</div>
+              <div class="text-2xl font-bold text-emerald-700 tabular-nums">{(() => { const r = crawlingRange(); return r?.range?.[1] ?? '-'; })()}</div>
+              <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_30%_80%,rgba(255,255,255,.85),transparent_65%)]" />
             </div>
-          </Show>
-        </div>
+            <div class="group relative overflow-hidden rounded-xl border border-purple-200/60 bg-gradient-to-br from-purple-50 to-purple-100 p-4 shadow hover:shadow-lg transition">
+              <div class="text-[11px] font-medium text-purple-700 mb-1">페이지 수</div>
+              <div class="text-2xl font-bold text-purple-700 tabular-nums">{(() => { const v = Number(crawlingRange()?.crawling_info?.pages_to_crawl ?? 0); return v>0? v: '-'; })()}</div>
+              <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,.9),transparent_60%)]" />
+            </div>
+            <div class="group relative overflow-hidden rounded-xl border border-indigo-200/60 bg-gradient-to-br from-indigo-50 to-indigo-100 p-4 shadow hover:shadow-lg transition">
+              <div class="text-[11px] font-medium text-indigo-700 mb-1">로컬DB 제품</div>
+              <div class="text-2xl font-bold text-indigo-700 tabular-nums">
+                {(() => { 
+                  const local = Number(crawlingRange()?.local_db_info?.total_saved_products ?? 0); 
+                  const pf = preflight();
+                  const sitePages = Number(pf?.site_total_pages ?? 0);
+                  const lastPageItems = Number(pf?.products_on_last_page ?? 0);
+                  const site = sitePages > 0 && lastPageItems > 0 
+                    ? (sitePages - 1) * 12 + lastPageItems 
+                    : 0;
+                  if (local > 0 && site > 0) {
+                    return <>
+                      {local.toLocaleString()}
+                      <span class="text-sm font-normal text-indigo-500 ml-1">/ {site.toLocaleString()}</span>
+                    </>;
+                  }
+                  return local > 0 ? local.toLocaleString() : '-'; 
+                })()}
+              </div>
+              <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_80%_30%,rgba(255,255,255,.95),transparent_65%)]" />
+            </div>
+            <div class="group relative overflow-hidden rounded-xl border border-orange-200/60 bg-gradient-to-br from-orange-50 to-orange-100 p-4 shadow hover:shadow-lg transition">
+              <div class="text-[11px] font-medium text-orange-700 mb-1">커버리지</div>
+              <div class="text-2xl font-bold text-orange-700 tabular-nums">{(() => { const p = Number(crawlingRange()?.progress?.progress_percentage ?? 0); return p>0? `${p.toFixed(1)}%` : '-'; })()}</div>
+              <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_20%_40%,rgba(255,255,255,.9),transparent_65%)]" />
+            </div>
+            <div class="group relative overflow-hidden rounded-xl border border-teal-200/60 bg-gradient-to-br from-teal-50 to-teal-100 p-4 shadow hover:shadow-lg transition">
+              <div class="text-[11px] font-medium text-teal-700 mb-1">예상 신규 세부</div>
+              <div class="text-2xl font-bold text-teal-700 tabular-nums">{(() => { const info = crawlingRange()?.crawling_info; const est = Number(info?.estimated_new_products ?? 0); if(est>0) return est; const pages = Number(info?.pages_to_crawl ?? 0); return pages>0? pages*12 : '-'; })()}</div>
+              <div class="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-40 transition bg-[radial-gradient(circle_at_70%_70%,rgba(255,255,255,.9),transparent_60%)]" />
+            </div>
+            <Show when={showAdvanced()}>
+              <div class="group relative overflow-hidden rounded-xl border border-gray-200/60 bg-gradient-to-br from-gray-50 to-gray-100 p-4 shadow hover:shadow-lg transition sm:col-span-2 lg:col-span-3">
+                <div class="flex items-center justify-between mb-2">
+                  <div class="text-[11px] font-medium text-gray-600">사이트 메타</div>
+                  <div class="text-[10px] text-gray-400">preflight</div>
+                </div>
+                <div class="flex flex-wrap gap-4 text-xs text-gray-700">
+                  <div>총페이지: <span class="font-semibold">{(() => { const p = preflight(); const v = Number(p?.site_total_pages ?? 0); return v>0? v: '-'; })()}</span></div>
+                  <div>마지막페이지제품: <span class="font-semibold">{(() => { const p = preflight(); const v = Number(p?.products_on_last_page ?? 0); return v>0? v: '-'; })()}</span></div>
+                  <div>범위: <span class="font-semibold">{(() => { const r = crawlingRange(); const s=r?.range?.[0]; const e=r?.range?.[1]; return (s&&e)? `${s}→${e}`:'-'; })()}</span></div>
+                  <div>설정 효과: <span class="font-semibold">{effectsOn() ? 'ON' : 'OFF'}</span></div>
+                </div>
+              </div>
+            </Show>
+          </div>
+        </Show>
       </div>
     </Show>
-        <StageStatsPanels
-          crawlingRange={crawlingRange}
-          preflight={preflight}
-          pageStats={pageStats}
+    <StageStatsPanels
+      crawlingRange={crawlingRange}
+      preflight={preflight}
+      pageStats={pageStats}
           detailStats={detailStats}
           detailTarget={detailPlannedTotal}
           stage1Pulse={stage1Pulse}
@@ -1850,33 +1919,12 @@ export default function CrawlingEngineTabSimple() {
             tauriApi={tauriApi}
             handleShallowSync={handleShallowSync}
             handleSmartSync={handleSmartSync}
-            handleAnalyzeMissing={handleAnalyzeMissing}
+            onHelpClick={() => setHelpPanelOpen(true)}
+            onStop={handleStop}
         />
 
-        <DiagnosticsPanel
-          diagResult={diagResult}
-          diagLoading={diagLoading}
-          cleanupLoading={cleanupLoading}
-          runDiagnostics={runDiagnostics}
-          runUrlCleanup={runUrlCleanup}
-          deriveRangesFromDiagnostics={deriveRangesFromDiagnostics}
-          setSyncRanges={setSyncRanges}
-          setSyncPulse={setSyncPulse}
-          addLog={addLog}
-          isSyncing={isSyncing}
-          startCoordSync={async () => {
-            try {
-              setIsSyncing(true);
-              addLog("🔁 products→details 좌표/ID 정합화 실행...");
-              const rep = await tauriApi.syncProductDetailsCoordinates();
-              addLog(`✅ 정합화 완료: products.id=${rep.updated_product_ids}, inserted=${rep.inserted_details}, updated_coords=${rep.updated_coordinates}, details.id=${rep.updated_ids} (p=${rep.total_products}, d=${rep.total_details})`);
-            } catch (e: any) {
-              addLog(`❌ 정합화 실패: ${e.message || e}`);
-            } finally {
-              setIsSyncing(false);
-            }
-          }}
-        />
+        {/* 도움말 패널 */}
+        <HelpPanel isOpen={helpPanelOpen} onClose={() => setHelpPanelOpen(false)} />
 
         {/* Stage1/Stage2 Runtime Monitor duplicated block removed; StageStatsPanels renders these above */}
 
@@ -1918,6 +1966,56 @@ export default function CrawlingEngineTabSimple() {
             flash={persistFlash}
             effectsOn={effectsOn}
           />
+        </div>
+
+        {/* Stage X: DB Diagnostics (Collapsible) - Stage 5 이후로 이동 */}
+        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 overflow-hidden mb-8">
+          <button
+            class="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+            onClick={() => setDiagnosticsExpanded(!diagnosticsExpanded())}
+          >
+            <div class="flex items-center gap-2">
+              <span class="text-lg">{diagnosticsExpanded() ? '▼' : '▶'}</span>
+              <h3 class="text-lg font-bold text-gray-800">Stage X: DB Pagination Diagnostics</h3>
+              <Show when={diagResult()?.total_products_without_coords}>
+                <span class="px-2 py-0.5 text-xs rounded-full bg-orange-100 text-orange-700 font-semibold">
+                  NULL 좌표: {diagResult()?.total_products_without_coords}개
+                </span>
+              </Show>
+            </div>
+            <span class="text-xs text-gray-500">
+              {diagnosticsExpanded() ? '접기' : '펼치기'}
+            </span>
+          </button>
+          
+          <Show when={diagnosticsExpanded()}>
+            <div class="border-t border-gray-200">
+              <DiagnosticsPanel
+                diagResult={diagResult}
+                diagLoading={diagLoading}
+                cleanupLoading={cleanupLoading}
+                runDiagnostics={runDiagnostics}
+                runUrlCleanup={runUrlCleanup}
+                deriveRangesFromDiagnostics={deriveRangesFromDiagnostics}
+                setSyncRanges={setSyncRanges}
+                setSyncPulse={setSyncPulse}
+                addLog={addLog}
+                isSyncing={isSyncing}
+                startCoordSync={async () => {
+                  try {
+                    setIsSyncing(true);
+                    addLog("🔁 products→details 좌표/ID 정합화 실행...");
+                    const rep = await tauriApi.syncProductDetailsCoordinates();
+                    addLog(`✅ 정합화 완료: products.id=${rep.updated_product_ids}, inserted=${rep.inserted_details}, updated_coords=${rep.updated_coordinates}, details.id=${rep.updated_ids} (p=${rep.total_products}, d=${rep.total_details})`);
+                  } catch (e: any) {
+                    addLog(`❌ 정합화 실패: ${e.message || e}`);
+                  } finally {
+                    setIsSyncing(false);
+                  }
+                }}
+              />
+            </div>
+          </Show>
         </div>
 
         {/* 실시간 로그 */}

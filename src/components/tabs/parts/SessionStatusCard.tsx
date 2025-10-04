@@ -12,59 +12,73 @@ interface Props {
   batchInfo: () => BatchInfo;
 }
 
-const SessionStatusCard: Component<Props> = (props) => (
-  <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8">
-    <div class="flex items-center justify-between mb-6">
-      <h2 class="text-3xl font-bold mb-3 flex items-center gap-2">
-        <span class="leading-none">🤖</span>
-        <span class="bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent">
-          스마트 크롤링 엔진
-        </span>
-      </h2>
-      <div class="flex items-center gap-2">
-        <div class={`w-3 h-3 rounded-full ${props.isRunning() ? 'bg-green-400 animate-pulse' : 'bg-gray-300'}`}></div>
-        <span class="text-sm font-medium text-gray-600">
-          {props.isRunning() ? '실행 중' : '대기'}
-        </span>
-      </div>
-    </div>
-    <div
-      class={`p-6 rounded-xl border-2 transition-all duration-300 ${
-        props.isRunning()
-          ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 shadow-lg'
-          : 'bg-gradient-to-r from-emerald-50 to-green-50 border-emerald-200 shadow-md'
-      }`}
-    >
+const SessionStatusCard: Component<Props> = (props) => {
+  // 실행 중인 작업 유형 감지
+  const getTaskType = () => {
+    const msg = props.statusMessage();
+    if (msg.includes('스마트 동기화')) return 'smart';
+    if (msg.includes('빠른 동기화')) return 'fast';
+    if (msg.includes('통합 파이프라인')) return 'crawl';
+    if (msg.includes('수동 크롤링')) return 'manual';
+    return 'default';
+  };
+
+  const getIconAndColor = () => {
+    if (!props.isRunning()) {
+      return { icon: '✅', bg: 'bg-emerald-500', text: 'text-emerald-700' };
+    }
+    
+    const type = getTaskType();
+    switch(type) {
+      case 'smart':
+        return { icon: '🧠', bg: 'bg-gradient-to-r from-purple-500 to-pink-500', text: 'text-purple-700' };
+      case 'fast':
+        return { icon: '🏃', bg: 'bg-gradient-to-r from-blue-500 to-cyan-500', text: 'text-blue-700' };
+      case 'crawl':
+        return { icon: '🎭', bg: 'bg-gradient-to-r from-purple-600 to-indigo-600', text: 'text-purple-700' };
+      case 'manual':
+        return { icon: '🎯', bg: 'bg-gradient-to-r from-indigo-500 to-purple-500', text: 'text-indigo-700' };
+      default:
+        return { icon: '🔄', bg: 'bg-blue-500', text: 'text-blue-700' };
+    }
+  };
+
+  return (
+    <div class="bg-white/90 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-4 mb-6">
       <div class="flex items-center justify-between">
-        <div class="flex items-center space-x-4">
-          <div class={`w-12 h-12 rounded-full flex items-center justify-center ${
-            props.isRunning() ? 'bg-blue-500' : 'bg-emerald-500'
-          }`}>
-            <span class="text-2xl text-white">
-              {props.isRunning() ? '🔄' : '✅'}
+        {/* 상태 표시 영역 */}
+        <div class="flex items-center gap-3">
+          <div class={`w-10 h-10 rounded-full flex items-center justify-center ${getIconAndColor().bg} ${props.isRunning() ? 'animate-pulse' : ''}`}>
+            <span class="text-xl text-white">
+              {getIconAndColor().icon}
             </span>
           </div>
           <div>
-            <h3 class="text-xl font-bold text-gray-800">{props.statusMessage()}</h3>
+            <div class={`text-lg font-bold ${getIconAndColor().text}`}>{props.statusMessage()}</div>
             <Show when={props.isRunning() && props.batchInfo().current > 0}>
-              <p class="text-sm text-gray-600 mt-1">
-                배치 진행: {props.batchInfo().current}
-                {props.batchInfo().totalEstimated ? `/${props.batchInfo().totalEstimated}` : ''}
-              </p>
+              <div class="text-xs text-gray-600 mt-0.5">
+                배치 {props.batchInfo().current}
+                <Show when={props.batchInfo().totalEstimated}>
+                  {' '}/ {props.batchInfo().totalEstimated}
+                </Show>
+                <Show when={props.batchInfo().batchId}>
+                  {' '}(ID: {props.batchInfo().batchId})
+                </Show>
+              </div>
             </Show>
           </div>
         </div>
-        <Show when={props.isRunning() && props.batchInfo().batchId}>
-          <div class="text-right">
-            <div class="text-xs text-gray-500">세션 ID</div>
-            <div class="text-sm font-mono text-gray-700 bg-white/50 px-2 py-1 rounded">
-              {props.batchInfo().batchId}
-            </div>
-          </div>
-        </Show>
+
+        {/* 상태 인디케이터 */}
+        <div class="flex items-center gap-2">
+          <div class={`w-2 h-2 rounded-full ${props.isRunning() ? 'bg-blue-400 animate-pulse' : 'bg-gray-300'}`}></div>
+          <span class="text-xs font-medium text-gray-500">
+            {props.isRunning() ? '실행 중' : '대기'}
+          </span>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 export default SessionStatusCard;

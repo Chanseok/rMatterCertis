@@ -68,17 +68,13 @@ const StageStatsPanels: Component<Props> = (p) => {
           <span class="text-xs text-gray-500">
             {(() => {
               const target = p.detailTarget?.() || 0;
-              const planned = plannedPages();
-              const plannedProducts = planned > 0 ? planned * 12 : 0;
               const est = (p.crawlingRange()?.crawling_info?.estimated_new_products ?? 0) as number;
               const observed = Math.max(p.detailStats().started || 0, p.detailStats().completed || 0);
-              const fallback = plannedProducts > 0 ? plannedProducts : (observed > 0 ? observed : (est > 0 ? est : 0));
               
-              // 🔍 DEBUG: 분모 계산 추적
-              console.log('🔍 [UI-DENOMINATOR]', { target, planned, plannedProducts, est, observed, fallback });
-              
-              if (target > 0) return `예상 ${target}`;
-              return fallback > 0 ? `예상 ${fallback}` : '';
+              // 우선순위: target(확정값) > observed(실시간) > est(사전예측)
+              if (target > 0) return `목표 ${target}`;
+              if (observed > 0) return `진행 ${observed}`;
+              return est > 0 ? `예상 ${est}` : '';
             })()}
           </span>
         </div>
@@ -94,18 +90,14 @@ const StageStatsPanels: Component<Props> = (p) => {
           const completed = p.detailStats().completed;
           
           if (target > 0) {
-            const percentage = Math.min(100, (completed / target) * 100);
-            console.log('🔍 [PROGRESS-BAR] Using target:', { target, completed, percentage });
-            return percentage;
+            return Math.min(100, (completed / target) * 100);
           }
           
           const est = (p.crawlingRange()?.crawling_info?.estimated_new_products ?? 0) as number;
           const observed = Math.max(p.detailStats().started || 0, completed || 0);
           const denom = observed > 0 ? observed : (est > 0 ? est : 0);
-          const percentage = denom > 0 ? Math.min(100, (completed / denom) * 100) : 0;
           
-          console.log('🔍 [PROGRESS-BAR] Using fallback:', { est, observed, denom, completed, percentage });
-          return percentage;
+          return denom > 0 ? Math.min(100, (completed / denom) * 100) : 0;
         }} />
       </div>
     </div>
