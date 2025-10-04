@@ -19,6 +19,7 @@ interface ControlPanelProps {
   // 🏃 Shallow Sync handlers
   handleShallowSync?: () => Promise<void> | void;
   handleSmartSync?: () => Promise<void> | void;
+  handleComplementCrawl?: () => Promise<void> | void;
   // 도움말 패널
   onHelpClick?: () => void;
   // 정지 기능
@@ -94,6 +95,17 @@ const ControlPanel: Component<ControlPanelProps> = (p) => {
             title="좌표 동기화 + 누락 분석 + 자동 보완 (8-12분)"
           >
             🧠 스마트 동기화
+          </button>
+        )}
+
+        {p.handleComplementCrawl && (
+          <button
+            onClick={() => p.handleComplementCrawl?.()}
+            disabled={p.isRunning() || p.isSyncing()}
+            class="px-6 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-green-500 to-teal-500 hover:from-green-600 hover:to-teal-600 disabled:opacity-50 disabled:cursor-not-allowed ripple shadow-md hover:shadow-lg transition"
+            title="certification_date가 누락된 제품만 재크롤링하여 정보를 업데이트합니다. 스마트 동기화보다 빠르고 가볍습니다."
+          >
+            🔧 제품 보완 동기화
           </button>
         )}
 

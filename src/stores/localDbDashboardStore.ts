@@ -12,6 +12,8 @@ interface SummaryData {
   new_products_24h: number;
   new_products_7d: number;
   top_device_categories: [string, number][];
+  all_device_categories?: [string, number][]; // 전체 카테고리 리스트
+  top_vendors?: [string, number][]; // Top 10 벤더
 }
 
 interface AnalyticsState {
@@ -48,12 +50,26 @@ interface UiFlags {
     parseError?: string;
   } | null;
   analyticsDiagnostics?: any;
+  // 필터 상태
+  filterDraft?: string; // Quick Search 입력 필드
+  selectedCategories: string[]; // 선택된 카테고리
+  selectedVendors: string[]; // 선택된 벤더
+  certDateRange: [string, string]; // [startDate, endDate] YYYY-MM-DD 형식
+  certDateMin?: number; // 데이터의 최소 연도
+  certDateMax?: number; // 데이터의 최대 연도
 }
 
 export const DEFAULT_PAGE_SIZE = 50;
 
 const [summary, setSummary] = createSignal<SummaryData | null>(null);
-const [ui, setUi] = createStore<UiFlags>({ loadingSummary: false, deviceTypesJson: '[]', reseedAfterSave: true });
+const [ui, setUi] = createStore<UiFlags>({ 
+  loadingSummary: false, 
+  deviceTypesJson: '[]', 
+  reseedAfterSave: true,
+  selectedCategories: [],
+  selectedVendors: [],
+  certDateRange: ["", ""] // 초기에는 비우고 loadSummary에서 설정
+});
 const [analytics, setAnalytics] = createStore<AnalyticsState>({ rows: [], total: 0, offset: 0, limit: DEFAULT_PAGE_SIZE, filterDraft: '', filterApplied: '', loading: false, sort: [] });
 
 async function loadSummary() {
@@ -61,6 +77,48 @@ async function loadSummary() {
   try {
     const data = await tauriApi.getDbSummary();
     setSummary(data as any);
+    
+    // Cert Date 범위 초기화: 실제 데이터에서 최소값 조회
+    if (!ui.certDateMin) {
+      try {
+        // 전체 데이터를 날짜 순으로 정렬하여 첫 번째 레코드의 날짜 가져오기
+        const res = await tauriApi.analyticsQuery({ 
+          offset: 0, 
+          limit: 1, 
+          sort: ['certification_date:asc'] 
+        });
+        if (res.rows && res.rows.length > 0 && res.rows[0].certification_date) {
+          const minDate = res.rows[0].certification_date;
+          const minYear = parseInt(minDate.split('-')[0]);
+          const today = new Date().toISOString().split('T')[0];
+          // certDateMin/Max와 certDateRange를 모두 업데이트
+          setUi({ 
+            ...ui, 
+            certDateMin: minYear, 
+            certDateMax: new Date().getFullYear(),
+            certDateRange: [minDate, today] // 실제 데이터 범위로 초기화
+          });
+        } else {
+          // 데이터가 없으면 기본값 사용
+          const today = new Date().toISOString().split('T')[0];
+          setUi({ 
+            ...ui, 
+            certDateMin: 2020, 
+            certDateMax: new Date().getFullYear(),
+            certDateRange: ["2020-01-01", today]
+          });
+        }
+      } catch {
+        // 에러 시 기본값 사용
+        const today = new Date().toISOString().split('T')[0];
+        setUi({ 
+          ...ui, 
+          certDateMin: 2020, 
+          certDateMax: new Date().getFullYear(),
+          certDateRange: ["2020-01-01", today]
+        });
+      }
+    }
   } catch (e: any) {
     setUi({ ...ui, summaryError: String(e) });
   } finally {
@@ -78,8 +136,9 @@ async function loadAnalytics(offset = 0) {
   }
 }
 
-async function applyFilter() {
-  setAnalytics({ ...analytics, filterApplied: analytics.filterDraft });
+async function applyFilter(filter?: string) {
+  const filterToApply = filter !== undefined ? filter : analytics.filterDraft;
+  setAnalytics({ ...analytics, filterApplied: filterToApply });
   await loadAnalytics(0);
 }
 
@@ -162,6 +221,54 @@ async function exportDataset(dataset: 'vendors' | 'device_types' | 'analytics') 
   }
 }
 
+async function exportCurrentView() {
+  try {
+    setUi({ ...ui, exportStatus: '현재 뷰 내보내는 중...' });
+    // 현재 analytics 상태(필터, 정렬 포함)로 전체 데이터 조회 후 Export
+    const res = await tauriApi.analyticsQuery({ 
+      offset: 0, 
+      limit: analytics.total || 10000, // 전체 데이터 가져오기
+      filter: analytics.filterApplied || undefined, 
+      sort: analytics.sort.length ? analytics.sort : undefined 
+    });
+    
+    // CSV 형식으로 변환
+    const rows = res.rows || [];
+    if (rows.length === 0) {
+      setUi({ ...ui, exportStatus: '내보낼 데이터가 없습니다.' });
+      return;
+    }
+    
+    const headers = ['Category', 'Device Type', 'Model', 'Vendor', 'Cert Date', 'Transport IF', 'Created', 'URL'];
+    const csvContent = [
+      headers.join(','),
+      ...rows.map((r: any) => [
+        `"${(r.device_category || '').replace(/"/g, '""')}"`,
+        `"${(r.device_type_name || '').replace(/"/g, '""')}"`,
+        `"${(r.model || '').replace(/"/g, '""')}"`,
+        `"${(r.vendor_name || '').replace(/"/g, '""')}"`,
+        `"${r.certification_date || ''}"`,
+        `"${(r.transport_interface || r.transport_if || '').replace(/"/g, '""')}"`,
+        `"${r.detail_created_at || ''}"`,
+        `"${(r.product_detail_url || '').replace(/"/g, '""')}"`
+      ].join(','))
+    ].join('\n');
+    
+    // 파일 다운로드
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `analytics_filtered_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    
+    setUi({ ...ui, exportStatus: `완료: ${rows.length}행 내보냄` });
+  } catch (e: any) {
+    setUi({ ...ui, exportStatus: `실패: ${e}` });
+  }
+}
+
 async function importDataset(dataset: 'vendors' | 'device_types', csvText: string) {
   try {
     setUi({ ...ui, importStatus: 'Import 중...', importLog: '' });
@@ -228,6 +335,7 @@ export const localDbDashboardStore = {
   saveDeviceTypes,
   updateDeviceTypesJson,
   exportDataset,
+  exportCurrentView,
   importDataset,
   previewDeleteRange,
   executeDeleteRange,

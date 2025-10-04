@@ -173,6 +173,8 @@ pub struct DbSummary {
     pub new_products_24h: i64,
     pub new_products_7d: i64,
     pub top_device_categories: Vec<(String, i64)>,
+    pub all_device_categories: Vec<(String, i64)>,
+    pub top_vendors: Vec<(String, i64)>,
 }
 
 /// Return basic database summary statistics.
@@ -225,6 +227,39 @@ pub async fn get_db_summary(state: State<'_, DatabaseConnection>) -> Result<DbSu
             Err(_) => Vec::new(),
         }
     };
+    
+    // All categories (for scrollable list)
+    let all_device_categories = {
+        let sql = "SELECT device_category, COUNT(*) as cnt FROM v_product_detail_analytics GROUP BY device_category ORDER BY cnt DESC";
+        match sqlx::query(sql).fetch_all(pool).await {
+            Ok(rows) => rows
+                .into_iter()
+                .filter_map(|r| {
+                    let cat: Option<String> = r.get::<Option<String>, _>("device_category");
+                    let cnt: i64 = r.get::<i64, _>("cnt");
+                    cat.map(|c| (c, cnt))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+    
+    // Top vendors (Top 10 by product count)
+    let top_vendors = {
+        let sql = "SELECT vendor_name, COUNT(*) as cnt FROM v_product_detail_analytics GROUP BY vendor_name ORDER BY cnt DESC LIMIT 10";
+        match sqlx::query(sql).fetch_all(pool).await {
+            Ok(rows) => rows
+                .into_iter()
+                .filter_map(|r| {
+                    let vendor: Option<String> = r.get::<Option<String>, _>("vendor_name");
+                    let cnt: i64 = r.get::<i64, _>("cnt");
+                    vendor.map(|v| (v, cnt))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+    
     Ok(DbSummary {
         total_products,
         total_product_details,
@@ -233,6 +268,8 @@ pub async fn get_db_summary(state: State<'_, DatabaseConnection>) -> Result<DbSu
         new_products_24h,
         new_products_7d,
         top_device_categories,
+        all_device_categories,
+        top_vendors,
     })
 }
 

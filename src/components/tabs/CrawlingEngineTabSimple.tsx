@@ -570,6 +570,44 @@ export default function CrawlingEngineTabSimple() {
     }
   };
 
+  // 🔧 제품 보완 동기화: certification_date가 누락된 제품 재크롤링
+  const handleComplementCrawl = async () => {
+    if (isRunning() || isSyncing()) {
+      addLog("⚠️ 이미 크롤링이 진행 중입니다.");
+      return;
+    }
+
+    setIsRunning(true);
+    setIsSyncing(true);
+    setStatusMessage("🔧 제품 보완 동기화 진행 중...");
+    addLog("🔧 제품 보완 동기화 시작 (certification_date 누락 제품 재크롤링, 동시성: 12)");
+
+    try {
+      const result = await tauriApi.startComplementCrawl();
+      
+      if (result.urls_targeted === 0) {
+        addLog(`✨ 보완이 필요한 제품이 없습니다.`);
+      } else {
+        addLog(`🔄 ${result.urls_targeted}개 제품 병렬 재크롤링 완료`);
+        addLog(`✅ 보완 동기화 완료: ${result.urls_completed}/${result.urls_targeted}개 성공 (${(result.duration_ms / 1000).toFixed(1)}초)`);
+        if (result.urls_failed > 0) {
+          addLog(`⚠️ ${result.urls_failed}개 실패 - 재시도가 필요할 수 있습니다.`);
+        } else {
+          addLog(`🎉 모든 제품이 성공적으로 업데이트되었습니다!`);
+        }
+      }
+      
+      setStatusMessage("✅ 제품 보완 동기화 완료");
+    } catch (error) {
+      console.error("제품 보완 동기화 실패:", error);
+      addLog(`❌ 제품 보완 동기화 실패: ${error}`);
+      setStatusMessage("❌ 제품 보완 동기화 실패");
+    } finally {
+      setIsRunning(false);
+      setIsSyncing(false);
+    }
+  };
+
   // 🛑 정지 핸들러
   const handleStop = async () => {
     addLog("🛑 작업 중지 요청...");
@@ -1919,6 +1957,7 @@ export default function CrawlingEngineTabSimple() {
             tauriApi={tauriApi}
             handleShallowSync={handleShallowSync}
             handleSmartSync={handleSmartSync}
+            handleComplementCrawl={handleComplementCrawl}
             onHelpClick={() => setHelpPanelOpen(true)}
             onStop={handleStop}
         />

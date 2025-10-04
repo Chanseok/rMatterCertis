@@ -165,7 +165,8 @@ pub async fn start_shallow_sync(
 
 /// 누락된 product_details 분석
 ///
-/// products 테이블에는 있지만 product_details에는 없는 항목 추출
+/// 1. products 테이블에는 있지만 product_details에는 없는 항목
+/// 2. product_details는 있지만 certification_date가 NULL인 항목
 ///
 /// # Errors
 /// Returns error if database query fails
@@ -173,12 +174,14 @@ pub async fn start_shallow_sync(
 pub async fn analyze_missing_details(
     app_state: State<'_, AppState>,
 ) -> Result<MissingAnalysisResult, String> {
-    info!("📊 Analyzing missing product details");
+    info!("📊 Analyzing missing product details (including NULL certification_date)");
     
     let pool = app_state.get_database_pool().await?;
     let repo = IntegratedProductRepository::new(pool);
     
-    // Query: products에는 있지만 product_details에는 없는 URL
+    // Query: 
+    // 1. products에는 있지만 product_details에는 없는 URL
+    // 2. product_details는 있지만 certification_date가 NULL인 경우
     let query = r"
         SELECT 
             p.url,
@@ -188,7 +191,7 @@ pub async fn analyze_missing_details(
             p.model
         FROM products p
         LEFT JOIN product_details pd ON p.url = pd.url
-        WHERE pd.url IS NULL
+        WHERE pd.url IS NULL OR pd.certification_date IS NULL
         ORDER BY p.page_id DESC, p.index_in_page ASC
     ";
     
@@ -223,6 +226,186 @@ pub async fn analyze_missing_details(
         total_products,
         complete_products,
         missing_details,
+    })
+}
+
+/// 보완 크롤링: certification_date가 NULL인 제품들의 상세 정보를 실제로 재크롤링
+///
+/// # Errors
+/// Returns error if crawling fails
+#[tauri::command]
+pub async fn start_complement_crawl(
+    app_state: State<'_, AppState>,
+) -> Result<ComplementCrawlResult, String> {
+    let start_time = std::time::Instant::now();
+    info!("🔧 Starting complement crawl for products with NULL certification_date");
+    
+    // Phase 1: certification_date가 NULL인 제품만 분석
+    let pool = app_state.get_database_pool().await?;
+    let repo = crate::infrastructure::integrated_product_repository::IntegratedProductRepository::new(pool.clone());
+    
+    // certification_date가 NULL인 제품만 조회
+    let query = r"
+        SELECT 
+            pd.url,
+            pd.page_id,
+            pd.index_in_page,
+            p.manufacturer,
+            p.model
+        FROM product_details pd
+        INNER JOIN products p ON pd.url = p.url
+        WHERE pd.certification_date IS NULL
+        ORDER BY pd.page_id DESC, pd.index_in_page ASC
+    ";
+    
+    let rows = sqlx::query(query)
+        .fetch_all(repo.pool())
+        .await
+        .map_err(|e| format!("Failed to query products with NULL certification_date: {}", e))?;
+    
+    let missing_details: Vec<MissingProductInfo> = rows
+        .into_iter()
+        .map(|row| MissingProductInfo {
+            url: row.get("url"),
+            page_id: row.get("page_id"),
+            index_in_page: row.get("index_in_page"),
+            manufacturer: row.get("manufacturer"),
+            model: row.get("model"),
+        })
+        .collect();
+    
+    if missing_details.is_empty() {
+        info!("✨ No products with NULL certification_date found");
+        return Ok(ComplementCrawlResult {
+            urls_targeted: 0,
+            urls_completed: 0,
+            urls_failed: 0,
+            duration_ms: start_time.elapsed().as_millis() as u64,
+        });
+    }
+    
+    info!("📝 Found {} products with NULL certification_date, starting concurrent re-crawl", missing_details.len());
+    
+    // Phase 2: 크롤링 인프라 준비
+    // HTTP 클라이언트 및 데이터 추출기 생성
+    use crate::infrastructure::{HttpClient, MatterDataExtractor};
+    
+    let http_client = HttpClient::create_from_global_config()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    
+    let data_extractor = MatterDataExtractor::new()
+        .map_err(|e| format!("Failed to create data extractor: {}", e))?;
+    
+    // ProductDetailCollector 설정
+    use crate::infrastructure::crawling_service_impls::{ProductDetailCollectorImpl, CollectorConfig};
+    use std::sync::Arc;
+    use std::time::Duration;
+    
+    let config_guard = app_state.config.read().await;
+    let app_config = config_guard.clone();
+    drop(config_guard);
+    
+    // 동시성 설정: 6~12개 동시 요청
+    let concurrency = 12.min(missing_details.len()); // 최대 12개 또는 총 제품 수
+    let detail_config = CollectorConfig {
+        batch_size: concurrency as u32,
+        max_concurrent: concurrency as u32,
+        concurrency: concurrency as u32,
+        delay_between_requests: Duration::from_millis(app_config.user.request_delay_ms),
+        delay_ms: app_config.user.request_delay_ms,
+        retry_attempts: 3,
+        retry_max: 3,
+    };
+    
+    let collector = ProductDetailCollectorImpl::new(
+        Arc::new(http_client),
+        Arc::new(data_extractor),
+        detail_config,
+    );
+    
+    let urls_targeted = missing_details.len() as u32;
+    let mut completed = 0;
+    let mut failed = 0;
+    
+    // Phase 3: 배치로 나누어 병렬 크롤링 수행
+    use crate::domain::product_url::ProductUrl;
+    use tokio_util::sync::CancellationToken;
+    
+    let batch_size = concurrency;
+    let total_batches = (missing_details.len() + batch_size - 1) / batch_size;
+    
+    for (batch_idx, chunk) in missing_details.chunks(batch_size).enumerate() {
+        info!("🔄 Processing batch {}/{} ({} products)", batch_idx + 1, total_batches, chunk.len());
+        
+        // ProductUrl 배열 생성
+        let product_urls: Vec<ProductUrl> = chunk.iter().map(|product_info| {
+            ProductUrl {
+                url: product_info.url.clone(),
+                page_id: product_info.page_id.unwrap_or(0),
+                index_in_page: product_info.index_in_page.unwrap_or(0),
+            }
+        }).collect();
+        
+        // 배치 전체를 한 번에 크롤링 (병렬 처리)
+        let session_id = format!("complement-crawl-{}", start_time.elapsed().as_millis());
+        let batch_id = format!("batch-{}", batch_idx);
+        
+        match collector.collect_details_with_async_events(
+            &product_urls,
+            Some(CancellationToken::new()),
+            session_id,
+            batch_id,
+        ).await {
+            Ok(details) => {
+                let details_count = details.len();
+                info!("✅ Batch {}/{} collected {} details", batch_idx + 1, total_batches, details_count);
+                
+                // 수집된 각 제품을 DB에 저장
+                for detail in details {
+                    match repo.create_or_update_product_detail(&detail).await {
+                        Ok(_) => {
+                            completed += 1;
+                            info!("💾 Saved: {}", detail.url);
+                        }
+                        Err(e) => {
+                            failed += 1;
+                            tracing::warn!("❌ Failed to save: {} - {}", detail.url, e);
+                        }
+                    }
+                }
+                
+                // 수집 실패한 제품 계산
+                let batch_failed = chunk.len() - details_count;
+                if batch_failed > 0 {
+                    failed += batch_failed as u32;
+                    tracing::warn!("⚠️ Batch {}/{}: {} products failed to crawl", 
+                                   batch_idx + 1, total_batches, batch_failed);
+                }
+            }
+            Err(e) => {
+                failed += chunk.len() as u32;
+                tracing::warn!("❌ Batch {}/{} failed entirely: {}", batch_idx + 1, total_batches, e);
+            }
+        }
+        
+        // 배치 간 짧은 대기 (rate limiting)
+        if batch_idx < total_batches - 1 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+    
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+    
+    info!(
+        "🎉 Complement crawl completed: {}/{} successful, {} failed ({}ms, {} batches with concurrency={})",
+        completed, urls_targeted, failed, duration_ms, total_batches, concurrency
+    );
+    
+    Ok(ComplementCrawlResult {
+        urls_targeted,
+        urls_completed: completed,
+        urls_failed: failed,
+        duration_ms,
     })
 }
 

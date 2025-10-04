@@ -799,7 +799,22 @@ impl IntegratedProductRepository {
                 binds.push(BindValue::OptStr(&detail.device_type));
                 change_kinds.push("change:device_type".to_string());
             }
-            fill_or_change_opt_str!(certification_date, "certification_date");
+            // certification_date는 정규화가 필요하므로 수동 처리
+            let normalized_new_cert_date = Self::normalize_cert_date(&detail.certification_date);
+            let normalized_existing_cert_date = Self::normalize_cert_date(&existing_detail.certification_date);
+            if normalized_existing_cert_date.is_none() && normalized_new_cert_date.is_some() {
+                updates.push("certification_date = ?");
+                binds.push(BindValue::OwnedStr(normalized_new_cert_date.clone().unwrap()));
+                change_kinds.push("fill:certification_date".to_string());
+            } else if normalized_existing_cert_date.is_some()
+                && normalized_new_cert_date.is_some()
+                && normalized_existing_cert_date != normalized_new_cert_date
+            {
+                updates.push("certification_date = ?");
+                binds.push(BindValue::OwnedStr(normalized_new_cert_date.clone().unwrap()));
+                change_kinds.push("change:certification_date".to_string());
+            }
+            
             fill_or_change_opt_str!(software_version, "software_version");
             fill_or_change_opt_str!(hardware_version, "hardware_version");
             fill_or_change_opt_str!(description, "description");
@@ -1171,7 +1186,7 @@ impl IntegratedProductRepository {
                                  certificate_id, certification_date, software_version, hardware_version,
                                  vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
                                  tis_trp_tested, specification_version, transport_interface, 
-                                 application_categories, description,
+                                 primary_device_type_ids, application_categories, description,
                                  compliance_document_url, program_type, created_at, updated_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 ON CONFLICT(url) DO UPDATE SET
@@ -1194,6 +1209,7 @@ impl IntegratedProductRepository {
                                     tis_trp_tested = excluded.tis_trp_tested,
                                     specification_version = excluded.specification_version,
                                     transport_interface = excluded.transport_interface,
+                                    primary_device_type_ids = excluded.primary_device_type_ids,
                                     application_categories = excluded.application_categories,
                                     description = excluded.description,
                                     compliance_document_url = excluded.compliance_document_url,
@@ -1201,7 +1217,11 @@ impl IntegratedProductRepository {
                                     updated_at = excluded.updated_at
                                 ";
             let normalized_cert_date = Self::normalize_cert_date(&detail.certification_date);
+            
             retry_sqlite_busy("insert_product_details", || {
+                let primary_device_type_ids_json = detail.primary_device_type_ids.as_ref()
+                    .map(|ids| serde_json::to_string(ids).unwrap_or_default());
+                
                 let q = sqlx::query(insert_sql)
                     .bind(&detail.url)
                     .bind(detail.page_id)
@@ -1223,6 +1243,7 @@ impl IntegratedProductRepository {
                     .bind(detail.tis_trp_tested.clone())
                     .bind(&detail.specification_version)
                     .bind(&detail.transport_interface)
+                    .bind(primary_device_type_ids_json)
                     .bind(&detail.application_categories)
                     .bind(&detail.description)
                     .bind(&detail.compliance_document_url)

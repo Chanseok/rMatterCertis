@@ -2896,7 +2896,10 @@ struct DetailValidationRules {
 }
 
 fn default_validation_rules() -> DetailValidationRules {
-    DetailValidationRules { require_certificate_id: true, required_fields: &[] }
+    DetailValidationRules { 
+        require_certificate_id: true, 
+        required_fields: &["certification_date"] 
+    }
 }
 
 fn classify_network_error(e: &anyhow::Error) -> bool {
@@ -2946,6 +2949,9 @@ async fn attempt_collect_product(
                 return AttemptResult::Incomplete { detail: Some(detail), reason: IncompleteReason::MissingRequiredField(*f) };
             }
             "model" if detail.model.as_deref().unwrap_or("").trim().is_empty() => {
+                return AttemptResult::Incomplete { detail: Some(detail), reason: IncompleteReason::MissingRequiredField(*f) };
+            }
+            "certification_date" if detail.certification_date.as_deref().unwrap_or("").trim().is_empty() => {
                 return AttemptResult::Incomplete { detail: Some(detail), reason: IncompleteReason::MissingRequiredField(*f) };
             }
             _ => {}

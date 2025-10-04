@@ -841,6 +841,7 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             commands::crawling::shallow_sync_commands::start_shallow_sync,
             commands::crawling::shallow_sync_commands::analyze_missing_details,
             commands::crawling::shallow_sync_commands::start_smart_sync,
+            commands::crawling::shallow_sync_commands::start_complement_crawl,
 
             // Legacy v4 commands removed (init/start/stop/etc.) – replaced by unified_crawling + real_crawling_commands
 
