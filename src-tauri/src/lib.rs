@@ -972,6 +972,8 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             // Legacy invoke compatibility wrappers removed (FE migrated to actor_system)
             commands::devtools::db_diagnostics::scan_db_pagination_mismatches,
             commands::devtools::db_diagnostics::diagnose_database_connection,
+            commands::devtools::db_diagnostics::get_products_without_coordinates,
+            commands::devtools::db_diagnostics::delete_products_without_coordinates,
             commands::devtools::lock_detector::debug_active_writer_lock,
             #[cfg(feature = "dev-tools")]
             commands::devtools::debug_commands::ui_debug_log,

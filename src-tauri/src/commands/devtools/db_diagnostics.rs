@@ -174,7 +174,10 @@ pub struct DbConnectionDiagnostics {
     #[derive(Debug, Serialize, ts_rs::TS)]
     #[ts(export, export_to = "../../../../generated-types/")]
     pub struct DbPaginationMismatchReport {
-        pub total_products: u64,
+        pub total_products: u64, // 로컬 DB 총 제품 수 (좌표 NULL 포함)
+        pub total_products_with_coords: u64, // 좌표가 있는 제품 수
+        pub total_products_without_coords: u64, // 좌표가 NULL인 제품 수
+        pub total_products_site: Option<u64>, // 사이트 총 제품 수
         pub max_page_id_db: Option<i32>,
         pub total_pages_site: Option<u32>,
         pub items_on_last_page: Option<u32>,
@@ -292,6 +295,9 @@ pub async fn scan_db_pagination_mismatches(
             // busy_timeout 조정은 전용 커넥션에만 적용되었으므로 별도 복구 불필요
             return Ok(DbPaginationMismatchReport {
                 total_products: 0,
+                total_products_with_coords: 0,
+                total_products_without_coords: 0,
+                total_products_site: None,
                 max_page_id_db: None,
                 total_pages_site: None,
                 items_on_last_page: None,
@@ -433,12 +439,44 @@ pub async fn scan_db_pagination_mismatches(
     // Load all relevant rows - 기본 busy_timeout (풀 설정보다 변경 X); 필요시 전용 커넥션 사용 고려 가능
     
     let mut total_products: u64 = 0;
+    let mut total_products_with_coords: u64 = 0;
+    let mut total_products_without_coords: u64 = 0;
+    
+    // 총 제품 수
     if let Ok(c) = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products")
         .fetch_one(&pool)
         .await
     {
         total_products = u64::try_from(c).unwrap_or_default();
     }
+    
+    // 좌표가 있는 제품 수
+    if let Ok(c) = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products WHERE page_id IS NOT NULL AND index_in_page IS NOT NULL")
+        .fetch_one(&pool)
+        .await
+    {
+        total_products_with_coords = u64::try_from(c).unwrap_or_default();
+    }
+    
+    // 좌표가 없는 제품 수
+    if let Ok(c) = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM products WHERE page_id IS NULL OR index_in_page IS NULL")
+        .fetch_one(&pool)
+        .await
+    {
+        total_products_without_coords = u64::try_from(c).unwrap_or_default();
+    }
+    
+    // 사이트 총 제품 수 계산 (총 페이지 수 * 12 - 마지막 페이지 여분)
+    let total_products_site: Option<u64> = if let (Some(total_pages), Some(last_items)) = (total_pages_site, items_on_last_page) {
+        let expected = (total_pages as u64) * 12;
+        let excess = 12u64.saturating_sub(last_items as u64);
+        Some(expected.saturating_sub(excess))
+    } else if let Some(total_pages) = total_pages_site {
+        // items_on_last_page가 없으면 대략 계산
+        Some((total_pages as u64) * 12)
+    } else {
+        None
+    };
 
     // Fetch url, page_id, index_in_page; ignore rows with NULL url
     // If database is busy (locked by crawling), return early with minimal report
@@ -453,6 +491,9 @@ pub async fn scan_db_pagination_mismatches(
             let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(&pool).await;
             return Ok(DbPaginationMismatchReport {
                 total_products,
+                total_products_with_coords,
+                total_products_without_coords,
+                total_products_site,
                 max_page_id_db: None,
                 total_pages_site,
                 items_on_last_page,
@@ -496,6 +537,9 @@ pub async fn scan_db_pagination_mismatches(
         let _ = sqlx::query("PRAGMA busy_timeout=5000").execute(&pool).await;
         return Ok(DbPaginationMismatchReport {
             total_products,
+            total_products_with_coords,
+            total_products_without_coords,
+            total_products_site,
             max_page_id_db: None,
             total_pages_site,
             items_on_last_page,
@@ -661,6 +705,9 @@ pub async fn scan_db_pagination_mismatches(
 
     let mut report = DbPaginationMismatchReport {
         total_products,
+        total_products_with_coords,
+        total_products_without_coords,
+        total_products_site,
         max_page_id_db: Some(max_page_id_db),
         total_pages_site,
         items_on_last_page,
@@ -767,3 +814,207 @@ pub async fn scan_db_pagination_mismatches(
 }
 
 // END scan_db_pagination_mismatches
+
+// ===== NULL Coordinates Management =====
+
+#[derive(Debug, Serialize, ts_rs::TS, Clone)]
+#[ts(export, export_to = "../../../../generated-types/")]
+pub struct ProductWithoutCoordinates {
+    pub url: String,
+    pub model: Option<String>,
+    pub manufacturer: Option<String>,
+    pub url_exists: bool, // URL 접근 가능 여부
+    pub checked_at: Option<String>, // 마지막 확인 시간
+}
+
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../../generated-types/")]
+pub struct NullCoordinatesReport {
+    pub total_count: u32,
+    pub verified_exists: Vec<ProductWithoutCoordinates>,
+    pub verified_missing: Vec<ProductWithoutCoordinates>,
+    pub not_verified: Vec<ProductWithoutCoordinates>,
+}
+
+/// NULL 좌표를 가진 제품 목록 조회 및 URL 검증
+#[tauri::command(async)]
+pub async fn get_products_without_coordinates(
+    app_state: State<'_, AppState>,
+    skip_verification: Option<bool>,
+) -> Result<NullCoordinatesReport, String> {
+    let skip_verification = skip_verification.unwrap_or(false);
+    info!(target: "db_diagnostics", skip_verification, "get_products_without_coordinates: start");
+    
+    let pool = app_state
+        .get_database_pool()
+        .await
+        .map_err(|e| format!("DB pool unavailable: {e}"))?;
+
+    // NULL 좌표 제품 조회
+    let rows = sqlx::query(
+        r"
+        SELECT 
+            p.url,
+            pd.model,
+            pd.manufacturer
+        FROM products p
+        LEFT JOIN product_details pd ON p.url = pd.url
+        WHERE p.page_id IS NULL OR p.index_in_page IS NULL
+        ORDER BY p.url
+        "
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut products = Vec::new();
+    
+    for row in rows {
+        let url: String = row.try_get("url").unwrap_or_default();
+        let model: Option<String> = row.try_get("model").ok().flatten();
+        let manufacturer: Option<String> = row.try_get("manufacturer").ok().flatten();
+        
+        products.push(ProductWithoutCoordinates {
+            url,
+            model,
+            manufacturer,
+            url_exists: false,
+            checked_at: None,
+        });
+    }
+
+    info!(target: "db_diagnostics", total = products.len(), "Loaded products without coordinates");
+
+    let mut verified_exists = Vec::new();
+    let mut verified_missing = Vec::new();
+    let mut not_verified = Vec::new();
+
+    // URL 검증을 건너뛰는 경우 모두 not_verified로 분류
+    if skip_verification {
+        info!(target: "db_diagnostics", "Skipping URL verification as requested");
+        not_verified = products;
+    } else {
+        // HTTP 클라이언트로 URL 존재 여부 확인 (타임아웃 증가)
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .connect_timeout(std::time::Duration::from_secs(1))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+
+        // URL 검증 (최대 50개까지만, 너무 많으면 시간 초과)
+        let max_verify = 50;
+        for (idx, mut product) in products.into_iter().enumerate() {
+            if idx >= max_verify {
+                // 나머지는 미검증으로 분류
+                not_verified.push(product);
+                continue;
+            }
+            
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                client.head(&product.url).send()
+            ).await {
+                Ok(Ok(response)) => {
+                    product.url_exists = response.status().is_success();
+                    product.checked_at = Some(Utc::now().to_rfc3339());
+                    
+                    if product.url_exists {
+                        info!(target: "db_diagnostics", url = %product.url, "URL exists");
+                        verified_exists.push(product);
+                    } else {
+                        info!(target: "db_diagnostics", url = %product.url, status = %response.status(), "URL not found");
+                        verified_missing.push(product);
+                    }
+                }
+                Ok(Err(e)) => {
+                    // HTTP 요청 오류
+                    info!(target: "db_diagnostics", url = %product.url, error = %e, "HTTP request failed");
+                    not_verified.push(product);
+                }
+                Err(_) => {
+                    // 타임아웃
+                    info!(target: "db_diagnostics", url = %product.url, "URL verification timeout");
+                    not_verified.push(product);
+                }
+            }
+            
+            // 너무 빠른 요청 방지
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        }
+    }
+
+    let total_count = u32::try_from(verified_exists.len() + verified_missing.len() + not_verified.len())
+        .unwrap_or(u32::MAX);
+
+    info!(
+        target: "db_diagnostics",
+        total = total_count,
+        exists = verified_exists.len(),
+        missing = verified_missing.len(),
+        not_verified = not_verified.len(),
+        "get_products_without_coordinates: done"
+    );
+
+    Ok(NullCoordinatesReport {
+        total_count,
+        verified_exists,
+        verified_missing,
+        not_verified,
+    })
+}
+
+/// NULL 좌표를 가진 제품들 삭제 (products와 product_details 테이블에서 모두 삭제)
+#[tauri::command(async)]
+pub async fn delete_products_without_coordinates(
+    app_state: State<'_, AppState>,
+    urls: Vec<String>,
+) -> Result<u32, String> {
+    info!(target: "db_diagnostics", count = urls.len(), "delete_products_without_coordinates: start");
+    
+    if urls.is_empty() {
+        return Ok(0);
+    }
+
+    let pool = app_state
+        .get_database_pool()
+        .await
+        .map_err(|e| format!("DB pool unavailable: {e}"))?;
+
+    let placeholders = urls.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    
+    // 트랜잭션 시작
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    
+    // 1. product_details 테이블에서 삭제
+    let details_query_str = format!("DELETE FROM product_details WHERE url IN ({})", placeholders);
+    let mut details_query = sqlx::query(&details_query_str);
+    for url in &urls {
+        details_query = details_query.bind(url);
+    }
+    let details_result = details_query.execute(&mut *tx).await.map_err(|e| e.to_string())?;
+    let details_deleted = details_result.rows_affected();
+    
+    // 2. products 테이블에서 삭제
+    let products_query_str = format!("DELETE FROM products WHERE url IN ({})", placeholders);
+    let mut products_query = sqlx::query(&products_query_str);
+    for url in &urls {
+        products_query = products_query.bind(url);
+    }
+    let products_result = products_query.execute(&mut *tx).await.map_err(|e| e.to_string())?;
+    let products_deleted = products_result.rows_affected();
+    
+    // 트랜잭션 커밋
+    tx.commit().await.map_err(|e| e.to_string())?;
+    
+    let total_deleted = u32::try_from(products_deleted).unwrap_or(u32::MAX);
+
+    info!(
+        target: "db_diagnostics",
+        requested = urls.len(),
+        products_deleted = products_deleted,
+        details_deleted = details_deleted,
+        "delete_products_without_coordinates: done"
+    );
+
+    Ok(total_deleted)
+}

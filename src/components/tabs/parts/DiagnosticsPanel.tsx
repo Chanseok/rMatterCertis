@@ -1,4 +1,5 @@
 import { Component, Show, For } from 'solid-js';
+import NullCoordinatesPanel from './NullCoordinatesPanel.tsx';
 
 interface Props {
   diagResult: () => any;
@@ -16,8 +17,9 @@ interface Props {
 
 const DiagnosticsPanel: Component<Props> = (p) => {
   return (
-    <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8">
-      <div class="flex items-center justify-between mb-2">
+    <>
+      <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8">
+        <div class="flex items-center justify-between mb-2">
         <h3 class="text-lg font-bold text-gray-800">Stage X: DB Pagination Diagnostics</h3>
         <div class="flex gap-2">
           <button
@@ -93,8 +95,39 @@ const DiagnosticsPanel: Component<Props> = (p) => {
               </div>
             );
           })()}
-          <div class="flex gap-4">
-            <span>총 제품: <b>{p.diagResult()?.total_products ?? 0}</b></span>
+          
+          {/* 제품 수 통계 - 상세 구분 */}
+          <div class="grid grid-cols-2 gap-2">
+            <div class="p-2 bg-blue-50 border border-blue-200 rounded">
+              <div class="text-xs text-blue-600 font-semibold mb-1">🌐 사이트</div>
+              <div class="flex flex-col gap-1 text-xs">
+                <span>총 제품: <b class="text-blue-700">{p.diagResult()?.total_products_site?.toLocaleString() ?? '계산 중...'}</b></span>
+                <span>총 페이지: <b class="text-blue-700">{p.diagResult()?.total_pages_site ?? '-'}</b></span>
+                <span>마지막 페이지 아이템: <b class="text-blue-700">{p.diagResult()?.items_on_last_page ?? '-'}</b></span>
+              </div>
+            </div>
+            
+            <div class="p-2 bg-green-50 border border-green-200 rounded">
+              <div class="text-xs text-green-600 font-semibold mb-1">💾 로컬 DB</div>
+              <div class="flex flex-col gap-1 text-xs">
+                <span>총 제품: <b class="text-green-700">{p.diagResult()?.total_products?.toLocaleString() ?? 0}</b></span>
+                <span class="text-emerald-700">├ 좌표 있음: <b>{p.diagResult()?.total_products_with_coords?.toLocaleString() ?? 0}</b></span>
+                <span class="text-orange-700">└ 좌표 없음: <b>{p.diagResult()?.total_products_without_coords?.toLocaleString() ?? 0}</b></span>
+                <span class="text-gray-600 text-[10px]">DB 최대 page_id: {p.diagResult()?.max_page_id_db ?? '-'}</span>
+              </div>
+            </div>
+          </div>
+          
+          <Show when={(p.diagResult()?.total_products_without_coords ?? 0) > 0}>
+            <div class="p-2 bg-orange-50 border border-orange-300 rounded">
+              <div class="text-orange-800 text-xs">
+                ⚠️ <b>{p.diagResult()?.total_products_without_coords}</b>개 제품이 좌표(page_id, index_in_page) 정보가 없습니다.
+                <span class="ml-2 text-orange-600">→ 아래 "좌표 없는 제품 관리" 섹션 참조</span>
+              </div>
+            </div>
+          </Show>
+          
+          <div class="flex gap-4 text-[10px] text-gray-500 border-t pt-1">
             <span>DB 최대 page_id: <b>{p.diagResult()?.max_page_id_db ?? '-'}</b></span>
             <span>사이트 총 페이지: <b>{p.diagResult()?.total_pages_site ?? '-'}</b></span>
             <span>마지막 페이지 아이템: <b>{p.diagResult()?.items_on_last_page ?? '-'}</b></span>
@@ -159,7 +192,15 @@ const DiagnosticsPanel: Component<Props> = (p) => {
           </Show>
         </div>
       </Show>
-    </div>
+      </div>
+      
+      {/* NULL 좌표 제품 관리 패널 */}
+      <NullCoordinatesPanel 
+        nullCoordsCount={() => p.diagResult()?.total_products_without_coords ?? 0}
+        addLog={p.addLog}
+        onRefresh={async () => { await p.runDiagnostics(); }}
+      />
+    </>
   );
 };
 
