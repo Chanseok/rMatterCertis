@@ -1,7 +1,7 @@
 /**
  * DateRangeSlider - 향상된 날짜 범위 슬라이더 컴포넌트
  * - 타이핑 입력과 슬라이더 양방향 동기화
- * - 기본: 주 단위 (7일), Option: 일 단위, Option+Shift: 월 단위 (30일)
+ * - 일 단위 (1일) 스텝으로 정밀한 날짜 선택
  */
 
 import { Component, createSignal, createEffect } from 'solid-js';
@@ -38,26 +38,9 @@ export const DateRangeSlider: Component<DateRangeSliderProps> = (props) => {
     return date.toISOString().split('T')[0];
   };
   
-  // 슬라이더 변경 핸들러 (세밀도 지원)
-  const handleSliderChange = (value: number, isStart: boolean, event: Event) => {
-    const inputEvent = event as InputEvent;
-    const isOption = (inputEvent as any).altKey;  // macOS에서 Option 키는 altKey
-    const isShift = (inputEvent as any).shiftKey;
-    
-    // 키 조합에 따라 스냅 단위 결정
-    let finalValue = value;
-    if (isOption && isShift) {
-      // Option+Shift: 월 단위 (30일)
-      finalValue = Math.round(value / 30) * 30;
-    } else if (isOption) {
-      // Option: 일 단위 (1일) - 값 그대로 사용
-      finalValue = Math.round(value);
-    } else {
-      // 기본: 주 단위 (7일)
-      finalValue = Math.round(value / 7) * 7;
-    }
-    
-    const newDate = numToDate(finalValue);
+  // 슬라이더 변경 핸들러
+  const handleSliderChange = (value: number, isStart: boolean) => {
+    const newDate = numToDate(value);
     
     if (isStart) {
       setStartInput(newDate);
@@ -144,7 +127,7 @@ export const DateRangeSlider: Component<DateRangeSliderProps> = (props) => {
             value={startNum()}
             step="1"
             class="flex-1 h-2 bg-blue-200 rounded-lg appearance-none cursor-pointer slider-thumb-blue"
-            onInput={e => handleSliderChange(Number(e.currentTarget.value), true, e)}
+            onInput={e => handleSliderChange(Number(e.currentTarget.value), true)}
           />
         </div>
         <div class="flex items-center gap-3">
@@ -156,18 +139,13 @@ export const DateRangeSlider: Component<DateRangeSliderProps> = (props) => {
             value={endNum()}
             step="1"
             class="flex-1 h-2 bg-purple-200 rounded-lg appearance-none cursor-pointer slider-thumb-purple"
-            onInput={e => handleSliderChange(Number(e.currentTarget.value), false, e)}
+            onInput={e => handleSliderChange(Number(e.currentTarget.value), false)}
           />
         </div>
       </div>
       
       <div class="flex justify-between items-center mt-3 text-xs text-gray-500">
         <span class="bg-white px-2 py-1 rounded">{props.minDate}</span>
-        <div class="flex gap-2 text-[10px]">
-          <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded">드래그: 주</span>
-          <span class="bg-green-100 text-green-700 px-2 py-0.5 rounded">⌥ Option: 일</span>
-          <span class="bg-purple-100 text-purple-700 px-2 py-0.5 rounded">⌥⇧ Opt+Shift: 월</span>
-        </div>
         <span class="bg-white px-2 py-1 rounded">{props.maxDate}</span>
       </div>
     </div>

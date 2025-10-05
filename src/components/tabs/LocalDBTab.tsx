@@ -120,10 +120,10 @@ export const LocalDBTab: Component = () => {
         
         {/* Date Range Slider */}
         <DateRangeSlider 
-          minDate={ui.certDateMin ? `${ui.certDateMin}-01-01` : "2020-01-01"}
-          maxDate={new Date().toISOString().split('T')[0]}
-          startDate={ui.certDateRange[0] || "2020-01-01"}
-          endDate={ui.certDateRange[1] || new Date().toISOString().split('T')[0]}
+          minDate={ui.certDateMin || "2020-01-01"}
+          maxDate={ui.certDateMax || new Date().toISOString().split('T')[0]}
+          startDate={ui.certDateRange[0] || ui.certDateMin || "2020-01-01"}
+          endDate={ui.certDateRange[1] || ui.certDateMax || new Date().toISOString().split('T')[0]}
           onChange={(start, end) => {
             localDbDashboardStore.setUi({ ...ui, certDateRange: [start, end] });
             applyFilters(); // 날짜 변경 시 자동 필터 적용

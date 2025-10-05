@@ -55,8 +55,8 @@ interface UiFlags {
   selectedCategories: string[]; // 선택된 카테고리
   selectedVendors: string[]; // 선택된 벤더
   certDateRange: [string, string]; // [startDate, endDate] YYYY-MM-DD 형식
-  certDateMin?: number; // 데이터의 최소 연도
-  certDateMax?: number; // 데이터의 최대 연도
+  certDateMin?: string; // 데이터의 최소 날짜 (YYYY-MM-DD)
+  certDateMax?: string; // 데이터의 최대 날짜 (YYYY-MM-DD)
 }
 
 export const DEFAULT_PAGE_SIZE = 50;
@@ -78,33 +78,41 @@ async function loadSummary() {
     const data = await tauriApi.getDbSummary();
     setSummary(data as any);
     
-    // Cert Date 범위 초기화: 실제 데이터에서 최소값 조회
+    // Cert Date 범위 초기화: 실제 데이터에서 최소/최대값 조회
     if (!ui.certDateMin) {
       try {
-        // 전체 데이터를 날짜 순으로 정렬하여 첫 번째 레코드의 날짜 가져오기
-        const res = await tauriApi.analyticsQuery({ 
+        // 최소 날짜 조회
+        const minRes = await tauriApi.analyticsQuery({ 
           offset: 0, 
           limit: 1, 
           sort: ['certification_date:asc'] 
         });
-        if (res.rows && res.rows.length > 0 && res.rows[0].certification_date) {
-          const minDate = res.rows[0].certification_date;
-          const minYear = parseInt(minDate.split('-')[0]);
-          const today = new Date().toISOString().split('T')[0];
+        
+        // 최대 날짜 조회
+        const maxRes = await tauriApi.analyticsQuery({ 
+          offset: 0, 
+          limit: 1, 
+          sort: ['certification_date:desc'] 
+        });
+        
+        if (minRes.rows?.[0]?.certification_date && maxRes.rows?.[0]?.certification_date) {
+          const minDate = minRes.rows[0].certification_date;
+          const maxDate = maxRes.rows[0].certification_date;
+          
           // certDateMin/Max와 certDateRange를 모두 업데이트
           setUi({ 
             ...ui, 
-            certDateMin: minYear, 
-            certDateMax: new Date().getFullYear(),
-            certDateRange: [minDate, today] // 실제 데이터 범위로 초기화
+            certDateMin: minDate, 
+            certDateMax: maxDate,
+            certDateRange: [minDate, maxDate] // 실제 데이터 범위로 초기화
           });
         } else {
           // 데이터가 없으면 기본값 사용
           const today = new Date().toISOString().split('T')[0];
           setUi({ 
             ...ui, 
-            certDateMin: 2020, 
-            certDateMax: new Date().getFullYear(),
+            certDateMin: "2020-01-01", 
+            certDateMax: today,
             certDateRange: ["2020-01-01", today]
           });
         }
@@ -113,8 +121,8 @@ async function loadSummary() {
         const today = new Date().toISOString().split('T')[0];
         setUi({ 
           ...ui, 
-          certDateMin: 2020, 
-          certDateMax: new Date().getFullYear(),
+          certDateMin: "2020-01-01", 
+          certDateMax: today,
           certDateRange: ["2020-01-01", today]
         });
       }
