@@ -22,6 +22,7 @@ export const LocalDBTab: Component = () => {
   // 필터 다이얼로그 상태
   const [showCategoryDialog, setShowCategoryDialog] = createSignal(false);
   const [showVendorDialog, setShowVendorDialog] = createSignal(false);
+  const [showDeviceTypeDialog, setShowDeviceTypeDialog] = createSignal(false);
 
   onMount(() => {
     initializeLocalDbDashboard().catch(console.error);
@@ -35,15 +36,35 @@ export const LocalDBTab: Component = () => {
   // 기존 로컬 제품 목록/검색 기능은 새로운 Analytics DSL UI 도입 전 임시 제거 (필요 시 별도 섹션 재추가)
   // (legacy 검색 신호 제거됨)
 
+  // 디바운스 타이머 (날짜 범위 변경 최적화)
+  let dateDebounce: number | undefined;
+  const DATE_DEBOUNCE_MS = 250;
+
   // Analytics 테이블 페이지 계산
   const totalPages = () => Math.max(1, Math.ceil(analytics.total / analytics.limit));
 
   // 필터 적용 함수: 날짜 범위 + 카테고리 + 벤더 선택을 DSL 필터로 변환
   const applyFilters = () => {
+    console.log('[applyFilters] 🚀 필터 적용 시작');
+    console.log('[applyFilters] 📊 현재 선택 상태:', {
+      selectedCategories: ui.selectedCategories,
+      selectedVendors: ui.selectedVendors,
+      selectedDeviceTypes: ui.selectedDeviceTypes,
+      certDateRange: ui.certDateRange
+    });
+    
     const filters: string[] = [];
 
     // 1. 날짜 범위 필터 (항상 적용) - date 필드 -> certification_date 매핑
-    const [startDate, endDate] = ui.certDateRange;
+    let [startDate, endDate] = ui.certDateRange;
+    
+    // 날짜가 비어있으면 전체 범위 사용
+    if (!startDate || !endDate) {
+      startDate = ui.certDateMin || "2020-01-01";
+      endDate = ui.certDateMax || new Date().toISOString().split('T')[0];
+      console.log('[applyFilters] 날짜 범위 없음, 전체 범위 사용:', { startDate, endDate });
+    }
+    
     if (startDate && endDate) {
       filters.push(`date>=${startDate}`);
       filters.push(`date<=${endDate}`);
@@ -51,31 +72,39 @@ export const LocalDBTab: Component = () => {
     console.log('[applyFilters] 날짜 필터 적용:', { startDate, endDate, filterAdded: startDate && endDate });
 
     // 2. 카테고리 필터 (device_category:in:[...] 형식)
+    console.log('[applyFilters] 카테고리 필터 검사:', { 
+      length: ui.selectedCategories.length, 
+      categories: ui.selectedCategories 
+    });
     if (ui.selectedCategories.length > 0) {
       const hasNull = ui.selectedCategories.includes('null');
       const normalCats = ui.selectedCategories.filter(c => c !== 'null');
       
-      if (hasNull && normalCats.length > 0) {
-        // null과 일반 카테고리 모두 선택됨 → OR 조건
-        const catList = normalCats.map(c => `"${c}"`).join(',');
-        filters.push(`(device_category:in:[${catList}] OR device_category:null)`);
-      } else if (hasNull) {
+      if (hasNull && normalCats.length === 0) {
         // null만 선택
-        filters.push('device_category:null');
+        filters.push('device_category=null');
+        console.log('[applyFilters] 카테고리 필터: 카테고리 없음');
       } else if (normalCats.length > 0) {
-        // 일반 카테고리만 선택
-        const catList = normalCats.map(c => `"${c}"`).join(',');
+        // 일반 카테고리 선택 (UI에서 null과 동시 선택 불가능하도록 제어됨)
+        const catList = normalCats.map(c => `"${c.replace(/"/g, '\\"')}"`).join(',');
         filters.push(`device_category:in:[${catList}]`);
+        console.log(`[applyFilters] 카테고리 필터: ${normalCats.length}개 선택`);
       }
     }
 
     // 3. 벤더 필터 (vendor_name:in:[...] 형식)
     if (ui.selectedVendors.length > 0) {
-      const vendorList = ui.selectedVendors.map(v => `"${v}"`).join(',');
+      const vendorList = ui.selectedVendors.map(v => `"${v.replace(/"/g, '\\"')}"`).join(',');
       filters.push(`vendor_name:in:[${vendorList}]`);
     }
 
-    // 4. 기존 filterDraft (quick search)와 결합
+    // 4. 디바이스 타입 필터 (dtype:in:[...] 형식)
+    if (ui.selectedDeviceTypes.length > 0) {
+      const dtypeList = ui.selectedDeviceTypes.map(d => `"${d.replace(/"/g, '\\"')}"`).join(',');
+      filters.push(`dtype:in:[${dtypeList}]`);
+    }
+
+    // 5. 기존 filterDraft (quick search)와 결합
     const quickSearch = ui.filterDraft?.trim();
     if (quickSearch) {
       filters.push(quickSearch);
@@ -128,12 +157,29 @@ export const LocalDBTab: Component = () => {
           endDate={ui.certDateRange[1] || ui.certDateMax || new Date().toISOString().split('T')[0]}
           onChange={(start, end) => {
             localDbDashboardStore.setUi({ ...ui, certDateRange: [start, end] });
-            applyFilters(); // 날짜 변경 시 자동 필터 적용
+            if (dateDebounce) window.clearTimeout(dateDebounce);
+            dateDebounce = window.setTimeout(() => applyFilters(), DATE_DEBOUNCE_MS);
           }}
         />
+        <div class="mt-1 text-xs">
+          <Show when={ui.certDateRange[0] && ui.certDateRange[1]}>
+            {(() => {
+              const [start, end] = ui.certDateRange;
+              if (!start || !end) return null;
+              const fullStart = ui.certDateMin;
+              const fullEnd = ui.certDateMax;
+              const span = (a: string, b: string) => (Math.round((new Date(b).getTime() - new Date(a).getTime())/86400000) + 1);
+              const isFull = start === fullStart && end === fullEnd;
+              const fullSpan = fullStart && fullEnd ? span(fullStart, fullEnd) : undefined;
+              const curSpan = span(start, end);
+              const pct = fullSpan ? Math.round(curSpan / fullSpan * 100) : 100;
+              return <span class={`px-2 py-1 rounded-full font-semibold ${isFull ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{isFull ? 'FULL RANGE' : 'PARTIAL'} · {curSpan}d{fullSpan ? ` / ${fullSpan}d (${pct}%)` : ''}</span>;
+            })()}
+          </Show>
+        </div>
 
-        {/* 카테고리 & 벤더 필터 버튼 */}
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* 카테고리 & 디바이스 타입 & 벤더 필터 버튼 */}
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* 카테고리 필터 */}
           <div class="bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-5 shadow-sm">
             <div class="flex items-center gap-2 mb-3">
@@ -172,6 +218,51 @@ export const LocalDBTab: Component = () => {
                   <Show when={ui.selectedCategories.length > 3}>
                     <span class="px-2 py-1 bg-gray-200 text-gray-600 rounded-full text-[10px] font-semibold">
                       +{ui.selectedCategories.length - 3}
+                    </span>
+                  </Show>
+                </div>
+              </div>
+            </Show>
+          </div>
+
+          {/* 디바이스 타입 필터 */}
+          <div class="bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-200 rounded-xl p-5 shadow-sm">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="text-2xl">🔧</span>
+              <div>
+                <div class="text-sm font-bold text-emerald-900">디바이스 타입 필터</div>
+                <div class="text-xs text-emerald-600">{s()?.total_device_types || 0}개 항목</div>
+              </div>
+            </div>
+            
+            <button 
+              class="w-full px-4 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-lg font-semibold shadow-lg transition-all transform hover:scale-[1.02] active:scale-95"
+              onClick={() => setShowDeviceTypeDialog(true)}
+            >
+              <div class="flex items-center justify-center gap-2">
+                <span>디바이스 타입 선택</span>
+                <Show when={ui.selectedDeviceTypes.length > 0}>
+                  <span class="bg-white text-emerald-600 rounded-full px-2.5 py-0.5 text-xs font-bold shadow-md">
+                    {ui.selectedDeviceTypes.length}
+                  </span>
+                </Show>
+              </div>
+            </button>
+            
+            <Show when={ui.selectedDeviceTypes.length > 0}>
+              <div class="mt-3 bg-white rounded-lg p-3 border border-emerald-200">
+                <div class="text-xs font-semibold text-emerald-700 mb-2">선택됨:</div>
+                <div class="flex flex-wrap gap-1.5">
+                  <For each={ui.selectedDeviceTypes.slice(0, 3)}>
+                    {dtype => (
+                      <span class="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-medium truncate max-w-[120px]" title={dtype}>
+                        {dtype}
+                      </span>
+                    )}
+                  </For>
+                  <Show when={ui.selectedDeviceTypes.length > 3}>
+                    <span class="px-2 py-1 bg-gray-200 text-gray-600 rounded-full text-[10px] font-semibold">
+                      +{ui.selectedDeviceTypes.length - 3}
                     </span>
                   </Show>
                 </div>
@@ -231,6 +322,9 @@ export const LocalDBTab: Component = () => {
             <div>
               <h3 class="text-xl font-bold text-gray-800">📈 데이터 요약</h3>
               <p class="text-xs text-gray-500 mt-1">전체 데이터베이스 통계 현황</p>
+              <Show when={analytics.loading}>
+                <p class="text-[10px] text-indigo-500 mt-1 animate-pulse">⏳ 분석 데이터 로딩...</p>
+              </Show>
               {/* 디버깅: 현재 적용된 필터 표시 */}
               <Show when={analytics.filterApplied}>
                 <p class="text-xs text-red-600 mt-1 font-mono">🔍 필터: {analytics.filterApplied}</p>
@@ -242,7 +336,7 @@ export const LocalDBTab: Component = () => {
                 class="px-4 py-2 rounded-lg bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white text-sm font-semibold shadow-md transition-all"
                 onClick={() => {
                   localDbDashboardStore.resetFilter();
-                  localDbDashboardStore.setUi({ ...ui, certDateRange: ["", ""], selectedCategories: [], selectedVendors: [] });
+                  localDbDashboardStore.setUi({ ...ui, certDateRange: ["", ""], selectedCategories: [], selectedVendors: [], selectedDeviceTypes: [] });
                 }}
               >
                 🗑️ 필터 초기화
@@ -268,12 +362,21 @@ export const LocalDBTab: Component = () => {
                   <span class="text-3xl">🏭</span>
                   <span class="text-xs font-semibold text-blue-700 bg-blue-200 px-2 py-1 rounded-full">TOTAL</span>
                 </div>
-                <div class="text-2xl font-bold text-blue-900">
-                  <span class="text-blue-600">{analytics.total.toLocaleString()}</span>
-                  <span class="text-lg text-blue-400 mx-1">/</span>
-                  <span class="text-blue-800">{s()!.total_products.toLocaleString()}</span>
-                </div>
-                <div class="text-xs text-blue-700 mt-1">인증 제품 (필터링 / 전체)</div>
+                {(() => {
+                  const filtered = analytics.total;
+                  const total = s()!.total_products;
+                  const pct = total ? (filtered / total * 100) : 0;
+                  return (
+                    <>
+                      <div class="text-2xl font-bold text-blue-900">
+                        <span class="text-blue-600">{filtered.toLocaleString()}</span>
+                        <span class="text-lg text-blue-400 mx-1">/</span>
+                        <span class="text-blue-800">{total.toLocaleString()}</span>
+                      </div>
+                      <div class="text-xs text-blue-700 mt-1">인증 제품 (필터링 / 전체 · {pct.toFixed(1)}%)</div>
+                    </>
+                  );
+                })()}
               </div>
 
               <div class="rounded-xl bg-gradient-to-br from-purple-50 to-purple-100 border-2 border-purple-200 p-5 shadow-sm">
@@ -281,12 +384,19 @@ export const LocalDBTab: Component = () => {
                   <span class="text-3xl">🏢</span>
                   <span class="text-xs font-semibold text-purple-700 bg-purple-200 px-2 py-1 rounded-full">VENDORS</span>
                 </div>
-                <div class="text-2xl font-bold text-purple-900">
-                  <span class="text-purple-600">{s()!.total_vendors.toLocaleString()}</span>
-                  <span class="text-lg text-purple-400 mx-1">/</span>
-                  <span class="text-purple-800">{s()!.total_vendors.toLocaleString()}</span>
-                </div>
-                <div class="text-xs text-purple-700 mt-1">벤더 수 (필터링 / 전체)</div>
+                {(() => {
+                  const totalVen = s()!.total_vendors;
+                  return (
+                    <>
+                      <div class="text-2xl font-bold text-purple-900">
+                        <span class="text-purple-600">{totalVen.toLocaleString()}</span>
+                        <span class="text-lg text-purple-400 mx-1">/</span>
+                        <span class="text-purple-800">{totalVen.toLocaleString()}</span>
+                      </div>
+                      <div class="text-xs text-purple-700 mt-1">벤더 수 (전체 범위 기준 동일)</div>
+                    </>
+                  );
+                })()}
               </div>
 
               <div class="rounded-xl bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-200 p-5 shadow-sm">
@@ -294,12 +404,21 @@ export const LocalDBTab: Component = () => {
                   <span class="text-3xl">📋</span>
                   <span class="text-xs font-semibold text-green-700 bg-green-200 px-2 py-1 rounded-full">DETAILS</span>
                 </div>
-                <div class="text-2xl font-bold text-green-900">
-                  <span class="text-green-600">{analytics.total.toLocaleString()}</span>
-                  <span class="text-lg text-green-400 mx-1">/</span>
-                  <span class="text-green-800">{s()!.total_product_details.toLocaleString()}</span>
-                </div>
-                <div class="text-xs text-green-700 mt-1">상세 정보 (필터링 / 전체)</div>
+                {(() => {
+                  const filtered = analytics.total;
+                  const totalDetails = s()!.total_product_details;
+                  const pct = totalDetails ? (filtered / totalDetails * 100) : 0;
+                  return (
+                    <>
+                      <div class="text-2xl font-bold text-green-900">
+                        <span class="text-green-600">{filtered.toLocaleString()}</span>
+                        <span class="text-lg text-green-400 mx-1">/</span>
+                        <span class="text-green-800">{totalDetails.toLocaleString()}</span>
+                      </div>
+                      <div class="text-xs text-green-700 mt-1">상세 정보 (필터링 / 전체 · {pct.toFixed(1)}%)</div>
+                    </>
+                  );
+                })()}
               </div>
 
               <div class="rounded-xl bg-gradient-to-br from-amber-50 to-amber-100 border-2 border-amber-200 p-5 shadow-sm">
@@ -328,7 +447,7 @@ export const LocalDBTab: Component = () => {
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
           <div class="mb-6">
             <h3 class="text-xl font-bold text-gray-800">🔍 분석 인사이트</h3>
-            <p class="text-xs text-gray-500 mt-1">카테고리, 벤더, 인증 활동 통계</p>
+            <p class="text-xs text-gray-500 mt-1">카테고리, 디바이스 타입, 벤더, 인증 활동 통계</p>
           </div>
           
           <Show when={!ui.loadingSummary && s()} fallback={
@@ -336,7 +455,7 @@ export const LocalDBTab: Component = () => {
               <div class="text-sm text-gray-400 animate-pulse">📊 인사이트를 불러오는 중...</div>
             </div>
           }>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {/* Top 카테고리 통계 */}
               <div class="bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-5 shadow-sm">
                 <div class="flex items-center gap-2 mb-4">
@@ -362,6 +481,39 @@ export const LocalDBTab: Component = () => {
                           </div>
                           <div class="h-1 bg-gray-200 rounded-full overflow-hidden">
                             <div class="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all" style={`width: ${percentage}%`}></div>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  </For>
+                </div>
+              </div>
+
+              {/* Top 디바이스 타입 */}
+              <div class="bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-200 rounded-xl p-5 shadow-sm">
+                <div class="flex items-center gap-2 mb-4">
+                  <span class="text-2xl">🔧</span>
+                  <div>
+                    <div class="text-sm font-bold text-emerald-900">Top 디바이스 타입</div>
+                    <div class="text-xs text-emerald-600">총 {s()!.total_device_types}개 타입</div>
+                  </div>
+                </div>
+                <div class="bg-white rounded-lg p-3 border border-emerald-200 space-y-1.5 overflow-y-auto max-h-[240px]" style="scrollbar-width: thin;">
+                  <For each={s()!.top_device_types?.slice(0, 10) || []}>
+                    {(dt, idx) => {
+                      const maxCount = s()!.top_device_types?.[0]?.[1] || 1;
+                      const percentage = (dt[1] / maxCount) * 100;
+                      return (
+                        <div class="group hover:bg-emerald-50 rounded p-2 transition-colors">
+                          <div class="flex items-center justify-between mb-1">
+                            <div class="flex items-center gap-2 flex-1 min-w-0">
+                              <span class="text-emerald-400 text-[10px] font-mono w-6">#{idx() + 1}</span>
+                              <span class="truncate font-medium text-xs text-gray-700" title={dt[0]}>{dt[0]}</span>
+                            </div>
+                            <span class="text-emerald-600 font-bold ml-2 text-xs">{dt[1]}</span>
+                          </div>
+                          <div class="h-1 bg-gray-200 rounded-full overflow-hidden">
+                            <div class="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all" style={`width: ${percentage}%`}></div>
                           </div>
                         </div>
                       );
@@ -404,15 +556,15 @@ export const LocalDBTab: Component = () => {
               </div>
 
               {/* 최근 인증 활동 */}
-              <div class="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-xl p-5 shadow-sm">
+              <div class="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-200 rounded-xl p-5 shadow-sm">
                 <div class="flex items-center gap-2 mb-4">
                   <span class="text-2xl">📅</span>
                   <div>
-                    <div class="text-sm font-bold text-emerald-900">최근 인증 활동</div>
-                    <div class="text-xs text-emerald-600">최신 인증 트렌드</div>
+                    <div class="text-sm font-bold text-amber-900">최근 인증 활동</div>
+                    <div class="text-xs text-amber-600">최신 인증 트렌드</div>
                   </div>
                 </div>
-                <div class="bg-white rounded-lg p-4 border border-emerald-200 space-y-4">
+                <div class="bg-white rounded-lg p-4 border border-amber-200 space-y-4">
                   <div class="flex items-center justify-between p-3 bg-gradient-to-r from-emerald-100 to-green-100 rounded-lg">
                     <div>
                       <div class="text-[10px] text-emerald-700 font-semibold uppercase tracking-wide">24시간 내</div>
@@ -764,15 +916,38 @@ export const LocalDBTab: Component = () => {
                     <button 
                       class="px-3 py-1.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded font-medium text-sm"
                       onClick={() => {
-                        const allCats = ['null', ...(s()?.all_device_categories?.map(c => c[0]) || [])];
-                        localDbDashboardStore.setUi({ ...ui, selectedCategories: allCats });
+                        const currentUi = localDbDashboardStore.ui;
+                        // 일반 카테고리만 비교 (null 제외)
+                        const normalCats = s()?.all_device_categories?.map(c => c[0]) || [];
+                        const currentNormal = currentUi.selectedCategories.filter(c => c !== 'null');
+                        const isAllNormalSelected = currentNormal.length === normalCats.length && normalCats.length > 0;
+                        
+                        // 토글: 전체 선택 상태면 전부 해제, 아니면 일반 카테고리 전체 선택 (null 제외)
+                        const newSelected = isAllNormalSelected ? [] : normalCats;
+                        
+                        console.log('[전체 선택 버튼] 클릭:', {
+                          currentSelected: currentUi.selectedCategories,
+                          normalCatsCount: normalCats.length,
+                          currentNormalCount: currentNormal.length,
+                          isAllNormalSelected,
+                          newSelected
+                        });
+                        localDbDashboardStore.setUi({ ...currentUi, selectedCategories: newSelected });
                       }}
                     >
-                      전체 선택
+                      {(() => {
+                        const normalCats = s()?.all_device_categories?.map(c => c[0]) || [];
+                        const currentNormal = ui.selectedCategories.filter(c => c !== 'null');
+                        return currentNormal.length === normalCats.length && normalCats.length > 0 ? '전체 해제' : '전체 선택';
+                      })()}
                     </button>
                     <button 
                       class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-medium text-sm"
-                      onClick={() => localDbDashboardStore.setUi({ ...ui, selectedCategories: [] })}
+                      onClick={() => {
+                        const currentUi = localDbDashboardStore.ui;
+                        console.log('[초기화 버튼] 클릭');
+                        localDbDashboardStore.setUi({ ...currentUi, selectedCategories: [] });
+                      }}
                     >
                       초기화
                     </button>
@@ -788,11 +963,21 @@ export const LocalDBTab: Component = () => {
                         : 'bg-gray-50 border-gray-200 hover:border-gray-300 hover:bg-gray-100'
                     }`}
                     onClick={() => {
-                      const isSelected = ui.selectedCategories.includes('null');
-                      const newSelected = isSelected 
-                        ? ui.selectedCategories.filter(cat => cat !== 'null')
-                        : [...ui.selectedCategories, 'null'];
-                      localDbDashboardStore.setUi({ ...ui, selectedCategories: newSelected });
+                      const currentUi = localDbDashboardStore.ui;
+                      const isSelected = currentUi.selectedCategories.includes('null');
+                      let newSelected: string[];
+                      
+                      if (isSelected) {
+                        // null 체크 해제
+                        newSelected = currentUi.selectedCategories.filter(cat => cat !== 'null');
+                      } else {
+                        // null 체크: 다른 카테고리 모두 해제하고 null만 선택
+                        newSelected = ['null'];
+                        console.log('[null 카테고리] OR 미지원으로 null 선택 시 다른 카테고리 모두 해제');
+                      }
+                      
+                      console.log('[null 카테고리 체크박스] 클릭:', { isSelected, resulting: newSelected });
+                      localDbDashboardStore.setUi({ ...currentUi, selectedCategories: newSelected });
                     }}
                   >
                     <div class="flex items-center justify-between">
@@ -812,28 +997,45 @@ export const LocalDBTab: Component = () => {
                   {/* 실제 카테고리들 */}
                   <For each={s()?.all_device_categories || []}>
                     {(c, idx) => {
-                      const isSelected = ui.selectedCategories.includes(c[0]);
+                      const isSelected = () => ui.selectedCategories.includes(c[0]);
                       const maxCount = s()!.top_device_categories[0]?.[1] || 1;
                       const percentage = (c[1] / maxCount) * 100;
                       return (
                         <div 
                           class={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
-                            isSelected 
+                            isSelected() 
                               ? 'bg-indigo-100 border-indigo-400 shadow-md' 
                               : 'bg-white border-gray-200 hover:border-indigo-300 hover:bg-indigo-50'
                           }`}
                           onClick={() => {
-                            const newSelected = isSelected 
-                              ? ui.selectedCategories.filter(cat => cat !== c[0])
-                              : [...ui.selectedCategories, c[0]];
-                            localDbDashboardStore.setUi({ ...ui, selectedCategories: newSelected });
+                            const currentUi = localDbDashboardStore.ui;
+                            let newSelected: string[];
+                            
+                            if (isSelected()) {
+                              // 체크 해제
+                              newSelected = currentUi.selectedCategories.filter(cat => cat !== c[0]);
+                            } else {
+                              // 체크: null이 있으면 제거
+                              newSelected = currentUi.selectedCategories.filter(cat => cat !== 'null');
+                              newSelected.push(c[0]);
+                              if (currentUi.selectedCategories.includes('null')) {
+                                console.log('[일반 카테고리] OR 미지원으로 일반 카테고리 선택 시 null 제거');
+                              }
+                            }
+                            console.log('[카테고리 체크박스] 클릭:', { 
+                              category: c[0], 
+                              wasSelected: isSelected(),
+                              currentSelected: currentUi.selectedCategories,
+                              resulting: newSelected 
+                            });
+                            localDbDashboardStore.setUi({ ...currentUi, selectedCategories: newSelected });
                           }}
                         >
                           <div class="flex items-center justify-between mb-2">
                             <div class="flex items-center gap-2 flex-1 min-w-0">
                               <input 
                                 type="checkbox" 
-                                checked={isSelected} 
+                                checked={isSelected()} 
                                 class="pointer-events-none w-4 h-4"
                               />
                               <span class="text-gray-400 text-xs font-mono">#{idx() + 1}</span>
@@ -870,6 +1072,7 @@ export const LocalDBTab: Component = () => {
                   <button 
                     class="px-4 py-2 rounded bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-semibold shadow-md"
                     onClick={() => {
+                      console.log('[카테고리 적용 버튼] 클릭됨! 현재 선택:', ui.selectedCategories);
                       setShowCategoryDialog(false);
                       applyFilters();
                     }}
@@ -901,10 +1104,11 @@ export const LocalDBTab: Component = () => {
                       class="px-3 py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded font-medium text-sm"
                       onClick={() => {
                         const allVendors = s()?.top_vendors?.map(v => v[0]) || [];
-                        localDbDashboardStore.setUi({ ...ui, selectedVendors: allVendors });
+                        const isAllSelected = ui.selectedVendors.length === allVendors.length;
+                        localDbDashboardStore.setUi({ ...ui, selectedVendors: isAllSelected ? [] : allVendors });
                       }}
                     >
-                      전체 선택
+                      {ui.selectedVendors.length === (s()?.top_vendors?.length || 0) ? '전체 해제' : '전체 선택'}
                     </button>
                     <button 
                       class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-medium text-sm"
@@ -918,18 +1122,18 @@ export const LocalDBTab: Component = () => {
                 <div class="grid grid-cols-2 gap-3 overflow-y-auto max-h-[500px] pr-2" style="scrollbar-width: thin;">
                   <For each={s()?.top_vendors || []}>
                     {(v, idx) => {
-                      const isSelected = ui.selectedVendors.includes(v[0]);
+                      const isSelected = () => ui.selectedVendors.includes(v[0]);
                       const maxCount = s()!.top_vendors?.[0]?.[1] || 1;
                       const percentage = (v[1] / maxCount) * 100;
                       return (
                         <div 
                           class={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
-                            isSelected 
+                            isSelected() 
                               ? 'bg-blue-100 border-blue-400 shadow-md' 
                               : 'bg-white border-gray-200 hover:border-blue-300 hover:bg-blue-50'
                           }`}
                           onClick={() => {
-                            const newSelected = isSelected 
+                            const newSelected = isSelected() 
                               ? ui.selectedVendors.filter(vendor => vendor !== v[0])
                               : [...ui.selectedVendors, v[0]];
                             localDbDashboardStore.setUi({ ...ui, selectedVendors: newSelected });
@@ -939,7 +1143,7 @@ export const LocalDBTab: Component = () => {
                             <div class="flex items-center gap-2 flex-1 min-w-0">
                               <input 
                                 type="checkbox" 
-                                checked={isSelected} 
+                                checked={isSelected()} 
                                 class="pointer-events-none w-4 h-4"
                               />
                               <span class="text-gray-400 text-xs font-mono">#{idx() + 1}</span>
@@ -977,6 +1181,102 @@ export const LocalDBTab: Component = () => {
                     class="px-4 py-2 rounded bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700 text-white font-semibold shadow-md"
                     onClick={() => {
                       setShowVendorDialog(false);
+                      applyFilters();
+                    }}
+                  >
+                    적용
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Show>
+
+        {/* 디바이스 타입 필터 다이얼로그 */}
+        <Show when={showDeviceTypeDialog()}>
+          <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowDeviceTypeDialog(false)}>
+            <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div class="sticky top-0 bg-gradient-to-r from-emerald-500 to-teal-600 px-6 py-4 flex items-center justify-between">
+                <h3 class="text-xl font-bold text-white">🔧 디바이스 타입 필터 선택</h3>
+                <button class="text-white hover:text-gray-200 text-3xl font-light" onClick={() => setShowDeviceTypeDialog(false)}>&times;</button>
+              </div>
+              
+              <div class="p-6">
+                <div class="flex items-center justify-between mb-4">
+                  <div class="text-sm text-gray-600">
+                    선택됨: <span class="font-bold text-emerald-600">{ui.selectedDeviceTypes.length}</span> / {s()?.all_device_type_names?.length || 0}
+                  </div>
+                  <div class="flex gap-2">
+                    <button 
+                      class="px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded font-medium text-sm"
+                      onClick={() => {
+                        const allTypes = s()?.all_device_type_names || [];
+                        const isAllSelected = ui.selectedDeviceTypes.length === allTypes.length;
+                        localDbDashboardStore.setUi({ ...ui, selectedDeviceTypes: isAllSelected ? [] : allTypes });
+                      }}
+                    >
+                      {ui.selectedDeviceTypes.length === (s()?.all_device_type_names?.length || 0) ? '전체 해제' : '전체 선택'}
+                    </button>
+                    <button 
+                      class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-medium text-sm"
+                      onClick={() => localDbDashboardStore.setUi({ ...ui, selectedDeviceTypes: [] })}
+                    >
+                      초기화
+                    </button>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 overflow-y-auto max-h-[500px] pr-2" style="scrollbar-width: thin;">
+                  <For each={s()?.all_device_type_names || []}>
+                    {(dtype, idx) => {
+                      const isSelected = () => ui.selectedDeviceTypes.includes(dtype);
+                      return (
+                        <div 
+                          class={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
+                            isSelected() 
+                              ? 'bg-emerald-100 border-emerald-400 shadow-md' 
+                              : 'bg-white border-gray-200 hover:border-emerald-300 hover:bg-emerald-50'
+                          }`}
+                          onClick={() => {
+                            const newSelected = isSelected() 
+                              ? ui.selectedDeviceTypes.filter(dt => dt !== dtype)
+                              : [...ui.selectedDeviceTypes, dtype];
+                            localDbDashboardStore.setUi({ ...ui, selectedDeviceTypes: newSelected });
+                          }}
+                        >
+                          <div class="flex items-center gap-2">
+                            <input 
+                              type="checkbox" 
+                              checked={isSelected()} 
+                              class="pointer-events-none w-4 h-4"
+                            />
+                            <span class="text-gray-400 text-xs font-mono">#{idx() + 1}</span>
+                            <span class="text-sm font-semibold text-gray-800 truncate" title={dtype}>
+                              {dtype}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  </For>
+                </div>
+              </div>
+              
+              <div class="sticky bottom-0 bg-gray-50 border-t px-6 py-4 flex justify-between items-center">
+                <div class="text-sm text-gray-600">
+                  <span class="font-semibold text-emerald-600">{ui.selectedDeviceTypes.length}</span>개 디바이스 타입 선택됨
+                </div>
+                <div class="flex gap-2">
+                  <button 
+                    class="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium"
+                    onClick={() => setShowDeviceTypeDialog(false)}
+                  >
+                    취소
+                  </button>
+                  <button 
+                    class="px-4 py-2 rounded bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-semibold shadow-md"
+                    onClick={() => {
+                      setShowDeviceTypeDialog(false);
                       applyFilters();
                     }}
                   >

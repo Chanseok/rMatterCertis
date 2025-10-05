@@ -174,7 +174,9 @@ pub struct DbSummary {
     pub new_products_7d: i64,
     pub top_device_categories: Vec<(String, i64)>,
     pub all_device_categories: Vec<(String, i64)>,
+    pub top_device_types: Vec<(String, i64)>,
     pub top_vendors: Vec<(String, i64)>,
+    pub all_device_type_names: Vec<String>,
 }
 
 /// Return basic database summary statistics.
@@ -260,6 +262,34 @@ pub async fn get_db_summary(state: State<'_, DatabaseConnection>) -> Result<DbSu
         }
     };
     
+    // Top device types (Top 10 by product count)
+    let top_device_types = {
+        let sql = "SELECT device_type_name, COUNT(*) as cnt FROM v_product_detail_analytics WHERE device_type_name IS NOT NULL GROUP BY device_type_name ORDER BY cnt DESC LIMIT 10";
+        match sqlx::query(sql).fetch_all(pool).await {
+            Ok(rows) => rows
+                .into_iter()
+                .filter_map(|r| {
+                    let dtype: Option<String> = r.get::<Option<String>, _>("device_type_name");
+                    let cnt: i64 = r.get::<i64, _>("cnt");
+                    dtype.map(|d| (d, cnt))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+    
+    // All device type names (for device type filter)
+    let all_device_type_names = {
+        let sql = "SELECT DISTINCT name FROM device_types ORDER BY name ASC";
+        match sqlx::query(sql).fetch_all(pool).await {
+            Ok(rows) => rows
+                .into_iter()
+                .filter_map(|r| r.get::<Option<String>, _>("name"))
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+    
     Ok(DbSummary {
         total_products,
         total_product_details,
@@ -269,7 +299,9 @@ pub async fn get_db_summary(state: State<'_, DatabaseConnection>) -> Result<DbSu
         new_products_7d,
         top_device_categories,
         all_device_categories,
+        top_device_types,
         top_vendors,
+        all_device_type_names,
     })
 }
 
@@ -316,6 +348,11 @@ pub async fn analytics_query(
     if limit <= 0 { limit = 50; }
     if limit > 200 { limit = 200; }
     let raw_filter = params.filter.unwrap_or_default().trim().to_string();
+    
+    info!("📊 analytics_query called: offset={}, limit={}, filter_len={}", offset, limit, raw_filter.len());
+    if !raw_filter.is_empty() {
+        info!("🔍 Raw filter: {}", raw_filter);
+    }
 
     // ---------------------------------------------------------------------
     // Runtime Safety Net Backfill (defensive):
@@ -376,11 +413,52 @@ pub async fn analytics_query(
     let mut filter_error: Option<String> = None;
     let mut applied_filter: Option<String> = None;
     if !raw_filter.is_empty() {
-        // Tokenization: simple split; reject tokens containing quotes to avoid complexity now.
-        let tokens: Vec<&str> = raw_filter.split_whitespace().collect();
+        // Enhanced tokenization: handle field:in:[...] specially
+        let mut tokens: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let mut in_bracket = false;
+        let mut paren_depth = 0;
+        
+        for ch in raw_filter.chars() {
+            match ch {
+                '[' if !in_bracket => {
+                    in_bracket = true;
+                    current.push(ch);
+                },
+                ']' if in_bracket => {
+                    in_bracket = false;
+                    current.push(ch);
+                },
+                '(' => {
+                    paren_depth += 1;
+                    current.push(ch);
+                },
+                ')' => {
+                    paren_depth -= 1;
+                    current.push(ch);
+                },
+                ' ' | '\t' | '\n' if !in_bracket && paren_depth == 0 => {
+                    if !current.is_empty() {
+                        tokens.push(current.clone());
+                        current.clear();
+                    }
+                },
+                _ => {
+                    current.push(ch);
+                }
+            }
+        }
+        if !current.is_empty() {
+            tokens.push(current);
+        }
+        
+        info!("🔍 Total tokens parsed: {}", tokens.len());
+        for (idx, token) in tokens.iter().enumerate() {
+            info!("  Token[{}]: '{}'", idx, token);
+        }
+        
         let field_pattern = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*").unwrap();
         for t in &tokens {
-            if t.contains('"') || t.contains('\'') { filter_error = Some("따옴표는 아직 지원하지 않습니다".into()); break; }
             // Skip logical connector tokens (prevent accidental bareword searching)
             let upper_tok = t.to_ascii_uppercase();
             if upper_tok == "AND" || upper_tok == "OR" {
@@ -390,10 +468,37 @@ pub async fn analytics_query(
                 // (model LIKE '%AND%' OR vendor_name LIKE '%AND%') 조건이 암묵적으로 추가되는
                 // 예상치 못한 필터 누락/축소가 발생한다. 이를 방지하기 위해 AND/OR 토큰은 무시한다.
                 // 향후 정식 논리식 파서를 도입할 때 여기 로직을 대체/확장해야 한다.
+                info!("  Skipping logical operator: {}", upper_tok);
                 continue;
             }
-            // Operators precedence: check for >= or <= first
-            let (field_part, op, value_part) = if let Some(pos) = t.find(">=") { (&t[..pos], Some(">="), &t[pos+2..]) } else if let Some(pos) = t.find("<=") { (&t[..pos], Some("<="), &t[pos+2..]) } else if let Some(pos) = t.find('=') { (&t[..pos], Some("="), &t[pos+1..]) } else if let Some(pos) = t.find('~') { (&t[..pos], Some("~"), &t[pos+1..]) } else if let Some(pos) = t.find(':') { (&t[..pos], None, &t[pos+1..]) } else { ("", None, *t) };
+            // Operators precedence: check for >= or <= first, then :in:
+            let t_str = t.as_str();
+            info!("  Processing token: '{}'", t_str);
+            
+            let (field_part, op, value_part) = if let Some(pos) = t_str.find(">=") {
+                info!("    Found >= operator at pos {}", pos);
+                (&t_str[..pos], Some(">="), &t_str[pos+2..])
+            } else if let Some(pos) = t_str.find("<=") {
+                info!("    Found <= operator at pos {}", pos);
+                (&t_str[..pos], Some("<="), &t_str[pos+2..])
+            } else if let Some(pos) = t_str.find(":in:") {
+                info!("    Found :in: operator at pos {}", pos);
+                (&t_str[..pos], Some(":in:"), &t_str[pos+4..])
+            } else if let Some(pos) = t_str.find('=') {
+                info!("    Found = operator at pos {}", pos);
+                (&t_str[..pos], Some("="), &t_str[pos+1..])
+            } else if let Some(pos) = t_str.find('~') {
+                info!("    Found ~ operator at pos {}", pos);
+                (&t_str[..pos], Some("~"), &t_str[pos+1..])
+            } else if let Some(pos) = t_str.find(':') {
+                info!("    Found : operator at pos {}", pos);
+                (&t_str[..pos], None, &t_str[pos+1..])
+            } else {
+                info!("    No operator found, treating as bareword");
+                ("", None, t_str)
+            };
+
+            info!("    Parsed: field='{}', op={:?}, value='{}'", field_part, op, value_part);
 
             let field = field_part.to_lowercase();
             let value = value_part.trim();
@@ -410,15 +515,102 @@ pub async fn analytics_query(
             let column = match field.as_str() {
                 "vendor"|"v"|"ven" => "vendor_name",
                 "vnum" => "vendor_number",
-                "category"|"cat" => "device_category",
-                "dtype"|"dname"|"dt" => "device_type_name",
+                "category"|"cat"|"device_category" => "device_category",
+                "dtype"|"dname"|"dt"|"device_type_name" => "device_type_name",
+                "vendor_name" => "vendor_name", // 직접 컬럼명 사용 허용
                 "model"|"m" => "model",
                 "date" => "certification_date",
                 "created"|"c" => "detail_created_at",
                 _ => { filter_error = Some(format!("알 수 없는 필드 '{}'", field)); break; }
             };
             let op_used = op.unwrap_or(if matches!(field.as_str(), "date"|"created"|"c") { "=" } else { "~" });
+            
+            // Special handling for null values
+            if value.eq_ignore_ascii_case("null") && (op_used == "=" || op_used == "~") {
+                where_clauses.push(format!("{} IS NULL", column));
+                continue;
+            }
+            
             match op_used {
+                ":in:" => {
+                    info!("    Starting :in: operator parsing...");
+                    // Parse array: [value1,value2,...] or ["val1","val2",...]
+                    if !value.starts_with('[') || !value.ends_with(']') {
+                        filter_error = Some(format!("in: 연산자는 배열 형식 [...]이 필요합니다: {}", value));
+                        break;
+                    }
+                    let inner = &value[1..value.len()-1];
+                    info!("    Inner content (after removing brackets): '{}'", inner);
+                    if inner.is_empty() {
+                        filter_error = Some("in: 배열이 비어있습니다".into());
+                        break;
+                    }
+                    
+                    // Quote-aware CSV parsing: split by comma only if not inside quotes
+                    info!("    Starting quote-aware CSV parsing...");
+                    let mut items: Vec<String> = Vec::new();
+                    let mut current = String::new();
+                    let mut in_quotes = false;
+                    let mut escape_next = false;
+                    
+                    for ch in inner.chars() {
+                        if escape_next {
+                            current.push(ch);
+                            escape_next = false;
+                        } else if ch == '\\' {
+                            escape_next = true;
+                        } else if ch == '"' {
+                            in_quotes = !in_quotes;
+                            current.push(ch);
+                        } else if ch == ',' && !in_quotes {
+                            // Comma outside quotes = delimiter
+                            let trimmed = current.trim();
+                            if !trimmed.is_empty() {
+                                // Remove surrounding quotes
+                                let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"')) || 
+                                                  (trimmed.starts_with('\'') && trimmed.ends_with('\'')) {
+                                    trimmed[1..trimmed.len()-1].to_string()
+                                } else {
+                                    trimmed.to_string()
+                                };
+                                items.push(unquoted);
+                            }
+                            current.clear();
+                        } else {
+                            current.push(ch);
+                        }
+                    }
+                    
+                    // Don't forget the last item
+                    info!("    Processing last item, current buffer: '{}'", current);
+                    let trimmed = current.trim();
+                    if !trimmed.is_empty() {
+                        let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"')) || 
+                                          (trimmed.starts_with('\'') && trimmed.ends_with('\'')) {
+                            trimmed[1..trimmed.len()-1].to_string()
+                        } else {
+                            trimmed.to_string()
+                        };
+                        items.push(unquoted);
+                    }
+                    
+                    info!("Parsed IN array for {}: {:?} (count: {})", column, items, items.len());
+                    
+                    if items.is_empty() {
+                        filter_error = Some("in: 배열에 유효한 값이 없습니다".into());
+                        info!("    ERROR: items is empty after parsing!");
+                        break;
+                    }
+                    
+                    // Generate placeholders and bind values
+                    info!("    Generating SQL placeholders...");
+                    let placeholders: Vec<&str> = items.iter().map(|_| "?").collect();
+                    where_clauses.push(format!("{} IN ({})", column, placeholders.join(",")));
+                    for item in items {
+                        binds.push(item);
+                    }
+                    info!("    :in: operator processing completed successfully");
+                },
                 "~" => {
                     where_clauses.push(format!("{} LIKE ?", column));
                     binds.push(format!("%{}%", value));
@@ -444,6 +636,10 @@ pub async fn analytics_query(
     let where_sql = if filter_error.is_none() && !where_clauses.is_empty() {
         format!("WHERE {}", where_clauses.join(" AND "))
     } else { String::new() };
+    
+    if !where_sql.is_empty() {
+        info!("Generated WHERE clause: {} | Binds: {:?}", where_sql, binds);
+    }
 
     // Count
     let total: i64 = if filter_error.is_none() {
