@@ -325,6 +325,11 @@ pub struct AnalyticsRow {
     pub certification_date: Option<String>,
     pub detail_created_at: Option<String>,
     pub transport_interface: Option<String>,
+    // Diagnostic columns (added in migration 026)
+    pub raw_type_ids: Option<String>,
+    pub type_ids_status: Option<String>,
+    pub category_missing_reason: Option<String>,
+    pub type_match_count: Option<i64>,
 }
 
 #[derive(serde::Serialize)]
@@ -676,7 +681,10 @@ pub async fn analytics_query(
 
     // Rows
     let rows: Vec<AnalyticsRow> = if filter_error.is_none() {
-        let base_select = format!(r#"SELECT product_detail_url, model, vendor_name, device_type_name, device_category, certification_date, detail_created_at, transport_interface
+        let base_select = format!(r#"SELECT 
+                      product_detail_url, model, vendor_name, device_type_name, device_category, 
+                      certification_date, detail_created_at, transport_interface,
+                      raw_type_ids, type_ids_status, category_missing_reason, type_match_count
                       FROM v_product_detail_analytics
                       {} {} LIMIT ? OFFSET ?"#, where_sql, order_by_sql);
         let mut q = sqlx::query(&base_select);
@@ -692,7 +700,15 @@ pub async fn analytics_query(
                 let certification_date = r.get::<Option<String>, _>("certification_date");
                 let detail_created_at = r.get::<Option<String>, _>("detail_created_at");
                 let transport_interface = r.get::<Option<String>, _>("transport_interface");
-                AnalyticsRow { product_detail_url, model, vendor_name, device_type_name, device_category, certification_date, detail_created_at, transport_interface }
+                let raw_type_ids = r.get::<Option<String>, _>("raw_type_ids");
+                let type_ids_status = r.get::<Option<String>, _>("type_ids_status");
+                let category_missing_reason = r.get::<Option<String>, _>("category_missing_reason");
+                let type_match_count = r.get::<Option<i64>, _>("type_match_count");
+                AnalyticsRow { 
+                    product_detail_url, model, vendor_name, device_type_name, device_category, 
+                    certification_date, detail_created_at, transport_interface,
+                    raw_type_ids, type_ids_status, category_missing_reason, type_match_count
+                }
             }).collect(),
             Err(_) => Vec::new()
         }

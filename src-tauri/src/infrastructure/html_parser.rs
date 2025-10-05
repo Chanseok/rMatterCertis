@@ -804,7 +804,27 @@ impl MatterDataExtractor {
                 detail.transport_interface = Some(value.to_string());
             }
             l if l.contains("primary device type") || l.contains("device type id") => {
-                // primary_device_type_id removed; normalized list field is populated via DB pipeline
+                // Parse comma-separated hex values: "0x0015,0x0100" or "0015,0100"
+                // Convert to decimal array: [21, 256]
+                let ids: Vec<i32> = value
+                    .split(',')
+                    .filter_map(|s| {
+                        let trimmed = s.trim();
+                        // Parse as hex (with or without 0x prefix)
+                        let hex_str = if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
+                            &trimmed[2..]
+                        } else {
+                            trimmed
+                        };
+                        
+                        // Convert hex to decimal
+                        i32::from_str_radix(hex_str, 16).ok()
+                    })
+                    .collect();
+                
+                if !ids.is_empty() {
+                    detail.primary_device_type_ids = Some(ids);
+                }
             }
             l if l.contains("device type")
                 || l.contains("product type")

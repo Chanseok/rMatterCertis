@@ -828,7 +828,34 @@ impl IntegratedProductRepository {
             fill_or_change_opt_str!(family_variant_sku, "family_variant_sku");
             fill_or_change_opt_str!(family_id, "family_id");
             fill_or_change_opt_str!(tis_trp_tested, "tis_trp_tested");
-            // primary_device_type_id removed; normalization uses primary_device_type_ids only
+            
+            // ⭐ primary_device_type_ids handling (Vec<String> requires special comparison)
+            let existing_ids_json = existing_detail.primary_device_type_ids.as_ref()
+                .map(|ids| serde_json::to_string(ids).unwrap_or_default());
+            let new_ids_json = detail.primary_device_type_ids.as_ref()
+                .map(|ids| serde_json::to_string(ids).unwrap_or_default());
+            
+            // 🐛 DEBUG: Log the values for troubleshooting
+            tracing::debug!(target="persist_detail_decision", url=%detail.url, 
+                existing_ids_json=?existing_ids_json, 
+                new_ids_json=?new_ids_json, 
+                "primary_device_type_ids_comparison");
+            
+            if existing_ids_json.is_none() && new_ids_json.is_some() {
+                updates.push("primary_device_type_ids = ?");
+                binds.push(BindValue::OwnedStr(new_ids_json.clone().unwrap()));
+                change_kinds.push("fill:primary_device_type_ids".to_string());
+                tracing::info!(target="persist_detail_decision", url=%detail.url, "WILL_FILL_primary_device_type_ids");
+            } else if existing_ids_json.is_some() 
+                && new_ids_json.is_some() 
+                && existing_ids_json != new_ids_json 
+            {
+                updates.push("primary_device_type_ids = ?");
+                binds.push(BindValue::OwnedStr(new_ids_json.clone().unwrap()));
+                change_kinds.push("change:primary_device_type_ids".to_string());
+                tracing::info!(target="persist_detail_decision", url=%detail.url, "WILL_CHANGE_primary_device_type_ids");
+            }
+            
             fill_or_change_opt_str!(certificate_id, "certificate_id");
             // numeric
             if existing_detail.vid != detail.vid && detail.vid.is_some() {

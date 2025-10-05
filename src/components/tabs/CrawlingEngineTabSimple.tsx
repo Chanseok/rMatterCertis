@@ -6,6 +6,7 @@ import StageStatsPanels from "./parts/StageStatsPanels";
 import DiagnosticsPanel from "./parts/DiagnosticsPanel";
 import HelpPanel from "./parts/HelpPanel";
 import ListPageProgressPanel from "../ListPageProgressPanel";
+import ComplementCrawlProgressPanel from "../ComplementCrawlProgressPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 // Types are relaxed locally to avoid tight coupling during integration
@@ -570,7 +571,7 @@ export default function CrawlingEngineTabSimple() {
     }
   };
 
-  // 🔧 제품 보완 동기화: certification_date가 누락된 제품 재크롤링
+  // 🔧 제품 보완 동기화: 핵심 필드(cert_date, transport, device_type_ids) 누락 제품 재크롤링
   const handleComplementCrawl = async () => {
     if (isRunning() || isSyncing()) {
       addLog("⚠️ 이미 크롤링이 진행 중입니다.");
@@ -580,13 +581,14 @@ export default function CrawlingEngineTabSimple() {
     setIsRunning(true);
     setIsSyncing(true);
     setStatusMessage("🔧 제품 보완 동기화 진행 중...");
-    addLog("🔧 제품 보완 동기화 시작 (certification_date 누락 제품 재크롤링, 동시성: 12)");
+    addLog("🔧 제품 보완 동기화 시작 (핵심 필드 누락 제품 재크롤링: cert_date, transport, device_type_ids)");
+    addLog("💡 동시성: 12개 제품 병렬 처리");
 
     try {
       const result = await tauriApi.startComplementCrawl();
       
       if (result.urls_targeted === 0) {
-        addLog(`✨ 보완이 필요한 제품이 없습니다.`);
+        addLog(`✨ 보완이 필요한 제품이 없습니다. (모든 제품에 핵심 필드 존재)`);
       } else {
         addLog(`🔄 ${result.urls_targeted}개 제품 병렬 재크롤링 완료`);
         addLog(`✅ 보완 동기화 완료: ${result.urls_completed}/${result.urls_targeted}개 성공 (${(result.duration_ms / 1000).toFixed(1)}초)`);
@@ -594,6 +596,7 @@ export default function CrawlingEngineTabSimple() {
           addLog(`⚠️ ${result.urls_failed}개 실패 - 재시도가 필요할 수 있습니다.`);
         } else {
           addLog(`🎉 모든 제품이 성공적으로 업데이트되었습니다!`);
+          addLog(`📊 업데이트 필드: certification_date, transport_interface, primary_device_type_ids`);
         }
       }
       
@@ -1837,8 +1840,13 @@ export default function CrawlingEngineTabSimple() {
         </div>
     <SyncPanel syncLive={syncLive} />
     <SessionStatusCard isRunning={isRunning} statusMessage={statusMessage} batchInfo={batchInfo} />
+    
     {/* ListPageCrawling 실시간 진행상황 패널 */}
     <ListPageProgressPanel />
+    
+    {/* 제품 보완 크롤링 실시간 진행상황 패널 */}
+    <ComplementCrawlProgressPanel />
+    
     {/* 복원: 계산된 크롤링 범위 & 사전 분석 Premium Cards */}
     <Show when={!isRunning()}>
       <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 -mt-4 space-y-6">

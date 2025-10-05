@@ -131,12 +131,12 @@ const HelpPanel: Component<Props> = (p) => {
                 <span>제품 보완 동기화</span>
               </h3>
               <div class="bg-teal-50 rounded-lg p-4 space-y-2">
-                <p class="text-sm text-gray-700"><strong>용도:</strong> certification_date 누락 제품만 재크롤링</p>
+                <p class="text-sm text-gray-700"><strong>용도:</strong> 핵심 필드(cert_date, transport, device_type_ids) 누락 제품 재크롤링</p>
                 <p class="text-sm text-gray-700"><strong>소요 시간:</strong> 누락 제품 수에 따라 1-5분</p>
                 <div class="text-sm text-gray-600">
                   <strong>동작 방식:</strong>
                   <ul class="list-disc list-inside ml-2 mt-1 space-y-1">
-                    <li>DB에서 certification_date가 NULL인 제품 검색</li>
+                    <li>DB에서 certification_date, transport_interface, primary_device_type_ids 중 하나라도 NULL인 제품 검색</li>
                     <li>해당 제품들만 선택적으로 재크롤링</li>
                     <li>기존 데이터는 유지하고 누락 필드만 업데이트</li>
                   </ul>
@@ -145,7 +145,7 @@ const HelpPanel: Component<Props> = (p) => {
                   <strong>사용 시나리오:</strong>
                   <ul class="list-disc list-inside ml-2 mt-1 space-y-1">
                     <li>스마트 동기화보다 빠르고 가벼운 보완 작업</li>
-                    <li>LocalDB 탭에서 certification_date 필터로 누락 확인 후</li>
+                    <li>LocalDB 탭에서 핵심 필드(cert_date, transport, device_type) 누락 확인 후</li>
                     <li>특정 필드만 보완이 필요한 경우</li>
                   </ul>
                 </div>
@@ -203,7 +203,7 @@ const HelpPanel: Component<Props> = (p) => {
                 <div class="bg-teal-50 rounded-lg p-4">
                   <h4 class="font-semibold text-teal-800 mb-2">빠른 보완 작업</h4>
                   <ol class="list-decimal list-inside text-sm text-gray-700 space-y-1">
-                    <li>LocalDB 탭에서 certification_date 필터로 누락 확인</li>
+                    <li>LocalDB 탭에서 핵심 필드(cert_date, transport, device_type) 누락 확인</li>
                     <li>🔧 제품 보완 동기화 (누락 제품만 재크롤링)</li>
                   </ol>
                 </div>
