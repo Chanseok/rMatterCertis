@@ -95,9 +95,19 @@ async function loadSummary() {
           sort: ['certification_date:desc'] 
         });
         
+        console.log('[loadSummary] 날짜 범위 조회 결과:', {
+          minRes: minRes.rows?.[0],
+          maxRes: maxRes.rows?.[0]
+        });
+        
         if (minRes.rows?.[0]?.certification_date && maxRes.rows?.[0]?.certification_date) {
           const minDate = minRes.rows[0].certification_date;
           const maxDate = maxRes.rows[0].certification_date;
+          
+          console.log('[loadSummary] 설정할 날짜 범위:', {
+            minDate,
+            maxDate
+          });
           
           // certDateMin/Max와 certDateRange를 모두 업데이트
           setUi({ 
@@ -109,6 +119,7 @@ async function loadSummary() {
         } else {
           // 데이터가 없으면 기본값 사용
           const today = new Date().toISOString().split('T')[0];
+          console.log('[loadSummary] 데이터 없음, 기본값 사용');
           setUi({ 
             ...ui, 
             certDateMin: "2020-01-01", 
@@ -116,9 +127,10 @@ async function loadSummary() {
             certDateRange: ["2020-01-01", today]
           });
         }
-      } catch {
+      } catch (e) {
         // 에러 시 기본값 사용
         const today = new Date().toISOString().split('T')[0];
+        console.error('[loadSummary] 날짜 범위 조회 실패:', e);
         setUi({ 
           ...ui, 
           certDateMin: "2020-01-01", 

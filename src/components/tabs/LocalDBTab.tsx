@@ -42,13 +42,13 @@ export const LocalDBTab: Component = () => {
   const applyFilters = () => {
     const filters: string[] = [];
 
-    // 1. 날짜 범위 필터 (date 필드 사용 - DSL 파서에서 certification_date로 매핑됨)
-    // 주의: 항상 날짜 필터를 적용하면 초기 로딩 시 전체 데이터를 못 가져올 수 있음
+    // 1. 날짜 범위 필터 (항상 적용) - date 필드 -> certification_date 매핑
     const [startDate, endDate] = ui.certDateRange;
     if (startDate && endDate) {
       filters.push(`date>=${startDate}`);
       filters.push(`date<=${endDate}`);
     }
+    console.log('[applyFilters] 날짜 필터 적용:', { startDate, endDate, filterAdded: startDate && endDate });
 
     // 2. 카테고리 필터 (device_category:in:[...] 형식)
     if (ui.selectedCategories.length > 0) {
@@ -83,6 +83,8 @@ export const LocalDBTab: Component = () => {
 
     // 5. 최종 필터 문자열 생성
     const finalFilter = filters.join(' AND ');
+    
+    console.log('[applyFilters] 최종 필터:', finalFilter);
     
     // 6. Store에 적용하고 Analytics 재로드
     localDbDashboardStore.applyFilter(finalFilter);

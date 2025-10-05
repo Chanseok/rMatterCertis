@@ -381,6 +381,17 @@ pub async fn analytics_query(
         let field_pattern = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*").unwrap();
         for t in &tokens {
             if t.contains('"') || t.contains('\'') { filter_error = Some("따옴표는 아직 지원하지 않습니다".into()); break; }
+            // Skip logical connector tokens (prevent accidental bareword searching)
+            let upper_tok = t.to_ascii_uppercase();
+            if upper_tok == "AND" || upper_tok == "OR" {
+                // NOTE: 현재 DSL은 명시적인 논리 연산자를 아직 지원하지 않는다.
+                // 사용자가 'date>=2022-10-01 AND date<=2025-10-02' 처럼 입력하면
+                // 공백 분리 토큰화 후 AND 가 bareword 로 분류되어
+                // (model LIKE '%AND%' OR vendor_name LIKE '%AND%') 조건이 암묵적으로 추가되는
+                // 예상치 못한 필터 누락/축소가 발생한다. 이를 방지하기 위해 AND/OR 토큰은 무시한다.
+                // 향후 정식 논리식 파서를 도입할 때 여기 로직을 대체/확장해야 한다.
+                continue;
+            }
             // Operators precedence: check for >= or <= first
             let (field_part, op, value_part) = if let Some(pos) = t.find(">=") { (&t[..pos], Some(">="), &t[pos+2..]) } else if let Some(pos) = t.find("<=") { (&t[..pos], Some("<="), &t[pos+2..]) } else if let Some(pos) = t.find('=') { (&t[..pos], Some("="), &t[pos+1..]) } else if let Some(pos) = t.find('~') { (&t[..pos], Some("~"), &t[pos+1..]) } else if let Some(pos) = t.find(':') { (&t[..pos], None, &t[pos+1..]) } else { ("", None, *t) };
 
