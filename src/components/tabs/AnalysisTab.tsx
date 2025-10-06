@@ -382,6 +382,37 @@ export const AnalysisTab: Component = () => {
             </Show>
           </div>
 
+          {/* Transport Interface Distribution */}
+          <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4">Transport Interface별 분포</h3>
+            <Show when={(pd()?.distributions?.transport_interfaces?.length ?? 0) === 0}>
+              <div class="text-center text-gray-500 py-6">Transport Interface 데이터가 없습니다.</div>
+            </Show>
+            <Show when={(pd()?.distributions?.transport_interfaces?.length ?? 0) > 0}>
+              <div class="space-y-3">
+                <For each={(pd()?.distributions?.transport_interfaces ?? [])}>
+                  {(item: any) => {
+                    const total = pd()?.total_details ?? 0;
+                    const key = item.key ?? 'Unknown';
+                    const count = item.count as number;
+                    const pct = total > 0 ? ((count / total) * 100).toFixed(1) : '0';
+                    return (
+                      <div>
+                        <div class="flex items-center justify-between mb-1">
+                          <span class="font-medium text-gray-800">{key}</span>
+                          <span class="text-sm text-gray-600">{count.toLocaleString()} ({pct}%)</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded h-2">
+                          <div class="h-2 rounded bg-violet-500" style={{ width: `${pct}%` }}></div>
+                        </div>
+                      </div>
+                    );
+                  }}
+                </For>
+              </div>
+            </Show>
+          </div>
+
 
 
         </Show>

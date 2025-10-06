@@ -23,6 +23,7 @@ export const LocalDBTab: Component = () => {
   const [showCategoryDialog, setShowCategoryDialog] = createSignal(false);
   const [showVendorDialog, setShowVendorDialog] = createSignal(false);
   const [showDeviceTypeDialog, setShowDeviceTypeDialog] = createSignal(false);
+  const [showTransportInterfaceDialog, setShowTransportInterfaceDialog] = createSignal(false);
 
   onMount(() => {
     initializeLocalDbDashboard().catch(console.error);
@@ -104,18 +105,24 @@ export const LocalDBTab: Component = () => {
       filters.push(`dtype:in:[${dtypeList}]`);
     }
 
-    // 5. 기존 filterDraft (quick search)와 결합
+    // 5. Transport Interface 필터 (transport_interface:in:[...] 형식)
+    if (ui.selectedTransportInterfaces.length > 0) {
+      const tiList = ui.selectedTransportInterfaces.map(ti => `"${ti.replace(/"/g, '\\"')}"`).join(',');
+      filters.push(`transport_interface:in:[${tiList}]`);
+    }
+
+    // 6. 기존 filterDraft (quick search)와 결합
     const quickSearch = ui.filterDraft?.trim();
     if (quickSearch) {
       filters.push(quickSearch);
     }
 
-    // 5. 최종 필터 문자열 생성
+    // 7. 최종 필터 문자열 생성
     const finalFilter = filters.join(' AND ');
     
     console.log('[applyFilters] 최종 필터:', finalFilter);
     
-    // 6. Store에 적용하고 Analytics 재로드
+    // 8. Store에 적용하고 Analytics 재로드
     localDbDashboardStore.applyFilter(finalFilter);
   };
 
@@ -178,8 +185,8 @@ export const LocalDBTab: Component = () => {
           </Show>
         </div>
 
-        {/* 카테고리 & 디바이스 타입 & 벤더 필터 버튼 */}
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* 카테고리 & 디바이스 타입 & 벤더 & Transport Interface 필터 버튼 */}
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* 카테고리 필터 */}
           <div class="bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-5 shadow-sm">
             <div class="flex items-center gap-2 mb-3">
@@ -314,6 +321,51 @@ export const LocalDBTab: Component = () => {
               </div>
             </Show>
           </div>
+
+          {/* Transport Interface 필터 */}
+          <div class="bg-gradient-to-br from-violet-50 to-purple-50 border-2 border-violet-200 rounded-xl p-5 shadow-sm">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="text-2xl">📡</span>
+              <div>
+                <div class="text-sm font-bold text-violet-900">Transport Interface 필터</div>
+                <div class="text-xs text-violet-600">{s()?.all_transport_interfaces?.length || 0}개 항목</div>
+              </div>
+            </div>
+            
+            <button 
+              class="w-full px-4 py-3 bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 text-white rounded-lg font-semibold shadow-lg transition-all transform hover:scale-[1.02] active:scale-95"
+              onClick={() => setShowTransportInterfaceDialog(true)}
+            >
+              <div class="flex items-center justify-center gap-2">
+                <span>Transport Interface 선택</span>
+                <Show when={ui.selectedTransportInterfaces.length > 0}>
+                  <span class="bg-white text-violet-600 rounded-full px-2.5 py-0.5 text-xs font-bold shadow-md">
+                    {ui.selectedTransportInterfaces.length}
+                  </span>
+                </Show>
+              </div>
+            </button>
+            
+            <Show when={ui.selectedTransportInterfaces.length > 0}>
+              <div class="mt-3 bg-white rounded-lg p-3 border border-violet-200">
+                <div class="text-xs font-semibold text-violet-700 mb-2">선택됨:</div>
+                <div class="flex flex-wrap gap-1.5">
+                  <For each={ui.selectedTransportInterfaces.slice(0, 3)}>
+                    {ti => (
+                      <span class="px-2 py-1 bg-violet-100 text-violet-700 rounded-full text-[10px] font-medium truncate max-w-[120px]" title={ti}>
+                        {ti}
+                      </span>
+                    )}
+                  </For>
+                  <Show when={ui.selectedTransportInterfaces.length > 3}>
+                    <span class="px-2 py-1 bg-gray-200 text-gray-600 rounded-full text-[10px] font-semibold">
+                      +{ui.selectedTransportInterfaces.length - 3}
+                    </span>
+                  </Show>
+                </div>
+              </div>
+            </Show>
+          </div>
         </div>
 
         {/* Summary */}
@@ -336,7 +388,7 @@ export const LocalDBTab: Component = () => {
                 class="px-4 py-2 rounded-lg bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white text-sm font-semibold shadow-md transition-all"
                 onClick={() => {
                   localDbDashboardStore.resetFilter();
-                  localDbDashboardStore.setUi({ ...ui, certDateRange: ["", ""], selectedCategories: [], selectedVendors: [], selectedDeviceTypes: [] });
+                  localDbDashboardStore.setUi({ ...ui, certDateRange: ["", ""], selectedCategories: [], selectedVendors: [], selectedDeviceTypes: [], selectedTransportInterfaces: [] });
                 }}
               >
                 🗑️ 필터 초기화
@@ -447,7 +499,7 @@ export const LocalDBTab: Component = () => {
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
           <div class="mb-6">
             <h3 class="text-xl font-bold text-gray-800">🔍 분석 인사이트</h3>
-            <p class="text-xs text-gray-500 mt-1">카테고리, 디바이스 타입, 벤더, 인증 활동 통계</p>
+            <p class="text-xs text-gray-500 mt-1">카테고리, 디바이스 타입, 벤더, Transport Interface, 인증 활동 통계</p>
           </div>
           
           <Show when={!ui.loadingSummary && s()} fallback={
@@ -455,7 +507,7 @@ export const LocalDBTab: Component = () => {
               <div class="text-sm text-gray-400 animate-pulse">📊 인사이트를 불러오는 중...</div>
             </div>
           }>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
               {/* Top 카테고리 통계 */}
               <div class="bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-5 shadow-sm">
                 <div class="flex items-center gap-2 mb-4">
@@ -555,6 +607,39 @@ export const LocalDBTab: Component = () => {
                 </div>
               </div>
 
+              {/* Transport Interface Top 10 */}
+              <div class="bg-gradient-to-br from-violet-50 to-purple-50 border-2 border-violet-200 rounded-xl p-5 shadow-sm">
+                <div class="flex items-center gap-2 mb-4">
+                  <span class="text-2xl">📡</span>
+                  <div>
+                    <div class="text-sm font-bold text-violet-900">Transport Interface</div>
+                    <div class="text-xs text-violet-600">{s()!.all_transport_interfaces?.length || 0}개 인터페이스</div>
+                  </div>
+                </div>
+                <div class="bg-white rounded-lg p-3 border border-violet-200 space-y-1.5 overflow-y-auto max-h-[240px]" style="scrollbar-width: thin;">
+                  <For each={s()!.top_transport_interfaces?.slice(0, 10) || []}>
+                    {(ti, idx) => {
+                      const maxCount = s()!.top_transport_interfaces?.[0]?.[1] || 1;
+                      const percentage = (ti[1] / maxCount) * 100;
+                      return (
+                        <div class="group hover:bg-violet-50 rounded p-2 transition-colors">
+                          <div class="flex items-center justify-between mb-1">
+                            <div class="flex items-center gap-2 flex-1 min-w-0">
+                              <span class="text-violet-400 text-[10px] font-mono w-6">#{idx() + 1}</span>
+                              <span class="truncate font-medium text-xs text-gray-700" title={ti[0]}>{ti[0]}</span>
+                            </div>
+                            <span class="text-violet-600 font-bold ml-2 text-xs">{ti[1]}</span>
+                          </div>
+                          <div class="h-1 bg-gray-200 rounded-full overflow-hidden">
+                            <div class="h-full bg-gradient-to-r from-violet-500 to-purple-500 rounded-full transition-all" style={`width: ${percentage}%`}></div>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  </For>
+                </div>
+              </div>
+
               {/* 최근 인증 활동 */}
               <div class="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-200 rounded-xl p-5 shadow-sm">
                 <div class="flex items-center gap-2 mb-4">
@@ -621,7 +706,7 @@ export const LocalDBTab: Component = () => {
               <button 
                 class="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-700 text-sm font-medium"
                 onClick={() => {
-                  localDbDashboardStore.setUi({ ...ui, filterDraft: '', selectedCategories: [] });
+                  localDbDashboardStore.setUi({ ...ui, filterDraft: '', selectedCategories: [], selectedVendors: [], selectedDeviceTypes: [], selectedTransportInterfaces: [] });
                   localDbDashboardStore.resetFilter();
                 }}
               >
@@ -1277,6 +1362,102 @@ export const LocalDBTab: Component = () => {
                     class="px-4 py-2 rounded bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-semibold shadow-md"
                     onClick={() => {
                       setShowDeviceTypeDialog(false);
+                      applyFilters();
+                    }}
+                  >
+                    적용
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Show>
+
+        {/* Transport Interface 필터 다이얼로그 */}
+        <Show when={showTransportInterfaceDialog()}>
+          <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowTransportInterfaceDialog(false)}>
+            <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div class="sticky top-0 bg-gradient-to-r from-violet-500 to-purple-600 px-6 py-4 flex items-center justify-between">
+                <h3 class="text-xl font-bold text-white">📡 Transport Interface 필터 선택</h3>
+                <button class="text-white hover:text-gray-200 text-3xl font-light" onClick={() => setShowTransportInterfaceDialog(false)}>&times;</button>
+              </div>
+              
+              <div class="p-6">
+                <div class="flex items-center justify-between mb-4">
+                  <div class="text-sm text-gray-600">
+                    선택됨: <span class="font-bold text-violet-600">{ui.selectedTransportInterfaces.length}</span> / {s()?.all_transport_interfaces?.length || 0}
+                  </div>
+                  <div class="flex gap-2">
+                    <button 
+                      class="px-3 py-1.5 bg-violet-100 hover:bg-violet-200 text-violet-700 rounded font-medium text-sm"
+                      onClick={() => {
+                        const allTIs = s()?.all_transport_interfaces || [];
+                        const isAllSelected = ui.selectedTransportInterfaces.length === allTIs.length;
+                        localDbDashboardStore.setUi({ ...ui, selectedTransportInterfaces: isAllSelected ? [] : allTIs });
+                      }}
+                    >
+                      {ui.selectedTransportInterfaces.length === (s()?.all_transport_interfaces?.length || 0) ? '전체 해제' : '전체 선택'}
+                    </button>
+                    <button 
+                      class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-medium text-sm"
+                      onClick={() => localDbDashboardStore.setUi({ ...ui, selectedTransportInterfaces: [] })}
+                    >
+                      초기화
+                    </button>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 overflow-y-auto max-h-[500px] pr-2" style="scrollbar-width: thin;">
+                  <For each={s()?.all_transport_interfaces || []}>
+                    {(ti, idx) => {
+                      const isSelected = () => ui.selectedTransportInterfaces.includes(ti);
+                      return (
+                        <div 
+                          class={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
+                            isSelected() 
+                              ? 'bg-violet-100 border-violet-400 shadow-md' 
+                              : 'bg-white border-gray-200 hover:border-violet-300 hover:bg-violet-50'
+                          }`}
+                          onClick={() => {
+                            const newSelected = isSelected() 
+                              ? ui.selectedTransportInterfaces.filter(t => t !== ti)
+                              : [...ui.selectedTransportInterfaces, ti];
+                            localDbDashboardStore.setUi({ ...ui, selectedTransportInterfaces: newSelected });
+                          }}
+                        >
+                          <div class="flex items-center gap-2">
+                            <input 
+                              type="checkbox" 
+                              checked={isSelected()} 
+                              class="pointer-events-none w-4 h-4"
+                            />
+                            <span class="text-gray-400 text-xs font-mono">#{idx() + 1}</span>
+                            <span class="text-sm font-semibold text-gray-800 truncate" title={ti}>
+                              {ti}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  </For>
+                </div>
+              </div>
+              
+              <div class="sticky bottom-0 bg-gray-50 border-t px-6 py-4 flex justify-between items-center">
+                <div class="text-sm text-gray-600">
+                  <span class="font-semibold text-violet-600">{ui.selectedTransportInterfaces.length}</span>개 Transport Interface 선택됨
+                </div>
+                <div class="flex gap-2">
+                  <button 
+                    class="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium"
+                    onClick={() => setShowTransportInterfaceDialog(false)}
+                  >
+                    취소
+                  </button>
+                  <button 
+                    class="px-4 py-2 rounded bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 text-white font-semibold shadow-md"
+                    onClick={() => {
+                      setShowTransportInterfaceDialog(false);
                       applyFilters();
                     }}
                   >

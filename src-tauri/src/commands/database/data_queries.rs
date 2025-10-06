@@ -177,6 +177,8 @@ pub struct DbSummary {
     pub top_device_types: Vec<(String, i64)>,
     pub top_vendors: Vec<(String, i64)>,
     pub all_device_type_names: Vec<String>,
+    pub top_transport_interfaces: Vec<(String, i64)>,
+    pub all_transport_interfaces: Vec<String>,
 }
 
 /// Return basic database summary statistics.
@@ -290,6 +292,34 @@ pub async fn get_db_summary(state: State<'_, DatabaseConnection>) -> Result<DbSu
         }
     };
     
+    // Top transport interfaces (Top 10 by product count)
+    let top_transport_interfaces = {
+        let sql = "SELECT transport_interface, COUNT(*) as cnt FROM v_product_detail_analytics WHERE transport_interface IS NOT NULL GROUP BY transport_interface ORDER BY cnt DESC LIMIT 10";
+        match sqlx::query(sql).fetch_all(pool).await {
+            Ok(rows) => rows
+                .into_iter()
+                .filter_map(|r| {
+                    let ti: Option<String> = r.get::<Option<String>, _>("transport_interface");
+                    let cnt: i64 = r.get::<i64, _>("cnt");
+                    ti.map(|t| (t, cnt))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+    
+    // All transport interfaces (for transport interface filter)
+    let all_transport_interfaces = {
+        let sql = "SELECT DISTINCT transport_interface FROM v_product_detail_analytics WHERE transport_interface IS NOT NULL ORDER BY transport_interface ASC";
+        match sqlx::query(sql).fetch_all(pool).await {
+            Ok(rows) => rows
+                .into_iter()
+                .filter_map(|r| r.get::<Option<String>, _>("transport_interface"))
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+    
     Ok(DbSummary {
         total_products,
         total_product_details,
@@ -302,6 +332,8 @@ pub async fn get_db_summary(state: State<'_, DatabaseConnection>) -> Result<DbSu
         top_device_types,
         top_vendors,
         all_device_type_names,
+        top_transport_interfaces,
+        all_transport_interfaces,
     })
 }
 
