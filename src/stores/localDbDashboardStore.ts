@@ -14,9 +14,10 @@ interface SummaryData {
   top_device_categories: [string, number][];
   all_device_categories?: [string, number][]; // 전체 카테고리 리스트
   top_device_types?: [string, number][]; // Top 10 디바이스 타입
+  all_device_types?: [string, number][]; // 전체 디바이스 타입 리스트 (count와 함께)
   top_vendors?: [string, number][]; // Top 10 벤더
   all_vendors?: [string, number][]; // 전체 벤더 리스트
-  all_device_type_names?: string[]; // 전체 디바이스 타입 이름 리스트
+  all_device_type_names?: string[]; // 전체 디바이스 타입 이름 리스트 (Matter 표준 정의용)
   top_transport_interfaces?: [string, number][]; // Top transport interfaces
   all_transport_interfaces?: string[]; // 전체 transport interface 리스트
   device_types_by_category?: Record<string, string[]>; // 카테고리별 디바이스 타입 매핑

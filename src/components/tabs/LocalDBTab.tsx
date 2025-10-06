@@ -302,9 +302,21 @@ export const LocalDBTab: Component = () => {
     }
   };
 
-  onMount(() => {
+  onMount(async () => {
     initializeLocalDbDashboard().catch(console.error);
     updateAvailableOptions().catch(console.error); // 초기 로드 시 유효한 옵션 가져오기
+    
+    // 초기 로드 시 filteredInsights를 전체 데이터로 설정
+    try {
+      const result = await invoke<any>('get_filtered_analytics_summary', {
+        filter: null,
+      });
+      setFilteredInsights(result);
+      console.log('[onMount] 초기 filteredInsights 설정 완료:', result);
+    } catch (error) {
+      console.error('[onMount] 초기 filteredInsights 로드 실패:', error);
+    }
+    
     // Vendor sync progress events (coarse-grained)
     listen<any>('vendor_sync_progress', (evt) => {
       const p = evt.payload || {};
@@ -405,6 +417,16 @@ export const LocalDBTab: Component = () => {
     
     // 9. 유효한 필터 옵션 업데이트 (필터 변경 후)
     updateAvailableOptions().catch(console.error);
+    
+    // 10. filteredInsights 업데이트 (데이터 요약 카드용)
+    invoke<any>('get_filtered_analytics_summary', {
+      filter: finalFilter || null,
+    }).then(result => {
+      setFilteredInsights(result);
+      console.log('[applyFilters] filteredInsights 업데이트 완료:', result);
+    }).catch(error => {
+      console.error('[applyFilters] filteredInsights 업데이트 실패:', error);
+    });
   };
 
   // Export/Import/삭제/Vendor Sync/Device Types 등은 차례로 store helper로 이동 예정 (현재는 backend API 직접 호출 유지)
@@ -494,14 +516,27 @@ export const LocalDBTab: Component = () => {
               class="w-full px-4 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-lg font-semibold shadow-lg transition-all transform hover:scale-[1.02] active:scale-95"
               onClick={() => setShowCategoryDialog(true)}
             >
-              <div class="flex items-center justify-center gap-2">
-                <span>카테고리 선택</span>
-                <Show when={ui.selectedCategories.length > 0}>
-                  <span class="bg-white text-indigo-600 rounded-full px-2.5 py-0.5 text-xs font-bold shadow-md">
-                    {ui.selectedCategories.length}
-                  </span>
-                </Show>
-              </div>
+              <Show
+                when={ui.selectedCategories.length > 0}
+                fallback={
+                  <div class="flex items-center justify-center gap-2">
+                    <span>카테고리 선택</span>
+                  </div>
+                }
+              >
+                <div class="flex flex-col gap-1">
+                  <div class="flex items-center justify-center gap-2">
+                    <span class="text-xs opacity-90">선택함:</span>
+                    <span class="bg-white text-indigo-600 rounded-full px-2.5 py-0.5 text-xs font-bold shadow-md">
+                      {ui.selectedCategories.length}
+                    </span>
+                  </div>
+                  <div class="text-xs opacity-90 truncate">
+                    {ui.selectedCategories.slice(0, 2).map(c => c === 'null' ? '(없음)' : c).join(', ')}
+                    {ui.selectedCategories.length > 2 ? '...' : ''}
+                  </div>
+                </div>
+              </Show>
             </button>
             
             <Show when={ui.selectedCategories.length > 0}>
@@ -531,7 +566,7 @@ export const LocalDBTab: Component = () => {
               <span class="text-2xl">🔧</span>
               <div>
                 <div class="text-sm font-bold text-emerald-900">디바이스 타입 필터</div>
-                <div class="text-xs text-emerald-600">{s()?.total_device_types || 0}개 항목</div>
+                <div class="text-xs text-emerald-600">{s()?.all_device_types?.length || 0}개 항목</div>
               </div>
             </div>
             
@@ -539,14 +574,27 @@ export const LocalDBTab: Component = () => {
               class="w-full px-4 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-lg font-semibold shadow-lg transition-all transform hover:scale-[1.02] active:scale-95"
               onClick={() => setShowDeviceTypeDialog(true)}
             >
-              <div class="flex items-center justify-center gap-2">
-                <span>디바이스 타입 선택</span>
-                <Show when={ui.selectedDeviceTypes.length > 0}>
-                  <span class="bg-white text-emerald-600 rounded-full px-2.5 py-0.5 text-xs font-bold shadow-md">
-                    {ui.selectedDeviceTypes.length}
-                  </span>
-                </Show>
-              </div>
+              <Show
+                when={ui.selectedDeviceTypes.length > 0}
+                fallback={
+                  <div class="flex items-center justify-center gap-2">
+                    <span>디바이스 타입 선택</span>
+                  </div>
+                }
+              >
+                <div class="flex flex-col gap-1">
+                  <div class="flex items-center justify-center gap-2">
+                    <span class="text-xs opacity-90">선택함:</span>
+                    <span class="bg-white text-emerald-600 rounded-full px-2.5 py-0.5 text-xs font-bold shadow-md">
+                      {ui.selectedDeviceTypes.length}
+                    </span>
+                  </div>
+                  <div class="text-xs opacity-90 truncate">
+                    {ui.selectedDeviceTypes.slice(0, 2).join(', ')}
+                    {ui.selectedDeviceTypes.length > 2 ? '...' : ''}
+                  </div>
+                </div>
+              </Show>
             </button>
             
             <Show when={ui.selectedDeviceTypes.length > 0}>
@@ -576,7 +624,7 @@ export const LocalDBTab: Component = () => {
               <span class="text-2xl">🏢</span>
               <div>
                 <div class="text-sm font-bold text-blue-900">벤더 필터</div>
-                <div class="text-xs text-blue-600">{s()?.total_vendors || 0}개 항목</div>
+                <div class="text-xs text-blue-600">{s()?.all_vendors?.length || 0}개 항목</div>
               </div>
             </div>
             
@@ -587,14 +635,27 @@ export const LocalDBTab: Component = () => {
                 await updateAvailableOptions();
               }}
             >
-              <div class="flex items-center justify-center gap-2">
-                <span>벤더 선택</span>
-                <Show when={ui.selectedVendors.length > 0}>
-                  <span class="bg-white text-blue-600 rounded-full px-2.5 py-0.5 text-xs font-bold shadow-md">
-                    {ui.selectedVendors.length}
-                  </span>
-                </Show>
-              </div>
+              <Show
+                when={ui.selectedVendors.length > 0}
+                fallback={
+                  <div class="flex items-center justify-center gap-2">
+                    <span>벤더 선택</span>
+                  </div>
+                }
+              >
+                <div class="flex flex-col gap-1">
+                  <div class="flex items-center justify-center gap-2">
+                    <span class="text-xs opacity-90">선택함:</span>
+                    <span class="bg-white text-blue-600 rounded-full px-2.5 py-0.5 text-xs font-bold shadow-md">
+                      {ui.selectedVendors.length}
+                    </span>
+                  </div>
+                  <div class="text-xs opacity-90 truncate">
+                    {ui.selectedVendors.slice(0, 2).join(', ')}
+                    {ui.selectedVendors.length > 2 ? '...' : ''}
+                  </div>
+                </div>
+              </Show>
             </button>
             
             <Show when={ui.selectedVendors.length > 0}>
@@ -635,14 +696,27 @@ export const LocalDBTab: Component = () => {
                 await updateAvailableOptions();
               }}
             >
-              <div class="flex items-center justify-center gap-2">
-                <span>Transport Interface 선택</span>
-                <Show when={ui.selectedTransportInterfaces.length > 0}>
-                  <span class="bg-white text-violet-600 rounded-full px-2.5 py-0.5 text-xs font-bold shadow-md">
-                    {ui.selectedTransportInterfaces.length}
-                  </span>
-                </Show>
-              </div>
+              <Show
+                when={ui.selectedTransportInterfaces.length > 0}
+                fallback={
+                  <div class="flex items-center justify-center gap-2">
+                    <span>Transport Interface 선택</span>
+                  </div>
+                }
+              >
+                <div class="flex flex-col gap-1">
+                  <div class="flex items-center justify-center gap-2">
+                    <span class="text-xs opacity-90">선택함:</span>
+                    <span class="bg-white text-violet-600 rounded-full px-2.5 py-0.5 text-xs font-bold shadow-md">
+                      {ui.selectedTransportInterfaces.length}
+                    </span>
+                  </div>
+                  <div class="text-xs opacity-90 truncate">
+                    {ui.selectedTransportInterfaces.slice(0, 2).join(', ')}
+                    {ui.selectedTransportInterfaces.length > 2 ? '...' : ''}
+                  </div>
+                </div>
+              </Show>
             </button>
             
             <Show when={ui.selectedTransportInterfaces.length > 0}>
@@ -686,9 +760,16 @@ export const LocalDBTab: Component = () => {
             <div class="flex gap-2">
               <button 
                 class="px-4 py-2 rounded-lg bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white text-sm font-semibold shadow-md transition-all"
-                onClick={() => {
+                onClick={async () => {
                   localDbDashboardStore.resetFilter();
                   localDbDashboardStore.setUi({ ...ui, certDateRange: ["", ""], selectedCategories: [], selectedVendors: [], selectedDeviceTypes: [], selectedTransportInterfaces: [] });
+                  // filteredInsights도 초기화 (전체 데이터로 업데이트)
+                  const result = await invoke<any>('get_filtered_analytics_summary', {
+                    filter: null,
+                  });
+                  setFilteredInsights(result);
+                  // 유효한 필터 옵션도 업데이트
+                  updateAvailableOptions().catch(console.error);
                 }}
               >
                 🗑️ 필터 초기화
@@ -709,14 +790,61 @@ export const LocalDBTab: Component = () => {
           }>
             {/* 주요 지표 카드 */}
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div class="rounded-xl bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 p-5 shadow-sm">
+              {/* 1. PRODUCTS (카테고리 색상) - 필터 버튼 1번과 일치 */}
+              <div class="rounded-xl bg-gradient-to-br from-indigo-50 to-purple-100 border-2 border-indigo-200 p-5 shadow-sm">
                 <div class="flex items-center justify-between mb-2">
-                  <span class="text-3xl">🏭</span>
-                  <span class="text-xs font-semibold text-blue-700 bg-blue-200 px-2 py-1 rounded-full">TOTAL</span>
+                  <span class="text-3xl">🏷️</span>
+                  <span class="text-xs font-semibold text-indigo-700 bg-indigo-200 px-2 py-1 rounded-full">PRODUCTS</span>
                 </div>
                 {(() => {
-                  const filtered = analytics.total;
+                  const filtered = filteredInsights()?.total_products || 0;
                   const total = s()!.total_products;
+                  const pct = total ? (filtered / total * 100) : 0;
+                  return (
+                    <>
+                      <div class="text-2xl font-bold text-indigo-900">
+                        <span class="text-indigo-600">{filtered.toLocaleString()}</span>
+                        <span class="text-lg text-indigo-400 mx-1">/</span>
+                        <span class="text-indigo-800">{total.toLocaleString()}</span>
+                      </div>
+                      <div class="text-xs text-indigo-700 mt-1">인증 제품 (필터링 / 전체 · {pct.toFixed(1)}%)</div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* 2. TYPES (디바이스 타입) - 필터 버튼 2번과 일치 */}
+              <div class="rounded-xl bg-gradient-to-br from-emerald-50 to-teal-100 border-2 border-emerald-200 p-5 shadow-sm">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-3xl">🔧</span>
+                  <span class="text-xs font-semibold text-emerald-700 bg-emerald-200 px-2 py-1 rounded-full">TYPES</span>
+                </div>
+                {(() => {
+                  const filtered = filteredInsights()?.total_device_types || 0;
+                  const total = s()?.all_device_types?.length || 0;
+                  const pct = total ? (filtered / total * 100) : 0;
+                  return (
+                    <>
+                      <div class="text-2xl font-bold text-emerald-900">
+                        <span class="text-emerald-600">{filtered.toLocaleString()}</span>
+                        <span class="text-lg text-emerald-400 mx-1">/</span>
+                        <span class="text-emerald-800">{total.toLocaleString()}</span>
+                      </div>
+                      <div class="text-xs text-emerald-700 mt-1">디바이스 타입 (필터링 / 전체 · {pct.toFixed(1)}%)</div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* 3. VENDORS (벤더) - 필터 버튼 3번과 일치 */}
+              <div class="rounded-xl bg-gradient-to-br from-blue-50 to-cyan-100 border-2 border-blue-200 p-5 shadow-sm">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-3xl">🏢</span>
+                  <span class="text-xs font-semibold text-blue-700 bg-blue-200 px-2 py-1 rounded-full">VENDORS</span>
+                </div>
+                {(() => {
+                  const filtered = filteredInsights()?.total_vendors || 0;
+                  const total = s()?.all_vendors?.length || 0;
                   const pct = total ? (filtered / total * 100) : 0;
                   return (
                     <>
@@ -725,72 +853,34 @@ export const LocalDBTab: Component = () => {
                         <span class="text-lg text-blue-400 mx-1">/</span>
                         <span class="text-blue-800">{total.toLocaleString()}</span>
                       </div>
-                      <div class="text-xs text-blue-700 mt-1">인증 제품 (필터링 / 전체 · {pct.toFixed(1)}%)</div>
+                      <div class="text-xs text-blue-700 mt-1">제조사 (필터링 / 전체 · {pct.toFixed(1)}%)</div>
                     </>
                   );
                 })()}
               </div>
 
-              <div class="rounded-xl bg-gradient-to-br from-purple-50 to-purple-100 border-2 border-purple-200 p-5 shadow-sm">
+              {/* 4. TRANSPORT (트랜스포트) - 필터 버튼 4번과 일치 */}
+              <div class="rounded-xl bg-gradient-to-br from-violet-50 to-purple-100 border-2 border-violet-200 p-5 shadow-sm">
                 <div class="flex items-center justify-between mb-2">
-                  <span class="text-3xl">🏢</span>
-                  <span class="text-xs font-semibold text-purple-700 bg-purple-200 px-2 py-1 rounded-full">VENDORS</span>
+                  <span class="text-3xl">📡</span>
+                  <span class="text-xs font-semibold text-violet-700 bg-violet-200 px-2 py-1 rounded-full">TRANSPORT</span>
                 </div>
                 {(() => {
-                  const totalVen = s()!.total_vendors;
+                  const filtered = filteredInsights()?.total_transport_interfaces || 0;
+                  const total = s()?.all_transport_interfaces?.length || 0;
+                  const pct = total ? (filtered / total * 100) : 0;
                   return (
                     <>
-                      <div class="text-2xl font-bold text-purple-900">
-                        <span class="text-purple-600">{totalVen.toLocaleString()}</span>
-                        <span class="text-lg text-purple-400 mx-1">/</span>
-                        <span class="text-purple-800">{totalVen.toLocaleString()}</span>
+                      <div class="text-2xl font-bold text-violet-900">
+                        <span class="text-violet-600">{filtered.toLocaleString()}</span>
+                        <span class="text-lg text-violet-400 mx-1">/</span>
+                        <span class="text-violet-800">{total.toLocaleString()}</span>
                       </div>
-                      <div class="text-xs text-purple-700 mt-1">벤더 수 (전체 범위 기준 동일)</div>
+                      <div class="text-xs text-violet-700 mt-1">Transport IF (필터링 / 전체 · {pct.toFixed(1)}%)</div>
                     </>
                   );
                 })()}
               </div>
-
-              <div class="rounded-xl bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-200 p-5 shadow-sm">
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-3xl">📋</span>
-                  <span class="text-xs font-semibold text-green-700 bg-green-200 px-2 py-1 rounded-full">DETAILS</span>
-                </div>
-                {(() => {
-                  const filtered = analytics.total;
-                  const totalDetails = s()!.total_product_details;
-                  const pct = totalDetails ? (filtered / totalDetails * 100) : 0;
-                  return (
-                    <>
-                      <div class="text-2xl font-bold text-green-900">
-                        <span class="text-green-600">{filtered.toLocaleString()}</span>
-                        <span class="text-lg text-green-400 mx-1">/</span>
-                        <span class="text-green-800">{totalDetails.toLocaleString()}</span>
-                      </div>
-                      <div class="text-xs text-green-700 mt-1">상세 정보 (필터링 / 전체 · {pct.toFixed(1)}%)</div>
-                    </>
-                  );
-                })()}
-              </div>
-
-              <div class="rounded-xl bg-gradient-to-br from-amber-50 to-amber-100 border-2 border-amber-200 p-5 shadow-sm">
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-3xl">🔧</span>
-                  <span class="text-xs font-semibold text-amber-700 bg-amber-200 px-2 py-1 rounded-full">TYPES</span>
-                </div>
-                <div class="text-2xl font-bold text-amber-900">
-                  <span class="text-amber-600">{s()!.total_device_types.toLocaleString()}</span>
-                  <span class="text-lg text-amber-400 mx-1">/</span>
-                  <span class="text-amber-800">{s()!.total_device_types.toLocaleString()}</span>
-                </div>
-                <div class="text-xs text-amber-700 mt-1">디바이스 타입 (필터링 / 전체)</div>
-              </div>
-            </div>
-          </Show>
-          
-          <Show when={ui.summaryError}>
-            <div class="bg-red-50 border-2 border-red-200 rounded-lg p-4 text-red-700 text-sm">
-              <span class="font-semibold">⚠️ 에러:</span> {ui.summaryError}
             </div>
           </Show>
         </div>
