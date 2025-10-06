@@ -176,9 +176,11 @@ pub struct DbSummary {
     pub all_device_categories: Vec<(String, i64)>,
     pub top_device_types: Vec<(String, i64)>,
     pub top_vendors: Vec<(String, i64)>,
+    pub all_vendors: Vec<(String, i64)>, // 전체 벤더 목록 (count와 함께)
     pub all_device_type_names: Vec<String>,
     pub top_transport_interfaces: Vec<(String, i64)>,
     pub all_transport_interfaces: Vec<String>,
+    pub device_types_by_category: std::collections::HashMap<String, Vec<String>>,
 }
 
 /// Return basic database summary statistics.
@@ -264,6 +266,22 @@ pub async fn get_db_summary(state: State<'_, DatabaseConnection>) -> Result<DbSu
         }
     };
     
+    // All vendors (전체 벤더 목록 with count)
+    let all_vendors = {
+        let sql = "SELECT vendor_name, COUNT(*) as cnt FROM v_product_detail_analytics GROUP BY vendor_name ORDER BY cnt DESC";
+        match sqlx::query(sql).fetch_all(pool).await {
+            Ok(rows) => rows
+                .into_iter()
+                .filter_map(|r| {
+                    let vendor: Option<String> = r.get::<Option<String>, _>("vendor_name");
+                    let cnt: i64 = r.get::<i64, _>("cnt");
+                    vendor.map(|v| (v, cnt))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+    
     // Top device types (Top 10 by product count)
     let top_device_types = {
         let sql = "SELECT device_type_name, COUNT(*) as cnt FROM v_product_detail_analytics WHERE device_type_name IS NOT NULL GROUP BY device_type_name ORDER BY cnt DESC LIMIT 10";
@@ -320,6 +338,25 @@ pub async fn get_db_summary(state: State<'_, DatabaseConnection>) -> Result<DbSu
         }
     };
     
+    // Device types by category mapping (for smart filtering)
+    let device_types_by_category = {
+        let sql = "SELECT device_category, device_type_name FROM v_product_detail_analytics WHERE device_category IS NOT NULL AND device_type_name IS NOT NULL GROUP BY device_category, device_type_name ORDER BY device_category, device_type_name";
+        match sqlx::query(sql).fetch_all(pool).await {
+            Ok(rows) => {
+                let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+                for r in rows {
+                    let cat: Option<String> = r.get::<Option<String>, _>("device_category");
+                    let dtype: Option<String> = r.get::<Option<String>, _>("device_type_name");
+                    if let (Some(c), Some(d)) = (cat, dtype) {
+                        map.entry(c).or_insert_with(Vec::new).push(d);
+                    }
+                }
+                map
+            },
+            Err(_) => std::collections::HashMap::new(),
+        }
+    };
+    
     Ok(DbSummary {
         total_products,
         total_product_details,
@@ -331,9 +368,11 @@ pub async fn get_db_summary(state: State<'_, DatabaseConnection>) -> Result<DbSu
         all_device_categories,
         top_device_types,
         top_vendors,
+        all_vendors,
         all_device_type_names,
         top_transport_interfaces,
         all_transport_interfaces,
+        device_types_by_category,
     })
 }
 
@@ -639,14 +678,18 @@ pub async fn analytics_query(
                         break;
                     }
                     
-                    // Generate placeholders and bind values
-                    info!("    Generating SQL placeholders...");
-                    let placeholders: Vec<&str> = items.iter().map(|_| "?").collect();
-                    where_clauses.push(format!("{} IN ({})", column, placeholders.join(",")));
+                    // Generate LIKE clauses for GROUP_CONCAT compatibility
+                    // GROUP_CONCAT creates comma-separated values like "Media, Lighting"
+                    // So we need LIKE '%Media%' instead of IN ('Media')
+                    info!("    Generating LIKE clauses for GROUP_CONCAT compatibility...");
+                    let like_clauses: Vec<String> = items.iter().map(|_| format!("{} LIKE ?", column)).collect();
+                    where_clauses.push(format!("({})", like_clauses.join(" OR ")));
+                    
+                    // Bind each item with wildcard for partial matching
                     for item in items {
-                        binds.push(item);
+                        binds.push(format!("%{}%", item));
                     }
-                    info!("    :in: operator processing completed successfully");
+                    info!("    :in: operator processing completed (using LIKE for GROUP_CONCAT)");
                 },
                 "~" => {
                     where_clauses.push(format!("{} LIKE ?", column));
@@ -1349,4 +1392,629 @@ pub async fn rehydrate_list_pages(state: State<'_, _AppStateForRepair>, params: 
         format!("rehydrate_complete pages_failed={pages_failed} mismatches_detected={mismatches_detected} http_errors={http_errors}")
     };
     Ok(RehydrateListPagesResult { pages_targeted: targeted_pages.len() as u32, pages_processed, products_with_null_coords_before: before as u64, products_filled, products_already_had_coords: products_already, products_still_null_after: after as u64, elapsed_ms: start.elapsed().as_millis(), note, pages_failed, http_errors, mismatches_detected, would_fill, auto_selected, per_page: if debug_enabled { Some(per_page_stats) } else { None } })
+}
+
+// ============================================================================
+// Filter-aware APIs for interactive filter experience
+// ============================================================================
+
+/// Available filter options based on current filter selections
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AvailableFilterOptions {
+    pub categories: Vec<String>,
+    pub device_types: Vec<String>,
+    pub vendors: Vec<String>,
+    pub transport_interfaces: Vec<String>,
+}
+
+/// Get available filter options based on current filter selections
+/// This enables smart filtering where each filter shows only options that
+/// will produce non-empty results given other active filters
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_available_filter_options(
+    state: State<'_, DatabaseConnection>,
+    current_filter: String,
+) -> Result<AvailableFilterOptions, String> {
+    // Log immediately at function entry to catch ALL invocations
+    info!("🚨🚨🚨 get_available_filter_options CALLED! 🚨🚨🚨");
+    info!("🔍 get_available_filter_options RAW parameter: '{}'", current_filter);
+    
+    let pool = state.pool();
+    
+    let filter_dsl = current_filter.trim();
+    
+    info!("🔍 get_available_filter_options filter_dsl after trim: '{}'", filter_dsl);
+    
+    // Parse the filter using the SAME logic as analytics_query
+    // (DO NOT use parse_filter_dsl - it has a bug with whitespace splitting)
+    let mut where_clauses: Vec<String> = Vec::new();
+    let mut binds: Vec<String> = Vec::new();
+    
+    if !filter_dsl.is_empty() {
+        // Enhanced tokenization: handle field:in:[...] specially (same as analytics_query)
+        let mut tokens: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let mut in_bracket = false;
+        let mut paren_depth = 0;
+        
+        for ch in filter_dsl.chars() {
+            match ch {
+                '[' if !in_bracket => {
+                    in_bracket = true;
+                    current.push(ch);
+                },
+                ']' if in_bracket => {
+                    in_bracket = false;
+                    current.push(ch);
+                },
+                '(' => {
+                    paren_depth += 1;
+                    current.push(ch);
+                },
+                ')' => {
+                    paren_depth -= 1;
+                    current.push(ch);
+                },
+                ' ' | '\t' | '\n' if !in_bracket && paren_depth == 0 => {
+                    if !current.is_empty() {
+                        tokens.push(current.clone());
+                        current.clear();
+                    }
+                },
+                _ => {
+                    current.push(ch);
+                }
+            }
+        }
+        if !current.is_empty() {
+            tokens.push(current);
+        }
+        
+        for t in &tokens {
+            // Skip logical connector tokens
+            let upper_tok = t.to_ascii_uppercase();
+            if upper_tok == "AND" || upper_tok == "OR" {
+                continue;
+            }
+            
+            let t_str = t.as_str();
+            
+            let (field_part, op, value_part) = if let Some(pos) = t_str.find(">=") {
+                (&t_str[..pos], Some(">="), &t_str[pos+2..])
+            } else if let Some(pos) = t_str.find("<=") {
+                (&t_str[..pos], Some("<="), &t_str[pos+2..])
+            } else if let Some(pos) = t_str.find(":in:") {
+                (&t_str[..pos], Some(":in:"), &t_str[pos+4..])
+            } else if let Some(pos) = t_str.find('=') {
+                (&t_str[..pos], Some("="), &t_str[pos+1..])
+            } else if let Some(pos) = t_str.find('~') {
+                (&t_str[..pos], Some("~"), &t_str[pos+1..])
+            } else if let Some(pos) = t_str.find(':') {
+                (&t_str[..pos], None, &t_str[pos+1..])
+            } else {
+                ("", None, t_str)
+            };
+
+            let field = field_part.to_lowercase();
+            let value = value_part.trim();
+            
+            if field.is_empty() { // bareword search
+                if value.is_empty() { continue; }
+                where_clauses.push("(model LIKE ? OR vendor_name LIKE ?)".into());
+                let like = format!("%{}%", value);
+                binds.push(like.clone());
+                binds.push(like);
+                continue;
+            }
+            
+            if value.is_empty() { continue; }
+            
+            // Map field
+            let column = match field.as_str() {
+                "vendor"|"v"|"ven" => "vendor_name",
+                "vnum" => "vendor_number",
+                "category"|"cat"|"device_category" => "device_category",
+                "dtype"|"dname"|"dt"|"device_type_name" => "device_type_name",
+                "vendor_name" => "vendor_name",
+                "model"|"m" => "model",
+                "date" => "certification_date",
+                "created"|"c" => "detail_created_at",
+                _ => continue,
+            };
+            
+            let op_used = op.unwrap_or(if matches!(field.as_str(), "date"|"created"|"c") { "=" } else { "~" });
+            
+            // Special handling for null values
+            if value.eq_ignore_ascii_case("null") && (op_used == "=" || op_used == "~") {
+                where_clauses.push(format!("{} IS NULL", column));
+                continue;
+            }
+            
+            match op_used {
+                ":in:" => {
+                    // Parse array: [value1,value2,...] or ["val1","val2",...]
+                    if !value.starts_with('[') || !value.ends_with(']') {
+                        continue;
+                    }
+                    let inner = &value[1..value.len()-1];
+                    if inner.is_empty() {
+                        continue;
+                    }
+                    
+                    // Quote-aware CSV parsing
+                    let mut items: Vec<String> = Vec::new();
+                    let mut current_item = String::new();
+                    let mut in_quotes = false;
+                    let mut escape_next = false;
+                    
+                    for ch in inner.chars() {
+                        if escape_next {
+                            current_item.push(ch);
+                            escape_next = false;
+                        } else if ch == '\\' {
+                            escape_next = true;
+                        } else if ch == '"' {
+                            in_quotes = !in_quotes;
+                            current_item.push(ch);
+                        } else if ch == ',' && !in_quotes {
+                            let trimmed = current_item.trim();
+                            if !trimmed.is_empty() {
+                                let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"')) || 
+                                                  (trimmed.starts_with('\'') && trimmed.ends_with('\'')) {
+                                    trimmed[1..trimmed.len()-1].to_string()
+                                } else {
+                                    trimmed.to_string()
+                                };
+                                items.push(unquoted);
+                            }
+                            current_item.clear();
+                        } else {
+                            current_item.push(ch);
+                        }
+                    }
+                    
+                    // Last item
+                    let trimmed = current_item.trim();
+                    if !trimmed.is_empty() {
+                        let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"')) || 
+                                          (trimmed.starts_with('\'') && trimmed.ends_with('\'')) {
+                            trimmed[1..trimmed.len()-1].to_string()
+                        } else {
+                            trimmed.to_string()
+                        };
+                        items.push(unquoted);
+                    }
+                    
+                    if items.is_empty() {
+                        continue;
+                    }
+                    
+                    // Generate LIKE clauses for GROUP_CONCAT compatibility (same as analytics_query)
+                    let like_clauses: Vec<String> = items.iter().map(|_| format!("{} LIKE ?", column)).collect();
+                    where_clauses.push(format!("({})", like_clauses.join(" OR ")));
+                    
+                    for item in items {
+                        binds.push(format!("%{}%", item));
+                    }
+                },
+                "~" => {
+                    where_clauses.push(format!("{} LIKE ?", column));
+                    binds.push(format!("%{}%", value));
+                },
+                "=" => {
+                    where_clauses.push(format!("{} = ?", column));
+                    binds.push(value.to_string());
+                },
+                ">=" | "<=" => {
+                    where_clauses.push(format!("{} {} ?", column, op_used));
+                    binds.push(value.to_string());
+                },
+                _ => continue,
+            }
+        }
+    }
+    
+    let where_clause = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", where_clauses.join(" AND "))
+    };
+    
+    info!("🔍 Parsed WHERE clause: '{}', binds: {:?}", where_clause, binds);
+    
+    // Get available categories
+    let categories_sql = if where_clause.is_empty() {
+        "SELECT DISTINCT device_category FROM v_product_detail_analytics ORDER BY device_category".to_string()
+    } else {
+        format!(
+            "SELECT DISTINCT device_category FROM v_product_detail_analytics {} ORDER BY device_category",
+            where_clause  // where_clause already contains "WHERE ..."
+        )
+    };
+    let mut categories_query = sqlx::query_scalar(&categories_sql);
+    for val in &binds {
+        categories_query = categories_query.bind(val);
+    }
+    let categories: Vec<String> = categories_query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Failed to fetch categories: {}", e))?;
+    
+    // Get available device types
+    let device_types_sql = if where_clause.is_empty() {
+        "SELECT DISTINCT device_type_name FROM v_product_detail_analytics WHERE device_type_name IS NOT NULL ORDER BY device_type_name".to_string()
+    } else {
+        format!(
+            "SELECT DISTINCT device_type_name FROM v_product_detail_analytics {} AND device_type_name IS NOT NULL ORDER BY device_type_name",
+            where_clause  // where_clause already contains "WHERE ..."
+        )
+    };
+    let mut device_types_query = sqlx::query_scalar(&device_types_sql);
+    for val in &binds {
+        device_types_query = device_types_query.bind(val);
+    }
+    let device_types: Vec<String> = device_types_query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Failed to fetch device types: {}", e))?;
+    
+    // Get available vendors
+    let vendors_sql = if where_clause.is_empty() {
+        "SELECT DISTINCT vendor_name FROM v_product_detail_analytics WHERE vendor_name IS NOT NULL ORDER BY vendor_name".to_string()
+    } else {
+        format!(
+            "SELECT DISTINCT vendor_name FROM v_product_detail_analytics {} AND vendor_name IS NOT NULL ORDER BY vendor_name",
+            where_clause  // where_clause already contains "WHERE ..."
+        )
+    };
+    let mut vendors_query = sqlx::query_scalar(&vendors_sql);
+    for val in &binds {
+        vendors_query = vendors_query.bind(val);
+    }
+    let vendors: Vec<String> = vendors_query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Failed to fetch vendors: {}", e))?;
+    
+    // Get available transport interfaces
+    let transport_sql = if where_clause.is_empty() {
+        "SELECT DISTINCT transport_interface FROM v_product_detail_analytics WHERE transport_interface IS NOT NULL ORDER BY transport_interface".to_string()
+    } else {
+        format!(
+            "SELECT DISTINCT transport_interface FROM v_product_detail_analytics {} AND transport_interface IS NOT NULL ORDER BY transport_interface",
+            where_clause  // where_clause already contains "WHERE ..."
+        )
+    };
+    let mut transport_query = sqlx::query_scalar(&transport_sql);
+    for val in &binds {
+        transport_query = transport_query.bind(val);
+    }
+    let transport_interfaces: Vec<String> = transport_query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Failed to fetch transport interfaces: {}", e))?;
+    
+    Ok(AvailableFilterOptions {
+        categories,
+        device_types,
+        vendors,
+        transport_interfaces,
+    })
+}
+
+/// Helper function to parse filter DSL and return WHERE clause and binds
+/// Returns tuple of (where_clause, binds)
+fn parse_filter_dsl(filter_dsl: &str) -> Result<(String, Vec<String>), String> {
+    if filter_dsl.trim().is_empty() {
+        return Ok((String::new(), Vec::new()));
+    }
+    
+    let mut where_clauses = Vec::new();
+    let mut binds = Vec::new();
+    let mut filter_error: Option<String> = None;
+    
+    // Split by whitespace (terms)
+    let terms: Vec<&str> = filter_dsl.split_whitespace().collect();
+    
+    for term in terms {
+        let t_str = term.trim();
+        if t_str.is_empty() { continue; }
+        
+        // Parse field:operator:value or field:value
+        let (field_part, op, value_part) = if let Some(in_pos) = t_str.find(":in:") {
+            (&t_str[..in_pos], Some(":in:"), &t_str[in_pos+4..])
+        } else if let Some(pos) = t_str.find('~') {
+            (&t_str[..pos], Some("~"), &t_str[pos+1..])
+        } else if let Some(pos) = t_str.find(':') {
+            (&t_str[..pos], None, &t_str[pos+1..])
+        } else {
+            ("", None, t_str)
+        };
+        
+        let field = field_part.to_lowercase();
+        let value = value_part.trim();
+        
+        if field.is_empty() { // bareword search
+            if value.is_empty() { continue; }
+            where_clauses.push("(model LIKE ? OR vendor_name LIKE ?)".into());
+            let like = format!("%{}%", value);
+            binds.push(like.clone());
+            binds.push(like);
+            continue;
+        }
+        
+        if value.is_empty() { 
+            filter_error = Some(format!("필드 '{}' 뒤에 값이 비었습니다", field)); 
+            break; 
+        }
+        
+        // Map field names
+        let column = match field.as_str() {
+            "vendor"|"v"|"ven"|"vendor_name" => "vendor_name",
+            "category"|"cat"|"device_category" => "device_category",
+            "dtype"|"dname"|"dt"|"device_type_name" => "device_type_name",
+            "transport"|"ti"|"transport_interface" => "transport_interface",
+            "model"|"m" => "model",
+            "date" => "certification_date",
+            _ => {
+                filter_error = Some(format!("알 수 없는 필드 '{}'", field));
+                break;
+            }
+        };
+        
+        let op_used = op.unwrap_or("~");
+        
+        // Handle null values
+        if value.eq_ignore_ascii_case("null") && (op_used == "=" || op_used == "~") {
+            where_clauses.push(format!("{} IS NULL", column));
+            continue;
+        }
+        
+        match op_used {
+            ":in:" => {
+                // Parse array: [value1,value2,...]
+                if !value.starts_with('[') || !value.ends_with(']') {
+                    filter_error = Some(format!("in: 연산자는 배열 형식 [...]이 필요합니다: {}", value));
+                    break;
+                }
+                let inner = &value[1..value.len()-1];
+                if inner.is_empty() {
+                    filter_error = Some("in: 배열이 비어있습니다".into());
+                    break;
+                }
+                
+                // Parse comma-separated values with quote handling
+                let mut items: Vec<String> = Vec::new();
+                let mut current = String::new();
+                let mut in_quotes = false;
+                let mut escape_next = false;
+                
+                for ch in inner.chars() {
+                    if escape_next {
+                        current.push(ch);
+                        escape_next = false;
+                    } else if ch == '\\' {
+                        escape_next = true;
+                    } else if ch == '"' {
+                        in_quotes = !in_quotes;
+                        current.push(ch);
+                    } else if ch == ',' && !in_quotes {
+                        let trimmed = current.trim();
+                        if !trimmed.is_empty() {
+                            let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"')) || 
+                                              (trimmed.starts_with('\'') && trimmed.ends_with('\'')) {
+                                trimmed[1..trimmed.len()-1].to_string()
+                            } else {
+                                trimmed.to_string()
+                            };
+                            items.push(unquoted);
+                        }
+                        current.clear();
+                    } else {
+                        current.push(ch);
+                    }
+                }
+                
+                // Last item
+                let trimmed = current.trim();
+                if !trimmed.is_empty() {
+                    let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"')) || 
+                                      (trimmed.starts_with('\'') && trimmed.ends_with('\'')) {
+                        trimmed[1..trimmed.len()-1].to_string()
+                    } else {
+                        trimmed.to_string()
+                    };
+                    items.push(unquoted);
+                }
+                
+                if items.is_empty() {
+                    filter_error = Some("in: 배열에 항목이 없습니다".into());
+                    break;
+                }
+                
+                let placeholders = items.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+                where_clauses.push(format!("{} IN ({})", column, placeholders));
+                binds.extend(items);
+            },
+            "~" => {
+                where_clauses.push(format!("{} LIKE ?", column));
+                binds.push(format!("%{}%", value));
+            },
+            _ => {
+                where_clauses.push(format!("{} = ?", column));
+                binds.push(value.to_string());
+            }
+        }
+    }
+    
+    if let Some(err) = filter_error {
+        return Err(err);
+    }
+    
+    let where_clause = where_clauses.join(" AND ");
+    Ok((where_clause, binds))
+}
+
+/// Filtered analytics summary - returns summary and top rankings based on current filters
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FilteredAnalyticsSummary {
+    pub total_products: i64,
+    pub total_vendors: i64,
+    pub total_categories: i64,
+    pub total_device_types: i64,
+    pub total_transport_interfaces: i64,
+    pub top_vendors: Vec<(String, i64)>,
+    pub top_categories: Vec<(String, i64)>,
+    pub top_device_types: Vec<(String, i64)>,
+    pub top_transport_interfaces: Vec<(String, i64)>,
+    pub applied_filter: String,
+}
+
+/// Get filtered analytics summary based on current filter
+#[tauri::command]
+pub async fn get_filtered_analytics_summary(
+    state: State<'_, DatabaseConnection>,
+    filter: Option<String>,
+) -> Result<FilteredAnalyticsSummary, String> {
+    let pool = state.pool();
+    let filter_dsl = filter.clone().unwrap_or_default();
+    
+    info!("📊 get_filtered_analytics_summary called with filter: {}", filter_dsl);
+    
+    // Parse filter to get WHERE clause
+    let (where_clause, _binds) = parse_filter_dsl(&filter_dsl)?;
+    
+    let base_where = if where_clause.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", where_clause)
+    };
+    
+    // Total products
+    let total_products: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM v_product_detail_analytics {}",
+        base_where
+    ))
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to count products: {}", e))?;
+    
+    // Total unique vendors
+    let total_vendors: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(DISTINCT vendor_name) FROM v_product_detail_analytics {} AND vendor_name IS NOT NULL",
+        base_where
+    ))
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to count vendors: {}", e))?;
+    
+    // Total unique categories
+    let total_categories: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(DISTINCT device_category) FROM v_product_detail_analytics {} AND device_category IS NOT NULL",
+        base_where
+    ))
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to count categories: {}", e))?;
+    
+    // Total unique device types
+    let total_device_types: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(DISTINCT device_type_name) FROM v_product_detail_analytics {} AND device_type_name IS NOT NULL",
+        base_where
+    ))
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to count device types: {}", e))?;
+    
+    // Total unique transport interfaces
+    let total_transport_interfaces: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(DISTINCT transport_interface) FROM v_product_detail_analytics {} AND transport_interface IS NOT NULL",
+        base_where
+    ))
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to count transport interfaces: {}", e))?;
+    
+    // Top vendors
+    let top_vendors_sql = format!(
+        "SELECT vendor_name, COUNT(*) as cnt FROM v_product_detail_analytics {} AND vendor_name IS NOT NULL GROUP BY vendor_name ORDER BY cnt DESC LIMIT 10",
+        base_where
+    );
+    let top_vendors: Vec<(String, i64)> = sqlx::query(&top_vendors_sql)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Failed to fetch top vendors: {}", e))?
+        .into_iter()
+        .filter_map(|r| {
+            let name: Option<String> = r.get("vendor_name");
+            let cnt: i64 = r.get("cnt");
+            name.map(|n| (n, cnt))
+        })
+        .collect();
+    
+    // Top categories
+    let top_categories_sql = format!(
+        "SELECT device_category, COUNT(*) as cnt FROM v_product_detail_analytics {} AND device_category IS NOT NULL GROUP BY device_category ORDER BY cnt DESC LIMIT 10",
+        base_where
+    );
+    let top_categories: Vec<(String, i64)> = sqlx::query(&top_categories_sql)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Failed to fetch top categories: {}", e))?
+        .into_iter()
+        .filter_map(|r| {
+            let name: Option<String> = r.get("device_category");
+            let cnt: i64 = r.get("cnt");
+            name.map(|n| (n, cnt))
+        })
+        .collect();
+    
+    // Top device types
+    let top_device_types_sql = format!(
+        "SELECT device_type_name, COUNT(*) as cnt FROM v_product_detail_analytics {} AND device_type_name IS NOT NULL GROUP BY device_type_name ORDER BY cnt DESC LIMIT 10",
+        base_where
+    );
+    let top_device_types: Vec<(String, i64)> = sqlx::query(&top_device_types_sql)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Failed to fetch top device types: {}", e))?
+        .into_iter()
+        .filter_map(|r| {
+            let name: Option<String> = r.get("device_type_name");
+            let cnt: i64 = r.get("cnt");
+            name.map(|n| (n, cnt))
+        })
+        .collect();
+    
+    // Top transport interfaces
+    let top_transport_interfaces_sql = format!(
+        "SELECT transport_interface, COUNT(*) as cnt FROM v_product_detail_analytics {} AND transport_interface IS NOT NULL GROUP BY transport_interface ORDER BY cnt DESC LIMIT 10",
+        base_where
+    );
+    let top_transport_interfaces: Vec<(String, i64)> = sqlx::query(&top_transport_interfaces_sql)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Failed to fetch top transport interfaces: {}", e))?
+        .into_iter()
+        .filter_map(|r| {
+            let name: Option<String> = r.get("transport_interface");
+            let cnt: i64 = r.get("cnt");
+            name.map(|n| (n, cnt))
+        })
+        .collect();
+    
+    Ok(FilteredAnalyticsSummary {
+        total_products,
+        total_vendors,
+        total_categories,
+        total_device_types,
+        total_transport_interfaces,
+        top_vendors,
+        top_categories,
+        top_device_types,
+        top_transport_interfaces,
+        applied_filter: filter_dsl,
+    })
 }

@@ -2,12 +2,21 @@
  * LocalDBTab - 로컬 데이터베이스 관리 탭 컴포넌트 (실제 데이터 사용)
  */
 
-import { Component, createSignal, For, onMount, Show } from 'solid-js';
+import { Component, createSignal, createMemo, For, onMount, Show, createEffect } from 'solid-js';
 import { tauriApi } from '../../services/tauri-api';
 import { localDbDashboardStore, initializeLocalDbDashboard } from '../../stores/localDbDashboardStore';
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import type { VendorSyncResult } from '../../types/domain';
 import { DateRangeSlider } from '../DateRangeSlider';
+
+// TypeScript types for filter-aware APIs
+interface AvailableFilterOptions {
+  categories: string[];
+  device_types: string[];
+  vendors: string[];
+  transport_interfaces: string[];
+}
 
 export const LocalDBTab: Component = () => {
   // Phase 6B: 통합된 Summary / Analytics / Maintenance UI
@@ -24,9 +33,278 @@ export const LocalDBTab: Component = () => {
   const [showVendorDialog, setShowVendorDialog] = createSignal(false);
   const [showDeviceTypeDialog, setShowDeviceTypeDialog] = createSignal(false);
   const [showTransportInterfaceDialog, setShowTransportInterfaceDialog] = createSignal(false);
+  
+  // 필터링된 인사이트 데이터
+  const [useFilteredInsights, setUseFilteredInsights] = createSignal(false);
+  const [filteredInsights, setFilteredInsights] = createSignal<any>(null);
+  const [loadingFilteredInsights, setLoadingFilteredInsights] = createSignal(false);
+  
+  // Computed data for insights - switches between filtered and full data
+  const topCategories = createMemo(() => 
+    useFilteredInsights() && filteredInsights() 
+      ? filteredInsights().top_categories 
+      : s()?.top_device_categories || []
+  );
+  const topDeviceTypes = createMemo(() => 
+    useFilteredInsights() && filteredInsights()
+      ? filteredInsights().top_device_types
+      : s()?.top_device_types || []
+  );
+  const topVendors = createMemo(() => 
+    useFilteredInsights() && filteredInsights()
+      ? filteredInsights().top_vendors
+      : s()?.top_vendors || []
+  );
+  const topTransport = createMemo(() => 
+    useFilteredInsights() && filteredInsights()
+      ? filteredInsights().top_transport_interfaces
+      : s()?.top_transport_interfaces || []
+  );
+  
+  const totalCategories = createMemo(() => 
+    useFilteredInsights() && filteredInsights()
+      ? filteredInsights().total_categories
+      : s()?.all_device_categories?.length || 0
+  );
+  const totalDeviceTypes = createMemo(() => 
+    useFilteredInsights() && filteredInsights()
+      ? filteredInsights().total_device_types
+      : s()?.total_device_types || 0
+  );
+  const totalVendors = createMemo(() => 
+    useFilteredInsights() && filteredInsights()
+      ? filteredInsights().total_vendors
+      : s()?.total_vendors || 0
+  );
+  const totalTransport = createMemo(() => 
+    useFilteredInsights() && filteredInsights()
+      ? filteredInsights().total_transport_interfaces
+      : s()?.all_transport_interfaces?.length || 0
+  );
+  
+  // 유효한 필터 옵션 (다른 필터에 따라 동적으로 변경)
+  const [availableOptions, setAvailableOptions] = createSignal<AvailableFilterOptions>({
+    categories: [],
+    device_types: [],
+    vendors: [],
+    transport_interfaces: [],
+  });
+  
+  // analytics.filterApplied 기반으로 특정 차원만 제외한 필터 생성
+  const buildFilterExcluding = (excludeFilter: 'category' | 'device_type' | 'vendor' | 'transport') => {
+    // analytics.filterApplied가 신뢰할 수 있는 원천 정보
+    const currentFilter = analytics.filterApplied || '';
+    
+    console.log('[buildFilterExcluding] 📋 현재 적용된 필터:', currentFilter);
+    console.log('[buildFilterExcluding] 🚫 제외할 차원:', excludeFilter);
+    
+    if (!currentFilter.trim()) {
+      console.log('[buildFilterExcluding] ⚠️ 적용된 필터가 없음, 빈 문자열 반환');
+      return '';
+    }
+    
+    // DSL 파싱: AND로 구분된 토큰들
+    const tokens = currentFilter.split(' AND ').map(t => t.trim()).filter(t => t.length > 0);
+    
+    // 제외할 차원에 해당하는 토큰 필터링
+    const filteredTokens = tokens.filter(token => {
+      const lowerToken = token.toLowerCase();
+      
+      switch (excludeFilter) {
+        case 'category':
+          // device_category:in:[...] 제외
+          return !lowerToken.startsWith('device_category:');
+        case 'device_type':
+          // dtype:in:[...] 제외
+          return !lowerToken.startsWith('dtype:') && !lowerToken.startsWith('device_type_name:');
+        case 'vendor':
+          // vendor:in:[...] 제외
+          return !lowerToken.startsWith('vendor:');
+        case 'transport':
+          // transport:in:[...] 제외
+          return !lowerToken.startsWith('transport:');
+        default:
+          return true;
+      }
+    });
+    
+    const result = filteredTokens.join(' AND ');
+    console.log('[buildFilterExcluding] ✅ 결과 필터:', result);
+    return result;
+  };
+  
+  // 유효한 옵션 업데이트
+  const updateAvailableOptions = async () => {
+    try {
+      console.log('[updateAvailableOptions] 🔍 시작 - 현재 필터:', {
+        categories: ui.selectedCategories,
+        deviceTypes: ui.selectedDeviceTypes,
+        vendors: ui.selectedVendors,
+        transport: ui.selectedTransportInterfaces,
+        dateRange: ui.certDateRange
+      });
+      
+      const vendorFilter = buildFilterExcluding('vendor');
+      console.log('[updateAvailableOptions] 🔧 벤더 필터 DSL:', vendorFilter);
+      
+      // 각 필터별로 해당 필터를 제외한 다른 필터들을 적용하여 유효한 옵션 조회
+      console.log('[updateAvailableOptions] 📡 백엔드 API 호출 시작...');
+      
+      const categoryFilter = buildFilterExcluding('category');
+      const deviceTypeFilter = buildFilterExcluding('device_type');
+      const transportFilter = buildFilterExcluding('transport');
+      
+      console.log('[updateAvailableOptions] 🔧 생성된 필터들:', {
+        category: categoryFilter,
+        deviceType: deviceTypeFilter,
+        vendor: vendorFilter,
+        transport: transportFilter
+      });
+      
+      console.log('[updateAvailableOptions] 🚀 invoke 호출 직전...');
+      console.log('[updateAvailableOptions] 🔍 invoke 함수 타입:', typeof invoke);
+      console.log('[updateAvailableOptions] 🔍 invoke 함수:', invoke);
+      
+      console.log('[updateAvailableOptions] 🎬 Promise.all 시작...');
+      
+      // 🔧 TEST: 먼저 하나만 호출해서 백엔드 응답 확인
+      console.log('[updateAvailableOptions] 🧪 TEST: 단일 invoke 테스트 시작...');
+      console.log('[updateAvailableOptions] 🧪 TEST: vendorFilter =', vendorFilter);
+      console.log('[updateAvailableOptions] 🧪 TEST: 파라미터 =', { current_filter: vendorFilter });
+      
+      try {
+        const testResult = await invoke<AvailableFilterOptions>('get_available_filter_options', { 
+          current_filter: vendorFilter
+        });
+        console.log('[updateAvailableOptions] ✅ TEST 성공! 응답:', testResult);
+      } catch (testError) {
+        console.error('[updateAvailableOptions] ❌ TEST 실패:', testError);
+        console.error('[updateAvailableOptions] ❌ TEST 에러 타입:', typeof testError);
+        console.error('[updateAvailableOptions] ❌ TEST 에러 상세:', JSON.stringify(testError, null, 2));
+      }
+      
+      const [categories, deviceTypes, vendors, transportInterfaces] = await Promise.all([
+        invoke<AvailableFilterOptions>('get_available_filter_options', { 
+          current_filter: categoryFilter
+        }).then(result => {
+          console.log('[updateAvailableOptions] ✅ categories 응답:', result);
+          return result;
+        }).catch(err => {
+          console.error('[updateAvailableOptions] ❌ categories 에러:', err);
+          throw err;
+        }),
+        invoke<AvailableFilterOptions>('get_available_filter_options', { 
+          current_filter: deviceTypeFilter
+        }).then(result => {
+          console.log('[updateAvailableOptions] ✅ deviceTypes 응답:', result);
+          return result;
+        }).catch(err => {
+          console.error('[updateAvailableOptions] ❌ deviceTypes 에러:', err);
+          throw err;
+        }),
+        invoke<AvailableFilterOptions>('get_available_filter_options', { 
+          current_filter: vendorFilter
+        }).then(result => {
+          console.log('[updateAvailableOptions] ✅ vendors 응답:', result);
+          return result;
+        }).catch(err => {
+          console.error('[updateAvailableOptions] ❌ vendors 에러:', err);
+          throw err;
+        }),
+        invoke<AvailableFilterOptions>('get_available_filter_options', { 
+          current_filter: transportFilter
+        }).then(result => {
+          console.log('[updateAvailableOptions] ✅ transportInterfaces 응답:', result);
+          return result;
+        }).catch(err => {
+          console.error('[updateAvailableOptions] ❌ transportInterfaces 에러:', err);
+          throw err;
+        }),
+      ]);
+      
+      console.log('[updateAvailableOptions] 🎉 Promise.all 완료! 결과:', {
+        categories,
+        deviceTypes,
+        vendors,
+        transportInterfaces
+      });
+      
+      console.log('[updateAvailableOptions] ✅ 백엔드 응답:', {
+        vendorFilter: vendorFilter,
+        availableVendorsCount: vendors.vendors?.length || 0,
+        availableVendors: vendors.vendors?.slice(0, 5) || [],
+        allResponses: {
+          categories: categories.categories?.length,
+          deviceTypes: deviceTypes.device_types?.length,
+          vendors: vendors.vendors?.length,
+          transport: transportInterfaces.transport_interfaces?.length
+        }
+      });
+      
+      setAvailableOptions({
+        categories: categories.categories || [],
+        device_types: deviceTypes.device_types || [],
+        vendors: vendors.vendors || [],
+        transport_interfaces: transportInterfaces.transport_interfaces || [],
+      });
+      
+      console.log('[updateAvailableOptions] ✅ availableOptions 업데이트 완료');
+    } catch (error) {
+      console.error('[updateAvailableOptions] ❌ 실패:', error);
+      console.error('[updateAvailableOptions] ❌ 에러 타입:', typeof error);
+      console.error('[updateAvailableOptions] ❌ 에러 객체:', JSON.stringify(error, null, 2));
+      if (error instanceof Error) {
+        console.error('[updateAvailableOptions] ❌ 에러 메시지:', error.message);
+        console.error('[updateAvailableOptions] ❌ 에러 스택:', error.stack);
+      }
+      // 에러 발생 시에도 빈 배열로 설정하여 UI가 멈추지 않도록
+      setAvailableOptions({
+        categories: [],
+        device_types: [],
+        vendors: [],
+        transport_interfaces: [],
+      });
+    }
+  };
+
+  // 필터 조합 변경 시 자동으로 유효 옵션 재계산 (카테고리 선택이 벤더/Transport에 반영되도록)
+  createEffect(() => {
+    // 의존성 읽기: Solid은 값 접근만으로 추적
+    ui.selectedCategories.length;
+    ui.selectedDeviceTypes.length;
+    ui.selectedVendors.length;
+    ui.selectedTransportInterfaces.length;
+    ui.certDateRange[0];
+    ui.certDateRange[1];
+    updateAvailableOptions().catch(err => console.warn('[auto updateAvailableOptions] 실패', err));
+  });
+  
+  // 필터링된 인사이트 업데이트
+  const updateFilteredInsights = async () => {
+    if (!useFilteredInsights()) return;
+    
+    try {
+      setLoadingFilteredInsights(true);
+      const currentFilter = analytics.filterApplied || '';
+      
+      console.log('[updateFilteredInsights] Fetching filtered insights with filter:', currentFilter);
+      
+      const result = await invoke<any>('get_filtered_analytics_summary', {
+        filter: currentFilter || null,
+      });
+      
+      setFilteredInsights(result);
+      console.log('[updateFilteredInsights] Filtered insights updated:', result);
+    } catch (error) {
+      console.error('[updateFilteredInsights] Failed to fetch filtered insights:', error);
+    } finally {
+      setLoadingFilteredInsights(false);
+    }
+  };
 
   onMount(() => {
     initializeLocalDbDashboard().catch(console.error);
+    updateAvailableOptions().catch(console.error); // 초기 로드 시 유효한 옵션 가져오기
     // Vendor sync progress events (coarse-grained)
     listen<any>('vendor_sync_progress', (evt) => {
       const p = evt.payload || {};
@@ -124,6 +402,9 @@ export const LocalDBTab: Component = () => {
     
     // 8. Store에 적용하고 Analytics 재로드
     localDbDashboardStore.applyFilter(finalFilter);
+    
+    // 9. 유효한 필터 옵션 업데이트 (필터 변경 후)
+    updateAvailableOptions().catch(console.error);
   };
 
   // Export/Import/삭제/Vendor Sync/Device Types 등은 차례로 store helper로 이동 예정 (현재는 backend API 직접 호출 유지)
@@ -152,10 +433,22 @@ export const LocalDBTab: Component = () => {
     <div class="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-blue-50 p-6">
       <div class="w-full max-w-7xl mx-auto space-y-6">
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 space-y-4">
-          <h2 class="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">�️ 로컬DB 데이터 분석</h2>
-          <p class="text-sm text-gray-600">인증 데이터를 필터링하고 분석하세요</p>
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">✨ 로컬DB 데이터 분석</h2>
+              <p class="text-sm text-gray-600">인증 데이터를 필터링하고 분석하세요</p>
+            </div>
+            <button
+              class="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white rounded-lg shadow-md transition-all duration-200 font-semibold text-sm"
+              onClick={() => localDbDashboardStore.setUi({ ...ui, filtersExpanded: !ui.filtersExpanded })}
+            >
+              <span>{ui.filtersExpanded ? '▲' : '▼'}</span>
+              <span>{ui.filtersExpanded ? '필터 접기' : '필터 펼치기'}</span>
+            </button>
+          </div>
         </div>
         
+        <Show when={ui.filtersExpanded}>
         {/* Date Range Slider */}
         <DateRangeSlider 
           minDate={ui.certDateMin || "2020-01-01"}
@@ -289,7 +582,10 @@ export const LocalDBTab: Component = () => {
             
             <button 
               class="w-full px-4 py-3 bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700 text-white rounded-lg font-semibold shadow-lg transition-all transform hover:scale-[1.02] active:scale-95"
-              onClick={() => setShowVendorDialog(true)}
+              onClick={async () => {
+                setShowVendorDialog(true);
+                await updateAvailableOptions();
+              }}
             >
               <div class="flex items-center justify-center gap-2">
                 <span>벤더 선택</span>
@@ -334,7 +630,10 @@ export const LocalDBTab: Component = () => {
             
             <button 
               class="w-full px-4 py-3 bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 text-white rounded-lg font-semibold shadow-lg transition-all transform hover:scale-[1.02] active:scale-95"
-              onClick={() => setShowTransportInterfaceDialog(true)}
+              onClick={async () => {
+                setShowTransportInterfaceDialog(true);
+                await updateAvailableOptions();
+              }}
             >
               <div class="flex items-center justify-center gap-2">
                 <span>Transport Interface 선택</span>
@@ -367,6 +666,7 @@ export const LocalDBTab: Component = () => {
             </Show>
           </div>
         </div>
+        </Show>
 
         {/* Summary */}
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
@@ -497,9 +797,35 @@ export const LocalDBTab: Component = () => {
 
         {/* 분석 인사이트 섹션 */}
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
-          <div class="mb-6">
-            <h3 class="text-xl font-bold text-gray-800">🔍 분석 인사이트</h3>
-            <p class="text-xs text-gray-500 mt-1">카테고리, 디바이스 타입, 벤더, Transport Interface, 인증 활동 통계</p>
+          <div class="mb-6 flex items-center justify-between">
+            <div>
+              <h3 class="text-xl font-bold text-gray-800">🔍 분석 인사이트</h3>
+              <p class="text-xs text-gray-500 mt-1">카테고리, 디바이스 타입, 벤더, Transport Interface 통계</p>
+            </div>
+            <div class="flex items-center gap-3">
+              <Show when={analytics.filterApplied}>
+                <div class="text-xs text-gray-500 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200">
+                  <span class="font-semibold text-blue-700">필터 적용됨</span>
+                </div>
+              </Show>
+              <button
+                class={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+                  useFilteredInsights()
+                    ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white shadow-md'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+                onClick={async () => {
+                  const newValue = !useFilteredInsights();
+                  setUseFilteredInsights(newValue);
+                  if (newValue) {
+                    await updateFilteredInsights();
+                  }
+                }}
+              >
+                <span>{useFilteredInsights() ? '✓' : '○'}</span>
+                <span>{useFilteredInsights() ? '필터 적용 중' : '전체 데이터'}</span>
+              </button>
+            </div>
           </div>
           
           <Show when={!ui.loadingSummary && s()} fallback={
@@ -507,20 +833,20 @@ export const LocalDBTab: Component = () => {
               <div class="text-sm text-gray-400 animate-pulse">📊 인사이트를 불러오는 중...</div>
             </div>
           }>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {/* Top 카테고리 통계 */}
               <div class="bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-5 shadow-sm">
                 <div class="flex items-center gap-2 mb-4">
                   <span class="text-2xl">🏷️</span>
                   <div>
                     <div class="text-sm font-bold text-indigo-900">Top 카테고리</div>
-                    <div class="text-xs text-indigo-600">{s()!.all_device_categories?.length || 0}개 전체</div>
+                    <div class="text-xs text-indigo-600">{totalCategories()}개 {useFilteredInsights() && loadingFilteredInsights() ? '로딩...' : (useFilteredInsights() ? '(필터됨)' : '전체')}</div>
                   </div>
                 </div>
                 <div class="bg-white rounded-lg p-3 border border-indigo-200 space-y-1.5 overflow-y-auto max-h-[240px]" style="scrollbar-width: thin;">
-                  <For each={s()!.top_device_categories || []}>
+                  <For each={topCategories()}>
                     {(c, idx) => {
-                      const maxCount = s()!.top_device_categories[0]?.[1] || 1;
+                      const maxCount = topCategories()[0]?.[1] || 1;
                       const percentage = (c[1] / maxCount) * 100;
                       return (
                         <div class="group hover:bg-indigo-50 rounded p-2 transition-colors">
@@ -547,13 +873,13 @@ export const LocalDBTab: Component = () => {
                   <span class="text-2xl">🔧</span>
                   <div>
                     <div class="text-sm font-bold text-emerald-900">Top 디바이스 타입</div>
-                    <div class="text-xs text-emerald-600">총 {s()!.total_device_types}개 타입</div>
+                    <div class="text-xs text-emerald-600">총 {totalDeviceTypes()}개 타입 {useFilteredInsights() ? '(필터됨)' : '(전체)'}</div>
                   </div>
                 </div>
                 <div class="bg-white rounded-lg p-3 border border-emerald-200 space-y-1.5 overflow-y-auto max-h-[240px]" style="scrollbar-width: thin;">
-                  <For each={s()!.top_device_types?.slice(0, 10) || []}>
+                  <For each={topDeviceTypes().slice(0, 10) || []}>
                     {(dt, idx) => {
-                      const maxCount = s()!.top_device_types?.[0]?.[1] || 1;
+                      const maxCount = topDeviceTypes()[0]?.[1] || 1;
                       const percentage = (dt[1] / maxCount) * 100;
                       return (
                         <div class="group hover:bg-emerald-50 rounded p-2 transition-colors">
@@ -580,13 +906,13 @@ export const LocalDBTab: Component = () => {
                   <span class="text-2xl">🏢</span>
                   <div>
                     <div class="text-sm font-bold text-blue-900">주요 벤더 Top 10</div>
-                    <div class="text-xs text-blue-600">총 {s()!.total_vendors}개 벤더</div>
+                    <div class="text-xs text-blue-600">총 {totalVendors()}개 벤더 {useFilteredInsights() ? '(필터됨)' : '(전체)'}</div>
                   </div>
                 </div>
                 <div class="bg-white rounded-lg p-3 border border-blue-200 space-y-1.5 overflow-y-auto max-h-[240px]" style="scrollbar-width: thin;">
-                  <For each={s()!.top_vendors?.slice(0, 10) || []}>
+                  <For each={topVendors().slice(0, 10) || []}>
                     {(v, idx) => {
-                      const maxCount = s()!.top_vendors?.[0]?.[1] || 1;
+                      const maxCount = topVendors()[0]?.[1] || 1;
                       const percentage = (v[1] / maxCount) * 100;
                       return (
                         <div class="group hover:bg-blue-50 rounded p-2 transition-colors">
@@ -613,13 +939,13 @@ export const LocalDBTab: Component = () => {
                   <span class="text-2xl">📡</span>
                   <div>
                     <div class="text-sm font-bold text-violet-900">Transport Interface</div>
-                    <div class="text-xs text-violet-600">{s()!.all_transport_interfaces?.length || 0}개 인터페이스</div>
+                    <div class="text-xs text-violet-600">{totalTransport()}개 인터페이스 {useFilteredInsights() ? '(필터됨)' : '(전체)'}</div>
                   </div>
                 </div>
                 <div class="bg-white rounded-lg p-3 border border-violet-200 space-y-1.5 overflow-y-auto max-h-[240px]" style="scrollbar-width: thin;">
-                  <For each={s()!.top_transport_interfaces?.slice(0, 10) || []}>
+                  <For each={topTransport().slice(0, 10) || []}>
                     {(ti, idx) => {
-                      const maxCount = s()!.top_transport_interfaces?.[0]?.[1] || 1;
+                      const maxCount = topTransport()[0]?.[1] || 1;
                       const percentage = (ti[1] / maxCount) * 100;
                       return (
                         <div class="group hover:bg-violet-50 rounded p-2 transition-colors">
@@ -637,37 +963,6 @@ export const LocalDBTab: Component = () => {
                       );
                     }}
                   </For>
-                </div>
-              </div>
-
-              {/* 최근 인증 활동 */}
-              <div class="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-200 rounded-xl p-5 shadow-sm">
-                <div class="flex items-center gap-2 mb-4">
-                  <span class="text-2xl">📅</span>
-                  <div>
-                    <div class="text-sm font-bold text-amber-900">최근 인증 활동</div>
-                    <div class="text-xs text-amber-600">최신 인증 트렌드</div>
-                  </div>
-                </div>
-                <div class="bg-white rounded-lg p-4 border border-amber-200 space-y-4">
-                  <div class="flex items-center justify-between p-3 bg-gradient-to-r from-emerald-100 to-green-100 rounded-lg">
-                    <div>
-                      <div class="text-[10px] text-emerald-700 font-semibold uppercase tracking-wide">24시간 내</div>
-                      <div class="text-3xl font-bold text-emerald-600 mt-1">{s()!.new_products_24h || 0}</div>
-                    </div>
-                    <div class="text-4xl">🆕</div>
-                  </div>
-                  <div class="flex items-center justify-between p-3 bg-gradient-to-r from-blue-100 to-cyan-100 rounded-lg">
-                    <div>
-                      <div class="text-[10px] text-blue-700 font-semibold uppercase tracking-wide">7일 내</div>
-                      <div class="text-3xl font-bold text-blue-600 mt-1">{s()!.new_products_7d || 0}</div>
-                    </div>
-                    <div class="text-4xl">📈</div>
-                  </div>
-                  <div class="pt-3 border-t border-emerald-200">
-                    <div class="text-xs text-emerald-700 mb-1 font-semibold">전체 인증 제품</div>
-                    <div class="text-2xl font-bold text-gray-800">{s()!.total_products.toLocaleString()}</div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -733,12 +1028,6 @@ export const LocalDBTab: Component = () => {
           </div>
 
           {/* Analytics 테이블 */}
-          <Show when={analytics.filterApplied || analytics.filterError}>
-            <div class="text-xs text-gray-500 flex items-center gap-2">
-              <span>적용 필터: <code class="bg-gray-100 px-1 py-0.5 rounded">{analytics.filterApplied || '없음'}</code></span>
-              <Show when={analytics.filterError}><span class="text-rose-600">에러: {analytics.filterError}</span></Show>
-            </div>
-          </Show>
           <div class="overflow-auto max-h-[360px] border rounded">
             <table class="w-full text-xs">
               <thead class="bg-gray-50 sticky top-0">
@@ -786,10 +1075,10 @@ export const LocalDBTab: Component = () => {
                     return (
                       <>
                         {cols.map(c => (
-                          <th class="p-2 text-left select-none cursor-pointer group hover:bg-indigo-50 transition" onClick={e => cycle(c.key, e.shiftKey)} title={`클릭: 정렬 / Shift+클릭: 다중정렬`}>
+                          <th class="p-2 text-left select-none cursor-pointer group hover:bg-indigo-50 transition" onClick={e => cycle(c.key, e.altKey)} title={`클릭: 정렬 / Option+클릭: 다중정렬`}>
                             <span class="inline-flex items-center gap-1">
                               <span class="font-semibold">{c.label}</span>
-                              <span class="text-sm text-indigo-600 font-bold min-w-[20px]">{indicator(c.key) || '↕'}</span>
+                              <span class="text-sm text-indigo-600 font-bold min-w-[20px]">{indicator(c.key) || ''}</span>
                             </span>
                           </th>
                         ))}
@@ -1083,16 +1372,27 @@ export const LocalDBTab: Component = () => {
                   <For each={s()?.all_device_categories || []}>
                     {(c, idx) => {
                       const isSelected = () => ui.selectedCategories.includes(c[0]);
+                      // 옵션 배열이 비어있으면(초기 로딩 중) 모든 옵션을 활성화
+                      const isAvailable = () => {
+                        const available = availableOptions().categories;
+                        return available.length === 0 || available.includes(c[0]);
+                      };
                       const maxCount = s()!.top_device_categories[0]?.[1] || 1;
                       const percentage = (c[1] / maxCount) * 100;
                       return (
                         <div 
                           class={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
-                            isSelected() 
-                              ? 'bg-indigo-100 border-indigo-400 shadow-md' 
-                              : 'bg-white border-gray-200 hover:border-indigo-300 hover:bg-indigo-50'
+                            !isAvailable() && !isSelected()
+                              ? 'bg-gray-100 border-gray-200 opacity-50'
+                              : isSelected() 
+                                ? 'bg-indigo-100 border-indigo-400 shadow-md' 
+                                : 'bg-white border-gray-200 hover:border-indigo-300 hover:bg-indigo-50'
                           }`}
                           onClick={() => {
+                            if (!isAvailable() && !isSelected()) {
+                              console.log('[카테고리] 비활성화된 옵션 클릭 무시:', c[0]);
+                              return;
+                            }
                             const currentUi = localDbDashboardStore.ui;
                             let newSelected: string[];
                             
@@ -1121,18 +1421,22 @@ export const LocalDBTab: Component = () => {
                               <input 
                                 type="checkbox" 
                                 checked={isSelected()} 
+                                disabled={!isAvailable() && !isSelected()}
                                 class="pointer-events-none w-4 h-4"
                               />
                               <span class="text-gray-400 text-xs font-mono">#{idx() + 1}</span>
-                              <span class="text-sm font-semibold text-gray-800 truncate" title={c[0]}>
+                              <span class={`text-sm font-semibold truncate ${!isAvailable() && !isSelected() ? 'text-gray-400' : 'text-gray-800'}`} title={c[0]}>
                                 {c[0]}
                               </span>
+                              <Show when={!isAvailable() && !isSelected()}>
+                                <span class="text-xs text-gray-400 italic">(다른 필터로 제외됨)</span>
+                              </Show>
                             </div>
-                            <span class="text-indigo-600 font-bold ml-2 text-sm">{c[1]}</span>
+                            <span class={`font-bold ml-2 text-sm ${!isAvailable() && !isSelected() ? 'text-gray-400' : 'text-indigo-600'}`}>{c[1]}</span>
                           </div>
                           <div class="h-1.5 bg-gray-200 rounded-full overflow-hidden">
                             <div 
-                              class="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all" 
+                              class={`h-full rounded-full transition-all ${!isAvailable() && !isSelected() ? 'bg-gray-300' : 'bg-gradient-to-r from-indigo-500 to-purple-500'}`}
                               style={`width: ${percentage}%`}
                             ></div>
                           </div>
@@ -1188,12 +1492,12 @@ export const LocalDBTab: Component = () => {
                     <button 
                       class="px-3 py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded font-medium text-sm"
                       onClick={() => {
-                        const allVendors = s()?.top_vendors?.map(v => v[0]) || [];
+                        const allVendors = s()?.all_vendors?.map(v => v[0]) || [];
                         const isAllSelected = ui.selectedVendors.length === allVendors.length;
                         localDbDashboardStore.setUi({ ...ui, selectedVendors: isAllSelected ? [] : allVendors });
                       }}
                     >
-                      {ui.selectedVendors.length === (s()?.top_vendors?.length || 0) ? '전체 해제' : '전체 선택'}
+                      {ui.selectedVendors.length === (s()?.all_vendors?.length || 0) ? '전체 해제' : '전체 선택'}
                     </button>
                     <button 
                       class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-medium text-sm"
@@ -1205,19 +1509,43 @@ export const LocalDBTab: Component = () => {
                 </div>
 
                 <div class="grid grid-cols-2 gap-3 overflow-y-auto max-h-[500px] pr-2" style="scrollbar-width: thin;">
-                  <For each={s()?.top_vendors || []}>
+                  <For each={(() => {
+                    // 전체 벤더 목록을 유효한 옵션 우선으로 정렬
+                    const vendors = s()?.all_vendors || [];
+                    const available = availableOptions().vendors;
+                    
+                    // 옵션이 로딩 중이면 원본 순서 유지
+                    if (available.length === 0) return vendors;
+                    
+                    // 유효한 벤더와 비유효한 벤더 분리
+                    const availableVendors = vendors.filter(v => available.includes(v[0]));
+                    const unavailableVendors = vendors.filter(v => !available.includes(v[0]));
+                    
+                    // 유효한 벤더를 먼저, 그 다음 비유효한 벤더
+                    return [...availableVendors, ...unavailableVendors];
+                  })()}>
                     {(v, idx) => {
                       const isSelected = () => ui.selectedVendors.includes(v[0]);
-                      const maxCount = s()!.top_vendors?.[0]?.[1] || 1;
+                      const isAvailable = () => {
+                        const available = availableOptions().vendors;
+                        return available.length === 0 || available.includes(v[0]);
+                      };
+                      const maxCount = s()?.all_vendors?.[0]?.[1] || 1;
                       const percentage = (v[1] / maxCount) * 100;
                       return (
                         <div 
                           class={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
-                            isSelected() 
-                              ? 'bg-blue-100 border-blue-400 shadow-md' 
-                              : 'bg-white border-gray-200 hover:border-blue-300 hover:bg-blue-50'
+                            !isAvailable() && !isSelected()
+                              ? 'bg-gray-100 border-gray-200 opacity-50'
+                              : isSelected() 
+                                ? 'bg-blue-100 border-blue-400 shadow-md' 
+                                : 'bg-white border-gray-200 hover:border-blue-300 hover:bg-blue-50'
                           }`}
                           onClick={() => {
+                            if (!isAvailable() && !isSelected()) {
+                              console.log('[벤더] 비활성화된 옵션 클릭 무시:', v[0]);
+                              return;
+                            }
                             const newSelected = isSelected() 
                               ? ui.selectedVendors.filter(vendor => vendor !== v[0])
                               : [...ui.selectedVendors, v[0]];
@@ -1228,19 +1556,23 @@ export const LocalDBTab: Component = () => {
                             <div class="flex items-center gap-2 flex-1 min-w-0">
                               <input 
                                 type="checkbox" 
-                                checked={isSelected()} 
+                                checked={isSelected()}
+                                disabled={!isAvailable() && !isSelected()}
                                 class="pointer-events-none w-4 h-4"
                               />
                               <span class="text-gray-400 text-xs font-mono">#{idx() + 1}</span>
-                              <span class="text-sm font-semibold text-gray-800 truncate" title={v[0]}>
+                              <span class={`text-sm font-semibold truncate ${!isAvailable() && !isSelected() ? 'text-gray-400' : 'text-gray-800'}`} title={v[0]}>
                                 {v[0]}
                               </span>
+                              <Show when={!isAvailable() && !isSelected()}>
+                                <span class="text-xs text-gray-400 italic">(제외됨)</span>
+                              </Show>
                             </div>
-                            <span class="text-blue-600 font-bold ml-2 text-sm">{v[1]}</span>
+                            <span class={`font-bold ml-2 text-sm ${!isAvailable() && !isSelected() ? 'text-gray-400' : 'text-blue-600'}`}>{v[1]}</span>
                           </div>
                           <div class="h-1.5 bg-gray-200 rounded-full overflow-hidden">
                             <div 
-                              class="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full transition-all" 
+                              class={`h-full rounded-full transition-all ${!isAvailable() && !isSelected() ? 'bg-gray-300' : 'bg-gradient-to-r from-blue-500 to-cyan-500'}`}
                               style={`width: ${percentage}%`}
                             ></div>
                           </div>
@@ -1312,17 +1644,76 @@ export const LocalDBTab: Component = () => {
                 </div>
 
                 <div class="grid grid-cols-2 gap-3 overflow-y-auto max-h-[500px] pr-2" style="scrollbar-width: thin;">
-                  <For each={s()?.all_device_type_names || []}>
+                  <For each={(() => {
+                    // 1차: 카테고리 기반 정렬, 2차: 유효한 옵션 기반 정렬
+                    const allTypes = s()?.all_device_type_names || [];
+                    const categoryMapping = s()?.device_types_by_category || {};
+                    const selectedCats = ui.selectedCategories.filter(c => c !== 'null');
+                    const available = availableOptions().device_types;
+                    
+                    // 카테고리 기반 관련성 체크
+                    const relevantTypes = new Set<string>();
+                    if (selectedCats.length > 0) {
+                      for (const cat of selectedCats) {
+                        const types = categoryMapping[cat] || [];
+                        types.forEach(t => relevantTypes.add(t));
+                      }
+                    }
+                    
+                    // 4개 그룹으로 분류
+                    const group1: string[] = []; // 카테고리 관련 + 유효
+                    const group2: string[] = []; // 카테고리 관련 + 비유효
+                    const group3: string[] = []; // 카테고리 무관 + 유효
+                    const group4: string[] = []; // 카테고리 무관 + 비유효
+                    
+                    for (const dtype of allTypes) {
+                      const isRelevant = selectedCats.length === 0 || relevantTypes.has(dtype);
+                      const isAvailable = available.length === 0 || available.includes(dtype);
+                      
+                      if (isRelevant && isAvailable) group1.push(dtype);
+                      else if (isRelevant && !isAvailable) group2.push(dtype);
+                      else if (!isRelevant && isAvailable) group3.push(dtype);
+                      else group4.push(dtype);
+                    }
+                    
+                    // 우선순위: 관련+유효 > 관련+비유효 > 무관+유효 > 무관+비유효
+                    return [...group1, ...group2, ...group3, ...group4];
+                  })()}>
                     {(dtype, idx) => {
                       const isSelected = () => ui.selectedDeviceTypes.includes(dtype);
+                      const isRelevant = () => {
+                        const selectedCats = ui.selectedCategories.filter(c => c !== 'null');
+                        if (selectedCats.length === 0) return true;
+                        const categoryMapping = s()?.device_types_by_category || {};
+                        for (const cat of selectedCats) {
+                          const types = categoryMapping[cat] || [];
+                          if (types.includes(dtype)) return true;
+                        }
+                        return false;
+                      };
+                      const isAvailable = () => {
+                        const available = availableOptions().device_types;
+                        return available.length === 0 || available.includes(dtype);
+                      };
+                      
+                      const canSelect = isAvailable() || isSelected();
+                      
                       return (
                         <div 
                           class={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
-                            isSelected() 
-                              ? 'bg-emerald-100 border-emerald-400 shadow-md' 
-                              : 'bg-white border-gray-200 hover:border-emerald-300 hover:bg-emerald-50'
+                            !canSelect
+                              ? 'bg-gray-100 border-gray-200 opacity-50'
+                              : isSelected() 
+                                ? 'bg-emerald-100 border-emerald-400 shadow-md' 
+                                : isRelevant()
+                                  ? 'bg-white border-gray-200 hover:border-emerald-300 hover:bg-emerald-50'
+                                  : 'bg-gray-50 border-gray-200 hover:border-gray-300'
                           }`}
                           onClick={() => {
+                            if (!canSelect) {
+                              console.log('[디바이스 타입] 비활성화된 옵션 클릭 무시:', dtype);
+                              return;
+                            }
                             const newSelected = isSelected() 
                               ? ui.selectedDeviceTypes.filter(dt => dt !== dtype)
                               : [...ui.selectedDeviceTypes, dtype];
@@ -1332,13 +1723,20 @@ export const LocalDBTab: Component = () => {
                           <div class="flex items-center gap-2">
                             <input 
                               type="checkbox" 
-                              checked={isSelected()} 
+                              checked={isSelected()}
+                              disabled={!canSelect}
                               class="pointer-events-none w-4 h-4"
                             />
-                            <span class="text-gray-400 text-xs font-mono">#{idx() + 1}</span>
-                            <span class="text-sm font-semibold text-gray-800 truncate" title={dtype}>
+                            <span class={`text-xs font-mono ${canSelect ? (isRelevant() ? 'text-gray-400' : 'text-gray-300') : 'text-gray-200'}`}>#{idx() + 1}</span>
+                            <span class={`text-sm font-semibold truncate ${!canSelect ? 'text-gray-400' : isRelevant() ? 'text-gray-800' : 'text-gray-500'}`} title={dtype}>
                               {dtype}
                             </span>
+                            <Show when={!isRelevant() && canSelect}>
+                              <span class="ml-auto text-[10px] text-gray-400">∅</span>
+                            </Show>
+                            <Show when={!canSelect}>
+                              <span class="ml-auto text-[10px] text-gray-400 italic">(제외됨)</span>
+                            </Show>
                           </div>
                         </div>
                       );
@@ -1408,17 +1806,42 @@ export const LocalDBTab: Component = () => {
                 </div>
 
                 <div class="grid grid-cols-2 gap-3 overflow-y-auto max-h-[500px] pr-2" style="scrollbar-width: thin;">
-                  <For each={s()?.all_transport_interfaces || []}>
+                  <For each={(() => {
+                    // Transport Interface를 유효한 옵션 우선으로 정렬
+                    const allTIs = s()?.all_transport_interfaces || [];
+                    const available = availableOptions().transport_interfaces;
+                    
+                    // 옵션이 로딩 중이면 원본 순서 유지
+                    if (available.length === 0) return allTIs;
+                    
+                    // 유효한 TI와 비유효한 TI 분리
+                    const availableTIs = allTIs.filter(ti => available.includes(ti));
+                    const unavailableTIs = allTIs.filter(ti => !available.includes(ti));
+                    
+                    // 유효한 TI를 먼저, 그 다음 비유효한 TI
+                    return [...availableTIs, ...unavailableTIs];
+                  })()}>
                     {(ti, idx) => {
                       const isSelected = () => ui.selectedTransportInterfaces.includes(ti);
+                      const isAvailable = () => {
+                        const available = availableOptions().transport_interfaces;
+                        return available.length === 0 || available.includes(ti);
+                      };
+                      
                       return (
                         <div 
                           class={`p-3 rounded-lg cursor-pointer transition-all border-2 ${
-                            isSelected() 
-                              ? 'bg-violet-100 border-violet-400 shadow-md' 
-                              : 'bg-white border-gray-200 hover:border-violet-300 hover:bg-violet-50'
+                            !isAvailable() && !isSelected()
+                              ? 'bg-gray-100 border-gray-200 opacity-50'
+                              : isSelected() 
+                                ? 'bg-violet-100 border-violet-400 shadow-md' 
+                                : 'bg-white border-gray-200 hover:border-violet-300 hover:bg-violet-50'
                           }`}
                           onClick={() => {
+                            if (!isAvailable() && !isSelected()) {
+                              console.log('[Transport Interface] 비활성화된 옵션 클릭 무시:', ti);
+                              return;
+                            }
                             const newSelected = isSelected() 
                               ? ui.selectedTransportInterfaces.filter(t => t !== ti)
                               : [...ui.selectedTransportInterfaces, ti];
@@ -1428,13 +1851,17 @@ export const LocalDBTab: Component = () => {
                           <div class="flex items-center gap-2">
                             <input 
                               type="checkbox" 
-                              checked={isSelected()} 
+                              checked={isSelected()}
+                              disabled={!isAvailable() && !isSelected()}
                               class="pointer-events-none w-4 h-4"
                             />
-                            <span class="text-gray-400 text-xs font-mono">#{idx() + 1}</span>
-                            <span class="text-sm font-semibold text-gray-800 truncate" title={ti}>
+                            <span class={`text-xs font-mono ${!isAvailable() && !isSelected() ? 'text-gray-200' : 'text-gray-400'}`}>#{idx() + 1}</span>
+                            <span class={`text-sm font-semibold truncate ${!isAvailable() && !isSelected() ? 'text-gray-400' : 'text-gray-800'}`} title={ti}>
                               {ti}
                             </span>
+                            <Show when={!isAvailable() && !isSelected()}>
+                              <span class="ml-auto text-xs text-gray-400 italic">(제외됨)</span>
+                            </Show>
                           </div>
                         </div>
                       );

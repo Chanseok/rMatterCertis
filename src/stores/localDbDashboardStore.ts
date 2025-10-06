@@ -15,9 +15,11 @@ interface SummaryData {
   all_device_categories?: [string, number][]; // 전체 카테고리 리스트
   top_device_types?: [string, number][]; // Top 10 디바이스 타입
   top_vendors?: [string, number][]; // Top 10 벤더
+  all_vendors?: [string, number][]; // 전체 벤더 리스트
   all_device_type_names?: string[]; // 전체 디바이스 타입 이름 리스트
   top_transport_interfaces?: [string, number][]; // Top transport interfaces
   all_transport_interfaces?: string[]; // 전체 transport interface 리스트
+  device_types_by_category?: Record<string, string[]>; // 카테고리별 디바이스 타입 매핑
 }
 
 interface AnalyticsState {
@@ -63,6 +65,7 @@ interface UiFlags {
   certDateRange: [string, string]; // [startDate, endDate] YYYY-MM-DD 형식
   certDateMin?: string; // 데이터의 최소 날짜 (YYYY-MM-DD)
   certDateMax?: string; // 데이터의 최대 날짜 (YYYY-MM-DD)
+  filtersExpanded: boolean; // 필터 섹션 접기/펼치기 상태
 }
 
 export const DEFAULT_PAGE_SIZE = 50;
@@ -76,7 +79,8 @@ const [ui, setUi] = createStore<UiFlags>({
   selectedVendors: [],
   selectedDeviceTypes: [],
   selectedTransportInterfaces: [],
-  certDateRange: ["", ""] // 초기에는 비우고 loadSummary에서 설정
+  certDateRange: ["", ""], // 초기에는 비우고 loadSummary에서 설정
+  filtersExpanded: true, // 기본적으로 펼쳐진 상태
 });
 const [analytics, setAnalytics] = createStore<AnalyticsState>({ rows: [], total: 0, offset: 0, limit: DEFAULT_PAGE_SIZE, filterDraft: '', filterApplied: '', loading: false, sort: [] });
 
