@@ -51,8 +51,6 @@ pub struct ProductDetailSelectors {
     pub certificate_id: String,
     /// Selector for certification date
     pub certification_date: String,
-    /// Selector for software version
-    pub software_version: String,
     /// Selector for hardware version
     pub hardware_version: String,
     /// Selector for VID (Vendor ID)
@@ -85,7 +83,6 @@ impl Default for MatterExtractorConfig {
                 device_type: ".device-type, .category".to_string(),
                 certificate_id: ".cert-id, .certification-id".to_string(),
                 certification_date: ".cert-date, .certification-date".to_string(),
-                software_version: ".software-version".to_string(),
                 hardware_version: ".hardware-version".to_string(),
                 vid: ".vid".to_string(),
                 pid: ".pid".to_string(),
@@ -462,7 +459,6 @@ impl MatterDataExtractor {
             device_type,
             certificate_id: None,
             certification_date: None,
-            software_version: None,
             hardware_version: None,
             vid: None,
             pid: None,
@@ -470,14 +466,10 @@ impl MatterDataExtractor {
             family_variant_sku: None,
             firmware_version: None,
             family_id: None,
-            tis_trp_tested: None,
             specification_version: None,
             transport_interface: None,
             primary_device_type_ids: None,
             application_categories: None,
-            description: None,
-            compliance_document_url: None,
-            program_type: None,
             created_at: now,
             updated_at: now,
         };
@@ -721,9 +713,6 @@ impl MatterDataExtractor {
             k if k.contains("hardware version") => {
                 detail.hardware_version = Some(value.to_string());
             }
-            k if k.contains("software version") => {
-                detail.software_version = Some(value.to_string());
-            }
             k if k.contains("firmware version") => {
                 detail.firmware_version = Some(value.to_string());
             }
@@ -731,9 +720,6 @@ impl MatterDataExtractor {
             k if k.contains("family sku") => detail.family_sku = Some(value.to_string()),
             k if k.contains("family variant sku") => {
                 detail.family_variant_sku = Some(value.to_string());
-            }
-            k if k.contains("tis") && k.contains("trp tested") => {
-                detail.tis_trp_tested = Some(value.to_string());
             }
             k if k.contains("specification version") => {
                 detail.specification_version = Some(value.to_string());
@@ -790,12 +776,6 @@ impl MatterDataExtractor {
                 || (l.contains("hardware") && !l.contains("firmware")) =>
             {
                 detail.hardware_version = Some(value.to_string());
-            }
-            l if l.contains("software") && !l.contains("hardware") => {
-                detail.software_version = Some(value.to_string());
-            }
-            l if l.contains("tis") && l.contains("trp") => {
-                detail.tis_trp_tested = Some(value.to_string());
             }
             l if l.contains("specification version") || l.contains("spec version") => {
                 detail.specification_version = Some(value.to_string());
@@ -1167,7 +1147,6 @@ mod tests {
         assert_eq!(detail.vid, Some(0x1234));
         assert_eq!(detail.pid, Some(5678));
         assert_eq!(detail.hardware_version, Some("1.0".to_string()));
-        assert_eq!(detail.software_version, Some("2.1.0".to_string()));
     }
 
     #[test]
@@ -1185,7 +1164,6 @@ mod tests {
             device_type: None,
             certificate_id: None,
             certification_date: None,
-            software_version: None,
             hardware_version: None,
             vid: None,
             pid: None,
@@ -1193,14 +1171,10 @@ mod tests {
             family_variant_sku: None,
             firmware_version: None,
             family_id: None,
-            tis_trp_tested: None,
             specification_version: None,
             transport_interface: None,
             primary_device_type_ids: None,
             application_categories: None,
-            description: None,
-            compliance_document_url: None,
-            program_type: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };

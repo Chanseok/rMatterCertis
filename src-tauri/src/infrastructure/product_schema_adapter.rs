@@ -34,7 +34,6 @@ impl ProductSchemaAdapter {
             certification_date: matter_product
                 .certified_date
                 .map(|dt| dt.format("%m/%d/%Y").to_string()),
-            software_version: None,
             hardware_version: matter_product.hardware_version.clone(),
             vid: Self::parse_hex_to_int(&matter_product.vendor_id),
             pid: Self::parse_hex_to_int(&matter_product.product_id),
@@ -42,16 +41,10 @@ impl ProductSchemaAdapter {
             family_variant_sku: None,
             firmware_version: matter_product.firmware_version.clone(),
             family_id: None,
-            tis_trp_tested: matter_product
-                .tis_trp_tested
-                .map(|b| if b { "Yes".to_string() } else { "No".to_string() }),
             specification_version: matter_product.specification_version.clone(),
             transport_interface: matter_product.transport_interface.clone(),
             primary_device_type_ids: None,
             application_categories: None,
-            description: None,
-            compliance_document_url: None,
-            program_type: Some("Matter".to_string()),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
@@ -69,7 +62,6 @@ impl ProductSchemaAdapter {
             device_type: None,
             certificate_id: product.certificate_id.clone(),
             certification_date: None,
-            software_version: None,
             hardware_version: None,
             vid: None,
             pid: None,
@@ -77,14 +69,10 @@ impl ProductSchemaAdapter {
             family_variant_sku: None,
             firmware_version: None,
             family_id: None,
-            tis_trp_tested: None,
             specification_version: None,
             transport_interface: None,
             primary_device_type_ids: None,
             application_categories: None,
-            description: None,
-            compliance_document_url: None,
-            program_type: Some("Matter".to_string()),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -104,7 +92,7 @@ impl ProductSchemaAdapter {
             // primary_device_type_id removed
             transport_interface: detail.transport_interface.clone(),
             certified_date: Self::parse_date_string(&detail.certification_date),
-            tis_trp_tested: detail.tis_trp_tested.as_ref().map(|s| s == "Yes"),
+            tis_trp_tested: None,
             compliance_document_url: None,
             program_type: "Matter".to_string(),
             device_type: detail.device_type.clone(),
@@ -169,7 +157,6 @@ mod tests {
             certificate_id: "CSA12345".to_string(),
             company_name: "Test Company".to_string(),
             product_name: "Test Product".to_string(),
-            description: Some("Test description".to_string()),
             firmware_version: Some("1.0".to_string()),
             hardware_version: Some("1.0".to_string()),
             specification_version: Some("1.1".to_string()),

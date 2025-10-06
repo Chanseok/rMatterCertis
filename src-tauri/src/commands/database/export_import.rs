@@ -419,11 +419,10 @@ pub async fn export_full_database_excel(
     // Product details headers (all columns from schema)
     let detail_headers = vec![
         "url", "page_id", "index_in_page", "id", "manufacturer", "model", "device_type",
-        "certificate_id", "certification_date", "software_version", "hardware_version",
+        "certificate_id", "certification_date", "hardware_version",
         "firmware_version", "specification_version", "vid", "pid", "family_sku",
-        "family_variant_sku", "family_id", "tis_trp_tested", "transport_interface",
-        "primary_device_type_ids", "application_categories", "description",
-        "compliance_document_url", "program_type", "created_at", "updated_at"
+        "family_variant_sku", "family_id", "transport_interface",
+        "primary_device_type_ids", "application_categories", "created_at", "updated_at"
     ];
     
     for (col, header) in detail_headers.iter().enumerate() {
@@ -436,10 +435,9 @@ pub async fn export_full_database_excel(
     info!("🔍 Querying product_details...");
     let details = sqlx::query(
         r#"SELECT url, page_id, index_in_page, id, manufacturer, model, device_type, certificate_id,
-           certification_date, software_version, hardware_version, firmware_version, specification_version,
-           vid, pid, family_sku, family_variant_sku, family_id, tis_trp_tested, transport_interface,
-           primary_device_type_ids, application_categories, description, compliance_document_url,
-           program_type, created_at, updated_at 
+           certification_date, hardware_version, firmware_version, specification_version,
+           vid, pid, family_sku, family_variant_sku, family_id, transport_interface,
+           primary_device_type_ids, application_categories, created_at, updated_at 
            FROM product_details ORDER BY page_id, index_in_page"#
     )
     .fetch_all(pool)
@@ -483,24 +481,19 @@ pub async fn export_full_database_excel(
         write_str!(6, "device_type");
         write_str!(7, "certificate_id");
         write_str!(8, "certification_date");
-        write_str!(9, "software_version");
-        write_str!(10, "hardware_version");
-        write_str!(11, "firmware_version");
-        write_str!(12, "specification_version");
-        write_num!(13, "vid");
-        write_num!(14, "pid");
-        write_str!(15, "family_sku");
-        write_str!(16, "family_variant_sku");
-        write_str!(17, "family_id");
-        write_str!(18, "tis_trp_tested");
-        write_str!(19, "transport_interface");
-        write_str!(20, "primary_device_type_ids");
-        write_str!(21, "application_categories");
-        write_str!(22, "description");
-        write_str!(23, "compliance_document_url");
-        write_str!(24, "program_type");
-        write_str!(25, "created_at");
-        write_str!(26, "updated_at");
+        write_str!(9, "hardware_version");
+        write_str!(10, "firmware_version");
+        write_str!(11, "specification_version");
+        write_num!(12, "vid");
+        write_num!(13, "pid");
+        write_str!(14, "family_sku");
+        write_str!(15, "family_variant_sku");
+        write_str!(16, "family_id");
+        write_str!(17, "transport_interface");
+        write_str!(18, "primary_device_type_ids");
+        write_str!(19, "application_categories");
+        write_str!(20, "created_at");
+        write_str!(21, "updated_at");
     }
     
     // ===== Device Types Sheet =====
@@ -803,23 +796,21 @@ pub async fn import_full_database_excel(
             sqlx::query(
                 r#"INSERT INTO product_details (
                     url, page_id, index_in_page, id, manufacturer, model, device_type, certificate_id,
-                    certification_date, software_version, hardware_version, firmware_version, specification_version,
-                    vid, pid, family_sku, family_variant_sku, family_id, tis_trp_tested, transport_interface,
-                    primary_device_type_ids, application_categories, description, compliance_document_url,
-                    program_type, created_at, updated_at
-                   ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
+                    certification_date, hardware_version, firmware_version, specification_version,
+                    vid, pid, family_sku, family_variant_sku, family_id, transport_interface,
+                    primary_device_type_ids, application_categories, created_at, updated_at
+                   ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
                    ON CONFLICT(url) DO UPDATE SET
                    page_id=excluded.page_id, index_in_page=excluded.index_in_page, id=excluded.id,
                    manufacturer=excluded.manufacturer, model=excluded.model, device_type=excluded.device_type,
                    certificate_id=excluded.certificate_id, certification_date=excluded.certification_date,
-                   software_version=excluded.software_version, hardware_version=excluded.hardware_version,
+                   hardware_version=excluded.hardware_version,
                    firmware_version=excluded.firmware_version, specification_version=excluded.specification_version,
                    vid=excluded.vid, pid=excluded.pid, family_sku=excluded.family_sku,
                    family_variant_sku=excluded.family_variant_sku, family_id=excluded.family_id,
-                   tis_trp_tested=excluded.tis_trp_tested, transport_interface=excluded.transport_interface,
+                   transport_interface=excluded.transport_interface,
                    primary_device_type_ids=excluded.primary_device_type_ids, 
-                   application_categories=excluded.application_categories, description=excluded.description,
-                   compliance_document_url=excluded.compliance_document_url, program_type=excluded.program_type,
+                   application_categories=excluded.application_categories,
                    updated_at=excluded.updated_at"#
             )
             .bind(&url)
@@ -834,9 +825,9 @@ pub async fn import_full_database_excel(
             .bind(&get_str!(9))
             .bind(&get_str!(10))
             .bind(&get_str!(11))
-            .bind(&get_str!(12))
+            .bind(&get_num!(12))
             .bind(&get_num!(13))
-            .bind(&get_num!(14))
+            .bind(&get_str!(14))
             .bind(&get_str!(15))
             .bind(&get_str!(16))
             .bind(&get_str!(17))
@@ -844,11 +835,6 @@ pub async fn import_full_database_excel(
             .bind(&get_str!(19))
             .bind(&get_str!(20))
             .bind(&get_str!(21))
-            .bind(&get_str!(22))
-            .bind(&get_str!(23))
-            .bind(&get_str!(24))
-            .bind(&get_str!(25))
-            .bind(&get_str!(26))
             .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;

@@ -815,19 +815,14 @@ impl IntegratedProductRepository {
                 change_kinds.push("change:certification_date".to_string());
             }
             
-            fill_or_change_opt_str!(software_version, "software_version");
             fill_or_change_opt_str!(hardware_version, "hardware_version");
-            fill_or_change_opt_str!(description, "description");
             fill_or_change_opt_str!(firmware_version, "firmware_version");
             fill_or_change_opt_str!(specification_version, "specification_version");
             fill_or_change_opt_str!(transport_interface, "transport_interface");
             fill_or_change_opt_str!(application_categories, "application_categories");
-            fill_or_change_opt_str!(compliance_document_url, "compliance_document_url");
-            fill_or_change_opt_str!(program_type, "program_type");
             fill_or_change_opt_str!(family_sku, "family_sku");
             fill_or_change_opt_str!(family_variant_sku, "family_variant_sku");
             fill_or_change_opt_str!(family_id, "family_id");
-            fill_or_change_opt_str!(tis_trp_tested, "tis_trp_tested");
             
             // ⭐ primary_device_type_ids handling (Vec<String> requires special comparison)
             let existing_ids_json = existing_detail.primary_device_type_ids.as_ref()
@@ -988,17 +983,9 @@ impl IntegratedProductRepository {
                                     fmt_opt_str(existing_detail.certification_date.as_ref()),
                                     fmt_opt_str(detail.certification_date.as_ref()),
                                 ),
-                                "software_version" => (
-                                    fmt_opt_str(existing_detail.software_version.as_ref()),
-                                    fmt_opt_str(detail.software_version.as_ref()),
-                                ),
                                 "hardware_version" => (
                                     fmt_opt_str(existing_detail.hardware_version.as_ref()),
                                     fmt_opt_str(detail.hardware_version.as_ref()),
-                                ),
-                                "description" => (
-                                    fmt_opt_str(existing_detail.description.as_ref()),
-                                    fmt_opt_str(detail.description.as_ref()),
                                 ),
                                 "firmware_version" => (
                                     fmt_opt_str(existing_detail.firmware_version.as_ref()),
@@ -1016,14 +1003,6 @@ impl IntegratedProductRepository {
                                     fmt_opt_str(existing_detail.application_categories.as_ref()),
                                     fmt_opt_str(detail.application_categories.as_ref()),
                                 ),
-                                "compliance_document_url" => (
-                                    fmt_opt_str(existing_detail.compliance_document_url.as_ref()),
-                                    fmt_opt_str(detail.compliance_document_url.as_ref()),
-                                ),
-                                "program_type" => (
-                                    fmt_opt_str(existing_detail.program_type.as_ref()),
-                                    fmt_opt_str(detail.program_type.as_ref()),
-                                ),
                                 "family_sku" => (
                                     fmt_opt_str(existing_detail.family_sku.as_ref()),
                                     fmt_opt_str(detail.family_sku.as_ref()),
@@ -1035,10 +1014,6 @@ impl IntegratedProductRepository {
                                 "family_id" => (
                                     fmt_opt_str(existing_detail.family_id.as_ref()),
                                     fmt_opt_str(detail.family_id.as_ref()),
-                                ),
-                                "tis_trp_tested" => (
-                                    fmt_opt_str(existing_detail.tis_trp_tested.as_ref()),
-                                    fmt_opt_str(detail.tis_trp_tested.as_ref()),
                                 ),
                                 // primary_device_type_id removed; normalized list is primary_device_type_ids
                                 "certificate_id" => (
@@ -1210,12 +1185,11 @@ impl IntegratedProductRepository {
             let insert_sql = r"
                                 INSERT INTO product_details 
                                 (url, page_id, index_in_page, id, manufacturer, model, device_type,
-                                 certificate_id, certification_date, software_version, hardware_version,
+                                 certificate_id, certification_date, hardware_version,
                                  vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
-                                 tis_trp_tested, specification_version, transport_interface, 
-                                 primary_device_type_ids, application_categories, description,
-                                 compliance_document_url, program_type, created_at, updated_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 specification_version, transport_interface, 
+                                 primary_device_type_ids, application_categories, created_at, updated_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 ON CONFLICT(url) DO UPDATE SET
                                     page_id = excluded.page_id,
                                     index_in_page = excluded.index_in_page,
@@ -1225,7 +1199,6 @@ impl IntegratedProductRepository {
                                     device_type = excluded.device_type,
                                     certificate_id = excluded.certificate_id,
                                     certification_date = excluded.certification_date,
-                                    software_version = excluded.software_version,
                                     hardware_version = excluded.hardware_version,
                                     vid = excluded.vid,
                                     pid = excluded.pid,
@@ -1233,14 +1206,10 @@ impl IntegratedProductRepository {
                                     family_variant_sku = excluded.family_variant_sku,
                                     firmware_version = excluded.firmware_version,
                                     family_id = excluded.family_id,
-                                    tis_trp_tested = excluded.tis_trp_tested,
                                     specification_version = excluded.specification_version,
                                     transport_interface = excluded.transport_interface,
                                     primary_device_type_ids = excluded.primary_device_type_ids,
                                     application_categories = excluded.application_categories,
-                                    description = excluded.description,
-                                    compliance_document_url = excluded.compliance_document_url,
-                                    program_type = excluded.program_type,
                                     updated_at = excluded.updated_at
                                 ";
             let normalized_cert_date = Self::normalize_cert_date(&detail.certification_date);
@@ -1259,7 +1228,6 @@ impl IntegratedProductRepository {
                     .bind(&detail.device_type)
                     .bind(&detail.certificate_id)
                     .bind(&normalized_cert_date)
-                    .bind(&detail.software_version)
                     .bind(&detail.hardware_version)
                     .bind(detail.vid)
                     .bind(detail.pid)
@@ -1267,14 +1235,10 @@ impl IntegratedProductRepository {
                     .bind(&detail.family_variant_sku)
                     .bind(&detail.firmware_version)
                     .bind(&detail.family_id)
-                    .bind(detail.tis_trp_tested.clone())
                     .bind(&detail.specification_version)
                     .bind(&detail.transport_interface)
                     .bind(primary_device_type_ids_json)
                     .bind(&detail.application_categories)
-                    .bind(&detail.description)
-                    .bind(&detail.compliance_document_url)
-                    .bind(&detail.program_type)
                     .bind(now)
                     .bind(now);
                 async move { q.execute(&*self.pool).await.map(|_| ()).map_err(|e| anyhow::Error::new(e)) }
@@ -1511,11 +1475,10 @@ impl IntegratedProductRepository {
                         r"
                         UPDATE product_details SET
                             page_id = ?, index_in_page = ?, id = ?, manufacturer = ?, model = ?, device_type = ?,
-                            certificate_id = ?, certification_date = ?, software_version = ?, hardware_version = ?,
+                            certificate_id = ?, certification_date = ?, hardware_version = ?,
                             vid = ?, pid = ?, family_sku = ?, family_variant_sku = ?, firmware_version = ?, family_id = ?,
-                            tis_trp_tested = ?, specification_version = ?, transport_interface = ?,
-                            primary_device_type_ids = ?, application_categories = ?, description = ?,
-                            compliance_document_url = ?, program_type = ?, updated_at = ?
+                            specification_version = ?, transport_interface = ?,
+                            primary_device_type_ids = ?, application_categories = ?, updated_at = ?
                         WHERE url = ?
                         "
                     )
@@ -1527,7 +1490,6 @@ impl IntegratedProductRepository {
                     .bind(&detail.device_type)
                     .bind(&detail.certificate_id)
                     .bind(certification_date)
-                    .bind(&detail.software_version)
                     .bind(&detail.hardware_version)
                     .bind(detail.vid)
                     .bind(detail.pid)
@@ -1535,14 +1497,10 @@ impl IntegratedProductRepository {
                     .bind(&detail.family_variant_sku)
                     .bind(&detail.firmware_version)
                     .bind(&detail.family_id)
-                    .bind(&detail.tis_trp_tested)
                     .bind(&detail.specification_version)
                     .bind(&detail.transport_interface)
                     .bind(primary_device_type_ids_json)
                     .bind(&detail.application_categories)
-                    .bind(&detail.description)
-                    .bind(&detail.compliance_document_url)
-                    .bind(&detail.program_type)
                     .bind(now)
                     .bind(&detail.url)
                     .execute(&mut *tx_conn)
@@ -1630,12 +1588,11 @@ impl IntegratedProductRepository {
                         r"
                         INSERT INTO product_details (
                             url, page_id, index_in_page, id, manufacturer, model, device_type,
-                            certificate_id, certification_date, software_version, hardware_version,
+                            certificate_id, certification_date, hardware_version,
                             vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
-                            tis_trp_tested, specification_version, transport_interface,
-                            primary_device_type_ids, application_categories, description,
-                            compliance_document_url, program_type, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            specification_version, transport_interface,
+                            primary_device_type_ids, application_categories, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         "
                     )
                     .bind(&detail.url)
@@ -1647,7 +1604,6 @@ impl IntegratedProductRepository {
                     .bind(&detail.device_type)
                     .bind(&detail.certificate_id)
                     .bind(certification_date)
-                    .bind(&detail.software_version)
                     .bind(&detail.hardware_version)
                     .bind(detail.vid)
                     .bind(detail.pid)
@@ -1655,14 +1611,10 @@ impl IntegratedProductRepository {
                     .bind(&detail.family_variant_sku)
                     .bind(&detail.firmware_version)
                     .bind(&detail.family_id)
-                    .bind(&detail.tis_trp_tested)
                     .bind(&detail.specification_version)
                     .bind(&detail.transport_interface)
                     .bind(primary_device_type_ids_json)
                     .bind(&detail.application_categories)
-                    .bind(&detail.description)
-                    .bind(&detail.compliance_document_url)
-                    .bind(&detail.program_type)
                     .bind(now)
                     .bind(now)
                     .execute(&mut *tx_conn)
@@ -1845,11 +1797,10 @@ impl IntegratedProductRepository {
         let row = sqlx::query(
             r"
          SELECT url, page_id, index_in_page, id, manufacturer, model, device_type,
-                   certificate_id, certification_date, software_version, hardware_version,
+                   certificate_id, certification_date, hardware_version,
                    vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
-                   tis_trp_tested, specification_version, transport_interface, 
-             primary_device_type_ids, application_categories, description,
-                   compliance_document_url, program_type, created_at, updated_at
+                   specification_version, transport_interface, 
+             primary_device_type_ids, application_categories, created_at, updated_at
             FROM product_details WHERE url = ?
             ",
         )
@@ -1870,7 +1821,6 @@ impl IntegratedProductRepository {
                     device_type: row.get("device_type"),
                     certificate_id: row.get("certificate_id"),
                     certification_date: row.get("certification_date"),
-                    software_version: row.get("software_version"),
                     hardware_version: row.get("hardware_version"),
                     vid: row.get("vid"),
                     pid: row.get("pid"),
@@ -1878,7 +1828,6 @@ impl IntegratedProductRepository {
                     family_variant_sku: row.get("family_variant_sku"),
                     firmware_version: row.get("firmware_version"),
                     family_id: row.get("family_id"),
-                    tis_trp_tested: row.get("tis_trp_tested"),
                     specification_version: row.get("specification_version"),
                     transport_interface: row.get("transport_interface"),
                     primary_device_type_ids: {
@@ -1886,9 +1835,6 @@ impl IntegratedProductRepository {
                         json.and_then(|s| serde_json::from_str::<Vec<i32>>(&s).ok())
                     },
                     application_categories: row.get("application_categories"),
-                    description: row.get("description"),
-                    compliance_document_url: row.get("compliance_document_url"),
-                    program_type: row.get("program_type"),
                     created_at: row.get("created_at"),
                     updated_at: row.get("updated_at"),
                 }))
@@ -1927,11 +1873,6 @@ impl IntegratedProductRepository {
             bind_values.push(specification_version.clone());
         }
 
-        if let Some(program_type) = &criteria.program_type {
-            conditions.push("pd.program_type = ?");
-            bind_values.push(program_type.clone());
-        }
-
         let where_clause = if conditions.is_empty() {
             String::new()
         } else {
@@ -1964,11 +1905,10 @@ impl IntegratedProductRepository {
             r"
             SELECT p.url, p.manufacturer, p.model, p.certificate_id, p.page_id, p.index_in_page, 
                    p.created_at as p_created_at, p.updated_at as p_updated_at,
-                   pd.id, pd.device_type as pd_device_type, pd.certification_date as pd_certification_date, pd.software_version, pd.hardware_version,
+                   pd.id, pd.device_type as pd_device_type, pd.certification_date as pd_certification_date, pd.hardware_version,
                    pd.vid, pd.pid, pd.family_sku, pd.family_variant_sku, pd.firmware_version, pd.family_id,
-                   pd.tis_trp_tested, pd.specification_version, pd.transport_interface, 
-                   pd.primary_device_type_ids, pd.application_categories, pd.description,
-                   pd.compliance_document_url, pd.program_type,
+                   pd.specification_version, pd.transport_interface, 
+                   pd.primary_device_type_ids, pd.application_categories,
                    pd.created_at as pd_created_at, pd.updated_at as pd_updated_at
             FROM products p
             LEFT JOIN product_details pd ON p.url = pd.url
@@ -2012,7 +1952,6 @@ impl IntegratedProductRepository {
                         device_type: row.get("pd_device_type"),
                         certificate_id: row.get("certificate_id"),
                         certification_date: row.get("pd_certification_date"),
-                        software_version: row.get("software_version"),
                         hardware_version: row.get("hardware_version"),
                         vid: row.get("vid"),
                         pid: row.get("pid"),
@@ -2020,7 +1959,6 @@ impl IntegratedProductRepository {
                         family_variant_sku: row.get("family_variant_sku"),
                         firmware_version: row.get("firmware_version"),
                         family_id: row.get("family_id"),
-                        tis_trp_tested: row.get("tis_trp_tested"),
                         specification_version: row.get("specification_version"),
                         transport_interface: row.get("transport_interface"),
                         primary_device_type_ids: {
@@ -2028,9 +1966,6 @@ impl IntegratedProductRepository {
                             json.and_then(|s| serde_json::from_str::<Vec<i32>>(&s).ok())
                         },
                         application_categories: row.get("application_categories"),
-                        description: row.get("description"),
-                        compliance_document_url: row.get("compliance_document_url"),
-                        program_type: row.get("program_type"),
                         created_at: row.get("pd_created_at"),
                         updated_at: row.get("pd_updated_at"),
                     })
@@ -2124,9 +2059,6 @@ impl IntegratedProductRepository {
                 certification_date: product_json["certification_date"]
                     .as_str()
                     .map(std::string::ToString::to_string),
-                software_version: product_json["software_version"]
-                    .as_str()
-                    .map(std::string::ToString::to_string),
                 hardware_version: product_json["hardware_version"]
                     .as_str()
                     .map(std::string::ToString::to_string),
@@ -2144,9 +2076,6 @@ impl IntegratedProductRepository {
                 family_id: product_json["family_id"]
                     .as_str()
                     .map(std::string::ToString::to_string),
-                tis_trp_tested: product_json["tis_trp_tested"]
-                    .as_str()
-                    .map(std::string::ToString::to_string),
                 specification_version: product_json["specification_version"]
                     .as_str()
                     .map(std::string::ToString::to_string),
@@ -2162,15 +2091,6 @@ impl IntegratedProductRepository {
                             .collect()
                     },
                 ),
-                description: product_json["description"]
-                    .as_str()
-                    .map(std::string::ToString::to_string),
-                compliance_document_url: product_json["compliance_document_url"]
-                    .as_str()
-                    .map(std::string::ToString::to_string),
-                program_type: product_json["program_type"]
-                    .as_str()
-                    .map(std::string::ToString::to_string),
                 created_at: basic_product.created_at,
                 updated_at: basic_product.updated_at,
             };
@@ -2350,7 +2270,7 @@ impl IntegratedProductRepository {
                 .fetch_optional(&*self.pool)
                 .await?;
 
-        let matter_products_count: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM product_details WHERE program_type = 'Matter' OR program_type IS NULL")
+        let matter_products_count: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM product_details")
             .fetch_one(&*self.pool)
             .await?;
 
@@ -2966,7 +2886,6 @@ mod tests {
                 device_type TEXT,
                 certificate_id TEXT,
                 certification_date TEXT,
-                software_version TEXT,
                 hardware_version TEXT,
                 vid INTEGER,
                 pid INTEGER,
@@ -2974,14 +2893,10 @@ mod tests {
                 family_variant_sku TEXT,
                 firmware_version TEXT,
                 family_id TEXT,
-                tis_trp_tested TEXT,
                 specification_version TEXT,
                 transport_interface TEXT,
                 primary_device_type_ids TEXT,
                 application_categories TEXT,
-                description TEXT,
-                compliance_document_url TEXT,
-                program_type TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(page_id, index_in_page)
@@ -3024,7 +2939,6 @@ mod tests {
             device_type: Some("Light Bulb".to_string()),
             certificate_id: Some("TEST123".to_string()),
             certification_date: Some("2024-01-01".to_string()),
-            software_version: Some("1.0.0".to_string()),
             hardware_version: Some("1.0.0".to_string()),
             vid: Some(1234),
             pid: Some(5678),
@@ -3032,14 +2946,10 @@ mod tests {
             family_variant_sku: Some("FAM-VAR-SKU".to_string()),
             firmware_version: Some("1.0.0".to_string()),
             family_id: Some("FAM-ID".to_string()),
-            tis_trp_tested: Some("Yes".to_string()),
             specification_version: Some("1.0".to_string()),
             transport_interface: Some("WiFi".to_string()),
             primary_device_type_ids: Some(vec![256, 257]),
             application_categories: Some("Lighting".to_string()),
-            description: Some("Test product description".to_string()),
-            compliance_document_url: Some("https://example.com/doc.pdf".to_string()),
-            program_type: Some("Matter".to_string()),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

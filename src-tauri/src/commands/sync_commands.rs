@@ -569,11 +569,6 @@ pub async fn start_basic_sync_pages(
                                                     calc.page_id, calc.index_in_page
                                                 ));
                                             }
-                                            let program_type = Some(
-                                                detail
-                                                    .program_type
-                                                    .unwrap_or_else(|| "Matter".to_string()),
-                                            );
                                             // clone fields for backfill
                                             let man_c = detail.manufacturer.clone();
                                             let model_c = detail.model.clone();
@@ -582,16 +577,14 @@ pub async fn start_basic_sync_pages(
                                             if sqlx::query(
                                             r"INSERT INTO product_details (
                                                 url, page_id, index_in_page, id, manufacturer, model, device_type,
-                                                certificate_id, certification_date, software_version, hardware_version, firmware_version,
+                                                certificate_id, certification_date, hardware_version, firmware_version,
                                                 specification_version, vid, pid, family_sku, family_variant_sku, family_id,
-                                                tis_trp_tested, transport_interface, application_categories,
-                                                description, compliance_document_url, program_type
+                                                transport_interface, application_categories
                                             ) VALUES (
                                                 ?, ?, ?, ?, ?, ?, ?,
-                                                ?, ?, ?, ?, ?,
-                                                ?, ?, ?, ?, ?, ?,
                                                 ?, ?, ?, ?,
-                                                ?, ?, ?
+                                                ?, ?, ?, ?, ?, ?,
+                                                ?, ?
                                             ) ON CONFLICT(url) DO UPDATE SET
                                                 page_id=COALESCE(excluded.page_id, product_details.page_id),
                                                 index_in_page=COALESCE(excluded.index_in_page, product_details.index_in_page),
@@ -601,7 +594,6 @@ pub async fn start_basic_sync_pages(
                                                 device_type=COALESCE(excluded.device_type, product_details.device_type),
                                                 certificate_id=COALESCE(excluded.certificate_id, product_details.certificate_id),
                                                 certification_date=COALESCE(excluded.certification_date, product_details.certification_date),
-                                                software_version=COALESCE(excluded.software_version, product_details.software_version),
                                                 hardware_version=COALESCE(excluded.hardware_version, product_details.hardware_version),
                                                 firmware_version=COALESCE(excluded.firmware_version, product_details.firmware_version),
                                                 specification_version=COALESCE(excluded.specification_version, product_details.specification_version),
@@ -610,13 +602,9 @@ pub async fn start_basic_sync_pages(
                                                 family_sku=COALESCE(excluded.family_sku, product_details.family_sku),
                                                 family_variant_sku=COALESCE(excluded.family_variant_sku, product_details.family_variant_sku),
                                                 family_id=COALESCE(excluded.family_id, product_details.family_id),
-                                                tis_trp_tested=COALESCE(excluded.tis_trp_tested, product_details.tis_trp_tested),
                                                 transport_interface=COALESCE(excluded.transport_interface, product_details.transport_interface),
                                                 -- primary_device_type_id removed
                                                 application_categories=COALESCE(excluded.application_categories, product_details.application_categories),
-                                                description=COALESCE(excluded.description, product_details.description),
-                                                compliance_document_url=COALESCE(excluded.compliance_document_url, product_details.compliance_document_url),
-                                                program_type=COALESCE(excluded.program_type, product_details.program_type),
                                                 updated_at=CURRENT_TIMESTAMP
                                         ",
                                         )
@@ -629,7 +617,6 @@ pub async fn start_basic_sync_pages(
                                         .bind(detail.device_type)
                                         .bind(detail.certificate_id)
                                         .bind(detail.certification_date)
-                                        .bind(detail.software_version)
                                         .bind(detail.hardware_version)
                                         .bind(detail.firmware_version)
                                         .bind(detail.specification_version)
@@ -638,12 +625,8 @@ pub async fn start_basic_sync_pages(
                                         .bind(detail.family_sku)
                                         .bind(detail.family_variant_sku)
                                         .bind(detail.family_id)
-                                        .bind(detail.tis_trp_tested)
                                         .bind(detail.transport_interface)
                                         .bind(detail.application_categories)
-                                        .bind(detail.description)
-                                        .bind(detail.compliance_document_url)
-                                        .bind(program_type)
                                         .execute(&mut *tx)
                                         .await
                                         .is_ok()

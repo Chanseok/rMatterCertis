@@ -47,7 +47,6 @@ pub async fn search_integrated_products_simple(
         device_type: None,
         certificate_id: None,
         specification_version: None,
-        program_type: None,
         page: Some(1),
         limit,
     };

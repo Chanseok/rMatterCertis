@@ -181,7 +181,6 @@ impl ContextualParser for ProductDetailParser {
             device_type,
             certificate_id: certification_data.get("certification_id").cloned(),
             certification_date: certification_data.get("certification_date").cloned(),
-            software_version: certification_data.get("software_version").cloned(),
             hardware_version: certification_data.get("hardware_version").cloned(),
             vid: self.parse_numeric_field(certification_data.get("vid")),
             pid: self.parse_numeric_field(certification_data.get("pid")),
@@ -189,14 +188,10 @@ impl ContextualParser for ProductDetailParser {
             family_variant_sku: None,
             firmware_version: None,
             family_id: None,
-            tis_trp_tested: None,
             specification_version: certification_data.get("specification_version").cloned(),
             transport_interface: certification_data.get("transport_interface").cloned(),
             primary_device_type_ids: None,
             application_categories: None,
-            description,
-            compliance_document_url: None,
-            program_type: certification_data.get("certification_type").cloned(),
             created_at: now,
             updated_at: now,
         };
@@ -461,8 +456,6 @@ impl ProductDetailParser {
             || key.contains("connectivity")
         {
             data.insert("transport_interface".to_string(), value.to_string());
-        } else if key.contains("software") && key.contains("version") {
-            data.insert("software_version".to_string(), value.to_string());
         } else if key.contains("hardware") && key.contains("version") {
             data.insert("hardware_version".to_string(), value.to_string());
         }

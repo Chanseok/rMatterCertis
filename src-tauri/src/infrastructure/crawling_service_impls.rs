@@ -3658,9 +3658,6 @@ const fn calculate_extracted_fields(detail: &crate::domain::product::ProductDeta
     if detail.certification_date.is_some() {
         count += 1;
     }
-    if detail.software_version.is_some() {
-        count += 1;
-    }
     if detail.hardware_version.is_some() {
         count += 1;
     }
@@ -3682,9 +3679,6 @@ const fn calculate_extracted_fields(detail: &crate::domain::product::ProductDeta
     if detail.family_id.is_some() {
         count += 1;
     }
-    if detail.tis_trp_tested.is_some() {
-        count += 1;
-    }
     if detail.specification_version.is_some() {
         count += 1;
     }
@@ -3693,15 +3687,6 @@ const fn calculate_extracted_fields(detail: &crate::domain::product::ProductDeta
     }
     // primary_device_type_id removed; normalized list handled elsewhere
     if detail.application_categories.is_some() {
-        count += 1;
-    }
-    if detail.description.is_some() {
-        count += 1;
-    }
-    if detail.compliance_document_url.is_some() {
-        count += 1;
-    }
-    if detail.program_type.is_some() {
         count += 1;
     }
 
