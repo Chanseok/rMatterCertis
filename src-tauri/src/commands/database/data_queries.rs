@@ -1942,95 +1942,121 @@ pub async fn get_filtered_analytics_summary(
         info!("   Bind[{}]: '{}'", i, bind);
     }
     
-    // Total products
-    let total_products_sql = if base_where.is_empty() {
-        "SELECT COUNT(*) FROM v_product_detail_analytics".to_string()
+    // 🚀 OPTIMIZED: Single query using CTEs to get all stats at once
+    let optimized_sql = if base_where.is_empty() {
+        r#"
+        WITH filtered_data AS (
+            SELECT 
+                vendor_name,
+                device_category,
+                device_type_name,
+                transport_interface
+            FROM v_product_detail_analytics
+        )
+        SELECT
+            (SELECT COUNT(*) FROM filtered_data) as total_products,
+            (SELECT COUNT(DISTINCT vendor_name) FROM filtered_data WHERE vendor_name IS NOT NULL) as total_vendors,
+            (SELECT COUNT(DISTINCT device_category) FROM filtered_data WHERE device_category IS NOT NULL) as total_categories,
+            (SELECT COUNT(DISTINCT device_type_name) FROM filtered_data WHERE device_type_name IS NOT NULL) as total_device_types,
+            (SELECT COUNT(DISTINCT transport_interface) FROM filtered_data WHERE transport_interface IS NOT NULL) as total_transport_interfaces
+        "#.to_string()
     } else {
-        format!("SELECT COUNT(*) FROM v_product_detail_analytics {}", base_where)
+        format!(r#"
+        WITH filtered_data AS (
+            SELECT 
+                vendor_name,
+                device_category,
+                device_type_name,
+                transport_interface
+            FROM v_product_detail_analytics
+            {}
+        )
+        SELECT
+            (SELECT COUNT(*) FROM filtered_data) as total_products,
+            (SELECT COUNT(DISTINCT vendor_name) FROM filtered_data WHERE vendor_name IS NOT NULL) as total_vendors,
+            (SELECT COUNT(DISTINCT device_category) FROM filtered_data WHERE device_category IS NOT NULL) as total_categories,
+            (SELECT COUNT(DISTINCT device_type_name) FROM filtered_data WHERE device_type_name IS NOT NULL) as total_device_types,
+            (SELECT COUNT(DISTINCT transport_interface) FROM filtered_data WHERE transport_interface IS NOT NULL) as total_transport_interfaces
+        "#, base_where)
     };
-    info!("📊 Total products SQL: {}", total_products_sql);
-    let mut total_products_query = sqlx::query_scalar::<_, i64>(&total_products_sql);
+    
+    info!("📊 Optimized stats SQL: {}", optimized_sql);
+    let mut stats_query = sqlx::query(&optimized_sql);
     for val in &binds {
-        total_products_query = total_products_query.bind(val);
+        stats_query = stats_query.bind(val);
     }
-    let total_products = total_products_query
+    
+    let stats_row = stats_query
         .fetch_one(pool)
         .await
-        .map_err(|e| format!("Failed to count products: {}", e))?;
+        .map_err(|e| format!("Failed to fetch stats: {}", e))?;
     
-    // Total unique vendors
-    let total_vendors_sql = if base_where.is_empty() {
-        "SELECT COUNT(DISTINCT vendor_name) FROM v_product_detail_analytics WHERE vendor_name IS NOT NULL".to_string()
-    } else {
-        format!("SELECT COUNT(DISTINCT vendor_name) FROM v_product_detail_analytics {} AND vendor_name IS NOT NULL", base_where)
-    };
-    let mut total_vendors_query = sqlx::query_scalar::<_, i64>(&total_vendors_sql);
-    for val in &binds {
-        total_vendors_query = total_vendors_query.bind(val);
-    }
-    let total_vendors = total_vendors_query
-        .fetch_one(pool)
-        .await
-        .map_err(|e| format!("Failed to count vendors: {}", e))?;
+    let total_products: i64 = stats_row.get("total_products");
+    let total_vendors: i64 = stats_row.get("total_vendors");
+    let total_categories: i64 = stats_row.get("total_categories");
+    let total_device_types: i64 = stats_row.get("total_device_types");
+    let total_transport_interfaces: i64 = stats_row.get("total_transport_interfaces");
     
-    // Total unique categories
-    let total_categories_sql = if base_where.is_empty() {
-        "SELECT COUNT(DISTINCT device_category) FROM v_product_detail_analytics WHERE device_category IS NOT NULL".to_string()
-    } else {
-        format!("SELECT COUNT(DISTINCT device_category) FROM v_product_detail_analytics {} AND device_category IS NOT NULL", base_where)
-    };
-    let mut total_categories_query = sqlx::query_scalar::<_, i64>(&total_categories_sql);
-    for val in &binds {
-        total_categories_query = total_categories_query.bind(val);
-    }
-    let total_categories = total_categories_query
-        .fetch_one(pool)
-        .await
-        .map_err(|e| format!("Failed to count categories: {}", e))?;
+    info!("📊 Stats fetched: products={}, vendors={}, categories={}, types={}, transports={}", 
+        total_products, total_vendors, total_categories, total_device_types, total_transport_interfaces);
     
-    // Total unique device types
-    let total_device_types_sql = if base_where.is_empty() {
-        "SELECT COUNT(DISTINCT device_type_name) FROM v_product_detail_analytics WHERE device_type_name IS NOT NULL".to_string()
-    } else {
-        format!("SELECT COUNT(DISTINCT device_type_name) FROM v_product_detail_analytics {} AND device_type_name IS NOT NULL", base_where)
-    };
-    let mut total_device_types_query = sqlx::query_scalar::<_, i64>(&total_device_types_sql);
-    for val in &binds {
-        total_device_types_query = total_device_types_query.bind(val);
-    }
-    let total_device_types = total_device_types_query
-        .fetch_one(pool)
-        .await
-        .map_err(|e| format!("Failed to count device types: {}", e))?;
+    // 🚀 OPTIMIZED: Execute all top-N queries in parallel using tokio::join!
+    let (top_vendors_result, top_categories_result, top_device_types_result, top_transport_interfaces_result) = tokio::join!(
+        // Top vendors
+        async {
+            let sql = if base_where.is_empty() {
+                "SELECT vendor_name, COUNT(*) as cnt FROM v_product_detail_analytics WHERE vendor_name IS NOT NULL GROUP BY vendor_name ORDER BY cnt DESC LIMIT 10".to_string()
+            } else {
+                format!("SELECT vendor_name, COUNT(*) as cnt FROM v_product_detail_analytics {} AND vendor_name IS NOT NULL GROUP BY vendor_name ORDER BY cnt DESC LIMIT 10", base_where)
+            };
+            let mut query = sqlx::query(&sql);
+            for val in &binds {
+                query = query.bind(val);
+            }
+            query.fetch_all(pool).await
+        },
+        // Top categories
+        async {
+            let sql = if base_where.is_empty() {
+                "SELECT device_category, COUNT(*) as cnt FROM v_product_detail_analytics WHERE device_category IS NOT NULL GROUP BY device_category ORDER BY cnt DESC LIMIT 10".to_string()
+            } else {
+                format!("SELECT device_category, COUNT(*) as cnt FROM v_product_detail_analytics {} AND device_category IS NOT NULL GROUP BY device_category ORDER BY cnt DESC LIMIT 10", base_where)
+            };
+            let mut query = sqlx::query(&sql);
+            for val in &binds {
+                query = query.bind(val);
+            }
+            query.fetch_all(pool).await
+        },
+        // Top device types
+        async {
+            let sql = if base_where.is_empty() {
+                "SELECT device_type_name, COUNT(*) as cnt FROM v_product_detail_analytics WHERE device_type_name IS NOT NULL GROUP BY device_type_name ORDER BY cnt DESC LIMIT 10".to_string()
+            } else {
+                format!("SELECT device_type_name, COUNT(*) as cnt FROM v_product_detail_analytics {} AND device_type_name IS NOT NULL GROUP BY device_type_name ORDER BY cnt DESC LIMIT 10", base_where)
+            };
+            let mut query = sqlx::query(&sql);
+            for val in &binds {
+                query = query.bind(val);
+            }
+            query.fetch_all(pool).await
+        },
+        // Top transport interfaces
+        async {
+            let sql = if base_where.is_empty() {
+                "SELECT transport_interface, COUNT(*) as cnt FROM v_product_detail_analytics WHERE transport_interface IS NOT NULL GROUP BY transport_interface ORDER BY cnt DESC LIMIT 10".to_string()
+            } else {
+                format!("SELECT transport_interface, COUNT(*) as cnt FROM v_product_detail_analytics {} AND transport_interface IS NOT NULL GROUP BY transport_interface ORDER BY cnt DESC LIMIT 10", base_where)
+            };
+            let mut query = sqlx::query(&sql);
+            for val in &binds {
+                query = query.bind(val);
+            }
+            query.fetch_all(pool).await
+        }
+    );
     
-    // Total unique transport interfaces
-    let total_transport_interfaces_sql = if base_where.is_empty() {
-        "SELECT COUNT(DISTINCT transport_interface) FROM v_product_detail_analytics WHERE transport_interface IS NOT NULL".to_string()
-    } else {
-        format!("SELECT COUNT(DISTINCT transport_interface) FROM v_product_detail_analytics {} AND transport_interface IS NOT NULL", base_where)
-    };
-    let mut total_transport_interfaces_query = sqlx::query_scalar::<_, i64>(&total_transport_interfaces_sql);
-    for val in &binds {
-        total_transport_interfaces_query = total_transport_interfaces_query.bind(val);
-    }
-    let total_transport_interfaces = total_transport_interfaces_query
-        .fetch_one(pool)
-        .await
-        .map_err(|e| format!("Failed to count transport interfaces: {}", e))?;
-    
-    // Top vendors
-    let top_vendors_sql = if base_where.is_empty() {
-        "SELECT vendor_name, COUNT(*) as cnt FROM v_product_detail_analytics WHERE vendor_name IS NOT NULL GROUP BY vendor_name ORDER BY cnt DESC LIMIT 10".to_string()
-    } else {
-        format!("SELECT vendor_name, COUNT(*) as cnt FROM v_product_detail_analytics {} AND vendor_name IS NOT NULL GROUP BY vendor_name ORDER BY cnt DESC LIMIT 10", base_where)
-    };
-    let mut top_vendors_query = sqlx::query(&top_vendors_sql);
-    for val in &binds {
-        top_vendors_query = top_vendors_query.bind(val);
-    }
-    let top_vendors: Vec<(String, i64)> = top_vendors_query
-        .fetch_all(pool)
-        .await
+    let top_vendors: Vec<(String, i64)> = top_vendors_result
         .map_err(|e| format!("Failed to fetch top vendors: {}", e))?
         .into_iter()
         .filter_map(|r| {
@@ -2040,19 +2066,7 @@ pub async fn get_filtered_analytics_summary(
         })
         .collect();
     
-    // Top categories
-    let top_categories_sql = if base_where.is_empty() {
-        "SELECT device_category, COUNT(*) as cnt FROM v_product_detail_analytics WHERE device_category IS NOT NULL GROUP BY device_category ORDER BY cnt DESC LIMIT 10".to_string()
-    } else {
-        format!("SELECT device_category, COUNT(*) as cnt FROM v_product_detail_analytics {} AND device_category IS NOT NULL GROUP BY device_category ORDER BY cnt DESC LIMIT 10", base_where)
-    };
-    let mut top_categories_query = sqlx::query(&top_categories_sql);
-    for val in &binds {
-        top_categories_query = top_categories_query.bind(val);
-    }
-    let top_categories: Vec<(String, i64)> = top_categories_query
-        .fetch_all(pool)
-        .await
+    let top_categories: Vec<(String, i64)> = top_categories_result
         .map_err(|e| format!("Failed to fetch top categories: {}", e))?
         .into_iter()
         .filter_map(|r| {
@@ -2062,19 +2076,7 @@ pub async fn get_filtered_analytics_summary(
         })
         .collect();
     
-    // Top device types
-    let top_device_types_sql = if base_where.is_empty() {
-        "SELECT device_type_name, COUNT(*) as cnt FROM v_product_detail_analytics WHERE device_type_name IS NOT NULL GROUP BY device_type_name ORDER BY cnt DESC LIMIT 10".to_string()
-    } else {
-        format!("SELECT device_type_name, COUNT(*) as cnt FROM v_product_detail_analytics {} AND device_type_name IS NOT NULL GROUP BY device_type_name ORDER BY cnt DESC LIMIT 10", base_where)
-    };
-    let mut top_device_types_query = sqlx::query(&top_device_types_sql);
-    for val in &binds {
-        top_device_types_query = top_device_types_query.bind(val);
-    }
-    let top_device_types: Vec<(String, i64)> = top_device_types_query
-        .fetch_all(pool)
-        .await
+    let top_device_types: Vec<(String, i64)> = top_device_types_result
         .map_err(|e| format!("Failed to fetch top device types: {}", e))?
         .into_iter()
         .filter_map(|r| {
@@ -2084,19 +2086,7 @@ pub async fn get_filtered_analytics_summary(
         })
         .collect();
     
-    // Top transport interfaces
-    let top_transport_interfaces_sql = if base_where.is_empty() {
-        "SELECT transport_interface, COUNT(*) as cnt FROM v_product_detail_analytics WHERE transport_interface IS NOT NULL GROUP BY transport_interface ORDER BY cnt DESC LIMIT 10".to_string()
-    } else {
-        format!("SELECT transport_interface, COUNT(*) as cnt FROM v_product_detail_analytics {} AND transport_interface IS NOT NULL GROUP BY transport_interface ORDER BY cnt DESC LIMIT 10", base_where)
-    };
-    let mut top_transport_interfaces_query = sqlx::query(&top_transport_interfaces_sql);
-    for val in &binds {
-        top_transport_interfaces_query = top_transport_interfaces_query.bind(val);
-    }
-    let top_transport_interfaces: Vec<(String, i64)> = top_transport_interfaces_query
-        .fetch_all(pool)
-        .await
+    let top_transport_interfaces: Vec<(String, i64)> = top_transport_interfaces_result
         .map_err(|e| format!("Failed to fetch top transport interfaces: {}", e))?
         .into_iter()
         .filter_map(|r| {
@@ -2117,5 +2107,352 @@ pub async fn get_filtered_analytics_summary(
         top_device_types,
         top_transport_interfaces,
         applied_filter: filter_dsl,
+    })
+}
+
+/// Helper function to calculate date span in days
+fn calculate_date_span_days(start: &str, end: &str) -> i64 {
+    use chrono::NaiveDate;
+    
+    let start_date = NaiveDate::parse_from_str(start, "%Y-%m-%d")
+        .unwrap_or_else(|_| NaiveDate::from_ymd_opt(2022, 1, 1).unwrap());
+    let end_date = NaiveDate::parse_from_str(end, "%Y-%m-%d")
+        .unwrap_or_else(|_| NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
+    
+    (end_date - start_date).num_days()
+}
+
+/// Certification timeline data point
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CertificationTimelinePoint {
+    pub date: String,
+    pub count: i64,
+}
+
+/// Certification timeline response with aggregation info
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CertificationTimelineResponse {
+    pub data: Vec<CertificationTimelinePoint>,
+    pub aggregation: String, // "daily", "weekly", "monthly", "quarterly", "half-yearly"
+    pub date_span_days: i64,
+}
+
+/// Get certification timeline (products count by date) with dynamic aggregation
+#[tauri::command]
+pub async fn get_certification_timeline(
+    state: State<'_, DatabaseConnection>,
+    filter: Option<String>,
+    start_date: Option<String>,
+    end_date: Option<String>,
+) -> Result<CertificationTimelineResponse, String> {
+    let pool = state.pool();
+    let filter_dsl = filter.unwrap_or_default();
+    
+    info!("📈 get_certification_timeline called with filter: {}, dates: {:?} ~ {:?}", 
+          filter_dsl, start_date, end_date);
+    
+    // Determine date range for aggregation calculation
+    let (actual_start, actual_end) = if let (Some(s), Some(e)) = (start_date.as_ref(), end_date.as_ref()) {
+        if !s.is_empty() && !e.is_empty() {
+            (s.clone(), e.clone())
+        } else {
+            // Query min/max from database
+            let min_max_sql = "SELECT MIN(certification_date) as min_date, MAX(certification_date) as max_date FROM v_product_detail_analytics WHERE certification_date IS NOT NULL";
+            let row = sqlx::query(min_max_sql).fetch_one(pool).await.map_err(|e| format!("Failed to get date range: {}", e))?;
+            let min: Option<String> = row.get("min_date");
+            let max: Option<String> = row.get("max_date");
+            (min.unwrap_or_else(|| "2022-01-01".to_string()), max.unwrap_or_else(|| "2025-12-31".to_string()))
+        }
+    } else {
+        // Query min/max from database
+        let min_max_sql = "SELECT MIN(certification_date) as min_date, MAX(certification_date) as max_date FROM v_product_detail_analytics WHERE certification_date IS NOT NULL";
+        let row = sqlx::query(min_max_sql).fetch_one(pool).await.map_err(|e| format!("Failed to get date range: {}", e))?;
+        let min: Option<String> = row.get("min_date");
+        let max: Option<String> = row.get("max_date");
+        (min.unwrap_or_else(|| "2022-01-01".to_string()), max.unwrap_or_else(|| "2025-12-31".to_string()))
+    };
+    
+    // Calculate date span in days
+    let date_span_days = calculate_date_span_days(&actual_start, &actual_end);
+    
+    // Determine aggregation level based on date span
+    // < 30 days: daily
+    // 30-180 days (1-6 months): weekly
+    // 180-540 days (6-18 months): monthly
+    // 540-1080 days (18-36 months): quarterly
+    // > 1080 days (3+ years): half-yearly
+    let (aggregation, group_by_format) = if date_span_days < 30 {
+        ("daily", "%Y-%m-%d")
+    } else if date_span_days < 180 {
+        ("weekly", "%Y-W%W") // Week number
+    } else if date_span_days < 540 {
+        ("monthly", "%Y-%m")
+    } else if date_span_days < 1080 {
+        ("quarterly", "%Y-Q") // Will be calculated manually
+    } else {
+        ("half-yearly", "%Y-H") // Will be calculated manually
+    };
+    
+    info!("📈 Date span: {} days, using {} aggregation", date_span_days, aggregation);
+    
+    // Parse filter using the same smart tokenizer logic
+    let mut where_clauses: Vec<String> = Vec::new();
+    let mut binds: Vec<String> = Vec::new();
+    
+    if !filter_dsl.trim().is_empty() {
+        // Same smart tokenization as get_filtered_analytics_summary
+        let mut tokens: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let mut in_bracket = false;
+        let mut paren_depth = 0;
+        
+        for ch in filter_dsl.chars() {
+            match ch {
+                '[' if !in_bracket => {
+                    in_bracket = true;
+                    current.push(ch);
+                },
+                ']' if in_bracket => {
+                    in_bracket = false;
+                    current.push(ch);
+                },
+                '(' => {
+                    paren_depth += 1;
+                    current.push(ch);
+                },
+                ')' => {
+                    paren_depth -= 1;
+                    current.push(ch);
+                },
+                ' ' if !in_bracket && paren_depth == 0 => {
+                    let t = current.trim();
+                    if !t.is_empty() && !t.eq_ignore_ascii_case("AND") && !t.eq_ignore_ascii_case("OR") {
+                        tokens.push(t.to_string());
+                    }
+                    current.clear();
+                },
+                _ => current.push(ch),
+            }
+        }
+        let t = current.trim();
+        if !t.is_empty() && !t.eq_ignore_ascii_case("AND") && !t.eq_ignore_ascii_case("OR") {
+            tokens.push(t.to_string());
+        }
+        
+        for t in tokens {
+            if t.is_empty() {
+                continue;
+            }
+            
+            let t_str = t.as_str();
+            let (field_part, op, value_part) = if let Some(pos) = t_str.find(">=") {
+                (&t_str[..pos], Some(">="), &t_str[pos+2..])
+            } else if let Some(pos) = t_str.find("<=") {
+                (&t_str[..pos], Some("<="), &t_str[pos+2..])
+            } else if let Some(pos) = t_str.find(":in:") {
+                (&t_str[..pos], Some(":in:"), &t_str[pos+4..])
+            } else if let Some(pos) = t_str.find('=') {
+                (&t_str[..pos], Some("="), &t_str[pos+1..])
+            } else if let Some(pos) = t_str.find('~') {
+                (&t_str[..pos], Some("~"), &t_str[pos+1..])
+            } else if let Some(pos) = t_str.find(':') {
+                (&t_str[..pos], None, &t_str[pos+1..])
+            } else {
+                ("", None, t_str)
+            };
+
+            let field = field_part.to_lowercase();
+            let value = value_part.trim();
+            
+            if field.is_empty() {
+                if value.is_empty() { continue; }
+                where_clauses.push("(model LIKE ? OR vendor_name LIKE ?)".into());
+                let like = format!("%{}%", value);
+                binds.push(like.clone());
+                binds.push(like);
+                continue;
+            }
+            
+            if value.is_empty() { continue; }
+            
+            let column = match field.as_str() {
+                "vendor"|"v"|"ven" => "vendor_name",
+                "vnum" => "vendor_number",
+                "category"|"cat"|"device_category" => "device_category",
+                "dtype"|"dname"|"dt"|"device_type_name" => "device_type_name",
+                "transport"|"ti"|"transport_interface" => "transport_interface",
+                "vendor_name" => "vendor_name",
+                "model"|"m" => "model",
+                "date" => "certification_date",
+                "created"|"c" => "detail_created_at",
+                _ => continue,
+            };
+            
+            let op_used = op.unwrap_or(if matches!(field.as_str(), "date"|"created"|"c") { "=" } else { "~" });
+            
+            if value.eq_ignore_ascii_case("null") && (op_used == "=" || op_used == "~") {
+                where_clauses.push(format!("{} IS NULL", column));
+                continue;
+            }
+            
+            match op_used {
+                ":in:" => {
+                    let list_content = if value.starts_with('[') && value.ends_with(']') {
+                        &value[1..value.len()-1]
+                    } else {
+                        value
+                    };
+                    
+                    let mut items: Vec<String> = Vec::new();
+                    let mut current_item = String::new();
+                    let mut in_quotes = false;
+                    
+                    for ch in list_content.chars() {
+                        if ch == '"' || ch == '\'' {
+                            in_quotes = !in_quotes;
+                            current_item.push(ch);
+                        } else if ch == ',' && !in_quotes {
+                            let trimmed = current_item.trim();
+                            if !trimmed.is_empty() {
+                                let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"')) || 
+                                                  (trimmed.starts_with('\'') && trimmed.ends_with('\'')) {
+                                    trimmed[1..trimmed.len()-1].to_string()
+                                } else {
+                                    trimmed.to_string()
+                                };
+                                items.push(unquoted);
+                            }
+                            current_item.clear();
+                        } else {
+                            current_item.push(ch);
+                        }
+                    }
+                    
+                    let trimmed = current_item.trim();
+                    if !trimmed.is_empty() {
+                        let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"')) || 
+                                          (trimmed.starts_with('\'') && trimmed.ends_with('\'')) {
+                            trimmed[1..trimmed.len()-1].to_string()
+                        } else {
+                            trimmed.to_string()
+                        };
+                        items.push(unquoted);
+                    }
+                    
+                    if items.is_empty() {
+                        continue;
+                    }
+                    
+                    let like_clauses: Vec<String> = items.iter().map(|_| format!("{} LIKE ?", column)).collect();
+                    where_clauses.push(format!("({})", like_clauses.join(" OR ")));
+                    
+                    for item in items {
+                        binds.push(format!("%{}%", item));
+                    }
+                },
+                "~" => {
+                    where_clauses.push(format!("{} LIKE ?", column));
+                    binds.push(format!("%{}%", value));
+                },
+                "=" => {
+                    where_clauses.push(format!("{} = ?", column));
+                    binds.push(value.to_string());
+                },
+                ">=" | "<=" => {
+                    where_clauses.push(format!("{} {} ?", column, op_used));
+                    binds.push(value.to_string());
+                },
+                _ => continue,
+            }
+        }
+    }
+    
+    // Add date range filter
+    if let Some(start) = start_date {
+        if !start.is_empty() {
+            where_clauses.push("certification_date >= ?".to_string());
+            binds.push(start);
+        }
+    }
+    if let Some(end) = end_date {
+        if !end.is_empty() {
+            where_clauses.push("certification_date <= ?".to_string());
+            binds.push(end);
+        }
+    }
+    
+    let base_where = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", where_clauses.join(" AND "))
+    };
+    
+    
+    // Build SQL query based on aggregation level
+    let sql = if aggregation == "quarterly" || aggregation == "half-yearly" {
+        // For quarterly and half-yearly, we need to use CASE statements
+        let period_expr = if aggregation == "quarterly" {
+            "CASE 
+                WHEN CAST(strftime('%m', certification_date) AS INTEGER) BETWEEN 1 AND 3 THEN strftime('%Y', certification_date) || '-Q1'
+                WHEN CAST(strftime('%m', certification_date) AS INTEGER) BETWEEN 4 AND 6 THEN strftime('%Y', certification_date) || '-Q2'
+                WHEN CAST(strftime('%m', certification_date) AS INTEGER) BETWEEN 7 AND 9 THEN strftime('%Y', certification_date) || '-Q3'
+                ELSE strftime('%Y', certification_date) || '-Q4'
+            END"
+        } else { // half-yearly
+            "CASE 
+                WHEN CAST(strftime('%m', certification_date) AS INTEGER) BETWEEN 1 AND 6 THEN strftime('%Y', certification_date) || '-H1'
+                ELSE strftime('%Y', certification_date) || '-H2'
+            END"
+        };
+        
+        format!(
+            "SELECT {} as date, COUNT(*) as count 
+             FROM v_product_detail_analytics 
+             {} 
+             GROUP BY date 
+             ORDER BY date ASC",
+            period_expr, base_where
+        )
+    } else {
+        // For daily, weekly, monthly use strftime
+        format!(
+            "SELECT strftime('{}', certification_date) as date, COUNT(*) as count 
+             FROM v_product_detail_analytics 
+             {} 
+             GROUP BY date 
+             ORDER BY date ASC",
+            group_by_format, base_where
+        )
+    };
+    
+    info!("📈 Timeline SQL: {}", sql);
+    
+    let mut query = sqlx::query(&sql);
+    for val in &binds {
+        query = query.bind(val);
+    }
+    
+    let rows = query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Failed to fetch timeline: {}", e))?;
+    
+    let timeline: Vec<CertificationTimelinePoint> = rows
+        .into_iter()
+        .filter_map(|r| {
+            let date: Option<String> = r.get("date");
+            let count: i64 = r.get("count");
+            date.map(|d| CertificationTimelinePoint { date: d, count })
+        })
+        .collect();
+    
+    info!("📈 Timeline data points: {} with {} aggregation", timeline.len(), aggregation);
+    
+    Ok(CertificationTimelineResponse {
+        data: timeline,
+        aggregation: aggregation.to_string(),
+        date_span_days,
     })
 }

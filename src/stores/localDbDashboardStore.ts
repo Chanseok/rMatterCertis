@@ -86,10 +86,13 @@ const [ui, setUi] = createStore<UiFlags>({
 const [analytics, setAnalytics] = createStore<AnalyticsState>({ rows: [], total: 0, offset: 0, limit: DEFAULT_PAGE_SIZE, filterDraft: '', filterApplied: '', loading: false, sort: [] });
 
 async function loadSummary() {
+  console.log('[loadSummary] 시작...');
   setUi({ ...ui, loadingSummary: true, summaryError: null });
   try {
     const data = await tauriApi.getDbSummary();
+    console.log('[loadSummary] getDbSummary 응답:', data);
     setSummary(data as any);
+    console.log('[loadSummary] summary 설정 완료');
     
     // Cert Date 범위 초기화: 실제 데이터에서 최소/최대값 조회
     if (!ui.certDateMin) {
@@ -152,9 +155,12 @@ async function loadSummary() {
         });
       }
     }
+    console.log('[loadSummary] 완료, summary:', summary());
   } catch (e: any) {
+    console.error('[loadSummary] 에러:', e);
     setUi({ ...ui, summaryError: String(e) });
   } finally {
+    console.log('[loadSummary] finally, loadingSummary를 false로 설정');
     setUi({ ...ui, loadingSummary: false });
   }
 }

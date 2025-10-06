@@ -2,13 +2,14 @@
  * LocalDBTab - 로컬 데이터베이스 관리 탭 컴포넌트 (실제 데이터 사용)
  */
 
-import { Component, createSignal, createMemo, For, onMount, Show, createEffect } from 'solid-js';
+import { Component, createSignal, createMemo, For, onMount, Show, createEffect, onCleanup } from 'solid-js';
 import { tauriApi } from '../../services/tauri-api';
 import { localDbDashboardStore, initializeLocalDbDashboard } from '../../stores/localDbDashboardStore';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import type { VendorSyncResult } from '../../types/domain';
 import { DateRangeSlider } from '../DateRangeSlider';
+import { CertificationTimeline } from '../charts/CertificationTimeline.tsx';
 
 // TypeScript types for filter-aware APIs
 interface AvailableFilterOptions {
@@ -38,6 +39,12 @@ export const LocalDBTab: Component = () => {
   const [useFilteredInsights, setUseFilteredInsights] = createSignal(false);
   const [filteredInsights, setFilteredInsights] = createSignal<any>(null);
   const [loadingFilteredInsights, setLoadingFilteredInsights] = createSignal(false);
+  
+  // 디버깅: 필터 변경부터 데이터 로드까지 걸린 시간 측정
+  const [filterLoadTime, setFilterLoadTime] = createSignal<number | null>(null);
+  const [isTimerRunning, setIsTimerRunning] = createSignal(false);
+  let filterStartTime: number | null = null;
+  let timerInterval: number | undefined;
   
   // Computed data for insights - switches between filtered and full data
   const topCategories = createMemo(() => 
@@ -303,25 +310,89 @@ export const LocalDBTab: Component = () => {
   };
 
   onMount(async () => {
-    initializeLocalDbDashboard().catch(console.error);
-    updateAvailableOptions().catch(console.error); // 초기 로드 시 유효한 옵션 가져오기
+    console.log('[onMount] 시작');
     
-    // 초기 로드 시 filteredInsights를 전체 데이터로 설정
+    // 1. 초기화 시작 (백그라운드에서 실행)
+    initializeLocalDbDashboard().catch(console.error);
+    
+    // 2. 초기 filteredInsights를 빠르게 로드 (기본 전체 날짜 범위로)
+    // summary가 로드되기를 기다리지 않고 먼저 filteredInsights를 표시
+    const today = new Date().toISOString().split('T')[0];
+    const defaultStartDate = "2020-01-01";
+    const defaultEndDate = today;
+    
     try {
+      setLoadingFilteredInsights(true);
+      
+      const initialFilter = `date>=${defaultStartDate} AND date<=${defaultEndDate}`;
+      console.log('[onMount] 초기 filteredInsights 로드:', { filter: initialFilter });
+      
       const result = await invoke<any>('get_filtered_analytics_summary', {
-        filter: null,
+        filter: initialFilter,
       });
+      
       setFilteredInsights(result);
       console.log('[onMount] 초기 filteredInsights 설정 완료:', result);
+      
+      // analytics.filterApplied에도 날짜 필터 적용
+      localDbDashboardStore.applyFilter(initialFilter);
+      console.log('[onMount] analytics.filterApplied 설정:', initialFilter);
+      
+      setLoadingFilteredInsights(false);
     } catch (error) {
       console.error('[onMount] 초기 filteredInsights 로드 실패:', error);
+      setLoadingFilteredInsights(false);
     }
+    
+    // 3. 유효한 필터 옵션 가져오기 (날짜 필터 적용 후)
+    updateAvailableOptions().catch(console.error);
     
     // Vendor sync progress events (coarse-grained)
     listen<any>('vendor_sync_progress', (evt) => {
       const p = evt.payload || {};
       localDbDashboardStore.setUi({ ...localDbDashboardStore.ui, vendorResult: { ...(localDbDashboardStore.ui.vendorResult||{}), progress: p.stage } });
     }).catch(()=>{});
+    
+    // Cleanup: 타이머 정리
+    onCleanup(() => {
+      if (timerInterval) {
+        window.clearInterval(timerInterval);
+        timerInterval = undefined;
+      }
+    });
+  });
+
+  // 4. summary가 로드되고 실제 날짜 범위가 설정되면 filteredInsights를 실제 범위로 업데이트
+  let hasInitializedWithRealDates = false;
+  createEffect(() => {
+    // summary가 로드되고, certDateMin/Max가 설정되었으며, 아직 초기화하지 않았을 때만 실행
+    const certMin = ui.certDateMin;
+    const certMax = ui.certDateMax;
+    const summaryExists = s();
+    
+    if (summaryExists && certMin && certMax && !hasInitializedWithRealDates) {
+      hasInitializedWithRealDates = true;
+      
+      console.log('[Effect] 실제 날짜 범위로 filteredInsights 업데이트:', {
+        certMin,
+        certMax
+      });
+      
+      const realFilter = `date>=${certMin} AND date<=${certMax}`;
+      
+      setLoadingFilteredInsights(true);
+      invoke<any>('get_filtered_analytics_summary', {
+        filter: realFilter,
+      }).then(result => {
+        setFilteredInsights(result);
+        localDbDashboardStore.applyFilter(realFilter);
+        console.log('[Effect] 실제 날짜 범위로 filteredInsights 업데이트 완료');
+      }).catch(error => {
+        console.error('[Effect] filteredInsights 업데이트 실패:', error);
+      }).finally(() => {
+        setLoadingFilteredInsights(false);
+      });
+    }
   });
 
   // 기존 로컬 제품 목록/검색 기능은 새로운 Analytics DSL UI 도입 전 임시 제거 (필요 시 별도 섹션 재추가)
@@ -419,13 +490,63 @@ export const LocalDBTab: Component = () => {
     updateAvailableOptions().catch(console.error);
     
     // 10. filteredInsights 업데이트 (데이터 요약 카드용)
+    console.log('[applyFilters] filteredInsights 업데이트 요청:', {
+      finalFilter,
+      dateRange: { startDate, endDate },
+      hasDateFilter: finalFilter.includes('date>=') && finalFilter.includes('date<=')
+    });
+    
+    // 타이머 시작
+    filterStartTime = performance.now();
+    setIsTimerRunning(true);
+    setFilterLoadTime(null);
+    
+    // 실시간 타이머 업데이트 (매 10ms)
+    if (timerInterval) {
+      window.clearInterval(timerInterval);
+    }
+    timerInterval = window.setInterval(() => {
+      if (filterStartTime !== null) {
+        const elapsed = performance.now() - filterStartTime;
+        setFilterLoadTime(elapsed);
+      }
+    }, 10);
+    
+    setLoadingFilteredInsights(true);
+    
     invoke<any>('get_filtered_analytics_summary', {
       filter: finalFilter || null,
     }).then(result => {
       setFilteredInsights(result);
-      console.log('[applyFilters] filteredInsights 업데이트 완료:', result);
+      
+      // 타이머 중지
+      const endTime = performance.now();
+      const totalTime = filterStartTime !== null ? endTime - filterStartTime : 0;
+      setFilterLoadTime(totalTime);
+      setIsTimerRunning(false);
+      if (timerInterval) {
+        window.clearInterval(timerInterval);
+        timerInterval = undefined;
+      }
+      
+      console.log('[applyFilters] filteredInsights 업데이트 완료:', {
+        total_products: result.total_products,
+        total_device_types: result.total_device_types,
+        total_vendors: result.total_vendors,
+        filter_applied: finalFilter,
+        load_time_ms: totalTime.toFixed(2)
+      });
     }).catch(error => {
       console.error('[applyFilters] filteredInsights 업데이트 실패:', error);
+      
+      // 타이머 중지 (에러 시)
+      setIsTimerRunning(false);
+      if (timerInterval) {
+        window.clearInterval(timerInterval);
+        timerInterval = undefined;
+      }
+    }).finally(() => {
+      setLoadingFilteredInsights(false);
     });
   };
 
@@ -756,18 +877,48 @@ export const LocalDBTab: Component = () => {
                 <p class="text-xs text-red-600 mt-1 font-mono">🔍 필터: {analytics.filterApplied}</p>
               </Show>
               <p class="text-xs text-blue-600 mt-1 font-mono">📅 날짜 범위: {ui.certDateRange[0] || '없음'} ~ {ui.certDateRange[1] || '없음'}</p>
+              <p class="text-xs text-purple-600 mt-1 font-mono">
+                📊 filteredInsights: {filteredInsights() ? `${filteredInsights()!.total_products} products` : 'null'}
+              </p>
+              {/* 디버깅: 필터 로드 타이머 */}
+              <Show when={isTimerRunning() || filterLoadTime() !== null}>
+                <p class="text-xs font-mono mt-1 flex items-center gap-1">
+                  <Show when={isTimerRunning()} fallback={
+                    <span class="text-green-600">✅ 로드 완료: {filterLoadTime()?.toFixed(0)}ms</span>
+                  }>
+                    <span class="text-orange-500 animate-pulse">⏱️ 로딩 중: {filterLoadTime()?.toFixed(0) || '0'}ms</span>
+                  </Show>
+                </p>
+              </Show>
             </div>
             <div class="flex gap-2">
               <button 
                 class="px-4 py-2 rounded-lg bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white text-sm font-semibold shadow-md transition-all"
                 onClick={async () => {
+                  // 날짜 범위를 전체 범위로 리셋
+                  const fullStartDate = ui.certDateMin || "2020-01-01";
+                  const fullEndDate = ui.certDateMax || new Date().toISOString().split('T')[0];
+                  
                   localDbDashboardStore.resetFilter();
-                  localDbDashboardStore.setUi({ ...ui, certDateRange: ["", ""], selectedCategories: [], selectedVendors: [], selectedDeviceTypes: [], selectedTransportInterfaces: [] });
-                  // filteredInsights도 초기화 (전체 데이터로 업데이트)
+                  localDbDashboardStore.setUi({ 
+                    ...ui, 
+                    certDateRange: [fullStartDate, fullEndDate], 
+                    selectedCategories: [], 
+                    selectedVendors: [], 
+                    selectedDeviceTypes: [], 
+                    selectedTransportInterfaces: [] 
+                  });
+                  
+                  // filteredInsights도 초기화 (전체 날짜 범위 포함)
+                  const dateFilters = [`date>=${fullStartDate}`, `date<=${fullEndDate}`];
+                  const fullRangeFilter = dateFilters.join(' AND ');
+                  
                   const result = await invoke<any>('get_filtered_analytics_summary', {
-                    filter: null,
+                    filter: fullRangeFilter,
                   });
                   setFilteredInsights(result);
+                  console.log('[Reset] filteredInsights 초기화 완료 (전체 날짜 범위 적용):', result);
+                  
                   // 유효한 필터 옵션도 업데이트
                   updateAvailableOptions().catch(console.error);
                 }}
@@ -783,9 +934,17 @@ export const LocalDBTab: Component = () => {
             </div>
           </div>
           
-          <Show when={!ui.loadingSummary && s()} fallback={
+          <Show when={s()} fallback={
             <div class="flex items-center justify-center py-12">
-              <div class="text-sm text-gray-400 animate-pulse">📊 데이터를 불러오는 중...</div>
+              <div class="flex flex-col items-center gap-2">
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                <div class="text-sm text-gray-400">📊 초기 데이터 로딩 중...</div>
+                <Show when={ui.loadingSummary}>
+                  <div class="text-xs text-gray-500 mt-1">
+                    (summary 로드 중...)
+                  </div>
+                </Show>
+              </div>
             </div>
           }>
             {/* 주요 지표 카드 */}
@@ -796,21 +955,31 @@ export const LocalDBTab: Component = () => {
                   <span class="text-3xl">🏷️</span>
                   <span class="text-xs font-semibold text-indigo-700 bg-indigo-200 px-2 py-1 rounded-full">PRODUCTS</span>
                 </div>
-                {(() => {
-                  const filtered = filteredInsights()?.total_products || 0;
-                  const total = s()!.total_products;
-                  const pct = total ? (filtered / total * 100) : 0;
-                  return (
-                    <>
-                      <div class="text-2xl font-bold text-indigo-900">
-                        <span class="text-indigo-600">{filtered.toLocaleString()}</span>
-                        <span class="text-lg text-indigo-400 mx-1">/</span>
-                        <span class="text-indigo-800">{total.toLocaleString()}</span>
-                      </div>
-                      <div class="text-xs text-indigo-700 mt-1">인증 제품 (필터링 / 전체 · {pct.toFixed(1)}%)</div>
-                    </>
-                  );
-                })()}
+                <Show
+                  when={!loadingFilteredInsights()}
+                  fallback={
+                    <div class="animate-pulse">
+                      <div class="h-8 bg-indigo-200 rounded mb-2"></div>
+                      <div class="h-3 bg-indigo-100 rounded w-3/4"></div>
+                    </div>
+                  }
+                >
+                  {(() => {
+                    const filtered = filteredInsights()?.total_products || 0;
+                    const total = s()!.total_products;
+                    const pct = total ? (filtered / total * 100) : 0;
+                    return (
+                      <>
+                        <div class="text-2xl font-bold text-indigo-900 transition-all duration-300">
+                          <span class="text-indigo-600">{filtered.toLocaleString()}</span>
+                          <span class="text-lg text-indigo-400 mx-1">/</span>
+                          <span class="text-indigo-800">{total.toLocaleString()}</span>
+                        </div>
+                        <div class="text-xs text-indigo-700 mt-1">인증 제품 (필터링 / 전체 · {pct.toFixed(1)}%)</div>
+                      </>
+                    );
+                  })()}
+                </Show>
               </div>
 
               {/* 2. TYPES (디바이스 타입) - 필터 버튼 2번과 일치 */}
@@ -819,21 +988,31 @@ export const LocalDBTab: Component = () => {
                   <span class="text-3xl">🔧</span>
                   <span class="text-xs font-semibold text-emerald-700 bg-emerald-200 px-2 py-1 rounded-full">TYPES</span>
                 </div>
-                {(() => {
-                  const filtered = filteredInsights()?.total_device_types || 0;
-                  const total = s()?.all_device_types?.length || 0;
-                  const pct = total ? (filtered / total * 100) : 0;
-                  return (
-                    <>
-                      <div class="text-2xl font-bold text-emerald-900">
-                        <span class="text-emerald-600">{filtered.toLocaleString()}</span>
-                        <span class="text-lg text-emerald-400 mx-1">/</span>
-                        <span class="text-emerald-800">{total.toLocaleString()}</span>
-                      </div>
-                      <div class="text-xs text-emerald-700 mt-1">디바이스 타입 (필터링 / 전체 · {pct.toFixed(1)}%)</div>
-                    </>
-                  );
-                })()}
+                <Show
+                  when={!loadingFilteredInsights()}
+                  fallback={
+                    <div class="animate-pulse">
+                      <div class="h-8 bg-emerald-200 rounded mb-2"></div>
+                      <div class="h-3 bg-emerald-100 rounded w-3/4"></div>
+                    </div>
+                  }
+                >
+                  {(() => {
+                    const filtered = filteredInsights()?.total_device_types || 0;
+                    const total = s()?.all_device_types?.length || 0;
+                    const pct = total ? (filtered / total * 100) : 0;
+                    return (
+                      <>
+                        <div class="text-2xl font-bold text-emerald-900 transition-all duration-300">
+                          <span class="text-emerald-600">{filtered.toLocaleString()}</span>
+                          <span class="text-lg text-emerald-400 mx-1">/</span>
+                          <span class="text-emerald-800">{total.toLocaleString()}</span>
+                        </div>
+                        <div class="text-xs text-emerald-700 mt-1">디바이스 타입 (필터링 / 전체 · {pct.toFixed(1)}%)</div>
+                      </>
+                    );
+                  })()}
+                </Show>
               </div>
 
               {/* 3. VENDORS (벤더) - 필터 버튼 3번과 일치 */}
@@ -842,21 +1021,31 @@ export const LocalDBTab: Component = () => {
                   <span class="text-3xl">🏢</span>
                   <span class="text-xs font-semibold text-blue-700 bg-blue-200 px-2 py-1 rounded-full">VENDORS</span>
                 </div>
-                {(() => {
-                  const filtered = filteredInsights()?.total_vendors || 0;
-                  const total = s()?.all_vendors?.length || 0;
-                  const pct = total ? (filtered / total * 100) : 0;
-                  return (
-                    <>
-                      <div class="text-2xl font-bold text-blue-900">
-                        <span class="text-blue-600">{filtered.toLocaleString()}</span>
-                        <span class="text-lg text-blue-400 mx-1">/</span>
-                        <span class="text-blue-800">{total.toLocaleString()}</span>
-                      </div>
-                      <div class="text-xs text-blue-700 mt-1">제조사 (필터링 / 전체 · {pct.toFixed(1)}%)</div>
-                    </>
-                  );
-                })()}
+                <Show
+                  when={!loadingFilteredInsights()}
+                  fallback={
+                    <div class="animate-pulse">
+                      <div class="h-8 bg-blue-200 rounded mb-2"></div>
+                      <div class="h-3 bg-blue-100 rounded w-3/4"></div>
+                    </div>
+                  }
+                >
+                  {(() => {
+                    const filtered = filteredInsights()?.total_vendors || 0;
+                    const total = s()?.all_vendors?.length || 0;
+                    const pct = total ? (filtered / total * 100) : 0;
+                    return (
+                      <>
+                        <div class="text-2xl font-bold text-blue-900 transition-all duration-300">
+                          <span class="text-blue-600">{filtered.toLocaleString()}</span>
+                          <span class="text-lg text-blue-400 mx-1">/</span>
+                          <span class="text-blue-800">{total.toLocaleString()}</span>
+                        </div>
+                        <div class="text-xs text-blue-700 mt-1">제조사 (필터링 / 전체 · {pct.toFixed(1)}%)</div>
+                      </>
+                    );
+                  })()}
+                </Show>
               </div>
 
               {/* 4. TRANSPORT (트랜스포트) - 필터 버튼 4번과 일치 */}
@@ -865,25 +1054,42 @@ export const LocalDBTab: Component = () => {
                   <span class="text-3xl">📡</span>
                   <span class="text-xs font-semibold text-violet-700 bg-violet-200 px-2 py-1 rounded-full">TRANSPORT</span>
                 </div>
-                {(() => {
-                  const filtered = filteredInsights()?.total_transport_interfaces || 0;
-                  const total = s()?.all_transport_interfaces?.length || 0;
-                  const pct = total ? (filtered / total * 100) : 0;
-                  return (
-                    <>
-                      <div class="text-2xl font-bold text-violet-900">
-                        <span class="text-violet-600">{filtered.toLocaleString()}</span>
-                        <span class="text-lg text-violet-400 mx-1">/</span>
-                        <span class="text-violet-800">{total.toLocaleString()}</span>
-                      </div>
-                      <div class="text-xs text-violet-700 mt-1">Transport IF (필터링 / 전체 · {pct.toFixed(1)}%)</div>
-                    </>
-                  );
-                })()}
+                <Show
+                  when={!loadingFilteredInsights()}
+                  fallback={
+                    <div class="animate-pulse">
+                      <div class="h-8 bg-violet-200 rounded mb-2"></div>
+                      <div class="h-3 bg-violet-100 rounded w-3/4"></div>
+                    </div>
+                  }
+                >
+                  {(() => {
+                    const filtered = filteredInsights()?.total_transport_interfaces || 0;
+                    const total = s()?.all_transport_interfaces?.length || 0;
+                    const pct = total ? (filtered / total * 100) : 0;
+                    return (
+                      <>
+                        <div class="text-2xl font-bold text-violet-900 transition-all duration-300">
+                          <span class="text-violet-600">{filtered.toLocaleString()}</span>
+                          <span class="text-lg text-violet-400 mx-1">/</span>
+                          <span class="text-violet-800">{total.toLocaleString()}</span>
+                        </div>
+                        <div class="text-xs text-violet-700 mt-1">Transport IF (필터링 / 전체 · {pct.toFixed(1)}%)</div>
+                      </>
+                    );
+                  })()}
+                </Show>
               </div>
             </div>
           </Show>
         </div>
+
+        {/* 인증 추세 차트 섹션 */}
+        <CertificationTimeline 
+          filter={analytics.filterApplied || null}
+          startDate={ui.certDateRange[0] || ui.certDateMin || "2020-01-01"}
+          endDate={ui.certDateRange[1] || ui.certDateMax || new Date().toISOString().split('T')[0]}
+        />
 
         {/* 분석 인사이트 섹션 */}
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">

@@ -884,6 +884,7 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             // Filter-aware analytics
             commands::database::data_queries::get_available_filter_options,
             commands::database::data_queries::get_filtered_analytics_summary,
+            commands::database::data_queries::get_certification_timeline,
             // commands::database::data_queries::diagnose_db_mapping, // TODO: Fix command registration
             // Vendor sync command (CSA DCL)
             commands::database::vendor_sync::update_vendors_from_csa,
