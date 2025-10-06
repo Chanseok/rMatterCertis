@@ -260,6 +260,74 @@ async function exportDataset(dataset: 'vendors' | 'device_types' | 'analytics') 
   }
 }
 
+async function exportFullDatabaseExcel() {
+  try {
+    setUi({ ...ui, exportStatus: 'Excel 파일로 전체 DB 내보내는 중...', working: true });
+    const result = await tauriApi.exportFullDatabaseExcel();
+    setUi({ 
+      ...ui, 
+      exportStatus: `완료: ${result.file_path}\n제품: ${result.products_count}개, 상세정보: ${result.product_details_count}개`,
+      working: false 
+    });
+  } catch (e: any) {
+    setUi({ ...ui, exportStatus: `실패: ${e}`, working: false });
+  }
+}
+
+async function importFullDatabaseExcel(filePath: string) {
+  try {
+    setUi({ ...ui, importStatus: 'Excel 파일에서 전체 DB 가져오는 중...', importLog: '', working: true });
+    const result = await tauriApi.importFullDatabaseExcel(filePath);
+    const summary = `완료!\n` +
+      `제품: ${result.products_imported}개 추가, ${result.products_updated}개 업데이트\n` +
+      `상세정보: ${result.details_imported}개 추가, ${result.details_updated}개 업데이트\n` +
+      `Device Types: ${result.device_types_imported}개 추가, ${result.device_types_updated}개 업데이트\n` +
+      `Vendors: ${result.vendors_imported}개 추가, ${result.vendors_updated}개 업데이트`;
+    const errors = result.errors.length > 0 ? `\n\n오류 (${result.errors.length}개):\n${result.errors.slice(0, 10).join('\n')}` : '';
+    const backup = result.backup_file ? `\n\n백업 파일: ${result.backup_file}` : '';
+    setUi({ 
+      ...ui, 
+      importStatus: '완료', 
+      importLog: summary + errors + backup,
+      working: false 
+    });
+    await loadSummary();
+    await loadAnalytics(0);
+  } catch (e: any) {
+    setUi({ ...ui, importStatus: '실패', importLog: String(e), working: false });
+  }
+}
+
+async function deleteAllRecordsConfirmed() {
+  const confirmed = confirm(
+    '⚠️ 경고: 모든 제품 데이터(products, product_details)를 삭제합니다!\n\n' +
+    '이 작업은 되돌릴 수 없으며, 자동으로 백업 파일이 생성됩니다.\n\n' +
+    '정말로 모든 데이터를 삭제하시겠습니까?'
+  );
+  
+  if (!confirmed) {
+    setUi({ ...ui, deleteResult: { cancelled: true } });
+    return;
+  }
+  
+  try {
+    setUi({ ...ui, deleteResult: { status: 'deleting...' }, working: true });
+    const result = await tauriApi.deleteAllRecords('DELETE_ALL_CONFIRMED');
+    setUi({ 
+      ...ui, 
+      deleteResult: {
+        ...result,
+        message: `삭제 완료!\n제품: ${result.deleted_products}개\n상세정보: ${result.deleted_product_details}개\n브리지: ${result.deleted_bridge_rows}개\n백업: ${result.backup_file || 'N/A'}`
+      },
+      working: false 
+    });
+    await loadSummary();
+    await loadAnalytics(0);
+  } catch (e: any) {
+    setUi({ ...ui, deleteResult: { error: String(e) }, working: false });
+  }
+}
+
 async function exportCurrentView() {
   try {
     setUi({ ...ui, exportStatus: '현재 뷰 내보내는 중...' });
@@ -375,9 +443,12 @@ export const localDbDashboardStore = {
   updateDeviceTypesJson,
   exportDataset,
   exportCurrentView,
+  exportFullDatabaseExcel,
   importDataset,
+  importFullDatabaseExcel,
   previewDeleteRange,
   executeDeleteRange,
+  deleteAllRecordsConfirmed,
   vendorDryRun,
   vendorSync,
   // Sorting helpers

@@ -87,6 +87,8 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 csv = "1.3"
 base64 = "0.22"
+rust_xlsxwriter = "0.82"  # Excel writing support
+calamine = "0.26"  # Excel reading support (0.27+ has yanked dependency issues)
 
 # 🔄 Type Generation for Frontend
 # Upgrade ts-rs for improved serde attribute support and silence unsupported serde warnings

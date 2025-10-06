@@ -2,7 +2,7 @@
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use tauri::State;
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 use ts_rs::TS;
 
 use crate::application::AppState;
@@ -736,7 +736,7 @@ pub async fn analytics_query(
     } else { String::new() };
     
     if !where_sql.is_empty() {
-        info!("Generated WHERE clause: {} | Binds: {:?}", where_sql, binds);
+        debug!("Generated WHERE clause: {} | Binds: {:?}", where_sql, binds);
     }
 
     // Count
@@ -1435,14 +1435,14 @@ pub async fn get_available_filter_options(
     current_filter: String,
 ) -> Result<AvailableFilterOptions, String> {
     // Log immediately at function entry to catch ALL invocations
-    info!("🚨🚨🚨 get_available_filter_options CALLED! 🚨🚨🚨");
-    info!("🔍 get_available_filter_options RAW parameter: '{}'", current_filter);
+    debug!("🚨🚨🚨 get_available_filter_options CALLED! 🚨🚨🚨");
+    debug!("🔍 get_available_filter_options RAW parameter: '{}'", current_filter);
     
     let pool = state.pool();
     
     let filter_dsl = current_filter.trim();
     
-    info!("🔍 get_available_filter_options filter_dsl after trim: '{}'", filter_dsl);
+    debug!("🔍 get_available_filter_options filter_dsl after trim: '{}'", filter_dsl);
     
     // Parse the filter using the SAME logic as analytics_query
     // (DO NOT use parse_filter_dsl - it has a bug with whitespace splitting)
@@ -1640,7 +1640,7 @@ pub async fn get_available_filter_options(
         format!("WHERE {}", where_clauses.join(" AND "))
     };
     
-    info!("🔍 Parsed WHERE clause: '{}', binds: {:?}", where_clause, binds);
+    debug!("🔍 Parsed WHERE clause: '{}', binds: {:?}", where_clause, binds);
     
     // Get available categories
     let categories_sql = if where_clause.is_empty() {
@@ -1747,7 +1747,7 @@ pub async fn get_filtered_analytics_summary(
     let pool = state.pool();
     let filter_dsl = filter.clone().unwrap_or_default();
     
-    info!("📊 get_filtered_analytics_summary called with filter: {}", filter_dsl);
+    debug!("📊 get_filtered_analytics_summary called with filter: {}", filter_dsl);
     
     // Use the SAME parsing logic as get_available_filter_options (smart tokenizer)
     // DO NOT use parse_filter_dsl - it's broken
@@ -1937,7 +1937,7 @@ pub async fn get_filtered_analytics_summary(
         format!("WHERE {}", where_clauses.join(" AND "))
     };
     
-    info!("📊 Generated WHERE clause: '{}' with {} binds", base_where, binds.len());
+    debug!("📊 Generated WHERE clause: '{}' with {} binds", base_where, binds.len());
     for (i, bind) in binds.iter().enumerate() {
         info!("   Bind[{}]: '{}'", i, bind);
     }
@@ -1980,7 +1980,7 @@ pub async fn get_filtered_analytics_summary(
         "#, base_where)
     };
     
-    info!("📊 Optimized stats SQL: {}", optimized_sql);
+    debug!("📊 Optimized stats SQL: {}", optimized_sql);
     let mut stats_query = sqlx::query(&optimized_sql);
     for val in &binds {
         stats_query = stats_query.bind(val);
@@ -2427,7 +2427,7 @@ pub async fn get_certification_timeline(
         )
     };
     
-    info!("📈 Timeline SQL: {}", sql);
+    debug!("📈 Timeline SQL: {}", sql);
     
     let mut query = sqlx::query(&sql);
     for val in &binds {

@@ -16,6 +16,11 @@
       "stage-*",
       "batch-*"
     ] },
-    "core:event:default"
+    "core:event:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:default",
+    "fs:allow-copy-file",
+    "fs:default"
   ]
 }

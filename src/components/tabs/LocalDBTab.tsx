@@ -575,8 +575,91 @@ export const LocalDBTab: Component = () => {
   };
 
   // ================= Maintenance Handlers =================
-    // CSV Import 관련 코드 제거됨
+  // CSV Import 관련 코드 제거됨
   // Delete Range 관련 코드 제거됨
+  
+  // Excel Export/Import Handlers
+  
+  const handleExcelExport = async () => {
+    try {
+      localDbDashboardStore.setUi({ ...ui, exportStatus: 'Excel 파일 생성 중...', working: true });
+      
+      // 백엔드에서 Excel 파일 생성
+      const result = await tauriApi.exportFullDatabaseExcel();
+      
+      const statusMessage = `완료!\n저장 위치: ${result.file_path}\n` +
+        `제품: ${result.products_count}개\n` +
+        `상세정보: ${result.product_details_count}개\n` +
+        `Device Types: ${result.device_types_count}개\n` +
+        `Vendors: ${result.vendors_count}개`;
+      
+      localDbDashboardStore.setUi({ 
+        ...ui, 
+        exportStatus: statusMessage,
+        working: false 
+      });
+      
+      // 파일 위치를 클립보드에 복사하거나 알림
+      const confirmMessage = `백업 파일이 생성되었습니다.\n\n` +
+        `제품: ${result.products_count}개, 상세정보: ${result.product_details_count}개\n` +
+        `Device Types: ${result.device_types_count}개, Vendors: ${result.vendors_count}개\n\n` +
+        `파일 위치를 클립보드에 복사하시겠습니까?\n\n${result.file_path}`;
+      
+      if (confirm(confirmMessage)) {
+        try {
+          await navigator.clipboard.writeText(result.file_path);
+          alert('파일 경로가 클립보드에 복사되었습니다!');
+        } catch (e) {
+          console.error('클립보드 복사 실패:', e);
+        }
+      }
+    } catch (e: any) {
+      localDbDashboardStore.setUi({ ...ui, exportStatus: `실패: ${e}`, working: false });
+    }
+  };
+  
+  const handleExcelImport = async () => {
+    try {
+      // 파일 선택 다이얼로그
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: 'Excel Files', extensions: ['xlsx'] }],
+        title: 'Excel 백업 파일 선택'
+      });
+      
+      if (selected && typeof selected === 'string') {
+        await localDbDashboardStore.importFullDatabaseExcel(selected);
+      } else if (!selected) {
+        localDbDashboardStore.setUi({ ...ui, importStatus: '취소됨' });
+      }
+    } catch (e: any) {
+      localDbDashboardStore.setUi({ ...ui, importStatus: `실패: ${e}`, working: false });
+    }
+  };
+  
+  // Page Range Delete Handlers
+  const [deleteFromPage, setDeleteFromPage] = createSignal(1);
+  const [deleteToPage, setDeleteToPage] = createSignal(10);
+  
+  const handlePreviewDelete = async () => {
+    await localDbDashboardStore.previewDeleteRange(deleteFromPage(), deleteToPage());
+  };
+  
+  const handleExecuteDelete = async () => {
+    if (!ui.deletePreview) {
+      alert('먼저 미리보기를 실행하세요');
+      return;
+    }
+    
+    if (confirm(`페이지 ${deleteFromPage()}-${deleteToPage()} 범위를 삭제하시겠습니까?`)) {
+      await localDbDashboardStore.executeDeleteRange(deleteFromPage(), deleteToPage());
+    }
+  };
+  
+  const handleDeleteAll = async () => {
+    await localDbDashboardStore.deleteAllRecordsConfirmed();
+  };
 
   return (
     <div class="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-blue-50 p-6">
@@ -1493,7 +1576,48 @@ export const LocalDBTab: Component = () => {
         {/* Export & Data Management */}
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-indigo-200 p-6 space-y-4">
           <h3 class="text-lg font-semibold text-gray-800">📥 Export & 데이터 관리</h3>
+          
+          {/* Excel 백업/복원 섹션 */}
+          <div class="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-lg border border-blue-200">
+            <h4 class="text-sm font-semibold text-blue-900 mb-3">💾 Excel 전체 백업/복원</h4>
+            <div class="flex flex-wrap gap-2 mb-3">
+              <button 
+                class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium shadow-sm transition-all disabled:bg-gray-400 disabled:cursor-not-allowed" 
+                onClick={handleExcelExport}
+                disabled={ui.working}
+              >
+                📊 전체 DB 내보내기 (저장 위치 선택)
+              </button>
+              <button 
+                class="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium shadow-sm transition-all disabled:bg-gray-400 disabled:cursor-not-allowed" 
+                onClick={handleExcelImport}
+                disabled={ui.working}
+              >
+                📥 Excel 파일에서 복원 (파일 선택)
+              </button>
+            </div>
+            <Show when={ui.exportStatus || ui.importStatus}>
+              <div class="bg-white/80 rounded p-3 space-y-1">
+                <Show when={ui.exportStatus}>
+                  <div class="text-xs text-gray-700">
+                    <span class="font-semibold">내보내기:</span> {ui.exportStatus}
+                  </div>
+                </Show>
+                <Show when={ui.importStatus}>
+                  <div class="text-xs text-gray-700">
+                    <span class="font-semibold">가져오기:</span> {ui.importStatus}
+                  </div>
+                </Show>
+                <Show when={ui.importLog}>
+                  <pre class="text-[10px] bg-gray-100 p-2 rounded overflow-auto max-h-32 mt-2">{ui.importLog}</pre>
+                </Show>
+              </div>
+            </Show>
+          </div>
+          
+          {/* 기존 CSV Export 섹션 */}
           <div class="space-y-3">
+            <h4 class="text-sm font-semibold text-gray-700">📄 CSV Export (부분 데이터)</h4>
             <div class="flex flex-wrap gap-2 items-center">
               <button class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium" onClick={() => localDbDashboardStore.exportCurrentView()}>📥 현재 뷰 Export</button>
               <span class="text-xs text-gray-400">|</span>
@@ -1501,7 +1625,88 @@ export const LocalDBTab: Component = () => {
               <button class="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs" onClick={() => localDbDashboardStore.exportDataset('device_types')}>Device Types (전체)</button>
               <button class="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs" onClick={() => localDbDashboardStore.exportDataset('analytics')}>Analytics (전체)</button>
             </div>
-            <div class="text-xs text-gray-500">{localDbDashboardStore.ui.exportStatus}</div>
+          </div>
+          
+          {/* 페이지 범위 삭제 섹션 */}
+          <div class="bg-gradient-to-r from-yellow-50 to-orange-50 p-4 rounded-lg border border-yellow-200">
+            <h4 class="text-sm font-semibold text-orange-900 mb-3">🗑️ 페이지 범위 삭제</h4>
+            <div class="space-y-3">
+              <div class="flex gap-3 items-center flex-wrap">
+                <label class="flex items-center gap-2 text-sm">
+                  <span class="text-gray-700">시작 페이지:</span>
+                  <input
+                    type="number"
+                    value={deleteFromPage()}
+                    onInput={(e) => setDeleteFromPage(parseInt(e.currentTarget.value) || 1)}
+                    min="1"
+                    class="border rounded px-2 py-1 w-24 text-sm"
+                  />
+                </label>
+                <label class="flex items-center gap-2 text-sm">
+                  <span class="text-gray-700">종료 페이지:</span>
+                  <input
+                    type="number"
+                    value={deleteToPage()}
+                    onInput={(e) => setDeleteToPage(parseInt(e.currentTarget.value) || 1)}
+                    min="1"
+                    class="border rounded px-2 py-1 w-24 text-sm"
+                  />
+                </label>
+              </div>
+              <div class="flex gap-2">
+                <button 
+                  class="px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-medium" 
+                  onClick={handlePreviewDelete}
+                >
+                  🔍 미리보기
+                </button>
+                <button 
+                  class="px-3 py-1.5 rounded bg-red-600 hover:bg-red-700 text-white text-xs font-medium disabled:bg-gray-400 disabled:cursor-not-allowed" 
+                  onClick={handleExecuteDelete}
+                  disabled={!ui.deletePreview}
+                >
+                  🗑️ 삭제 실행
+                </button>
+              </div>
+              <Show when={ui.deletePreview}>
+                <div class="bg-white/80 rounded p-3 text-xs space-y-1">
+                  <div class="font-semibold text-gray-800">삭제 미리보기:</div>
+                  <div>• 제품: {ui.deletePreview.products_count}개</div>
+                  <div>• 상세정보: {ui.deletePreview.product_details_count}개</div>
+                  <div>• Primary Types: {ui.deletePreview.product_details_with_primary_types}개</div>
+                </div>
+              </Show>
+              <Show when={ui.deleteResult && !ui.deleteResult.error}>
+                <div class="bg-green-100 rounded p-3 text-xs space-y-1">
+                  <div class="font-semibold text-green-800">삭제 완료:</div>
+                  <div>• 제품: {ui.deleteResult.deleted_products}개</div>
+                  <div>• 상세정보: {ui.deleteResult.deleted_product_details}개</div>
+                  <div>• 브리지: {ui.deleteResult.deleted_bridge_rows}개</div>
+                </div>
+              </Show>
+            </div>
+          </div>
+          
+          {/* 전체 삭제 섹션 */}
+          <div class="bg-gradient-to-r from-red-50 to-rose-50 p-4 rounded-lg border border-red-300">
+            <h4 class="text-sm font-semibold text-red-900 mb-2">⚠️ 전체 레코드 삭제</h4>
+            <p class="text-xs text-red-700 mb-3">모든 제품 데이터를 삭제합니다. 자동 백업이 생성됩니다.</p>
+            <button 
+              class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium shadow-sm transition-all disabled:bg-gray-400 disabled:cursor-not-allowed" 
+              onClick={handleDeleteAll}
+              disabled={ui.working}
+            >
+              🗑️ 전체 데이터 삭제 (주의!)
+            </button>
+            <Show when={ui.deleteResult?.message}>
+              <pre class="text-xs bg-white/80 p-3 rounded mt-3 whitespace-pre-wrap">{ui.deleteResult.message}</pre>
+            </Show>
+            <Show when={ui.deleteResult?.cancelled}>
+              <div class="text-xs text-yellow-600 mt-2">취소되었습니다.</div>
+            </Show>
+            <Show when={ui.deleteResult?.error}>
+              <div class="text-xs text-red-600 mt-2">오류: {ui.deleteResult.error}</div>
+            </Show>
           </div>
         </div>
 

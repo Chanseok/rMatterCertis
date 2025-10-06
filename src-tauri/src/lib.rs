@@ -898,6 +898,10 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             // Phase 3 delete range
             commands::database::export_import::preview_delete_range,
             commands::database::export_import::delete_range,
+            // Excel export/import for full database backup/restore
+            commands::database::export_import::export_full_database_excel,
+            commands::database::export_import::import_full_database_excel,
+            commands::database::export_import::delete_all_records,
             // Window Management commands (이미 config_commands에 구현됨)
             commands::config_commands::save_window_state,
             commands::config_commands::load_window_state,

@@ -444,6 +444,50 @@ export class TauriApiService {
   return await invoke('delete_range', { from_page: fromPage, to_page: toPage });
   }
 
+  /**
+   * Export full database (products + product_details + device_types + vendors) to Excel format
+   */
+  async exportFullDatabaseExcel(): Promise<{
+    file_path: string;
+    products_count: number;
+    product_details_count: number;
+    device_types_count: number;
+    vendors_count: number;
+  }> {
+    return await invoke('export_full_database_excel');
+  }
+
+  /**
+   * Import full database from Excel backup file
+   */
+  async importFullDatabaseExcel(filePath: string): Promise<{
+    products_imported: number;
+    products_updated: number;
+    details_imported: number;
+    details_updated: number;
+    device_types_imported: number;
+    device_types_updated: number;
+    vendors_imported: number;
+    vendors_updated: number;
+    errors: string[];
+    backup_file?: string | null;
+  }> {
+    return await invoke('import_full_database_excel', { filePath, file_path: filePath });
+  }
+
+  /**
+   * Delete all records from products and product_details tables
+   * Requires confirmation token for safety
+   */
+  async deleteAllRecords(confirmationToken: string): Promise<{
+    deleted_products: number;
+    deleted_product_details: number;
+    deleted_bridge_rows: number;
+    backup_file?: string | null;
+  }> {
+    return await invoke('delete_all_records', { confirmationToken, confirmation_token: confirmationToken });
+  }
+
   async dashboardVendorSync(options?: { dry_run?: boolean }): Promise<any> {
   return await invoke('dashboard_vendor_sync', { options });
   }
