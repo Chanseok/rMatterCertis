@@ -236,7 +236,6 @@ pub struct DeleteRangePreview {
     pub to_page: u32,
     pub product_details_count: i64,
     pub products_count: i64,
-    pub product_details_with_primary_types: i64,
 }
 
 #[tauri::command]
@@ -245,17 +244,17 @@ pub async fn preview_delete_range(
     from_page: u32,
     to_page: u32,
 ) -> Result<DeleteRangePreview, String> {
+    info!("🔍 preview_delete_range called: from_page={}, to_page={}", from_page, to_page);
     if to_page < from_page { return Err("to_page must be >= from_page".into()); }
     // Guard insane ranges
     if to_page - from_page > 50 { return Err("Range too large (max 50 pages per operation)".into()); }
     let pool = state.pool();
     let sql_pd = r#"SELECT COUNT(*) FROM product_details WHERE page_id BETWEEN ?1 AND ?2"#;
     let sql_p = r#"SELECT COUNT(*) FROM products WHERE page_id BETWEEN ?1 AND ?2"#;
-    let sql_bridge = r#"SELECT COUNT(DISTINCT ppt.product_detail_id) FROM product_primary_device_types ppt JOIN product_details pd ON pd.url = ppt.product_detail_id WHERE pd.page_id BETWEEN ?1 AND ?2"#;
     let product_details_count = sqlx::query_scalar::<_, i64>(sql_pd).bind(from_page).bind(to_page).fetch_one(pool).await.unwrap_or(0);
     let products_count = sqlx::query_scalar::<_, i64>(sql_p).bind(from_page).bind(to_page).fetch_one(pool).await.unwrap_or(0);
-    let product_details_with_primary_types = sqlx::query_scalar::<_, i64>(sql_bridge).bind(from_page).bind(to_page).fetch_one(pool).await.unwrap_or(0);
-    Ok(DeleteRangePreview { from_page, to_page, product_details_count, products_count, product_details_with_primary_types })
+    info!("✅ preview_delete_range result: products={}, product_details={}", products_count, product_details_count);
+    Ok(DeleteRangePreview { from_page, to_page, product_details_count, products_count })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -264,7 +263,6 @@ pub struct DeleteRangeResult {
     pub to_page: u32,
     pub deleted_product_details: u64,
     pub deleted_products: u64,
-    pub deleted_bridge_rows: u64,
 }
 
 #[tauri::command]
@@ -277,16 +275,18 @@ pub async fn delete_range(
     if to_page - from_page > 50 { return Err("Range too large (max 50 pages per operation)".into()); }
     let pool = state.pool();
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    // Delete bridge rows first (FK safety)
-    let bridge_del = sqlx::query("DELETE FROM product_primary_device_types WHERE product_detail_id IN (SELECT url FROM product_details WHERE page_id BETWEEN ?1 AND ?2)")
-        .bind(from_page).bind(to_page).execute(&mut *tx).await.map_err(|e| e.to_string())?.rows_affected();
+    
+    // Delete product_details first (child table)
     let pd_del = sqlx::query("DELETE FROM product_details WHERE page_id BETWEEN ?1 AND ?2")
         .bind(from_page).bind(to_page).execute(&mut *tx).await.map_err(|e| e.to_string())?.rows_affected();
+    
+    // Delete products (parent table)
     let p_del = sqlx::query("DELETE FROM products WHERE page_id BETWEEN ?1 AND ?2")
         .bind(from_page).bind(to_page).execute(&mut *tx).await.map_err(|e| e.to_string())?.rows_affected();
+    
     tx.commit().await.map_err(|e| e.to_string())?;
-    info!("🗑️ Deleted pages range {}-{} (products={}, product_details={}, bridge={})", from_page, to_page, p_del, pd_del, bridge_del);
-    Ok(DeleteRangeResult { from_page, to_page, deleted_product_details: pd_del, deleted_products: p_del, deleted_bridge_rows: bridge_del })
+    info!("🗑️ Deleted pages range {}-{} (products={}, product_details={})", from_page, to_page, p_del, pd_del);
+    Ok(DeleteRangeResult { from_page, to_page, deleted_product_details: pd_del, deleted_products: p_del })
 }
 
 // ---------------------------------------------------------------------------
@@ -1002,7 +1002,6 @@ pub async fn import_full_database_excel(
 pub struct DeleteAllResult {
     pub deleted_products: u64,
     pub deleted_product_details: u64,
-    pub deleted_bridge_rows: u64,
     pub backup_file: Option<String>,
 }
 
@@ -1026,13 +1025,6 @@ pub async fn delete_all_records(
     // Start transaction
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     
-    // Delete bridge table rows first (FK safety)
-    let bridge_del = sqlx::query("DELETE FROM product_primary_device_types")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?
-        .rows_affected();
-    
     // Delete product_details (child table)
     let details_del = sqlx::query("DELETE FROM product_details")
         .execute(&mut *tx)
@@ -1053,13 +1045,12 @@ pub async fn delete_all_records(
     // VACUUM to reclaim space
     let _ = sqlx::query("VACUUM").execute(pool).await;
     
-    info!("🗑️ Deleted all records: products={}, product_details={}, bridge={}", 
-        products_del, details_del, bridge_del);
+    info!("🗑️ Deleted all records: products={}, product_details={}", 
+        products_del, details_del);
     
     Ok(DeleteAllResult {
         deleted_products: products_del,
         deleted_product_details: details_del,
-        deleted_bridge_rows: bridge_del,
         backup_file,
     })
 }

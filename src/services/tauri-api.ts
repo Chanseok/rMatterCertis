@@ -433,15 +433,23 @@ export class TauriApiService {
   }
 
   async previewDeleteRange(fromPage: number, toPage: number): Promise<{
-    from_page: number; to_page: number; product_details_count: number; products_count: number; product_details_with_primary_types: number;
+    from_page: number; to_page: number; product_details_count: number; products_count: number;
   }> {
-  return await invoke('preview_delete_range', { from_page: fromPage, to_page: toPage });
+    console.log('📞 Invoking preview_delete_range with:', { fromPage, toPage });
+    try {
+      const result = await invoke('preview_delete_range', { fromPage, toPage });
+      console.log('📥 preview_delete_range response:', result);
+      return result as any;
+    } catch (e) {
+      console.error('💥 preview_delete_range invoke failed:', e);
+      throw e;
+    }
   }
 
   async deleteRange(fromPage: number, toPage: number): Promise<{
-    from_page: number; to_page: number; deleted_product_details: number; deleted_products: number; deleted_bridge_rows: number;
+    from_page: number; to_page: number; deleted_product_details: number; deleted_products: number;
   }> {
-  return await invoke('delete_range', { from_page: fromPage, to_page: toPage });
+  return await invoke('delete_range', { fromPage, toPage });
   }
 
   /**
@@ -482,7 +490,6 @@ export class TauriApiService {
   async deleteAllRecords(confirmationToken: string): Promise<{
     deleted_products: number;
     deleted_product_details: number;
-    deleted_bridge_rows: number;
     backup_file?: string | null;
   }> {
     return await invoke('delete_all_records', { confirmationToken, confirmation_token: confirmationToken });

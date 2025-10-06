@@ -643,6 +643,7 @@ export const LocalDBTab: Component = () => {
   const [deleteToPage, setDeleteToPage] = createSignal(10);
   
   const handlePreviewDelete = async () => {
+    console.log('🔍 handlePreviewDelete clicked! from:', deleteFromPage(), 'to:', deleteToPage());
     await localDbDashboardStore.previewDeleteRange(deleteFromPage(), deleteToPage());
   };
   
@@ -1656,7 +1657,10 @@ export const LocalDBTab: Component = () => {
               <div class="flex gap-2">
                 <button 
                   class="px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-medium" 
-                  onClick={handlePreviewDelete}
+                  onClick={() => {
+                    console.log('🖱️ Preview button clicked!');
+                    handlePreviewDelete();
+                  }}
                 >
                   🔍 미리보기
                 </button>
@@ -1673,7 +1677,6 @@ export const LocalDBTab: Component = () => {
                   <div class="font-semibold text-gray-800">삭제 미리보기:</div>
                   <div>• 제품: {ui.deletePreview.products_count}개</div>
                   <div>• 상세정보: {ui.deletePreview.product_details_count}개</div>
-                  <div>• Primary Types: {ui.deletePreview.product_details_with_primary_types}개</div>
                 </div>
               </Show>
               <Show when={ui.deleteResult && !ui.deleteResult.error}>
@@ -1681,7 +1684,6 @@ export const LocalDBTab: Component = () => {
                   <div class="font-semibold text-green-800">삭제 완료:</div>
                   <div>• 제품: {ui.deleteResult.deleted_products}개</div>
                   <div>• 상세정보: {ui.deleteResult.deleted_product_details}개</div>
-                  <div>• 브리지: {ui.deleteResult.deleted_bridge_rows}개</div>
                 </div>
               </Show>
             </div>

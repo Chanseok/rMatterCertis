@@ -184,7 +184,6 @@ export function PageRangeDeleteControls() {
           <ul class="text-sm space-y-1">
             <li>제품: {localDbDashboardStore.ui.deleteResult.deleted_products}개</li>
             <li>상세정보: {localDbDashboardStore.ui.deleteResult.deleted_product_details}개</li>
-            <li>브리지: {localDbDashboardStore.ui.deleteResult.deleted_bridge_rows}개</li>
           </ul>
         </div>
       )}

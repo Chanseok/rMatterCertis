@@ -317,7 +317,7 @@ async function deleteAllRecordsConfirmed() {
       ...ui, 
       deleteResult: {
         ...result,
-        message: `삭제 완료!\n제품: ${result.deleted_products}개\n상세정보: ${result.deleted_product_details}개\n브리지: ${result.deleted_bridge_rows}개\n백업: ${result.backup_file || 'N/A'}`
+        message: `삭제 완료!\n제품: ${result.deleted_products}개\n상세정보: ${result.deleted_product_details}개\n백업: ${result.backup_file || 'N/A'}`
       },
       working: false 
     });
@@ -388,11 +388,16 @@ async function importDataset(dataset: 'vendors' | 'device_types', csvText: strin
 }
 
 async function previewDeleteRange(fromPage: number, toPage: number) {
+  console.log('🔍 previewDeleteRange called:', { fromPage, toPage });
   try {
     const res = await tauriApi.previewDeleteRange(fromPage, toPage);
+    console.log('✅ previewDeleteRange result:', res);
     setUi({ ...ui, deletePreview: res });
   } catch (e: any) {
+    console.error('❌ previewDeleteRange error:', e);
+    console.error('❌ Error details:', JSON.stringify(e, null, 2));
     setUi({ ...ui, deletePreview: { error: String(e) } });
+    alert(`미리보기 실패: ${e}`);
   }
 }
 
