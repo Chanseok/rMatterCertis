@@ -45,6 +45,12 @@ export const LocalDBTab: Component = () => {
   const [isTimerRunning, setIsTimerRunning] = createSignal(false);
   let filterStartTime: number | null = null;
   let timerInterval: number | undefined;
+
+  // 섹션 접기 상태
+  const [isSummaryCollapsed, setIsSummaryCollapsed] = createSignal(false);
+  const [isTimelineCollapsed, setIsTimelineCollapsed] = createSignal(false);
+  const [isInsightsCollapsed, setIsInsightsCollapsed] = createSignal(false);
+  const [isAnalyticsCollapsed, setIsAnalyticsCollapsed] = createSignal(false);
   
   // Computed data for insights - switches between filtered and full data
   const topCategories = createMemo(() => 
@@ -866,31 +872,39 @@ export const LocalDBTab: Component = () => {
         {/* Summary */}
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
           <div class="flex items-center justify-between mb-6">
-            <div>
-              <h3 class="text-xl font-bold text-gray-800">📈 데이터 요약</h3>
-              <p class="text-xs text-gray-500 mt-1">전체 데이터베이스 통계 현황</p>
-              <Show when={analytics.loading}>
-                <p class="text-[10px] text-indigo-500 mt-1 animate-pulse">⏳ 분석 데이터 로딩...</p>
-              </Show>
-              {/* 디버깅: 현재 적용된 필터 표시 */}
-              <Show when={analytics.filterApplied}>
-                <p class="text-xs text-red-600 mt-1 font-mono">🔍 필터: {analytics.filterApplied}</p>
-              </Show>
-              <p class="text-xs text-blue-600 mt-1 font-mono">📅 날짜 범위: {ui.certDateRange[0] || '없음'} ~ {ui.certDateRange[1] || '없음'}</p>
-              <p class="text-xs text-purple-600 mt-1 font-mono">
-                📊 filteredInsights: {filteredInsights() ? `${filteredInsights()!.total_products} products` : 'null'}
-              </p>
-              {/* 디버깅: 필터 로드 타이머 */}
-              <Show when={isTimerRunning() || filterLoadTime() !== null}>
-                <p class="text-xs font-mono mt-1 flex items-center gap-1">
-                  <Show when={isTimerRunning()} fallback={
-                    <span class="text-green-600">✅ 로드 완료: {filterLoadTime()?.toFixed(0)}ms</span>
-                  }>
-                    <span class="text-orange-500 animate-pulse">⏱️ 로딩 중: {filterLoadTime()?.toFixed(0) || '0'}ms</span>
-                  </Show>
+            <button
+              onClick={() => setIsSummaryCollapsed(!isSummaryCollapsed())}
+              class="flex items-center gap-3 hover:text-indigo-600 transition-colors"
+            >
+              <div>
+                <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+                  📈 데이터 요약
+                  <span class="text-gray-400 text-base">{isSummaryCollapsed() ? '▼' : '▲'}</span>
+                </h3>
+                <p class="text-xs text-gray-500 mt-1">전체 데이터베이스 통계 현황</p>
+                <Show when={analytics.loading}>
+                  <p class="text-[10px] text-indigo-500 mt-1 animate-pulse">⏳ 분석 데이터 로딩...</p>
+                </Show>
+                {/* 디버깅: 현재 적용된 필터 표시 */}
+                <Show when={analytics.filterApplied}>
+                  <p class="text-xs text-red-600 mt-1 font-mono">🔍 필터: {analytics.filterApplied}</p>
+                </Show>
+                <p class="text-xs text-blue-600 mt-1 font-mono">📅 날짜 범위: {ui.certDateRange[0] || '없음'} ~ {ui.certDateRange[1] || '없음'}</p>
+                <p class="text-xs text-purple-600 mt-1 font-mono">
+                  📊 filteredInsights: {filteredInsights() ? `${filteredInsights()!.total_products} products` : 'null'}
                 </p>
-              </Show>
-            </div>
+                {/* 디버깅: 필터 로드 타이머 */}
+                <Show when={isTimerRunning() || filterLoadTime() !== null}>
+                  <p class="text-xs font-mono mt-1 flex items-center gap-1">
+                    <Show when={isTimerRunning()} fallback={
+                      <span class="text-green-600">✅ 로드 완료: {filterLoadTime()?.toFixed(0)}ms</span>
+                    }>
+                      <span class="text-orange-500 animate-pulse">⏱️ 로딩 중: {filterLoadTime()?.toFixed(0) || '0'}ms</span>
+                    </Show>
+                  </p>
+                </Show>
+              </div>
+            </button>
             <div class="flex gap-2">
               <button 
                 class="px-4 py-2 rounded-lg bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white text-sm font-semibold shadow-md transition-all"
@@ -934,6 +948,7 @@ export const LocalDBTab: Component = () => {
             </div>
           </div>
           
+          <Show when={!isSummaryCollapsed()}>
           <Show when={s()} fallback={
             <div class="flex items-center justify-center py-12">
               <div class="flex flex-col items-center gap-2">
@@ -1082,22 +1097,44 @@ export const LocalDBTab: Component = () => {
               </div>
             </div>
           </Show>
+          </Show>
         </div>
 
         {/* 인증 추세 차트 섹션 */}
+        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
+          <button
+            onClick={() => setIsTimelineCollapsed(!isTimelineCollapsed())}
+            class="flex items-center gap-2 hover:text-indigo-600 transition-colors mb-4 w-full"
+          >
+            <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+              📈 인증 추세
+              <span class="text-gray-400 text-base">{isTimelineCollapsed() ? '▼' : '▲'}</span>
+            </h3>
+          </button>
+          <Show when={!isTimelineCollapsed()}>
         <CertificationTimeline 
           filter={analytics.filterApplied || null}
           startDate={ui.certDateRange[0] || ui.certDateMin || "2020-01-01"}
           endDate={ui.certDateRange[1] || ui.certDateMax || new Date().toISOString().split('T')[0]}
         />
+          </Show>
+        </div>
 
         {/* 분석 인사이트 섹션 */}
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
           <div class="mb-6 flex items-center justify-between">
-            <div>
-              <h3 class="text-xl font-bold text-gray-800">🔍 분석 인사이트</h3>
-              <p class="text-xs text-gray-500 mt-1">카테고리, 디바이스 타입, 벤더, Transport Interface 통계</p>
-            </div>
+            <button
+              onClick={() => setIsInsightsCollapsed(!isInsightsCollapsed())}
+              class="flex items-center gap-2 hover:text-indigo-600 transition-colors"
+            >
+              <div>
+                <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+                  🔍 분석 인사이트
+                  <span class="text-gray-400 text-base">{isInsightsCollapsed() ? '▼' : '▲'}</span>
+                </h3>
+                <p class="text-xs text-gray-500 mt-1">카테고리, 디바이스 타입, 벤더, Transport Interface 통계</p>
+              </div>
+            </button>
             <div class="flex items-center gap-3">
               <Show when={analytics.filterApplied}>
                 <div class="text-xs text-gray-500 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200">
@@ -1124,6 +1161,7 @@ export const LocalDBTab: Component = () => {
             </div>
           </div>
           
+          <Show when={!isInsightsCollapsed()}>
           <Show when={!ui.loadingSummary && s()} fallback={
             <div class="flex items-center justify-center py-12">
               <div class="text-sm text-gray-400 animate-pulse">📊 인사이트를 불러오는 중...</div>
@@ -1263,12 +1301,21 @@ export const LocalDBTab: Component = () => {
               </div>
             </div>
           </Show>
+          </Show>
         </div>
 
         {/* Analytics + DSL Filter Placeholder */}
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 space-y-4">
           <div class="flex items-center justify-between mb-4">
-            <h3 class="text-lg font-semibold text-gray-800">📊 Analytics 데이터</h3>
+            <button
+              onClick={() => setIsAnalyticsCollapsed(!isAnalyticsCollapsed())}
+              class="flex items-center gap-2 hover:text-indigo-600 transition-colors"
+            >
+              <h3 class="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                📊 Analytics 데이터
+                <span class="text-gray-400 text-base">{isAnalyticsCollapsed() ? '▼' : '▲'}</span>
+              </h3>
+            </button>
             <div class="flex gap-2 items-center">
               <span class="text-xs text-gray-500">
                 총 <span class="font-bold text-indigo-600">{analytics.total}</span>건
@@ -1276,6 +1323,7 @@ export const LocalDBTab: Component = () => {
             </div>
           </div>
 
+          <Show when={!isAnalyticsCollapsed()}>
           {/* Quick Search + 필터 상태 표시 */}
           <div class="space-y-3">
             <div class="flex gap-2 items-center">
@@ -1439,6 +1487,7 @@ export const LocalDBTab: Component = () => {
             <div class="ml-auto text-xs text-gray-400">총 {analytics.total} 행</div>
           </div>
           {/* Diagnostics UI 제거됨 */}
+          </Show>
         </div>
 
         {/* Export & Data Management */}

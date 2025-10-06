@@ -2,6 +2,7 @@
 import { Component, createSignal, createEffect, Show, onCleanup } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { Chart, registerables } from 'chart.js';
+import 'chartjs-adapter-date-fns'; // time scale을 위한 어댑터
 
 // Register Chart.js components
 Chart.register(...registerables);
@@ -28,7 +29,7 @@ export const CertificationTimeline: Component<CertificationTimelineProps> = (pro
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
   const [canvasElement, setCanvasElement] = createSignal<HTMLCanvasElement | undefined>(undefined);
-  let chartInstance: Chart | null = null;
+  let chartInstance: any = null; // Chart.js with time scale uses different data structure
 
   // Load timeline data when props change
   createEffect(() => {
@@ -82,22 +83,6 @@ export const CertificationTimeline: Component<CertificationTimelineProps> = (pro
     }
   };
 
-  // Format date label based on aggregation
-  const formatDateLabel = (date: string, aggregation: string): string => {
-    if (aggregation === 'weekly') {
-      const parts = date.split('-W');
-      return `${parts[0]}년 ${parts[1]}주`;
-    } else if (aggregation === 'monthly') {
-      const parts = date.split('-');
-      return `${parts[0]}년 ${parseInt(parts[1])}월`;
-    } else if (aggregation === 'quarterly') {
-      return date.replace('-Q', '년 ') + '분기';
-    } else if (aggregation === 'half-yearly') {
-      return date.replace('-H1', '년 상반기').replace('-H2', '년 하반기');
-    }
-    return date;
-  };
-
   // Create or update chart when both data and canvas are ready
   createEffect(() => {
     const data = timelineData();
@@ -123,11 +108,26 @@ export const CertificationTimeline: Component<CertificationTimelineProps> = (pro
       return;
     }
 
-    // Destroy existing chart
+    // Destroy existing chart and clean up Chart.js registry
     if (chartInstance) {
       console.log('[Timeline Chart] Destroying existing chart');
-      chartInstance.destroy();
+      try {
+        chartInstance.destroy();
+      } catch (e) {
+        console.warn('[Timeline Chart] Error destroying chart:', e);
+      }
       chartInstance = null;
+    }
+    
+    // Clean up any orphaned Chart.js instances attached to this canvas
+    try {
+      const chartId = (canvas as any)['data-chart-id'];
+      if (chartId !== undefined) {
+        console.log('[Timeline Chart] Cleaning up orphaned chart ID:', chartId);
+        delete (canvas as any)['data-chart-id'];
+      }
+    } catch (e) {
+      console.warn('[Timeline Chart] Error cleaning canvas:', e);
     }
 
     const ctx = canvas.getContext('2d');
@@ -138,32 +138,64 @@ export const CertificationTimeline: Component<CertificationTimelineProps> = (pro
 
     console.log('[Timeline Chart] Creating new chart with', data.data.length, 'points');
     
-    const labels = data.data.map(p => formatDateLabel(p.date, data.aggregation));
-    const counts = data.data.map(p => p.count);
+    // x축을 time scale로 사용하기 위해 {x, y} 객체 배열로 변환
+    // 날짜 형식을 Chart.js가 인식할 수 있는 형식으로 변환
+    const chartData = data.data.map(p => {
+      let dateValue = p.date;
+      
+      // 월별 집계 (YYYY-MM) -> YYYY-MM-01로 변환
+      if (/^\d{4}-\d{2}$/.test(dateValue)) {
+        dateValue = `${dateValue}-01`;
+      }
+      // 주별 집계 (YYYY-W##) -> 해당 주의 월요일로 변환
+      else if (/^\d{4}-W\d{2}$/.test(dateValue)) {
+        const [year, week] = dateValue.split('-W');
+        const date = new Date(parseInt(year), 0, 1 + (parseInt(week) - 1) * 7);
+        dateValue = date.toISOString().split('T')[0];
+      }
+      // 분기별 (YYYY-Q#) -> 해당 분기 첫날로 변환
+      else if (/^\d{4}-Q\d$/.test(dateValue)) {
+        const [year, quarter] = dateValue.split('-Q');
+        const month = (parseInt(quarter) - 1) * 3;
+        dateValue = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+      }
+      // 반기별 (YYYY-H#) -> 해당 반기 첫날로 변환  
+      else if (/^\d{4}-H\d$/.test(dateValue)) {
+        const [year, half] = dateValue.split('-H');
+        const month = parseInt(half) === 1 ? '01' : '07';
+        dateValue = `${year}-${month}-01`;
+      }
+      
+      console.log('[Timeline Chart] Date conversion:', p.date, '->', dateValue);
+      
+      return {
+        x: dateValue,
+        y: p.count,
+      };
+    });
 
-    console.log('[Timeline Chart] Labels:', labels);
-    console.log('[Timeline Chart] Counts:', counts);
+    console.log('[Timeline Chart] Chart data:', chartData);
 
-    chartInstance = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [
-          {
-            type: 'bar',
-            label: '인증 건수',
-            data: counts,
-            backgroundColor: 'rgba(59, 130, 246, 0.5)',
-            borderColor: 'rgba(59, 130, 246, 1)',
-            borderWidth: 1,
-            borderRadius: 6,
-            hoverBackgroundColor: 'rgba(59, 130, 246, 0.7)',
-            order: 2,
-          },
-          {
-            type: 'line',
-            label: '추세선',
-            data: counts,
+    try {
+      chartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          datasets: [
+            {
+              type: 'bar',
+              label: '인증 건수',
+              data: chartData,
+              backgroundColor: 'rgba(59, 130, 246, 0.5)',
+              borderColor: 'rgba(59, 130, 246, 1)',
+              borderWidth: 1,
+              borderRadius: 6,
+              hoverBackgroundColor: 'rgba(59, 130, 246, 0.7)',
+              order: 2,
+            },
+            {
+              type: 'line',
+              label: '추세선',
+            data: chartData, // counts 대신 chartData 사용
             borderColor: 'rgba(168, 85, 247, 1)',
             backgroundColor: 'rgba(168, 85, 247, 0.1)',
             borderWidth: 3,
@@ -232,6 +264,23 @@ export const CertificationTimeline: Component<CertificationTimelineProps> = (pro
         },
         scales: {
           x: {
+            type: 'time', // time scale 사용
+            time: {
+              // 집계 방식에 따라 동적으로 unit 설정
+              unit: data.aggregation === 'daily' ? 'day' :
+                    data.aggregation === 'weekly' ? 'week' :
+                    data.aggregation === 'monthly' ? 'month' :
+                    data.aggregation === 'quarterly' ? 'quarter' :
+                    'year', // half-yearly는 year로 표시
+              displayFormats: {
+                day: 'MM/dd',
+                week: 'yyyy-MM-dd',
+                month: 'yyyy-MM',
+                quarter: 'yyyy-[Q]Q',
+                year: 'yyyy',
+              },
+              tooltipFormat: 'yyyy-MM-dd',
+            },
             display: true,
             title: {
               display: true,
@@ -282,15 +331,34 @@ export const CertificationTimeline: Component<CertificationTimelineProps> = (pro
           duration: 750,
           easing: 'easeInOutQuart',
         },
-      },
-    });
-    
-    console.log('[Timeline Chart] Chart created successfully');
+      }, // options 끝
+    }); // new Chart() 끝
+      
+      console.log('[Timeline Chart] Chart created successfully');
+    } catch (error) {
+      console.error('[Timeline Chart] Failed to create chart:', error);
+      // Canvas가 이미 사용 중인 경우, 강제로 정리하고 재시도
+      if (error instanceof Error && error.message.includes('Canvas is already in use')) {
+        console.warn('[Timeline Chart] Canvas in use, attempting recovery...');
+        // Chart.js의 모든 인스턴스에서 이 canvas 제거
+        const charts = (Chart as any).instances;
+        if (charts) {
+          for (const chart of Object.values(charts)) {
+            if ((chart as any).canvas === canvas) {
+              console.log('[Timeline Chart] Found and destroying orphaned chart');
+              (chart as any).destroy();
+            }
+          }
+        }
+      }
+      setError(error instanceof Error ? error.message : String(error));
+    }
   });
 
-  // Cleanup on unmount
+  // Cleanup when component unmounts
   onCleanup(() => {
     if (chartInstance) {
+      console.log('[Timeline Chart] Component cleanup: destroying chart');
       chartInstance.destroy();
       chartInstance = null;
     }
