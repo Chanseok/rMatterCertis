@@ -620,12 +620,16 @@ export const LocalDBTab: Component = () => {
   
   const handleExcelImport = async () => {
     try {
+      // 기본 내보내기 폴더 경로 가져오기
+      const defaultDir = await tauriApi.getExportsDirectory();
+      
       // 파일 선택 다이얼로그
       const { open } = await import('@tauri-apps/plugin-dialog');
       const selected = await open({
         multiple: false,
         filters: [{ name: 'Excel Files', extensions: ['xlsx'] }],
-        title: 'Excel 백업 파일 선택'
+        title: 'Excel 백업 파일 선택',
+        defaultPath: defaultDir
       });
       
       if (selected && typeof selected === 'string') {
@@ -640,7 +644,29 @@ export const LocalDBTab: Component = () => {
   
   // Page Range Delete Handlers
   const [deleteFromPage, setDeleteFromPage] = createSignal(1);
-  const [deleteToPage, setDeleteToPage] = createSignal(10);
+  const [deleteToPage, setDeleteToPage] = createSignal(20);
+  const [maxPageId, setMaxPageId] = createSignal<number | null>(null);
+  
+  // Load max page_id on mount
+  onMount(async () => {
+    try {
+      const max = await tauriApi.getMaxPageId();
+      setMaxPageId(max);
+      // Set default to latest 20 pages (max-19 to max)
+      if (max > 19) {
+        setDeleteFromPage(max - 19);
+        setDeleteToPage(max);
+      } else if (max > 0) {
+        setDeleteFromPage(Math.max(0, max - 19));
+        setDeleteToPage(max);
+      } else {
+        setDeleteFromPage(0);
+        setDeleteToPage(max || 20);
+      }
+    } catch (e) {
+      console.error('Failed to get max page_id:', e);
+    }
+  });
   
   const handlePreviewDelete = async () => {
     console.log('🔍 handlePreviewDelete clicked! from:', deleteFromPage(), 'to:', deleteToPage());
@@ -654,13 +680,32 @@ export const LocalDBTab: Component = () => {
     }
     
     if (confirm(`페이지 ${deleteFromPage()}-${deleteToPage()} 범위를 삭제하시겠습니까?`)) {
+      const currentFrom = deleteFromPage();
       await localDbDashboardStore.executeDeleteRange(deleteFromPage(), deleteToPage());
+      
+      // 삭제 성공 후 자동으로 다음 20페이지 범위 설정
+      if (!ui.deleteResult?.error) {
+        const newTo = currentFrom - 1;
+        const newFrom = Math.max(0, newTo - 19);
+        setDeleteFromPage(newFrom);
+        setDeleteToPage(newTo);
+        
+        // 자동으로 미리보기 실행
+        if (newTo > 0) {
+          setTimeout(() => {
+            localDbDashboardStore.previewDeleteRange(newFrom, newTo);
+          }, 500);
+        }
+      }
     }
   };
   
   const handleDeleteAll = async () => {
     await localDbDashboardStore.deleteAllRecordsConfirmed();
   };
+  
+  // 레코드 삭제 섹션 접기 상태
+  const [deletesSectionExpanded, setDeletesSectionExpanded] = createSignal(false);
 
   return (
     <div class="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-blue-50 p-6">
@@ -1616,98 +1661,124 @@ export const LocalDBTab: Component = () => {
             </Show>
           </div>
           
-          {/* 기존 CSV Export 섹션 */}
-          <div class="space-y-3">
-            <h4 class="text-sm font-semibold text-gray-700">📄 CSV Export (부분 데이터)</h4>
-            <div class="flex flex-wrap gap-2 items-center">
-              <button class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium" onClick={() => localDbDashboardStore.exportCurrentView()}>📥 현재 뷰 Export</button>
-              <span class="text-xs text-gray-400">|</span>
-              <button class="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs" onClick={() => localDbDashboardStore.exportDataset('vendors')}>Vendors (전체)</button>
-              <button class="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs" onClick={() => localDbDashboardStore.exportDataset('device_types')}>Device Types (전체)</button>
-              <button class="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs" onClick={() => localDbDashboardStore.exportDataset('analytics')}>Analytics (전체)</button>
+          {/* 레코드 삭제 섹션 (접을 수 있음) */}
+          <div class="bg-gradient-to-r from-orange-50 to-red-50 p-4 rounded-lg border border-orange-300">
+            <div class="flex items-center justify-between mb-3">
+              <h4 class="text-sm font-semibold text-red-900">�️ 레코드 삭제</h4>
+              <button
+                class="px-3 py-1 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-medium"
+                onClick={() => setDeletesSectionExpanded(!deletesSectionExpanded())}
+              >
+                {deletesSectionExpanded() ? '▲ 접기' : '▼ 펼치기'}
+              </button>
             </div>
-          </div>
-          
-          {/* 페이지 범위 삭제 섹션 */}
-          <div class="bg-gradient-to-r from-yellow-50 to-orange-50 p-4 rounded-lg border border-yellow-200">
-            <h4 class="text-sm font-semibold text-orange-900 mb-3">🗑️ 페이지 범위 삭제</h4>
-            <div class="space-y-3">
-              <div class="flex gap-3 items-center flex-wrap">
-                <label class="flex items-center gap-2 text-sm">
-                  <span class="text-gray-700">시작 페이지:</span>
-                  <input
-                    type="number"
-                    value={deleteFromPage()}
-                    onInput={(e) => setDeleteFromPage(parseInt(e.currentTarget.value) || 1)}
-                    min="1"
-                    class="border rounded px-2 py-1 w-24 text-sm"
-                  />
-                </label>
-                <label class="flex items-center gap-2 text-sm">
-                  <span class="text-gray-700">종료 페이지:</span>
-                  <input
-                    type="number"
-                    value={deleteToPage()}
-                    onInput={(e) => setDeleteToPage(parseInt(e.currentTarget.value) || 1)}
-                    min="1"
-                    class="border rounded px-2 py-1 w-24 text-sm"
-                  />
-                </label>
-              </div>
-              <div class="flex gap-2">
-                <button 
-                  class="px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-medium" 
-                  onClick={() => {
-                    console.log('🖱️ Preview button clicked!');
-                    handlePreviewDelete();
-                  }}
-                >
-                  🔍 미리보기
-                </button>
-                <button 
-                  class="px-3 py-1.5 rounded bg-red-600 hover:bg-red-700 text-white text-xs font-medium disabled:bg-gray-400 disabled:cursor-not-allowed" 
-                  onClick={handleExecuteDelete}
-                  disabled={!ui.deletePreview}
-                >
-                  🗑️ 삭제 실행
-                </button>
-              </div>
-              <Show when={ui.deletePreview}>
-                <div class="bg-white/80 rounded p-3 text-xs space-y-1">
-                  <div class="font-semibold text-gray-800">삭제 미리보기:</div>
-                  <div>• 제품: {ui.deletePreview.products_count}개</div>
-                  <div>• 상세정보: {ui.deletePreview.product_details_count}개</div>
+            
+            <Show when={deletesSectionExpanded()}>
+              <div class="space-y-4">
+                {/* 페이지 범위 삭제 */}
+                <div class="bg-white/60 p-3 rounded border border-yellow-200">
+                  <h5 class="text-sm font-semibold text-orange-800 mb-2">� 페이지 범위 삭제 (page_id 기준)</h5>
+                  <div class="bg-blue-50 border border-blue-200 rounded p-2 mb-3 text-xs text-blue-800">
+                    <strong>ℹ️ 중요:</strong> 물리 페이지가 아닌 <strong>page_id</strong> 기준으로 삭제합니다.<br/>
+                    <strong>큰 값일수록 최신 데이터</strong>입니다. 
+                    <Show when={maxPageId()}>
+                      (현재 최대: {maxPageId()})
+                    </Show>
+                    <br/>
+                    page_id는 0부터 시작 가능, 기본값은 최신 20페이지, 최대 100페이지까지 설정 가능합니다.
+                  </div>
+                  <div class="space-y-3">
+                    <div class="flex gap-3 items-center flex-wrap">
+                      <label class="flex items-center gap-2 text-sm">
+                        <span class="text-gray-700">시작:</span>
+                        <input
+                          type="number"
+                          value={deleteFromPage()}
+                          onInput={(e) => setDeleteFromPage(parseInt(e.currentTarget.value) || 0)}
+                          min="0"
+                          max={maxPageId() || undefined}
+                          class="border rounded px-2 py-1 w-24 text-sm"
+                        />
+                      </label>
+                      <label class="flex items-center gap-2 text-sm">
+                        <span class="text-gray-700">종료:</span>
+                        <input
+                          type="number"
+                          value={deleteToPage()}
+                          onInput={(e) => setDeleteToPage(parseInt(e.currentTarget.value) || 0)}
+                          min="0"
+                          max={maxPageId() || undefined}
+                          class="border rounded px-2 py-1 w-24 text-sm"
+                        />
+                      </label>
+                      <Show when={maxPageId()}>
+                        <button
+                          class="px-2 py-1 rounded bg-blue-500 hover:bg-blue-600 text-white text-xs"
+                          onClick={() => {
+                            const max = maxPageId()!;
+                            setDeleteFromPage(max > 19 ? max - 19 : 1);
+                            setDeleteToPage(max);
+                          }}
+                          title="최신 20페이지 범위로 설정"
+                        >
+                          📌 최신 20
+                        </button>
+                      </Show>
+                    </div>
+                    <div class="flex gap-2">
+                      <button 
+                        class="px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-medium" 
+                        onClick={handlePreviewDelete}
+                      >
+                        🔍 미리보기
+                      </button>
+                      <button 
+                        class="px-3 py-1.5 rounded bg-red-600 hover:bg-red-700 text-white text-xs font-medium disabled:bg-gray-400 disabled:cursor-not-allowed" 
+                        onClick={handleExecuteDelete}
+                        disabled={!ui.deletePreview}
+                      >
+                        🗑️ 삭제 실행
+                      </button>
+                    </div>
+                    <Show when={ui.deletePreview}>
+                      <div class="bg-white/80 rounded p-3 text-xs space-y-1">
+                        <div class="font-semibold text-gray-800">삭제 미리보기:</div>
+                        <div>• 제품: {ui.deletePreview.products_count}개</div>
+                        <div>• 상세정보: {ui.deletePreview.product_details_count}개</div>
+                      </div>
+                    </Show>
+                    <Show when={ui.deleteResult && !ui.deleteResult.error}>
+                      <div class="bg-green-100 rounded p-3 text-xs space-y-1">
+                        <div class="font-semibold text-green-800">✅ 삭제 완료 (다음 범위로 자동 이동)</div>
+                        <div>• 제품: {ui.deleteResult.deleted_products}개</div>
+                        <div>• 상세정보: {ui.deleteResult.deleted_product_details}개</div>
+                      </div>
+                    </Show>
+                  </div>
                 </div>
-              </Show>
-              <Show when={ui.deleteResult && !ui.deleteResult.error}>
-                <div class="bg-green-100 rounded p-3 text-xs space-y-1">
-                  <div class="font-semibold text-green-800">삭제 완료:</div>
-                  <div>• 제품: {ui.deleteResult.deleted_products}개</div>
-                  <div>• 상세정보: {ui.deleteResult.deleted_product_details}개</div>
+                
+                {/* 전체 삭제 */}
+                <div class="bg-white/60 p-3 rounded border border-red-300">
+                  <h5 class="text-sm font-semibold text-red-900 mb-2">⚠️ 전체 레코드 삭제</h5>
+                  <p class="text-xs text-red-700 mb-3">모든 제품 데이터를 삭제합니다. 자동 백업이 생성됩니다.</p>
+                  <button 
+                    class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium shadow-sm transition-all disabled:bg-gray-400 disabled:cursor-not-allowed" 
+                    onClick={handleDeleteAll}
+                    disabled={ui.working}
+                  >
+                    🗑️ 전체 데이터 삭제 (주의!)
+                  </button>
+                  <Show when={ui.deleteResult?.message}>
+                    <pre class="text-xs bg-white/80 p-3 rounded mt-3 whitespace-pre-wrap">{ui.deleteResult.message}</pre>
+                  </Show>
+                  <Show when={ui.deleteResult?.cancelled}>
+                    <div class="text-xs text-yellow-600 mt-2">취소되었습니다.</div>
+                  </Show>
+                  <Show when={ui.deleteResult?.error}>
+                    <div class="text-xs text-red-600 mt-2">오류: {ui.deleteResult.error}</div>
+                  </Show>
                 </div>
-              </Show>
-            </div>
-          </div>
-          
-          {/* 전체 삭제 섹션 */}
-          <div class="bg-gradient-to-r from-red-50 to-rose-50 p-4 rounded-lg border border-red-300">
-            <h4 class="text-sm font-semibold text-red-900 mb-2">⚠️ 전체 레코드 삭제</h4>
-            <p class="text-xs text-red-700 mb-3">모든 제품 데이터를 삭제합니다. 자동 백업이 생성됩니다.</p>
-            <button 
-              class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium shadow-sm transition-all disabled:bg-gray-400 disabled:cursor-not-allowed" 
-              onClick={handleDeleteAll}
-              disabled={ui.working}
-            >
-              🗑️ 전체 데이터 삭제 (주의!)
-            </button>
-            <Show when={ui.deleteResult?.message}>
-              <pre class="text-xs bg-white/80 p-3 rounded mt-3 whitespace-pre-wrap">{ui.deleteResult.message}</pre>
-            </Show>
-            <Show when={ui.deleteResult?.cancelled}>
-              <div class="text-xs text-yellow-600 mt-2">취소되었습니다.</div>
-            </Show>
-            <Show when={ui.deleteResult?.error}>
-              <div class="text-xs text-red-600 mt-2">오류: {ui.deleteResult.error}</div>
+              </div>
             </Show>
           </div>
         </div>

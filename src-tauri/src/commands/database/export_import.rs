@@ -230,6 +230,29 @@ pub async fn import_data(state: State<'_, DatabaseConnection>, dataset: String, 
 // Phase 3: Delete Range (product_details & products) - preview + execute
 // ---------------------------------------------------------------------------
 
+/// Get the exports directory path (used as default path for import dialogs)
+#[tauri::command]
+pub fn get_exports_directory() -> String {
+    exports_dir().to_string_lossy().to_string()
+}
+
+/// Get the maximum page_id from products table
+#[tauri::command]
+pub async fn get_max_page_id(
+    state: State<'_, DatabaseConnection>,
+) -> Result<u32, String> {
+    let pool = state.pool();
+    let max_page_id = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT MAX(page_id) FROM products"
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .unwrap_or(0);
+    
+    Ok(max_page_id as u32)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeleteRangePreview {
     pub from_page: u32,
@@ -247,7 +270,7 @@ pub async fn preview_delete_range(
     info!("🔍 preview_delete_range called: from_page={}, to_page={}", from_page, to_page);
     if to_page < from_page { return Err("to_page must be >= from_page".into()); }
     // Guard insane ranges
-    if to_page - from_page > 50 { return Err("Range too large (max 50 pages per operation)".into()); }
+    if to_page - from_page > 100 { return Err("Range too large (max 100 pages per operation)".into()); }
     let pool = state.pool();
     let sql_pd = r#"SELECT COUNT(*) FROM product_details WHERE page_id BETWEEN ?1 AND ?2"#;
     let sql_p = r#"SELECT COUNT(*) FROM products WHERE page_id BETWEEN ?1 AND ?2"#;
@@ -272,7 +295,7 @@ pub async fn delete_range(
     to_page: u32,
 ) -> Result<DeleteRangeResult, String> {
     if to_page < from_page { return Err("to_page must be >= from_page".into()); }
-    if to_page - from_page > 50 { return Err("Range too large (max 50 pages per operation)".into()); }
+    if to_page - from_page > 100 { return Err("Range too large (max 100 pages per operation)".into()); }
     let pool = state.pool();
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     
@@ -714,8 +737,8 @@ pub async fn import_full_database_excel(
             let page_id = row[4].get_float().map(|f| f as i64);
             let index_in_page = row[5].get_float().map(|f| f as i64);
             let id = row[6].get_string().map(|s| s.to_string());
-            let created_at = row[7].get_string().map(|s| s.to_string());
-            let updated_at = row[8].get_string().map(|s| s.to_string());
+            let created_at = row[7].get_string().map(|s| s.to_string()).unwrap_or_else(|| Utc::now().to_rfc3339());
+            let updated_at = row[8].get_string().map(|s| s.to_string()).unwrap_or_else(|| Utc::now().to_rfc3339());
             
             // Check if exists
             let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM products WHERE url = ?1 LIMIT 1")
@@ -762,8 +785,8 @@ pub async fn import_full_database_excel(
         let _headers = rows.next(); // Skip header row
         
         for (row_num, row) in rows.enumerate() {
-            if row.len() < 27 {
-                result.errors.push(format!("Product_details row {} has insufficient columns", row_num + 2));
+            if row.len() < 22 {
+                result.errors.push(format!("Product_details row {} has insufficient columns (expected 22, got {})", row_num + 2, row.len()));
                 continue;
             }
             
@@ -791,6 +814,10 @@ pub async fn import_full_database_excel(
                     row.get($idx).and_then(|d| d.get_float()).map(|f| f as i64)
                 };
             }
+            
+            // Get timestamps or use current time as default
+            let created_at = get_str!(20).unwrap_or_else(|| Utc::now().to_rfc3339());
+            let updated_at = get_str!(21).unwrap_or_else(|| Utc::now().to_rfc3339());
             
             // Insert or update
             sqlx::query(
@@ -833,8 +860,8 @@ pub async fn import_full_database_excel(
             .bind(&get_str!(17))
             .bind(&get_str!(18))
             .bind(&get_str!(19))
-            .bind(&get_str!(20))
-            .bind(&get_str!(21))
+            .bind(&created_at)
+            .bind(&updated_at)
             .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;

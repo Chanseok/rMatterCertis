@@ -432,6 +432,14 @@ export class TauriApiService {
   return await invoke('import_data', { dataset, base64Csv: base64_csv, base64_csv }); // ensure snake_case provided
   }
 
+  async getExportsDirectory(): Promise<string> {
+    return await invoke('get_exports_directory');
+  }
+
+  async getMaxPageId(): Promise<number> {
+    return await invoke('get_max_page_id');
+  }
+
   async previewDeleteRange(fromPage: number, toPage: number): Promise<{
     from_page: number; to_page: number; product_details_count: number; products_count: number;
   }> {

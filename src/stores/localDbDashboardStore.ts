@@ -299,18 +299,26 @@ async function importFullDatabaseExcel(filePath: string) {
 }
 
 async function deleteAllRecordsConfirmed() {
-  const confirmed = confirm(
-    '⚠️ 경고: 모든 제품 데이터(products, product_details)를 삭제합니다!\n\n' +
-    '이 작업은 되돌릴 수 없으며, 자동으로 백업 파일이 생성됩니다.\n\n' +
-    '정말로 모든 데이터를 삭제하시겠습니까?'
-  );
-  
-  if (!confirmed) {
-    setUi({ ...ui, deleteResult: { cancelled: true } });
-    return;
-  }
-  
   try {
+    // Use Tauri's native dialog for better control
+    const { ask } = await import('@tauri-apps/plugin-dialog');
+    
+    const confirmed = await ask(
+      '이 작업은 되돌릴 수 없으며, 자동으로 백업 파일이 생성됩니다.\n\n정말로 모든 데이터를 삭제하시겠습니까?',
+      {
+        title: '⚠️ 경고: 모든 제품 데이터 삭제',
+        kind: 'warning',
+        okLabel: '삭제',
+        cancelLabel: '취소'
+      }
+    );
+    
+    if (!confirmed) {
+      setUi({ ...ui, deleteResult: { cancelled: true } });
+      return;
+    }
+    
+    // Only after user confirms, start the deletion process
     setUi({ ...ui, deleteResult: { status: 'deleting...' }, working: true });
     const result = await tauriApi.deleteAllRecords('DELETE_ALL_CONFIRMED');
     setUi({ 

@@ -895,7 +895,9 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             // Phase 2 export/import
             commands::database::export_import::export_data,
             commands::database::export_import::import_data,
+            commands::database::export_import::get_exports_directory,
             // Phase 3 delete range
+            commands::database::export_import::get_max_page_id,
             commands::database::export_import::preview_delete_range,
             commands::database::export_import::delete_range,
             // Excel export/import for full database backup/restore
