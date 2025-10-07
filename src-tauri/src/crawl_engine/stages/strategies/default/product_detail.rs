@@ -79,6 +79,15 @@ impl StageLogic for ProductDetailLogic {
         }
         let failed = attempted.saturating_sub(successful);
         let duration_ms = start.elapsed().as_millis() as u64;
+        
+        tracing::debug!(
+            "[ProductDetailLogic] Processed {} URLs → collected {} details (successful={} failed={})",
+            attempted,
+            details.len(),
+            successful,
+            failed
+        );
+        
         // Emit typed StageResultData and bridge to legacy JSON at the boundary
         let (item_id, item_type) = if urls.urls.len() == 1 {
             // 개별 ProductUrl의 경우

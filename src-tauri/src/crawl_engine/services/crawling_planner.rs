@@ -419,27 +419,41 @@ impl CrawlingPlanner {
                             }
                         }
                         Ok(_) => {
-                            let force_recrawl = std::env::var("MC_FORCE_RECRAWL_ON_COMPLETE")
-                                .map(|v| {
-                                    let t = v.trim();
-                                    !(t.eq("0") || t.eq_ignore_ascii_case("false"))
-                                })
-                                .unwrap_or(false);
-                            if force_recrawl {
+                            // DB가 비어있으면 전체 크롤링 범위를 반환 (가장 오래된 페이지부터)
+                            let db_total = db_analysis.total_products;
+                            if db_total == 0 {
                                 let start = total_pages_on_site;
                                 let end = start.saturating_sub(count - 1).max(1);
                                 let pages: Vec<u32> = (end..=start).rev().collect();
                                 info!(
-                                    "♻️ Force recrawl enabled (MC_FORCE_RECRAWL_ON_COMPLETE) -> selecting newest pages again count={} pages={:?}",
+                                    "📊 DB is empty (total_products=0) -> returning full range for oldest-first crawl: count={} pages={:?}",
                                     pages.len(),
                                     pages
                                 );
                                 pages
                             } else {
-                                info!(
-                                    "✅ All products already have details (no missing detail rows) -> skipping list page crawling (use MC_FORCE_RECRAWL_ON_COMPLETE=1 to override)"
-                                );
-                                Vec::new()
+                                let force_recrawl = std::env::var("MC_FORCE_RECRAWL_ON_COMPLETE")
+                                    .map(|v| {
+                                        let t = v.trim();
+                                        !(t.eq("0") || t.eq_ignore_ascii_case("false"))
+                                    })
+                                    .unwrap_or(false);
+                                if force_recrawl {
+                                    let start = total_pages_on_site;
+                                    let end = start.saturating_sub(count - 1).max(1);
+                                    let pages: Vec<u32> = (end..=start).rev().collect();
+                                    info!(
+                                        "♻️ Force recrawl enabled (MC_FORCE_RECRAWL_ON_COMPLETE) -> selecting newest pages again count={} pages={:?}",
+                                        pages.len(),
+                                        pages
+                                    );
+                                    pages
+                                } else {
+                                    info!(
+                                        "✅ All products already have details (no missing detail rows) -> skipping list page crawling (use MC_FORCE_RECRAWL_ON_COMPLETE=1 to override)"
+                                    );
+                                    Vec::new()
+                                }
                             }
                         }
                         Err(e) => {

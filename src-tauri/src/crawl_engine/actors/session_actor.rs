@@ -1185,6 +1185,8 @@ impl SessionActor {
         let mut collected_details: Vec<crate::domain::integrated_product::ProductDetail> = Vec::new();
         let mut successful_count: u32 = 0;
         let mut failed_count: u32 = 0;
+        let mut matched_count = 0;
+        let mut unmatched_count = 0;
         for it in &detail_res.details {
             if let Some(SRD::ProductDetails {
                 details,
@@ -1195,8 +1197,24 @@ impl SessionActor {
                 collected_details.extend(details.clone());
                 successful_count = successful_count.saturating_add(*sc);
                 failed_count = failed_count.saturating_add(*fc);
+                matched_count += 1;
+            } else {
+                unmatched_count += 1;
+                tracing::debug!(
+                    "[DetailCollection] Item {} has non-ProductDetails collected_data: {:?}",
+                    it.item_id,
+                    it.collected_data.as_ref().map(|d| format!("{:?}", d)).unwrap_or_else(|| "None".to_string())
+                );
             }
         }
+        tracing::info!(
+            "[DetailCollection] Batch {}: Processed {} items → matched={} unmatched={} collected_details={}",
+            batch_id,
+            detail_res.details.len(),
+            matched_count,
+            unmatched_count,
+            collected_details.len()
+        );
 
         // Safety: if any details are missing pagination coordinates, restore them
         // from the Stage 1 URL mapping to ensure DataSaving isn't a no-op.
