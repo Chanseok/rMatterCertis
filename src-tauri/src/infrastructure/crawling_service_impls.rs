@@ -479,8 +479,8 @@ impl StatusCheckerImpl {
             );
             warn!("🔄 Site content may have decreased - will perform full discovery");
 
-            // 하향 탐색으로 유효한 페이지 찾기
-            current_page = self.find_last_valid_page_downward(current_page).await?;
+            // 하향 탐색으로 유효한 페이지 찾기 (5페이지 단위 + 안전성 체크)
+            current_page = self.find_last_valid_page_with_safety_check(current_page).await?;
             info!("✅ Found valid starting page: {}", current_page);
         }
 
@@ -508,8 +508,8 @@ impl StatusCheckerImpl {
                 Ok(analysis) => analysis,
                 Err(e) => {
                     warn!("❌ Failed to analyze page {}: {}", current_page, e);
-                    // 네트워크 오류 시 하향 탐색
-                    current_page = self.find_last_valid_page_downward(current_page).await?;
+                    // 네트워크 오류 시 하향 탐색 (5페이지 단위 + 안전성 체크)
+                    current_page = self.find_last_valid_page_with_safety_check(current_page).await?;
                     break;
                 }
             };
@@ -560,53 +560,6 @@ impl StatusCheckerImpl {
             verified_last_page, products_on_last_page
         );
         Ok((verified_last_page, products_on_last_page))
-    }
-
-    /// 하향 탐색으로 마지막 유효한 페이지 찾기
-    async fn find_last_valid_page_downward(&self, start_page: u32) -> Result<u32> {
-        let mut current_page = start_page.saturating_sub(1);
-        let min_page = 1;
-
-        info!("Starting downward search from page {}", current_page);
-
-        while current_page >= min_page {
-            let test_url = config_utils::matter_products_page_url_simple(current_page);
-
-            // Use configured HttpClient
-            let _client = self.create_configured_http_client()?;
-            match self.http_client.fetch_response(&test_url).await {
-                Ok(response) => match response.text().await {
-                    Ok(html) => {
-                        let doc = scraper::Html::parse_document(&html);
-                        if self.has_products_on_page(&doc) {
-                            info!("Found valid page with products: {}", current_page);
-                            return Ok(current_page);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to get HTML for page {}: {}", current_page, e);
-                    }
-                },
-                Err(e) => {
-                    warn!(
-                        "Failed to fetch page {} during downward search: {}",
-                        current_page, e
-                    );
-                }
-            }
-
-            current_page = current_page.saturating_sub(1);
-
-            // 요청 간 지연
-            tokio::time::sleep(tokio::time::Duration::from_millis(
-                self.config.user.request_delay_ms,
-            ))
-            .await;
-        }
-
-        // 모든 페이지에서 제품을 찾지 못한 경우
-        warn!("No valid pages found during downward search, returning 1");
-        Ok(1)
     }
 
     /// 안전성 검사가 포함된 하향 탐색 - 연속 빈 페이지 12개 step (5페이지 단위) 이상 시 fatal error
