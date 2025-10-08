@@ -1,8 +1,7 @@
 -- 001_baseline_consolidated.sql
 -- Unified baseline schema for fresh installations.
--- Version: 1.0 (2025-10-08)
--- Incorporates all production-ready migrations up to 1004
 -- Idempotent: all CREATE use IF NOT EXISTS, seed uses INSERT OR IGNORE, normalizations are conditional.
+-- After applying this, legacy stepwise migrations (002..026) are redundant for new installs.
 
 PRAGMA foreign_keys = ON;
 BEGIN;
@@ -16,8 +15,6 @@ CREATE TABLE IF NOT EXISTS vendors (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Products: URL is PRIMARY KEY, coordinates (page_id, index_in_page) are reference metadata only
--- NO UNIQUE constraint on coordinates to allow dynamic repositioning when site order changes
 CREATE TABLE IF NOT EXISTS products (
   url TEXT PRIMARY KEY,
   page_id INTEGER,
@@ -27,8 +24,6 @@ CREATE TABLE IF NOT EXISTS products (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Product Details: URL is PRIMARY KEY, coordinates are reference metadata only
--- NO UNIQUE constraint on coordinates to allow dynamic repositioning when site order changes
 CREATE TABLE IF NOT EXISTS product_details (
   url TEXT PRIMARY KEY,
   page_id INTEGER,
@@ -91,39 +86,14 @@ CREATE TABLE IF NOT EXISTS page_fetch_attempts (
   CONSTRAINT uq_attempt UNIQUE(logical_page_id, attempt_no)
 );
 
--- Vendor sync tracking
-CREATE TABLE IF NOT EXISTS sync_sessions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  completed_at TEXT,
-  status TEXT NOT NULL DEFAULT 'running',
-  total_vendors INTEGER,
-  processed_vendors INTEGER DEFAULT 0,
-  error_message TEXT
-);
-
-CREATE TABLE IF NOT EXISTS sync_observed (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id INTEGER NOT NULL,
-  url TEXT NOT NULL,
-  page_id INTEGER,
-  index_in_page INTEGER,
-  observed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  FOREIGN KEY (session_id) REFERENCES sync_sessions(id) ON DELETE CASCADE
-);
-
--- Crawling results tracking
-CREATE TABLE IF NOT EXISTS crawling_results (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  completed_at TEXT,
-  status TEXT NOT NULL DEFAULT 'running',
-  total_pages INTEGER,
-  processed_pages INTEGER DEFAULT 0,
-  total_products INTEGER DEFAULT 0,
-  new_products INTEGER DEFAULT 0,
-  updated_products INTEGER DEFAULT 0,
-  error_message TEXT
+CREATE TABLE IF NOT EXISTS page_repair_queue (
+  logical_page_id INTEGER PRIMARY KEY,
+  inserted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  next_action_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  priority INTEGER NOT NULL DEFAULT 100,
+  state TEXT NOT NULL DEFAULT 'pending',
+  attempt_failures INTEGER NOT NULL DEFAULT 0,
+  last_error_code TEXT
 );
 
 -- INDEXES
@@ -141,6 +111,7 @@ CREATE INDEX IF NOT EXISTS idx_page_fetch_attempts_page ON page_fetch_attempts (
 CREATE INDEX IF NOT EXISTS idx_page_fetch_attempts_success ON page_fetch_attempts (success_final);
 CREATE INDEX IF NOT EXISTS idx_page_fetch_attempts_error ON page_fetch_attempts (error_code);
 CREATE INDEX IF NOT EXISTS idx_page_fetch_attempts_mismatch ON page_fetch_attempts (count_mismatch, index_mismatch);
+CREATE INDEX IF NOT EXISTS idx_page_repair_queue_state ON page_repair_queue (state, priority, next_action_at);
 
 -- SEED DEVICE TYPES (subset + known comprehensive list from prior migrations)
 INSERT OR IGNORE INTO device_types (type_id, name, category, code_hex, introduced_in) VALUES
@@ -251,5 +222,4 @@ SELECT * FROM v_page_latest_attempt WHERE success_final = 0;
 
 COMMIT;
 
--- Set schema version
-PRAGMA user_version = 1004;
+-- Optional: baseline version stamp (caller may set PRAGMA user_version)
