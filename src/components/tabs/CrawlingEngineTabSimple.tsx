@@ -108,6 +108,15 @@ export default function CrawlingEngineTabSimple() {
   // Removed range FX related signals (legacy range panel removed)
   const [actorEventCount, setActorEventCount] = createSignal(0);
   // Legacy range animation helpers removed
+  
+  // 🚨 사이트 상태 경고 (페이지 수 감소 감지)
+  const [siteHealthWarning, setSiteHealthWarning] = createSignal<{
+    isWarning: boolean;
+    currentPages: number;
+    previousMaxPages: number;
+    decreaseRatio: number;
+  } | null>(null);
+  
   // Lightweight Sync runtime view
   const [syncLive, setSyncLive] = createSignal<{
     active: boolean;
@@ -424,9 +433,34 @@ export default function CrawlingEngineTabSimple() {
       }
 
       const siteStatus = siteStatusResponse.data;
+      
+      // 🐛 DEBUG: 사이트 상태 데이터 확인
+      console.log('🔍 [DEBUG] siteStatus:', siteStatus);
+      console.log('🔍 [DEBUG] is_page_count_decreased:', siteStatus.is_page_count_decreased);
+      console.log('🔍 [DEBUG] previous_max_pages:', siteStatus.previous_max_pages);
+      console.log('🔍 [DEBUG] total_pages:', siteStatus.total_pages);
+      console.log('🔍 [DEBUG] page_decrease_ratio:', siteStatus.page_decrease_ratio);
+      
       addLog(
         `✅ 사이트 상태 확인 완료: ${siteStatus.total_pages}페이지, 마지막 페이지 ${siteStatus.products_on_last_page}개 제품`
       );
+      
+      // 🚨 사이트 건강 상태 체크: 페이지 수 감소 감지
+      if (siteStatus.is_page_count_decreased && siteStatus.previous_max_pages) {
+        const decreaseRatio = siteStatus.page_decrease_ratio || 0;
+        setSiteHealthWarning({
+          isWarning: true,
+          currentPages: siteStatus.total_pages,
+          previousMaxPages: siteStatus.previous_max_pages,
+          decreaseRatio: decreaseRatio,
+        });
+        addLog(
+          `⚠️ 경고: 사이트 페이지 수 감소 감지 (${siteStatus.previous_max_pages} → ${siteStatus.total_pages}, -${(decreaseRatio * 100).toFixed(1)}%)`
+        );
+      } else {
+        setSiteHealthWarning(null);
+      }
+      
       // Update preflight snapshot so readiness banner can show details immediately
       try {
         setPreflight({
@@ -1895,7 +1929,12 @@ export default function CrawlingEngineTabSimple() {
           </span>
         </div>
     <SyncPanel syncLive={syncLive} />
-    <SessionStatusCard isRunning={isRunning} statusMessage={statusMessage} batchInfo={batchInfo} />
+    <SessionStatusCard 
+      isRunning={isRunning} 
+      statusMessage={statusMessage} 
+      batchInfo={batchInfo}
+      siteHealthWarning={siteHealthWarning}
+    />
     
     {/* ListPageCrawling 실시간 진행상황 패널 */}
     <ListPageProgressPanel />
@@ -2027,6 +2066,7 @@ export default function CrawlingEngineTabSimple() {
             handleComplementCrawl={handleComplementCrawl}
             onHelpClick={() => setHelpPanelOpen(true)}
             onStop={handleStop}
+            siteHealthWarning={siteHealthWarning}
         />
 
         {/* 도움말 패널 */}

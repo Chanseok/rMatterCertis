@@ -223,11 +223,14 @@ impl StatusChecker for StatusCheckerImpl {
         let prev_max_page;
         {
             let mut cfg_guard = self.config.clone();
-            let mut mutated = false;
             let now_ts = chrono::Utc::now().to_rfc3339();
             // Track previous maxima
             prev_max_page = cfg_guard.app_managed.last_known_max_page;
             let prev_max_products = cfg_guard.app_managed.last_known_max_total_products;
+
+            // Always update last_known_last_page with current value
+            cfg_guard.app_managed.last_known_last_page = Some(total_pages);
+            let mut mutated = true; // Already mutated by setting last_known_last_page
 
             // Detect page count drop
             if let Some(prev) = prev_max_page {
@@ -237,15 +240,29 @@ impl StatusChecker for StatusCheckerImpl {
                         cfg_guard.app_managed.first_degradation_at = Some(now_ts.clone());
                     }
                     cfg_guard.app_managed.last_degradation_note = Some(format!(
-                        "page_drop prev={} current={}", prev, total_pages
+                        "page_drop prev_max={} current={}", prev, total_pages
                     ));
+                    tracing::warn!(
+                        target="site_health",
+                        prev_max_page=%prev,
+                        current_page=%total_pages,
+                        "Page count dropped - possible site issue"
+                    );
                 } else if total_pages > prev {
-                    // New high water mark resets degradation note
+                    // New high water mark: update max and reset degradation note
                     cfg_guard.app_managed.last_known_max_page = Some(total_pages);
                     cfg_guard.app_managed.last_degradation_note = None;
                     mutated = true;
+                    tracing::info!(
+                        target="site_health",
+                        prev_max_page=%prev,
+                        new_max_page=%total_pages,
+                        "New maximum page count recorded"
+                    );
                 }
+                // If equal, only last_known_last_page is updated (already done above)
             } else {
+                // First time: set both max and last
                 cfg_guard.app_managed.last_known_max_page = Some(total_pages);
                 mutated = true;
             }
@@ -1005,8 +1022,31 @@ impl StatusCheckerImpl {
 
         // 설정 업데이트를 위한 클로저 사용
         config_manager.update_app_managed(|app_managed| {
-            // 마지막 알려진 페이지 업데이트
-            app_managed.last_known_max_page = Some(last_page);
+            // Always update last_known_last_page with current value
+            app_managed.last_known_last_page = Some(last_page);
+
+            // Update last_known_max_page only if current is higher (caching strategy)
+            if let Some(prev_max) = app_managed.last_known_max_page {
+                if last_page > prev_max {
+                    app_managed.last_known_max_page = Some(last_page);
+                    tracing::info!(
+                        target="site_health",
+                        prev_max=%prev_max,
+                        new_max=%last_page,
+                        "Maximum page count updated in config"
+                    );
+                } else if last_page < prev_max {
+                    tracing::warn!(
+                        target="site_health",
+                        prev_max=%prev_max,
+                        current=%last_page,
+                        "Current page count is less than cached maximum - possible site issue"
+                    );
+                }
+            } else {
+                // First time: set max_page
+                app_managed.last_known_max_page = Some(last_page);
+            }
 
             // 마지막 성공한 크롤링 시간 업데이트
             app_managed.last_successful_crawl = Some(chrono::Utc::now().to_rfc3339());

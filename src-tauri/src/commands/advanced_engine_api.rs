@@ -7,11 +7,12 @@ use tracing::{error, info, warn};
 
 use crate::api::frontend_api::{
     ApiResponse, DatabaseStats, ProductInfo, ProductPage, SiteStatusInfo,
-}; // trait import for check_site_status
+};
 use crate::application::shared_state::SharedStateCache;
 use crate::application::shared_state::SiteAnalysisResult;
 use crate::application::state::AppState;
 use crate::domain::constants::site;
+use crate::domain::services::crawling_services::StatusChecker; // trait import for check_site_status
 use crate::infrastructure::IntegratedProductRepository;
 
 /// Advanced Crawling Engine 사이트 상태 확인 (실제 구현)
@@ -47,6 +48,9 @@ pub async fn check_advanced_site_status(
             products_on_last_page: cached_analysis.products_on_last_page,
             estimated_total_products: cached_analysis.estimated_products,
             health_score: cached_analysis.health_score,
+            is_page_count_decreased: false, // 캐시된 데이터에서는 계산 안 함
+            previous_max_pages: None,
+            page_decrease_ratio: None,
         };
         return Ok(ApiResponse::success(site_status_info));
     }
@@ -81,53 +85,44 @@ pub async fn check_advanced_site_status(
             config,
             product_repo,
         );
+    let status_checker_arc = std::sync::Arc::new(status_checker);
 
     // 2. 사이트 상태 조회 (SharedStateCache single-flight 사용)
-    let site_analysis_cached = shared_state
-        .get_or_refresh_site_analysis_singleflight(Some(5), std::sync::Arc::new(status_checker))
+    let site_status = shared_state
+        .get_or_refresh_site_analysis_singleflight(Some(5), status_checker_arc.clone())
         .await
         .map_err(|e| format!("Site status refresh failed: {}", e))?;
-    let site_status = crate::domain::services::SiteStatus {
-        is_accessible: true,
-        response_time_ms: 0,
-        total_pages: site_analysis_cached.total_pages,
-        estimated_products: site_analysis_cached.estimated_products,
-        products_on_last_page: site_analysis_cached.products_on_last_page,
-        last_check_time: site_analysis_cached.analyzed_at,
-        health_score: site_analysis_cached.health_score,
-        data_change_status:
-            crate::domain::services::crawling_services::SiteDataChangeStatus::Stable {
-                count: site_analysis_cached.estimated_products,
-            },
-        decrease_recommendation: None,
-        crawling_range_recommendation:
-            crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
-        is_page_count_decreased: false,
-        previous_max_pages: None,
-        page_decrease_ratio: None,
-    };
+    
+    // 🆕 실제 사이트 상태를 다시 체크하여 페이지 감소 여부 확인
+    let full_site_status = status_checker_arc
+        .check_site_status()
+        .await
+        .map_err(|e| format!("Full site status check failed: {}", e))?;
 
     // 3. 결과 캐시에 저장
     // 이미 single-flight에서 캐시에 저장됨. 필요 시 그대로 사용
     let analysis = SiteAnalysisResult::new(
-        site_status.total_pages,
-        site_status.products_on_last_page,
-        site_status.estimated_products,
+        full_site_status.total_pages,
+        full_site_status.products_on_last_page,
+        full_site_status.estimated_products,
         site::BASE_URL.to_string(),
-        site_status.health_score,
+        full_site_status.health_score,
     );
     shared_state.set_site_analysis(analysis.clone()).await;
 
     // 성공: unified 경로 사용으로 레거시 이벤트는 발신하지 않습니다
 
-    // 5. 응답 변환
+    // 5. 응답 변환 - 페이지 감소 정보 포함
     let site_status_info = SiteStatusInfo {
         is_accessible: true,
-        response_time_ms: site_status.response_time_ms,
-        total_pages: site_status.total_pages,
-        products_on_last_page: site_status.products_on_last_page,
-        estimated_total_products: site_status.estimated_products,
-        health_score: site_status.health_score,
+        response_time_ms: full_site_status.response_time_ms,
+        total_pages: full_site_status.total_pages,
+        products_on_last_page: full_site_status.products_on_last_page,
+        estimated_total_products: full_site_status.estimated_products,
+        health_score: full_site_status.health_score,
+        is_page_count_decreased: full_site_status.is_page_count_decreased,
+        previous_max_pages: full_site_status.previous_max_pages,
+        page_decrease_ratio: full_site_status.page_decrease_ratio,
     };
     Ok(ApiResponse::success(site_status_info))
 }

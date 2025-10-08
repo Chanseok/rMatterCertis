@@ -60,29 +60,7 @@ const [tabState, setTabState] = createStore<TabState>({
         text: 'text-purple-700',
         accent: 'from-purple-500 to-violet-500'
       }
-  },
-    {
-      id: 'analysis',
-      label: '분석',
-      icon: '📈',
-      theme: {
-        bg: 'bg-amber-50',
-        border: 'border-amber-200',
-        text: 'text-amber-700',
-        accent: 'from-amber-500 to-orange-500'
-      }
-  },
-    {
-      id: 'diagnostics',
-      label: '진단',
-      icon: '🔍',
-      theme: {
-        bg: 'bg-red-50',
-        border: 'border-red-200',
-        text: 'text-red-700',
-        accent: 'from-red-500 to-rose-500'
-      }
-    }
+  }
 
     
   ],

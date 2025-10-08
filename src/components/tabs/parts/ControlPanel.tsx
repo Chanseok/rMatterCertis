@@ -1,4 +1,11 @@
-import { Component } from "solid-js";
+import { Component, Show } from "solid-js";
+
+interface SiteHealthWarning {
+  isWarning: boolean;
+  currentPages: number;
+  previousMaxPages: number;
+  decreaseRatio: number;
+}
 
 interface ControlPanelProps {
   isRunning: () => boolean;
@@ -24,11 +31,25 @@ interface ControlPanelProps {
   onHelpClick?: () => void;
   // 정지 기능
   onStop?: () => Promise<void> | void;
+  // 🚨 사이트 건강 경고
+  siteHealthWarning?: () => SiteHealthWarning | null;
 }
 
 const ControlPanel: Component<ControlPanelProps> = (p) => {
   return (
     <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8">
+      {/* 🚨 사이트 건강 경고 표시 */}
+      <Show when={p.siteHealthWarning?.()}>
+        <div class="mb-4 bg-gradient-to-r from-red-50 to-orange-50 border-l-4 border-red-400 rounded-lg p-3">
+          <div class="flex items-center gap-2">
+            <span class="text-lg">⚠️</span>
+            <div class="flex-1 text-xs text-red-800">
+              <strong>크롤링 부적합:</strong> 사이트 페이지 수 감소 감지 ({p.siteHealthWarning?.()?.previousMaxPages} → {p.siteHealthWarning?.()?.currentPages})
+            </div>
+          </div>
+        </div>
+      </Show>
+      
       {/* 상단 헤더 with 도움말 버튼 */}
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-sm font-semibold text-gray-600">크롤링 컨트롤</h3>

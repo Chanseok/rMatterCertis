@@ -287,8 +287,10 @@ impl FailurePolicyConfig {
 /// Application-managed settings that are automatically updated by the app
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppManagedConfig {
-    /// Last known maximum page number
+    /// Last known maximum page number (cached, only increases)
     pub last_known_max_page: Option<u32>,
+    /// Most recent last page number from site (updated every time)
+    pub last_known_last_page: Option<u32>,
     /// Last known stable total estimated products (monotonic non-decreasing)
     pub last_known_max_total_products: Option<u32>,
     /// Timestamp when a degradation (drop) was first observed
@@ -402,6 +404,7 @@ impl Default for AppManagedConfig {
     fn default() -> Self {
         Self {
             last_known_max_page: None,
+            last_known_last_page: None,
             last_known_max_total_products: None,
             first_degradation_at: None,
             last_degradation_note: None,

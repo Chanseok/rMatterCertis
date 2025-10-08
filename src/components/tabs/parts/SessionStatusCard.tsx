@@ -6,10 +6,18 @@ interface BatchInfo {
   batchId?: string;
 }
 
+interface SiteHealthWarning {
+  isWarning: boolean;
+  currentPages: number;
+  previousMaxPages: number;
+  decreaseRatio: number;
+}
+
 interface Props {
   isRunning: () => boolean;
   statusMessage: () => string;
   batchInfo: () => BatchInfo;
+  siteHealthWarning?: () => SiteHealthWarning | null;
 }
 
 const SessionStatusCard: Component<Props> = (props) => {
@@ -45,6 +53,25 @@ const SessionStatusCard: Component<Props> = (props) => {
 
   return (
     <div class="bg-white/90 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-4 mb-6">
+      {/* 🚨 사이트 건강 경고 - 상단 */}
+      <Show when={props.siteHealthWarning?.()}>
+        <div class="mb-4 bg-gradient-to-r from-amber-100 to-orange-100 border-l-4 border-amber-500 rounded-lg p-3">
+          <div class="flex items-start gap-2">
+            <span class="text-xl mt-0.5">⚠️</span>
+            <div class="flex-1">
+              <div class="font-bold text-amber-900 text-sm mb-1">사이트 일시적 문제 감지</div>
+              <div class="text-xs text-amber-800">
+                페이지 수 감소: {props.siteHealthWarning?.()?.previousMaxPages} → {props.siteHealthWarning?.()?.currentPages} 
+                ({((props.siteHealthWarning?.()?.decreaseRatio || 0) * 100).toFixed(1)}% 감소)
+              </div>
+              <div class="text-xs text-amber-700 mt-1">
+                💡 크롤링 대기 권장 - 사이트 정상화 후 재시도
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
+      
       <div class="flex items-center justify-between">
         {/* 상태 표시 영역 */}
         <div class="flex items-center gap-3">

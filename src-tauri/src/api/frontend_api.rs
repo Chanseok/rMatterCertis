@@ -61,6 +61,12 @@ pub struct SiteStatusInfo {
     pub products_on_last_page: u32,
     /// 예상 총 제품 수
     pub estimated_total_products: u32,
+    /// 🆕 사이트 페이지 수 감소 여부
+    pub is_page_count_decreased: bool,
+    /// 🆕 이전 최대 페이지 수
+    pub previous_max_pages: Option<u32>,
+    /// 🆕 페이지 수 감소율 (0.0 ~ 1.0)
+    pub page_decrease_ratio: Option<f64>,
 }
 
 /// 제품 정보

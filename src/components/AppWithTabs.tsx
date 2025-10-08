@@ -8,11 +8,10 @@ import { AppLayout } from './layout/AppLayout';
 import CrawlingEngineTabSimple from './tabs/CrawlingEngineTabSimple';
 import { SettingsTab } from './tabs/SettingsTab';
 import { LocalDBTab } from './tabs/LocalDBTab';
-import { AnalysisTab } from './tabs/AnalysisTab';
-import { DatabaseDiagnostics } from './DatabaseDiagnostics';
 // Archived tabs removed from runtime imports:
 // LiveProductionTab, LiveCrawlingTab, NewArchTestTab, ActorSystemTab,
 // DomainDashboardTab, RealtimeDashboardTab, HierarchicalEventMonitor
+// AnalysisTab, DatabaseDiagnostics (2025-10-08: 사용하지 않는 탭 제거)
 import { tabState, restoreLastActiveTab } from '../stores/tabStore';
 let auditEnabled = false; // dev event audit flag
 import { windowState } from '../stores/windowStore';
@@ -58,13 +57,8 @@ export const AppWithTabs: Component = () => {
       <Show when={currentTab() === 'localDB'}>
         <LocalDBTab />
       </Show>
-      <Show when={currentTab() === 'analysis'}>
-        <AnalysisTab />
-      </Show>
-      <Show when={currentTab() === 'diagnostics'}>
-        <DatabaseDiagnostics />
-      </Show>
   {/* 기존 'Local DB Dashboard' 중복 탭 제거 (6B 재정비 단계) */}
+  {/* Analysis, Diagnostics 탭 제거 (2025-10-08: 사용하지 않는 탭) */}
     </AppLayout>
   );
 };
