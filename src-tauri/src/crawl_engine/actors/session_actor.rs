@@ -360,6 +360,13 @@ impl SessionActor {
             };
 
             if let Err(e) = run_result {
+                // Cancellation 에러는 즉시 중단
+                let error_msg = format!("{:?}", e);
+                if error_msg.contains("cancelled by user") || error_msg.contains("Cancellation detected") {
+                    info!("🛑 Batch {} cancelled by user, stopping all batches", batch_id);
+                    break;  // 즉시 루프 종료
+                }
+                
                 error!("❌ Batch {} failed: {}", batch_id, e);
                 self.errors.push(format!("batch {batch_id}: {e}"));
                 let fail_event = AppEvent::SessionFailed {
@@ -416,6 +423,13 @@ impl SessionActor {
             };
 
             if let Err(e) = run_result {
+                // Cancellation 에러는 즉시 중단
+                let error_msg = format!("{:?}", e);
+                if error_msg.contains("cancelled by user") || error_msg.contains("Cancellation detected") {
+                    info!("🛑 Batch {} cancelled by user, stopping all batches", batch_id);
+                    break;  // 즉시 루프 종료
+                }
+                
                 error!("Batch {} failed: {}", batch_id, e);
                 self.errors.push(format!("batch {batch_id}: {e}"));
                 let fail_event = AppEvent::SessionFailed {

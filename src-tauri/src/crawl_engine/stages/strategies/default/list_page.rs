@@ -25,6 +25,7 @@ impl StageLogic for ListPageLogic {
             deps,
             total_pages_hint,
             products_on_last_page_hint,
+            cancellation_token,
             ..
         } = input;
         if !matches!(st, ActorStageType::ListPageCrawling) {
@@ -81,7 +82,7 @@ impl StageLogic for ListPageLogic {
             };
 
         let urls = collector
-            .collect_single_page(page_number, total_pages, products_on_last_page)
+            .collect_single_page(page_number, total_pages, products_on_last_page, &cancellation_token)
             .await
             .map_err(|e| StageLogicError::Internal(format!("List page collect failed: {}", e)))?;
         if urls.is_empty() {

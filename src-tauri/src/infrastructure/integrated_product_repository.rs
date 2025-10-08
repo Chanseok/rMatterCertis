@@ -2716,8 +2716,9 @@ impl IntegratedProductRepository {
         // Convert site page (1=newest, total_pages_on_site=oldest) to our 0-based page_id
         let page_id: i32 =
             i32::try_from(total_pages_on_site.saturating_sub(site_page)).unwrap_or(i32::MAX);
-        // Expected count
+        // Expected count - The oldest page (site_page == total_pages_on_site) may have fewer products
         let expected: i32 = if site_page == total_pages_on_site {
+            // 물리 페이지 최대값(가장 오래된 페이지)은 products_on_last_page만큼 있을 수 있음
             i32::try_from(products_on_last_page).unwrap_or(i32::MAX)
         } else {
             crate::domain::constants::site::PRODUCTS_PER_PAGE

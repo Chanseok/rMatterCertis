@@ -21,6 +21,7 @@ import { getCrawlEventsStore } from '../../events/crawlEventsStore';
 
 export default function CrawlingEngineTabSimple() {
   const [isRunning, setIsRunning] = createSignal(false);
+  const [currentSessionId, setCurrentSessionId] = createSignal<string | null>(null);
   // Basic/Advanced toggle: default to basic view (advanced off)
   const [showAdvanced, setShowAdvanced] = createSignal(false);
   const [diagnosticsExpanded, setDiagnosticsExpanded] = createSignal(false); // Stage X 진단 패널 확장/축소
@@ -469,13 +470,25 @@ export default function CrawlingEngineTabSimple() {
         overrideBatchSize: 3,
         delayMs: 100,
       });
-      addLog(`✅ 통합 파이프라인(하이) 세션 시작: ${JSON.stringify(res)}`);
+      
+      console.log("🔍 Crawling started, response:", res);
+      // 🔥 NEW: Save session ID for stop functionality
+      if (res?.session_id) {
+        console.log("✅ Setting session ID:", res.session_id);
+        setCurrentSessionId(res.session_id);
+        addLog(`✅ 통합 파이프라인(하이) 세션 시작: ${res.session_id}`);
+      } else {
+        console.warn("⚠️ No session_id in response:", res);
+        addLog(`✅ 통합 파이프라인(하이) 세션 시작: ${JSON.stringify(res)}`);
+      }
+      
       setStatusMessage("🎭 통합 파이프라인 실행 중 (하이)");
     } catch (error) {
       console.error("통합 파이프라인(하이) 시작 실패:", error);
       addLog(`❌ 통합 파이프라인(하이) 시작 실패: ${error}`);
       setStatusMessage("크롤링 실패");
       setIsRunning(false);
+      setCurrentSessionId(null);
     }
   };
 
@@ -613,17 +626,30 @@ export default function CrawlingEngineTabSimple() {
 
   // 🛑 정지 핸들러
   const handleStop = async () => {
+    console.log("🔍 handleStop CALLED! currentSessionId:", currentSessionId());
+    const sessionId = currentSessionId();
+    if (!sessionId) {
+      console.warn("⚠️ No active session ID");
+      addLog("⚠️ 활성 세션이 없습니다.");
+      return;
+    }
+    
+    console.log("🛑 Sending cancel request for session:", sessionId);
     addLog("🛑 작업 중지 요청...");
     setStatusMessage("작업 중지 중...");
     
     try {
-      // Tauri에 정지 명령 전송 (실제 구현 필요)
-      // await invoke("stop_current_operation");
-      addLog("⚠️ 정지 기능은 아직 구현되지 않았습니다.");
+      // Tauri에 정지 명령 전송 (camelCase 매개변수 사용)
+      await invoke("cancel_real_crawling", { 
+        sessionId: sessionId 
+      });
+      console.log("✅ Cancel command sent successfully");
+      addLog("✅ 크롤링이 중지되었습니다.");
       setIsRunning(false);
+      setCurrentSessionId(null);
       setStatusMessage("작업 중지됨");
     } catch (error) {
-      console.error("정지 실패:", error);
+      console.error("❌ 정지 실패:", error);
       addLog(`❌ 정지 실패: ${error}`);
     }
   };
@@ -883,6 +909,9 @@ export default function CrawlingEngineTabSimple() {
           });
         }
         if (name === "actor-session-completed") {
+          // 🔥 Clear session ID when session completes
+          setCurrentSessionId(null);
+          
           // Shallow Mode는 첫 번째 세션 완료 시 해제 (이후 세션은 실제 Detail 크롤링 가능)
           if (isShallowMode()) {
             setIsShallowMode(false);
@@ -908,7 +937,10 @@ export default function CrawlingEngineTabSimple() {
             // range snapshot removed
           } catch {}
           // Recompute crawling range so the UI reflects the newly planned range
-          calculateCrawlingRange();
+          // Wait a bit to ensure DB writes are committed before recalculation
+          setTimeout(() => {
+            calculateCrawlingRange();
+          }, 1000);
           // Mark persist no-events state if applicable
           if ((persistStats().attempted === 0 || persistStats().noEvents) ) {
             if (!(persistStats().failureInferred)) {
@@ -918,6 +950,9 @@ export default function CrawlingEngineTabSimple() {
           }
         }
         if (name === "actor-session-failed") {
+          // 🔥 Clear session ID when session fails
+          setCurrentSessionId(null);
+          
           // isSyncing 중이면 isRunning을 유지
           if (!isSyncing()) {
             setIsRunning(false);
@@ -935,6 +970,9 @@ export default function CrawlingEngineTabSimple() {
           name === "actor-session-timeout" ||
           name === "actor-shutdown-completed"
         ) {
+          // 🔥 Clear session ID on timeout/shutdown
+          setCurrentSessionId(null);
+          
           // isSyncing 중이면 isRunning을 유지
           if (!isSyncing()) {
             setIsRunning(false);
@@ -948,7 +986,20 @@ export default function CrawlingEngineTabSimple() {
           addLog("🛑 세션 종료");
           setBatchInfo((prev) => ({ ...prev }));
           // Refresh planned range after abnormal end as well
-          calculateCrawlingRange();
+          // Wait to ensure DB state is stable before recalculation
+          setTimeout(() => {
+            calculateCrawlingRange();
+          }, 1000);
+        }
+        
+        // 🔥 NEW: Handle cancellation event
+        if (name === "crawling-cancelled") {
+          setCurrentSessionId(null);
+          setIsRunning(false);
+          setIsSyncing(false);
+          setIsShallowMode(false);
+          setStatusMessage("사용자가 크롤링을 중단했습니다");
+          addLog(`🛑 크롤링 취소됨: ${payload?.message || ""}`);
         }
 
 

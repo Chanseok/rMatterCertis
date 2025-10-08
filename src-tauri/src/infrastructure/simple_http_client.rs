@@ -394,6 +394,77 @@ impl HttpClient {
         Ok(response)
     }
 
+    /// Public variant to perform a GET with custom options and cancellation support
+    pub async fn fetch_response_with_options_cancel(
+        &self,
+        url: &str,
+        opts: &RequestOptions,
+        cancellation_token: &CancellationToken,
+    ) -> Result<Response> {
+        let rate_limiter = GlobalRateLimiter::get_instance();
+        if let Some(label) = &self.context_label {
+            debug!(
+                "⚖️ [rate-limit] {} RPS (source: {})",
+                self.config.max_requests_per_second, label
+            );
+        } else {
+            debug!(
+                "⚖️ [rate-limit] {} RPS",
+                self.config.max_requests_per_second
+            );
+        }
+
+        // Apply rate limiting with cancellation support
+        tokio::select! {
+            () = rate_limiter.apply_rate_limit(self.config.max_requests_per_second) => {},
+            () = cancellation_token.cancelled() => {
+                return Err(anyhow!("Request cancelled during rate limiting"));
+            }
+        }
+
+        if self.config.respect_robots_txt
+            && !opts.skip_robots_check
+            && !self.robots_allowed(url).await?
+        {
+            warn!("robots.txt disallows: {}", url);
+            return Err(anyhow!("Blocked by robots.txt: {}", url));
+        }
+
+        // Include attempt info when provided by caller for better observability
+        match (opts.attempt, opts.max_attempts) {
+            (Some(a), Some(m)) if a > 1 => {
+                info!(
+                    "🌐 HTTP GET (HttpClient,opts,cancel-aware, {}/{} retrying): {}",
+                    a, m, url
+                );
+            }
+            (Some(a), Some(m)) if a == 1 => {
+                info!("🌐 HTTP GET (HttpClient,opts,cancel-aware, {}/{}): {}", a, m, url);
+            }
+            _ => {
+                info!("🌐 HTTP GET (HttpClient,opts,cancel-aware): {}", url);
+            }
+        }
+
+        // Perform request with cancellation
+        let response = tokio::select! {
+            res = self.build_request(url, opts)?.send() => {
+                res.map_err(|e| anyhow!("HTTP request failed: {}", e))?
+            },
+            () = cancellation_token.cancelled() => {
+                warn!("🛑 HTTP request cancelled: {}", url);
+                return Err(anyhow!("HTTP request cancelled"));
+            }
+        };
+
+        if !response.status().is_success() {
+            error!("❌ HTTP error {}: {}", response.status(), url);
+            return Err(anyhow!("HTTP error {}: {}", response.status(), url));
+        }
+
+        Ok(response)
+    }
+
     async fn robots_allowed(&self, target_url: &str) -> Result<bool> {
         if !self.config.respect_robots_txt {
             return Ok(true);

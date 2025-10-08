@@ -936,12 +936,9 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             // Actor System Monitoring commands (Phase C: UI 개선)
             // Removed start_crawling_session (unified entrypoint)
 
-            // 🚀 Phase C: Real Crawling Commands (temporarily gated; not used by FE)
-            #[cfg(feature = "dev-tools")]
+            // 🚀 Phase C: Real Crawling Commands
             commands::crawling::real_crawling_commands::execute_real_crawling,
-            #[cfg(feature = "dev-tools")]
             commands::crawling::real_crawling_commands::get_real_crawling_status,
-            #[cfg(feature = "dev-tools")]
             commands::crawling::real_crawling_commands::cancel_real_crawling,
             // 🧪 Phase C: Crawling Test & Development Tools (not registered to FE)
             // 🔧 Phase C: Performance Optimization Tools

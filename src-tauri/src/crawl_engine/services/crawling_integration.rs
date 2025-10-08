@@ -276,7 +276,7 @@ impl CrawlingIntegrationService {
             }
 
             match self
-                .collect_single_page_with_retry_with_meta(page, 3, perform_site_check)
+                .collect_single_page_with_retry_with_meta(page, 3, perform_site_check, &cancellation_token)
                 .await
             {
                 Ok((urls, retry_count, duration_ms)) => {
@@ -455,7 +455,7 @@ impl CrawlingIntegrationService {
             }
 
             match self
-                .collect_single_page_with_retry(page, 3, perform_site_check)
+                .collect_single_page_with_retry(page, 3, perform_site_check, &cancellation_token)
                 .await
             {
                 Ok(urls) => {
@@ -477,6 +477,7 @@ impl CrawlingIntegrationService {
         page: u32,
         max_retries: u32,
         perform_site_check: bool,
+        cancellation_token: &CancellationToken,
     ) -> Result<Vec<ProductUrl>> {
         // 사이트 상태 확인 (선택적)
         let site_status = if perform_site_check {
@@ -502,6 +503,9 @@ impl CrawlingIntegrationService {
                     },
                 decrease_recommendation: None,
                 crawling_range_recommendation: CrawlingRangeRecommendation::Partial(5),
+                is_page_count_decreased: false,
+                previous_max_pages: None,
+                page_decrease_ratio: None,
             }
         };
         let mut last_error = None;
@@ -514,6 +518,7 @@ impl CrawlingIntegrationService {
                     page,
                     site_status.total_pages,
                     site_status.products_on_last_page,
+                    cancellation_token,
                 )
                 .await
             {
@@ -573,6 +578,7 @@ impl CrawlingIntegrationService {
         page: u32,
         max_retries: u32,
         perform_site_check: bool,
+        cancellation_token: &CancellationToken,
     ) -> Result<(Vec<ProductUrl>, u32, u64)> {
         let site_status = if perform_site_check {
             info!(page = page, "Performing site status check for page (meta)");
@@ -596,6 +602,9 @@ impl CrawlingIntegrationService {
                     },
                 decrease_recommendation: None,
                 crawling_range_recommendation: CrawlingRangeRecommendation::Partial(5),
+                is_page_count_decreased: false,
+                previous_max_pages: None,
+                page_decrease_ratio: None,
             }
         };
 
@@ -610,6 +619,7 @@ impl CrawlingIntegrationService {
                     page,
                     site_status.total_pages,
                     site_status.products_on_last_page,
+                    cancellation_token,
                 )
                 .await
             {

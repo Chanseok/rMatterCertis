@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+use crate::commands::crawling::actor_system::request_graceful_shutdown;
 use ts_rs::TS;
 
 use crate::application::AppState;
@@ -256,9 +257,50 @@ pub async fn get_real_crawling_status(
     Ok(None)
 }
 
-#[tauri::command]
+/// Cancel the real crawling session
+///
 /// # Errors
 /// Returns an error string if cancellation fails.
-pub async fn cancel_real_crawling(_session_id: String) -> Result<bool, String> {
+#[tauri::command]
+pub async fn cancel_real_crawling(
+    #[allow(non_snake_case)]
+    sessionId: String,
+    app: AppHandle,
+) -> Result<bool, String> {
+    let session_id = sessionId;
+    info!("🛑 Cancelling crawling session: {}", session_id);
+    
+    let app_state = app.state::<AppState>();
+
+    // Trigger CancellationToken if available so any cooperative jobs can unwind.
+    let token_cancelled = if let Some(token) = app_state.get_cancellation_token().await {
+        info!("✅ Found cancellation token, triggering cancel");
+        token.cancel();
+        true
+    } else {
+        warn!("⚠️ No cancellation token stored in AppState when attempting to cancel session {session_id}");
+        false
+    };
+
+    // Also propagate shutdown via the actor-system watch channel so SessionActor breaks execution loop.
+    match request_graceful_shutdown(app.clone()).await {
+        Ok(_) => info!("📩 Graceful shutdown signal sent to actor system"),
+        Err(err) => warn!("⚠️ Failed to send graceful shutdown signal: {}", err),
+    }
+
+    // Emit cancellation event for the frontend regardless of cancellation-token availability.
+    let _ = app.emit(
+        "crawling-cancelled",
+        serde_json::json!({
+            "session_id": session_id,
+            "timestamp": Utc::now(),
+            "message": "크롤링이 사용자에 의해 중단되었습니다"
+        }),
+    );
+
+    if !token_cancelled {
+        warn!("⚠️ Cancellation token not found; relying solely on graceful shutdown signal");
+    }
+
     Ok(true)
 }

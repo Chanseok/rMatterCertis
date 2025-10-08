@@ -303,6 +303,9 @@ impl PlanningStrategy for IntelligentPlanningStrategy {
                         },
                         decrease_recommendation: None,
                         crawling_range_recommendation: CrawlingRangeRecommendation::Full,
+                        is_page_count_decreased: false,
+                        previous_max_pages: None,
+                        page_decrease_ratio: None,
                     })
                 } else {
                     None
@@ -634,6 +637,9 @@ impl PlanningStrategy for ManualPlanningStrategy {
                         },
                         decrease_recommendation: None,
                         crawling_range_recommendation: CrawlingRangeRecommendation::Full,
+                        is_page_count_decreased: false,
+                        previous_max_pages: None,
+                        page_decrease_ratio: None,
                     })
             } else {
                 None

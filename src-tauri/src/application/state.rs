@@ -49,6 +49,10 @@ pub struct AppState {
 
     /// Cancellation token for stopping crawling operations
     pub crawling_cancellation_token: Arc<RwLock<Option<CancellationToken>>>,
+    
+    /// Shutdown watch channel sender for graceful actor system shutdown
+    pub shutdown_tx: Arc<RwLock<Option<tokio::sync::watch::Sender<bool>>>>,
+    
     /// Session-scoped SQLITE lock/busy error counter (incremented on retry exhaustion or surfaced lock events)
     pub lock_error_counter: Arc<RwLock<u64>>,
 }
@@ -77,6 +81,7 @@ impl AppState {
             http_client: Arc::new(RwLock::new(None)),
             session_start_time: Arc::new(RwLock::new(None)),
             crawling_cancellation_token: Arc::new(RwLock::new(None)),
+            shutdown_tx: Arc::new(RwLock::new(None)),
             lock_error_counter: Arc::new(RwLock::new(0)),
         }
     }
@@ -277,6 +282,24 @@ impl AppState {
     pub async fn get_cancellation_token(&self) -> Option<CancellationToken> {
         let token_guard = self.crawling_cancellation_token.read().await;
         token_guard.clone()
+    }
+
+    /// Set the cancellation token for the current session
+    pub async fn set_cancellation_token(&self, token: Option<CancellationToken>) {
+        let mut token_guard = self.crawling_cancellation_token.write().await;
+        *token_guard = token;
+    }
+
+    /// Get the current shutdown sender
+    pub async fn get_shutdown_tx(&self) -> Option<tokio::sync::watch::Sender<bool>> {
+        let tx_guard = self.shutdown_tx.read().await;
+        tx_guard.clone()
+    }
+
+    /// Set the shutdown sender for the current session
+    pub async fn set_shutdown_tx(&self, tx: Option<tokio::sync::watch::Sender<bool>>) {
+        let mut tx_guard = self.shutdown_tx.write().await;
+        *tx_guard = tx;
     }
 
     /// Get the current crawling session

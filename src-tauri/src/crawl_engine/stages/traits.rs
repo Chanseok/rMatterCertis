@@ -38,6 +38,8 @@ pub struct StageInput {
     pub progress_emitter: Option<Arc<dyn Fn(u32, u32, bool) + Send + Sync>>,
     /// Optional per-product keyed detail AppEvent emitter (Option A)
     pub product_detail_event_emitter: Option<Arc<dyn Fn(crate::crawl_engine::actors::types::AppEvent) + Send + Sync>>,
+    /// Cancellation token for immediate shutdown support
+    pub cancellation_token: tokio_util::sync::CancellationToken,
 }
 
 /// Output from a `StageLogic` strategy

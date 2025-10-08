@@ -37,6 +37,7 @@ struct TaskInput {
     deps: Arc<StageDeps>,
     total_pages_hint: Option<u32>,
     products_on_last_page_hint: Option<u32>,
+    cancellation_token: tokio_util::sync::CancellationToken,
 }
 
 /// Dependency bundle for `StageActor` (to move construction out of the actor)
@@ -356,6 +357,7 @@ impl StageActor {
             deps,
             total_pages_hint,
             products_on_last_page_hint,
+            cancellation_token,
         } = input;
 
         let _permit = sem.acquire().await.map_err(|e| StageError::GenericError {
@@ -439,6 +441,7 @@ impl StageActor {
             deps: &Arc<StageDeps>,
             total_pages_hint: Option<u32>,
             products_on_last_page_hint: Option<u32>,
+            cancellation_token: &tokio_util::sync::CancellationToken,
     ) -> Result<StageItemResult, StageError> {
             // Attempt-level lifecycle events always enabled (previously gated by MC_ATTEMPT_EVENTS)
             let attempt_events_enabled = true;
@@ -505,6 +508,7 @@ impl StageActor {
                             StageActor::emit_best_effort(&ctx_clone, evt);
                         }))
                     } else { None },
+                    cancellation_token: cancellation_token.clone(),
                 };
                 let logic_arc = if let Some(l) = strategy_factory.logic_for(stage_type) { l } else { return Err(StageError::GenericError { message: format!("No strategy registered for stage {:?}", stage_type) }); };
                 let fut_exec = logic_arc.execute(stage_input);
@@ -627,7 +631,7 @@ impl StageActor {
         }
 
     let result: Result<StageItemResult, StageError> = if matches!(stage_type, StageType::ListPageCrawling | StageType::ProductDetailCrawling) {
-            run_with_attempt_events(&ctx, &stage_type, &item, &session_id, &batch_id, &strategy_factory, &deps, total_pages_hint, products_on_last_page_hint).await
+            run_with_attempt_events(&ctx, &stage_type, &item, &session_id, &batch_id, &strategy_factory, &deps, total_pages_hint, products_on_last_page_hint, &cancellation_token).await
         } else if let Some(logic) = strategy_factory.logic_for(&stage_type) {
             let deps_in = crate::crawl_engine::stages::traits::Deps {
                 http: deps.http_client.clone(),
@@ -648,6 +652,7 @@ impl StageActor {
                 batch_id: batch_id.clone(),
                 progress_emitter: None,
                 product_detail_event_emitter: None,
+                cancellation_token: cancellation_token.clone(),
             };
             match logic.execute(stage_input).await {
                 Ok(crate::crawl_engine::stages::traits::StageOutput { result }) => Ok(result),
@@ -1743,6 +1748,10 @@ impl StageActor {
         let deadline = Instant::now() + overall_timeout;
         let mut join_set = tokio::task::JoinSet::new();
         let batch_id_owned = self.batch_id.clone();
+        
+        // ✅ Create a CancellationToken for all tasks in this batch
+        let batch_cancellation_token = tokio_util::sync::CancellationToken::new();
+        
         for item in items {
             let sem = semaphore.clone();
             let input = TaskInput {
@@ -1755,6 +1764,7 @@ impl StageActor {
                 deps: deps_arc.clone(),
                 total_pages_hint: site_total_pages_hint,
                 products_on_last_page_hint,
+                cancellation_token: batch_cancellation_token.clone(),
             };
             join_set.spawn(Self::execute_single_item_task(sem, input));
         }
@@ -1782,7 +1792,31 @@ impl StageActor {
                 });
             }
             let remaining = deadline.saturating_duration_since(now);
-            match tokio::time::timeout(remaining, join_set.join_next()).await {
+            
+            // 🛑 Use tokio::select! to race between cancellation and task completion
+            let mut cancel_rx = _context.cancellation_rx.clone();
+            let task_result = tokio::select! {
+                _ = cancel_rx.changed() => {
+                    if *cancel_rx.borrow_and_update() {
+                        warn!("🚫 Cancellation detected in StageActor, aborting remaining tasks");
+                        // Abort all remaining tasks
+                        join_set.abort_all();
+                        // Drain the join set to clean up
+                        while let Some(_) = join_set.join_next().await {}
+                        return Err(StageError::GenericError {
+                            message: "Stage cancelled by user".to_string(),
+                        });
+                    } else {
+                        // Not a cancellation, continue loop
+                        continue;
+                    }
+                }
+                result = tokio::time::timeout(remaining, join_set.join_next()) => {
+                    result
+                }
+            };
+            
+            match task_result {
                 Ok(Some(Ok(Ok(res)))) => {
                     if progress_enabled {
                         if res.success { succeeded_count += 1; } else { failed_count += 1; }

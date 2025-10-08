@@ -477,6 +477,9 @@ async fn perform_site_analysis(
             decrease_recommendation: None,
             crawling_range_recommendation:
                 crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
+            is_page_count_decreased: false,
+            previous_max_pages: None,
+            page_decrease_ratio: None,
         }
     } else {
         status_checker

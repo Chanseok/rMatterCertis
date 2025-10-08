@@ -102,6 +102,9 @@ pub async fn check_advanced_site_status(
         decrease_recommendation: None,
         crawling_range_recommendation:
             crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
+        is_page_count_decreased: false,
+        previous_max_pages: None,
+        page_decrease_ratio: None,
     };
 
     // 3. 결과 캐시에 저장

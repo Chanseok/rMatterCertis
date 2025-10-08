@@ -99,11 +99,13 @@ pub trait ProductListCollector: Send + Sync {
     /// * `page` - 페이지 번호
     /// * `total_pages` - 사이트의 총 페이지 수 (사전 계산된 값)
     /// * `products_on_last_page` - 마지막 페이지의 제품 수 (사전 계산된 값)
+    /// * `cancellation_token` - 취소 토큰 (HTTP 요청 즉시 중지 지원)
     async fn collect_single_page(
         &self,
         page: u32,
         total_pages: u32,
         products_on_last_page: u32,
+        cancellation_token: &CancellationToken,
     ) -> Result<Vec<ProductUrl>>;
 
     /// 배치별 페이지 수집 (메타데이터 포함)
@@ -188,6 +190,13 @@ pub struct SiteStatus {
     pub data_change_status: SiteDataChangeStatus,
     pub decrease_recommendation: Option<DataDecreaseRecommendation>,
     pub crawling_range_recommendation: CrawlingRangeRecommendation,
+    
+    /// 🆕 사이트 페이지 수 감소 여부 (이전 최대값보다 적을 때 true)
+    pub is_page_count_decreased: bool,
+    /// 🆕 이전 최대 페이지 수
+    pub previous_max_pages: Option<u32>,
+    /// 🆕 페이지 수 감소율 (0.0 ~ 1.0, 감소한 경우에만 의미있음)
+    pub page_decrease_ratio: Option<f64>,
 }
 
 /// 데이터베이스 분석 결과

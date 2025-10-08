@@ -29,7 +29,6 @@ use crate::crawl_engine::runtime::session_registry::{
 use crate::infrastructure::config::ConfigManager; // 설정 관리자 추가
 use blake3;
 use chrono::Utc;
-use once_cell::sync::OnceCell; // retained for PHASE_SHUTDOWN_TX only (session registry extracted)
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -41,9 +40,6 @@ use crate::crawl_engine::services::planning_service::PlanningStrategy;
 use crate::domain::pagination::PaginationCalculator;
 use tracing::{error, info};
 // use crate::application::shared_state; // no direct symbols needed here
-
-// Graceful shutdown channel (single active session assumption)
-static PHASE_SHUTDOWN_TX: OnceCell<watch::Sender<bool>> = OnceCell::new();
 
 // ========== Hash Integrity Helper ==========
 fn compute_plan_hash(
@@ -99,6 +95,8 @@ pub async fn bootstrap_and_spawn_session(
 
     // Build event channel and start the bridge to FE
     let (actor_event_tx, actor_event_rx) = broadcast::channel::<AppEvent>(1000);
+    info!("🔧 Created broadcast channel with capacity 1000");
+    
     let _bridge_handle = start_actor_event_bridge(app.clone(), actor_event_rx)
         .await
         .map_err(|e| format!("failed to start event bridge: {e}"))?;
@@ -107,24 +105,42 @@ pub async fn bootstrap_and_spawn_session(
     let system_config = Arc::new(SystemConfig::default());
     let (control_tx, _control_rx) = mpsc::channel::<ActorCommand>(100);
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    // expose shutdown handle for request_graceful_shutdown
-    let _ = PHASE_SHUTDOWN_TX.set(shutdown_tx.clone());
+    
+    // 🔥 Store shutdown_tx in AppState instead of global OnceCell
+    let app_state = app.state::<AppState>();
+    app_state.set_shutdown_tx(Some(shutdown_tx.clone())).await;
+    
+    // 🔥 Create cancellation token and store in AppState
+    let cancellation_token = tokio_util::sync::CancellationToken::new();
+    app_state
+        .set_cancellation_token(Some(cancellation_token.clone()))
+        .await;
+    
+    info!("🔧 Creating AppContext with event_tx (will be moved)");
+    // 🔥 FIX: Use the original sender in context (not clone)
+    // This keeps the channel alive for the entire session
     let context = AppContext::new(
         session_id.clone(),
         control_tx,
-        actor_event_tx.clone(),
+        actor_event_tx,  // Use original, not clone
         shutdown_rx,
         system_config,
     );
+    info!("🔧 AppContext created, event_tx moved into context");
 
     // Spawn SessionActor and send ExecutePrePlanned
     let mut session_actor = SessionActor::new(session_id.clone());
     let (cmd_tx, cmd_rx) = mpsc::channel::<ActorActorCommand>(100);
+    
+    info!("🔧 Spawning SessionActor task with context (context will be moved)");
     tokio::spawn(async move {
+        info!("🎯 SessionActor task started, context moved in");
         if let Err(e) = session_actor.run(context, cmd_rx).await {
             error!("SessionActor run error: {}", e);
         }
+        info!("🎯 SessionActor task ended");
     });
+    
     cmd_tx
         .send(ActorActorCommand::ExecutePrePlanned {
             session_id: session_id.clone(),
@@ -200,16 +216,16 @@ pub async fn start_actor_system_crawling(
 /// # Errors
 /// Returns an error if sending the shutdown signal fails or no session is active.
 pub async fn request_graceful_shutdown(app: AppHandle) -> Result<ActorSystemResponse, String> {
-    if let Some(tx) = PHASE_SHUTDOWN_TX.get() {
+    let app_state = app.state::<AppState>();
+    
+    // Get shutdown_tx from AppState instead of global OnceCell
+    if let Some(tx) = app_state.get_shutdown_tx().await {
         if tx.send(true).is_err() {
             return Err("Failed to send shutdown signal".into());
         }
-        // Emit ShutdownRequested event via broadcast if bridge exists (best-effort)
-        if let Some(state) = app.try_state::<AppState>() {
-            let _ = state;
-        }
         let now = Utc::now();
-        info!("Graceful shutdown requested at {}", now);
+        info!("📩 Graceful shutdown signal sent at {}", now);
+        
         // Update registry state to ShuttingDown
         {
             let registry = session_registry();
@@ -220,6 +236,7 @@ pub async fn request_graceful_shutdown(app: AppHandle) -> Result<ActorSystemResp
                 }
             }
         }
+        
         Ok(ActorSystemResponse {
             success: true,
             message: "Graceful shutdown signal sent".into(),
@@ -880,6 +897,9 @@ async fn calculate_intelligent_crawling_range(
                 decrease_recommendation: None,
                 crawling_range_recommendation:
                     crate::domain::services::crawling_services::CrawlingRangeRecommendation::Full,
+                is_page_count_decreased: false,
+                previous_max_pages: None,
+                page_decrease_ratio: None,
             })
     } else {
         None
@@ -1078,6 +1098,9 @@ async fn build_execution_plan_from_explicit_pages(
                 },
                 decrease_recommendation: None,
                 crawling_range_recommendation: CrawlingRangeRecommendation::Full,
+                is_page_count_decreased: false,
+                previous_max_pages: None,
+                page_decrease_ratio: None,
             }
         } else {
             let (_plan, _cfg, status) = create_execution_plan(app)

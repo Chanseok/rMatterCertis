@@ -161,6 +161,9 @@ impl StatusChecker for StatusCheckerImpl {
                 data_change_status: SiteDataChangeStatus::Inaccessible,
                 decrease_recommendation: None,
                 crawling_range_recommendation: CrawlingRangeRecommendation::None,
+                is_page_count_decreased: false,
+                previous_max_pages: None,
+                page_decrease_ratio: None,
             });
         } else {
             info!("Site is accessible");
@@ -217,12 +220,13 @@ impl StatusChecker for StatusCheckerImpl {
             .await?;
 
         // Step 6: Anomaly detection against stored maxima
+        let prev_max_page;
         {
             let mut cfg_guard = self.config.clone();
             let mut mutated = false;
             let now_ts = chrono::Utc::now().to_rfc3339();
             // Track previous maxima
-            let prev_max_page = cfg_guard.app_managed.last_known_max_page;
+            prev_max_page = cfg_guard.app_managed.last_known_max_page;
             let prev_max_products = cfg_guard.app_managed.last_known_max_total_products;
 
             // Detect page count drop
@@ -291,6 +295,30 @@ impl StatusChecker for StatusCheckerImpl {
                 tracing::warn!(target="site_health", note=?cfg_guard.app_managed.last_degradation_note, first_at=?cfg_guard.app_managed.first_degradation_at, "Site pagination anomaly detected (non-fatal)");
             }
         }
+            
+        // 🆕 페이지 수 감소 정보 계산
+        let is_page_count_decreased = prev_max_page.map_or(false, |prev| total_pages < prev);
+        let previous_max_pages = prev_max_page;
+        let page_decrease_ratio = if is_page_count_decreased {
+            prev_max_page.map(|prev| {
+                if prev > 0 {
+                    (prev - total_pages) as f64 / prev as f64
+                } else {
+                    0.0
+                }
+            })
+        } else {
+            None
+        };
+        
+        if is_page_count_decreased {
+            warn!(
+                "⚠️ Site page count decreased: {} → {} (decrease ratio: {:.2}%)",
+                prev_max_page.unwrap_or(0),
+                total_pages,
+                page_decrease_ratio.unwrap_or(0.0) * 100.0
+            );
+        }
 
         Ok(SiteStatus {
             is_accessible: true,
@@ -303,6 +331,9 @@ impl StatusChecker for StatusCheckerImpl {
             data_change_status,
             decrease_recommendation,
             crawling_range_recommendation,
+            is_page_count_decreased,
+            previous_max_pages,
+            page_decrease_ratio,
         })
     }
 
@@ -561,34 +592,36 @@ impl StatusCheckerImpl {
         Ok(1)
     }
 
-    /// 안전성 검사가 포함된 하향 탐색 - 연속 빈 페이지 3개 이상 시 fatal error
+    /// 안전성 검사가 포함된 하향 탐색 - 연속 빈 페이지 12개 step (5페이지 단위) 이상 시 fatal error
     async fn find_last_valid_page_with_safety_check(&self, start_page: u32) -> Result<u32> {
         let mut current_page = start_page;
-        let mut consecutive_empty_pages = 0;
-        const MAX_CONSECUTIVE_EMPTY: u32 = 12;
+        let mut consecutive_empty_checks = 0;
+        const MAX_CONSECUTIVE_EMPTY_CHECKS: u32 = 12;
+        const SEARCH_STEP: u32 = 5; // 5페이지 단위로 검색
         let min_page = 1;
 
         info!(
-            "🔍 Starting safe downward search from page {} (max consecutive empty: {})",
-            current_page, MAX_CONSECUTIVE_EMPTY
+            "🔍 Starting safe downward search from page {} (step: {}, max consecutive empty checks: {})",
+            current_page, SEARCH_STEP, MAX_CONSECUTIVE_EMPTY_CHECKS
         );
 
         // 먼저 시작 페이지가 비어있는지 확인
         if !self.check_page_has_products(current_page).await? {
-            consecutive_empty_pages += 1;
+            consecutive_empty_checks += 1;
             info!(
-                "⚠️  Starting page {} is empty (consecutive: {})",
-                current_page, consecutive_empty_pages
+                "⚠️  Starting page {} is empty (consecutive checks: {})",
+                current_page, consecutive_empty_checks
             );
         }
 
         while current_page > min_page {
-            current_page = current_page.saturating_sub(1);
+            // 5페이지 단위로 감소 (단, min_page 아래로는 가지 않음)
+            current_page = current_page.saturating_sub(SEARCH_STEP).max(min_page);
 
             let test_url = config_utils::matter_products_page_url_simple(current_page);
             info!(
-                "🔍 Checking page {} (consecutive empty: {})",
-                current_page, consecutive_empty_pages
+                "🔍 Checking page {} (consecutive empty checks: {})",
+                current_page, consecutive_empty_checks
             );
 
             // Use configured HttpClient
@@ -599,70 +632,70 @@ impl StatusCheckerImpl {
                         let doc = scraper::Html::parse_document(&html);
                         if self.has_products_on_page(&doc) {
                             info!(
-                                "✅ Found valid page with products: {} (after {} consecutive empty pages)",
-                                current_page, consecutive_empty_pages
+                                "✅ Found valid page with products: {} (after {} consecutive empty checks)",
+                                current_page, consecutive_empty_checks
                             );
                             return Ok(current_page);
                         }
-                        consecutive_empty_pages += 1;
+                        consecutive_empty_checks += 1;
                         warn!(
-                            "⚠️  Page {} is empty (consecutive: {}/{})",
-                            current_page, consecutive_empty_pages, MAX_CONSECUTIVE_EMPTY
+                            "⚠️  Page {} is empty (consecutive checks: {}/{})",
+                            current_page, consecutive_empty_checks, MAX_CONSECUTIVE_EMPTY_CHECKS
                         );
 
-                        // 연속으로 빈 페이지가 3개 이상이면 fatal error
-                        if consecutive_empty_pages >= MAX_CONSECUTIVE_EMPTY {
+                        // 연속으로 빈 페이지가 12번 확인되면 fatal error
+                        if consecutive_empty_checks >= MAX_CONSECUTIVE_EMPTY_CHECKS {
                             error!(
-                                "💥 FATAL ERROR: Found {} consecutive empty pages starting from page {}. This indicates a serious site issue or crawling problem.",
-                                consecutive_empty_pages, start_page
+                                "💥 FATAL ERROR: Found {} consecutive empty checks (step: {}) starting from page {}. This indicates a serious site issue or crawling problem.",
+                                consecutive_empty_checks, SEARCH_STEP, start_page
                             );
 
                             return Err(anyhow!(
-                                "Fatal error: {} consecutive empty pages detected. Site may be down or pagination structure changed. Last checked pages: {} to {}",
-                                consecutive_empty_pages,
-                                start_page,
+                                "Fatal error: {} consecutive empty checks detected (step: {} pages). Site may be down or pagination structure changed. Last checked page: {}",
+                                consecutive_empty_checks,
+                                SEARCH_STEP,
                                 current_page
                             ));
                         }
                     }
                     Err(e) => {
-                        consecutive_empty_pages += 1;
+                        consecutive_empty_checks += 1;
                         warn!(
-                            "❌ Failed to get HTML for page {} during safe downward search: {} (consecutive: {}/{})",
-                            current_page, e, consecutive_empty_pages, MAX_CONSECUTIVE_EMPTY
+                            "❌ Failed to get HTML for page {} during safe downward search: {} (consecutive checks: {}/{})",
+                            current_page, e, consecutive_empty_checks, MAX_CONSECUTIVE_EMPTY_CHECKS
                         );
 
-                        if consecutive_empty_pages >= MAX_CONSECUTIVE_EMPTY {
+                        if consecutive_empty_checks >= MAX_CONSECUTIVE_EMPTY_CHECKS {
                             error!(
                                 "💥 FATAL ERROR: {} consecutive failures starting from page {}.",
-                                consecutive_empty_pages, start_page
+                                consecutive_empty_checks, start_page
                             );
 
                             return Err(anyhow!(
                                 "Fatal error: {} consecutive failures detected. HTML parsing issues or site problems. Last error: {}",
-                                consecutive_empty_pages,
+                                consecutive_empty_checks,
                                 e
                             ));
                         }
                     }
                 },
                 Err(e) => {
-                    consecutive_empty_pages += 1;
+                    consecutive_empty_checks += 1;
                     warn!(
-                        "❌ Failed to fetch page {} during safe downward search: {} (consecutive: {}/{})",
-                        current_page, e, consecutive_empty_pages, MAX_CONSECUTIVE_EMPTY
+                        "❌ Failed to fetch page {} during safe downward search: {} (consecutive checks: {}/{})",
+                        current_page, e, consecutive_empty_checks, MAX_CONSECUTIVE_EMPTY_CHECKS
                     );
 
                     // 네트워크 오류도 연속 실패로 카운트
-                    if consecutive_empty_pages >= MAX_CONSECUTIVE_EMPTY {
+                    if consecutive_empty_checks >= MAX_CONSECUTIVE_EMPTY_CHECKS {
                         error!(
                             "💥 FATAL ERROR: {} consecutive failures (empty pages + network errors) starting from page {}.",
-                            consecutive_empty_pages, start_page
+                            consecutive_empty_checks, start_page
                         );
 
                         return Err(anyhow!(
                             "Fatal error: {} consecutive failures detected. Network issues or site problems. Last error: {}",
-                            consecutive_empty_pages,
+                            consecutive_empty_checks,
                             e
                         ));
                     }
@@ -676,25 +709,25 @@ impl StatusCheckerImpl {
             .await;
         }
 
-        // 최소 페이지까지 도달했지만 여전히 연속 빈 페이지가 많다면 fatal error
-        if consecutive_empty_pages >= MAX_CONSECUTIVE_EMPTY {
+        // 최소 페이지까지 도달했지만 여전히 연속 빈 체크가 많다면 fatal error
+        if consecutive_empty_checks >= MAX_CONSECUTIVE_EMPTY_CHECKS {
             error!(
-                "💥 FATAL ERROR: Reached minimum page but still have {} consecutive empty pages. Site appears to be completely empty or broken.",
-                consecutive_empty_pages
+                "💥 FATAL ERROR: Reached minimum page but still have {} consecutive empty checks. Site appears to be completely empty or broken.",
+                consecutive_empty_checks
             );
 
             return Err(anyhow!(
-                "Fatal error: Site appears to be empty or broken. {} consecutive empty pages found from page {} down to page {}",
-                consecutive_empty_pages,
+                "Fatal error: Site appears to be empty or broken. {} consecutive empty checks found from page {} down to page {}",
+                consecutive_empty_checks,
                 start_page,
                 current_page
             ));
         }
 
-        // 모든 페이지에서 제품을 찾지 못했지만 연속 빈 페이지가 3개 미만이면 경고와 함께 1 반환
+        // 모든 페이지에서 제품을 찾지 못했지만 연속 빈 체크가 12개 미만이면 경고와 함께 1 반환
         warn!(
-            "⚠️  No valid pages found during safe downward search, but only {} consecutive empty pages. Returning page 1 as fallback.",
-            consecutive_empty_pages
+            "⚠️  No valid pages found during safe downward search, but only {} consecutive empty checks. Returning page 1 as fallback.",
+            consecutive_empty_checks
         );
         Ok(1)
     }
@@ -2010,10 +2043,13 @@ impl ProductListCollector for ProductListCollectorImpl {
             pages.len()
         );
 
+        // ✅ Create a cancellation token for batch processing
+        let cancellation_token = CancellationToken::new();
+
         let mut all_urls = Vec::new();
         for &page in pages {
             match self
-                .collect_single_page(page, total_pages, products_on_last_page)
+                .collect_single_page(page, total_pages, products_on_last_page, &cancellation_token)
                 .await
             {
                 Ok(mut urls) => {
@@ -2215,6 +2251,7 @@ impl ProductListCollector for ProductListCollectorImpl {
         page: u32,
         total_pages: u32,
         products_on_last_page: u32,
+        cancellation_token: &CancellationToken,
     ) -> Result<Vec<ProductUrl>> {
         // ✅ Clean Code: 명시적 파라미터 사용 (상태 의존성 제거)
 
@@ -2284,7 +2321,8 @@ impl ProductListCollector for ProductListCollectorImpl {
                 o
             };
             // 정책 기반 HttpClient 사용 (상태 기반 재시도, Retry-After 준수) + 옵션 적용
-            let response = match self.http_client.fetch_response_with_options(&url_with_variant, &opts).await {
+            // ✅ CancellationToken 지원으로 즉시 중지 가능
+            let response = match self.http_client.fetch_response_with_options_cancel(&url_with_variant, &opts, cancellation_token).await {
                 Ok(r) => r,
                 Err(e) => {
                     last_error = Some(e);
@@ -2660,8 +2698,8 @@ impl ProductListCollector for ProductListCollectorImpl {
                 // 실제 페이지 수집 작업
                 let url =
                     crate::infrastructure::config::utils::matter_products_page_url_simple(page);
-                // Use consistent HttpClient for true concurrency
-                let response = http_client.fetch_response(&url).await?;
+                // Use consistent HttpClient for true concurrency with cancellation support
+                let response = http_client.fetch_response_with_cancel(&url, &token_clone).await?;
                 let html_string: String = response.text().await?;
 
                 // 중간에 취소 확인
@@ -3574,9 +3612,11 @@ impl CrawlingRangeCalculator {
 
         info!("🔍 Current max page_id in database: {}", max_page_id);
 
-        // page_id에서 실제 페이지 번호로 변환
-        // page_id 0 = 485페이지, page_id 1 = 484페이지, ..., page_id 5 = 480페이지
-        // Overflow 방지: max_page_id가 total_pages보다 클 수 있음 (사이트 변경 등)
+        // ✅ Gap을 무시하고 absolute max_page_id를 사용
+        // Gap이 있더라도 IntegratedProductRepository::calculate_next_crawling_range에서
+        // is_site_page_fully_detailed 체크로 누락된 페이지를 자동으로 재크롤링함
+        
+        // page_id에서 실제 페이지 번호로 변환 (absolute max 사용)
         let last_crawled_page = if max_page_id as u32 >= total_pages {
             warn!(
                 "⚠️  Database max_page_id ({}) >= total_pages ({}), assuming no valid crawled pages",
@@ -3586,20 +3626,21 @@ impl CrawlingRangeCalculator {
         } else {
             total_pages - max_page_id as u32
         };
+        
         info!(
             "📍 Last crawled page: {} (page_id: {})",
             last_crawled_page, max_page_id
         );
 
         // 다음 크롤링할 범위 계산
-        // 현재 페이지의 제품 수집 상태 확인
+        // 현재 페이지의 제품 수집 상태 확인 (absolute max 기준)
         let current_page_products = all_products
             .iter()
             .filter(|p| p.page_id == Some(max_page_id))
             .count();
 
         let expected_products_on_current_page = if last_crawled_page == total_pages {
-            // 마지막 페이지 (485페이지)라면 products_on_last_page만큼 있어야 함
+            // 물리 페이지 최대값(가장 오래된 페이지)은 products_on_last_page만큼 있어야 함
             products_on_last_page as usize
         } else {
             // 다른 페이지라면 12개가 있어야 함
