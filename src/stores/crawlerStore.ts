@@ -58,6 +58,27 @@ interface CrawlerState {
   isStopping: boolean;
   isPausing: boolean;
   isResuming: boolean;
+  
+  // 시간 추정을 위한 통계
+  timeStats: {
+    listPageDurations: number[]; // ListPage 크롤링 소요 시간들 (ms)
+    detailDurations: number[];    // Detail 크롤링 소요 시간들 (ms)
+    sessionStartTime: Date | null;
+    lastProgressTime: number | null;  // 마지막 Progress 이벤트 시간 (timestamp)
+    lastProgressCurrent: number | null;  // 마지막 Progress의 current 값
+    lastProgressStage: string | null;  // 마지막 Progress의 stage
+    
+    // 세션 전체 통계 (배치가 아닌 전체 세션 기준)
+    totalListPagesInSession: number | null;  // 이번 세션의 총 ListPage 수
+    completedListPagesInSession: number;     // 완료된 ListPage 수
+    totalDetailsInSession: number | null;    // 이번 세션의 총 Detail 아이템 수
+    completedDetailsInSession: number;       // 완료된 Detail 아이템 수
+    
+    // 배치 정보
+    currentBatchIndex: number | null;  // 현재 배치 번호 (1부터 시작)
+    totalBatches: number | null;       // 총 배치 수
+    batchId: string | null;            // 현재 배치 ID
+  };
 }
 
 // 초기 상태
@@ -80,6 +101,21 @@ const initialState: CrawlerState = {
   isStopping: false,
   isPausing: false,
   isResuming: false,
+  timeStats: {
+    listPageDurations: [],
+    detailDurations: [],
+    sessionStartTime: null,
+    lastProgressTime: null,
+    lastProgressCurrent: null,
+    lastProgressStage: null,
+    totalListPagesInSession: null,
+    completedListPagesInSession: 0,
+    totalDetailsInSession: null,
+    completedDetailsInSession: 0,
+    currentBatchIndex: null,
+    totalBatches: null,
+    batchId: null,
+  },
 };
 
 // 반응형 상태 생성
@@ -298,29 +334,22 @@ class CrawlerStore {
   private async subscribeToEvents(): Promise<void> {
     console.log('📡 Subscribing to unified actor events...');
     
-    // 기본 액터 이벤트 구독
-    const unlisten1 = await tauriApi.subscribeToUnifiedActorEvents({
+    // 모든 액터 이벤트 구독 (variant 필터 없이)
+    const unlisten = await tauriApi.subscribeToUnifiedActorEvents({
       onEvent: (payload) => this.handleActorEvent(payload),
-    });
-    
-    // StageItem 이벤트 추가 구독
-    const unlisten2 = await tauriApi.subscribeToStageItemEvents({
-      onItemStarted: (payload) => this.handleStageItemStarted(payload),
-      onItemCompleted: (payload) => this.handleStageItemCompleted(payload),
     });
     
     eventSubscriptions()[0] = () => { 
       try { 
-        unlisten1(); 
-        unlisten2();
+        unlisten(); 
       } catch {} 
     };
-    console.log('✅ Subscribed to unified actor events and stage item events.');
+    console.log('✅ Subscribed to unified actor events.');
   }
 
   private handleActorEvent(payload: any): void {
     // Log all events for debugging
-    console.log(`[Actor Event] variant: ${payload.variant}`, payload);
+    console.log(`[CrawlerStore Actor Event] variant: ${payload.variant}`, payload);
 
     const variant = payload.variant;
 
@@ -341,12 +370,58 @@ class CrawlerStore {
                 elapsed_time: 0,
             });
             setCrawlerState('currentSessionId', payload.session_id);
+            // 세션 시작 시간 기록
+            setCrawlerState('timeStats', 'sessionStartTime', new Date());
+            // 통계 초기화
+            setCrawlerState('timeStats', 'listPageDurations', []);
+            setCrawlerState('timeStats', 'detailDurations', []);
+            setCrawlerState('timeStats', 'lastProgressTime', null);
+            setCrawlerState('timeStats', 'lastProgressCurrent', null);
+            setCrawlerState('timeStats', 'lastProgressStage', null);
+            // 세션 전체 통계 초기화
+            setCrawlerState('timeStats', 'totalListPagesInSession', null);
+            setCrawlerState('timeStats', 'completedListPagesInSession', 0);
+            setCrawlerState('timeStats', 'totalDetailsInSession', null);
+            setCrawlerState('timeStats', 'completedDetailsInSession', 0);
+            setCrawlerState('timeStats', 'currentBatchIndex', null);
+            setCrawlerState('timeStats', 'totalBatches', null);
+            setCrawlerState('timeStats', 'batchId', null);
             break;
 
       case 'StageStarted': {
         const normalizedStageType = this.normalizeStageType(payload.stage_type);
         const stageType = this.mapStageTypeToCrawlingStage(normalizedStageType);
         console.log(`[CrawlerStore] StageStarted event received:`, payload);
+        
+        // 세션 전체 통계 업데이트 - 첫 번째 Stage만 또는 누적
+        if (normalizedStageType.includes('listpage')) {
+          // 첫 StageStarted이거나 null이면 설정, 이후에는 누적
+          setCrawlerState('timeStats', 'totalListPagesInSession', (prev) => {
+            if (prev === null) {
+              console.log(`[CrawlerStore] Setting initial totalListPagesInSession: ${payload.items_count}`);
+              return payload.items_count;
+            } else {
+              const newTotal = prev + payload.items_count;
+              console.log(`[CrawlerStore] Accumulating totalListPagesInSession: ${prev} + ${payload.items_count} = ${newTotal}`);
+              return newTotal;
+            }
+          });
+          // completedListPagesInSession은 누적되므로 리셋하지 않음
+        } else if (normalizedStageType.includes('productdetail')) {
+          // Detail도 마찬가지로 누적
+          setCrawlerState('timeStats', 'totalDetailsInSession', (prev) => {
+            if (prev === null) {
+              console.log(`[CrawlerStore] Setting initial totalDetailsInSession: ${payload.items_count}`);
+              return payload.items_count;
+            } else {
+              const newTotal = prev + payload.items_count;
+              console.log(`[CrawlerStore] Accumulating totalDetailsInSession: ${prev} + ${payload.items_count} = ${newTotal}`);
+              return newTotal;
+            }
+          });
+          // completedDetailsInSession은 누적되므로 리셋하지 않음
+        }
+        
         setCrawlerState('progress', (prev) => {
           const switchingToDetail = normalizedStageType.includes('productdetail');
           const newProgress = {
@@ -407,6 +482,51 @@ class CrawlerStore {
           total: isDetailStage ? prev.total : payload.total_steps,
         };
       });
+      
+      // Progress 이벤트마다 시간 추정 계산 (진행률 기반)
+      const currentProgress = crawlerState.progress;
+      if (currentProgress && currentProgress.status === 'Running') {
+        const now = Date.now();
+        const stats = crawlerState.timeStats;
+        
+        // 첫 Progress 이벤트거나 stage가 변경된 경우 초기화
+        if (!stats.lastProgressTime || stats.lastProgressStage !== (currentProgress.current_stage || '')) {
+          setCrawlerState('timeStats', 'lastProgressTime', now);
+          setCrawlerState('timeStats', 'lastProgressCurrent', currentProgress.current || 0);
+          setCrawlerState('timeStats', 'lastProgressStage', currentProgress.current_stage || '');
+        } else {
+          // 이전 Progress와 현재 Progress 사이의 시간 차이 계산
+          const timeDiff = now - stats.lastProgressTime;
+          const itemsDiff = (currentProgress.current || 0) - (stats.lastProgressCurrent || 0);
+          
+          if (itemsDiff > 0 && timeDiff > 0) {
+            // 평균 시간 계산 (아이템당 소요 시간)
+            const avgTimePerItem = timeDiff / itemsDiff;
+            
+            // stage에 따라 적절한 통계에 저장
+            const stageType = (currentProgress.current_stage || '').toLowerCase();
+            if (stageType.includes('listpage')) {
+              setCrawlerState('timeStats', 'listPageDurations', (prev) => {
+                const updated = [...prev, avgTimePerItem];
+                return updated.slice(-50); // 최근 50개만 유지
+              });
+            } else if (stageType.includes('productdetail')) {
+              setCrawlerState('timeStats', 'detailDurations', (prev) => {
+                const updated = [...prev, avgTimePerItem];
+                return updated.slice(-100); // 최근 100개만 유지
+              });
+            }
+            
+            // 시간 추정 계산
+            const timeEstimates = this.calculateTimeEstimates(stageType);
+            setCrawlerState('progress', 'time_estimates', timeEstimates);
+            
+            // 현재 값으로 업데이트
+            setCrawlerState('timeStats', 'lastProgressTime', now);
+            setCrawlerState('timeStats', 'lastProgressCurrent', currentProgress.current || 0);
+          }
+        }
+      }
       break;
 
     case 'SessionCompleted':
@@ -435,6 +555,33 @@ class CrawlerStore {
         case 'StageItemCompleted':
           this.handleStageItemCompleted(payload);
           break;
+        
+        case 'ListPageBatchStarted':
+          // 배치 시작 정보 저장
+          console.log('[CrawlerStore] ListPageBatchStarted:', payload);
+          
+          // 세션 전체 페이지 수 설정 (첫 배치에서 한 번만)
+          if (payload.total_pages_in_session !== undefined) {
+            setCrawlerState('timeStats', 'totalListPagesInSession', (prev) => {
+              if (prev === null) {
+                console.log(`[CrawlerStore] Setting totalListPagesInSession from first batch: ${payload.total_pages_in_session}`);
+                return payload.total_pages_in_session;
+              }
+              return prev; // 이미 설정되었으면 유지
+            });
+          }
+          
+          // 배치 정보 업데이트
+          if (payload.batch_index !== undefined) {
+            setCrawlerState('timeStats', 'currentBatchIndex', payload.batch_index + 1); // 1-based index for display
+          }
+          if (payload.total_batches !== undefined) {
+            setCrawlerState('timeStats', 'totalBatches', payload.total_batches);
+          }
+          if (payload.batch_id) {
+            setCrawlerState('timeStats', 'batchId', payload.batch_id);
+          }
+          break;
 
         default:
             break;
@@ -462,7 +609,7 @@ class CrawlerStore {
   }
 
   private handleStageItemCompleted(payload: any): void {
-    console.log('🔴 [StageItemCompleted] 이벤트 수신:', payload);
+    console.log('✅ [CrawlerStore] StageItemCompleted received:', payload);
     
     // 새로운 StageItemType 구조에 맞게 타입 추출
     const itemTypeDisplay = this.getItemTypeDisplay(payload.item_type);
@@ -478,6 +625,39 @@ class CrawlerStore {
       completed_at: payload.timestamp,
     };
 
+    // 시간 통계 업데이트
+    const normalizedStageType = this.normalizeStageType(payload.stage_type);
+    if (payload.duration_ms && payload.success) {
+      if (normalizedStageType.includes('listpage')) {
+        setCrawlerState('timeStats', 'listPageDurations', (prev) => {
+          const updated = [...prev, payload.duration_ms];
+          // 최근 50개만 유지하여 평균을 계산
+          return updated.slice(-50);
+        });
+        // 완료 카운트 증가 (페이지 하나 완료)
+        setCrawlerState('timeStats', 'completedListPagesInSession', (prev) => prev + 1);
+        
+        // totalListPagesInSession은 ListPageBatchStarted에서 설정됨
+        // 여기서는 null 체크만 하고 로그 출력
+        if (crawlerState.timeStats.totalListPagesInSession === null) {
+          console.warn('[CrawlerStore] totalListPagesInSession is null at StageItemCompleted - waiting for ListPageBatchStarted');
+        }
+      } else if (normalizedStageType.includes('productdetail')) {
+        setCrawlerState('timeStats', 'detailDurations', (prev) => {
+          const updated = [...prev, payload.duration_ms];
+          // 최근 100개만 유지하여 평균을 계산
+          return updated.slice(-100);
+        });
+        // 완료 카운트 증가 (Detail 하나 완료)
+        setCrawlerState('timeStats', 'completedDetailsInSession', (prev) => prev + 1);
+        
+        // totalDetailsInSession은 StageStarted에서 설정됨
+        if (crawlerState.timeStats.totalDetailsInSession === null) {
+          console.warn('[CrawlerStore] totalDetailsInSession is null at StageItemCompleted - waiting for StageStarted');
+        }
+      }
+    }
+
     setCrawlerState('progress', (prev: CrawlingProgress | null) => {
       if (!prev) return prev;
 
@@ -492,19 +672,168 @@ class CrawlerStore {
         ...(prev.recent_completed_items || []),
       ].slice(0, 20);
 
+      const newCurrent = prev.current + (payload.success ? 1 : 0);
+      const newErrors = prev.errors + (payload.success ? 0 : 1);
+      
+      // 시간 추정 계산
+      const timeEstimates = this.calculateTimeEstimates(normalizedStageType);
+
       return {
         ...prev,
         active_items: updatedActiveItems,
         recent_completed_items: updatedRecentCompleted,
-        current: prev.current + (payload.success ? 1 : 0),
-        errors: prev.errors + (payload.success ? 0 : 1),
+        current: newCurrent,
+        errors: newErrors,
         new_items: prev.new_items + (payload.collected_count || 0),
         // 상세 단계에서는 아이템 개수 기반으로 percentage 재계산
         percentage: prev.current_stage === CrawlingStage.ProductDetails && prev.total > 0
-          ? Math.min(100, Math.round(((prev.current + (payload.success ? 1 : 0)) / prev.total) * 100))
+          ? Math.min(100, Math.round((newCurrent / prev.total) * 100))
           : prev.percentage,
+        time_estimates: timeEstimates,
       };
     });
+  }
+
+  // 시간 추정 계산
+  private calculateTimeEstimates(
+    stageType: string
+  ) {
+    const stats = crawlerState.timeStats;
+    const now = new Date();
+    
+    console.log('[TimeEstimate] Calculating estimates...', {
+      stageType,
+      totalListPages: stats.totalListPagesInSession,
+      completedListPages: stats.completedListPagesInSession,
+      totalDetails: stats.totalDetailsInSession,
+      completedDetails: stats.completedDetailsInSession,
+      listPageDurationsCount: stats.listPageDurations.length,
+      detailDurationsCount: stats.detailDurations.length,
+    });
+    
+    // ListPage 통계 - 세션 전체 기준으로 계산
+    let listPageStats;
+    if (stageType.includes('listpage') && stats.listPageDurations.length > 0) {
+      const avgTimePerPage = stats.listPageDurations.reduce((a, b) => a + b, 0) / stats.listPageDurations.length;
+      const totalPages = stats.totalListPagesInSession || 0;
+      const completedPages = stats.completedListPagesInSession;
+      const remainingPages = totalPages - completedPages;
+      
+      listPageStats = {
+        completed_pages: completedPages,
+        total_pages: totalPages,
+        remaining_pages: remainingPages,
+        avg_time_per_page_ms: Math.round(avgTimePerPage),
+        estimated_remaining_ms: Math.round(avgTimePerPage * remainingPages),
+      };
+    }
+    
+    // Detail 통계 - 세션 전체 기준으로 계산
+    let detailStats;
+    if (stageType.includes('productdetail') && stats.detailDurations.length > 0) {
+      const avgTimePerItem = stats.detailDurations.reduce((a, b) => a + b, 0) / stats.detailDurations.length;
+      const avgTimePer10Items = avgTimePerItem * 10;
+      const totalDetails = stats.totalDetailsInSession || 0;
+      const completedDetails = stats.completedDetailsInSession;
+      const remainingItems = totalDetails - completedDetails;
+      
+      detailStats = {
+        completed_products: completedDetails,
+        total_products: totalDetails,
+        remaining_products: remainingItems,
+        avg_time_per_10_products_ms: Math.round(avgTimePer10Items),
+        estimated_remaining_ms: Math.round(avgTimePerItem * remainingItems),
+      };
+    }
+    
+    // 전체 추정: ListPage와 Detail 양쪽 합산
+    // 현재 스테이지에 따라 적절하게 계산
+    let totalEstimatedMs = 0;
+    
+    if (stageType.includes('listpage')) {
+      // ListPage 단계: ListPage 남은 시간 + 아직 시작하지 않은 Detail 전체 시간
+      totalEstimatedMs = listPageStats?.estimated_remaining_ms || 0;
+      
+      // Detail 단계가 아직 시작하지 않았다면, 남은 ListPage들에서 나올 Detail들의 예상 시간 추가
+      if (stats.detailDurations.length > 0 && listPageStats) {
+        const avgDetailTime = stats.detailDurations.reduce((a, b) => a + b, 0) / stats.detailDurations.length;
+        // 남은 페이지 * 페이지당 평균 제품 수 (약 12개 가정)
+        const estimatedDetailsFromRemainingPages = listPageStats.remaining_pages * 12;
+        totalEstimatedMs += avgDetailTime * estimatedDetailsFromRemainingPages;
+      }
+    } else if (stageType.includes('productdetail')) {
+      // Detail 단계: 현재 Detail 남은 시간 + 아직 처리하지 않은 ListPage들의 Detail 시간
+      totalEstimatedMs = detailStats?.estimated_remaining_ms || 0;
+      
+      console.log('[TimeEstimate] ProductDetail stage calculation:', {
+        currentDetailRemaining: detailStats?.estimated_remaining_ms,
+        totalListPages: stats.totalListPagesInSession,
+        completedListPages: stats.completedListPagesInSession,
+      });
+      
+      // 아직 처리하지 않은 ListPage들이 있다면 해당 페이지들의 예상 시간도 추가
+      if (stats.listPageDurations.length > 0 && stats.totalListPagesInSession) {
+        const completedListPages = stats.completedListPagesInSession;
+        const totalListPages = stats.totalListPagesInSession;
+        const remainingListPages = totalListPages - completedListPages;
+        
+        console.log('[TimeEstimate] Remaining ListPages calculation:', {
+          remainingListPages,
+          hasDetailDurations: stats.detailDurations.length > 0,
+        });
+        
+        if (remainingListPages > 0) {
+          // 남은 ListPage 크롤링 시간
+          const avgListPageTime = stats.listPageDurations.reduce((a, b) => a + b, 0) / stats.listPageDurations.length;
+          const listPageTimeToAdd = avgListPageTime * remainingListPages;
+          totalEstimatedMs += listPageTimeToAdd;
+          
+          console.log('[TimeEstimate] Adding remaining ListPage time:', {
+            avgListPageTime,
+            remainingListPages,
+            timeToAdd: listPageTimeToAdd,
+          });
+          
+          // 남은 ListPage에서 나올 Detail 크롤링 시간
+          if (stats.detailDurations.length > 0) {
+            const avgDetailTime = stats.detailDurations.reduce((a, b) => a + b, 0) / stats.detailDurations.length;
+            const estimatedDetailsFromRemainingPages = remainingListPages * 12; // 페이지당 평균 12개
+            const detailTimeToAdd = avgDetailTime * estimatedDetailsFromRemainingPages;
+            totalEstimatedMs += detailTimeToAdd;
+            
+            console.log('[TimeEstimate] Adding future Detail time:', {
+              avgDetailTime,
+              estimatedDetailsFromRemainingPages,
+              timeToAdd: detailTimeToAdd,
+            });
+          }
+        }
+      }
+      
+      console.log('[TimeEstimate] Final total for ProductDetail stage:', totalEstimatedMs);
+    }
+    
+    const estimatedCompletionTime = new Date(now.getTime() + totalEstimatedMs).toISOString();
+    
+    // 배치 정보 추가
+    let batchInfo;
+    if (stats.currentBatchIndex && stats.totalBatches && stats.batchId) {
+      batchInfo = {
+        current_batch: stats.currentBatchIndex,
+        total_batches: stats.totalBatches,
+        batch_id: stats.batchId,
+      };
+    }
+    
+    const result = {
+      list_page_stats: listPageStats,
+      detail_stats: detailStats,
+      batch_info: batchInfo,
+      total_estimated_remaining_ms: totalEstimatedMs,
+      estimated_completion_time: estimatedCompletionTime,
+    };
+    
+    return result;
   }
 
   // Normalize stage_type field that can be string or nested-enum object

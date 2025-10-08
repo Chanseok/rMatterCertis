@@ -355,7 +355,16 @@ impl SessionActor {
 
             // Always use StageActor path (legacy BatchActor retired)
             let run_result = {
-                self.run_batch_with_stage_actor(&batch_id, &pages, context, deps, site_status, None)
+                self.run_batch_with_stage_actor(
+                    &batch_id, 
+                    &pages, 
+                    context, 
+                    deps, 
+                    site_status, 
+                    None,
+                    batch_idx - 1, // 0-based index
+                    planned_batches_count as u32,
+                )
                     .await
             };
 
@@ -418,7 +427,16 @@ impl SessionActor {
             let batch_id = format!("{}-pre-{}", session_id, idx + 1);
             // Execute via StageActor (legacy path retired) so preplanned runs process pages.
             let run_result: Result<(), SessionError> = {
-                self.run_batch_with_stage_actor(&batch_id, &pages, context, deps, site_status, Some(plan))
+                self.run_batch_with_stage_actor(
+                    &batch_id, 
+                    &pages, 
+                    context, 
+                    deps, 
+                    site_status, 
+                    Some(plan),
+                    idx as u32,  // 0-based index
+                    planned_batches as u32,
+                )
                     .await
             };
 
@@ -863,6 +881,8 @@ impl SessionActor {
         deps: &SessionDeps,
         site_status: &crate::domain::services::SiteStatus,
         plan: Option<&crate::crawl_engine::actors::types::ExecutionPlan>,
+        batch_index: u32,
+        total_batches: u32,
     ) -> Result<(), SessionError> {
         use crate::crawl_engine::actors::types::StageResultData as SRD;
         use crate::crawl_engine::actors::types::StageType;
@@ -918,7 +938,23 @@ impl SessionActor {
         // 전체 크롤링 대상 페이지 목록 추출 (스테이지 시작 전에 미리 추출)
         let page_numbers: Vec<u32> = pages.iter().copied().collect();
         
-        tracing::info!("📋 ListPageBatchStarted: total={}, pages={:?}", total_pages_in_batch, page_numbers);
+        // 세션 전체 페이지 수 계산 (plan이 있으면 사용, 없으면 현재 배치만)
+        let total_pages_in_session = if let Some(exec_plan) = plan {
+            exec_plan.crawling_ranges.iter()
+                .map(|r| {
+                    if r.start_page <= r.end_page {
+                        r.end_page - r.start_page + 1
+                    } else {
+                        r.start_page - r.end_page + 1
+                    }
+                })
+                .sum()
+        } else {
+            total_pages_in_batch  // fallback
+        };
+        
+        tracing::info!("📋 ListPageBatchStarted: batch={}/{}, current_batch_pages={}, total_session_pages={}, pages={:?}", 
+            batch_index + 1, total_batches, total_pages_in_batch, total_pages_in_session, page_numbers);
         
         // ListPageBatchStarted 이벤트 발행 (스테이지 실행 전!)
         let _ = self.emit(
@@ -926,7 +962,10 @@ impl SessionActor {
             AppEvent::ListPageBatchStarted {
                 session_id: self.session_id.clone().unwrap_or_default(),
                 batch_id: batch_id.to_string(),
+                batch_index,
+                total_batches,
                 total_pages: total_pages_in_batch,
+                total_pages_in_session,
                 page_numbers: page_numbers.clone(), // 물리 페이지 번호 목록 추가
                 timestamp: Utc::now(),
             },

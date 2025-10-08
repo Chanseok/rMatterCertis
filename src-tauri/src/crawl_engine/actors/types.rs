@@ -507,8 +507,11 @@ pub enum AppEvent {
     ListPageBatchStarted {
         session_id: String,
         batch_id: String,
-        total_pages: u32,
-        page_numbers: Vec<u32>, // 물리 페이지 번호 목록 (예: [507, 506, 505])
+        batch_index: u32,         // 현재 배치 인덱스 (0-based)
+        total_batches: u32,       // 전체 배치 수
+        total_pages: u32,         // 현재 배치의 페이지 수
+        total_pages_in_session: u32, // 세션 전체 페이지 수
+        page_numbers: Vec<u32>,   // 물리 페이지 번호 목록 (예: [507, 506, 505])
         timestamp: DateTime<Utc>,
     },
     /// ListPageCrawling 개별 페이지 진행상황

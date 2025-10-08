@@ -7,6 +7,7 @@ import DiagnosticsPanel from "./parts/DiagnosticsPanel";
 import HelpPanel from "./parts/HelpPanel";
 import ListPageProgressPanel from "../ListPageProgressPanel";
 import ComplementCrawlProgressPanel from "../ComplementCrawlProgressPanel";
+import TimeEstimatesPanel from "../TimeEstimatesPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 // Types are relaxed locally to avoid tight coupling during integration
@@ -18,6 +19,7 @@ import DbSnapshotPanel from "./parts/DbSnapshotPanel";
 import PersistPanel from "./parts/PersistPanel";
 import { DetailTracker, ProductDetailEvent, ProductDetailPhase } from '../../services/detail-tracker';
 import { getCrawlEventsStore } from '../../events/crawlEventsStore';
+import { crawlerStore } from '../../stores/crawlerStore';
 
 export default function CrawlingEngineTabSimple() {
   const [isRunning, setIsRunning] = createSignal(false);
@@ -356,6 +358,9 @@ export default function CrawlingEngineTabSimple() {
   // Track sync-start events to detect backend start and enable fallbacks
   let syncStartSeq = 0;
   onMount(async () => {
+    // Initialize crawlerStore (이벤트 구독 포함)
+    await crawlerStore.initialize();
+    
     // Subscribe to structured crawl events store (dual emission path)
     try {
       const store = getCrawlEventsStore();
@@ -1897,6 +1902,9 @@ export default function CrawlingEngineTabSimple() {
     
     {/* 제품 보완 크롤링 실시간 진행상황 패널 */}
     <ComplementCrawlProgressPanel />
+    
+    {/* 크롤링 시간 추정 패널 */}
+    <TimeEstimatesPanel progress={crawlerStore.progress()} />
     
     {/* 복원: 계산된 크롤링 범위 & 사전 분석 Premium Cards */}
     <Show when={!isRunning()}>

@@ -88,8 +88,12 @@ const [windowState, setWindowState] = createStore<WindowStore>({
         // 윈도우 위치와 크기 적용
         await windowState.applyWindowSettings();
         
-        // 윈도우 표시 (위치 설정 후)
-        await invoke('show_window');
+        // 윈도우 표시 (위치 설정 후) - 에러 무시 (이미 visible:true일 수 있음)
+        try {
+          await invoke('show_window');
+        } catch (e) {
+          console.log('⚠️ Window already visible or show_window failed (non-fatal):', e);
+        }
         
         setWindowState('isInitialized', true);
         return;
@@ -105,11 +109,15 @@ const [windowState, setWindowState] = createStore<WindowStore>({
         const parsed = JSON.parse(savedState) as InternalWindowState;
         setWindowState('state', { ...DEFAULT_STATE, ...parsed });
         console.log('🔧 Window state restored from localStorage:', parsed);
-    // 적용 및 표시 (첫 실행 깜빡임 방지: 숨김 상태에서 적용 후 표시)
-    await windowState.applyWindowSettings();
-    await invoke('show_window');
-    setWindowState('isInitialized', true);
-    return;
+        // 적용 및 표시 (첫 실행 깜빡임 방지: 숨김 상태에서 적용 후 표시)
+        await windowState.applyWindowSettings();
+        try {
+          await invoke('show_window');
+        } catch (e) {
+          console.log('⚠️ Window already visible or show_window failed (non-fatal):', e);
+        }
+        setWindowState('isInitialized', true);
+        return;
       }
     } catch (error) {
       console.error('❌ Failed to restore window state:', error);
@@ -117,7 +125,11 @@ const [windowState, setWindowState] = createStore<WindowStore>({
 
   // 저장된 상태가 전혀 없으면 기본값 적용 후 표시
   await windowState.applyWindowSettings();
-  await invoke('show_window');
+  try {
+    await invoke('show_window');
+  } catch (e) {
+    console.log('⚠️ Window already visible or show_window failed (non-fatal):', e);
+  }
   setWindowState('isInitialized', true);
   },
 

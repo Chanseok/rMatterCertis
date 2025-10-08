@@ -72,6 +72,35 @@ export interface CrawlingProgress {
     error?: string;
     completed_at: string;
   }[];
+  
+  // 시간 추정 정보
+  time_estimates?: {
+    // ListPage 크롤링 통계
+    list_page_stats?: {
+      completed_pages: number;
+      total_pages: number;
+      remaining_pages: number;
+      avg_time_per_page_ms: number;
+      estimated_remaining_ms: number;
+    };
+    // Detail 크롤링 통계
+    detail_stats?: {
+      completed_products: number;
+      total_products: number;
+      remaining_products: number;
+      avg_time_per_10_products_ms: number;
+      estimated_remaining_ms: number;
+    };
+    // 배치 정보
+    batch_info?: {
+      current_batch: number;
+      total_batches: number;
+      batch_id: string;
+    };
+    // 전체 추정
+    total_estimated_remaining_ms: number;
+    estimated_completion_time: string; // ISO string format
+  };
 }
 
 export interface CrawlingTaskStatus {
