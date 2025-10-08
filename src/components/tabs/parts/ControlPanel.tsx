@@ -87,7 +87,7 @@ const ControlPanel: Component<ControlPanelProps> = (p) => {
           {p.isRunning() ? '통합 파이프라인 실행 중...' : '🎭 크롤링'}
         </button>
 
-        <button
+                <button
           onClick={p.calculateCrawlingRange}
           disabled={p.isRunning()}
           class="px-6 py-3 rounded-xl font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed ripple shadow"
@@ -95,40 +95,6 @@ const ControlPanel: Component<ControlPanelProps> = (p) => {
         >
           📊 범위 다시 계산
         </button>
-
-        {/* 🏃 Shallow Sync buttons */}
-        {p.handleShallowSync && (
-          <button
-            onClick={() => p.handleShallowSync?.()}
-            disabled={p.isRunning() || p.isSyncing()}
-            class="px-6 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed ripple shadow-md hover:shadow-lg transition"
-            title="전체 페이지의 좌표만 빠르게 동기화 (상세 정보 제외, 5-8분)"
-          >
-            🏃 빠른 동기화
-          </button>
-        )}
-
-        {p.handleSmartSync && (
-          <button
-            onClick={() => p.handleSmartSync?.()}
-            disabled={p.isRunning() || p.isSyncing()}
-            class="px-6 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed ripple shadow-md hover:shadow-lg transition"
-            title="좌표 동기화 + 누락 분석 + 자동 보완 (8-12분)"
-          >
-            🧠 스마트 동기화
-          </button>
-        )}
-
-        {p.handleComplementCrawl && (
-          <button
-            onClick={() => p.handleComplementCrawl?.()}
-            disabled={p.isRunning() || p.isSyncing()}
-            class="px-6 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-green-500 to-teal-500 hover:from-green-600 hover:to-teal-600 disabled:opacity-50 disabled:cursor-not-allowed ripple shadow-md hover:shadow-lg transition"
-            title="핵심 필드(certification_date, transport_interface, primary_device_type_ids) 중 하나라도 누락된 제품만 재크롤링하여 정보를 업데이트합니다. 스마트 동기화보다 빠르고 가볍습니다."
-          >
-            🔧 제품 보완 동기화
-          </button>
-        )}
 
         <div class="h-10 w-px bg-gray-300 dark:bg-gray-600" />
 

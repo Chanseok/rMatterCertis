@@ -13,14 +13,57 @@ interface Props {
   addLog: (msg: string) => void;
   isSyncing: () => boolean;
   startCoordSync: () => Promise<void>;
+  // 🏃 Shallow Sync handlers (moved from ControlPanel)
+  handleShallowSync?: () => Promise<void> | void;
+  handleSmartSync?: () => Promise<void> | void;
+  handleComplementCrawl?: () => Promise<void> | void;
 }
 
 const DiagnosticsPanel: Component<Props> = (p) => {
   return (
     <>
       <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 mb-8">
-        <div class="flex items-center justify-between mb-2">
-        <h3 class="text-lg font-bold text-gray-800">Stage X: DB Pagination Diagnostics</h3>
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-bold text-gray-800">Stage X: DB 레코드 체크 및 동기화</h3>
+        </div>
+        
+        {/* 동기화 버튼 그룹 */}
+        <div class="flex flex-wrap gap-2 mb-4">
+          {p.handleShallowSync && (
+            <button
+              onClick={() => p.handleShallowSync?.()}
+              disabled={p.isSyncing()}
+              class="px-4 py-2 rounded-lg font-semibold text-white bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition text-sm"
+              title="전체 페이지의 좌표만 빠르게 동기화 (상세 정보 제외, 5-8분)"
+            >
+              🏃 빠른 동기화
+            </button>
+          )}
+
+          {p.handleSmartSync && (
+            <button
+              onClick={() => p.handleSmartSync?.()}
+              disabled={p.isSyncing()}
+              class="px-4 py-2 rounded-lg font-semibold text-white bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition text-sm"
+              title="좌표 동기화 + 누락 분석 + 자동 보완 (8-12분)"
+            >
+              🧠 스마트 동기화
+            </button>
+          )}
+
+          {p.handleComplementCrawl && (
+            <button
+              onClick={() => p.handleComplementCrawl?.()}
+              disabled={p.isSyncing()}
+              class="px-4 py-2 rounded-lg font-semibold text-white bg-gradient-to-r from-green-500 to-teal-500 hover:from-green-600 hover:to-teal-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition text-sm"
+              title="핵심 필드(certification_date, transport_interface, primary_device_type_ids) 중 하나라도 누락된 제품만 재크롤링하여 정보를 업데이트합니다. 스마트 동기화보다 빠르고 가볍습니다."
+            >
+              🔧 제품 보완 동기화
+            </button>
+          )}
+        </div>
+
+        {/* 진단 버튼 그룹 */}
         <div class="flex gap-2">
           <button
             class={`px-3 py-1.5 text-sm rounded-lg shadow ${p.diagLoading() ? 'bg-gray-200 text-gray-500' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
@@ -29,46 +72,9 @@ const DiagnosticsPanel: Component<Props> = (p) => {
           >
             {p.diagLoading() ? '진단 중…' : '진단 실행'}
           </button>
-          <button
-            class={`px-3 py-1.5 text-sm rounded-lg shadow ${p.cleanupLoading() ? 'bg-gray-200 text-gray-500' : 'bg-rose-600 text-white hover:bg-rose-700'}`}
-            disabled={p.cleanupLoading()}
-            onClick={p.runUrlCleanup}
-          >
-            {p.cleanupLoading() ? '정리 중…' : 'URL 중복 제거'}
-          </button>
-          <button
-            class={`px-3 py-1.5 text-sm rounded-lg shadow ${p.isSyncing() ? 'bg-gray-200 text-gray-500' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
-            disabled={p.isSyncing()}
-            onClick={p.startCoordSync}
-            title="products.url 기준으로 product_details에 page_id/index_in_page/id를 정합화합니다 (크롤링 없음)"
-          >
-            products→details 동기화
-          </button>
-          <button
-            class="px-3 py-1.5 text-sm rounded-lg shadow bg-emerald-600 text-white hover:bg-emerald-700"
-            onClick={async () => {
-              p.addLog('🔍 DB 연결 진단 실행...');
-              try {
-                const res: any = await (window as any).__TAURI_INVOKE__?.('diagnose_database_connection')
-                  || await (await import('@tauri-apps/api/core')).invoke('diagnose_database_connection');
-                p.addLog(`✅ DB 연결 상태: closed=${res.pool_closed} select_ok=${res.simple_select_ok} immediate_select_ok=${res.immediate_select_ok}`);
-                if (res.notes && res.notes.length) {
-                  for (const n of res.notes) p.addLog('📝 ' + n);
-                }
-                if (res.write_probe_error) {
-                  p.addLog('⚠️ write_probe_error: ' + res.write_probe_error);
-                }
-              } catch (e:any) {
-                p.addLog('❌ DB 연결 진단 실패: ' + (e?.message || e));
-              }
-            }}
-            title="풀 closed 여부, 단순 SELECT 가능 여부 등을 확인"
-          >
-            DB 연결 진단
-          </button>
         </div>
-      </div>
-      <Show when={p.diagResult()} fallback={<p class="text-xs text-gray-500">로컬 DB의 page_id/index_in_page 정합성을 검사합니다. 실행을 눌러 결과를 확인하세요.</p>}>
+        
+        <Show when={p.diagResult()} fallback={<p class="text-xs text-gray-500">로컬 DB의 page_id/index_in_page 정합성을 검사합니다. 실행을 눌러 결과를 확인하세요.</p>}>
         <div class="text-xs text-gray-700 space-y-2">
           {(() => {
             const expr = p.deriveRangesFromDiagnostics();

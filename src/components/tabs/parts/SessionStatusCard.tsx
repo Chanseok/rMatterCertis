@@ -32,6 +32,11 @@ const SessionStatusCard: Component<Props> = (props) => {
   };
 
   const getIconAndColor = () => {
+    // 사이트 건강 경고가 있으면 경고 스타일
+    if (!props.isRunning() && props.siteHealthWarning?.()) {
+      return { icon: '⚠️', bg: 'bg-amber-500', text: 'text-amber-700' };
+    }
+    
     if (!props.isRunning()) {
       return { icon: '✅', bg: 'bg-emerald-500', text: 'text-emerald-700' };
     }
@@ -51,27 +56,15 @@ const SessionStatusCard: Component<Props> = (props) => {
     }
   };
 
+  const getStatusMessage = () => {
+    if (!props.isRunning() && props.siteHealthWarning?.()) {
+      return `크롤링 가능 - 사이트 일시적 문제 감지 (${props.siteHealthWarning?.()?.previousMaxPages} → ${props.siteHealthWarning?.()?.currentPages})`;
+    }
+    return props.statusMessage();
+  };
+
   return (
     <div class="bg-white/90 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-4 mb-6">
-      {/* 🚨 사이트 건강 경고 - 상단 */}
-      <Show when={props.siteHealthWarning?.()}>
-        <div class="mb-4 bg-gradient-to-r from-amber-100 to-orange-100 border-l-4 border-amber-500 rounded-lg p-3">
-          <div class="flex items-start gap-2">
-            <span class="text-xl mt-0.5">⚠️</span>
-            <div class="flex-1">
-              <div class="font-bold text-amber-900 text-sm mb-1">사이트 일시적 문제 감지</div>
-              <div class="text-xs text-amber-800">
-                페이지 수 감소: {props.siteHealthWarning?.()?.previousMaxPages} → {props.siteHealthWarning?.()?.currentPages} 
-                ({((props.siteHealthWarning?.()?.decreaseRatio || 0) * 100).toFixed(1)}% 감소)
-              </div>
-              <div class="text-xs text-amber-700 mt-1">
-                💡 크롤링 대기 권장 - 사이트 정상화 후 재시도
-              </div>
-            </div>
-          </div>
-        </div>
-      </Show>
-      
       <div class="flex items-center justify-between">
         {/* 상태 표시 영역 */}
         <div class="flex items-center gap-3">
@@ -81,7 +74,7 @@ const SessionStatusCard: Component<Props> = (props) => {
             </span>
           </div>
           <div>
-            <div class={`text-lg font-bold ${getIconAndColor().text}`}>{props.statusMessage()}</div>
+            <div class={`text-lg font-bold ${getIconAndColor().text}`}>{getStatusMessage()}</div>
             <Show when={props.isRunning() && props.batchInfo().current > 0}>
               <div class="text-xs text-gray-600 mt-0.5">
                 배치 {props.batchInfo().current}

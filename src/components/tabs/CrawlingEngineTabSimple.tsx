@@ -2159,6 +2159,9 @@ export default function CrawlingEngineTabSimple() {
                     setIsSyncing(false);
                   }
                 }}
+                handleShallowSync={handleShallowSync}
+                handleSmartSync={handleSmartSync}
+                handleComplementCrawl={handleComplementCrawl}
               />
             </div>
           </Show>
