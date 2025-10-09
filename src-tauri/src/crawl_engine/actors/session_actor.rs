@@ -414,6 +414,159 @@ impl SessionActor {
         deps: &SessionDeps,
         site_status: &crate::domain::services::SiteStatus,
     ) -> Result<usize, SessionError> {
+        // URL 기반 크롤링 모드: product_urls가 있으면 범위 크롤링 건너뛰고 바로 제품 상세 크롤링
+        if let Some(ref product_urls) = plan.product_urls {
+            info!(
+                "🎯 [URL-based Mode] ExecutionPlan contains {} product URLs - skipping list crawling, going straight to detail crawling",
+                product_urls.len()
+            );
+            
+            let batch_id = format!("{}-url-details", session_id);
+            
+            // ProductDetailCrawling 직접 실행
+            use crate::crawl_engine::actors::stage_actor::StageDeps as StageDepsStruct;
+            use crate::crawl_engine::actors::types::StageType;
+            use crate::crawl_engine::channels::types as ch;
+            use crate::crawl_engine::channels::types::StageItem;
+            
+            let app_config = AppConfig::for_development();
+            let config_concurrency = app_config.user.crawling.workers.product_detail_max_concurrent as u32;
+            let timeout_secs = app_config.user.crawling.timing.operation_timeout_seconds;
+            
+            // 중복 저장 정책 (환경 변수로 제어 가능)
+            let dup_policy_env = std::env::var("MC_DUP_POLICY").unwrap_or_default();
+            let duplicate_policy = if dup_policy_env.eq_ignore_ascii_case("update_id_index_only") {
+                crate::crawl_engine::actors::types::DuplicatePersistencePolicy::UpdateIdIndexOnly
+            } else {
+                crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip
+            };
+            
+            let deps_stage = StageDepsStruct {
+                http_client: Arc::clone(&deps.http_client),
+                data_extractor: Arc::clone(&deps.data_extractor),
+                product_repo: Arc::clone(&deps.product_repo),
+                app_config: app_config.clone(),
+                duplicate_policy,
+            };
+            
+            let mut stage_actor = crate::crawl_engine::actors::stage_actor::StageActor::new_with_deps(
+                format!("stage_url_details_{}", batch_id),
+                batch_id.to_string(),
+                deps_stage,
+                Arc::new(crate::crawl_engine::stages::DefaultStageLogicFactory),
+            );
+            
+            // URL 목록을 StageItem으로 변환
+            let detail_items: Vec<StageItem> = vec![StageItem::ProductUrls(ch::ProductUrls {
+                urls: product_urls.clone(),
+                batch_id: Some(batch_id.clone()),
+            })];
+            
+            info!(
+                "[URL Mode] Batch {batch_id}: starting ProductDetailCrawling for {} urls",
+                product_urls.len()
+            );
+            
+            // ProductDetailCrawling 실행
+            let detail_res = stage_actor
+                .execute_stage(
+                    StageType::ProductDetailCrawling,
+                    detail_items,
+                    config_concurrency,
+                    timeout_secs,
+                    context,
+                )
+                .await
+                .map_err(|e| {
+                    SessionError::ContextError(format!("StageActor detail run failed: {e:?}"))
+                })?;
+            
+            info!(
+                "[URL Mode] Batch {batch_id}: ProductDetailCrawling completed: {} item_results (ok={} fail={})",
+                detail_res.details.len(),
+                detail_res.successful_items,
+                detail_res.failed_items
+            );
+            
+            // Collect ProductDetails for DataSaving stage
+            use crate::crawl_engine::actors::types::StageResultData as SRD;
+            let mut collected_details: Vec<crate::domain::integrated_product::ProductDetail> = Vec::new();
+            let mut successful_count: u32 = 0;
+            let mut failed_count: u32 = 0;
+            
+            for it in &detail_res.details {
+                if let Some(SRD::ProductDetails {
+                    details,
+                    successful_count: sc,
+                    failed_count: fc,
+                }) = &it.collected_data
+                {
+                    collected_details.extend(details.clone());
+                    successful_count = successful_count.saturating_add(*sc);
+                    failed_count = failed_count.saturating_add(*fc);
+                }
+            }
+            
+            info!(
+                "[URL Mode] Batch {}: Collected {} product details (success={} fail={})",
+                batch_id,
+                collected_details.len(),
+                successful_count,
+                failed_count
+            );
+            
+            // Stage 5: DataSaving (validation + DB persistence)
+            if !collected_details.is_empty() {
+                info!(
+                    "[URL Mode] Batch {batch_id}: starting DataSaving for {} details",
+                    collected_details.len()
+                );
+                
+                // Wrap into ProductDetails payload
+                let detail_payload = ch::ProductDetails {
+                    products: collected_details.clone(),
+                    source_urls: product_urls.clone(),
+                    extraction_stats: ch::ExtractionStats {
+                        attempted: successful_count.saturating_add(failed_count),
+                        successful: successful_count,
+                        failed: failed_count,
+                        empty_responses: 0,
+                    },
+                };
+                
+                let save_items: Vec<StageItem> = vec![StageItem::ProductDetails(detail_payload)];
+
+                
+                let save_res = stage_actor
+                    .execute_stage(
+                        StageType::DataSaving,
+                        save_items,
+                        1, // 직렬 처리
+                        timeout_secs,
+                        context,
+                    )
+                    .await
+                    .map_err(|e| {
+                        SessionError::ContextError(format!("DataSaving failed: {e:?}"))
+                    })?;
+                
+                info!(
+                    "[URL Mode] Batch {batch_id}: DataSaving completed: ok={} fail={}",
+                    save_res.successful_items,
+                    save_res.failed_items
+                );
+            } else {
+                info!("[URL Mode] Batch {batch_id}: No details to save, skipping DataSaving");
+            }
+            
+            self.processed_batches = 1;
+            self.total_success_count = product_urls.len() as u32;
+            
+            return Ok(1); // URL 기반 모드는 단일 배치로 처리
+        }
+        
+        // 기존 범위 기반 크롤링 로직 (product_urls가 None일 때)
+        info!("📋 [Range-based Mode] Processing {} crawling ranges", plan.crawling_ranges.len());
         let planned_batches = plan.crawling_ranges.len();
         for (idx, range) in plan.crawling_ranges.iter().enumerate() {
             // Build physical pages respecting reverse_order flag
@@ -449,7 +602,7 @@ impl SessionActor {
                     break;  // 즉시 루프 종료
                 }
                 
-                error!("Batch {} failed: {}", batch_id, e);
+                error!("❌ Batch {} failed: {}", batch_id, e);
                 self.errors.push(format!("batch {batch_id}: {e}"));
                 let fail_event = AppEvent::SessionFailed {
                     session_id: session_id.to_string(),
