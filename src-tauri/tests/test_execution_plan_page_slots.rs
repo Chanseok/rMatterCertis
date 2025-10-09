@@ -89,6 +89,7 @@ mod tests {
             }),
             contract_version:
                 matter_certis_v2_lib::crawl_engine::actors::contract::ACTOR_CONTRACT_VERSION,
+            product_urls: None,
             page_slots,
             list_only: false,
         }
