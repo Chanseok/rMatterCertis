@@ -170,18 +170,6 @@ export interface PerformanceMetrics {
   cache_hit_rate: number;
 }
 
-export interface CrawlingResult {
-  total_processed: number;
-  new_items: number;
-  updated_items: number;
-  errors: number;
-  duration_ms: number;
-  stages_completed: CrawlingStage[];
-  start_time: string;
-  end_time: string;
-  performance_metrics: PerformanceMetrics;
-}
-
 // Removed: CrawlingEvent union was unused.
 
 // Removed: CrawlingConfig was unused.

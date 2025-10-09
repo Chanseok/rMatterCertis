@@ -10,7 +10,6 @@ use sqlx::FromRow;
 pub use super::product::{
     Product, ProductDetail, ProductSearchCriteria, ProductSearchResult, ProductWithDetails, Vendor,
 };
-pub use super::session_manager::CrawlingResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct IntegratedProduct {

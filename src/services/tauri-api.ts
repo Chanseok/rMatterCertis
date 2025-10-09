@@ -533,17 +533,6 @@ export class TauriApiService {
     }
   }
 
-  /**
-   * Export crawling results to a file
-   */
-  async exportCrawlingResults(): Promise<string> {
-    try {
-      return await invoke<string>('export_crawling_results');
-    } catch (error) {
-      throw new Error(`Failed to export crawling results: ${error}`);
-    }
-  }
-
   // =========================================================================
   // Real-time Event Subscription
   // =========================================================================

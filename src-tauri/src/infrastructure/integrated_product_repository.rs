@@ -14,7 +14,6 @@ use crate::domain::product::{
     Product, ProductDetail, ProductSearchCriteria, ProductSearchResult, ProductWithDetails, Vendor,
 };
 use sqlx::{Row, sqlite::SqlitePool};
-use crate::domain::session_manager::CrawlingResult;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 // duplicate/legacy imports removed
@@ -2171,81 +2170,6 @@ impl IntegratedProductRepository {
         } else {
             Ok(vendor_id)
         }
-    }
-
-    // ===============================
-    // CRAWLING RESULTS OPERATIONS
-    // ===============================
-
-    /// Save crawling result
-    /// # Errors
-    /// Returns an error if the upsert query fails.
-    pub async fn save_crawling_result(&self, result: &CrawlingResult) -> Result<()> {
-        sqlx::query(
-            r"
-            INSERT OR REPLACE INTO crawling_results 
-            (session_id, status, stage, total_pages, products_found, details_fetched, errors_count,
-             started_at, completed_at, execution_time_seconds, config_snapshot, error_details, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ",
-        )
-        .bind(&result.session_id)
-        .bind(&result.status)
-        .bind(&result.stage)
-        .bind(result.total_pages)
-        .bind(result.products_found)
-        .bind(result.details_fetched)
-        .bind(result.errors_count)
-        .bind(result.started_at)
-        .bind(result.completed_at)
-        .bind(result.execution_time_seconds)
-        .bind(&result.config_snapshot)
-        .bind(&result.error_details)
-        .bind(result.created_at)
-        .execute(&*self.pool)
-        .await?;
-        Ok(())
-    }
-
-    /// Get crawling results with pagination
-    /// # Errors
-    /// Returns an error if the query or row decoding fails.
-    pub async fn get_crawling_results(&self, page: i32, limit: i32) -> Result<Vec<CrawlingResult>> {
-        let offset = (page - 1) * limit;
-        let rows = sqlx::query(
-            r"
-            SELECT session_id, status, stage, total_pages, products_found, details_fetched, errors_count,
-                   started_at, completed_at, execution_time_seconds, config_snapshot, error_details, created_at
-            FROM crawling_results 
-            ORDER BY started_at DESC 
-            LIMIT ? OFFSET ?
-            ",
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&*self.pool)
-        .await?;
-
-        let results = rows
-            .into_iter()
-            .map(|row| CrawlingResult {
-                session_id: row.get("session_id"),
-                status: row.get("status"),
-                stage: row.get("stage"),
-                total_pages: row.get("total_pages"),
-                products_found: row.get("products_found"),
-                details_fetched: row.get("details_fetched"),
-                errors_count: row.get("errors_count"),
-                started_at: row.get("started_at"),
-                completed_at: row.get("completed_at"),
-                execution_time_seconds: row.get("execution_time_seconds"),
-                config_snapshot: row.get("config_snapshot"),
-                error_details: row.get("error_details"),
-                created_at: row.get("created_at"),
-            })
-            .collect();
-
-        Ok(results)
     }
 
     // ===============================

@@ -127,24 +127,6 @@ pub struct CrawlingSessionState {
     pub target_domains: Vec<String>,
 }
 
-/// Final crawling result (saved to database)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CrawlingResult {
-    pub session_id: String,
-    pub status: SessionStatus,
-    pub stage: CrawlingStage,
-    pub total_pages: u32,
-    pub products_found: u32,
-    pub errors_count: u32,
-    pub started_at: DateTime<Utc>,
-    pub completed_at: DateTime<Utc>,
-    pub execution_time_seconds: u32,
-    pub config_snapshot: serde_json::Value,
-    pub error_details: Option<String>,
-    pub details_fetched: u32,
-    pub created_at: DateTime<Utc>,
-}
-
 /// Thread-safe session manager for in-memory state management
 #[derive(Debug)]
 pub struct SessionManager {
@@ -324,48 +306,6 @@ impl SessionManager {
             session.last_updated_at = Utc::now();
         }
         Ok(())
-    }
-
-    /// Complete session and prepare final result
-    pub async fn complete_session(
-        &self,
-        session_id: &str,
-        status: SessionStatus,
-    ) -> Option<CrawlingResult> {
-        let mut sessions = self.sessions.write().await;
-
-        if let Some(mut session) = sessions.remove(session_id) {
-            let completed_at = Utc::now();
-            let execution_time = (completed_at - session.started_at).num_seconds() as u32;
-
-            session.status = status.clone();
-            session.last_updated_at = completed_at;
-
-            // Update performance metrics
-            self.update_metrics(&session, execution_time).await;
-
-            Some(CrawlingResult {
-                session_id: session.session_id,
-                status,
-                stage: session.stage,
-                total_pages: session.total_pages,
-                products_found: session.products_found,
-                errors_count: session.errors_count,
-                started_at: session.started_at,
-                completed_at,
-                execution_time_seconds: execution_time,
-                config_snapshot: session.config_snapshot,
-                error_details: if session.error_details.is_empty() {
-                    None
-                } else {
-                    Some(session.error_details.join("\n"))
-                },
-                details_fetched: session.products_processed,
-                created_at: Utc::now(),
-            })
-        } else {
-            None
-        }
     }
 
     /// Remove session from memory (cleanup)

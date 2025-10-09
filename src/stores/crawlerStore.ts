@@ -10,7 +10,7 @@ import { createSignal, onCleanup } from 'solid-js';
 import { tauriApi } from '../services/tauri-api';
 import { apiAdapter, safeApiCall } from '../platform/tauri';
 // types from '@/types' were unused and removed to satisfy noUnused
-import type { CrawlingProgress, CrawlingTaskStatus, CrawlingResult, BackendCrawlerConfig, CrawlingStatusCheck } from '../types/crawling';
+import type { CrawlingProgress, CrawlingTaskStatus, BackendCrawlerConfig, CrawlingStatusCheck } from '../types/crawling';
 import { CrawlingStatus, CrawlingStage } from '../types/crawling';
 import { DatabaseHealth } from '../types/crawling';
 import type { 
@@ -39,8 +39,8 @@ interface CrawlerState {
   // 작업 상태
   activeTasks: Map<string, CrawlingTaskStatus>;
   
-  // 크롤링 결과
-  lastResult: CrawlingResult | null;
+  // 크롤링 완료 요약 (이벤트 payload)
+  lastResult: any | null;
   
   // 사이트 분석 결과 (탭 전환 시에도 유지)
   siteAnalysisResult: CrawlingStatusCheck | null;
@@ -277,7 +277,7 @@ class CrawlerStore {
     });
   }
 
-  setResult(result: CrawlingResult) {
+  setResult(result: any) {
     setCrawlerState('lastResult', result);
   }
 

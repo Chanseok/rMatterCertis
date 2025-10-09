@@ -83,22 +83,10 @@ CREATE TABLE IF NOT EXISTS vendors (
 -- CRAWLING SESSION MANAGEMENT (Optimized)
 -- ====================================================================
 
--- Final crawling results (memory-based sessions + persistent results)
-CREATE TABLE IF NOT EXISTS crawling_results (
-    session_id TEXT PRIMARY KEY,
-    status TEXT NOT NULL,                         -- 'Completed', 'Failed', 'Stopped'
-    stage TEXT NOT NULL,                          -- 'ProductList', 'ProductDetails', 'Completed'
-    total_pages INTEGER NOT NULL DEFAULT 0,
-    products_found INTEGER NOT NULL DEFAULT 0,
-    details_fetched INTEGER NOT NULL DEFAULT 0,
-    errors_count INTEGER NOT NULL DEFAULT 0,
-    started_at DATETIME NOT NULL,
-    completed_at DATETIME,
-    execution_time_seconds INTEGER,
-    config_snapshot TEXT,                         -- JSON configuration snapshot
-    error_details TEXT,                          -- Detailed error information
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ====================================================================
+-- PERFORMANCE OPTIMIZATION INDEXES
 
 -- ====================================================================
 -- PERFORMANCE OPTIMIZATION INDEXES
@@ -123,11 +111,6 @@ CREATE INDEX IF NOT EXISTS idx_product_details_program_type ON product_details (
 -- Vendors table indexes
 CREATE INDEX IF NOT EXISTS idx_vendors_vendor_name ON vendors (vendor_name);
 CREATE INDEX IF NOT EXISTS idx_vendors_vendor_number ON vendors (vendor_number);
-
--- Crawling results indexes
-CREATE INDEX IF NOT EXISTS idx_crawling_results_status ON crawling_results (status);
-CREATE INDEX IF NOT EXISTS idx_crawling_results_started_at ON crawling_results (started_at);
-CREATE INDEX IF NOT EXISTS idx_crawling_results_stage ON crawling_results (stage);
 
 -- ====================================================================
 -- PARTIAL SYNC SESSION + OBSERVED SET (for two-phase sync)

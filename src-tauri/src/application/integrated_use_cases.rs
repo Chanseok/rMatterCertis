@@ -14,7 +14,6 @@ use crate::domain::integrated_product::DatabaseStatistics;
 use crate::domain::product::{
     Product, ProductDetail, ProductSearchCriteria, ProductSearchResult, ProductWithDetails, Vendor,
 };
-use crate::domain::session_manager::CrawlingResult;
 use crate::infrastructure::integrated_product_repository::IntegratedProductRepository;
 
 /// Integrated use cases for the new unified schema
@@ -130,31 +129,6 @@ impl IntegratedProductUseCases {
     /// Get all vendors
     pub async fn get_vendors(&self) -> Result<Vec<Vendor>> {
         self.repo.get_vendors().await
-    }
-
-    // ===============================
-    // CRAWLING SESSION MANAGEMENT
-    // ===============================
-
-    /// Save crawling result
-    pub async fn save_crawling_result(&self, result: CrawlingResult) -> Result<()> {
-        if result.session_id.trim().is_empty() {
-            return Err(anyhow!("Session ID cannot be empty"));
-        }
-
-        self.repo.save_crawling_result(&result).await
-    }
-
-    /// Get crawling results with pagination
-    pub async fn get_crawling_results(&self, page: i32, limit: i32) -> Result<Vec<CrawlingResult>> {
-        if page < 1 {
-            return Err(anyhow!("Page must be >= 1"));
-        }
-        if !(1..=100).contains(&limit) {
-            return Err(anyhow!("Limit must be between 1 and 100"));
-        }
-
-        self.repo.get_crawling_results(page, limit).await
     }
 
     // ===============================
