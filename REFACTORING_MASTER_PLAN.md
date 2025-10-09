@@ -2,18 +2,19 @@
 
 > 생성일: 2025-10-09  
 > 최종 업데이트: 2025-10-09  
+> 진행 상태: **Phase 2, 3, 4 완료** (2025-10-09)  
 > 통합 문서: refactoring-todo.md + refactoring-todo-by-gemini.md + testing-strategy-before-refactoring.md
 
 ## 📋 목차
 
 1. [실행 전략 개요](#1-실행-전략-개요)
-2. [Phase 0: 테스트 인프라 구축 (1주)](#phase-0-테스트-인프라-구축-1주)
-3. [Phase 1: 긴급 정리 (1-2일)](#phase-1-긴급-정리-1-2일)
-4. [Phase 2: 백엔드 중복 제거 (3-5일)](#phase-2-백엔드-중복-제거-3-5일)
-5. [Phase 3: 프론트엔드 정리 (2-3일)](#phase-3-프론트엔드-정리-2-3일)
-6. [Phase 4: 문서 및 스크립트 정리 (1-2일)](#phase-4-문서-및-스크립트-정리-1-2일)
-7. [Phase 5: 아키텍처 개선 (필요시)](#phase-5-아키텍처-개선-필요시)
-8. [Phase 6: CI/CD 통합 (1일)](#phase-6-cicd-통합-1일)
+2. [Phase 0: 테스트 인프라 구축 (1주)](#phase-0-테스트-인프라-구축-1주) - ⏸️ 보류
+3. [Phase 1: 긴급 정리 (1-2일)](#phase-1-긴급-정리-1-2일) - ✅ 완료 (이전 작업)
+4. [Phase 2: 백엔드 코드 품질 개선 (3-5일)](#phase-2-백엔드-코드-품질-개선-3-5일) - ✅ 완료 (2025-10-09)
+5. [Phase 3: 프론트엔드 정리 (2-3일)](#phase-3-프론트엔드-정리-2-3일) - ✅ 완료 (2025-10-09)
+6. [Phase 4: 문서 및 스크립트 정리 (1-2일)](#phase-4-문서-및-스크립트-정리-1-2일) - ✅ 완료 (2025-10-09)
+7. [Phase 5: 아키텍처 개선 (필요시)](#phase-5-아키텍처-개선-필요시) - 🔄 검증 위주
+8. [Phase 6: CI/CD 통합 (1일)](#phase-6-cicd-통합-1일) - ⏸️ 향후 계획
 9. [작업 체크리스트](#작업-체크리스트)
 10. [성공 기준 및 메트릭](#성공-기준-및-메트릭)
 
@@ -28,7 +29,64 @@
 3. **즉시 검증 (Immediate Validation)**: 변경 후 바로 테스트 실행
 4. **안전한 롤백 (Safe Rollback)**: Git branch/stash 적극 활용
 
-### 📊 현황 요약
+### 📊 진행 현황 (2025-10-09)
+
+#### ✅ Phase 1: 긴급 정리 (완료 - 이전 작업)
+- [x] 아카이브 디렉토리 삭제 (121 파일, ~30,700 라인)
+- [x] UI 3개 탭 구조 확정 (크롤링, 설정, 로컬DB)
+- [x] AnalysisTab, DatabaseDiagnostics 아카이브
+
+#### ✅ Phase 2: 백엔드 코드 품질 개선 (완료 - 2025-10-09)
+- [x] **Task 2.1**: unwrap/expect 감사 (220개 발견, HIGH 9개 수정)
+- [x] **Task 2.2**: mod.rs 검토 (deprecated events/ 디렉토리 제거)
+- [x] **Task 2.3**: clone() 최적화 (8개 패턴 수정, Arc::clone 명시)
+- [x] **Task 2.4**: events.log 개발 전용 전환 (#[cfg(debug_assertions)])
+- [x] **Task 2.5**: ts-rs 검증 (147개 타입, 수동 관리 확인)
+- [x] Bug fix: degradation note 회복 후 클리어 안 되는 버그 수정
+- 📝 **7개 커밋**, 모든 cargo check/type-check 통과
+
+#### ✅ Phase 3: 프론트엔드 정리 (완료 - 2025-10-09)
+- [x] **Task 3.1**: DiagnosticsPanel 타입 정의 (any 제거, 4개 인터페이스)
+- [x] **Task 3.2**: 백업/복원 API 타입 통합 (6개 인터페이스, 중복 제거)
+- [x] **Task 3.3**: Deprecated API 제거 (getCrawlingStatus, legacy subscriptions)
+- 📝 **3개 커밋**, 모든 type-check 통과
+
+#### ✅ Phase 4: 문서 및 스크립트 정리 (완료 - 2025-10-09)
+- [x] **Task 4.1**: UI 가이드 업데이트 (3개 탭 구조 문서화)
+- [x] **Task 4.2**: 레거시 키워드 검색 (모든 참조 유효 확인)
+- [x] **Task 4.3**: 레거시 스크립트 아카이브 (4개 파일)
+- [x] **Task 4.4**: 레거시 상태/타입 검증 (깨끗한 상태 확인)
+- 📝 **2개 커밋** (UI guide, scripts archive)
+
+#### ⏸️ Phase 0: 테스트 인프라 (보류)
+- 현재 cargo test로 기본 검증 수행 중
+- Golden test, E2E 시나리오는 필요시 추가
+
+#### 🔄 Phase 5: 아키텍처 검증 (진행 가능)
+- 검증 위주 작업 (구현 완료된 아키텍처 확인)
+
+#### 📅 Phase 6: CI/CD (향후 계획)
+- 향후 필요시 진행
+
+### 📈 성과 요약
+
+**제거된 코드량**:
+- Phase 1: ~30,700 라인
+- Phase 2-4: 추가 정리 진행 중
+
+**품질 개선**:
+- ✅ Modern Rust 2024 원칙 적용 (unwrap 제거, Arc::clone 명시)
+- ✅ TypeScript 타입 안전성 향상 (any 제거, 중앙화된 타입)
+- ✅ 개발 도구 개선 (events.log debug-only, 스크립트 정리)
+- ✅ 문서 현행화 (3개 탭 구조 반영)
+
+**Git 커밋**:
+- Phase 2: 7개 커밋
+- Phase 3: 3개 커밋
+- Phase 4: 2개 커밋
+- **총 12개 커밋**, 모든 검증 통과
+
+### 📊 기존 현황 요약 (참고)
 
 #### ✅ 완료된 작업
 - [x] `find_last_valid_page_downward` 제거 (5페이지 단위 탐색으로 통합)
@@ -511,19 +569,19 @@ rg "\.unwrap\(\)|\.expect\(" src-tauri/src --type rust | grep -v "test"
    ```
 
 **실행 계획**:
-1. [ ] `anyhow` crate 의존성 확인 (이미 추가됨)
-2. [ ] 파일별로 순차 수정 (한 번에 하나씩)
+1. [x] `anyhow` crate 의존성 확인 (이미 추가됨)
+2. [x] 파일별로 순차 수정 (한 번에 하나씩)
    - Stage 실행 로직 → 데이터베이스 경로 → HTTP 클라이언트
-3. [ ] 각 파일 수정 후 `cargo test` 실행
-4. [ ] Clippy 경고 확인: `cargo clippy --all-targets`
+3. [x] 각 파일 수정 후 `cargo test` 실행
+4. [x] Clippy 경고 확인: `cargo clippy --all-targets`
 
 **체크리스트**:
-- [ ] `stage_actor.rs`: 10개 수정
-- [ ] `strategies/default.rs`: 8개 수정
-- [ ] `database_paths.rs`: 4개 수정
-- [ ] `database_connection.rs`: 2개 수정
-- [ ] `simple_http_client.rs`: 3개 수정
-- [ ] `integrated_product_repository.rs`: 10개 수정
+- [x] ~~`stage_actor.rs`: 10개 수정~~ (HIGH priority 9개 수정됨: integrated_product_repository.rs 6개, actor_system.rs 3개)
+- [ ] `strategies/default.rs`: 8개 수정 (MEDIUM priority - 향후 작업)
+- [ ] `database_paths.rs`: 4개 수정 (MEDIUM priority - 향후 작업)
+- [ ] `database_connection.rs`: 2개 수정 (LOW priority - 향후 작업)
+- [ ] `simple_http_client.rs`: 3개 수정 (LOW priority - 향후 작업)
+- [x] `integrated_product_repository.rs`: 6개 수정 ✅ (2025-10-09 완료)
 
 ### Task 2.2: mod.rs 사용 검토 및 제거
 
@@ -542,15 +600,15 @@ src-tauri/src/
 ```
 
 **조사 필요**:
-- [ ] `infrastructure/mod.rs` → `infrastructure.rs` 이동 가능 여부
-- [ ] 다른 `mod.rs` 파일 존재 여부 확인
+- [x] `infrastructure/mod.rs` → `infrastructure.rs` 이동 가능 여부 (검토 완료: directory-style 유지)
+- [x] 다른 `mod.rs` 파일 존재 여부 확인 (완료: events/ 디렉토리 제거됨)
   ```bash
   find src-tauri/src -name "mod.rs" -type f
   ```
 
 **참고**: 현재 `infrastructure/mod.rs`는 주석에 "Directory-style module"이라고 명시되어 있으므로, 이미 Modern 스타일로 구현됨 (유지)
 
-**결정**: ✅ 현재 구조 유지 (directory-style은 허용됨, `mod.rs` 남용만 금지)
+**결정**: ✅ 현재 구조 유지 (directory-style은 허용됨, `mod.rs` 남용만 금지) - **완료 (2025-10-09)**
 
 ### Task 2.3: 불필요한 clone() 제거
 
@@ -568,16 +626,17 @@ let executor = integration_service.clone(); // Arc::clone은 cheap
 ```
 
 **조사 항목**:
-1. [ ] 각 `clone()` 사용처의 타입 확인
-2. [ ] 불필요한 intermediate clone 제거
-3. [ ] `Arc::clone(&x)` 명시적 사용 (가독성)
+1. [x] 각 `clone()` 사용처의 타입 확인 (완료)
+2. [x] 불필요한 intermediate clone 제거 (완료: 8개 패턴 수정)
+3. [x] `Arc::clone(&x)` 명시적 사용 (가독성) (완료)
 
 **체크리스트**:
-- [ ] `real_crawling_commands.rs`: 1개
-- [ ] `shallow_sync_commands.rs`: 1개
-- [ ] `crawling_integration.rs`: 1개
-- [ ] `session_actor.rs`: 1개 (plan.clone → Arc::clone)
-- [ ] `lib.rs`: 1개 (app_state.clone())
+- [x] `real_crawling_commands.rs`: 1개 ✅
+- [x] `shallow_sync_commands.rs`: 1개 ✅
+- [x] `crawling_integration.rs`: 1개 ✅
+- [x] `session_actor.rs`: 1개 (plan.clone → Arc::clone) ✅
+- [x] `lib.rs`: 1개 (app_state.clone() - 문서화됨, 소유권 분할 필요) ✅
+- [x] 기타 3개 파일 수정 완료 ✅ (2025-10-09 완료)
 
 ### Task 2.4: events.log 개발 전용으로 전환
 
@@ -687,15 +746,17 @@ pub struct LoggingConfig {
 ```
 
 **체크리스트**:
-- [ ] `get_events_log_dir()` 함수 구현 (#[cfg(debug_assertions)])
-- [ ] logging.rs에서 events.log 레이어를 #[cfg(debug_assertions)]로 감싸기
-- [ ] 기존 4곳의 events_appender 경로 수정 (line 332, 339, 429, 435)
-- [ ] registry 초기화를 조건부 컴파일로 분기 (debug: events_layer 포함, release: 제외)
-- [ ] (선택) LoggingConfig에 enable_events_log 필드 추가
-- [ ] (선택) UI 설정 탭에 events.log 토글 추가 (import.meta.env.DEV만)
-- [ ] 테스트: `cargo build` (debug) → `src-tauri/target/debug/logs/events.log` 생성 확인
-- [ ] 테스트: `cargo build --release` → events.log 미생성 확인
-- [ ] 문서: 개발자 가이드에 events.log 사용법 추가 (actor-event, kpi.* 타겟 설명)
+- [x] `get_events_log_dir()` 함수 구현 (#[cfg(debug_assertions)]) ✅
+- [x] logging.rs에서 events.log 레이어를 #[cfg(debug_assertions)]로 감싸기 ✅
+- [x] 기존 4곳의 events_appender 경로 수정 (line 332, 339, 429, 435) ✅
+- [x] registry 초기화를 조건부 컴파일로 분기 (debug: events_layer 포함, release: 제외) ✅
+- [ ] (선택) LoggingConfig에 enable_events_log 필드 추가 (향후 필요시)
+- [ ] (선택) UI 설정 탭에 events.log 토글 추가 (import.meta.env.DEV만) (향후 필요시)
+- [x] 테스트: `cargo build` (debug) → `src-tauri/target/debug/logs/events.log` 생성 확인 ✅
+- [x] 테스트: `cargo build --release` → events.log 미생성 확인 ✅
+- [x] 문서: 개발자 가이드에 events.log 사용법 추가 (actor-event, kpi.* 타겟 설명) ✅
+
+**완료 (2025-10-09)**: events.log는 이제 debug 빌드 전용이며, session 마커와 함께 개발 경로에만 생성됨
 
 **참고**:
 - Debug 빌드 경로: `src-tauri/target/debug/logs/events.log`
@@ -760,12 +821,14 @@ pub struct MyResult {
 ```
 
 **체크리스트**:
-- [ ] 생성된 타입 파일 목록 확인
-- [ ] #[derive(TS)] 누락된 구조체 검색
-- [ ] 프론트엔드에서 수동 정의된 타입과 비교
-- [ ] 중복 타입 정의 제거
-- [ ] `npm run type-check` 통과
-- [ ] 타입 생성 스크립트 문서화 (scripts/generate_types.sh 등)
+- [x] 생성된 타입 파일 목록 확인 ✅ (bindings/ 디렉토리 없음 - 수동 관리 확인됨)
+- [x] #[derive(TS)] 누락된 구조체 검색 ✅ (147개 타입 확인됨)
+- [x] 프론트엔드에서 수동 정의된 타입과 비교 ✅ (수동 타입 관리 방식 확인)
+- [ ] 중복 타입 정의 제거 (향후 작업 - 필요시 자동 생성 전환)
+- [x] `npm run type-check` 통과 ✅
+- [x] 타입 생성 스크립트 문서화 (scripts/generate_types.sh 등) ✅
+
+**완료 (2025-10-09)**: ts-rs는 #[derive(TS)] 147개 타입에 적용되어 있으나, 자동 생성은 비활성화 상태. 수동 TypeScript 타입 관리 방식으로 일관되게 운영 중.
 
 **참고**:
 - ts-rs 설정: `src-tauri/Cargo.toml`의 ts-rs dependency
@@ -831,18 +894,20 @@ export interface DuplicatePosition {
 ```
 
 **실행 순서**:
-1. [ ] `src/types/diagnostics.ts` 생성
-2. [ ] 타입 정의 추가
-3. [ ] DiagnosticsPanel에서 타입 import
-4. [ ] `any` 제거
-5. [ ] `npm run type-check` 통과
+1. [x] `src/types/diagnostics.ts` 생성 ✅
+2. [x] 타입 정의 추가 ✅
+3. [x] DiagnosticsPanel에서 타입 import ✅
+4. [x] `any` 제거 ✅
+5. [x] `npm run type-check` 통과 ✅
 
 **체크리스트**:
-- [ ] 타입 파일 생성
-- [ ] 모든 인터페이스 정의
-- [ ] DiagnosticsPanel 적용
-- [ ] CrawlingEngineTabSimple 적용
-- [ ] `any` 제거 확인
+- [x] 타입 파일 생성 ✅
+- [x] 모든 인터페이스 정의 (DiagnosticsResult, GroupSummary, PageGap, DuplicatePosition) ✅
+- [x] DiagnosticsPanel 적용 ✅
+- [x] CrawlingEngineTabSimple 적용 ✅
+- [x] `any` 제거 확인 (3개 For 루프) ✅
+
+**완료 (2025-10-09)**: DiagnosticsResult 타입 시스템 구축 완료
 
 ### Task 3.2: 백업/복원 API 타입 통합
 
@@ -877,15 +942,18 @@ export interface ImportOptions {
 ```
 
 **실행 순서**:
-1. [ ] `src/types/backup.ts` 생성
-2. [ ] 타입 정의
-3. [ ] `tauri-api.ts` 적용
-4. [ ] 관련 컴포넌트 타입 수정
+1. [x] `src/types/backup.ts` 생성 ✅
+2. [x] 타입 정의 ✅
+3. [x] `tauri-api.ts` 적용 ✅
+4. [x] 관련 컴포넌트 타입 수정 ✅
 
 **체크리스트**:
-- [ ] 타입 파일 생성
-- [ ] API 서비스 적용
-- [ ] 타입 체크 통과
+- [x] 타입 파일 생성 (ImportResult, ExportFullDatabaseResult, ImportFullDatabaseResult, DeleteAllRecordsResult, DeleteRangeResult, PreviewDeleteRangeResult) ✅
+- [x] API 서비스 적용 (6개 메서드 타입 교체) ✅
+- [x] 타입 체크 통과 ✅
+- [x] 중복 backup_file?: string | null 정의 제거 (3곳) ✅
+
+**완료 (2025-10-09)**: 백업/복원 API 타입 중앙화 완료
 
 ### Task 3.3: Deprecated API 제거
 
@@ -908,19 +976,21 @@ async getCrawlingProgress(): Promise<...> { ... } // ❌ 제거
 ```
 
 **실행 순서**:
-1. [ ] deprecated 메서드 사용처 확인
+1. [x] deprecated 메서드 사용처 확인 ✅
    ```bash
    rg "getCrawlingProgress" src/
    ```
-2. [ ] 새 API로 전환 (또는 제거)
-3. [ ] deprecated 메서드 삭제
-4. [ ] 주석 정리
+2. [x] 새 API로 전환 (또는 제거) ✅ (사용처 없음 확인)
+3. [x] deprecated 메서드 삭제 ✅ (getCrawlingStatus 제거)
+4. [x] 주석 정리 ✅ (legacy subscription 주석 정리)
 
 **체크리스트**:
-- [ ] 사용처 파악
-- [ ] 마이그레이션 or 제거
-- [ ] deprecated 코드 삭제
-- [ ] 주석 정리
+- [x] 사용처 파악 (platform adapter만 사용, tauri-api.ts는 미사용) ✅
+- [x] 마이그레이션 or 제거 (제거 완료) ✅
+- [x] deprecated 코드 삭제 (getCrawlingStatus, CrawlingProgress import 제거) ✅
+- [x] 주석 정리 (legacy subscriptions, detailed-crawling-event 주석 제거) ✅
+
+**완료 (2025-10-09)**: Deprecated API 정리 완료
 
 ---
 
@@ -960,9 +1030,11 @@ async getCrawlingProgress(): Promise<...> { ... } // ❌ 제거
 ```
 
 **체크리스트**:
-- [ ] 분석 탭 섹션 "Deprecated" 표시
-- [ ] 현재 3개 탭 위주로 재구성
-- [ ] 탭 추가 방법 간략 가이드 추가
+- [x] 분석 탭 섹션 "Deprecated" 표시 ✅
+- [x] 현재 3개 탭 위주로 재구성 (크롤링 엔진, 설정, 로컬DB) ✅
+- [x] 탭 추가 방법 간략 가이드 추가 ✅
+
+**완료 (2025-10-09)**: UI 가이드 문서 현행화 완료
 
 ### Task 4.2: 레거시 키워드 검색 및 정리
 
@@ -984,10 +1056,12 @@ rg -i "dashboard|analysis tab|actor system" docs/ guide/
 - "Actor System Tab" → "크롤링 엔진 (내부 아키텍처)" 또는 제거
 
 **체크리스트**:
-- [ ] 키워드 검색 실행
-- [ ] 발견된 문서 목록 작성
-- [ ] 각 문서 업데이트
-- [ ] 크로스 체크
+- [x] 키워드 검색 실행 ✅
+- [x] 발견된 문서 목록 작성 ✅
+- [x] 각 문서 업데이트 (조치 불필요 - 모든 참조가 유효함) ✅
+- [x] 크로스 체크 ✅
+
+**완료 (2025-10-09)**: 레거시 키워드 검증 완료 (localDbDashboardStore는 현재 활성 스토어, 아키텍처 문서는 역사적 참조로 보존)
 
 ### Task 4.3: 레거시 스크립트 정리
 
@@ -1022,10 +1096,12 @@ mv scripts/check_csa_list_pages.mjs scripts/_archived_20251009/
 ```
 
 **체크리스트**:
-- [ ] dev.sh 중복 분석 및 통합
-- [ ] scripts/ 스크립트 용도 파악
-- [ ] 미사용 스크립트 아카이브
-- [ ] README 업데이트 (스크립트 용도 문서화)
+- [x] dev.sh 중복 분석 및 통합 (src-tauri/dev.sh는 shim - 올바른 패턴) ✅
+- [x] scripts/ 스크립트 용도 파악 ✅
+- [x] 미사용 스크립트 아카이브 (4개: check_csa_list_pages.mjs, diagnose_canonical_page.mjs, test_html_parsing.sh, test_site_structure.sh) ✅
+- [x] README 업데이트 (스크립트 용도 문서화) ✅ (아카이브 디렉토리에 README.md 생성)
+
+**완료 (2025-10-09)**: 레거시 스크립트 정리 완료 (scripts/_archived_20251009/ 생성)
 
 ### Task 4.4: 레거시 상태 관리 및 타입 정리
 
@@ -1053,10 +1129,12 @@ interface AnalyticsReport { ... } // ❌ 제거
 ```
 
 **체크리스트**:
-- [ ] 스토어 레거시 상태 검색
-- [ ] 타입 레거시 정의 검색
-- [ ] 미사용 항목 제거
-- [ ] `ts-prune` 재실행 확인
+- [x] 스토어 레거시 상태 검색 ✅ (발견 없음)
+- [x] 타입 레거시 정의 검색 ✅ (발견 없음)
+- [x] 미사용 항목 제거 ✅ (조치 불필요 - 이미 깨끗한 상태)
+- [x] `ts-prune` 재실행 확인 ✅ (npm script 없음, 수동 검증 완료)
+
+**완료 (2025-10-09)**: 레거시 상태/타입 검증 완료 (깨끗한 상태 확인됨)
 
 ---
 
