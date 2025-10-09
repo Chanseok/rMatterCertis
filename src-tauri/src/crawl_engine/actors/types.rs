@@ -1223,6 +1223,11 @@ pub struct ExecutionPlan {
     /// 크롤링 범위 목록 (여러 범위를 순차 처리)
     pub crawling_ranges: Vec<PageRange>,
 
+    /// 직접 지정된 제품 URL 목록 (제품 보완 동기화용)
+    /// 이 필드가 Some이면 crawling_ranges 대신 이 URL 목록을 사용
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub product_urls: Option<Vec<ProductUrl>>,
+
     /// 배치 크기
     pub batch_size: u32,
 

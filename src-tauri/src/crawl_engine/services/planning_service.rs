@@ -528,6 +528,7 @@ impl PlanningStrategy for IntelligentPlanningStrategy {
             plan_id,
             session_id,
             crawling_ranges,
+            product_urls: None, // 범위 기반 크롤링
             batch_size: app_config.user.batch.batch_size,
             concurrency_limit: app_config.user.max_concurrent_requests,
             estimated_duration_secs: crawling_plan.total_estimated_duration_secs,
@@ -756,6 +757,7 @@ impl PlanningStrategy for ManualPlanningStrategy {
             plan_id,
             session_id,
             crawling_ranges: ranges,
+            product_urls: None, // 범위 기반 크롤링
             batch_size,
             concurrency_limit: app_config.user.max_concurrent_requests,
             estimated_duration_secs: 0,
@@ -840,6 +842,7 @@ mod tests {
                     reverse_order: true,
                 },
             ],
+            product_urls: None, // 테스트용
             batch_size: 2,
             concurrency_limit: 3,
             estimated_duration_secs: 0,
@@ -899,6 +902,7 @@ mod tests {
                 estimated_products: 36,
                 reverse_order: true,
             }],
+            product_urls: None, // 테스트용
             batch_size: 2,
             concurrency_limit: 3,
             estimated_duration_secs: 0,

@@ -8,7 +8,7 @@ use crate::domain::services::crawling_services::StatusChecker;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::Arc;
-use tauri::{Emitter, Manager, State};
+use tauri::{Manager, State};
 use tracing::info;
 use ts_rs::TS;
 
@@ -239,29 +239,114 @@ pub async fn analyze_missing_details(
 }
 
 /// 보완 크롤링: certification_date가 NULL인 제품들의 상세 정보를 실제로 재크롤링
+/// SessionActor 기반으로 백그라운드에서 실행되며, 중지 가능합니다.
 ///
 /// # Errors
 /// Returns error if crawling fails
 #[tauri::command]
 pub async fn start_complement_crawl(
     app: tauri::AppHandle,
-    app_state: State<'_, AppState>,
 ) -> Result<ComplementCrawlResult, String> {
-    let start_time = std::time::Instant::now();
-    info!("🔧 Starting complement crawl for incomplete products (missing cert_date, transport, or device_type_ids)");
+    info!("🔧 Starting complement crawl (SessionActor-based)");
     
-    // Phase 1: 핵심 필드가 누락된 제품 분석
+    // Phase 1: 누락 제품 조회
+    let missing_products = query_missing_products(&app).await?;
+    
+    if missing_products.is_empty() {
+        info!("✨ No incomplete products found");
+        return Ok(ComplementCrawlResult {
+            urls_targeted: 0,
+            urls_completed: 0,
+            urls_failed: 0,
+            duration_ms: 0,
+        });
+    }
+    
+    info!("📝 Found {} incomplete products (missing cert_date/transport/device_type_ids)", missing_products.len());
+    
+    // Phase 2: ExecutionPlan 생성
+    use crate::application::AppState;
+    use crate::crawl_engine::actors::types::{ExecutionPlan, PlanInputSnapshot};
+    use chrono::Utc;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    let app_state = app.state::<AppState>();
+    let config_guard = app_state.config.read().await;
+    let app_config = config_guard.clone();
+    drop(config_guard);
+    
+    let session_id = format!("complement-{}", Utc::now().timestamp_millis());
+    let plan_id = format!("plan-complement-{}", Utc::now().timestamp_millis());
+    
+    // 계획 해시 생성
+    let mut hasher = DefaultHasher::new();
+    session_id.hash(&mut hasher);
+    missing_products.len().hash(&mut hasher);
+    let plan_hash = format!("{:x}", hasher.finish());
+    
+    let execution_plan = ExecutionPlan {
+        plan_id,
+        session_id: session_id.clone(),
+        crawling_ranges: vec![], // URL 직접 제공 방식
+        product_urls: Some(missing_products.clone()), // 🎯 직접 URL 목록 제공
+        batch_size: 20,
+        concurrency_limit: app_config.user.max_concurrent_requests,
+        estimated_duration_secs: 0,
+        created_at: Utc::now(),
+        analysis_summary: format!("Complement crawl: {} products", missing_products.len()),
+        original_strategy: "ComplementCrawl".to_string(),
+        input_snapshot: PlanInputSnapshot {
+            total_pages: 0,
+            products_on_last_page: 0,
+            db_max_page_id: None,
+            db_max_index_in_page: None,
+            db_total_products: missing_products.len() as u64,
+            page_range_limit: 0,
+            batch_size: 20,
+            concurrency_limit: app_config.user.max_concurrent_requests,
+            created_at: Utc::now(),
+        },
+        plan_hash,
+        skip_duplicate_urls: false,
+        kpi_meta: Some(crate::crawl_engine::actors::types::ExecutionPlanKpi {
+            total_ranges: 0,
+            total_pages: 0,
+            batches: (missing_products.len() + 19) / 20, // 20개씩 배치
+            strategy: "ComplementCrawl".to_string(),
+            created_at: Utc::now(),
+        }),
+        contract_version: 1, // ACTOR_CONTRACT_VERSION은 &str이므로 직접 1 사용
+        page_slots: vec![], // URL 기반이므로 page_slots 불필요
+        list_only: false,
+    };
+    
+    // Phase 3: SessionActor 실행
+    let (_session_id, _) = crate::commands::crawling::actor_system::bootstrap_and_spawn_session(
+        &app,
+        execution_plan,
+        app_config,
+    ).await?;
+    
+    info!("✅ Complement crawl session started: {}", session_id);
+    
+    Ok(ComplementCrawlResult {
+        urls_targeted: missing_products.len() as u32,
+        urls_completed: 0, // 백그라운드 실행이므로 0
+        urls_failed: 0,    // 완료는 이벤트로 전달
+        duration_ms: 0,
+    })
+}
+
+/// 핵심 필드가 누락된 제품 목록 조회
+async fn query_missing_products(app: &tauri::AppHandle) -> Result<Vec<crate::domain::product_url::ProductUrl>, String> {
+    use crate::application::AppState;
+    
+    let app_state = app.state::<AppState>();
     let pool = app_state.get_database_pool().await?;
-    let repo = crate::infrastructure::integrated_product_repository::IntegratedProductRepository::new(pool.clone());
     
-    // certification_date, transport_interface, primary_device_type_ids 중 하나라도 NULL인 제품 조회
     let query = r"
-        SELECT 
-            pd.url,
-            pd.page_id,
-            pd.index_in_page,
-            p.manufacturer,
-            p.model
+        SELECT pd.url, pd.page_id, pd.index_in_page
         FROM product_details pd
         INNER JOIN products p ON pd.url = p.url
         WHERE pd.certification_date IS NULL
@@ -273,188 +358,19 @@ pub async fn start_complement_crawl(
     ";
     
     let rows = sqlx::query(query)
-        .fetch_all(repo.pool())
+        .fetch_all(&pool)
         .await
-        .map_err(|e| format!("Failed to query incomplete products: {}", e))?;
+        .map_err(|e| format!("Failed to query missing products: {}", e))?;
     
-    let missing_details: Vec<MissingProductInfo> = rows
-        .into_iter()
-        .map(|row| MissingProductInfo {
+    let product_urls = rows.into_iter().map(|row| {
+        crate::domain::product_url::ProductUrl {
             url: row.get("url"),
             page_id: row.get("page_id"),
             index_in_page: row.get("index_in_page"),
-            manufacturer: row.get("manufacturer"),
-            model: row.get("model"),
-        })
-        .collect();
-    
-    if missing_details.is_empty() {
-        info!("✨ No incomplete products found (all have cert_date, transport, and device_type_ids)");
-        return Ok(ComplementCrawlResult {
-            urls_targeted: 0,
-            urls_completed: 0,
-            urls_failed: 0,
-            duration_ms: start_time.elapsed().as_millis() as u64,
-        });
-    }
-    
-    info!("📝 Found {} incomplete products (missing cert_date/transport/device_type_ids), starting concurrent re-crawl", missing_details.len());
-    
-    // Phase 2: 크롤링 인프라 준비
-    // HTTP 클라이언트 및 데이터 추출기 생성
-    use crate::infrastructure::{HttpClient, MatterDataExtractor};
-    
-    let http_client = HttpClient::create_from_global_config()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-    
-    let data_extractor = MatterDataExtractor::new()
-        .map_err(|e| format!("Failed to create data extractor: {}", e))?;
-    
-    // ProductDetailCollector 설정
-    use crate::infrastructure::crawling_service_impls::{ProductDetailCollectorImpl, CollectorConfig};
-    use std::sync::Arc;
-    use std::time::Duration;
-    
-    let config_guard = app_state.config.read().await;
-    let app_config = config_guard.clone();
-    drop(config_guard);
-    
-    // 동시성 설정: 최대 18개 동시 요청 (성능 최적화)
-    let concurrency = 18.min(missing_details.len()); // 최대 18개 또는 총 제품 수
-    let detail_config = CollectorConfig {
-        batch_size: concurrency as u32,
-        max_concurrent: concurrency as u32,
-        concurrency: concurrency as u32,
-        delay_between_requests: Duration::from_millis(app_config.user.request_delay_ms),
-        delay_ms: app_config.user.request_delay_ms,
-        retry_attempts: 3,
-        retry_max: 3,
-    };
-    
-    let collector = ProductDetailCollectorImpl::new(
-        Arc::new(http_client),
-        Arc::new(data_extractor),
-        detail_config,
-    );
-    
-    let urls_targeted = missing_details.len() as u32;
-    let mut completed = 0;
-    let mut failed = 0;
-    
-    // Phase 3: 배치로 나누어 병렬 크롤링 수행
-    use crate::domain::product_url::ProductUrl;
-    use tokio_util::sync::CancellationToken;
-    
-    let batch_size = concurrency;
-    let total_batches = (missing_details.len() + batch_size - 1) / batch_size;
-    
-    // 🎯 SessionStarted 이벤트 발행
-    let session_id = format!("complement-crawl-{}", chrono::Utc::now().timestamp_millis());
-    let _ = app.emit("actor-event", serde_json::json!({
-        "variant": "SessionStarted",
-        "session_id": &session_id,
-        "total_products": urls_targeted,
-        "total_batches": total_batches,
-        "concurrency": concurrency,
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-    }));
-    
-    for (batch_idx, chunk) in missing_details.chunks(batch_size).enumerate() {
-        info!("🔄 Processing batch {}/{} ({} products)", batch_idx + 1, total_batches, chunk.len());
-        
-        // ProductUrl 배열 생성
-        let product_urls: Vec<ProductUrl> = chunk.iter().map(|product_info| {
-            ProductUrl {
-                url: product_info.url.clone(),
-                page_id: product_info.page_id.unwrap_or(0),
-                index_in_page: product_info.index_in_page.unwrap_or(0),
-            }
-        }).collect();
-        
-        // 배치 전체를 한 번에 크롤링 (병렬 처리)
-        let batch_session_id = format!("{}-batch-{}", session_id, batch_idx);
-        let batch_id = format!("batch-{}", batch_idx);
-        
-        match collector.collect_details_with_async_events(
-            &product_urls,
-            Some(CancellationToken::new()),
-            batch_session_id,
-            batch_id,
-        ).await {
-            Ok(details) => {
-                let details_count = details.len();
-                info!("✅ Batch {}/{} collected {} details", batch_idx + 1, total_batches, details_count);
-                
-                // 수집된 각 제품을 DB에 저장
-                for detail in details {
-                    match repo.create_or_update_product_detail(&detail).await {
-                        Ok(_) => {
-                            completed += 1;
-                            info!("💾 Saved: {}", detail.url);
-                        }
-                        Err(e) => {
-                            failed += 1;
-                            tracing::warn!("❌ Failed to save: {} - {}", detail.url, e);
-                        }
-                    }
-                }
-                
-                // 수집 실패한 제품 계산
-                let batch_failed = chunk.len() - details_count;
-                if batch_failed > 0 {
-                    failed += batch_failed as u32;
-                    tracing::warn!("⚠️ Batch {}/{}: {} products failed to crawl", 
-                                   batch_idx + 1, total_batches, batch_failed);
-                }
-            }
-            Err(e) => {
-                failed += chunk.len() as u32;
-                tracing::warn!("❌ Batch {}/{} failed entirely: {}", batch_idx + 1, total_batches, e);
-            }
         }
-        
-        // 🎯 StageProgress 이벤트 발행 (배치 완료 시마다)
-        let _ = app.emit("actor-event", serde_json::json!({
-            "variant": "StageProgress",
-            "session_id": &session_id,
-            "current_batch": batch_idx + 1,
-            "total_batches": total_batches,
-            "completed_products": completed,
-            "failed_products": failed,
-            "progress_percentage": ((batch_idx + 1) as f64 / total_batches as f64 * 100.0) as u32,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        }));
-        
-        // 배치 간 짧은 대기 (rate limiting)
-        if batch_idx < total_batches - 1 {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
-    }
+    }).collect();
     
-    let duration_ms = start_time.elapsed().as_millis() as u64;
-    
-    info!(
-        "🎉 Complement crawl completed: {}/{} successful, {} failed ({}ms, {} batches with concurrency={})",
-        completed, urls_targeted, failed, duration_ms, total_batches, concurrency
-    );
-    
-    // 🎯 SessionCompleted 이벤트 발행
-    let _ = app.emit("actor-event", serde_json::json!({
-        "variant": "SessionCompleted",
-        "session_id": &session_id,
-        "total_products": urls_targeted,
-        "completed_products": completed,
-        "failed_products": failed,
-        "duration_ms": duration_ms,
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-    }));
-    
-    Ok(ComplementCrawlResult {
-        urls_targeted,
-        urls_completed: completed,
-        urls_failed: failed,
-        duration_ms,
-    })
+    Ok(product_urls)
 }
 
 /// 스마트 동기화: 얕은 크롤링 → 진단 → 누락 제품만 보완 크롤링

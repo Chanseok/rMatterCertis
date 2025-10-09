@@ -753,6 +753,7 @@ pub async fn resume_from_token(
         plan_id: format!("plan_{}", uuid::Uuid::new_v4()),
         session_id: new_session_id.clone(),
         crawling_ranges: ranges,
+        product_urls: None, // 범위 기반 크롤링
         batch_size: batch_size_from_token,
         concurrency_limit: concurrency_from_token,
         estimated_duration_secs: 0,
@@ -1199,6 +1200,7 @@ async fn build_execution_plan_from_explicit_pages(
         plan_id,
         session_id,
         crawling_ranges: ranges,
+        product_urls: None, // 범위 기반 크롤링
         batch_size: app_config.user.batch.batch_size,
         concurrency_limit: app_config.user.max_concurrent_requests,
         estimated_duration_secs: 0,
