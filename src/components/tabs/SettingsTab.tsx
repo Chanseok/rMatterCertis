@@ -132,22 +132,186 @@ export const SettingsTab: Component = () => {
             <legend class="px-2 text-lg font-semibold text-gray-800">
               핵심 설정
             </legend>
-            {/* 처리량 · 동시성 */}
+            {/* 🔴 동시성 & 속도 제어 (Concurrency & Rate Limiting) */}
             <div class="mt-4">
               <div class="flex items-center gap-2 mb-2">
-                <span class="w-1.5 h-4 rounded bg-indigo-300"></span>
+                <span class="w-1.5 h-4 rounded bg-red-400"></span>
                 <div class="text-sm font-semibold text-gray-800">
-                  처리량 · 동시성
+                  🔴 동시성 & 속도 제어
+                </div>
+                <span class="text-xs text-gray-500 ml-auto">서버 부하 제어 핵심 설정</span>
+              </div>
+              
+              {/* 안내 메시지 */}
+              <div class="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div class="flex items-start gap-2">
+                  <span class="text-blue-600 text-sm">💡</span>
+                  <div class="flex-1 text-xs text-blue-800 leading-relaxed">
+                    <strong>설정 간 관계:</strong> "최대 동시 요청"은 모든 작업의 상한선입니다. 
+                    목록/상세 동시 처리는 이 값을 초과할 수 없습니다. 
+                    RPS는 초당 요청 수를 제한하며, 일반적으로 최대 동시 요청보다 크거나 같게 설정합니다.
+                  </div>
                 </div>
               </div>
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+              {/* 전역 제한 (Global Limits) */}
+              <div class="mb-4 p-3 bg-red-50/50 border border-red-200 rounded-lg">
+                <div class="text-xs font-semibold text-red-800 mb-2">⚠️ 전역 제한 (Global Limits)</div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-red-300 bg-white hover:bg-red-50/30 transition p-3">
+                    <div class="flex-1">
+                      <div class="flex items-center gap-1">
+                        <span class="text-red-600">🔴</span>
+                        <div class="text-sm font-medium text-gray-800">
+                          최대 동시 요청
+                        </div>
+                      </div>
+                      <div class="text-xs text-gray-500">
+                        모든 작업의 동시 실행 상한선
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <input
+                        type="number"
+                        class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                        value={settingsState.getNestedValue(
+                          "user.max_concurrent_requests"
+                        )}
+                        min={1}
+                        max={100}
+                        onInput={(e) =>
+                          settingsState.updateNestedField(
+                            "user.max_concurrent_requests",
+                            +e.currentTarget.value
+                          )
+                        }
+                      />
+                      <span class="text-sm text-gray-500">개</span>
+                    </div>
+                  </label>
+                  <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-red-300 bg-white hover:bg-red-50/30 transition p-3">
+                    <div class="flex-1">
+                      <div class="flex items-center gap-1">
+                        <span class="text-red-600">🔴</span>
+                        <div class="text-sm font-medium text-gray-800">
+                          초당 요청 제한 (RPS)
+                        </div>
+                      </div>
+                      <div class="text-xs text-gray-500">
+                        1초에 보낼 수 있는 최대 요청 수
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <input
+                        type="number"
+                        class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-red-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                        value={
+                          settingsState.getNestedValue(
+                            "user.crawling.workers.max_requests_per_second"
+                          ) ?? ""
+                        }
+                        min={1}
+                        max={1000}
+                        onInput={(e) =>
+                          settingsState.updateNestedField(
+                            "user.crawling.workers.max_requests_per_second",
+                            e.currentTarget.value ? +e.currentTarget.value : null
+                          )
+                        }
+                      />
+                      <span class="text-sm text-gray-500">req/s</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* 작업별 동시성 (Task-specific Concurrency) */}
+              <div class="p-3 bg-yellow-50/50 border border-yellow-200 rounded-lg">
+                <div class="text-xs font-semibold text-yellow-800 mb-2">작업별 동시성 (Task-specific)</div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-yellow-300 bg-white hover:bg-yellow-50/30 transition p-3">
+                    <div class="flex-1">
+                      <div class="flex items-center gap-1">
+                        <span class="text-yellow-600">🟡</span>
+                        <div class="text-sm font-medium text-gray-800">
+                          목록 동시 처리
+                        </div>
+                      </div>
+                      <div class="text-xs text-gray-500">
+                        리스트 페이지 처리 동시성 (≤ 최대 동시 요청)
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <input
+                        type="number"
+                        class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-yellow-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                        value={settingsState.getNestedValue(
+                          "user.crawling.workers.list_page_max_concurrent"
+                        )}
+                        min={1}
+                        max={1000}
+                        onInput={(e) =>
+                          settingsState.updateNestedField(
+                            "user.crawling.workers.list_page_max_concurrent",
+                            +e.currentTarget.value
+                          )
+                        }
+                      />
+                      <span class="text-sm text-gray-500">개</span>
+                    </div>
+                  </label>
+                  <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-yellow-300 bg-white hover:bg-yellow-50/30 transition p-3">
+                    <div class="flex-1">
+                      <div class="flex items-center gap-1">
+                        <span class="text-yellow-600">🟡</span>
+                        <div class="text-sm font-medium text-gray-800">
+                          상세 동시 처리
+                        </div>
+                      </div>
+                      <div class="text-xs text-gray-500">
+                        상세 페이지 처리 동시성 (≤ 최대 동시 요청)
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <input
+                        type="number"
+                        class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-yellow-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                        value={settingsState.getNestedValue(
+                          "user.crawling.workers.product_detail_max_concurrent"
+                        )}
+                        min={1}
+                        max={1000}
+                        onInput={(e) =>
+                          settingsState.updateNestedField(
+                            "user.crawling.workers.product_detail_max_concurrent",
+                            +e.currentTarget.value
+                          )
+                        }
+                      />
+                      <span class="text-sm text-gray-500">개</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* ⏱️ 타임아웃 설정 (Timeout Settings) */}
+            <div class="mt-6">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="w-1.5 h-4 rounded bg-orange-400"></span>
+                <div class="text-sm font-semibold text-gray-800">
+                  ⏱️ 타임아웃 설정
+                </div>
+                <span class="text-xs text-gray-500 ml-auto">응답 대기 시간 제한</span>
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
                     <div class="text-sm font-medium text-gray-800">
-                      최대 동시 요청
+                      요청 타임아웃
                     </div>
                     <div class="text-xs text-gray-500">
-                      동시에 보낼 수 있는 요청 개수
+                      HTTP 요청 최대 대기 시간
                     </div>
                   </div>
                   <div class="flex items-center gap-2">
@@ -155,114 +319,31 @@ export const SettingsTab: Component = () => {
                       type="number"
                       class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                       value={settingsState.getNestedValue(
-                        "user.max_concurrent_requests"
+                        "user.crawling.workers.request_timeout_seconds"
                       )}
                       min={1}
-                      max={100}
+                      max={600}
                       onInput={(e) =>
                         settingsState.updateNestedField(
-                          "user.max_concurrent_requests",
+                          "user.crawling.workers.request_timeout_seconds",
                           +e.currentTarget.value
                         )
                       }
                     />
-                    <span class="text-sm text-gray-500">개</span>
-                  </div>
-                </label>
-                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
-                  <div class="flex-1">
-                    <div class="text-sm font-medium text-gray-800">
-                      목록 동시 처리
-                    </div>
-                    <div class="text-xs text-gray-500">
-                      리스트 페이지 처리 동시성
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <input
-                      type="number"
-                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
-                      value={settingsState.getNestedValue(
-                        "user.crawling.workers.list_page_max_concurrent"
-                      )}
-                      min={1}
-                      max={1000}
-                      onInput={(e) =>
-                        settingsState.updateNestedField(
-                          "user.crawling.workers.list_page_max_concurrent",
-                          +e.currentTarget.value
-                        )
-                      }
-                    />
-                    <span class="text-sm text-gray-500">개</span>
-                  </div>
-                </label>
-                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
-                  <div class="flex-1">
-                    <div class="text-sm font-medium text-gray-800">
-                      상세 동시 처리
-                    </div>
-                    <div class="text-xs text-gray-500">
-                      상세 페이지 처리 동시성
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <input
-                      type="number"
-                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
-                      value={settingsState.getNestedValue(
-                        "user.crawling.workers.product_detail_max_concurrent"
-                      )}
-                      min={1}
-                      max={1000}
-                      onInput={(e) =>
-                        settingsState.updateNestedField(
-                          "user.crawling.workers.product_detail_max_concurrent",
-                          +e.currentTarget.value
-                        )
-                      }
-                    />
-                    <span class="text-sm text-gray-500">개</span>
-                  </div>
-                </label>
-                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
-                  <div class="flex-1">
-                    <div class="text-sm font-medium text-gray-800">
-                      요청 지연 (ms)
-                    </div>
-                    <div class="text-xs text-gray-500">
-                      서버 부하 방지를 위한 요청 간 간격
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <input
-                      type="number"
-                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
-                      value={settingsState.getNestedValue(
-                        "user.request_delay_ms"
-                      )}
-                      min={100}
-                      max={10000}
-                      onInput={(e) =>
-                        settingsState.updateNestedField(
-                          "user.request_delay_ms",
-                          +e.currentTarget.value
-                        )
-                      }
-                    />
-                    <span class="text-sm text-gray-500">ms</span>
+                    <span class="text-sm text-gray-500">초</span>
                   </div>
                 </label>
               </div>
             </div>
 
-            {/* 지연 · 템포 */}
+            {/* 🔁 지연 & 재시도 (Delays & Retries) */}
             <div class="mt-6">
               <div class="flex items-center gap-2 mb-2">
-                <span class="w-1.5 h-4 rounded bg-indigo-300"></span>
+                <span class="w-1.5 h-4 rounded bg-green-400"></span>
                 <div class="text-sm font-semibold text-gray-800">
-                  지연(ms)· 템포
+                  🔁 지연 & 재시도
                 </div>
+                <span class="text-xs text-gray-500 ml-auto">요청 간격 및 실패 처리</span>
               </div>
               <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
@@ -300,44 +381,29 @@ export const SettingsTab: Component = () => {
                     </div>
                     <div class="text-xs text-gray-500">배치 간 대기 시간</div>
                   </div>
-                  <input
-                    type="number"
-                    class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
-                    value={settingsState.getNestedValue(
-                      "user.batch.batch_delay_ms"
-                    )}
-                    min={0}
-                    max={60000}
-                    onInput={(e) =>
-                      settingsState.updateNestedField(
-                        "user.batch.batch_delay_ms",
-                        +e.currentTarget.value
-                      )
-                    }
-                  />
-                </label>
-                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
-                  <div class="flex-1">
-                    <div class="text-sm font-medium text-gray-800">
-                      상세 로그 모드
-                    </div>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="number"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      value={settingsState.getNestedValue(
+                        "user.batch.batch_delay_ms"
+                      )}
+                      min={0}
+                      max={60000}
+                      onInput={(e) =>
+                        settingsState.updateNestedField(
+                          "user.batch.batch_delay_ms",
+                          +e.currentTarget.value
+                        )
+                      }
+                    />
+                    <span class="text-sm text-gray-500">ms</span>
                   </div>
-                  <input
-                    type="checkbox"
-                    class="w-4 h-4"
-                    checked={settingsState.getNestedValue(
-                      "user.verbose_logging"
-                    )}
-                    onChange={(e) =>
-                      settingsState.updateNestedField(
-                        "user.verbose_logging",
-                        e.currentTarget.checked
-                      )
-                    }
-                  />
                 </label>
               </div>
             </div>
+
+            {/* 기존 "지연 · 템포" 섹션 제거됨 (위로 통합) */}
 
             {/* 범위 · 크기 */}
             <div class="mt-6">
@@ -423,75 +489,7 @@ export const SettingsTab: Component = () => {
 
             {/* 지능형 모드: 요청에 따라 UI에서 제거됨 */}
 
-            {/* 워커(병렬 처리) */}
-            <div class="mt-6">
-              <div class="flex items-center gap-2 mb-2">
-                <span class="w-1.5 h-4 rounded bg-indigo-300"></span>
-                <div class="text-sm font-semibold text-gray-800">
-                  워커(병렬 처리)
-                </div>
-              </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
-                  <div class="flex-1">
-                    <div class="text-sm font-medium text-gray-800">
-                      요청 타임아웃(초)
-                    </div>
-                    <div class="text-xs text-gray-500">
-                      HTTP 요청 최대 대기 시간
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <input
-                      type="number"
-                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
-                      value={settingsState.getNestedValue(
-                        "user.crawling.workers.request_timeout_seconds"
-                      )}
-                      min={1}
-                      max={600}
-                      onInput={(e) =>
-                        settingsState.updateNestedField(
-                          "user.crawling.workers.request_timeout_seconds",
-                          +e.currentTarget.value
-                        )
-                      }
-                    />
-                    <span class="text-sm text-gray-500">초</span>
-                  </div>
-                </label>
-                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
-                  <div class="flex-1">
-                    <div class="text-sm font-medium text-gray-800">
-                      초당 요청 제한(RPS)
-                    </div>
-                    <div class="text-xs text-gray-500">
-                      Rate limit (비워두면 기본값)
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <input
-                      type="number"
-                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
-                      value={
-                        settingsState.getNestedValue(
-                          "user.crawling.workers.max_requests_per_second"
-                        ) ?? ""
-                      }
-                      min={1}
-                      max={1000}
-                      onInput={(e) =>
-                        settingsState.updateNestedField(
-                          "user.crawling.workers.max_requests_per_second",
-                          e.currentTarget.value ? +e.currentTarget.value : null
-                        )
-                      }
-                    />
-                    <span class="text-sm text-gray-500">req/s</span>
-                  </div>
-                </label>
-              </div>
-            </div>
+            {/* "워커(병렬 처리)" 섹션 제거됨 (위 "동시성 & 속도 제어"로 통합) */}
 
             {/* 배치 처리 */}
             <div class="mt-6">
