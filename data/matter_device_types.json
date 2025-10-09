@@ -1,83 +1,527 @@
 [
-  { "id": 22,  "hex": "0x0016", "name": "Root Node",                    "category": "Utility",          "introduced_in": null },
-  { "id": 17,  "hex": "0x0011", "name": "Power Source",                 "category": "Utility",          "introduced_in": null },
-  { "id": 18,  "hex": "0x0012", "name": "OTA Requestor",                "category": "Utility",          "introduced_in": null },
-  { "id": 20,  "hex": "0x0014", "name": "OTA Provider",                 "category": "Utility",          "introduced_in": null },
-  { "id": 14,  "hex": "0x000E", "name": "Aggregator",                   "category": "Utility",          "introduced_in": null },
-  { "id": 19,  "hex": "0x0013", "name": "Bridged Node",                 "category": "Utility",          "introduced_in": null },
-
-  { "id": 256, "hex": "0x0100", "name": "On/Off Light",                 "category": "Lighting",         "introduced_in": null },
-  { "id": 257, "hex": "0x0101", "name": "Dimmable Light",               "category": "Lighting",         "introduced_in": null },
-  { "id": 268, "hex": "0x010C", "name": "Color Temperature Light",       "category": "Lighting",         "introduced_in": null },
-  { "id": 269, "hex": "0x010D", "name": "Extended Color Light",         "category": "Lighting",         "introduced_in": null },
-
-  { "id": 266, "hex": "0x010A", "name": "On/Off Plug-in Unit",          "category": "Smart Plugs / Actuators", "introduced_in": null },
-  { "id": 267, "hex": "0x010B", "name": "Dimmable Plug-In Unit",        "category": "Smart Plugs / Actuators", "introduced_in": null },
-  { "id": 771, "hex": "0x0303", "name": "Pump",                         "category": "Smart Plugs / Actuators", "introduced_in": null },
-  { "id": 66,  "hex": "0x0042", "name": "Water Valve",                  "category": "Smart Plugs / Actuators", "introduced_in": "1.3" },
-
-  { "id": 259, "hex": "0x0103", "name": "On/Off Light Switch",          "category": "Switches & Controls", "introduced_in": null },
-  { "id": 260, "hex": "0x0104", "name": "Dimmer Switch",                "category": "Switches & Controls", "introduced_in": null },
-  { "id": 261, "hex": "0x0105", "name": "Color Dimmer Switch",          "category": "Switches & Controls", "introduced_in": null },
-  { "id": 2112,"hex": "0x0840", "name": "Control Bridge",               "category": "Switches & Controls", "introduced_in": null },
-  { "id": 772, "hex": "0x0304", "name": "Pump Controller",              "category": "Switches & Controls", "introduced_in": null },
-  { "id": 15,  "hex": "0x000F", "name": "Generic Switch",               "category": "Switches & Controls", "introduced_in": null },
-
-  { "id": 1284,"hex": "0x0504", "name": "Mounted On/Off Load Control",  "category": "Load Control Switches", "introduced_in": "1.4" },
-  { "id": 1285,"hex": "0x0505", "name": "Mounted Dimmable Load Control", "category": "Load Control Switches", "introduced_in": "1.4" },
-
-  { "id": 21,  "hex": "0x0015", "name": "Contact Sensor",               "category": "Sensors",          "introduced_in": null },
-  { "id": 262, "hex": "0x0106", "name": "Light Sensor",                 "category": "Sensors",          "introduced_in": null },
-  { "id": 263, "hex": "0x0107", "name": "Occupancy Sensor",             "category": "Sensors",          "introduced_in": null },
-  { "id": 770, "hex": "0x0302", "name": "Temperature Sensor",           "category": "Sensors",          "introduced_in": null },
-  { "id": 773, "hex": "0x0305", "name": "Pressure Sensor",              "category": "Sensors",          "introduced_in": null },
-  { "id": 774, "hex": "0x0306", "name": "Flow Sensor",                  "category": "Sensors",          "introduced_in": null },
-  { "id": 775, "hex": "0x0307", "name": "Humidity Sensor",              "category": "Sensors",          "introduced_in": null },
-  { "id": 2128,"hex": "0x0850", "name": "On/Off Sensor",                "category": "Sensors",          "introduced_in": null },
-  { "id": 118, "hex": "0x0076", "name": "Smoke CO Alarm",               "category": "Sensors",          "introduced_in": null },
-  { "id": 68,  "hex": "0x0044", "name": "Water Freeze Sensor",          "category": "Sensors",          "introduced_in": "1.3" },
-  { "id": 67,  "hex": "0x0043", "name": "Water Leak Detector",          "category": "Sensors",          "introduced_in": "1.3" },
-  { "id": 46,  "hex": "0x002E", "name": "Rain Sensor",                  "category": "Sensors",          "introduced_in": "1.3" },
-
-  { "id": 10,  "hex": "0x000A", "name": "Door Lock",                    "category": "Closures",         "introduced_in": null },
-  { "id": 11,  "hex": "0x000B", "name": "Door Lock Controller",         "category": "Closures",         "introduced_in": null },
-  { "id": 514, "hex": "0x0202", "name": "Window Covering",              "category": "Closures",         "introduced_in": null },
-  { "id": 515, "hex": "0x0203", "name": "Window Covering Controller",   "category": "Closures",         "introduced_in": null },
-
-  { "id": 768, "hex": "0x0300", "name": "Heating/Cooling Unit",         "category": "HVAC",             "introduced_in": null },
-  { "id": 769, "hex": "0x0301", "name": "Thermostat",                   "category": "HVAC",             "introduced_in": null },
-  { "id": 43,  "hex": "0x002B", "name": "Fan",                          "category": "HVAC",             "introduced_in": null },
-  { "id": 45,  "hex": "0x002D", "name": "Air Purifier",                 "category": "HVAC",             "introduced_in": null },
-  { "id": 44,  "hex": "0x002C", "name": "Air Quality Sensor",           "category": "HVAC",             "introduced_in": null },
-
-  { "id": 40,  "hex": "0x0028", "name": "Basic Video Player",           "category": "Media",            "introduced_in": null },
-  { "id": 35,  "hex": "0x0023", "name": "Casting Video Player",         "category": "Media",            "introduced_in": null },
-  { "id": 34,  "hex": "0x0022", "name": "Speaker",                      "category": "Media",            "introduced_in": null },
-  { "id": 36,  "hex": "0x0024", "name": "Content App",                  "category": "Media",            "introduced_in": null },
-  { "id": 41,  "hex": "0x0029", "name": "Casting Video Client",         "category": "Media",            "introduced_in": null },
-  { "id": 42,  "hex": "0x002A", "name": "Video Remote Control",         "category": "Media",            "introduced_in": null },
-
-  { "id": 39,  "hex": "0x0027", "name": "Mode Select",                  "category": "Generic",          "introduced_in": null },
-
-  { "id": 116, "hex": "0x0074", "name": "Robotic Vacuum Cleaner",       "category": "Robotic Devices",  "introduced_in": null },
-
-  { "id": 112, "hex": "0x0070", "name": "Refrigerator",                 "category": "Appliances",       "introduced_in": null },
-  { "id": 113, "hex": "0x0071", "name": "Temperature Controlled Cabinet","category": "Appliances",       "introduced_in": null },
-  { "id": 114, "hex": "0x0072", "name": "Room Air Conditioner",         "category": "Appliances",       "introduced_in": null },
-  { "id": 115, "hex": "0x0073", "name": "Laundry Washer",               "category": "Appliances",       "introduced_in": "1.2" },
-  { "id": 117, "hex": "0x0075", "name": "Dishwasher",                   "category": "Appliances",       "introduced_in": "1.2" },
-  { "id": 119, "hex": "0x0077", "name": "Cooktop",                      "category": "Appliances",       "introduced_in": "1.3" },
-  { "id": 120, "hex": "0x0078", "name": "Oven",                         "category": "Appliances",       "introduced_in": "1.3" },
-  { "id": 121, "hex": "0x0079", "name": "Extractor Hood",               "category": "Appliances",       "introduced_in": "1.3" },
-  { "id": 122, "hex": "0x007A", "name": "Microwave Oven",               "category": "Appliances",       "introduced_in": "1.3" },
-
-  { "id": 1293,"hex": "0x050D", "name": "Electric Vehicle Supply Equipment (EVSE)", "category": "Energy Management", "introduced_in": "1.3" },
-  { "id": 1294,"hex": "0x050E", "name": "Energy Management",             "category": "Energy Management", "introduced_in": "1.3" },
-  { "id": 1295,"hex": "0x050F", "name": "Energy Sensor",                 "category": "Energy Management", "introduced_in": "1.3" },
-  { "id": 1287,"hex": "0x0507", "name": "Solar Power",                  "category": "Energy Management", "introduced_in": "1.4" },
-  { "id": 24,  "hex": "0x0018", "name": "Battery",                      "category": "Energy Management", "introduced_in": "1.4" },
-  { "id": 1336,"hex": "0x0538", "name": "Heat Pump",                    "category": "Energy Management", "introduced_in": "1.4" },
-  { "id": 1292,"hex": "0x050C", "name": "Water Heater",                 "category": "Energy Management", "introduced_in": "1.4" },
-
-  { "id": 27,  "hex": "0x001B", "name": "Home Router/Access Point (HRAP)", "category": "Infrastructure", "introduced_in": "1.4" }
+  {
+    "id": 0,
+    "hex": "0x0000",
+    "name": "Unknown Device",
+    "category": "Other",
+    "introduced_in": null
+  },
+  {
+    "id": 10,
+    "hex": "0x000A",
+    "name": "Door Lock",
+    "category": "Closures",
+    "introduced_in": null
+  },
+  {
+    "id": 11,
+    "hex": "0x000B",
+    "name": "Door Lock Controller",
+    "category": "Closures",
+    "introduced_in": null
+  },
+  {
+    "id": 14,
+    "hex": "0x000E",
+    "name": "Aggregator",
+    "category": "Utility",
+    "introduced_in": null
+  },
+  {
+    "id": 15,
+    "hex": "0x000F",
+    "name": "Generic Switch",
+    "category": "Switches & Controls",
+    "introduced_in": null
+  },
+  {
+    "id": 17,
+    "hex": "0x0011",
+    "name": "Power Source",
+    "category": "Utility",
+    "introduced_in": null
+  },
+  {
+    "id": 18,
+    "hex": "0x0012",
+    "name": "OTA Requestor",
+    "category": "Utility",
+    "introduced_in": null
+  },
+  {
+    "id": 19,
+    "hex": "0x0013",
+    "name": "Bridged Node",
+    "category": "Utility",
+    "introduced_in": null
+  },
+  {
+    "id": 20,
+    "hex": "0x0014",
+    "name": "OTA Provider",
+    "category": "Utility",
+    "introduced_in": null
+  },
+  {
+    "id": 21,
+    "hex": "0x0015",
+    "name": "Contact Sensor",
+    "category": "Sensors",
+    "introduced_in": null
+  },
+  {
+    "id": 22,
+    "hex": "0x0016",
+    "name": "Root Node",
+    "category": "Utility",
+    "introduced_in": null
+  },
+  {
+    "id": 24,
+    "hex": "0x0018",
+    "name": "Battery",
+    "category": "Energy Management",
+    "introduced_in": "1.4"
+  },
+  {
+    "id": 27,
+    "hex": "0x001B",
+    "name": "Home Router/Access Point (HRAP)",
+    "category": "Infrastructure",
+    "introduced_in": "1.4"
+  },
+  {
+    "id": 34,
+    "hex": "0x0022",
+    "name": "Speaker",
+    "category": "Media",
+    "introduced_in": null
+  },
+  {
+    "id": 35,
+    "hex": "0x0023",
+    "name": "Casting Video Player",
+    "category": "Media",
+    "introduced_in": null
+  },
+  {
+    "id": 36,
+    "hex": "0x0024",
+    "name": "Content App",
+    "category": "Media",
+    "introduced_in": null
+  },
+  {
+    "id": 39,
+    "hex": "0x0027",
+    "name": "Mode Select",
+    "category": "Generic",
+    "introduced_in": null
+  },
+  {
+    "id": 40,
+    "hex": "0x0028",
+    "name": "Basic Video Player",
+    "category": "Media",
+    "introduced_in": null
+  },
+  {
+    "id": 41,
+    "hex": "0x0029",
+    "name": "Casting Video Client",
+    "category": "Media",
+    "introduced_in": null
+  },
+  {
+    "id": 42,
+    "hex": "0x002A",
+    "name": "Video Remote Control",
+    "category": "Media",
+    "introduced_in": null
+  },
+  {
+    "id": 43,
+    "hex": "0x002B",
+    "name": "Fan",
+    "category": "HVAC",
+    "introduced_in": null
+  },
+  {
+    "id": 44,
+    "hex": "0x002C",
+    "name": "Air Quality Sensor",
+    "category": "HVAC",
+    "introduced_in": null
+  },
+  {
+    "id": 45,
+    "hex": "0x002D",
+    "name": "Air Purifier",
+    "category": "HVAC",
+    "introduced_in": null
+  },
+  {
+    "id": 46,
+    "hex": "0x002E",
+    "name": "Rain Sensor",
+    "category": "Sensors",
+    "introduced_in": "1.3"
+  },
+  {
+    "id": 66,
+    "hex": "0x0042",
+    "name": "Water Valve",
+    "category": "Smart Plugs / Actuators",
+    "introduced_in": "1.3"
+  },
+  {
+    "id": 67,
+    "hex": "0x0043",
+    "name": "Water Leak Detector",
+    "category": "Sensors",
+    "introduced_in": "1.3"
+  },
+  {
+    "id": 68,
+    "hex": "0x0044",
+    "name": "Water Freeze Sensor",
+    "category": "Sensors",
+    "introduced_in": "1.3"
+  },
+  {
+    "id": 112,
+    "hex": "0x0070",
+    "name": "Refrigerator",
+    "category": "Appliances",
+    "introduced_in": null
+  },
+  {
+    "id": 113,
+    "hex": "0x0071",
+    "name": "Temperature Controlled Cabinet",
+    "category": "Appliances",
+    "introduced_in": null
+  },
+  {
+    "id": 114,
+    "hex": "0x0072",
+    "name": "Room Air Conditioner",
+    "category": "Appliances",
+    "introduced_in": null
+  },
+  {
+    "id": 115,
+    "hex": "0x0073",
+    "name": "Laundry Washer",
+    "category": "Appliances",
+    "introduced_in": "1.2"
+  },
+  {
+    "id": 116,
+    "hex": "0x0074",
+    "name": "Robotic Vacuum Cleaner",
+    "category": "Robotic Devices",
+    "introduced_in": null
+  },
+  {
+    "id": 117,
+    "hex": "0x0075",
+    "name": "Dishwasher",
+    "category": "Appliances",
+    "introduced_in": "1.2"
+  },
+  {
+    "id": 118,
+    "hex": "0x0076",
+    "name": "Smoke CO Alarm",
+    "category": "Sensors",
+    "introduced_in": null
+  },
+  {
+    "id": 119,
+    "hex": "0x0077",
+    "name": "Cooktop",
+    "category": "Appliances",
+    "introduced_in": "1.3"
+  },
+  {
+    "id": 120,
+    "hex": "0x0078",
+    "name": "Oven",
+    "category": "Appliances",
+    "introduced_in": "1.3"
+  },
+  {
+    "id": 121,
+    "hex": "0x0079",
+    "name": "Extractor Hood",
+    "category": "Appliances",
+    "introduced_in": "1.3"
+  },
+  {
+    "id": 122,
+    "hex": "0x007A",
+    "name": "Microwave Oven",
+    "category": "Appliances",
+    "introduced_in": "1.3"
+  },
+  {
+    "id": 145,
+    "hex": "0x0091",
+    "name": "Matter Bridge",
+    "category": "Bridges & Hubs",
+    "introduced_in": null
+  },
+  {
+    "id": 256,
+    "hex": "0x0100",
+    "name": "On/Off Light",
+    "category": "Lighting",
+    "introduced_in": null
+  },
+  {
+    "id": 257,
+    "hex": "0x0101",
+    "name": "Dimmable Light",
+    "category": "Lighting",
+    "introduced_in": null
+  },
+  {
+    "id": 259,
+    "hex": "0x0103",
+    "name": "On/Off Light Switch",
+    "category": "Switches & Controls",
+    "introduced_in": null
+  },
+  {
+    "id": 260,
+    "hex": "0x0104",
+    "name": "Dimmer Switch",
+    "category": "Switches & Controls",
+    "introduced_in": null
+  },
+  {
+    "id": 261,
+    "hex": "0x0105",
+    "name": "Color Dimmer Switch",
+    "category": "Switches & Controls",
+    "introduced_in": null
+  },
+  {
+    "id": 262,
+    "hex": "0x0106",
+    "name": "Light Sensor",
+    "category": "Sensors",
+    "introduced_in": null
+  },
+  {
+    "id": 263,
+    "hex": "0x0107",
+    "name": "Occupancy Sensor",
+    "category": "Sensors",
+    "introduced_in": null
+  },
+  {
+    "id": 266,
+    "hex": "0x010A",
+    "name": "On/Off Plug-in Unit",
+    "category": "Smart Plugs / Actuators",
+    "introduced_in": null
+  },
+  {
+    "id": 267,
+    "hex": "0x010B",
+    "name": "Dimmable Plug-In Unit",
+    "category": "Smart Plugs / Actuators",
+    "introduced_in": null
+  },
+  {
+    "id": 268,
+    "hex": "0x010C",
+    "name": "Color Temperature Light",
+    "category": "Lighting",
+    "introduced_in": null
+  },
+  {
+    "id": 269,
+    "hex": "0x010D",
+    "name": "Extended Color Light",
+    "category": "Lighting",
+    "introduced_in": null
+  },
+  {
+    "id": 271,
+    "hex": "0x010F",
+    "name": "Smart Plug Type A",
+    "category": "Smart Plugs / Actuators",
+    "introduced_in": null
+  },
+  {
+    "id": 272,
+    "hex": "0x0110",
+    "name": "Smart Plug Type B",
+    "category": "Smart Plugs / Actuators",
+    "introduced_in": null
+  },
+  {
+    "id": 513,
+    "hex": "0x0201",
+    "name": "Custom Device Type 513",
+    "category": "Other",
+    "introduced_in": null
+  },
+  {
+    "id": 514,
+    "hex": "0x0202",
+    "name": "Window Covering",
+    "category": "Closures",
+    "introduced_in": null
+  },
+  {
+    "id": 515,
+    "hex": "0x0203",
+    "name": "Window Covering Controller",
+    "category": "Closures",
+    "introduced_in": null
+  },
+  {
+    "id": 519,
+    "hex": "0x0207",
+    "name": "Wi-Fi Light Bulb",
+    "category": "Lighting",
+    "introduced_in": null
+  },
+  {
+    "id": 768,
+    "hex": "0x0300",
+    "name": "Heating/Cooling Unit",
+    "category": "HVAC",
+    "introduced_in": null
+  },
+  {
+    "id": 769,
+    "hex": "0x0301",
+    "name": "Thermostat",
+    "category": "HVAC",
+    "introduced_in": null
+  },
+  {
+    "id": 770,
+    "hex": "0x0302",
+    "name": "Temperature Sensor",
+    "category": "Sensors",
+    "introduced_in": null
+  },
+  {
+    "id": 771,
+    "hex": "0x0303",
+    "name": "Pump",
+    "category": "Smart Plugs / Actuators",
+    "introduced_in": null
+  },
+  {
+    "id": 772,
+    "hex": "0x0304",
+    "name": "Pump Controller",
+    "category": "Switches & Controls",
+    "introduced_in": null
+  },
+  {
+    "id": 773,
+    "hex": "0x0305",
+    "name": "Pressure Sensor",
+    "category": "Sensors",
+    "introduced_in": null
+  },
+  {
+    "id": 774,
+    "hex": "0x0306",
+    "name": "Flow Sensor",
+    "category": "Sensors",
+    "introduced_in": null
+  },
+  {
+    "id": 775,
+    "hex": "0x0307",
+    "name": "Humidity Sensor",
+    "category": "Sensors",
+    "introduced_in": null
+  },
+  {
+    "id": 1284,
+    "hex": "0x0504",
+    "name": "Mounted On/Off Load Control",
+    "category": "Load Control Switches",
+    "introduced_in": "1.4"
+  },
+  {
+    "id": 1285,
+    "hex": "0x0505",
+    "name": "Mounted Dimmable Load Control",
+    "category": "Load Control Switches",
+    "introduced_in": "1.4"
+  },
+  {
+    "id": 1287,
+    "hex": "0x0507",
+    "name": "Solar Power",
+    "category": "Energy Management",
+    "introduced_in": "1.4"
+  },
+  {
+    "id": 1292,
+    "hex": "0x050C",
+    "name": "Water Heater",
+    "category": "Energy Management",
+    "introduced_in": "1.4"
+  },
+  {
+    "id": 1293,
+    "hex": "0x050D",
+    "name": "Electric Vehicle Supply Equipment (EVSE)",
+    "category": "Energy Management",
+    "introduced_in": "1.3"
+  },
+  {
+    "id": 1294,
+    "hex": "0x050E",
+    "name": "Energy Management",
+    "category": "Energy Management",
+    "introduced_in": "1.3"
+  },
+  {
+    "id": 1295,
+    "hex": "0x050F",
+    "name": "Energy Sensor",
+    "category": "Energy Management",
+    "introduced_in": "1.3"
+  },
+  {
+    "id": 1336,
+    "hex": "0x0538",
+    "name": "Heat Pump",
+    "category": "Energy Management",
+    "introduced_in": "1.4"
+  },
+  {
+    "id": 2112,
+    "hex": "0x0840",
+    "name": "Control Bridge",
+    "category": "Switches & Controls",
+    "introduced_in": null
+  },
+  {
+    "id": 2128,
+    "hex": "0x0850",
+    "name": "On/Off Sensor",
+    "category": "Sensors",
+    "introduced_in": null
+  },
+  {
+    "id": 4891,
+    "hex": "0x131B",
+    "name": "Smart LED Bulb",
+    "category": "Lighting",
+    "introduced_in": null
+  }
 ]

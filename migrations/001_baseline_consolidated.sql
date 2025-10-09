@@ -1,13 +1,19 @@
--- 001_baseline_consolidated.sql
--- Unified baseline schema for fresh installations.
--- Version: 1.0 (2025-10-08)
--- Incorporates all production-ready migrations up to 1004
--- Idempotent: all CREATE use IF NOT EXISTS, seed uses INSERT OR IGNORE, normalizations are conditional.
+-- 002_baseline_cleaned.sql
+-- Cleaned baseline schema for fresh installations.
+-- Version: 2.0 (2025-10-10)
+-- Changes from v1.0:
+--   - REMOVED: sync_sessions, sync_observed (타입 불일치로 실제 동작 안 함)
+--   - REMOVED: crawling_results (사용처 없음)
+--   - REMOVED: page_fetch_attempts (선택적 디버깅 기능, MC_ATTEMPT_LOG_SQLITE 환경 변수 필요, 일반 사용 안 함)
+--   - REMOVED: application_categories 컬럼 (파싱 로직 없음, 항상 NULL)
 
 PRAGMA foreign_keys = ON;
 BEGIN;
 
+-- ============================================================================
 -- CORE TABLES
+-- ============================================================================
+
 CREATE TABLE IF NOT EXISTS vendors (
   vendor_number INTEGER PRIMARY KEY,
   vendor_name TEXT,
@@ -20,6 +26,9 @@ CREATE TABLE IF NOT EXISTS vendors (
 -- NO UNIQUE constraint on coordinates to allow dynamic repositioning when site order changes
 CREATE TABLE IF NOT EXISTS products (
   url TEXT PRIMARY KEY,
+  manufacturer TEXT,
+  model TEXT,
+  certificate_id TEXT,
   page_id INTEGER,
   index_in_page INTEGER,
   id TEXT,               -- backfilled composite id (pXXXXiYY)
@@ -51,7 +60,7 @@ CREATE TABLE IF NOT EXISTS product_details (
   tis_trp_tested TEXT,
   transport_interface TEXT,
   primary_device_type_ids TEXT,
-  application_categories TEXT,
+  -- REMOVED: application_categories TEXT (not parsed, always NULL)
   description TEXT,
   compliance_document_url TEXT,
   program_type TEXT DEFAULT 'Matter',
@@ -71,62 +80,16 @@ CREATE TABLE IF NOT EXISTS device_types (
   type_id TEXT
 );
 
--- Crawl attempt instrumentation
-CREATE TABLE IF NOT EXISTS page_fetch_attempts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  logical_page_id INTEGER NOT NULL,
-  attempt_no INTEGER NOT NULL,
-  fetched_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  product_count INTEGER NOT NULL,
-  distinct_indices INTEGER NOT NULL,
-  contiguous_ok INTEGER NOT NULL,
-  count_mismatch INTEGER NOT NULL,
-  index_mismatch INTEGER NOT NULL,
-  is_terminal_guess INTEGER NOT NULL,
-  success_final INTEGER NOT NULL,
-  error_code TEXT,
-  error_detail TEXT,
-  duration_ms INTEGER,
-  retry_scheduled INTEGER NOT NULL DEFAULT 0,
-  CONSTRAINT uq_attempt UNIQUE(logical_page_id, attempt_no)
-);
+-- ============================================================================
+-- DIAGNOSTIC TABLES
+-- ============================================================================
 
--- Vendor sync tracking
-CREATE TABLE IF NOT EXISTS sync_sessions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  completed_at TEXT,
-  status TEXT NOT NULL DEFAULT 'running',
-  total_vendors INTEGER,
-  processed_vendors INTEGER DEFAULT 0,
-  error_message TEXT
-);
+-- REMOVED: page_fetch_attempts (환경 변수로 제어되는 선택적 기능, 일반 사용자는 사용 안 함)
 
-CREATE TABLE IF NOT EXISTS sync_observed (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id INTEGER NOT NULL,
-  url TEXT NOT NULL,
-  page_id INTEGER,
-  index_in_page INTEGER,
-  observed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  FOREIGN KEY (session_id) REFERENCES sync_sessions(id) ON DELETE CASCADE
-);
-
--- Crawling results tracking
-CREATE TABLE IF NOT EXISTS crawling_results (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  completed_at TEXT,
-  status TEXT NOT NULL DEFAULT 'running',
-  total_pages INTEGER,
-  processed_pages INTEGER DEFAULT 0,
-  total_products INTEGER DEFAULT 0,
-  new_products INTEGER DEFAULT 0,
-  updated_products INTEGER DEFAULT 0,
-  error_message TEXT
-);
-
+-- ============================================================================
 -- INDEXES
+-- ============================================================================
+
 CREATE INDEX IF NOT EXISTS idx_product_details_manufacturer ON product_details (manufacturer);
 CREATE INDEX IF NOT EXISTS idx_product_details_device_type ON product_details (device_type);
 CREATE INDEX IF NOT EXISTS idx_product_details_certificate_id ON product_details (certificate_id);
@@ -137,10 +100,10 @@ CREATE INDEX IF NOT EXISTS idx_product_details_specification_version ON product_
 CREATE INDEX IF NOT EXISTS idx_product_details_program_type ON product_details (program_type);
 CREATE INDEX IF NOT EXISTS idx_device_types_type_id ON device_types (type_id);
 CREATE INDEX IF NOT EXISTS idx_device_types_category ON device_types (category);
-CREATE INDEX IF NOT EXISTS idx_page_fetch_attempts_page ON page_fetch_attempts (logical_page_id);
-CREATE INDEX IF NOT EXISTS idx_page_fetch_attempts_success ON page_fetch_attempts (success_final);
-CREATE INDEX IF NOT EXISTS idx_page_fetch_attempts_error ON page_fetch_attempts (error_code);
-CREATE INDEX IF NOT EXISTS idx_page_fetch_attempts_mismatch ON page_fetch_attempts (count_mismatch, index_mismatch);
+
+-- ============================================================================
+-- SEED DATA
+-- ============================================================================
 
 -- SEED DEVICE TYPES (subset + known comprehensive list from prior migrations)
 INSERT OR IGNORE INTO device_types (type_id, name, category, code_hex, introduced_in) VALUES
@@ -191,12 +154,19 @@ UPDATE device_types SET introduced_in='Unknown' WHERE introduced_in IS NULL OR i
 -- Remove duplicate type_id rows keeping first
 DELETE FROM device_types WHERE id NOT IN (SELECT MIN(id) FROM device_types GROUP BY type_id);
 
+-- ============================================================================
+-- DATA NORMALIZATION
+-- ============================================================================
+
 -- DATE NORMALIZATION (MM/DD/YYYY -> YYYY-MM-DD)
 UPDATE product_details
 SET certification_date = substr(certification_date,7,4)||'-'||substr(certification_date,1,2)||'-'||substr(certification_date,4,2)
 WHERE certification_date GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]';
 
+-- ============================================================================
 -- VIEWS
+-- ============================================================================
+
 DROP VIEW IF EXISTS v_product_detail_analytics;
 CREATE VIEW v_product_detail_analytics AS
 SELECT
@@ -234,22 +204,7 @@ LEFT JOIN (
   GROUP BY pd_inner.url
 ) dtg ON dtg.url = pd.url;
 
-DROP VIEW IF EXISTS v_page_latest_attempt;
-CREATE VIEW v_page_latest_attempt AS
-WITH latest AS (
-  SELECT logical_page_id, MAX(attempt_no) AS max_attempt
-  FROM page_fetch_attempts
-  GROUP BY logical_page_id
-)
-SELECT a.*
-FROM page_fetch_attempts a
-JOIN latest l ON a.logical_page_id = l.logical_page_id AND a.attempt_no = l.max_attempt;
-
-DROP VIEW IF EXISTS v_page_latest_problem;
-CREATE VIEW v_page_latest_problem AS
-SELECT * FROM v_page_latest_attempt WHERE success_final = 0;
-
 COMMIT;
 
 -- Set schema version
-PRAGMA user_version = 1004;
+PRAGMA user_version = 2000;

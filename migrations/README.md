@@ -6,16 +6,12 @@
 
 ### Active Migrations
 
-- **002_baseline_cleaned.sql** - Cleaned baseline schema for fresh installations ⭐ **CURRENT**
+- **001_baseline_consolidated.sql** - Cleaned baseline schema for fresh installations ⭐ **CURRENT**
   - Version: 2.0 (2025-10-10)
   - **Removed**: sync_sessions, sync_observed, crawling_results, page_fetch_attempts (실제 동작 안 함)
   - **Removed**: application_categories 컬럼 (파싱 로직 없음, 항상 NULL)
+  - **Fixed**: products 테이블에 manufacturer, model, certificate_id 컬럼 보존
   - Idempotent: safe to run multiple times
-
-- **001_baseline_consolidated.sql** - Previous baseline (v1.0)
-  - Version: 1.0 (2025-10-08)
-  - Includes all production-ready schema changes up to version 1004
-  - **Deprecated**: Use 002_baseline_cleaned.sql instead
 
 ### Archived Migrations
 
@@ -27,7 +23,7 @@ All development-phase migrations have been archived in `archive/development_migr
 
 ### For Fresh Installations
 
-1. Run only `002_baseline_cleaned.sql` ⭐
+1. Run only `001_baseline_consolidated.sql` ⭐
 2. This creates the complete schema at version 2000
 3. No need to run any archived migrations
 
