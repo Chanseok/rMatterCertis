@@ -547,13 +547,22 @@ export default function CrawlingEngineTabSimple() {
 
     try {
       const result = await invoke<any>("start_shallow_sync");
-      addLog(`✅ 빠른 동기화 완료: ${result.pages_scanned}페이지, ${result.urls_synced}개 URL 동기화 (${result.duration_ms}ms)`);
-      setStatusMessage(`✅ 빠른 동기화 완료 (${result.pages_scanned}p)`);
+      
+      // 세션 ID 저장 (중지 기능을 위해 필수)
+      if (result.sessionId) {
+        setCurrentSessionId(result.sessionId);
+        console.log("📝 Shallow sync session ID saved:", result.sessionId);
+      }
+      
+      addLog(`✅ 빠른 동기화 시작: ${result.pages_scanned}페이지, 세션 ID: ${result.sessionId}`);
+      addLog(`💡 백그라운드에서 크롤링 진행 중... (중지 버튼으로 중단 가능)`);
+      setStatusMessage(`🏃 빠른 동기화 진행 중... (${result.pages_scanned}p)`);
+      
+      // Note: 크롤링은 백그라운드에서 계속 진행되며 이벤트로 완료를 알림
     } catch (error) {
       console.error("빠른 동기화 실패:", error);
       addLog(`❌ 빠른 동기화 실패: ${error}`);
       setStatusMessage("빠른 동기화 실패");
-    } finally {
       setIsRunning(false);
       setIsSyncing(false);
       setIsShallowMode(false);
@@ -578,28 +587,40 @@ export default function CrawlingEngineTabSimple() {
       const result = await invoke<any>("start_smart_sync");
       
       // Phase 1: 얕은 크롤링 결과
-      const shallow = result.shallow_crawl || {};
-      addLog(`📝 Phase 1 완료: ${shallow.pages_scanned || 'N/A'}페이지 동기화 (백그라운드 실행)`);
+      const shallow = result.shallowCrawl || result.shallow_crawl || {};
+      
+      // 세션 ID 저장 (중지 기능을 위해 필수)
+      if (shallow.sessionId || shallow.session_id) {
+        const sessionId = shallow.sessionId || shallow.session_id;
+        setCurrentSessionId(sessionId);
+        console.log("📝 Smart sync session ID saved:", sessionId);
+      }
+      
+      addLog(`📝 Phase 1 완료: ${shallow.pagesScanned || shallow.pages_scanned || 'N/A'}페이지 동기화 (백그라운드 실행)`);
       
       // Phase 2: 진단 결과
-      const analysis = result.missing_analysis || {};
-      const missing = analysis.missing_details || [];
+      const analysis = result.missingAnalysis || result.missing_analysis || {};
+      const missing = analysis.missingDetails || analysis.missing_details || [];
       addLog(`📊 Phase 2 완료: ${missing.length}개 누락 발견`);
       
       // Phase 3: 보완 크롤링 결과
-      const complement = result.complement_crawl;
+      const complement = result.complementCrawl || result.complement_crawl;
       if (complement) {
-        addLog(`🔧 Phase 3 완료: ${complement.urls_completed}/${complement.urls_targeted}개 보완 (${complement.duration_ms}ms)`);
-        if (complement.urls_failed > 0) {
-          addLog(`⚠️ ${complement.urls_failed}개 실패`);
+        const completed = complement.urlsCompleted || complement.urls_completed || 0;
+        const targeted = complement.urlsTargeted || complement.urls_targeted || 0;
+        const failed = complement.urlsFailed || complement.urls_failed || 0;
+        const duration = complement.durationMs || complement.duration_ms || 0;
+        addLog(`🔧 Phase 3 완료: ${completed}/${targeted}개 보완 (${duration}ms)`);
+        if (failed > 0) {
+          addLog(`⚠️ ${failed}개 실패`);
         }
       } else {
         addLog(`✨ Phase 3 스킵: 누락 없음`);
       }
       
-      const totalMs = result.total_duration_ms || 0;
+      const totalMs = result.totalDurationMs || result.total_duration_ms || 0;
       addLog(`🎉 스마트 동기화 요청 완료! (${(totalMs / 1000).toFixed(1)}초)`);
-      addLog(`💡 백그라운드에서 좌표 갱신이 계속 진행됩니다.`);
+      addLog(`💡 백그라운드에서 좌표 갱신이 계속 진행됩니다. (중지 버튼으로 중단 가능)`);
       
       // 백그라운드 작업이 완료될 때까지 대기하지 않고 즉시 종료
       // (실제 완료는 actor-session-completed 이벤트로 감지)
