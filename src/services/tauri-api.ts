@@ -10,7 +10,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   BackendCrawlerConfig,
-  CrawlingProgress,
   CrawlingStatusCheck,
   DatabaseStats
 } from '../types/crawling';
@@ -285,21 +284,6 @@ export class TauriApiService {
   }
 
   /**
-   * Get the current crawling progress and status (deprecated: use actor-system API directly)
-   */
-  async getCrawlingStatus(): Promise<CrawlingProgress> {
-    try {
-      // Route to actor-system status using current sessionId if available
-      const { crawlerStore } = await import('../stores/crawlerStore');
-      const sid = crawlerStore.currentSessionId();
-      if (!sid) throw new Error('No active session');
-      return await invoke<any>('get_session_status', { session_id: sid });
-    } catch (error) {
-      throw new Error(`Failed to get crawling status: ${error}`);
-    }
-  }
-
-  /**
    * Get database statistics
    */
   async getDatabaseStats(): Promise<DatabaseStats> {
@@ -564,8 +548,6 @@ export class TauriApiService {
   // Real-time Event Subscription
   // =========================================================================
 
-  // Deprecated legacy subscriptions removed: progress, task-status, stage-change, database-update, completion, crawling-stopped
-
   /**
    * Subscribe to concurrency broadcast events (optional)
    */
@@ -677,11 +659,6 @@ export class TauriApiService {
     this.eventListeners.set('live-state-update', unlisten);
     return unlisten;
   }
-
-  /**
-   * Subscribe to detailed crawling events (hierarchical event monitor)
-   */
-    // legacy detailed-crawling-event removed
 
   /**
    * Subscribe to all Live Production Line events with proper typing
