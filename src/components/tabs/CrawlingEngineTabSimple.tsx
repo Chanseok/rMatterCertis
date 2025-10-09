@@ -602,21 +602,32 @@ export default function CrawlingEngineTabSimple() {
     try {
       const result = await tauriApi.startComplementCrawl();
       
+      // 🐛 디버깅: 결과 전체 출력
+      console.log("🔍 startComplementCrawl result:", result);
+      addLog(`🔍 DEBUG: result = ${JSON.stringify(result)}`);
+      
       // 세션 ID 저장 (중지 버튼 지원)
-      const sessionId = result.session_id;
+      const sessionId = result.sessionId;
+      console.log("🔍 Extracted sessionId:", sessionId, "| Type:", typeof sessionId);
+      addLog(`🔍 DEBUG: sessionId = "${sessionId}" (${typeof sessionId})`);
+      
       if (sessionId && sessionId.trim() !== "") { // 빈 문자열 체크 추가
         setCurrentSessionId(sessionId);
-        addLog(`🆔 세션 ID: ${sessionId}`);
+        addLog(`🆔 세션 ID 저장 성공: ${sessionId}`);
         addLog("💡 백그라운드에서 작업이 진행됩니다. 중지 버튼으로 중단 가능합니다.");
+        console.log("✅ Session ID saved to state:", sessionId);
+      } else {
+        console.warn("⚠️ Session ID is empty or invalid:", sessionId);
+        addLog(`⚠️ 세션 ID가 비어있거나 유효하지 않습니다: "${sessionId}"`);
       }
       
-      if (result.urls_targeted === 0) {
+      if (result.urlsTargeted === 0) {
         addLog(`✨ 보완이 필요한 제품이 없습니다. (모든 제품에 핵심 필드 존재)`);
         setStatusMessage("✅ 제품 보완 동기화 완료 (보완 불필요)");
         setIsRunning(false);
         setIsSyncing(false);
       } else {
-        addLog(`🔄 ${result.urls_targeted}개 제품 병렬 재크롤링 시작`);
+        addLog(`🔄 ${result.urlsTargeted}개 제품 병렬 재크롤링 시작`);
         // 성공 시: 상태는 "진행 중" 유지, actor-session-completed에서 종료
         setStatusMessage("🔧 제품 보완 동기화 완료 (백그라운드 작업 진행 중...)");
         addLog("💡 세션 완료 대기 중...");

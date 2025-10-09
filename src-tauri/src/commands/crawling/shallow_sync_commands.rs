@@ -332,13 +332,18 @@ pub async fn start_complement_crawl(
     
     info!("✅ Complement crawl session started: {}", session_id);
     
-    Ok(ComplementCrawlResult {
+    let result = ComplementCrawlResult {
         session_id: session_id.clone(),
         urls_targeted: missing_products.len() as u32,
         urls_completed: 0, // 백그라운드 실행이므로 0
         urls_failed: 0,    // 완료는 이벤트로 전달
         duration_ms: 0,
-    })
+    };
+    
+    info!("🔍 Returning ComplementCrawlResult: session_id={}, urls_targeted={}", 
+          result.session_id, result.urls_targeted);
+    
+    Ok(result)
 }
 
 /// 핵심 필드가 누락된 제품 목록 조회

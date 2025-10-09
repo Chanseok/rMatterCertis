@@ -486,13 +486,14 @@ export class TauriApiService {
 
   /**
    * 보완 크롤링: certification_date가 NULL인 제품들을 재크롤링하여 DB 업데이트
+   * Note: Tauri automatically converts Rust's snake_case to JavaScript's camelCase
    */
   async startComplementCrawl(): Promise<{
-    session_id: string;
-    urls_targeted: number;
-    urls_completed: number;
-    urls_failed: number;
-    duration_ms: number;
+    sessionId: string;  // Rust: session_id -> JS: sessionId
+    urlsTargeted: number;  // Rust: urls_targeted -> JS: urlsTargeted
+    urlsCompleted: number;  // Rust: urls_completed -> JS: urlsCompleted
+    urlsFailed: number;  // Rust: urls_failed -> JS: urlsFailed
+    durationMs: number;  // Rust: duration_ms -> JS: durationMs
   }> {
     try {
       return await invoke('start_complement_crawl');
