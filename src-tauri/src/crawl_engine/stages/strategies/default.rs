@@ -61,6 +61,7 @@ mod tests {
             batch_id: None,
             progress_emitter: None,
             product_detail_event_emitter: None,
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
         };
         let res = logic.execute(input).await;
         assert!(res.is_err());
@@ -80,6 +81,7 @@ mod tests {
             batch_id: None,
             progress_emitter: None,
             product_detail_event_emitter: None,
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
         };
         let res = logic.execute(input).await;
         assert!(res.is_err());
@@ -99,6 +101,7 @@ mod tests {
             batch_id: None,
             progress_emitter: None,
             product_detail_event_emitter: None,
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
         };
         let res = logic.execute(input).await;
         assert!(res.is_err());
@@ -156,6 +159,7 @@ mod tests {
             batch_id: None,
             progress_emitter: None,
             product_detail_event_emitter: None,
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
         };
         let res = logic.execute(input).await.expect("happy path");
         assert!(res.result.success);
@@ -180,7 +184,6 @@ mod tests {
             device_type: None,
             certificate_id: None,
             certification_date: None,
-            software_version: None,
             hardware_version: None,
             vid: None,
             pid: None,
@@ -188,14 +191,10 @@ mod tests {
             family_variant_sku: None,
             firmware_version: None,
             family_id: None,
-            tis_trp_tested: None,
             specification_version: None,
             transport_interface: None,
             primary_device_type_ids: None,
             application_categories: None,
-            description: None,
-            compliance_document_url: None,
-            program_type: Some("Matter".into()),
             created_at: now,
             updated_at: now,
         };
@@ -224,6 +223,7 @@ mod tests {
             batch_id: None,
             progress_emitter: None,
             product_detail_event_emitter: None,
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
         };
         let res = logic.execute(input).await.expect("happy path");
         assert!(res.result.success);
@@ -261,6 +261,7 @@ mod tests {
             batch_id: None,
             progress_emitter: None,
             product_detail_event_emitter: None,
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
         };
         let res = logic.execute(input).await.expect("happy path");
         assert!(res.result.success);

@@ -66,6 +66,7 @@ async fn preplanned_batches_run_sequentially_in_order() {
         kpi_meta: None,
         contract_version: 1,
         page_slots: vec![],
+        list_only: false,
     };
 
     // Build context and channels

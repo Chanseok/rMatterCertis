@@ -157,6 +157,7 @@ mod tests {
             certificate_id: "CSA12345".to_string(),
             company_name: "Test Company".to_string(),
             product_name: "Test Product".to_string(),
+            description: None,
             firmware_version: Some("1.0".to_string()),
             hardware_version: Some("1.0".to_string()),
             specification_version: Some("1.1".to_string()),

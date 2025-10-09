@@ -1,0 +1,294 @@
+warning: /Users/chanseok/Codes/rMatterCertis/src-tauri/Cargo.toml: `panic` setting is ignored for `bench` profile
+warning: matter-certis-v2@0.2.0: Generated unified types index with 92 exports
+   Compiling matter-certis-v2 v0.2.0 (/Users/chanseok/Codes/rMatterCertis/src-tauri)
+warning: unused import: `super::*`
+ --> src/infrastructure/crawling_range_calculation_test.rs:6:9
+  |
+6 |     use super::*;
+  |         ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: `matter-certis-v2` (lib test) generated 1 warning (run `cargo fix --lib -p matter-certis-v2 --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.87s
+     Running unittests src/lib.rs (target/debug/deps/matter_certis_v2_lib-07eb16e8309981fc)
+
+running 256 tests
+test api::dashboard_types::export_bindings_performancethresholds ... ok
+test api::dashboard_types::export_bindings_chartdatapoint ... ok
+test api::dashboard_types::export_bindings_databasestatus ... ok
+test api::dashboard_types::export_bindings_activecrawlingsession ... ok
+test api::dashboard_types::export_bindings_completedsession ... ok
+test api::dashboard_types::export_bindings_alertlevel ... ok
+test api::dashboard_types::export_bindings_realtimeperformancemetrics ... ok
+test api::dashboard_types::export_bindings_serverstatus ... ok
+test api::dashboard_types::export_bindings_sitestatus ... ok
+test api::dashboard_types::export_bindings_stagestatistics ... ok
+test api::dashboard_types::export_bindings_dashboardalert ... ok
+test api::dashboard_types::export_bindings_dashboardconfig ... ok
+test api::dashboard_types::export_bindings_realtimechartdata ... ok
+test api::frontend_api::export_bindings_advancedcrawlingconfig ... ok
+test api::frontend_api::export_bindings_crawlingprogressinfo ... ok
+test api::frontend_api::export_bindings_databasestats ... ok
+test api::frontend_api::export_bindings_errorinfo ... ok
+test api::frontend_api::export_bindings_productinfo ... ok
+test api::frontend_api::export_bindings_sessionstatus ... ok
+test api::dashboard_types::export_bindings_systemstatus ... ok
+test api::frontend_api::export_bindings_apiresponse ... ok
+test api::frontend_api::export_bindings_crawlingsession ... ok
+test application::events::tests::test_event_emission_error_types ... ok
+test application::events::tests::test_event_emitter_basic_operations ... ok
+test application::state::tests::test_app_state_creation ... ok
+test application::state::tests::test_progress_update ... ok
+test application::state::tests::test_session_lifecycle ... ok
+test api::frontend_api::export_bindings_sitestatusinfo ... ok
+test api::frontend_api::export_bindings_productpage ... ok
+test commands::config_commands::tests::test_frontend_config_conversion ... ok
+test commands::config_commands::tests::test_frontend_log_writing ... ok
+test commands::config_commands::tests::test_site_config_structure ... ok
+test commands::crawling::actor_system::tests::resume_token_v2_parse_like_production_logic ... ok
+test commands::crawling::actor_system::tests::status_payload_includes_downshift_metadata ... ok
+test commands::config_commands::export_bindings_windowposition ... ok
+test commands::config_commands::export_bindings_windowsize ... ok
+test commands::crawling::real_crawling_commands::export_bindings_realcrawlingprogress ... ok
+test commands::crawling::real_crawling_commands::export_bindings_realcrawlingrequest ... ok
+test api::frontend_api::export_bindings_startcrawlingrequest ... ok
+test commands::crawling::real_crawling_commands::export_bindings_stageresultsummary ... ok
+test commands::crawling::shallow_sync_commands::export_bindings_complementcrawlresult ... ok
+test commands::crawling::shallow_sync_commands::export_bindings_missingproductinfo ... ok
+test commands::crawling::real_crawling_commands::export_bindings_realcrawlingresult ... ok
+test commands::config_commands::export_bindings_windowstate ... ok
+test api::frontend_api::export_bindings_startcrawlingresponse ... ok
+test commands::database::data_queries::export_bindings_availablefilteroptions ... ok
+test commands::crawling::shallow_sync_commands::export_bindings_missinganalysisresult ... ok
+test commands::crawling::shallow_sync_commands::export_bindings_shallowcrawlresult ... ok
+test api::dashboard_types::export_bindings_dashboardstate ... ok
+test commands::database::data_queries::export_bindings_certificationtimelinepoint ... ok
+test api::frontend_api::tests::test_typescript_exports ... ok
+test commands::database::data_queries::export_bindings_crawlingstatusinfo ... ok
+test commands::database::data_queries::export_bindings_filteredanalyticssummary ... ok
+test commands::database::data_queries::export_bindings_systemstatus ... ok
+test commands::database::export_import::export_bindings_excelexportresult ... ok
+test commands::database::export_import::export_bindings_excelimportresult ... ok
+test commands::database::data_queries::export_bindings_certificationtimelineresponse ... ok
+test commands::devtools::db_diagnostics::export_bindings_coordmismatchsample ... ok
+test commands::devtools::db_diagnostics::export_bindings_dbconnectiondiagnostics ... ok
+test commands::database::data_queries::export_bindings_productpage ... ok
+test commands::devtools::db_diagnostics::export_bindings_duplicateposition ... ok
+test crawl_engine::actor_event_bridge::tests::generalized_only_mode_emits_unified_channel_and_keeps_original_name_in_payload ... ok
+test crawl_engine::actor_event_bridge::tests::map_batch_started_includes_optional_plan_id ... ok
+test crawl_engine::actor_event_bridge::tests::map_page_lifecycle_event ... ok
+test crawl_engine::actor_event_bridge::tests::map_performance_metrics_event_name_and_payload_flattened ... ok
+test crawl_engine::actor_event_bridge::tests::map_stage_started_event_name_and_payload_flattened ... ok
+test crawl_engine::actor_event_bridge::tests::map_task_lifecycle_event ... ok
+test crawl_engine::actor_event_bridge::tests::map_validation_completed_event ... ok
+test commands::devtools::db_diagnostics::export_bindings_groupsummary ... ok
+test api::dashboard_types::export_bindings_dashboardevent ... ok
+test crawl_engine::actors::stage_batcher::tests::test_concurrency_cap ... ok
+test crawl_engine::actors::stage_batcher::tests::test_reverse_order ... ok
+test crawl_engine::actors::stage_batcher::tests::test_timeout_enforcement_only_if_stricter ... ok
+test crawl_engine::actors::stage_actor::tests::stage_actor_emits_validation_and_metrics_with_hermetic_context ... ok
+test commands::devtools::db_diagnostics::export_bindings_pagesequencegap ... ok
+test commands::devtools::db_diagnostics::export_bindings_prepasssummary ... ok
+test crawl_engine::actors::traits::tests::test_actor_health_creation ... ok
+test crawl_engine::actors::traits::tests::test_actor_status_serialization ... ok
+test crawl_engine::actors::traits::tests::test_actor_type ... ok
+test crawl_engine::actors::traits::tests::test_lifecycle_event ... ok
+test commands::devtools::db_diagnostics::export_bindings_productwithoutcoordinates ... ok
+test commands::devtools::lock_detector::export_bindings_lockdetectorresult ... ok
+test commands::devtools::db_diagnostics::export_bindings_nullcoordinatesreport ... ok
+test crawl_engine::actors::traits::export_bindings_actorstatus ... ok
+test crawl_engine::actors::traits::export_bindings_actortype ... ok
+test commands::crawling::shallow_sync_commands::export_bindings_smartsyncresult ... ok
+test crawl_engine::actors::types::export_bindings_actorerror ... ok
+test crawl_engine::actors::types::export_bindings_batchconfig ... ok
+test crawl_engine::actors::types::export_bindings_collectionmetrics ... ok
+test crawl_engine::actors::types::export_bindings_crawlingstrategy ... ok
+test crawl_engine::actors::types::export_bindings_crawlphase ... ok
+test crawl_engine::actors::traits::export_bindings_actorhealth ... ok
+test crawl_engine::actors::traits::export_bindings_actorlifecycleevent ... ok
+test crawl_engine::actors::types::export_bindings_duplicatepersistencepolicy ... ok
+test crawl_engine::actors::types::export_bindings_errorsummary ... ok
+test crawl_engine::actors::types::export_bindings_crawlingconfig ... ok
+test crawl_engine::actors::types::export_bindings_executionplankpi ... ok
+test crawl_engine::actors::types::export_bindings_pagerange ... ok
+test crawl_engine::actors::types::export_bindings_faileditem ... ok
+test crawl_engine::actors::types::export_bindings_pageslot ... ok
+test crawl_engine::actors::types::export_bindings_performancemetrics ... ok
+test commands::devtools::db_diagnostics::export_bindings_dbpaginationmismatchreport ... ok
+test crawl_engine::actors::types::export_bindings_planinputsnapshot ... ok
+test crawl_engine::actors::types::export_bindings_processingmetrics ... ok
+test crawl_engine::actors::types::export_bindings_sessionsummary ... ok
+test crawl_engine::actors::types::export_bindings_simplemetrics ... ok
+test crawl_engine::actors::types::export_bindings_stageerror ... ok
+test crawl_engine::actors::types::export_bindings_stageitemtype ... ok
+test crawl_engine::actors::types::export_bindings_stagetype ... ok
+test crawl_engine::actors::types::export_bindings_stageitem ... ok
+test crawl_engine::actors::types::export_bindings_executionplan ... ok
+test crawl_engine::actors::types::tests::test_actor_command_serialization ... ok
+test crawl_engine::actors::types::tests::test_app_event_serialization ... ok
+test crawl_engine::actors::types::tests::test_batch_config_default ... ok
+test crawl_engine::actors::types::tests::test_crawling_config_default ... ok
+test crawl_engine::actors::types::tests::test_batch_events_optionally_carry_plan_id ... ok
+test crawl_engine::actors::types::tests::test_duration_field_names_policy_examples ... ok
+test crawl_engine::actors::types::tests::test_event_timestamp_presence ... ok
+test crawl_engine::actors::types::tests::test_performance_metrics ... ok
+test crawl_engine::actors::types::tests::test_stage_item_completed_has_duration_ms_and_timestamp ... ok
+test crawl_engine::actors::types::tests::test_stage_result ... ok
+test crawl_engine::channels::types::tests::test_backpressure_check ... ok
+test crawl_engine::channels::types::tests::test_channel_factory_creation ... ok
+test crawl_engine::channels::types::tests::test_control_channel_communication ... ok
+test crawl_engine::context::integrated::tests::test_context_builder ... ok
+test crawl_engine::context::integrated::tests::test_concurrency_limits ... ok
+test crawl_engine::context::integrated::tests::test_log_level_comparison ... ok
+test crawl_engine::context::integrated::tests::test_context_hierarchy ... ok
+test crawl_engine::context::integrated::tests::test_retry_policy_access ... ok
+test crawl_engine::actors::types::export_bindings_syncanomalyentry ... ok
+test crawl_engine::actors::types::export_bindings_taskkind ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_batcheventtype ... ok
+test crawl_engine::actors::types::export_bindings_stageresultdata ... ok
+test crawl_engine::actors::types::export_bindings_stagesuccessresult ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_bottlenecktype ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_batchplan ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_bottleneckalert ... ok
+test crawl_engine::actors::types::export_bindings_stageitemresult ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_errorcategory ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_optimizationtype ... ok
+test crawl_engine::actors::types::export_bindings_stageresult ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_optimizationhint ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_performancetrend ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_concurrencysnapshot ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_resourceallocation ... ok
+test crawl_engine::actors::types::export_bindings_actorcommand ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_resourceforecast ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_resourceusage ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_retrystrategy ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_sessioneventtype ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_crawlingsessionplan ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_sitestatusinfo ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_stagetype ... ok
+test crawl_engine::integrated_context::tests::test_context_hierarchy ... ok
+test crawl_engine::integrated_context::tests::test_event_emission ... ok
+test crawl_engine::integrated_context::tests::test_integrated_context_creation ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_taskexecutioncontext ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_taskpriority ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_trenddirection ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_tasktypeinfo ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_taskstate ... ok
+test crawl_engine::services::crawling_planner::export_bindings_optimizationstrategy ... ok
+test crawl_engine::services::crawling_planner::export_bindings_phasetype ... ok
+test crawl_engine::services::planning_service::tests::adjust_execution_plan_with_invalid_range_errors ... ok
+test crawl_engine::services::planning_service::tests::adjust_execution_plan_with_page_count_truncates_newest ... ok
+test crawl_engine::services::planning_service::tests::manual_build_ranges_chunks_reverse_order ... ok
+test crawl_engine::services::performance_optimizer::export_bindings_optimizationrecommendation ... ok
+test crawl_engine::stages::strategies::default::tests::data_saving_logic_happy_path_with_empty_validated_products_is_noop_success ... ok
+test crawl_engine::stages::strategies::default::tests::data_saving_logic_rejects_wrong_item ... ok
+test crawl_engine::stages::strategies::default::tests::data_validation_logic_happy_path_validates_in_memory_details ... ok
+test crawl_engine::services::crawling_planner::export_bindings_crawlingphase ... ok
+test crawl_engine::stages::strategies::default::tests::list_page_logic_unsupported_item_errors ... ok
+test crawl_engine::stages::strategies::default::tests::product_detail_logic_happy_path_with_empty_urls_is_success ... ok
+test crawl_engine::stages::strategies::default::tests::product_detail_logic_rejects_wrong_item ... ok
+test crawl_engine::stages::tests::test_factory_returns_all_strategies ... ok
+test domain::constants::tests::test_site_constants ... ok
+test domain::constants::tests::test_ttl_values ... ok
+test domain::constants::tests::test_validation_ranges ... ok
+test crawl_engine::services::real_crawling_commands::tests::test_real_crawling_commands ... ok
+test domain::integrated_product::tests::test_calculate_data_quality_score ... ok
+test domain::integrated_product::tests::test_calculate_discount_rate ... ok
+test domain::integrated_product::tests::test_is_on_sale ... ok
+test domain::integrated_product::tests::test_new_integrated_product ... ok
+test domain::integrated_product::tests::test_search_criteria_default ... ok
+test domain::integrated_product::tests::test_update_from_crawl_data ... ok
+test domain::pagination::tests::test_basic_mapping ... ok
+test domain::pagination::tests::test_previous_page_rollover ... ok
+test crawl_engine::services::performance_optimizer::export_bindings_optimizationstatus ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_concurrencyinsight ... ok
+test domain::entities::export_bindings_product ... ok
+test crawl_engine::services::crawling_planner::export_bindings_crawlingplan ... ok
+test crawl_engine::services::performance_optimizer::export_bindings_crawlingperformancemetrics ... ok
+test domain::product::export_bindings_productdetail ... ok
+test domain::product::export_bindings_product ... ok
+test domain::product::tests::product_detail_generate_id_zero_padded ... ok
+test domain::product::tests::product_generate_id_zero_padded ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_tasklifecycleevent ... ok
+test domain::product_url::export_bindings_producturl ... ok
+test domain::services::crawling_services::export_bindings_crawlingrangerecommendation ... ok
+test crawl_engine::actors::types::export_bindings_appevent ... ok
+test domain::services::crawling_services::export_bindings_fieldanalysis ... ok
+test domain::services::crawling_services::export_bindings_duplicatetype ... ok
+test domain::services::crawling_services::export_bindings_processingstrategy ... ok
+test domain::services::crawling_services::export_bindings_databaseanalysis ... ok
+test domain::services::crawling_services::export_bindings_severitylevel ... ok
+test domain::session_manager::tests::test_concurrent_sessions ... ok
+test domain::session_manager::tests::test_session_lifecycle ... ok
+test infrastructure::crawling_range_calculation_test::tests::test_step_by_step_calculation ... ok
+test infrastructure::crawling_range_calculation_test::tests::test_crawling_range_calculation_prompts6_example ... FAILED
+test domain::services::crawling_services::export_bindings_sitedatachangestatus ... ok
+test domain::services::crawling_services::export_bindings_duplicategroup ... ok
+test domain::services::crawling_services::export_bindings_recommendedaction ... ok
+test domain::services::crawling_services::export_bindings_datadecreaserecommendation ... ok
+test domain::services::crawling_services::export_bindings_duplicateanalysis ... ok
+test infrastructure::database_paths::tests::test_database_path_consistency ... ok
+test domain::services::crawling_services::export_bindings_sitestatus ... ok
+test infrastructure::features::tests::defaults_are_sane ... ok
+test infrastructure::features::tests::explicit_values_parse ... ok
+test crawl_engine::events::task_lifecycle::export_bindings_concurrencyevent ... ok
+test infrastructure::html_parser::tests::test_extractor_creation ... ok
+test infrastructure::database_paths::tests::test_directory_creation ... ok
+test infrastructure::html_parser::tests::test_certificate_id_extraction ... ok
+test infrastructure::html_parser::tests::test_pagination_calculation ... ok
+test infrastructure::html_parser::tests::test_parse_numeric_id ... ok
+test infrastructure::html_parser::tests::test_page_type_detection ... ok
+test infrastructure::database_connection::tests::test_database_connection ... ok
+test infrastructure::html_parser::tests::test_product_url_extraction ... ok
+test infrastructure::html_parser::tests::test_product_list_extraction ... ok
+test infrastructure::html_parser::tests::test_product_detail_extraction ... ok
+test infrastructure::html_parser::tests::test_extract_product_data_json ... ok
+test infrastructure::html_parser::tests::test_detail_list_extraction ... ok
+test infrastructure::html_parser::tests::test_url_resolution ... ok
+test infrastructure::logging::tests::test_logging_config_default ... ok
+test infrastructure::logging::tests::test_log_directory_creation ... ok
+test infrastructure::html_parser::tests::test_total_pages_extraction ... ok
+test infrastructure::parsing::product_list_parser::tests::test_parser_creation ... ok
+test infrastructure::parsing::product_list_parser::tests::test_url_resolution ... ok
+test infrastructure::product_schema_adapter::tests::test_device_type_mapping ... ok
+test infrastructure::product_schema_adapter::tests::test_hex_parsing ... ok
+test infrastructure::product_schema_adapter::tests::test_matter_product_to_product_conversion ... ok
+test infrastructure::integrated_product_repository::tests::test_bulk_empty_list ... ok
+test infrastructure::parsing::product_detail_parser::tests::test_numeric_field_parsing ... ok
+test infrastructure::parsing::product_detail_parser::tests::test_parser_creation ... ok
+test infrastructure::simple_http_client::tests::test_cancellation_before_start ... ok
+test infrastructure::simple_http_client::tests::test_custom_config ... ok
+test infrastructure::simple_http_client::tests::test_client_creation ... ok
+test infrastructure::integrated_product_repository::tests::test_bulk_create_product_details ... ok
+test infrastructure::integrated_product_repository::tests::test_bulk_update_product_details ... ok
+test crawl_engine::ts_gen::tests::test_typescript_type_generation ... ok
+test infrastructure::database_connection::tests::test_migration_007_column_exists ... ok
+test infrastructure::database_connection::tests::test_migration_009_legacy_column_absent ... ok
+test infrastructure::database_connection::tests::test_database_migration ... ok
+test infrastructure::simple_http_client::tests::test_cancellation_during_body ... ok
+test infrastructure::simple_http_client::tests::test_retry_policy_429_then_ok ... ok
+test infrastructure::simple_http_client::tests::test_health_check ... ok
+test infrastructure::simple_http_client::tests::test_rate_limiter_performance ... ok
+
+failures:
+
+---- infrastructure::crawling_range_calculation_test::tests::test_crawling_range_calculation_prompts6_example stdout ----
+📊 Test Result:
+  Start page: 471
+  End page: 372
+  Expected: start=471, end=462
+
+thread 'infrastructure::crawling_range_calculation_test::tests::test_crawling_range_calculation_prompts6_example' panicked at src/infrastructure/crawling_range_calculation_test.rs:94:17:
+assertion `left == right` failed: End page should be 462
+  left: 372
+ right: 462
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    infrastructure::crawling_range_calculation_test::tests::test_crawling_range_calculation_prompts6_example
+
+test result: FAILED. 255 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.66s
+
+error: test failed, to rerun pass `--lib`

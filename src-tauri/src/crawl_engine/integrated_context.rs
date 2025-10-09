@@ -351,6 +351,7 @@ mod tests {
                 max_retries: 0,
                 strategy: crate::crawl_engine::actors::types::CrawlingStrategy::NewestFirst,
             },
+            planned_pages: vec![],
             timestamp: chrono::Utc::now(),
         };
 
