@@ -641,9 +641,16 @@ export function LocalDBTab() {
 }
 ```
 
-### 4. 분석 탭 (Analysis Tab)
+### 4. ~~분석 탭 (Analysis Tab)~~ (⚠️ DEPRECATED)
 
-#### 주요 기능 배치
+> **⚠️ 이 섹션은 더 이상 사용되지 않습니다.**  
+> 현재 UI는 **3개 탭 구조** (크롤링 엔진, 설정, 로컬DB)만 사용합니다.  
+> 분석 기능은 **로컬DB 탭**으로 통합되었습니다.
+
+<details>
+<summary>📜 레거시 분석 탭 구현 참고 (클릭하여 펼치기)</summary>
+
+#### 주요 기능 배치 (레거시)
 - **분석 서브탭**: 제품 현황, 제조사 분석, 디바이스 유형 분석, 상호작용 분석, 데이터 테이블
 - **날짜 범위 필터**: 슬라이더로 기간 선택
 - **차트 시각화**: 파이차트, 바차트, 라인차트
@@ -859,6 +866,113 @@ export function AnalysisTab() {
   );
 }
 ```
+
+</details>
+
+---
+
+## 현재 활성 탭 구조 (2025-10-09 기준)
+
+### ✅ 1. 크롤링 엔진 탭 (CrawlingEngineTabSimple)
+
+**위치**: `src/components/tabs/CrawlingEngineTabSimple.tsx`
+
+**주요 기능**:
+- 🔍 **사이트 상태 체크**: 실시간 페이지 카운트 감지
+- 📋 **크롤링 플랜**: 전체/부분/수동 범위 선택
+- 🚀 **실행 제어**: 시작/중지/일시정지/재개
+- 📊 **Stage별 진행률**: 5단계 파이프라인 실시간 추적
+- 📝 **Actor 이벤트 콘솔**: 백엔드 이벤트 로그 스트리밍
+- 🧪 **DB 진단**: 좌표 정합성 검사 및 동기화
+
+**구성**:
+```tsx
+// 패널 구조
+<ControlPanel />           // 플랜 선택 및 실행 버튼
+<SessionStatusCard />      // 현재 세션 상태
+<StageStatsPanels />       // Stage 1-5 실시간 통계
+<DiagnosticsPanel />       // DB 진단 및 동기화
+<SyncPanel />              // 좌표 동기화 범위 지정
+<ValidationPanel />        // 데이터 검증
+<PersistPanel />           // DB 저장 통계
+```
+
+### ✅ 2. 설정 탭 (SettingsTab)
+
+**위치**: `src/components/tabs/SettingsTab.tsx`
+
+**주요 기능**:
+- ⚙️ **크롤링 설정**: 동시성, 재시도, 타임아웃
+- 🏭 **Vendor 관리**: 제조사 목록 동기화
+- 📱 **Device Types 관리**: 디바이스 유형 동기화
+- 📁 **경로 설정**: DB, 로그, 백업 디렉토리
+- 📊 **로깅 설정**: 로그 레벨, 파일 크기 제한
+
+**구성**:
+```tsx
+// 설정 그룹
+<CrawlingSettings />       // 크롤링 파라미터
+<VendorSettings />         // Vendor 관리
+<DeviceTypeSettings />     // Device Type 관리
+<PathSettings />           // 디렉토리 경로
+<LoggingSettings />        // 로그 설정
+```
+
+### ✅ 3. 로컬DB 탭 (LocalDBTab)
+
+**위치**: `src/components/tabs/LocalDBTab.tsx`
+
+**주요 기능**:
+- 📊 **통계 대시보드**: 제품 수, 페이지 수, 최근 업데이트
+- 🔍 **제품 검색**: 키워드, 제조사, 디바이스 유형 필터
+- 📤 **백업/복원**: Excel 전체 백업 및 복원
+- 📁 **데이터 관리**: 범위 삭제, 전체 삭제
+- 📈 **분석 도구**: 제조사별/유형별 통계 (분석 탭 통합)
+
+**구성**:
+```tsx
+// 대시보드 섹션
+<StatsSummary />           // 통계 요약 카드
+<SearchPanel />            // 제품 검색 및 필터
+<BackupRestorePanel />     // 백업/복원 도구
+<DataManagementPanel />    // 데이터 삭제 도구
+<AnalyticsPanel />         // 제조사/유형별 분석 (구 분석 탭)
+```
+
+### 📝 새 탭 추가 가이드
+
+1. **탭 컴포넌트 생성**:
+   ```tsx
+   // src/components/tabs/MyNewTab.tsx
+   export default function MyNewTab() {
+     return <div>My New Tab Content</div>;
+   }
+   ```
+
+2. **App.tsx에 라우팅 추가**:
+   ```tsx
+   // src/App.tsx
+   import MyNewTab from './components/tabs/MyNewTab';
+   
+   const tabs = [
+     { id: 'crawling', label: '크롤링 엔진', component: CrawlingEngineTabSimple },
+     { id: 'settings', label: '설정', component: SettingsTab },
+     { id: 'localdb', label: '로컬DB', component: LocalDBTab },
+     { id: 'mynew', label: '새 탭', component: MyNewTab }, // 추가
+   ];
+   ```
+
+3. **탭 아이콘 및 스타일 설정**:
+   ```tsx
+   const tabIcons = {
+     crawling: '🚀',
+     settings: '⚙️',
+     localdb: '💾',
+     mynew: '✨', // 추가
+   };
+   ```
+
+---
 
 ## Tauri 통합 가이드
 
