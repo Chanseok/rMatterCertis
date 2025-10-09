@@ -11,8 +11,14 @@ export const SettingsTab: Component = () => {
   const [saveMessage, setSaveMessage] = createSignal<string>("");
   const [showMessage, setShowMessage] = createSignal(false);
   const [showModal, setShowModal] = createSignal(false);
-  const [showAdvanced, setShowAdvanced] = createSignal(false);
   const [showAppManaged, setShowAppManaged] = createSignal(false);
+  
+  // 각 섹션별 접기/펼치기 상태
+  const [showRange, setShowRange] = createSignal(true);
+  const [showConcurrency, setShowConcurrency] = createSignal(true);
+  const [showTiming, setShowTiming] = createSignal(true);
+  const [showLogging, setShowLogging] = createSignal(true);
+  const [showAdvanced, setShowAdvanced] = createSignal(false); // 고급 설정은 기본 접힌 상태
 
   onMount(async () => {
     console.log("⚙️ SettingsTab 컴포넌트 로드됨");
@@ -88,16 +94,7 @@ export const SettingsTab: Component = () => {
 
         {/* Presets */}
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-4">
-          <div class="flex items-center justify-between mb-2">
-            <h3 class="text-lg font-semibold text-gray-800">프리셋</h3>
-            <button
-              type="button"
-              class="text-sm text-blue-600 hover:text-blue-700 transition-colors duration-200"
-              onClick={() => setShowAdvanced((p) => !p)}
-            >
-              {showAdvanced() ? "▲ 고급 설정 숨기기" : "▼ 고급 설정 보기"}
-            </button>
-          </div>
+          <h3 class="text-lg font-semibold text-gray-800 mb-2">프리셋</h3>
           <div class="flex flex-wrap gap-2">
             <For each={CONFIG_PRESETS}>
               {(preset) => (
@@ -135,14 +132,20 @@ export const SettingsTab: Component = () => {
             
             {/* 📊 범위 · 크기 - 최우선 설정 */}
             <div class="mt-4">
-              <div class="flex items-center gap-2 mb-2">
+              <button
+                type="button"
+                class="flex items-center gap-2 mb-2 w-full hover:bg-gray-50 rounded-lg p-2 -ml-2 transition-colors"
+                onClick={() => setShowRange(!showRange())}
+              >
                 <span class="w-1.5 h-4 rounded bg-blue-400"></span>
                 <div class="text-sm font-semibold text-gray-800">
                   📊 범위 · 크기
                 </div>
-                <span class="text-xs text-gray-500 ml-auto">크롤링 범위 및 데이터 저장 설정</span>
-              </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <span class="text-xs text-gray-500 flex-1 text-left">크롤링 범위 및 데이터 저장 설정</span>
+                <span class="text-gray-400 text-sm">{showRange() ? '▼' : '▶'}</span>
+              </button>
+              <Show when={showRange()}>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
                     <div class="text-sm font-medium text-gray-800">
@@ -200,18 +203,25 @@ export const SettingsTab: Component = () => {
                   </div>
                 </label>
               </div>
+              </Show>
             </div>
 
             {/* 🔴 동시성 & 속도 제어 (Concurrency & Rate Limiting) */}
             <div class="mt-6">
-              <div class="flex items-center gap-2 mb-2">
+              <button
+                type="button"
+                class="flex items-center gap-2 mb-2 w-full hover:bg-gray-50 rounded-lg p-2 -ml-2 transition-colors"
+                onClick={() => setShowConcurrency(!showConcurrency())}
+              >
                 <span class="w-1.5 h-4 rounded bg-red-400"></span>
                 <div class="text-sm font-semibold text-gray-800">
                   🔴 동시성 & 속도 제어
                 </div>
-                <span class="text-xs text-gray-500 ml-auto">서버 부하 제어 핵심 설정</span>
-              </div>
+                <span class="text-xs text-gray-500 flex-1 text-left">서버 부하 제어 핵심 설정</span>
+                <span class="text-gray-400 text-sm">{showConcurrency() ? '▼' : '▶'}</span>
+              </button>
               
+              <Show when={showConcurrency()}>
               {/* 안내 메시지 */}
               <div class="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <div class="flex items-start gap-2">
@@ -363,17 +373,24 @@ export const SettingsTab: Component = () => {
                   </label>
                 </div>
               </div>
+              </Show>
             </div>
 
             {/* ⏱️ 타이밍 & 재시도 - 타임아웃, 지연, 재시도 통합 */}
             <div class="mt-6">
-              <div class="flex items-center gap-2 mb-2">
+              <button
+                type="button"
+                class="flex items-center gap-2 mb-2 w-full hover:bg-gray-50 rounded-lg p-2 -ml-2 transition-colors"
+                onClick={() => setShowTiming(!showTiming())}
+              >
                 <span class="w-1.5 h-4 rounded bg-orange-400"></span>
                 <div class="text-sm font-semibold text-gray-800">
                   ⏱️ 타이밍 & 재시도
                 </div>
-                <span class="text-xs text-gray-500 ml-auto">시간 제한 및 요청 간격 설정</span>
-              </div>
+                <span class="text-xs text-gray-500 flex-1 text-left">시간 제한 및 요청 간격 설정</span>
+                <span class="text-gray-400 text-sm">{showTiming() ? '▼' : '▶'}</span>
+              </button>
+              <Show when={showTiming()}>
               <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
@@ -458,17 +475,24 @@ export const SettingsTab: Component = () => {
                   </div>
                 </label>
               </div>
+              </Show>
             </div>
 
             {/* 📝 로깅 */}
             <div class="mt-6">
-              <div class="flex items-center gap-2 mb-2">
+              <button
+                type="button"
+                class="flex items-center gap-2 mb-2 w-full hover:bg-gray-50 rounded-lg p-2 -ml-2 transition-colors"
+                onClick={() => setShowLogging(!showLogging())}
+              >
                 <span class="w-1.5 h-4 rounded bg-cyan-400"></span>
                 <div class="text-sm font-semibold text-gray-800">
                   📝 로깅
                 </div>
-                <span class="text-xs text-gray-500 ml-auto">로그 출력 및 저장 설정</span>
-              </div>
+                <span class="text-xs text-gray-500 flex-1 text-left">로그 출력 및 저장 설정</span>
+                <span class="text-gray-400 text-sm">{showLogging() ? '▼' : '▶'}</span>
+              </button>
+              <Show when={showLogging()}>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
@@ -547,15 +571,23 @@ export const SettingsTab: Component = () => {
                   />
                 </label>
               </div>
+              </Show>
             </div>
           </fieldset>
 
           {/* 고급 설정 (토글) */}
-          <Show when={showAdvanced()}>
-            <fieldset class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
+          <fieldset class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
+            <button
+              type="button"
+              class="flex items-center gap-2 w-full hover:bg-gray-50 rounded-lg p-2 -ml-2 transition-colors"
+              onClick={() => setShowAdvanced(!showAdvanced())}
+            >
               <legend class="px-2 text-lg font-semibold text-gray-800">
-                고급 설정
+                🔧 고급 설정
               </legend>
+              <span class="text-gray-400 text-sm ml-auto">{showAdvanced() ? '▼ 숨기기' : '▶ 펼치기'}</span>
+            </button>
+            <Show when={showAdvanced()}>
               <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
                 {/* 로깅 고급 */}
                 <label class="text-sm font-medium text-gray-800 flex items-center gap-2">
@@ -1195,8 +1227,9 @@ export const SettingsTab: Component = () => {
                   </div>
                 </label>
               </div>
+              </Show>
             </fieldset>
-          </Show>
+          
           {/* 앱 관리 정보 (읽기 전용, 토글) */}
           <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20">
             <div class="p-4 flex items-center justify-between">
