@@ -20,6 +20,7 @@ import PersistPanel from "./parts/PersistPanel";
 import { DetailTracker, ProductDetailEvent, ProductDetailPhase } from '../../services/detail-tracker';
 import { getCrawlEventsStore } from '../../events/crawlEventsStore';
 import { crawlerStore } from '../../stores/crawlerStore';
+import type { DiagnosticsResult } from '../../types/diagnostics';
 
 export default function CrawlingEngineTabSimple() {
   const [isRunning, setIsRunning] = createSignal(false);
@@ -173,7 +174,7 @@ export default function CrawlingEngineTabSimple() {
   const [persistFlash, setPersistFlash] = createSignal(false);
   // Stage X: DB mismatch diagnostics
   const [diagLoading, setDiagLoading] = createSignal(false);
-  const [diagResult, setDiagResult] = createSignal<any | null>(null);
+  const [diagResult, setDiagResult] = createSignal<DiagnosticsResult | null>(null);
   const [cleanupLoading, setCleanupLoading] = createSignal(false);
   const runDiagnostics = async () => {
     try {

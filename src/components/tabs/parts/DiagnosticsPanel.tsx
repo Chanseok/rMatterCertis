@@ -1,8 +1,9 @@
 import { Component, Show, For } from 'solid-js';
 import NullCoordinatesPanel from './NullCoordinatesPanel.tsx';
+import type { DiagnosticsResult } from '../../../types/diagnostics';
 
 interface Props {
-  diagResult: () => any;
+  diagResult: () => DiagnosticsResult | null;
   diagLoading: () => boolean;
   cleanupLoading: () => boolean;
   runDiagnostics: () => void | Promise<void>;
@@ -147,8 +148,8 @@ const DiagnosticsPanel: Component<Props> = (p) => {
           <div>
             <b>이상 그룹</b>
             <ul class="list-disc ml-5">
-              <For each={(p.diagResult()?.group_summaries ?? []).filter((g: any) => g.status !== 'ok')}>
-                {(g: any) => (
+              <For each={(p.diagResult()?.group_summaries ?? []).filter((g) => g.status !== 'ok')}>
+                {(g) => (
                   <li>
                     page_id {g.page_id}
                     {g.current_page_number != null ? ` (물리 ${g.current_page_number})` : ''}
@@ -166,7 +167,7 @@ const DiagnosticsPanel: Component<Props> = (p) => {
               <b class="text-red-800">🚨 누락된 페이지 시퀀스</b> (총 {p.diagResult()?.total_missing_pages ?? 0}개 페이지)
               <ul class="list-disc ml-5 text-red-700">
                 <For each={(p.diagResult()?.missing_pages ?? []).slice(0, 20)}>
-                  {(gap: any) => (
+                  {(gap) => (
                     <li>
                       {gap.gap_type === 'single' 
                         ? `page_id ${gap.start_page}${gap.start_physical_page != null ? ` (물리 ${gap.start_physical_page})` : ''} 누락`
@@ -186,7 +187,7 @@ const DiagnosticsPanel: Component<Props> = (p) => {
               <b>중복 위치 샘플</b>
               <ul class="list-disc ml-5">
                 <For each={(p.diagResult()?.duplicate_positions ?? []).slice(0, 20)}>
-                  {(d: any) => (
+                  {(d) => (
                     <li>
                       page_id {d.page_id}
                       {d.current_page_number != null ? ` (물리 ${d.current_page_number})` : ''}, index {d.index_in_page}: {d.urls?.length ?? 0}개 URL
