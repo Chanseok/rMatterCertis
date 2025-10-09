@@ -7,6 +7,7 @@ use crate::infrastructure::integrated_product_repository::IntegratedProductRepos
 use crate::domain::services::crawling_services::StatusChecker;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
 use tracing::info;
 use ts_rs::TS;
@@ -89,7 +90,7 @@ pub async fn start_shallow_sync(
     drop(config_guard);
     
     let pool = app_state.get_database_pool().await?;
-    let repo = IntegratedProductRepository::new(pool);
+    let repo = Arc::new(IntegratedProductRepository::new(pool));
     
     // 사이트 분석으로 총 페이지 수 확인
     use crate::infrastructure::HttpClient;
@@ -106,7 +107,7 @@ pub async fn start_shallow_sync(
         http_client,
         data_extractor,
         app_config.clone(),
-        std::sync::Arc::new(repo.clone()),
+        Arc::clone(&repo),
     );
     
     let site_status = status_checker.check_site_status().await

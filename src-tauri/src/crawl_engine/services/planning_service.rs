@@ -252,7 +252,7 @@ impl PlanningStrategy for IntelligentPlanningStrategy {
         };
 
         // 2) Services
-        let product_repo = std::sync::Arc::new(IntegratedProductRepository::new(db_pool.clone()));
+        let product_repo = std::sync::Arc::new(IntegratedProductRepository::new(db_pool));
         info!("🔍 Testing database connection before planning...");
         if let Err(e) = product_repo.get_product_count().await {
             error!("❌ Database connection failed in planning: {}", e);

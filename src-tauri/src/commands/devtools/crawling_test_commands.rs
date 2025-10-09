@@ -143,7 +143,7 @@ pub async fn quick_crawling_test(
     };
 
     // 5. 실행기 생성
-    let executor = Arc::new(RealCrawlingStageExecutor::new(integration_service.clone()));
+    let executor = Arc::new(RealCrawlingStageExecutor::new(Arc::clone(&integration_service)));
     let cancellation_token = CancellationToken::new();
 
     // 6. 리스트 수집 테스트

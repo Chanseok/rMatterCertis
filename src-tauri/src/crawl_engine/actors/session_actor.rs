@@ -214,8 +214,9 @@ impl SessionActor {
             })?;
 
         self.plan_version = 1;
-        self.crawling_plan = Some(std::sync::Arc::new(plan.clone()));
-        Ok((plan, used_site_status))
+        let plan_arc = Arc::new(plan);
+        self.crawling_plan = Some(Arc::clone(&plan_arc));
+        Ok(((*plan_arc).clone(), used_site_status))
     }
 
     /// Emit a simple "plan ready" progress event

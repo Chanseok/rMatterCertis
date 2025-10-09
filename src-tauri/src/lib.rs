@@ -476,7 +476,7 @@ pub fn run() {
         }
     });
 
-    // Create application state (owned). Also store Arc clone for global accessor.
+    // Create application state. Store Arc for global accessor, then move owned state to Tauri.
     let app_state = application::AppState::new(config);
     crate::application::app_handle_access::set_app_state(Arc::new(app_state.clone()));
 

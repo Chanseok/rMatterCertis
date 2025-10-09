@@ -813,15 +813,14 @@ impl crate::crawl_engine::actors::StageActor {
         products_on_last_page: u32,
     ) -> anyhow::Result<Self> {
         // Initialize integration service
-        let app_cfg = app_config.clone();
         let integration_service =
-            Arc::new(CrawlingIntegrationService::new(config.clone(), app_cfg.clone()).await?);
+            Arc::new(CrawlingIntegrationService::new(Arc::clone(&config), app_config.clone()).await?);
 
         // Create executor
         let crawling_executor = Arc::new(RealCrawlingStageExecutor::new(integration_service));
 
         // Build minimal deps for StageActor
-        let http_client = Arc::new(app_cfg.create_http_client()?);
+        let http_client = Arc::new(app_config.create_http_client()?);
         let extractor = Arc::new(crate::infrastructure::MatterDataExtractor::new()?);
         let pool = crate::infrastructure::database_connection::get_or_init_global_pool().await?;
         let repo = Arc::new(crate::infrastructure::IntegratedProductRepository::new(
@@ -831,7 +830,7 @@ impl crate::crawl_engine::actors::StageActor {
             crate::infrastructure::crawling_service_impls::StatusCheckerImpl::with_product_repo(
                 (*http_client).clone(),
                 (*extractor).clone(),
-                app_cfg.clone(),
+                app_config.clone(),
                 Arc::clone(&repo),
             ),
         );
@@ -840,15 +839,15 @@ impl crate::crawl_engine::actors::StageActor {
                 Arc::clone(&http_client),
                 Arc::clone(&extractor),
                 crate::infrastructure::crawling_service_impls::CollectorConfig {
-                    max_concurrent: app_cfg.user.crawling.workers.list_page_max_concurrent as u32,
-                    concurrency: app_cfg.user.crawling.workers.list_page_max_concurrent as u32,
+                    max_concurrent: app_config.user.crawling.workers.list_page_max_concurrent as u32,
+                    concurrency: app_config.user.crawling.workers.list_page_max_concurrent as u32,
                     delay_between_requests: std::time::Duration::from_millis(
-                        app_cfg.user.request_delay_ms,
+                        app_config.user.request_delay_ms,
                     ),
-                    delay_ms: app_cfg.user.request_delay_ms,
-                    batch_size: app_cfg.user.batch.batch_size,
-                    retry_attempts: app_cfg.user.crawling.workers.max_retries,
-                    retry_max: app_cfg.user.crawling.workers.max_retries,
+                    delay_ms: app_config.user.request_delay_ms,
+                    batch_size: app_config.user.batch.batch_size,
+                    retry_attempts: app_config.user.crawling.workers.max_retries,
+                    retry_max: app_config.user.crawling.workers.max_retries,
                 },
                 status_checker_impl.clone(),
             ),
@@ -858,16 +857,16 @@ impl crate::crawl_engine::actors::StageActor {
                 Arc::clone(&http_client),
                 Arc::clone(&extractor),
                 crate::infrastructure::crawling_service_impls::CollectorConfig {
-                    max_concurrent: app_cfg.user.crawling.workers.product_detail_max_concurrent
+                    max_concurrent: app_config.user.crawling.workers.product_detail_max_concurrent
                         as u32,
-                    concurrency: app_cfg.user.crawling.workers.product_detail_max_concurrent as u32,
+                    concurrency: app_config.user.crawling.workers.product_detail_max_concurrent as u32,
                     delay_between_requests: std::time::Duration::from_millis(
-                        app_cfg.user.request_delay_ms,
+                        app_config.user.request_delay_ms,
                     ),
-                    delay_ms: app_cfg.user.request_delay_ms,
-                    batch_size: app_cfg.user.batch.batch_size,
-                    retry_attempts: app_cfg.user.crawling.workers.max_retries,
-                    retry_max: app_cfg.user.crawling.workers.max_retries,
+                    delay_ms: app_config.user.request_delay_ms,
+                    batch_size: app_config.user.batch.batch_size,
+                    retry_attempts: app_config.user.crawling.workers.max_retries,
+                    retry_max: app_config.user.crawling.workers.max_retries,
                 },
             ),
         );
@@ -875,7 +874,7 @@ impl crate::crawl_engine::actors::StageActor {
             http_client,
             data_extractor: extractor,
             product_repo: repo,
-            app_config: app_cfg.clone(),
+            app_config: app_config.clone(),
             duplicate_policy: crate::crawl_engine::actors::types::DuplicatePersistencePolicy::Skip,
         };
         let mut stage_actor = Self::new_with_deps(

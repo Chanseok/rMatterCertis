@@ -59,7 +59,8 @@ async fn main() -> Result<()> {
 
     // 2. 리포지토리 초기화
     info!("🏗️  2. 리포지토리 초기화");
-    let _product_repo = Arc::new(IntegratedProductRepository::new(db.pool().clone()));
+    let db_pool = db.pool().clone();
+    let _product_repo = Arc::new(IntegratedProductRepository::new(db_pool));
     println!("✅ IntegratedProductRepository 초기화 완료");
 
     // 3. HTTP 클라이언트 및 데이터 추출기 설정
