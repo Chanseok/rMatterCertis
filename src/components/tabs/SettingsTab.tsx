@@ -405,13 +405,14 @@ export const SettingsTab: Component = () => {
 
             {/* 기존 "지연 · 템포" 섹션 제거됨 (위로 통합) */}
 
-            {/* 범위 · 크기 */}
+            {/* 📊 범위 · 크기 */}
             <div class="mt-6">
               <div class="flex items-center gap-2 mb-2">
-                <span class="w-1.5 h-4 rounded bg-indigo-300"></span>
+                <span class="w-1.5 h-4 rounded bg-blue-400"></span>
                 <div class="text-sm font-semibold text-gray-800">
-                  범위 · 크기
+                  📊 범위 · 크기
                 </div>
+                <span class="text-xs text-gray-500 ml-auto">크롤링 범위 및 배치 크기</span>
               </div>
               <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
@@ -423,21 +424,24 @@ export const SettingsTab: Component = () => {
                       크롤링할 최대 페이지 수
                     </div>
                   </div>
-                  <input
-                    type="number"
-                    class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
-                    value={settingsState.getNestedValue(
-                      "user.crawling.page_range_limit"
-                    )}
-                    min={1}
-                    max={10000}
-                    onInput={(e) =>
-                      settingsState.updateNestedField(
-                        "user.crawling.page_range_limit",
-                        +e.currentTarget.value
-                      )
-                    }
-                  />
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="number"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      value={settingsState.getNestedValue(
+                        "user.crawling.page_range_limit"
+                      )}
+                      min={1}
+                      max={10000}
+                      onInput={(e) =>
+                        settingsState.updateNestedField(
+                          "user.crawling.page_range_limit",
+                          +e.currentTarget.value
+                        )
+                      }
+                    />
+                    <span class="text-sm text-gray-500">페이지</span>
+                  </div>
                 </label>
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
@@ -448,26 +452,32 @@ export const SettingsTab: Component = () => {
                       한 번에 저장할 레코드 수
                     </div>
                   </div>
-                  <input
-                    type="number"
-                    class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
-                    value={settingsState.getNestedValue(
-                      "user.batch.batch_size"
-                    )}
-                    min={1}
-                    max={1000}
-                    onInput={(e) =>
-                      settingsState.updateNestedField(
-                        "user.batch.batch_size",
-                        +e.currentTarget.value
-                      )
-                    }
-                  />
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="number"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      value={settingsState.getNestedValue(
+                        "user.batch.batch_size"
+                      )}
+                      min={1}
+                      max={1000}
+                      onInput={(e) =>
+                        settingsState.updateNestedField(
+                          "user.batch.batch_size",
+                          +e.currentTarget.value
+                        )
+                      }
+                    />
+                    <span class="text-sm text-gray-500">개</span>
+                  </div>
                 </label>
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
                     <div class="text-sm font-medium text-gray-800">
                       로컬DB 자동 추가
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      크롤링 데이터 자동 저장
                     </div>
                   </div>
                   <input
@@ -491,17 +501,23 @@ export const SettingsTab: Component = () => {
 
             {/* "워커(병렬 처리)" 섹션 제거됨 (위 "동시성 & 속도 제어"로 통합) */}
 
-            {/* 배치 처리 */}
+            {/* 📦 배치 처리 */}
             <div class="mt-6">
               <div class="flex items-center gap-2 mb-2">
-                <span class="w-1.5 h-4 rounded bg-indigo-300"></span>
-                <div class="text-sm font-semibold text-gray-800">배치 처리</div>
+                <span class="w-1.5 h-4 rounded bg-purple-400"></span>
+                <div class="text-sm font-semibold text-gray-800">
+                  📦 배치 처리
+                </div>
+                <span class="text-xs text-gray-500 ml-auto">데이터 일괄 처리 설정</span>
               </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="grid grid-cols-1 md:grid-cols-1 gap-4">
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
                     <div class="text-sm font-medium text-gray-800">
                       배치 처리 사용
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      여러 작업을 모아서 한 번에 처리
                     </div>
                   </div>
                   <input
@@ -521,17 +537,23 @@ export const SettingsTab: Component = () => {
               </div>
             </div>
 
-            {/* 로깅 */}
+            {/* 📝 로깅 */}
             <div class="mt-6">
               <div class="flex items-center gap-2 mb-2">
-                <span class="w-1.5 h-4 rounded bg-indigo-300"></span>
-                <div class="text-sm font-semibold text-gray-800">로깅</div>
+                <span class="w-1.5 h-4 rounded bg-cyan-400"></span>
+                <div class="text-sm font-semibold text-gray-800">
+                  📝 로깅
+                </div>
+                <span class="text-xs text-gray-500 ml-auto">로그 출력 및 저장 설정</span>
               </div>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
                     <div class="text-sm font-medium text-gray-800">
                       콘솔 출력
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      터미널에 로그 표시
                     </div>
                   </div>
                   <input
@@ -555,6 +577,9 @@ export const SettingsTab: Component = () => {
                     <div class="text-sm font-medium text-gray-800">
                       파일 저장
                     </div>
+                    <div class="text-xs text-gray-500">
+                      로그 파일로 저장
+                    </div>
                   </div>
                   <input
                     type="checkbox"
@@ -573,8 +598,8 @@ export const SettingsTab: Component = () => {
                   />
                 </label>
               </div>
-              <div class="grid grid-cols-1 md:grid-cols-1 gap-4">
-                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3 mt-2">
+              <div class="grid grid-cols-1 md:grid-cols-1 gap-4 mt-4">
+                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
                     <div class="text-sm font-medium text-gray-800">
                       로그 레벨
@@ -585,7 +610,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="text"
-                    class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                    class="text-lg px-3 py-2 w-32 text-center rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-cyan-300"
                     value={
                       settingsState.getNestedValue("user.logging.level") ||
                       "info"
