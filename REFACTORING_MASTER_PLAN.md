@@ -922,77 +922,154 @@ interface AnalyticsReport { ... } // ❌ 제거
 
 ---
 
-## Phase 5: 아키텍처 개선 (필요시)
+## Phase 5: 아키텍처 원칙 준수 및 선택적 개선
 
-> **목적**: 성능 최적화, 코드 품질 향상  
-> **우선순위**: 🟢 Low (선택적)
+> **목적**: 리팩토링 시 Modern Rust 2024 원칙 준수, 구현 완료된 아키텍처 검증  
+> **우선순위**: 🟡 Medium (코드 품질 핵심)  
+> **참고 문서**: `guide/re-arch-plan-final2.md`, `guide/re-arch-plan-final3.md`
 
-### Task 5.1: 페이지 탐색 캐시 최적화
+### 🦀 Modern Rust 2024 필수 준수 원칙
 
+> **⚠️ 리팩토링 시 모든 코드는 아래 원칙을 준수해야 함**
+
+#### 코드 품질 기준
+- **`mod.rs` 사용 금지**: 모듈은 `lib.rs` 또는 `directory/file.rs` 사용
+- **Clippy 100% 준수**: `cargo clippy --all-targets --all-features`
+  - `#![warn(clippy::all, clippy::pedantic, clippy::nursery)]` 적용
+- **`unwrap()` 금지**: 모든 에러는 `Result<T, E>`로 적절히 처리
+- **불필요한 `clone()` 최소화**: 참조 전달 우선, 소유권 이동 최적화
+- **ts-rs 8.0 타입 안전성**: 백엔드-프론트엔드 타입 자동 동기화
+
+#### Clean Code 원칙
+- **명확한 네이밍**: 변수/함수명은 의도를 명확히 표현
+- **단일 책임 원칙 (SRP)**: 하나의 함수/모듈은 하나의 책임만
+- **최소 의존성**: 순환 참조 제거, 의존성 그래프 단순화
+
+#### 함수형 프로그래밍 원칙
+- **Stateless 메서드 우선**: 가급적 순수 함수로 작성
+- **불변성 추구**: 가변 상태 최소화, `Arc` 대신 메시지 전달
+- **명시적 의존성**: 내부 캐시/상태 대신 파라미터로 명시적 전달
+  ```rust
+  // ❌ 암시적 상태 의존
+  fn analyze(&self) -> Result<Report> {
+      let data = self.cache.get(); // 숨겨진 의존성
+  }
+  
+  // ✅ 명시적 파라미터
+  fn analyze(data: &Data) -> Result<Report> {
+      // 순수 함수
+  }
+  ```
+
+### 📋 구현 완료된 아키텍처 검증 체크리스트
+
+> **현재 상태 확인**: 아래 항목들은 이미 구현 완료. 리팩토링 시 손상 여부만 확인
+
+#### ✅ Backend-Only CRUD 패턴 (완료)
+- [x] AppState 공유 연결 풀 (`src-tauri/src/application/state.rs`)
+- [x] 중앙화된 데이터베이스 경로 (`~/Library/Application Support/matter-certis-v2/database/`)
+- [x] 모든 CRUD는 Tauri Commands를 통해서만 수행
+- [ ] **검증**: 프론트엔드에 직접 DB 접근 코드 없는지 확인
+  ```bash
+  # 프론트엔드에서 직접 DB 접근 검색
+  rg "Database\\.load|SqlitePool|sqlx::" src/ --type ts
+  ```
+
+#### ✅ Actor 시스템 핵심 인프라 (완료)
+- [x] AppContext 공유 컨텍스트 (`src-tauri/src/new_architecture/context.rs`)
+- [x] 삼중 채널 시스템 (Control/Data/Event)
+- [x] ExecutionPlan Contract v1 (page_slots, plan_hash)
+- [x] SessionActor → BatchActor 실행 경로
+- [ ] **검증**: Phase trait 구현 확인
+  ```bash
+  # Phase trait 구현체 검색
+  rg "impl Phase for" src-tauri/src/
+  ```
+
+#### ✅ Session 제어 시스템 (완료)
+- [x] SessionRegistry (pause/resume/shutdown)
+- [x] watch 채널 기반 제어 신호
+- [x] 진행률 추적 (pages, batches)
+- [x] 에러 추적 (last_error, error_count)
+- [x] Resume 토큰 (generated_at, remaining_pages)
+- [ ] **검증**: get_session_status API 응답 확인
+  ```bash
+  # 세션 상태 API 테스트
+  cargo test session_status
+  ```
+
+#### ✅ Graceful Shutdown (완료)
+- [x] Phase loop 종료 감지
+- [x] PhaseAborted 이벤트 발행
+- [x] SessionRegistry 상태 전환 (ShuttingDown → Completed)
+- [ ] **검증**: Shutdown 시나리오 테스트
+  ```bash
+  # Graceful shutdown 테스트
+  cargo test graceful_shutdown
+  ```
+
+#### ✅ 설정 파일 기반 자율 운영 (완료)
+- [x] `matter_certis_config.json` 기반 설정 로드
+- [x] ConfigManager 파일 감시 (notify crate)
+- [x] 백엔드 자율 동작 (프론트엔드 독립)
+- [ ] **검증**: UI에서 설정값 전송하는 API 제거 확인
+  ```bash
+  # 설정값 전송 API 검색
+  rg "invoke.*config|invoke.*batch_size|invoke.*concurrency" src/ --type ts
+  ```
+
+### 🔧 선택적 개선 사항 (필요시만 수행)
+
+#### Task 5.1: 페이지 탐색 캐시 최적화
 **현재 구조**:
 ```rust
-// PageAnalysisCache 활용도 분석
 page_cache: Arc<tokio::sync::Mutex<HashMap<u32, PageAnalysisCache>>>
 ```
 
-**개선 아이디어**:
-1. LRU 캐시 도입 (용량 제한)
-2. TTL(Time To Live) 설정
-3. 캐시 히트율 모니터링
-
-**실행 (선택적)**:
-- [ ] 현재 캐시 히트율 측정
-- [ ] LRU 캐시 구현 (`lru` crate)
+**개선 아이디어** (선택적):
+- [ ] LRU 캐시 도입 (`lru` crate)
+- [ ] TTL 설정 및 캐시 히트율 모니터링
 - [ ] 성능 벤치마크
 
-### Task 5.2: 데이터베이스 분석 성능 개선
+**실행 조건**: 메모리 사용량이 문제가 되거나 캐시 히트율이 낮을 때만
 
-**문제점**:
-- 대규모 데이터셋에서 `analyze_current_state` 느림
-- UI 블로킹 발생
+#### Task 5.2: 데이터베이스 분석 성능 개선
+**문제점**: 대규모 데이터셋에서 `analyze_current_state` 느림
 
-**개선 방안**:
-1. 배치 처리 (청크 단위 분석)
-2. 인덱스 최적화
-3. Stream API 도입 (점진적 결과 반환)
+**개선 방안** (선택적):
+- [ ] 인덱스 최적화 (page_id, index_in_page)
+- [ ] 배치 처리 (청크 단위 분석)
+- [ ] Stream API 도입
 
-**실행 (선택적)**:
-- [ ] 현재 성능 측정 (벤치마크)
-- [ ] 인덱스 추가 (page_id, index_in_page)
-- [ ] 배치 처리 구현
-- [ ] 성능 비교
+**실행 조건**: 7000+ 제품에서 분석 시간이 5초 이상 걸릴 때만
 
-### Task 5.3: 에러 처리 일관성 개선
+#### Task 5.3: 에러 처리 일관성 개선
+**현재 문제**: `Result<T, String>` vs `anyhow::Error` 혼재
 
-**현재 문제**:
-- 일부는 `Result<T, String>` 반환
-- 일부는 `try-catch`로 처리
-- 에러 메시지 일관성 부족
-
-**개선 계획**:
+**개선 방안** (선택적):
 ```rust
-// 백엔드: anyhow::Error 통일
+// anyhow::Error 통일
 use anyhow::{Result, Context};
 
 pub async fn some_operation() -> Result<T> {
+    load_config().context("Failed to load configuration")?;
     // ...
-    .context("Failed to perform operation")?
 }
 ```
 
-```typescript
-// 프론트엔드: ErrorBoundary + 에러 코드
-enum ErrorCode {
-  SITE_INACCESSIBLE = 'SITE_001',
-  DB_CONNECTION_FAILED = 'DB_001',
-  // ...
-}
-```
+**실행 조건**: 에러 추적/디버깅이 어려울 때만
 
-**실행 (선택적)**:
-- [ ] 백엔드 에러 패턴 통일
-- [ ] 프론트엔드 ErrorBoundary 도입
-- [ ] 에러 코드 정의
+### 📚 Phase 5 참고 문서
+
+**필수 읽기**:
+- `guide/re-arch-plan-final2.md` - Actor 모델 및 Phase 로드맵
+- `guide/re-arch-plan-final3.md` - 핵심 인프라 설계
+
+**권장 읽기**:
+- [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/)
+- [Clean Architecture in Rust](https://www.youtube.com/watch?v=wU8hQvU8aKM)
+- [Actor Model in Tokio](https://ryhl.io/blog/actors-with-tokio/)
+- [DDD with Rust](https://github.com/rust-unofficial/patterns/blob/master/patterns/behavioural/strategy.md)
 
 ---
 
@@ -1393,9 +1470,44 @@ git checkout -b refactoring-attempt-2
 
 ---
 
-## 부록
+## 부록 B: 참고 링크 모음
 
-### A. 빠른 참조 명령어
+### Modern Rust & Clean Code
+- [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/) - 공식 API 설계 가이드
+- [Clippy Lint List](https://rust-lang.github.io/rust-clippy/master/) - Clippy 경고 목록
+- [Rust Design Patterns](https://rust-unofficial.github.io/patterns/) - Rust 디자인 패턴
+- [Clean Code in Rust](https://www.youtube.com/watch?v=wU8hQvU8aKM) - Clean Architecture 적용
+
+### Actor Model & Concurrency
+- [Actor Model with Tokio](https://ryhl.io/blog/actors-with-tokio/) - Tokio 기반 Actor 구현
+- [Tokio Tutorial](https://tokio.rs/tokio/tutorial) - 공식 Tokio 튜토리얼
+- [Async Rust Book](https://rust-lang.github.io/async-book/) - 비동기 프로그래밍
+
+### Testing & Quality
+- [Rust Testing Book](https://doc.rust-lang.org/book/ch11-00-testing.html) - 공식 테스트 가이드
+- [Property-Based Testing](https://github.com/proptest-rs/proptest) - proptest 사용법
+- [Golden Testing Pattern](https://ro-che.info/articles/2017-12-04-golden-tests) - Golden 테스트 설명
+- [Tarpaulin Coverage](https://github.com/xd009642/tarpaulin) - 코드 커버리지 도구
+
+### Frontend & TypeScript
+- [SolidJS Testing Guide](https://www.solidjs.com/guides/testing) - SolidJS 테스트
+- [ts-rs Documentation](https://docs.rs/ts-rs/latest/ts_rs/) - TypeScript 타입 생성
+- [Tauri Best Practices](https://tauri.app/v1/guides/features/command/) - Tauri 명령 패턴
+
+### Database & SQLite
+- [SQLx Documentation](https://docs.rs/sqlx/latest/sqlx/) - SQLx 공식 문서
+- [SQLite Best Practices](https://www.sqlite.org/bestpractice.html) - SQLite 모범 사례
+
+### Architecture References
+- **프로젝트 내부 문서**:
+  - `guide/re-arch-plan-final2.md` - Actor 모델 및 Phase 로드맵
+  - `guide/re-arch-plan-final3.md` - 핵심 인프라 설계
+  - `guide/matter-certis-v2-development-guide.md` - 개발 가이드
+  - `guide/DATABASE_SCHEMA.md` - 데이터베이스 스키마
+
+---
+
+## 부록 C: 빠른 참조 명령어
 
 ```bash
 # 테스트 실행
@@ -1414,7 +1526,7 @@ cd src-tauri && cargo tarpaulin --out Html
 cd src-tauri && cargo test --lib --quiet && cd .. && npm run type-check
 ```
 
-### B. 주요 파일 경로
+## 부록 D: 주요 파일 경로
 
 **테스트 파일**:
 - `src-tauri/tests/page_discovery_regression.rs`
@@ -1430,7 +1542,7 @@ cd src-tauri && cargo test --lib --quiet && cd .. && npm run type-check
 - `guide/SolidJS-UI-Implementation-Guide.md`
 - `docs/testing-strategy-before-refactoring.md`
 
-### C. 연락처 및 지원
+## 부록 E: 연락처 및 지원
 
 **문제 발생 시**:
 1. GitHub Issue 생성
@@ -1447,3 +1559,346 @@ cd src-tauri && cargo test --lib --quiet && cd .. && npm run type-check
   - 6개 Phase로 구조화
   - 상세 작업 체크리스트 작성
   - 리스크 관리 및 롤백 계획 수립
+
+- **2025-10-09 v1.1**:
+  - Phase 5 (아키텍처 개선) 대폭 확장
+  - `guide/re-arch-plan-final2.md`, `guide/re-arch-plan-final3.md` 통합
+  - Modern Rust 2024 원칙 추가
+  - Actor 시스템 핵심 인프라 설계 반영
+  - Backend-Only CRUD 패턴, Session 제어, Graceful Shutdown 등 상세화
+  - 아키텍처 원칙 빠른 참조 섹션 추가
+
+---
+
+## 부록 A: 아키텍처 원칙 빠른 참조 🦀
+
+> **리팩토링 시 모든 코드는 이 원칙을 준수해야 합니다**
+
+### 1️⃣ Modern Rust 2024 체크리스트
+
+**코드 작성 시 확인사항**:
+```
+□ mod.rs 사용하지 않음 (lib.rs 또는 file.rs 사용)
+□ cargo clippy --all-targets 경고 없음
+□ unwrap() 사용하지 않음 (모든 에러 Result<T, E>로 처리)
+□ clone() 최소화 (참조 전달 또는 Arc 사용)
+□ #[derive(TS)] 추가하여 TypeScript 타입 자동 생성
+□ 명확한 함수/변수 네이밍 (의도 표현)
+□ 단일 책임 원칙 준수 (하나의 함수는 하나의 일만)
+```
+
+### 2️⃣ 함수형 프로그래밍 패턴
+
+**✅ 권장**:
+```rust
+// 순수 함수 (상태 없음, 부작용 없음)
+fn calculate_severity(current: u32, previous: u32) -> SeverityLevel {
+    let change_pct = ((previous - current) as f64 / previous as f64) * 100.0;
+    match change_pct {
+        pct if pct < 10.0 => SeverityLevel::Low,
+        pct if pct < 30.0 => SeverityLevel::Medium,
+        pct if pct < 50.0 => SeverityLevel::High,
+        _ => SeverityLevel::Critical,
+    }
+}
+
+// 명시적 의존성 (파라미터로 전달)
+async fn analyze_data(
+    pool: &SqlitePool,
+    config: &AnalysisConfig,
+    current_count: u32,
+) -> Result<AnalysisReport> {
+    // ...
+}
+```
+
+**❌ 피해야 할 패턴**:
+```rust
+// 암시적 상태 의존
+struct Analyzer {
+    cache: HashMap<String, Data>, // 숨겨진 상태
+}
+
+impl Analyzer {
+    fn analyze(&mut self) -> Report {
+        let data = self.cache.get("key").unwrap(); // ❌ unwrap!
+        // ❌ 내부 상태에 의존
+    }
+}
+```
+
+### 3️⃣ Backend-Only CRUD 원칙
+
+**데이터베이스 접근 흐름**:
+```
+Frontend (SolidJS)
+    ↓ (invoke Tauri Command)
+Backend (Rust)
+    ↓ (use AppState.get_database_pool())
+Repository Layer
+    ↓ (execute SQL)
+SQLite Database
+```
+
+**금지 사항**:
+```typescript
+// ❌ 프론트엔드에서 직접 DB 연결
+const db = await Database.load("sqlite:...");
+const result = await db.execute("SELECT ...");
+
+// ✅ 백엔드 API 사용
+const result = await invoke('get_products_page', { page: 1, pageSize: 50 });
+```
+
+### 4️⃣ Actor 시스템 핵심 개념 (현재 구현)
+
+**실제 구현된 Actor 구조**:
+```
+CrawlingPlanner (분석 & 계획 수립)
+    ↓ generates
+ExecutionPlan (실행 계획 계약)
+    ↓ handed to
+SessionActor (세션 전체 관리)
+    ↓ (순차적 배치 실행)
+    └── Batch 1, 2, 3... (순차 처리)
+        ↓ (Stage 파이프라인)
+        StageActor (Stage 2-3-4 실행)
+            ├── Stage 2: ListPages (페이지 목록 크롤링)
+            ├── Stage 3: ProductDetails (상세 정보 수집)
+            └── Stage 4: DatabaseStorage (DB 저장)
+                ↓ (AppEvent via broadcast)
+                UI (SolidJS)
+```
+
+**주요 구성 요소**:
+
+1. **CrawlingPlanner** (분석 & 계획 수립):
+   - 사이트 상태 분석 (총 페이지 수, 마지막 페이지 제품 수)
+   - DB 상태 분석 (총 제품 수, 중복 제품, 마지막 업데이트)
+   - 최적화 전략 결정 (Full/Partial/Incremental/Smart)
+   - ExecutionPlan 생성 (plan_hash로 무결성 보장)
+
+2. **ExecutionPlan** (실행 계획 계약 - Contract v1):
+   ```rust
+   pub struct ExecutionPlan {
+       pub plan_id: String,              // 계획 고유 ID
+       pub session_id: String,            // 세션 ID
+       pub crawling_ranges: Vec<PageRange>, // 크롤링 범위 목록
+       pub batch_size: u32,               // 배치 크기 (예: 10)
+       pub concurrency_limit: u32,        // 동시성 제한 (예: 3)
+       pub estimated_duration_secs: u64,  // 예상 소요 시간
+       pub plan_hash: String,             // 무결성 검증 해시 (SHA256)
+       pub page_slots: Vec<PageSlot>,     // 사전 계산된 page_id 매핑
+       pub list_only: bool,               // true: List만, false: List+Detail
+       pub contract_version: u32,         // API 계약 버전 (현재: 1)
+   }
+   
+   pub struct PageSlot {
+       pub physical_page: u32,  // 물리 페이지 번호 (예: 589)
+       pub page_id: i32,        // 논리 page_id (total_pages - physical)
+       pub capacity: u8,        // 페이지 용량 (마지막: products_on_last_page, 나머지: 12)
+   }
+   ```
+
+   **핵심 규칙**:
+   - `page_id` 계산: `total_pages - physical_page` (역순 매핑)
+   - `index_in_page`: 내림차순 (capacity-1 .. 0)
+   - 마지막 페이지 capacity: `products_on_last_page`
+   - 나머지 페이지: `PRODUCTS_PER_PAGE` (12)
+   - `plan_hash`: SHA256(page_slots sorted + input_snapshot)
+
+3. **SessionActor** (세션 관리):
+   - ExecutionPlan 수신 및 검증
+   - 배치 순차 실행 (한 번에 하나씩)
+   - 진행률 추적 (processed_pages, completed_batches)
+   - SessionRegistry 상태 업데이트
+   - Graceful Shutdown 감지
+
+4. **StageActor** (Stage 실행):
+   - Stage 2-4 파이프라인 실행
+   - 각 Stage 로직 실행 (ListPages, ProductDetails, DatabaseStorage)
+   - AppEvent 발행 (StageStarted, StageCompleted, StageFailed)
+
+5. **BatchActor**: Retired (현재 미사용, SessionActor가 배치 관리)
+
+6. **IntegratedContext**: AppContext + EventEmitter 통합
+
+**제어 신호 전파 (Graceful Shutdown)**:
+```
+UI → request_graceful_shutdown
+    ↓
+PHASE_SHUTDOWN_TX (watch channel)
+    ↓
+SessionRegistry (status = ShuttingDown)
+    ↓
+SessionActor (detect shutdown signal in batch loop)
+    ↓
+PhaseAborted event
+    ↓
+SessionRegistry (status = Completed)
+```
+
+**이벤트 흐름**:
+```
+StageActor (Stage 2-4 실행)
+    ↓ emit
+AppEvent (SessionStarted, BatchStarted, StageCompleted...)
+    ↓ broadcast
+ActorEventBridge (프론트엔드 브릿지)
+    ↓
+UI (SolidJS - listen & update)
+```
+
+**ExecutionPlan 생명주기**:
+```
+1. CrawlingPlanner.analyze_system_state()
+   → 사이트/DB 상태 분석
+   
+2. CrawlingPlanner.create_execution_plan()
+   → ExecutionPlan 생성 (plan_hash 계산)
+   
+3. SessionActor.execute(plan)
+   → 계획 검증 후 실행
+   
+4. SessionCompleted event
+   → integrity 검증 (completed_batches == expected_batches)
+   
+5. Resume Token 생성 (실패 시)
+   → remaining_pages + plan_hash 저장
+```
+
+### 5️⃣ 설정 파일 기반 자율 운영
+
+**역할 분리**:
+- **백엔드**: `matter_certis_config.json` 읽기 → 자율 동작
+- **프론트엔드**: 설정 파일 편집 + 상태 표시만
+
+**금지**:
+```typescript
+// ❌ 프론트엔드에서 설정값 전송
+await invoke('start_crawling', { 
+  batchSize: 10,  // ❌ 설정값을 직접 전달
+  concurrency: 5  // ❌
+});
+
+// ✅ 설정 파일에 저장 → 백엔드가 자동 감지
+await invoke('save_config', { config });
+await invoke('start_crawling'); // 파라미터 없음
+```
+
+### 6️⃣ ExecutionPlan Contract v1
+
+**핵심 규칙**:
+```rust
+// 1. page_id 계산: total_pages - physical_page
+// 2. index_in_page: 내림차순 (capacity-1 .. 0)
+// 3. 마지막 페이지 capacity: products_on_last_page
+// 4. 나머지 페이지: PRODUCTS_PER_PAGE (12)
+// 5. plan_hash: SHA256(page_slots sorted)
+```
+
+**Integrity 검증**:
+```rust
+// Session 완료 시
+if completed_batches != expected_batches {
+    log::warn!("Integrity mismatch detected");
+    final_state = "CompletedWithDiscrepancy";
+}
+```
+
+### 7️⃣ 테스트 작성 원칙
+
+**Regression 테스트 패턴**:
+```rust
+#[test]
+fn test_critical_behavior() {
+    // Given: 초기 상태 설정
+    let input = create_test_data();
+    
+    // When: 동작 실행
+    let result = function_under_test(input);
+    
+    // Then: 예상 결과 검증
+    assert_eq!(result.status, ExpectedStatus);
+    assert!(result.value > threshold);
+}
+```
+
+**테스트 커버리지 목표**:
+- 크리티컬 경로: 100%
+- 비즈니스 로직: 80% 이상
+- UI 컴포넌트: 50% 이상 (주요 상호작용)
+
+### 8️⃣ 에러 처리 패턴
+
+**백엔드 (Rust)**:
+```rust
+use anyhow::{Result, Context};
+
+pub async fn risky_operation() -> Result<Data> {
+    let config = load_config()
+        .context("Failed to load configuration")?;
+    
+    let data = fetch_data(&config)
+        .await
+        .context("Failed to fetch data from remote")?;
+    
+    Ok(data)
+}
+```
+
+**프론트엔드 (TypeScript)**:
+```typescript
+try {
+  const result = await invoke<Result>('risky_command', params);
+  if (!result.success) {
+    throw new Error(result.error);
+  }
+} catch (error) {
+  console.error('[ErrorCode: CMD_001]', error);
+  showNotification('Operation failed', 'error');
+}
+```
+
+### 9️⃣ Git Workflow
+
+**브랜치 전략**:
+```
+main (안정)
+  ↓
+refactoring/phase-N (작업)
+  ↓
+refactoring/phase-N-task-M (개별 작업)
+```
+
+**커밋 메시지 규칙**:
+```
+type(scope): subject
+
+- feat: 새 기능 추가
+- fix: 버그 수정
+- refactor: 리팩토링 (기능 변경 없음)
+- test: 테스트 추가/수정
+- docs: 문서 변경
+- chore: 빌드/설정 변경
+
+예: refactor(backend): unify analyze_data_changes methods
+```
+
+### 🔟 Code Review Checklist
+
+**리뷰어 확인사항**:
+```
+□ Modern Rust 2024 원칙 준수
+□ 테스트 추가됨 (또는 기존 테스트 통과)
+□ 타입 안전성 (ts-rs 타입 동기화)
+□ 에러 처리 적절함 (unwrap 없음)
+□ 명확한 네이밍
+□ 문서 주석 추가 (복잡한 로직)
+□ 성능 고려 (불필요한 clone 없음)
+□ 보안 고려 (SQL injection 방지 등)
+```
+
+---
+
+## 부록 B: 참고 링크 모음
