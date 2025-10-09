@@ -61,22 +61,22 @@ export const SettingsTab: Component = () => {
         <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6 flex items-center justify-between">
           <h2 class="text-2xl md:text-3xl font-bold text-gray-800 flex items-center gap-2">
             <span>⚙️</span>
-            <span class="bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent">
+            <span class="bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 bg-clip-text text-transparent">
               애플리케이션 설정
             </span>
           </h2>
           <div class="flex gap-2">
             <button
-              class="px-4 py-2 rounded-lg text-gray-700 bg-white border border-gray-200 hover:bg-gray-50"
+              class="px-4 py-2 rounded-lg text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 transition-colors duration-200"
               onClick={handleReset}
             >
               기본값으로 초기화
             </button>
             <button
-              class={`px-4 py-2 rounded-lg text-white shadow ${
+              class={`px-4 py-2 rounded-lg text-white shadow transition-all duration-200 ${
                 settingsState.isLoading
                   ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+                  : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
               }`}
               onClick={handleSave}
               disabled={settingsState.isLoading}
@@ -92,19 +92,24 @@ export const SettingsTab: Component = () => {
             <h3 class="text-lg font-semibold text-gray-800">프리셋</h3>
             <button
               type="button"
-              class="text-sm text-indigo-600 hover:text-indigo-700"
+              class="text-sm text-blue-600 hover:text-blue-700 transition-colors duration-200"
               onClick={() => setShowAdvanced((p) => !p)}
             >
-              {showAdvanced() ? "고급 설정 숨기기" : "고급 설정 보기"}
+              {showAdvanced() ? "▲ 고급 설정 숨기기" : "▼ 고급 설정 보기"}
             </button>
           </div>
           <div class="flex flex-wrap gap-2">
             <For each={CONFIG_PRESETS}>
               {(preset) => (
                 <button
-                  class="px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 text-sm"
+                  class={`px-3 py-1.5 rounded-lg border transition-all duration-200 text-sm ${
+                    settingsState.currentPreset === preset.name
+                      ? 'border-blue-500 bg-blue-50 text-blue-700 font-semibold shadow-sm'
+                      : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700'
+                  }`}
                   onClick={() => applyPreset(preset.name)}
                 >
+                  {settingsState.currentPreset === preset.name && '✓ '}
                   {preset.name}
                 </button>
               )}
@@ -1131,10 +1136,10 @@ export const SettingsTab: Component = () => {
               </legend>
               <button
                 type="button"
-                class="text-sm text-indigo-600 hover:text-indigo-700"
+                class="text-sm text-blue-600 hover:text-blue-700 transition-colors duration-200"
                 onClick={() => setShowAppManaged((p) => !p)}
               >
-                {showAppManaged() ? "숨기기" : "펼치기"}
+                {showAppManaged() ? "▲ 숨기기" : "▼ 펼치기"}
               </button>
             </div>
             <Show when={showAppManaged()}>
@@ -1220,10 +1225,10 @@ export const SettingsTab: Component = () => {
             </button>
             <button
               type="submit"
-              class={`px-4 py-2 rounded-lg text-white shadow ${
+              class={`px-4 py-2 rounded-lg text-white shadow transition-all duration-200 ${
                 settingsState.isLoading
                   ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+                  : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
               }`}
               disabled={settingsState.isLoading}
             >
