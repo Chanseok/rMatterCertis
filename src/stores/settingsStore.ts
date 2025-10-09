@@ -12,6 +12,7 @@ interface SettingsStore {
   isLoading: boolean;
   isDirty: boolean;
   lastSaved: string | null;
+  currentPreset: string | null; // 현재 적용된 프리셋 이름
   expandedSections: {
     basic: boolean;
     logging: boolean;
@@ -121,6 +122,7 @@ const [settingsState, setSettingsState] = createStore<SettingsStore>({
   isLoading: false,
   isDirty: false,
   lastSaved: null,
+  currentPreset: null, // 초기값은 없음 (사용자가 프리셋 선택 전)
   expandedSections: {
     basic: true,
     logging: false,
@@ -202,6 +204,8 @@ const [settingsState, setSettingsState] = createStore<SettingsStore>({
     target[keys[keys.length - 1]] = value;
     
     setSettingsState('settings', current);
+    // 수동 변경 시 프리셋 해제
+    setSettingsState('currentPreset', null);
     this.markDirty();
   },
 
@@ -209,6 +213,7 @@ const [settingsState, setSettingsState] = createStore<SettingsStore>({
     const preset = CONFIG_PRESETS.find(p => p.name === presetName);
     if (preset) {
       setSettingsState('settings', preset.config);
+      setSettingsState('currentPreset', presetName); // 현재 프리셋 추적
       this.markDirty();
     }
   },
