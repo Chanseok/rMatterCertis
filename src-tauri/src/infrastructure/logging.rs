@@ -63,6 +63,23 @@ pub fn get_log_directory() -> PathBuf {
     exe_dir.join("logs")
 }
 
+/// Get events.log directory (development builds only)
+/// Returns: src-tauri/target/debug/logs/ for debug builds
+#[cfg(debug_assertions)]
+fn get_events_log_directory() -> PathBuf {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    PathBuf::from(manifest_dir)
+        .join("target")
+        .join("debug")
+        .join("logs")
+}
+
+/// Events logging disabled in release builds
+#[cfg(not(debug_assertions))]
+fn get_events_log_directory() -> PathBuf {
+    PathBuf::new() // Return empty path (unused)
+}
+
 /// Initialize the logging system with default configuration
 /// Initialize the logging system with default configuration
 ///
@@ -335,10 +352,21 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
             // Store the guard globally to prevent it from being dropped
             LOG_GUARDS.lock().unwrap().push(file_guard);
 
-            // Dedicated events layer (actor-event + kpi.* targets) -> events.log
-            let events_appender = rolling::never(&log_dir, "events.log");
-            let (events_writer, events_guard) = non_blocking(events_appender);
-            LOG_GUARDS.lock().unwrap().push(events_guard);
+            // Dedicated events layer (actor-event + kpi.* targets) -> events.log (DEBUG BUILDS ONLY)
+            #[cfg(debug_assertions)]
+            let (events_writer, events_guard) = {
+                let events_log_dir = get_events_log_directory();
+                // Create events log directory if needed
+                if let Err(e) = std::fs::create_dir_all(&events_log_dir) {
+                    warn!("Failed to create events log directory {:?}: {}", events_log_dir, e);
+                }
+                let events_appender = rolling::never(&events_log_dir, "events.log");
+                let (writer, guard) = non_blocking(events_appender);
+                LOG_GUARDS.lock().unwrap().push(guard);
+                info!("Events logging enabled: {}/events.log", events_log_dir.display());
+                (writer, ())
+            };
+            
             let make_events_filter = || {
                 filter_fn(|meta| {
                     let t = meta.target();
@@ -378,6 +406,9 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
                     .with_timer(KstTimeFormatter)
                     .with_target(false)
                     .with_filter(exclude_events_filter.clone());
+                
+                // Events layer (debug builds only)
+                #[cfg(debug_assertions)]
                 let events_layer = fmt::Layer::new()
                     .json()
                     .with_writer(events_writer)
@@ -388,10 +419,18 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
                     .with_line_number(false)
                     .with_ansi(false)
                     .with_filter(make_events_filter());
+                
+                #[cfg(debug_assertions)]
                 registry
                     .with(file_layer)
                     .with(console_layer)
                     .with(events_layer)
+                    .init();
+                
+                #[cfg(not(debug_assertions))]
+                registry
+                    .with(file_layer)
+                    .with(console_layer)
                     .init();
             } else {
                 let file_layer = fmt::Layer::new()
@@ -408,6 +447,9 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
                     .with_timer(KstTimeFormatter)
                     .with_target(false)
                     .with_filter(exclude_events_filter.clone());
+                
+                // Events layer (debug builds only)
+                #[cfg(debug_assertions)]
                 let events_layer = fmt::Layer::new()
                     .with_writer(events_writer)
                     .with_timer(KstTimeFormatter)
@@ -417,10 +459,18 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
                     .with_line_number(false)
                     .with_ansi(false)
                     .with_filter(make_events_filter());
+                
+                #[cfg(debug_assertions)]
                 registry
                     .with(file_layer)
                     .with(console_layer)
                     .with(events_layer)
+                    .init();
+                
+                #[cfg(not(debug_assertions))]
+                registry
+                    .with(file_layer)
+                    .with(console_layer)
                     .init();
             }
         }
@@ -432,9 +482,19 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
             // Store the guard globally to prevent it from being dropped
             LOG_GUARDS.lock().unwrap().push(file_guard);
 
-            let events_appender = rolling::never(&log_dir, "events.log");
-            let (events_writer, events_guard) = non_blocking(events_appender);
-            LOG_GUARDS.lock().unwrap().push(events_guard);
+            // Dedicated events layer (actor-event + kpi.* targets) -> events.log (DEBUG BUILDS ONLY)
+            #[cfg(debug_assertions)]
+            let (events_writer, _events_guard) = {
+                let events_log_dir = get_events_log_directory();
+                if let Err(e) = std::fs::create_dir_all(&events_log_dir) {
+                    warn!("Failed to create events log directory {:?}: {}", events_log_dir, e);
+                }
+                let events_appender = rolling::never(&events_log_dir, "events.log");
+                let (writer, guard) = non_blocking(events_appender);
+                LOG_GUARDS.lock().unwrap().push(guard);
+                (writer, ())
+            };
+            
             let make_events_filter = || {
                 filter_fn(|meta| {
                     let t = meta.target();
@@ -468,6 +528,9 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
                     .with_line_number(true)
                     .with_ansi(false)
                     .with_filter(exclude_events_filter.clone());
+                
+                // Events layer (debug builds only)
+                #[cfg(debug_assertions)]
                 let events_layer = fmt::Layer::new()
                     .json()
                     .with_writer(events_writer)
@@ -478,7 +541,12 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
                     .with_line_number(false)
                     .with_ansi(false)
                     .with_filter(make_events_filter());
+                
+                #[cfg(debug_assertions)]
                 registry.with(file_layer).with(events_layer).init();
+                
+                #[cfg(not(debug_assertions))]
+                registry.with(file_layer).init();
             } else {
                 let file_layer = fmt::Layer::new()
                     .with_writer(file_writer)
@@ -489,6 +557,9 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
                     .with_line_number(false)
                     .with_ansi(false)
                     .with_filter(exclude_events_filter.clone());
+                
+                // Events layer (debug builds only)
+                #[cfg(debug_assertions)]
                 let events_layer = fmt::Layer::new()
                     .with_writer(events_writer)
                     .with_timer(KstTimeFormatter)
@@ -498,7 +569,12 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
                     .with_line_number(false)
                     .with_ansi(false)
                     .with_filter(make_events_filter());
+                
+                #[cfg(debug_assertions)]
                 registry.with(file_layer).with(events_layer).init();
+                
+                #[cfg(not(debug_assertions))]
+                registry.with(file_layer).init();
             }
         }
         (false, true) => {
