@@ -90,7 +90,7 @@ pub async fn execute_real_crawling(
                 return Err(format!("Failed to initialize crawling service: {}", e));
             }
         };
-    let executor = Arc::new(RealCrawlingStageExecutor::new(integration_service.clone()));
+    let executor = Arc::new(RealCrawlingStageExecutor::new(Arc::clone(&integration_service)));
     let mut stage_results = Vec::new();
     let cancellation_token = CancellationToken::new();
     let total_pages = request.end_page - request.start_page + 1;
