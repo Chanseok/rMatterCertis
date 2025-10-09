@@ -268,7 +268,7 @@ impl IntegratedProductUseCases {
             specification_version: None,
             transport_interface: None,
             primary_device_type_ids: None,
-            application_categories: None,
+            // REMOVED: application_categories
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

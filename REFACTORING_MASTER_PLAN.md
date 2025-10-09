@@ -1,9 +1,29 @@
 # 리팩토링 마스터 플랜 (통합본)
 
 > 생성일: 2025-10-09  
-> 최종 업데이트: 2025-10-09  
-> 진행 상태: **Phase 2, 3, 4, 5 완료** (2025-10-09)  
+> 최종 업데이트: 2025-10-10  
+> 진행 상태: **Phase 2, 3, 4, 5 완료** + **DB 정리 완료** (2025-10-10)  
 > 통합 문서: refactoring-todo.md + refactoring-todo-by-gemini.md + testing-strategy-before-refactoring.md
+
+## 🆕 최신 업데이트 (2025-10-10)
+
+### ✅ DB Schema 대정리 완료
+
+실제로 동작하지 않았던 테이블과 컬럼을 제거하여 스키마 정리:
+
+**제거된 테이블** (실제 동작 안 했음):
+- `sync_sessions` - session_id 타입 불일치 (STRING vs INTEGER), INSERT 로직 없음
+- `sync_observed` - 외래 키 제약으로 실패
+- `crawling_results` - 사용처 없음
+- `page_fetch_attempts` - MC_ATTEMPT_LOG_SQLITE 환경 변수 필요, 기본 비활성화
+
+**제거된 컬럼**:
+- `product_details.application_categories` - HTML 파서에서 항상 None, 추출 로직 없음
+
+**결과**:
+- 새로운 baseline: `002_baseline_cleaned.sql` (v2.0, PRAGMA user_version = 2000)
+- 코드 정리: 모든 관련 코드에서 미사용 테이블/컬럼 참조 제거
+- Migration 아카이브: 개발 단계 파일들을 `src-tauri/migrations/archive/development_phase/`로 이동
 
 ## 📋 목차
 

@@ -124,7 +124,7 @@ pub struct MatterProduct {
     pub tis_trp_tested: Option<String>,
     pub specification_version: Option<String>,
     pub transport_interface: Option<String>,
-    pub application_categories: Vec<String>, // JSON array as Vec
+    // REMOVED: application_categories (파싱 로직 없음, 항상 NULL)
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

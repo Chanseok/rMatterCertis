@@ -315,12 +315,12 @@ pub async fn diagnose_and_repair_data(
 								url, page_id, index_in_page, id, manufacturer, model, device_type,
 								certificate_id, certification_date, hardware_version, firmware_version,
 								specification_version, vid, pid, family_sku, family_variant_sku, family_id,
-								transport_interface, application_categories
+								transport_interface
 							) VALUES (
 								?, ?, ?, ?, ?, ?, ?,
 								?, ?, ?, ?,
 								?, ?, ?, ?, ?, ?,
-								?, ?
+								?
 							) ON CONFLICT(url) DO UPDATE SET
 								page_id=COALESCE(excluded.page_id, product_details.page_id),
 								index_in_page=COALESCE(excluded.index_in_page, product_details.index_in_page),
@@ -340,7 +340,7 @@ pub async fn diagnose_and_repair_data(
 								family_id=COALESCE(excluded.family_id, product_details.family_id),
 								transport_interface=COALESCE(excluded.transport_interface, product_details.transport_interface),
 								-- primary_device_type_id removed
-								application_categories=COALESCE(excluded.application_categories, product_details.application_categories),
+								-- REMOVED: application_categories
 								updated_at=CURRENT_TIMESTAMP
 						",
 						)
@@ -362,7 +362,6 @@ pub async fn diagnose_and_repair_data(
 						.bind(detail.family_variant_sku)
 						.bind(detail.family_id)
 						.bind(detail.transport_interface)
-						.bind(detail.application_categories)
 						.execute(&pool)
 						.await;
 

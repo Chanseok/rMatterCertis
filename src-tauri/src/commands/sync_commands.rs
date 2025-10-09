@@ -398,17 +398,7 @@ pub async fn start_basic_sync_pages(
                     continue;
                 }
 
-                // Record observed
-                let _ = sqlx::query(
-                    "INSERT INTO sync_observed(session_id, url, page_id, index_in_page) VALUES(?, ?, ?, ?) \
-                     ON CONFLICT(session_id, url) DO UPDATE SET page_id=excluded.page_id, index_in_page=excluded.index_in_page",
-                )
-                .bind(&session_id)
-                .bind(url)
-                .bind(calc.page_id)
-                .bind(calc.index_in_page)
-                .execute(&mut *tx)
-                .await;
+                // Note: sync_observed table removed (타입 불일치로 실제 동작 안 했음)
 
                 let row = match sqlx::query(
                     "SELECT page_id, index_in_page FROM products WHERE url = ? LIMIT 1",
@@ -579,12 +569,11 @@ pub async fn start_basic_sync_pages(
                                                 url, page_id, index_in_page, id, manufacturer, model, device_type,
                                                 certificate_id, certification_date, hardware_version, firmware_version,
                                                 specification_version, vid, pid, family_sku, family_variant_sku, family_id,
-                                                transport_interface, application_categories
+                                                transport_interface
                                             ) VALUES (
                                                 ?, ?, ?, ?, ?, ?, ?,
                                                 ?, ?, ?, ?,
-                                                ?, ?, ?, ?, ?, ?,
-                                                ?, ?
+                                                ?, ?, ?, ?, ?, ?
                                             ) ON CONFLICT(url) DO UPDATE SET
                                                 page_id=COALESCE(excluded.page_id, product_details.page_id),
                                                 index_in_page=COALESCE(excluded.index_in_page, product_details.index_in_page),
@@ -604,7 +593,7 @@ pub async fn start_basic_sync_pages(
                                                 family_id=COALESCE(excluded.family_id, product_details.family_id),
                                                 transport_interface=COALESCE(excluded.transport_interface, product_details.transport_interface),
                                                 -- primary_device_type_id removed
-                                                application_categories=COALESCE(excluded.application_categories, product_details.application_categories),
+                                                -- REMOVED: application_categories
                                                 updated_at=CURRENT_TIMESTAMP
                                         ",
                                         )
@@ -626,7 +615,7 @@ pub async fn start_basic_sync_pages(
                                         .bind(detail.family_variant_sku)
                                         .bind(detail.family_id)
                                         .bind(detail.transport_interface)
-                                        .bind(detail.application_categories)
+                                        // REMOVED: application_categories binding
                                         .execute(&mut *tx)
                                         .await
                                         .is_ok()
@@ -810,7 +799,7 @@ pub async fn start_basic_sync_pages(
 
     // Phase-2: bounded sweep for pages covered in this session
     // Only if not a dry_run and some pages were processed
-    let mut deleted_total: u32 = 0;
+    let deleted_total: u32 = 0;
     if !dry_run.unwrap_or(false) && pages_processed > 0 {
         // Merge and normalize ranges again for safety
     let sweep_ranges: Vec<(u32, u32)> = Vec::new();
@@ -828,69 +817,15 @@ pub async fn start_basic_sync_pages(
             let pid_end = calculator.calculate(phys_end, 0).page_id;
             let low = pid_start.min(pid_end);
             let high = pid_start.max(pid_end);
-            match sqlx::query(
-                "DELETE FROM products p
-                 WHERE p.page_id BETWEEN ? AND ?
-                   AND p.page_id IN (
-                       SELECT o.page_id FROM (
-                           SELECT page_id, COUNT(*) AS cnt
-                           FROM sync_observed
-                           WHERE session_id = ?
-                           GROUP BY page_id
-                       ) o
-                       WHERE o.cnt = 12
-                   )
-                   AND NOT EXISTS (
-                       SELECT 1 FROM sync_observed o2
-                       WHERE o2.session_id = ? AND o2.url = p.url
-                   )",
-            )
-            .bind(low)
-            .bind(high)
-            .bind(&session_id)
-            .bind(&session_id)
-            .bind(&session_id)
-            .execute(&pool)
-            .await
-            {
-                Ok(res) => {
-                    let affected = u32::try_from(res.rows_affected()).unwrap_or(u32::MAX);
-                    if affected > 0 {
-                        deleted_total = deleted_total.saturating_add(affected);
-                        debug!(
-                            "Sweep deleted {} rows in phys range {}-{} (pid {}-{})",
-                            affected, phys_start, phys_end, low, high
-                        );
-                    }
-                }
-                Err(err) => {
-                    emit_actor_event(
-                        &app,
-                        AppEvent::SyncWarning {
-                            session_id: session_id.clone(),
-                            code: "sweep_failed".into(),
-                            detail: format!(
-                                "range {}-{} (pid {}-{}): {}",
-                                phys_start, phys_end, low, high, err
-                            ),
-                            timestamp: Utc::now(),
-                        },
-                    );
-                }
-            }
+            
+            // Note: Sweep logic removed - sync_observed table no longer exists
+            // Previous logic attempted to delete products not observed in this sync session,
+            // but sync_observed was never properly populated due to type mismatch.
+            // This cleanup is now handled by the repository layer during updates.
         }
     }
 
-    // Mark session completed
-    if let Err(e) = sqlx::query(
-        "UPDATE sync_sessions SET status='completed', finished_at=CURRENT_TIMESTAMP WHERE session_id = ?",
-    )
-    .bind(&session_id)
-    .execute(&pool)
-    .await
-    {
-        error!("Failed to mark sync session completed: {}", e);
-    }
+    // Note: sync_sessions table removed (INSERT 로직 없어서 실제 동작 안 했음)
 
     // Build anomaly summary for observability (page_id groups with cnt != 12)
     let mut anomalies: Vec<SyncAnomalyEntry> = Vec::new();

@@ -45,7 +45,7 @@ pub struct ProductDetail {
     pub specification_version: Option<String>,
     pub transport_interface: Option<String>,
     pub primary_device_type_ids: Option<Vec<i32>>, // normalized list (JSON-backed)
-    pub application_categories: Option<String>,
+    // REMOVED: application_categories (파싱 로직 없음, 항상 NULL)
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -170,7 +170,6 @@ mod tests {
             specification_version: None,
             transport_interface: None,
             primary_device_type_ids: None,
-            application_categories: None,
             created_at: now,
             updated_at: now,
         };

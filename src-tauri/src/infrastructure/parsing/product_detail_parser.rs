@@ -191,7 +191,7 @@ impl ContextualParser for ProductDetailParser {
             specification_version: certification_data.get("specification_version").cloned(),
             transport_interface: certification_data.get("transport_interface").cloned(),
             primary_device_type_ids: None,
-            application_categories: None,
+            // REMOVED: application_categories
             created_at: now,
             updated_at: now,
         };

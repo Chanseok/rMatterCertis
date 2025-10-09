@@ -469,7 +469,6 @@ impl MatterDataExtractor {
             specification_version: None,
             transport_interface: None,
             primary_device_type_ids: None,
-            application_categories: None,
             created_at: now,
             updated_at: now,
         };
@@ -1174,7 +1173,6 @@ mod tests {
             specification_version: None,
             transport_interface: None,
             primary_device_type_ids: None,
-            application_categories: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };

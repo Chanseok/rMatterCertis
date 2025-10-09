@@ -69,7 +69,7 @@ export interface CreateMatterProductDto {
   certification_date?: string;
   commissioning_method?: string;
   transport_protocol?: string;
-  application_categories?: string; // JSON string
+  // REMOVED: application_categories (파싱 로직 없음, 항상 NULL)
   clusters_client?: string;        // JSON string
   clusters_server?: string;        // JSON string
 }
@@ -95,7 +95,7 @@ export interface MatterProductResponseDto {
   tis_trp_tested?: string;
   specification_version?: string;
   transport_interface?: string;
-  application_categories: string[];
+  // REMOVED: application_categories
   created_at: string;
   updated_at: string;
 }

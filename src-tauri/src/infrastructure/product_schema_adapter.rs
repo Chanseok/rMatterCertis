@@ -44,7 +44,7 @@ impl ProductSchemaAdapter {
             specification_version: matter_product.specification_version.clone(),
             transport_interface: matter_product.transport_interface.clone(),
             primary_device_type_ids: None,
-            application_categories: None,
+            // REMOVED: application_categories
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
@@ -72,7 +72,7 @@ impl ProductSchemaAdapter {
             specification_version: None,
             transport_interface: None,
             primary_device_type_ids: None,
-            application_categories: None,
+            // REMOVED: application_categories
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };

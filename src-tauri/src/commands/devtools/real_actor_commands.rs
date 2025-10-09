@@ -650,7 +650,7 @@ fn convert_json_to_product_detail(
         specification_version: None,
         transport_interface: None,
         primary_device_type_id: None,
-        application_categories: None,
+        // REMOVED: application_categories
         description,
         compliance_document_url: None,
         program_type: None,

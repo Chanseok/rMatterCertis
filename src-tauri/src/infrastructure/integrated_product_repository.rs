@@ -824,7 +824,7 @@ impl IntegratedProductRepository {
             fill_or_change_opt_str!(firmware_version, "firmware_version");
             fill_or_change_opt_str!(specification_version, "specification_version");
             fill_or_change_opt_str!(transport_interface, "transport_interface");
-            fill_or_change_opt_str!(application_categories, "application_categories");
+            // REMOVED: application_categories (파싱 로직 없음, 항상 NULL)
             fill_or_change_opt_str!(family_sku, "family_sku");
             fill_or_change_opt_str!(family_variant_sku, "family_variant_sku");
             fill_or_change_opt_str!(family_id, "family_id");
@@ -1010,10 +1010,7 @@ impl IntegratedProductRepository {
                                     fmt_opt_str(existing_detail.transport_interface.as_ref()),
                                     fmt_opt_str(detail.transport_interface.as_ref()),
                                 ),
-                                "application_categories" => (
-                                    fmt_opt_str(existing_detail.application_categories.as_ref()),
-                                    fmt_opt_str(detail.application_categories.as_ref()),
-                                ),
+                                // REMOVED: application_categories
                                 "family_sku" => (
                                     fmt_opt_str(existing_detail.family_sku.as_ref()),
                                     fmt_opt_str(detail.family_sku.as_ref()),
@@ -1200,8 +1197,8 @@ impl IntegratedProductRepository {
                                  certificate_id, certification_date, hardware_version,
                                  vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
                                  specification_version, transport_interface, 
-                                 primary_device_type_ids, application_categories, created_at, updated_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 primary_device_type_ids, created_at, updated_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 ON CONFLICT(url) DO UPDATE SET
                                     page_id = excluded.page_id,
                                     index_in_page = excluded.index_in_page,
@@ -1221,7 +1218,6 @@ impl IntegratedProductRepository {
                                     specification_version = excluded.specification_version,
                                     transport_interface = excluded.transport_interface,
                                     primary_device_type_ids = excluded.primary_device_type_ids,
-                                    application_categories = excluded.application_categories,
                                     updated_at = excluded.updated_at
                                 ";
             let normalized_cert_date = Self::normalize_cert_date(&detail.certification_date);
@@ -1250,7 +1246,7 @@ impl IntegratedProductRepository {
                     .bind(&detail.specification_version)
                     .bind(&detail.transport_interface)
                     .bind(primary_device_type_ids_json)
-                    .bind(&detail.application_categories)
+                    // REMOVED: application_categories binding
                     .bind(now)
                     .bind(now);
                 async move { q.execute(&*self.pool).await.map(|_| ()).map_err(|e| anyhow::Error::new(e)) }
@@ -1494,7 +1490,7 @@ impl IntegratedProductRepository {
                             certificate_id = ?, certification_date = ?, hardware_version = ?,
                             vid = ?, pid = ?, family_sku = ?, family_variant_sku = ?, firmware_version = ?, family_id = ?,
                             specification_version = ?, transport_interface = ?,
-                            primary_device_type_ids = ?, application_categories = ?, updated_at = ?
+                            primary_device_type_ids = ?, updated_at = ?
                         WHERE url = ?
                         "
                     )
@@ -1516,7 +1512,7 @@ impl IntegratedProductRepository {
                     .bind(&detail.specification_version)
                     .bind(&detail.transport_interface)
                     .bind(primary_device_type_ids_json)
-                    .bind(&detail.application_categories)
+                    // REMOVED: application_categories binding
                     .bind(now)
                     .bind(&detail.url)
                     .execute(&mut *tx_conn)
@@ -1607,8 +1603,8 @@ impl IntegratedProductRepository {
                             certificate_id, certification_date, hardware_version,
                             vid, pid, family_sku, family_variant_sku, firmware_version, family_id,
                             specification_version, transport_interface,
-                            primary_device_type_ids, application_categories, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            primary_device_type_ids, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         "
                     )
                     .bind(&detail.url)
@@ -1630,7 +1626,7 @@ impl IntegratedProductRepository {
                     .bind(&detail.specification_version)
                     .bind(&detail.transport_interface)
                     .bind(primary_device_type_ids_json)
-                    .bind(&detail.application_categories)
+                    // REMOVED: application_categories binding
                     .bind(now)
                     .bind(now)
                     .execute(&mut *tx_conn)
@@ -1850,7 +1846,7 @@ impl IntegratedProductRepository {
                         let json: Option<String> = row.get("primary_device_type_ids");
                         json.and_then(|s| serde_json::from_str::<Vec<i32>>(&s).ok())
                     },
-                    application_categories: row.get("application_categories"),
+                    // REMOVED: application_categories
                     created_at: row.get("created_at"),
                     updated_at: row.get("updated_at"),
                 }))
@@ -1981,7 +1977,7 @@ impl IntegratedProductRepository {
                             let json: Option<String> = row.get("primary_device_type_ids");
                             json.and_then(|s| serde_json::from_str::<Vec<i32>>(&s).ok())
                         },
-                        application_categories: row.get("application_categories"),
+                        // REMOVED: application_categories
                         created_at: row.get("pd_created_at"),
                         updated_at: row.get("pd_updated_at"),
                     })
@@ -2100,13 +2096,7 @@ impl IntegratedProductRepository {
                     .map(std::string::ToString::to_string),
                 // legacy field removed; keep only normalized list
                 primary_device_type_ids: None,
-                application_categories: product_json["application_categories"].as_array().map(
-                    |arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
-                            .collect()
-                    },
-                ),
+                // REMOVED: application_categories (파싱 로직 없음, 항상 NULL)
                 created_at: basic_product.created_at,
                 updated_at: basic_product.updated_at,
             };
@@ -2892,7 +2882,7 @@ mod tests {
             specification_version: Some("1.0".to_string()),
             transport_interface: Some("WiFi".to_string()),
             primary_device_type_ids: Some(vec![256, 257]),
-            application_categories: Some("Lighting".to_string()),
+            // REMOVED: application_categories
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

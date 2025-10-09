@@ -1,16 +1,21 @@
 # Database Migrations
 
-## Current Schema Version: 1004
+## Current Schema Version: 2000 (v2.0 Cleaned)
 
 ## Migration Files
 
 ### Active Migrations
 
-- **001_baseline_consolidated.sql** - Complete baseline schema for fresh installations
+- **002_baseline_cleaned.sql** - Cleaned baseline schema for fresh installations ⭐ **CURRENT**
+  - Version: 2.0 (2025-10-10)
+  - **Removed**: sync_sessions, sync_observed, crawling_results, page_fetch_attempts (실제 동작 안 함)
+  - **Removed**: application_categories 컬럼 (파싱 로직 없음, 항상 NULL)
+  - Idempotent: safe to run multiple times
+
+- **001_baseline_consolidated.sql** - Previous baseline (v1.0)
   - Version: 1.0 (2025-10-08)
   - Includes all production-ready schema changes up to version 1004
-  - Creates all tables, indexes, views, and seeds initial data
-  - Idempotent: safe to run multiple times
+  - **Deprecated**: Use 002_baseline_cleaned.sql instead
 
 ### Archived Migrations
 
@@ -22,14 +27,28 @@ All development-phase migrations have been archived in `archive/development_migr
 
 ### For Fresh Installations
 
-1. Run only `001_baseline_consolidated.sql`
-2. This creates the complete schema at version 1004
+1. Run only `002_baseline_cleaned.sql` ⭐
+2. This creates the complete schema at version 2000
 3. No need to run any archived migrations
 
-### For Existing Databases
+### For Existing Databases (v1.0 → v2.0)
 
-Existing databases should already be at version 1004 or later.
-If updating from an older version, apply migrations sequentially from the archive.
+To upgrade from v1.0 to v2.0, run:
+```sql
+-- Remove deprecated tables
+DROP TABLE IF EXISTS sync_sessions;
+DROP TABLE IF EXISTS sync_observed;
+DROP TABLE IF EXISTS crawling_results;
+DROP TABLE IF EXISTS page_fetch_attempts;
+DROP VIEW IF EXISTS v_page_latest_attempt;
+DROP VIEW IF EXISTS v_page_latest_problem;
+
+-- Remove deprecated column (SQLite doesn't support DROP COLUMN directly)
+-- application_categories will be ignored by new code
+
+-- Update schema version
+PRAGMA user_version = 2000;
+```
 
 ### Future Migrations
 
@@ -48,12 +67,17 @@ New schema changes should:
 - **product_details** - Detailed product information
 - **device_types** - Matter device type definitions
 
-### Tracking Tables
+### Views
 
-- **page_fetch_attempts** - Crawling attempt instrumentation
-- **sync_sessions** - Vendor sync session tracking
-- **sync_observed** - Products observed during sync
-- **crawling_results** - Crawling session results
+- **v_product_detail_analytics** - Analytics view joining products, details, vendors, and device types
+
+### Removed in v2.0 (실제 동작하지 않았던 테이블)
+
+- ~~**page_fetch_attempts**~~ - 선택적 디버깅 기능 (MC_ATTEMPT_LOG_SQLITE 환경 변수 필요, 일반 사용 안 함)
+- ~~**sync_sessions**~~ - 타입 불일치로 실제 동작 안 함
+- ~~**sync_observed**~~ - 외래 키 제약으로 실패
+- ~~**crawling_results**~~ - 사용처 없음
+- ~~**product_details.application_categories**~~ - 파싱 로직 없음, 항상 NULL
 
 ### Key Design Decisions
 

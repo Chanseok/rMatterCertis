@@ -3768,9 +3768,7 @@ const fn calculate_extracted_fields(detail: &crate::domain::product::ProductDeta
         count += 1;
     }
     // primary_device_type_id removed; normalized list handled elsewhere
-    if detail.application_categories.is_some() {
-        count += 1;
-    }
+    // REMOVED: application_categories check (필드 삭제됨)
 
     count
 }
