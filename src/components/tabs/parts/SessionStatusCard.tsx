@@ -24,10 +24,10 @@ const SessionStatusCard: Component<Props> = (props) => {
   // 실행 중인 작업 유형 감지
   const getTaskType = () => {
     const msg = props.statusMessage();
-    if (msg.includes('스마트 동기화')) return 'smart';
-    if (msg.includes('빠른 동기화')) return 'fast';
+    if (msg.includes('좌표 갱신')) return 'coordinate';
     if (msg.includes('통합 파이프라인')) return 'crawl';
     if (msg.includes('수동 크롤링')) return 'manual';
+    if (msg.includes('제품 보완')) return 'complement';
     return 'default';
   };
 
@@ -43,10 +43,10 @@ const SessionStatusCard: Component<Props> = (props) => {
     
     const type = getTaskType();
     switch(type) {
-      case 'smart':
-        return { icon: '🧠', bg: 'bg-gradient-to-r from-purple-500 to-pink-500', text: 'text-purple-700' };
-      case 'fast':
-        return { icon: '🏃', bg: 'bg-gradient-to-r from-blue-500 to-cyan-500', text: 'text-blue-700' };
+      case 'coordinate':
+        return { icon: '📍', bg: 'bg-gradient-to-r from-blue-500 to-cyan-500', text: 'text-blue-700' };
+      case 'complement':
+        return { icon: '🔧', bg: 'bg-gradient-to-r from-teal-500 to-emerald-500', text: 'text-teal-700' };
       case 'crawl':
         return { icon: '🎭', bg: 'bg-gradient-to-r from-purple-600 to-indigo-600', text: 'text-purple-700' };
       case 'manual':

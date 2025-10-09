@@ -23,9 +23,8 @@ interface ControlPanelProps {
   setCrawlingRange: (updater: any) => void;
   addLog: (msg: string) => void;
   tauriApi: any;
-  // 🏃 Shallow Sync handlers
+  // 좌표 갱신 및 제품 보완 handlers
   handleShallowSync?: () => Promise<void> | void;
-  handleSmartSync?: () => Promise<void> | void;
   handleComplementCrawl?: () => Promise<void> | void;
   // 도움말 패널
   onHelpClick?: () => void;

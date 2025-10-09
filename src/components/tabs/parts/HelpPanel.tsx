@@ -90,35 +90,6 @@ const HelpPanel: Component<Props> = (p) => {
                   <ul class="list-disc list-inside ml-2 mt-1 space-y-1">
                     <li>좌표 정보만 필요할 때</li>
                     <li>빠른 데이터 갱신이 필요할 때</li>
-                    <li>스마트 동기화 전 사전 동기화</li>
-                  </ul>
-                </div>
-              </div>
-            </section>
-
-            {/* 스마트 동기화 */}
-            <section>
-              <h3 class="text-lg font-semibold text-pink-700 mb-3 flex items-center gap-2">
-                <span>🧠</span>
-                <span>스마트 동기화</span>
-              </h3>
-              <div class="bg-pink-50 rounded-lg p-4 space-y-2">
-                <p class="text-sm text-gray-700"><strong>용도:</strong> 얕은 크롤링 + 진단 + 누락 보완 통합</p>
-                <p class="text-sm text-gray-700"><strong>소요 시간:</strong> 8-12분</p>
-                <div class="text-sm text-gray-600">
-                  <strong>실행 단계:</strong>
-                  <ul class="list-disc list-inside ml-2 mt-1 space-y-1">
-                    <li>Phase 1: 빠른 동기화 (좌표 갱신)</li>
-                    <li>Phase 2: 누락된 product_details 분석</li>
-                    <li>Phase 3: 누락된 상세 정보만 선택적으로 크롤링</li>
-                  </ul>
-                </div>
-                <div class="text-sm text-gray-600">
-                  <strong>사용 시나리오:</strong>
-                  <ul class="list-disc list-inside ml-2 mt-1 space-y-1">
-                    <li>완전한 데이터 동기화가 필요할 때</li>
-                    <li>누락된 제품 상세 정보 자동 보완</li>
-                    <li>정기적인 데이터 유지보수</li>
                   </ul>
                 </div>
               </div>
@@ -144,7 +115,7 @@ const HelpPanel: Component<Props> = (p) => {
                 <div class="text-sm text-gray-600">
                   <strong>사용 시나리오:</strong>
                   <ul class="list-disc list-inside ml-2 mt-1 space-y-1">
-                    <li>스마트 동기화보다 빠르고 가벼운 보완 작업</li>
+                    <li>빠르고 가벼운 보완 작업</li>
                     <li>LocalDB 탭에서 핵심 필드(cert_date, transport, device_type) 누락 확인 후</li>
                     <li>특정 필드만 보완이 필요한 경우</li>
                   </ul>
@@ -195,8 +166,8 @@ const HelpPanel: Component<Props> = (p) => {
                 <div class="bg-blue-50 rounded-lg p-4">
                   <h4 class="font-semibold text-blue-800 mb-2">정기 유지보수</h4>
                   <ol class="list-decimal list-inside text-sm text-gray-700 space-y-1">
-                    <li>🏃 빠른 동기화</li>
-                    <li>🧠 스마트 동기화</li>
+                    <li>📍 좌표 갱신</li>
+                    <li>🔧 제품 보완</li>
                   </ol>
                 </div>
 

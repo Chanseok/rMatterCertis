@@ -532,7 +532,7 @@ export default function CrawlingEngineTabSimple() {
     }
   };
 
-  // 🏃 얕은 동기화: 전체 페이지 좌표만 빠르게 갱신
+  // 📍 좌표 갱신 (Shallow Sync): 리스트만 크롤링하여 좌표 업데이트
   const handleShallowSync = async () => {
     if (isRunning() || isSyncing()) {
       addLog("⚠️ 이미 크롤링이 진행 중입니다.");
@@ -542,8 +542,8 @@ export default function CrawlingEngineTabSimple() {
     setIsRunning(true);
     setIsSyncing(true);
     setIsShallowMode(true);
-    setStatusMessage("🏃 빠른 동기화 시작 중...");
-    addLog("🏃 빠른 동기화 시작 (좌표 갱신만)");
+    setStatusMessage("📍 좌표 갱신 시작 중...");
+    addLog("📍 좌표 갱신 시작 (리스트 크롤링, 상세 정보 제외)");
 
     try {
       const result = await invoke<any>("start_shallow_sync");
@@ -554,98 +554,22 @@ export default function CrawlingEngineTabSimple() {
         console.log("📝 Shallow sync session ID saved:", result.sessionId);
       }
       
-      addLog(`✅ 빠른 동기화 시작: ${result.pages_scanned}페이지, 세션 ID: ${result.sessionId}`);
+      addLog(`✅ 좌표 갱신 시작: ${result.pages_scanned}페이지, 세션 ID: ${result.sessionId}`);
       addLog(`💡 백그라운드에서 크롤링 진행 중... (중지 버튼으로 중단 가능)`);
-      setStatusMessage(`🏃 빠른 동기화 진행 중... (${result.pages_scanned}p)`);
+      setStatusMessage(`📍 좌표 갱신 진행 중... (${result.pages_scanned}p)`);
       
       // Note: 크롤링은 백그라운드에서 계속 진행되며 이벤트로 완료를 알림
     } catch (error) {
-      console.error("빠른 동기화 실패:", error);
-      addLog(`❌ 빠른 동기화 실패: ${error}`);
-      setStatusMessage("빠른 동기화 실패");
+      console.error("좌표 갱신 실패:", error);
+      addLog(`❌ 좌표 갱신 실패: ${error}`);
+      setStatusMessage("좌표 갱신 실패");
       setIsRunning(false);
       setIsSyncing(false);
       setIsShallowMode(false);
     }
   };
 
-  // 🧠 스마트 동기화: 얕은 + 진단 + 보완 통합
-  const handleSmartSync = async () => {
-    if (isRunning() || isSyncing()) {
-      addLog("⚠️ 이미 크롤링이 진행 중입니다.");
-      return;
-    }
-
-    setIsRunning(true);
-    setIsSyncing(true);
-    setIsShallowMode(true);
-    setStatusMessage("🧠 스마트 동기화 진행 중...");
-    addLog("🧠 스마트 동기화 시작 (얕은 크롤링 + 진단 + 보완)");
-
-    let hasError = false;
-    try {
-      const result = await invoke<any>("start_smart_sync");
-      
-      // Phase 1: 얕은 크롤링 결과
-      const shallow = result.shallowCrawl || result.shallow_crawl || {};
-      
-      // 세션 ID 저장 (중지 기능을 위해 필수)
-      if (shallow.sessionId || shallow.session_id) {
-        const sessionId = shallow.sessionId || shallow.session_id;
-        setCurrentSessionId(sessionId);
-        console.log("📝 Smart sync session ID saved:", sessionId);
-      }
-      
-      addLog(`📝 Phase 1 완료: ${shallow.pagesScanned || shallow.pages_scanned || 'N/A'}페이지 동기화 (백그라운드 실행)`);
-      
-      // Phase 2: 진단 결과
-      const analysis = result.missingAnalysis || result.missing_analysis || {};
-      const missing = analysis.missingDetails || analysis.missing_details || [];
-      addLog(`📊 Phase 2 완료: ${missing.length}개 누락 발견`);
-      
-      // Phase 3: 보완 크롤링 결과
-      const complement = result.complementCrawl || result.complement_crawl;
-      if (complement) {
-        const completed = complement.urlsCompleted || complement.urls_completed || 0;
-        const targeted = complement.urlsTargeted || complement.urls_targeted || 0;
-        const failed = complement.urlsFailed || complement.urls_failed || 0;
-        const duration = complement.durationMs || complement.duration_ms || 0;
-        addLog(`🔧 Phase 3 완료: ${completed}/${targeted}개 보완 (${duration}ms)`);
-        if (failed > 0) {
-          addLog(`⚠️ ${failed}개 실패`);
-        }
-      } else {
-        addLog(`✨ Phase 3 스킵: 누락 없음`);
-      }
-      
-      const totalMs = result.totalDurationMs || result.total_duration_ms || 0;
-      addLog(`🎉 스마트 동기화 요청 완료! (${(totalMs / 1000).toFixed(1)}초)`);
-      addLog(`💡 백그라운드에서 좌표 갱신이 계속 진행됩니다. (중지 버튼으로 중단 가능)`);
-      
-      // 백그라운드 작업이 완료될 때까지 대기하지 않고 즉시 종료
-      // (실제 완료는 actor-session-completed 이벤트로 감지)
-    } catch (error) {
-      hasError = true;
-      console.error("스마트 동기화 실패:", error);
-      addLog(`❌ 스마트 동기화 실패: ${error}`);
-      setStatusMessage("❌ 스마트 동기화 실패");
-    } finally {
-      // 주의: isShallowMode는 여기서 false로 바꾸지 않음!
-      // 백그라운드 세션이 완료되면 actor-session-completed에서 처리
-      
-      if (hasError) {
-        setIsRunning(false);
-        setIsSyncing(false);
-        setIsShallowMode(false); // 에러 시에만 즉시 리셋
-      } else {
-        // 성공 시: 상태는 "진행 중" 유지, actor-session-completed에서 종료
-        setStatusMessage("🧠 스마트 동기화 완료 (백그라운드 작업 진행 중...)");
-        addLog("💡 세션 완료 대기 중...");
-      }
-    }
-  };
-
-  // 🔧 제품 보완 동기화: 핵심 필드(cert_date, transport, device_type_ids) 누락 제품 재크롤링
+  // 🔧 제품 보완: 핵심 필드 누락 제품만 재크롤링
   const handleComplementCrawl = async () => {
     if (isRunning() || isSyncing()) {
       addLog("⚠️ 이미 크롤링이 진행 중입니다.");
@@ -663,7 +587,7 @@ export default function CrawlingEngineTabSimple() {
       
       // 세션 ID 저장 (중지 버튼 지원)
       const sessionId = result.session_id;
-      if (sessionId) {
+      if (sessionId && sessionId.trim() !== "") { // 빈 문자열 체크 추가
         setCurrentSessionId(sessionId);
         addLog(`🆔 세션 ID: ${sessionId}`);
         addLog("💡 백그라운드에서 작업이 진행됩니다. 중지 버튼으로 중단 가능합니다.");
@@ -983,14 +907,8 @@ export default function CrawlingEngineTabSimple() {
             console.log('[ShallowMode] Turned off after first session completion');
           }
           
-          // isSyncing 중이면서 isShallowMode가 false → 백그라운드 작업 완료
-          if (isSyncing() && !isShallowMode()) {
-            setIsRunning(false);
-            setIsSyncing(false);
-            setStatusMessage("✅ 스마트 동기화 완료");
-            addLog("🏁 백그라운드 세션 완료");
-          } else if (!isSyncing()) {
-            // 일반 크롤링 완료
+          // 크롤링 완료 처리
+          if (!isSyncing()) {
             setIsRunning(false);
             setStatusMessage("크롤링 완료");
           }
@@ -2088,7 +2006,6 @@ export default function CrawlingEngineTabSimple() {
             addLog={addLog}
             tauriApi={tauriApi}
             handleShallowSync={handleShallowSync}
-            handleSmartSync={handleSmartSync}
             handleComplementCrawl={handleComplementCrawl}
             onHelpClick={() => setHelpPanelOpen(true)}
             onStop={handleStop}
@@ -2148,7 +2065,7 @@ export default function CrawlingEngineTabSimple() {
           >
             <div class="flex items-center gap-2">
               <span class="text-lg">{diagnosticsExpanded() ? '▼' : '▶'}</span>
-              <h3 class="text-lg font-bold text-gray-800">Stage X: DB Pagination Diagnostics</h3>
+              <h3 class="text-lg font-bold text-gray-800">Stage X: DB 레코드 체크 및 동기화</h3>
               <Show when={diagResult()?.total_products_without_coords}>
                 <span class="px-2 py-0.5 text-xs rounded-full bg-orange-100 text-orange-700 font-semibold">
                   NULL 좌표: {diagResult()?.total_products_without_coords}개
@@ -2186,7 +2103,6 @@ export default function CrawlingEngineTabSimple() {
                   }
                 }}
                 handleShallowSync={handleShallowSync}
-                handleSmartSync={handleSmartSync}
                 handleComplementCrawl={handleComplementCrawl}
               />
             </div>
