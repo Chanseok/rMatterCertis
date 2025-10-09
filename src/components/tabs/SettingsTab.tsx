@@ -150,21 +150,24 @@ export const SettingsTab: Component = () => {
                       동시에 보낼 수 있는 요청 개수
                     </div>
                   </div>
-                  <input
-                    type="number"
-                    class="text-lg px-3 py-2 w-24 text-center rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                    value={settingsState.getNestedValue(
-                      "user.max_concurrent_requests"
-                    )}
-                    min={1}
-                    max={100}
-                    onInput={(e) =>
-                      settingsState.updateNestedField(
-                        "user.max_concurrent_requests",
-                        +e.currentTarget.value
-                      )
-                    }
-                  />
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="number"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      value={settingsState.getNestedValue(
+                        "user.max_concurrent_requests"
+                      )}
+                      min={1}
+                      max={100}
+                      onInput={(e) =>
+                        settingsState.updateNestedField(
+                          "user.max_concurrent_requests",
+                          +e.currentTarget.value
+                        )
+                      }
+                    />
+                    <span class="text-sm text-gray-500">개</span>
+                  </div>
                 </label>
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
@@ -175,21 +178,24 @@ export const SettingsTab: Component = () => {
                       리스트 페이지 처리 동시성
                     </div>
                   </div>
-                  <input
-                    type="number"
-                    class="text-lg px-3 py-2 w-24 text-center rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                    value={settingsState.getNestedValue(
-                      "user.crawling.workers.list_page_max_concurrent"
-                    )}
-                    min={1}
-                    max={1000}
-                    onInput={(e) =>
-                      settingsState.updateNestedField(
-                        "user.crawling.workers.list_page_max_concurrent",
-                        +e.currentTarget.value
-                      )
-                    }
-                  />
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="number"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      value={settingsState.getNestedValue(
+                        "user.crawling.workers.list_page_max_concurrent"
+                      )}
+                      min={1}
+                      max={1000}
+                      onInput={(e) =>
+                        settingsState.updateNestedField(
+                          "user.crawling.workers.list_page_max_concurrent",
+                          +e.currentTarget.value
+                        )
+                      }
+                    />
+                    <span class="text-sm text-gray-500">개</span>
+                  </div>
                 </label>
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
@@ -200,21 +206,52 @@ export const SettingsTab: Component = () => {
                       상세 페이지 처리 동시성
                     </div>
                   </div>
-                  <input
-                    type="number"
-                    class="text-lg px-3 py-2 w-24 text-center rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                    value={settingsState.getNestedValue(
-                      "user.crawling.workers.product_detail_max_concurrent"
-                    )}
-                    min={1}
-                    max={1000}
-                    onInput={(e) =>
-                      settingsState.updateNestedField(
-                        "user.crawling.workers.product_detail_max_concurrent",
-                        +e.currentTarget.value
-                      )
-                    }
-                  />
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="number"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      value={settingsState.getNestedValue(
+                        "user.crawling.workers.product_detail_max_concurrent"
+                      )}
+                      min={1}
+                      max={1000}
+                      onInput={(e) =>
+                        settingsState.updateNestedField(
+                          "user.crawling.workers.product_detail_max_concurrent",
+                          +e.currentTarget.value
+                        )
+                      }
+                    />
+                    <span class="text-sm text-gray-500">개</span>
+                  </div>
+                </label>
+                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
+                  <div class="flex-1">
+                    <div class="text-sm font-medium text-gray-800">
+                      요청 지연 (ms)
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      서버 부하 방지를 위한 요청 간 간격
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="number"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      value={settingsState.getNestedValue(
+                        "user.request_delay_ms"
+                      )}
+                      min={100}
+                      max={10000}
+                      onInput={(e) =>
+                        settingsState.updateNestedField(
+                          "user.request_delay_ms",
+                          +e.currentTarget.value
+                        )
+                      }
+                    />
+                    <span class="text-sm text-gray-500">ms</span>
+                  </div>
                 </label>
               </div>
             </div>
@@ -237,21 +274,24 @@ export const SettingsTab: Component = () => {
                       서버 부하 방지를 위한 요청 간 간격
                     </div>
                   </div>
-                  <input
-                    type="number"
-                    class="text-lg px-3 py-2 w-24 text-center rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                    value={settingsState.getNestedValue(
-                      "user.request_delay_ms"
-                    )}
-                    min={100}
-                    max={10000}
-                    onInput={(e) =>
-                      settingsState.updateNestedField(
-                        "user.request_delay_ms",
-                        +e.currentTarget.value
-                      )
-                    }
-                  />
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="number"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      value={settingsState.getNestedValue(
+                        "user.request_delay_ms"
+                      )}
+                      min={100}
+                      max={10000}
+                      onInput={(e) =>
+                        settingsState.updateNestedField(
+                          "user.request_delay_ms",
+                          +e.currentTarget.value
+                        )
+                      }
+                    />
+                    <span class="text-sm text-gray-500">ms</span>
+                  </div>
                 </label>
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
@@ -262,7 +302,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="number"
-                    class="text-lg px-3 py-2 w-24 text-center rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.batch.batch_delay_ms"
                     )}
@@ -319,7 +359,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="number"
-                    class="text-lg px-3 py-2 w-24 text-center rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.crawling.page_range_limit"
                     )}
@@ -344,7 +384,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="number"
-                    class="text-lg px-3 py-2 w-24 text-center rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.batch.batch_size"
                     )}
@@ -401,21 +441,24 @@ export const SettingsTab: Component = () => {
                       HTTP 요청 최대 대기 시간
                     </div>
                   </div>
-                  <input
-                    type="number"
-                    class="text-lg px-3 py-2 w-24 text-center rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                    value={settingsState.getNestedValue(
-                      "user.crawling.workers.request_timeout_seconds"
-                    )}
-                    min={1}
-                    max={600}
-                    onInput={(e) =>
-                      settingsState.updateNestedField(
-                        "user.crawling.workers.request_timeout_seconds",
-                        +e.currentTarget.value
-                      )
-                    }
-                  />
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="number"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      value={settingsState.getNestedValue(
+                        "user.crawling.workers.request_timeout_seconds"
+                      )}
+                      min={1}
+                      max={600}
+                      onInput={(e) =>
+                        settingsState.updateNestedField(
+                          "user.crawling.workers.request_timeout_seconds",
+                          +e.currentTarget.value
+                        )
+                      }
+                    />
+                    <span class="text-sm text-gray-500">초</span>
+                  </div>
                 </label>
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
@@ -426,23 +469,26 @@ export const SettingsTab: Component = () => {
                       Rate limit (비워두면 기본값)
                     </div>
                   </div>
-                  <input
-                    type="number"
-                    class="text-lg px-3 py-2 w-24 text-center rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                    value={
-                      settingsState.getNestedValue(
-                        "user.crawling.workers.max_requests_per_second"
-                      ) ?? ""
-                    }
-                    min={1}
-                    max={1000}
-                    onInput={(e) =>
-                      settingsState.updateNestedField(
-                        "user.crawling.workers.max_requests_per_second",
-                        e.currentTarget.value ? +e.currentTarget.value : null
-                      )
-                    }
-                  />
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="number"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      value={
+                        settingsState.getNestedValue(
+                          "user.crawling.workers.max_requests_per_second"
+                        ) ?? ""
+                      }
+                      min={1}
+                      max={1000}
+                      onInput={(e) =>
+                        settingsState.updateNestedField(
+                          "user.crawling.workers.max_requests_per_second",
+                          e.currentTarget.value ? +e.currentTarget.value : null
+                        )
+                      }
+                    />
+                    <span class="text-sm text-gray-500">req/s</span>
+                  </div>
                 </label>
               </div>
             </div>
@@ -541,7 +587,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="text"
-                    class="text-lg px-3 py-2 w-36 text-center rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={
                       settingsState.getNestedValue("user.logging.level") ||
                       "info"
@@ -591,7 +637,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="text"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 w-full text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={
                       settingsState.getNestedValue(
                         "user.logging.file_naming_strategy"
@@ -612,7 +658,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={
                       settingsState.getNestedValue("user.logging.max_files") ||
                       5
@@ -692,7 +738,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.batch.batch_retry_limit"
                     )}
@@ -715,7 +761,7 @@ export const SettingsTab: Component = () => {
                   <div class="text-xs text-gray-500">리스트 페이지 실패 시</div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.crawling.product_list_retry_count"
                     )}
@@ -734,7 +780,7 @@ export const SettingsTab: Component = () => {
                   <div class="text-xs text-gray-500">상세 페이지 실패 시</div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.crawling.product_detail_retry_count"
                     )}
@@ -757,7 +803,7 @@ export const SettingsTab: Component = () => {
                   <div class="text-xs text-gray-500">HTTP 요청 헤더 식별자</div>
                   <input
                     type="text"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 w-full text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={
                       settingsState.getNestedValue(
                         "user.crawling.workers.user_agent"
@@ -778,7 +824,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="text"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 w-full text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={
                       settingsState.getNestedValue(
                         "user.crawling.workers.user_agent_sync"
@@ -833,7 +879,7 @@ export const SettingsTab: Component = () => {
                   <div class="text-xs text-gray-500">DB 쓰기 최적화</div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.crawling.workers.db_batch_size"
                     )}
@@ -852,7 +898,7 @@ export const SettingsTab: Component = () => {
                   <div class="text-xs text-gray-500">동시 DB 작업 제한</div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.crawling.workers.db_max_concurrency"
                     )}
@@ -873,7 +919,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.crawling.workers.max_retries"
                     )}
@@ -896,7 +942,7 @@ export const SettingsTab: Component = () => {
                   <div class="text-xs text-gray-500">배경 작업 스케줄 간격</div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.crawling.timing.scheduler_interval_ms"
                     )}
@@ -917,7 +963,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.crawling.timing.shutdown_timeout_seconds"
                     )}
@@ -938,7 +984,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.crawling.timing.stats_interval_seconds"
                     )}
@@ -959,7 +1005,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.crawling.timing.retry_delay_ms"
                     )}
@@ -980,7 +1026,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "user.crawling.timing.operation_timeout_seconds"
                     )}
@@ -1005,7 +1051,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "advanced.last_page_search_start"
                     )}
@@ -1024,7 +1070,7 @@ export const SettingsTab: Component = () => {
                   <div class="text-xs text-gray-500">마지막 페이지 탐색</div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "advanced.max_search_attempts"
                     )}
@@ -1043,7 +1089,7 @@ export const SettingsTab: Component = () => {
                   <div class="text-xs text-gray-500">특정 엔진 내부 용도</div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={settingsState.getNestedValue(
                       "advanced.request_timeout_seconds"
                     )}
@@ -1064,7 +1110,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="text"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 w-full text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={(
                       settingsState.getNestedValue(
                         "advanced.product_selectors"
@@ -1086,7 +1132,7 @@ export const SettingsTab: Component = () => {
                   <div class="text-xs text-gray-500">연속 실패 허용 수</div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={
                       settingsState.getNestedValue(
                         "advanced.failure_policy.failure_threshold"
@@ -1109,7 +1155,7 @@ export const SettingsTab: Component = () => {
                   </div>
                   <input
                     type="number"
-                    class="mt-1 text-lg px-3 py-2 rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-center"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                     value={
                       settingsState.getNestedValue(
                         "advanced.failure_policy.removal_grace_secs"
@@ -1124,6 +1170,83 @@ export const SettingsTab: Component = () => {
                       )
                     }
                   />
+                </label>
+
+                {/* 누락된 설정들 추가 */}
+                <label class="flex items-center gap-3 text-sm font-medium text-gray-800 p-3 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition">
+                  <input
+                    type="checkbox"
+                    class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-300"
+                    checked={
+                      settingsState.getNestedValue(
+                        "user.crawling.intelligent_mode.override_config_limit"
+                      ) ?? false
+                    }
+                    onInput={(e) =>
+                      settingsState.updateNestedField(
+                        "user.crawling.intelligent_mode.override_config_limit",
+                        e.currentTarget.checked
+                      )
+                    }
+                  />
+                  <div class="flex-1">
+                    <div class="text-sm font-medium text-gray-800">
+                      설정 오버라이드 허용
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      지능형 모드에서 페이지 범위 제한 무시
+                    </div>
+                  </div>
+                </label>
+
+                <label class="text-sm font-medium text-gray-800">
+                  지능형 모드 최대 범위
+                  <div class="text-xs text-gray-500">
+                    지능형 크롤링 시 최대 페이지 범위
+                  </div>
+                  <input
+                    type="number"
+                    class="mt-1 text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                    value={
+                      settingsState.getNestedValue(
+                        "user.crawling.intelligent_mode.max_range_limit"
+                      ) ?? 100
+                    }
+                    min={1}
+                    max={1000}
+                    onInput={(e) =>
+                      settingsState.updateNestedField(
+                        "user.crawling.intelligent_mode.max_range_limit",
+                        +e.currentTarget.value
+                      )
+                    }
+                  />
+                </label>
+
+                <label class="flex items-center gap-3 text-sm font-medium text-gray-800 p-3 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition">
+                  <input
+                    type="checkbox"
+                    class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-300"
+                    checked={
+                      settingsState.getNestedValue(
+                        "user.logging.separate_frontend_backend"
+                      ) ?? false
+                    }
+                    onInput={(e) =>
+                      settingsState.updateNestedField(
+                        "user.logging.separate_frontend_backend",
+                        e.currentTarget.checked
+                      )
+                    }
+                  />
+                  <div class="flex-1">
+                    <div class="text-sm font-medium text-gray-800">
+                      프론트/백엔드 로그 분리
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      UI와 백엔드 로그를 별도 파일로 저장
+                    </div>
+                  </div>
                 </label>
               </div>
             </fieldset>
