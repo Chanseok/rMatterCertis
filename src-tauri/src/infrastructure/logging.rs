@@ -361,8 +361,15 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
                     warn!("Failed to create events log directory {:?}: {}", events_log_dir, e);
                 }
                 let events_appender = rolling::never(&events_log_dir, "events.log");
-                let (writer, guard) = non_blocking(events_appender);
+                let (mut writer, guard) = non_blocking(events_appender);
                 LOG_GUARDS.lock().unwrap().push(guard);
+                
+                // Write session start marker to events.log
+                use std::io::Write;
+                if let Err(e) = writeln!(writer, "\n\n==== Event Logging Start ====\n\n") {
+                    warn!("Failed to write events.log start marker: {}", e);
+                }
+                
                 info!("Events logging enabled: {}/events.log", events_log_dir.display());
                 (writer, ())
             };
@@ -490,8 +497,15 @@ pub fn init_logging_with_config(config: &LoggingConfig) -> Result<()> {
                     warn!("Failed to create events log directory {:?}: {}", events_log_dir, e);
                 }
                 let events_appender = rolling::never(&events_log_dir, "events.log");
-                let (writer, guard) = non_blocking(events_appender);
+                let (mut writer, guard) = non_blocking(events_appender);
                 LOG_GUARDS.lock().unwrap().push(guard);
+                
+                // Write session start marker to events.log
+                use std::io::Write;
+                if let Err(e) = writeln!(writer, "\n\n==== Event Logging Start ====\n\n") {
+                    warn!("Failed to write events.log start marker: {}", e);
+                }
+                
                 (writer, ())
             };
             
