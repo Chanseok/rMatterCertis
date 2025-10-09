@@ -132,8 +132,78 @@ export const SettingsTab: Component = () => {
             <legend class="px-2 text-lg font-semibold text-gray-800">
               핵심 설정
             </legend>
-            {/* 🔴 동시성 & 속도 제어 (Concurrency & Rate Limiting) */}
+            
+            {/* 📊 범위 · 크기 - 최우선 설정 */}
             <div class="mt-4">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="w-1.5 h-4 rounded bg-blue-400"></span>
+                <div class="text-sm font-semibold text-gray-800">
+                  📊 범위 · 크기
+                </div>
+                <span class="text-xs text-gray-500 ml-auto">크롤링 범위 및 데이터 저장 설정</span>
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
+                  <div class="flex-1">
+                    <div class="text-sm font-medium text-gray-800">
+                      페이지 범위
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      크롤링할 최대 페이지 수
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="number"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      value={settingsState.getNestedValue(
+                        "user.crawling.page_range_limit"
+                      )}
+                      min={1}
+                      max={10000}
+                      onInput={(e) =>
+                        settingsState.updateNestedField(
+                          "user.crawling.page_range_limit",
+                          +e.currentTarget.value
+                        )
+                      }
+                    />
+                    <span class="text-sm text-gray-500">페이지</span>
+                  </div>
+                </label>
+                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
+                  <div class="flex-1">
+                    <div class="text-sm font-medium text-gray-800">
+                      배치 크기
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      한 번에 저장할 레코드 수 (0=배치 처리 비활성)
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="number"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      value={settingsState.getNestedValue(
+                        "user.batch.batch_size"
+                      )}
+                      min={0}
+                      max={1000}
+                      onInput={(e) =>
+                        settingsState.updateNestedField(
+                          "user.batch.batch_size",
+                          +e.currentTarget.value
+                        )
+                      }
+                    />
+                    <span class="text-sm text-gray-500">개</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* 🔴 동시성 & 속도 제어 (Concurrency & Rate Limiting) */}
+            <div class="mt-6">
               <div class="flex items-center gap-2 mb-2">
                 <span class="w-1.5 h-4 rounded bg-red-400"></span>
                 <div class="text-sm font-semibold text-gray-800">
@@ -295,16 +365,16 @@ export const SettingsTab: Component = () => {
               </div>
             </div>
 
-            {/* ⏱️ 타임아웃 설정 (Timeout Settings) */}
+            {/* ⏱️ 타이밍 & 재시도 - 타임아웃, 지연, 재시도 통합 */}
             <div class="mt-6">
               <div class="flex items-center gap-2 mb-2">
                 <span class="w-1.5 h-4 rounded bg-orange-400"></span>
                 <div class="text-sm font-semibold text-gray-800">
-                  ⏱️ 타임아웃 설정
+                  ⏱️ 타이밍 & 재시도
                 </div>
-                <span class="text-xs text-gray-500 ml-auto">응답 대기 시간 제한</span>
+                <span class="text-xs text-gray-500 ml-auto">시간 제한 및 요청 간격 설정</span>
               </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
                     <div class="text-sm font-medium text-gray-800">
@@ -317,7 +387,7 @@ export const SettingsTab: Component = () => {
                   <div class="flex items-center gap-2">
                     <input
                       type="number"
-                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                       value={settingsState.getNestedValue(
                         "user.crawling.workers.request_timeout_seconds"
                       )}
@@ -333,19 +403,6 @@ export const SettingsTab: Component = () => {
                     <span class="text-sm text-gray-500">초</span>
                   </div>
                 </label>
-              </div>
-            </div>
-
-            {/* 🔁 지연 & 재시도 (Delays & Retries) */}
-            <div class="mt-6">
-              <div class="flex items-center gap-2 mb-2">
-                <span class="w-1.5 h-4 rounded bg-green-400"></span>
-                <div class="text-sm font-semibold text-gray-800">
-                  🔁 지연 & 재시도
-                </div>
-                <span class="text-xs text-gray-500 ml-auto">요청 간격 및 실패 처리</span>
-              </div>
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
                   <div class="flex-1">
                     <div class="text-sm font-medium text-gray-800">
@@ -358,7 +415,7 @@ export const SettingsTab: Component = () => {
                   <div class="flex items-center gap-2">
                     <input
                       type="number"
-                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                       value={settingsState.getNestedValue(
                         "user.request_delay_ms"
                       )}
@@ -384,7 +441,7 @@ export const SettingsTab: Component = () => {
                   <div class="flex items-center gap-2">
                     <input
                       type="number"
-                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
+                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
                       value={settingsState.getNestedValue(
                         "user.batch.batch_delay_ms"
                       )}
@@ -399,140 +456,6 @@ export const SettingsTab: Component = () => {
                     />
                     <span class="text-sm text-gray-500">ms</span>
                   </div>
-                </label>
-              </div>
-            </div>
-
-            {/* 기존 "지연 · 템포" 섹션 제거됨 (위로 통합) */}
-
-            {/* 📊 범위 · 크기 */}
-            <div class="mt-6">
-              <div class="flex items-center gap-2 mb-2">
-                <span class="w-1.5 h-4 rounded bg-blue-400"></span>
-                <div class="text-sm font-semibold text-gray-800">
-                  📊 범위 · 크기
-                </div>
-                <span class="text-xs text-gray-500 ml-auto">크롤링 범위 및 배치 크기</span>
-              </div>
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
-                  <div class="flex-1">
-                    <div class="text-sm font-medium text-gray-800">
-                      페이지 범위
-                    </div>
-                    <div class="text-xs text-gray-500">
-                      크롤링할 최대 페이지 수
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <input
-                      type="number"
-                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
-                      value={settingsState.getNestedValue(
-                        "user.crawling.page_range_limit"
-                      )}
-                      min={1}
-                      max={10000}
-                      onInput={(e) =>
-                        settingsState.updateNestedField(
-                          "user.crawling.page_range_limit",
-                          +e.currentTarget.value
-                        )
-                      }
-                    />
-                    <span class="text-sm text-gray-500">페이지</span>
-                  </div>
-                </label>
-                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
-                  <div class="flex-1">
-                    <div class="text-sm font-medium text-gray-800">
-                      배치 크기
-                    </div>
-                    <div class="text-xs text-gray-500">
-                      한 번에 저장할 레코드 수
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <input
-                      type="number"
-                      class="text-lg px-3 py-2 w-24 text-right rounded-md bg-white border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-300 [&::-webkit-inner-spin-button]:ml-2 [&::-webkit-outer-spin-button]:ml-2"
-                      value={settingsState.getNestedValue(
-                        "user.batch.batch_size"
-                      )}
-                      min={1}
-                      max={1000}
-                      onInput={(e) =>
-                        settingsState.updateNestedField(
-                          "user.batch.batch_size",
-                          +e.currentTarget.value
-                        )
-                      }
-                    />
-                    <span class="text-sm text-gray-500">개</span>
-                  </div>
-                </label>
-                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
-                  <div class="flex-1">
-                    <div class="text-sm font-medium text-gray-800">
-                      로컬DB 자동 추가
-                    </div>
-                    <div class="text-xs text-gray-500">
-                      크롤링 데이터 자동 저장
-                    </div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    class="w-4 h-4"
-                    checked={settingsState.getNestedValue(
-                      "user.crawling.auto_add_to_local_db"
-                    )}
-                    onChange={(e) =>
-                      settingsState.updateNestedField(
-                        "user.crawling.auto_add_to_local_db",
-                        e.currentTarget.checked
-                      )
-                    }
-                  />
-                </label>
-              </div>
-            </div>
-
-            {/* 지능형 모드: 요청에 따라 UI에서 제거됨 */}
-
-            {/* "워커(병렬 처리)" 섹션 제거됨 (위 "동시성 & 속도 제어"로 통합) */}
-
-            {/* 📦 배치 처리 */}
-            <div class="mt-6">
-              <div class="flex items-center gap-2 mb-2">
-                <span class="w-1.5 h-4 rounded bg-purple-400"></span>
-                <div class="text-sm font-semibold text-gray-800">
-                  📦 배치 처리
-                </div>
-                <span class="text-xs text-gray-500 ml-auto">데이터 일괄 처리 설정</span>
-              </div>
-              <div class="grid grid-cols-1 md:grid-cols-1 gap-4">
-                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-800 rounded-lg border border-gray-200 bg-white/80 hover:bg-white transition p-3">
-                  <div class="flex-1">
-                    <div class="text-sm font-medium text-gray-800">
-                      배치 처리 사용
-                    </div>
-                    <div class="text-xs text-gray-500">
-                      여러 작업을 모아서 한 번에 처리
-                    </div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    class="w-4 h-4"
-                    checked={settingsState.getNestedValue(
-                      "user.batch.enable_batch_processing"
-                    )}
-                    onChange={(e) =>
-                      settingsState.updateNestedField(
-                        "user.batch.enable_batch_processing",
-                        e.currentTarget.checked
-                      )
-                    }
-                  />
                 </label>
               </div>
             </div>
