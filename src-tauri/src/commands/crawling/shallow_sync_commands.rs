@@ -61,6 +61,7 @@ pub struct SmartSyncResult {
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct ComplementCrawlResult {
+    pub session_id: String,
     pub urls_targeted: u32,
     pub urls_completed: u32,
     pub urls_failed: u32,
@@ -255,6 +256,7 @@ pub async fn start_complement_crawl(
     if missing_products.is_empty() {
         info!("✨ No incomplete products found");
         return Ok(ComplementCrawlResult {
+            session_id: String::new(), // 누락 제품 없음 - 세션 없음
             urls_targeted: 0,
             urls_completed: 0,
             urls_failed: 0,
@@ -331,6 +333,7 @@ pub async fn start_complement_crawl(
     info!("✅ Complement crawl session started: {}", session_id);
     
     Ok(ComplementCrawlResult {
+        session_id: session_id.clone(),
         urls_targeted: missing_products.len() as u32,
         urls_completed: 0, // 백그라운드 실행이므로 0
         urls_failed: 0,    // 완료는 이벤트로 전달
@@ -407,6 +410,7 @@ pub async fn start_smart_sync(
         // crawl_specific_urls(missing_analysis.missing_details)
         
         Some(ComplementCrawlResult {
+            session_id: String::new(), // TODO: 실제 구현 시 session_id 반환
             urls_targeted: missing_analysis.missing_details.len() as u32,
             urls_completed: 0,
             urls_failed: 0,

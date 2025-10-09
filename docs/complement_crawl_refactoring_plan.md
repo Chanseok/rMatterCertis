@@ -78,36 +78,39 @@ if let Some(product_urls) = &self.execution_plan.product_urls {
 
 ## 📝 구현 단계
 
-### Phase 1: ExecutionPlan 확장 (30분)
-- [ ] `ExecutionPlan`에 `product_urls: Option<Vec<ProductUrl>>` 필드 추가
-- [ ] `create_complement_execution_plan()` 헬퍼 함수 작성
-- [ ] 누락 제품 쿼리를 별도 함수로 분리: `query_missing_products()`
+### Phase 1: ExecutionPlan 확장 (30분) ✅ 완료 (Commit 81daf03)
+- [x] `ExecutionPlan`에 `product_urls: Option<Vec<ProductUrl>>` 필드 추가
+- [x] `query_missing_products()` 헬퍼 함수 작성 및 분리
+- [x] `start_complement_crawl()` SessionActor 기반으로 리팩토링
+- [x] 기존 200+ 라인 → 70 라인으로 단순화
+- [x] 모든 ExecutionPlan 초기화 지점에 `product_urls: None` 추가
 
-### Phase 2: StageActor URL 기반 크롤링 지원 (1시간)
-- [ ] `stage_actor.rs`의 `execute_product_details_collection()` 수정
+### Phase 2: SessionActor URL 기반 크롤링 지원 (1시간) ✅ 완료 (Commit f8583e6)
+- [x] `session_actor.rs`의 `run_preplanned_batches()` 수정
   - `product_urls` 필드 체크
-  - URL 목록이 있으면 직접 사용
-  - 없으면 기존 로직 (페이지 범위에서 조회)
-- [ ] 기존 로직과 호환성 유지 (빠른/스마트 동기화 영향 없음)
+  - URL 목록이 있으면 ListPageCrawling 건너뛰고 바로 ProductDetailCrawling
+  - 없으면 기존 로직 (페이지 범위 기반 크롤링)
+- [x] ProductDetails 구조 올바르게 사용 (products, source_urls, extraction_stats)
+- [x] 기존 로직과 호환성 유지 (빠른/스마트 동기화 영향 없음)
+- [x] StageActor 재사용으로 이벤트 발행 및 메트릭 일관성 확보
 
-### Phase 3: start_complement_crawl 리팩토링 (30분)
-- [ ] 기존 배치 처리 로직 제거
-- [ ] 기존 이벤트 발행 로직 제거
-- [ ] SessionActor 호출로 단순화
-- [ ] 결과 구조체 업데이트 (session_id 반환)
-
-### Phase 4: 프론트엔드 연동 (30분)
+### Phase 3: 프론트엔드 연동 (30분) ⏳ 진행 예정
 - [ ] `handleComplementCrawl()` 수정
-  - 세션 ID 저장
-  - 백그라운드 실행 안내
+  - 세션 ID 저장: `setCurrentSessionId(result.sessionId)`
+  - 백그라운드 실행 안내 메시지 표시
   - 중지 버튼 활성화
 - [ ] `actor-session-completed` 이벤트로 완료 처리
 
-### Phase 5: 테스트 및 검증 (30분)
+### Phase 4: 테스트 및 검증 (30분) ⏳ 진행 예정
 - [ ] 제품 보완 동기화 실행 테스트
 - [ ] 중지 버튼 작동 확인
 - [ ] 이벤트 발행 확인
 - [ ] DB 저장 확인
+
+### Phase 5: 문서화 (15분) ⏳ 진행 예정
+- [ ] 아키텍처 다이어그램 업데이트
+- [ ] URL 기반 vs 범위 기반 크롤링 모드 문서화
+- [ ] 이 계획서의 완료 상태 업데이트
 
 ## 🔧 코드 변경 사항
 

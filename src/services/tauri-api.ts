@@ -488,6 +488,7 @@ export class TauriApiService {
    * 보완 크롤링: certification_date가 NULL인 제품들을 재크롤링하여 DB 업데이트
    */
   async startComplementCrawl(): Promise<{
+    session_id: string;
     urls_targeted: number;
     urls_completed: number;
     urls_failed: number;

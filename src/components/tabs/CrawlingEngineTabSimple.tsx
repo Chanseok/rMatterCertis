@@ -661,25 +661,29 @@ export default function CrawlingEngineTabSimple() {
     try {
       const result = await tauriApi.startComplementCrawl();
       
-      if (result.urls_targeted === 0) {
-        addLog(`✨ 보완이 필요한 제품이 없습니다. (모든 제품에 핵심 필드 존재)`);
-      } else {
-        addLog(`🔄 ${result.urls_targeted}개 제품 병렬 재크롤링 완료`);
-        addLog(`✅ 보완 동기화 완료: ${result.urls_completed}/${result.urls_targeted}개 성공 (${(result.duration_ms / 1000).toFixed(1)}초)`);
-        if (result.urls_failed > 0) {
-          addLog(`⚠️ ${result.urls_failed}개 실패 - 재시도가 필요할 수 있습니다.`);
-        } else {
-          addLog(`🎉 모든 제품이 성공적으로 업데이트되었습니다!`);
-          addLog(`📊 업데이트 필드: certification_date, transport_interface, primary_device_type_ids`);
-        }
+      // 세션 ID 저장 (중지 버튼 지원)
+      const sessionId = result.session_id;
+      if (sessionId) {
+        setCurrentSessionId(sessionId);
+        addLog(`🆔 세션 ID: ${sessionId}`);
+        addLog("💡 백그라운드에서 작업이 진행됩니다. 중지 버튼으로 중단 가능합니다.");
       }
       
-      setStatusMessage("✅ 제품 보완 동기화 완료");
+      if (result.urls_targeted === 0) {
+        addLog(`✨ 보완이 필요한 제품이 없습니다. (모든 제품에 핵심 필드 존재)`);
+        setStatusMessage("✅ 제품 보완 동기화 완료 (보완 불필요)");
+        setIsRunning(false);
+        setIsSyncing(false);
+      } else {
+        addLog(`🔄 ${result.urls_targeted}개 제품 병렬 재크롤링 시작`);
+        // 성공 시: 상태는 "진행 중" 유지, actor-session-completed에서 종료
+        setStatusMessage("🔧 제품 보완 동기화 완료 (백그라운드 작업 진행 중...)");
+        addLog("💡 세션 완료 대기 중...");
+      }
     } catch (error) {
       console.error("제품 보완 동기화 실패:", error);
       addLog(`❌ 제품 보완 동기화 실패: ${error}`);
       setStatusMessage("❌ 제품 보완 동기화 실패");
-    } finally {
       setIsRunning(false);
       setIsSyncing(false);
     }
