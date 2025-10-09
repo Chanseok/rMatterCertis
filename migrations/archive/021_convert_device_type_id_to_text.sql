@@ -1,1 +1,0 @@
--- Archived legacy migration 021. Replaced by baseline unified schema (TEXT type_id already present).

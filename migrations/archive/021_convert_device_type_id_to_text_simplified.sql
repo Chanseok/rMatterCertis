@@ -1,1 +1,0 @@
--- Archived legacy migration 021 (simplified variant). Superseded by baseline.

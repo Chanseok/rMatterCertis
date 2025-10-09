@@ -1,1 +1,0 @@
--- Archived. Superseded by consolidated baseline. See migrations/archive/020_populate_bridge_table_and_fix_mappings.sql

@@ -1,1 +1,0 @@
--- Archived legacy migration 025. Superseded by baseline consolidation.
