@@ -22,6 +22,14 @@ import type {
 // Import concrete generated type file to avoid directory barrel resolution issues in bundler mode
 import type { StageBatcherSettings } from '../types/generated/StageBatcherSettings';
 import type { VendorSyncResult } from '../types/domain';
+import type {
+  ImportResult,
+  ExportFullDatabaseResult,
+  ImportFullDatabaseResult,
+  DeleteAllRecordsResult,
+  DeleteRangeResult,
+  PreviewDeleteRangeResult
+} from '../types/backup';
 
 /**
  * Service class for communicating with the Rust backend
@@ -425,9 +433,7 @@ export class TauriApiService {
     return await invoke('export_data', { dataset });
   }
 
-  async importDataset(dataset: 'vendors' | 'device_types', csvText: string): Promise<{
-    dataset: string; processed: number; inserted: number; updated: number; errors: string[]; backup_file?: string | null;
-  }> {
+  async importDataset(dataset: 'vendors' | 'device_types', csvText: string): Promise<ImportResult> {
     const base64_csv = btoa(csvText);
   return await invoke('import_data', { dataset, base64Csv: base64_csv, base64_csv }); // ensure snake_case provided
   }
@@ -440,9 +446,7 @@ export class TauriApiService {
     return await invoke('get_max_page_id');
   }
 
-  async previewDeleteRange(fromPage: number, toPage: number): Promise<{
-    from_page: number; to_page: number; product_details_count: number; products_count: number;
-  }> {
+  async previewDeleteRange(fromPage: number, toPage: number): Promise<PreviewDeleteRangeResult> {
     console.log('📞 Invoking preview_delete_range with:', { fromPage, toPage });
     try {
       const result = await invoke('preview_delete_range', { fromPage, toPage });
@@ -454,40 +458,21 @@ export class TauriApiService {
     }
   }
 
-  async deleteRange(fromPage: number, toPage: number): Promise<{
-    from_page: number; to_page: number; deleted_product_details: number; deleted_products: number;
-  }> {
+  async deleteRange(fromPage: number, toPage: number): Promise<DeleteRangeResult> {
   return await invoke('delete_range', { fromPage, toPage });
   }
 
   /**
    * Export full database (products + product_details + device_types + vendors) to Excel format
    */
-  async exportFullDatabaseExcel(): Promise<{
-    file_path: string;
-    products_count: number;
-    product_details_count: number;
-    device_types_count: number;
-    vendors_count: number;
-  }> {
+  async exportFullDatabaseExcel(): Promise<ExportFullDatabaseResult> {
     return await invoke('export_full_database_excel');
   }
 
   /**
    * Import full database from Excel backup file
    */
-  async importFullDatabaseExcel(filePath: string): Promise<{
-    products_imported: number;
-    products_updated: number;
-    details_imported: number;
-    details_updated: number;
-    device_types_imported: number;
-    device_types_updated: number;
-    vendors_imported: number;
-    vendors_updated: number;
-    errors: string[];
-    backup_file?: string | null;
-  }> {
+  async importFullDatabaseExcel(filePath: string): Promise<ImportFullDatabaseResult> {
     return await invoke('import_full_database_excel', { filePath, file_path: filePath });
   }
 
@@ -495,11 +480,7 @@ export class TauriApiService {
    * Delete all records from products and product_details tables
    * Requires confirmation token for safety
    */
-  async deleteAllRecords(confirmationToken: string): Promise<{
-    deleted_products: number;
-    deleted_product_details: number;
-    backup_file?: string | null;
-  }> {
+  async deleteAllRecords(confirmationToken: string): Promise<DeleteAllRecordsResult> {
     return await invoke('delete_all_records', { confirmationToken, confirmation_token: confirmationToken });
   }
 
