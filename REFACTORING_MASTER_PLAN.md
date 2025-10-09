@@ -1202,13 +1202,21 @@ interface AnalyticsReport { ... } // ❌ 제거
 - [x] AppContext 공유 컨텍스트 (`src-tauri/src/new_architecture/context.rs`)
 - [x] 삼중 채널 시스템 (Control/Data/Event)
 - [x] ExecutionPlan Contract v1 (page_slots, plan_hash)
-- [x] SessionActor → BatchActor 실행 경로
-- [x] **검증**: Phase trait 구현 확인 ✅ (2025-10-09)
+- [x] SessionActor → StageActor 실행 경로
+- [x] **검증**: Actor 시스템 구조 확인 ✅ (2025-10-09)
   ```bash
-  # Phase trait 구현체 검색
-  rg "impl Phase for" src-tauri/src/
-  # ✅ 결과: Phase trait은 사용하지 않음. 대신 SessionRegistry + watch 채널 기반 제어 사용
-  # SessionActor, StageActor 등 호환성 레이어 존재 (src-tauri/src/crawl_engine/actor_system.rs)
+  # Phase trait 검색 (계획 문서에서 언급되었으나 실제 미구현)
+  rg "trait Phase" src-tauri/src/
+  # ✅ 결과: Phase trait은 구현되지 않음 (설계 변경됨)
+  # 
+  # 실제 구현:
+  # 1. SessionRegistry + watch 채널 기반 제어 (src-tauri/src/crawl_engine/runtime/session_registry.rs)
+  # 2. CrawlingPhase struct, PhaseType enum (데이터 구조, trait 아님)
+  #    - 용도: 크롤링 단계 계획 데이터 (StatusCheck, ListPageCrawling, ProductDetailCrawling 등)
+  #    - 위치: src-tauri/src/crawl_engine/services/crawling_planner.rs
+  # 3. CrawlPhase enum (ListPages, ProductDetails, DataValidation, Finalize)
+  #    - 위치: src-tauri/src/crawl_engine/actors/types.rs
+  # 4. SessionActor, StageActor 호환성 레이어 (src-tauri/src/crawl_engine/actor_system.rs)
   ```
 
 #### ✅ Session 제어 시스템 (완료)
@@ -1226,15 +1234,18 @@ interface AnalyticsReport { ... } // ❌ 제거
   ```
 
 #### ✅ Graceful Shutdown (완료)
-- [x] Phase loop 종료 감지
-- [x] PhaseAborted 이벤트 발행
+- [x] Shutdown 신호 전파 (watch 채널 기반)
 - [x] SessionRegistry 상태 전환 (ShuttingDown → Completed)
+- [x] 크롤링 작업 정리 및 리소스 해제
 - [x] **검증**: Shutdown 시나리오 테스트 ✅ (2025-10-09)
   ```bash
-  # Graceful shutdown 테스트
-  cargo test graceful_shutdown
+  # Graceful shutdown 구현 확인
+  rg "request_graceful_shutdown" src-tauri/src/
   # ✅ 결과: request_graceful_shutdown 함수 구현 확인 (src-tauri/src/commands/crawling/actor_system.rs)
   # shutdown_tx.send(true) → SessionStatus::ShuttingDown 전환 로직 존재
+  # 
+  # 주의: "PhaseAborted 이벤트"는 계획에서만 언급, 실제 미구현
+  # 실제 구현: shutdown_tx (watch 채널) + SessionStatus 상태 머신
   ```
 
 #### ✅ 설정 파일 기반 자율 운영 (완료)
