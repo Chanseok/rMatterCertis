@@ -452,187 +452,325 @@ src/components/features/VendorManagement.tsx
 
 ---
 
-## Phase 2: 백엔드 중복 제거 (3-5일)
+## Phase 2: 백엔드 코드 품질 개선 (5-7일)
 
-> **목적**: 중복 메서드 통합, Mock 분리  
-> **우선순위**: 🟡 Medium (테스트 가드 필수)
+> **목적**: Modern Rust 2024 원칙 준수, 중복 제거, 에러 처리 개선  
+> **우선순위**: � High (코드 품질 핵심)  
+> **참고**: 부록 A - 아키텍처 원칙 빠른 참조
 
-### Task 2.1: analyze_data_changes 통합
+### Task 2.1: unwrap()/expect() 제거 (프로덕션 코드)
 
-**현재 상태**:
-```rust
-// crawling_service_impls.rs
-async fn analyze_data_changes(&self, current: u32) 
-    -> (SiteDataChangeStatus, Option<DataDecreaseRecommendation>)
+**현재 문제**: 50+ 곳에서 `unwrap()` 또는 `expect()` 사용 (테스트 코드 제외)
 
-async fn analyze_site_data_changes(&self, current: u32) 
-    -> DataChangeAnalysis
+**우선순위 대상**:
+```bash
+# 프로덕션 코드에서 unwrap 검색 (테스트 제외)
+rg "\.unwrap\(\)|\.expect\(" src-tauri/src --type rust | grep -v "test"
 ```
 
-**통합 계획**:
-```rust
-// 새로운 API
-async fn analyze_data_changes(
-    &self, 
-    current: u32,
-    with_recommendations: bool
-) -> Result<DataAnalysisResult>
-
-enum DataAnalysisResult {
-    Simple(DataChangeAnalysis),
-    Detailed {
-        status: SiteDataChangeStatus,
-        recommendation: Option<DataDecreaseRecommendation>,
-    }
-}
-```
-
-**실행 순서**:
-1. [ ] 테스트 먼저 작성 (Task 0.4 완료 필요)
-2. [ ] 사용처 파악
-   ```bash
-   rg "analyze_data_changes\(" src-tauri/
-   rg "analyze_site_data_changes\(" src-tauri/
+**주요 수정 대상**:
+1. **Stage 실행 로직** (`stage_actor.rs`, `strategies/default.rs`):
+   ```rust
+   // ❌ Before
+   let http = Arc::new(cfg.create_http_client().expect("http client"));
+   
+   // ✅ After
+   let http = Arc::new(cfg.create_http_client()
+       .context("Failed to create HTTP client")?);
    ```
-3. [ ] 새 API 구현
-4. [ ] 기존 호출부 변경
-5. [ ] 중복 메서드 제거
-6. [ ] `cargo test` 통과 확인
 
-**체크리스트**:
-- [ ] 사용처 목록 작성
-- [ ] 새 API 설계 및 구현
-- [ ] 마이그레이션
-- [ ] 테스트 통과
-
-### Task 2.2: DatabaseAnalyzer Mock 분리
-
-**현재 상태**:
-```rust
-// crawling_service_impls.rs (프로덕션 코드)
-impl DatabaseAnalyzer for MockDatabaseAnalyzer { ... }
-```
-
-**목표 구조**:
-```rust
-// 프로덕션: src-tauri/src/infrastructure/crawling_service_impls.rs
-impl DatabaseAnalyzer for DatabaseAnalyzerImpl { ... }
-
-// 테스트: src-tauri/tests/mocks/database.rs
-pub struct MockDatabaseAnalyzer { ... }
-impl DatabaseAnalyzer for MockDatabaseAnalyzer { ... }
-```
-
-**실행 순서**:
-1. [ ] 테스트 Mock 디렉토리 생성
-   ```bash
-   mkdir -p src-tauri/tests/mocks
-   touch src-tauri/tests/mocks/mod.rs
-   touch src-tauri/tests/mocks/database.rs
+2. **데이터베이스 경로 관리** (`database_paths.rs`):
+   ```rust
+   // ❌ Before
+   .expect("DatabasePathManager가 초기화되지 않았습니다")
+   
+   // ✅ After
+   .ok_or_else(|| anyhow!("DatabasePathManager not initialized. Call initialize() first"))?
    ```
-2. [ ] Mock 코드 이동
-3. [ ] 프로덕션 코드에서 Mock 제거
-4. [ ] 테스트에서 Mock import 변경
-5. [ ] `cargo test` 통과 확인
+
+3. **파일 경로 처리** (`database_connection.rs`):
+   ```rust
+   // ❌ Before
+   let label = path.file_name().unwrap().to_string_lossy().to_string();
+   
+   // ✅ After
+   let label = path.file_name()
+       .ok_or_else(|| anyhow!("Invalid file path: no filename"))?
+       .to_string_lossy()
+       .to_string();
+   ```
+
+4. **동시성 제어** (`simple_http_client.rs`):
+   ```rust
+   // ❌ Before
+   let _permit = self.semaphore.acquire().await.unwrap();
+   
+   // ✅ After
+   let _permit = self.semaphore.acquire().await
+       .map_err(|e| anyhow!("Semaphore acquire failed: {}", e))?;
+   ```
+
+**실행 계획**:
+1. [ ] `anyhow` crate 의존성 확인 (이미 추가됨)
+2. [ ] 파일별로 순차 수정 (한 번에 하나씩)
+   - Stage 실행 로직 → 데이터베이스 경로 → HTTP 클라이언트
+3. [ ] 각 파일 수정 후 `cargo test` 실행
+4. [ ] Clippy 경고 확인: `cargo clippy --all-targets`
 
 **체크리스트**:
-- [ ] Mock 디렉토리 생성
-- [ ] Mock 코드 이동
-- [ ] Import 경로 수정
-- [ ] 프로덕션 코드 정리
+- [ ] `stage_actor.rs`: 10개 수정
+- [ ] `strategies/default.rs`: 8개 수정
+- [ ] `database_paths.rs`: 4개 수정
+- [ ] `database_connection.rs`: 2개 수정
+- [ ] `simple_http_client.rs`: 3개 수정
+- [ ] `integrated_product_repository.rs`: 10개 수정
 
-### Task 2.3: CrawlingPlanner 분석 메서드 통합
+### Task 2.2: mod.rs 사용 검토 및 제거
 
-**현재 상태**:
-```rust
-// crawling_planner.rs
-pub async fn analyze_system_state(&self, app_state: &AppState) 
-    -> Result<SystemAnalysis>
+**현재 상태**: `src-tauri/src/infrastructure/mod.rs` 사용 중
 
-pub async fn analyze_system_state_with_cache(&self, app_state: &AppState) 
-    -> Result<SystemAnalysis>
+**Modern Rust 2024 권장 구조**:
+```
+src-tauri/src/
+├── infrastructure.rs      // ✅ 권장 (디렉토리 게이트 파일)
+│   or
+├── infrastructure/        // 현재 구조
+│   ├── lib.rs            // ✅ 대안 (디렉토리용 lib.rs)
+│   ├── config.rs
+│   ├── crawler.rs
+│   └── ...
 ```
 
-**통합 계획**:
+**조사 필요**:
+- [ ] `infrastructure/mod.rs` → `infrastructure.rs` 이동 가능 여부
+- [ ] 다른 `mod.rs` 파일 존재 여부 확인
+  ```bash
+  find src-tauri/src -name "mod.rs" -type f
+  ```
+
+**참고**: 현재 `infrastructure/mod.rs`는 주석에 "Directory-style module"이라고 명시되어 있으므로, 이미 Modern 스타일로 구현됨 (유지)
+
+**결정**: ✅ 현재 구조 유지 (directory-style은 허용됨, `mod.rs` 남용만 금지)
+
+### Task 2.3: 불필요한 clone() 제거
+
+**현재 문제**: `Arc::new(value.clone())` 패턴 8곳 발견
+
+**주요 수정 대상**:
 ```rust
-pub async fn analyze_system_state(
-    &self, 
-    app_state: &AppState,
-    force_refresh: bool
-) -> Result<SystemAnalysis> {
-    if force_refresh {
-        // 캐시 무시하고 새로 분석
-    } else {
-        // 캐시된 사이트 상태 활용
-    }
-}
-```
+// ❌ Before
+let executor = Arc::new(RealCrawlingStageExecutor::new(integration_service.clone()));
 
-**실행 순서**:
-1. [ ] 사용처 파악
-2. [ ] 테스트 작성
-3. [ ] 통합 API 구현
-4. [ ] 호출부 변경 (`force_refresh` 파라미터 추가)
-5. [ ] 중복 메서드 제거
-
-**체크리스트**:
-- [ ] 사용처 분석
-- [ ] 통합 구현
-- [ ] 마이그레이션
-- [ ] 테스트 통과
-
-### Task 2.4: 진행 상황 분석 메서드 정리
-
-**현재 상태**:
-```rust
-// crawling_service_impls.rs
-pub async fn analyze_simple_progress(...) -> Result<SimpleProgressInfo>
-pub async fn analyze_crawling_progress(...) -> Result<CrawlingProgressInfo>
+// ✅ After
+let executor = Arc::new(RealCrawlingStageExecutor::new(Arc::clone(&integration_service)));
+// 또는 integration_service가 이미 Arc라면
+let executor = integration_service.clone(); // Arc::clone은 cheap
 ```
 
 **조사 항목**:
-1. [ ] 두 메서드의 반환 타입 차이 분석
-2. [ ] 각각의 사용처 파악
-3. [ ] 통합 가능 여부 결정
-
-**결정 후 실행**:
-- 통합 가능: Task 2.1과 유사하게 진행
-- 분리 필요: 네이밍 개선 및 문서화
+1. [ ] 각 `clone()` 사용처의 타입 확인
+2. [ ] 불필요한 intermediate clone 제거
+3. [ ] `Arc::clone(&x)` 명시적 사용 (가독성)
 
 **체크리스트**:
-- [ ] 차이점 문서화
-- [ ] 통합 or 분리 결정
-- [ ] 실행 및 테스트
+- [ ] `real_crawling_commands.rs`: 1개
+- [ ] `shallow_sync_commands.rs`: 1개
+- [ ] `crawling_integration.rs`: 1개
+- [ ] `session_actor.rs`: 1개 (plan.clone → Arc::clone)
+- [ ] `lib.rs`: 1개 (app_state.clone())
 
-### Task 2.5: 미사용 백엔드 기능 제거
+### Task 2.4: events.log 개발 전용으로 전환
 
-#### 2.5.1 진단 관련 Command
-```bash
-# analytics_query 사용처 확인
-rg "analytics_query" src-tauri/ src/
+**현재 상황**: `events.log`가 프로덕션 경로에 생성됨 (`~/Library/Application Support/matter-certis-v2/logs/events.log`)
 
-# DbDiagnosticsReport 사용처 확인
-rg "DbDiagnosticsReport" src-tauri/ src/
+**목표**: 개발/디버깅 전용으로 전환 (release 빌드에서 완전히 제외)
+
+**핵심 원칙**:
+- ✅ Debug 빌드 전용: `#[cfg(debug_assertions)]`
+- ✅ 개발 경로 사용: `src-tauri/target/debug/logs/events.log`
+- ✅ Release 빌드: events.log 레이어 완전히 제외
+- ✅ 설정 기반 활성화/비활성화 (선택사항)
+
+**구현 계획**:
+
+#### 2.4.1 개발 빌드 전용 경로 설정
+```rust
+// src-tauri/src/infrastructure/logging.rs
+
+/// Get events log directory (debug builds only)
+#[cfg(debug_assertions)]
+fn get_events_log_dir() -> PathBuf {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    PathBuf::from(manifest_dir)
+        .join("target")
+        .join("debug")
+        .join("logs")
+}
+
+/// Events log disabled in release builds
+#[cfg(not(debug_assertions))]
+fn get_events_log_dir() -> PathBuf {
+    PathBuf::new() // 빈 경로 반환
+}
 ```
 
-**조건부 제거**:
-- AnalysisTab 삭제 후 미사용 → 제거
-- LocalDBTab에서 사용 중 → 유지
+#### 2.4.2 조건부 events.log 레이어 추가
+```rust
+// src-tauri/src/infrastructure/logging.rs (기존 코드 수정)
 
-#### 2.5.2 페이지 일관성 체크
-```bash
-rg "check_page_index_consistency" src-tauri/ src/
+// 기존: let events_appender = rolling::never(&log_dir, "events.log");
+// 변경:
+#[cfg(debug_assertions)]
+let events_appender = rolling::never(&get_events_log_dir(), "events.log");
+
+// events.log 레이어를 #[cfg(debug_assertions)]로 감싸기
+#[cfg(debug_assertions)]
+let events_layer = fmt::Layer::new()
+    .with_writer(events_writer)
+    .with_timer(KstTimeFormatter)
+    .with_target(true)
+    .with_thread_ids(false)
+    .with_file(false)
+    .with_line_number(false)
+    .with_ansi(false)
+    .with_filter(make_events_filter());
+
+// registry 초기화 시 조건부 추가
+#[cfg(debug_assertions)]
+registry
+    .with(file_layer)
+    .with(console_layer)
+    .with(events_layer)  // Debug 빌드만
+    .init();
+
+#[cfg(not(debug_assertions))]
+registry
+    .with(file_layer)
+    .with(console_layer)
+    // events_layer 제외
+    .init();
 ```
 
-**조건부 제거**:
-- DiagnosticsPanel과 중복 → 제거
-- 독립적 기능 → 유지
+#### 2.4.3 설정 구조 추가 (선택사항)
+```rust
+// src-tauri/src/infrastructure/config.rs
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LoggingConfig {
+    // ... 기존 필드들
+    
+    /// Enable events.log for development/debugging (debug builds only)
+    #[cfg(debug_assertions)]
+    #[serde(default)]
+    pub enable_events_log: bool,
+}
+```
+
+#### 2.4.4 UI 설정 탭 업데이트 (선택사항)
+```typescript
+// src/components/settings/LoggingSettings.tsx
+{import.meta.env.DEV && (
+  <Switch
+    checked={config.logging.enable_events_log}
+    onChange={(enabled) => updateConfig('logging.enable_events_log', enabled)}
+    label="Enable Events Log (Debug Only)"
+    description="Creates events.log in src-tauri/target/debug/logs/ (actor-event, kpi.* targets)"
+  />
+)}
+
+{/* Release 빌드에서는 비활성화 표시 */}
+{import.meta.env.MODE === 'production' && (
+  <Notice type="info">
+    Events logging is disabled in production builds
+  </Notice>
+)}
+```
 
 **체크리스트**:
-- [ ] analytics_query 사용처 확인
-- [ ] DbDiagnosticsReport 사용처 확인
-- [ ] check_page_index_consistency 사용처 확인
-- [ ] 미사용 함수 제거
+- [ ] `get_events_log_dir()` 함수 구현 (#[cfg(debug_assertions)])
+- [ ] logging.rs에서 events.log 레이어를 #[cfg(debug_assertions)]로 감싸기
+- [ ] 기존 4곳의 events_appender 경로 수정 (line 332, 339, 429, 435)
+- [ ] registry 초기화를 조건부 컴파일로 분기 (debug: events_layer 포함, release: 제외)
+- [ ] (선택) LoggingConfig에 enable_events_log 필드 추가
+- [ ] (선택) UI 설정 탭에 events.log 토글 추가 (import.meta.env.DEV만)
+- [ ] 테스트: `cargo build` (debug) → `src-tauri/target/debug/logs/events.log` 생성 확인
+- [ ] 테스트: `cargo build --release` → events.log 미생성 확인
+- [ ] 문서: 개발자 가이드에 events.log 사용법 추가 (actor-event, kpi.* 타겟 설명)
+
+**참고**:
+- Debug 빌드 경로: `src-tauri/target/debug/logs/events.log`
+- Release 빌드: events.log 레이어 완전히 제외 (#[cfg(not(debug_assertions))])
+- 프로덕션 경로 사용 금지: `~/Library/Application Support/` 아님
+- 기록 대상: actor-event, kpi.plan, kpi.batch, kpi.session, kpi.execution_plan 등
+
+### Task 2.5: ts-rs 타입 동기화 검증
+
+**현재 상황**: Rust → TypeScript 타입 자동 생성 (ts-rs)
+
+**검증 항목**:
+
+#### 2.5.1 생성된 타입 파일 확인
+```bash
+# 생성된 TypeScript 타입 파일 목록
+find src/bindings -name "*.ts" | head -20
+
+# 최근 수정된 파일 확인 (타입 변경 후 재생성 여부)
+ls -lt src/bindings/*.ts | head -10
+```
+
+#### 2.5.2 타입 동기화 체크
+```bash
+# Rust 구조체에 #[derive(TS)] 있는지 확인
+rg "#\[derive.*TS.*\]" src-tauri/src --type rust
+
+# ts-rs export 설정 확인
+rg "#\[ts\(export\)\]" src-tauri/src --type rust
+
+# 프론트엔드에서 import하는 타입 확인
+rg "from.*bindings" src --type typescript
+```
+
+#### 2.5.3 타입 불일치 탐지
+```bash
+# 수동으로 정의된 타입과 ts-rs 생성 타입 비교
+rg "interface.*Result|type.*Result" src/types --type typescript
+rg "export interface" src/bindings --type typescript
+
+# 중복 타입 정의 확인
+```
+
+**수정 전략**:
+1. **누락된 #[derive(TS)]**: 백엔드 구조체에 추가
+2. **불일치**: `npm run generate-types` 실행 (있다면)
+3. **수동 타입 제거**: ts-rs 생성 타입 사용
+
+**예시**:
+```rust
+// ❌ Before (ts-rs 미사용)
+pub struct MyResult {
+    pub success: bool,
+}
+
+// ✅ After (ts-rs 사용)
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MyResult {
+    pub success: bool,
+}
+```
+
+**체크리스트**:
+- [ ] 생성된 타입 파일 목록 확인
+- [ ] #[derive(TS)] 누락된 구조체 검색
+- [ ] 프론트엔드에서 수동 정의된 타입과 비교
+- [ ] 중복 타입 정의 제거
+- [ ] `npm run type-check` 통과
+- [ ] 타입 생성 스크립트 문서화 (scripts/generate_types.sh 등)
+
+**참고**:
+- ts-rs 설정: `src-tauri/Cargo.toml`의 ts-rs dependency
+- 생성 경로: `src/bindings/` (기본값)
+- 빌드 후크: `build.rs` 또는 별도 스크립트
 
 ---
 
