@@ -248,17 +248,31 @@ impl StatusChecker for StatusCheckerImpl {
                         current_page=%total_pages,
                         "Page count dropped - possible site issue"
                     );
-                } else if total_pages > prev {
-                    // New high water mark: update max and reset degradation note
-                    cfg_guard.app_managed.last_known_max_page = Some(total_pages);
-                    cfg_guard.app_managed.last_degradation_note = None;
-                    mutated = true;
-                    tracing::info!(
-                        target="site_health",
-                        prev_max_page=%prev,
-                        new_max_page=%total_pages,
-                        "New maximum page count recorded"
-                    );
+                } else {
+                    // Pages recovered or maintained
+                    if total_pages > prev {
+                        // New high water mark: update max
+                        cfg_guard.app_managed.last_known_max_page = Some(total_pages);
+                        mutated = true;
+                        tracing::info!(
+                            target="site_health",
+                            prev_max_page=%prev,
+                            new_max_page=%total_pages,
+                            "New maximum page count recorded"
+                        );
+                    }
+                    // Clear degradation note even if equal (recovery confirmed)
+                    if cfg_guard.app_managed.last_degradation_note.is_some() {
+                        cfg_guard.app_managed.last_degradation_note = None;
+                        cfg_guard.app_managed.first_degradation_at = None;
+                        mutated = true;
+                        tracing::info!(
+                            target="site_health",
+                            prev_max_page=%prev,
+                            current_page=%total_pages,
+                            "Site degradation cleared - pages stable or recovered"
+                        );
+                    }
                 }
                 // If equal, only last_known_last_page is updated (already done above)
             } else {
@@ -276,10 +290,24 @@ impl StatusChecker for StatusCheckerImpl {
                     cfg_guard.app_managed.last_degradation_note = Some(format!(
                         "product_drop prev={} current={}", prev_p, estimated_products
                     ));
-                } else if estimated_products > prev_p {
-                    cfg_guard.app_managed.last_known_max_total_products = Some(estimated_products);
-                    cfg_guard.app_managed.last_degradation_note = None;
-                    mutated = true;
+                } else {
+                    // Products recovered or maintained - clear degradation note
+                    if estimated_products > prev_p {
+                        cfg_guard.app_managed.last_known_max_total_products = Some(estimated_products);
+                        mutated = true;
+                    }
+                    // Clear degradation note even if equal (recovery confirmed)
+                    if cfg_guard.app_managed.last_degradation_note.is_some() {
+                        cfg_guard.app_managed.last_degradation_note = None;
+                        cfg_guard.app_managed.first_degradation_at = None;
+                        mutated = true;
+                        tracing::info!(
+                            target="site_health",
+                            prev_products=%prev_p,
+                            current_products=%estimated_products,
+                            "Site degradation cleared - products stable or recovered"
+                        );
+                    }
                 }
             } else {
                 cfg_guard.app_managed.last_known_max_total_products = Some(estimated_products);
