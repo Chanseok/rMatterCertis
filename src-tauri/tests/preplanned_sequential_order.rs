@@ -44,6 +44,7 @@ async fn preplanned_batches_run_sequentially_in_order() {
                 reverse_order: true,
             },
         ],
+        product_urls: None,
         batch_size: 2,
         concurrency_limit: 2,
         estimated_duration_secs: 0,
