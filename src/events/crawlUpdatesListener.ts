@@ -94,9 +94,4 @@ export function getCrawlUpdatesListener(opts?: CrawlUpdatesListenerOptions) {
   return _instance;
 }
 
-// Convenience quick start for simple pages
-export async function ensureCrawlUpdatesRunning(opts?: CrawlUpdatesListenerOptions) {
-  const l = getCrawlUpdatesListener(opts);
-  await l.start();
-  return l;
-}
+// ensureCrawlUpdatesRunning removed (unused)

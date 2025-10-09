@@ -140,15 +140,4 @@ export class DetailTracker {
   getEventsSeen() { return this.eventsSeen; }
 }
 
-// Helper to derive a stable key from a URL (simple canonicalization). Real implementation might move to Rust backend.
-export function canonicalUrlKey(raw: string): string {
-  try {
-    const u = new URL(raw);
-    const host = u.host.toLowerCase();
-    let path = u.pathname.replace(/\/+/g, '/');
-    if (path.endsWith('/')) path = path.slice(0, -1);
-    return host + path;
-  } catch {
-    return raw.trim();
-  }
-}
+// canonicalUrlKey removed (unused helper function)
