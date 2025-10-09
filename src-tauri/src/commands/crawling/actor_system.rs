@@ -611,8 +611,11 @@ pub async fn resume_from_token(
     let new_session_id = format!("resume_{}", uuid::Uuid::new_v4());
     let mut pages_sorted = remaining_pages.clone();
     pages_sorted.sort_unstable();
-    let first = *pages_sorted.first().unwrap();
-    let last = *pages_sorted.last().unwrap();
+    
+    // Safe: remaining_pages is checked to be non-empty earlier
+    let first = *pages_sorted.first().expect("pages_sorted is non-empty after empty check");
+    let last = *pages_sorted.last().expect("pages_sorted is non-empty after empty check");
+    
     let mut ranges: Vec<PageRange> = Vec::new();
     let mut seg_start = pages_sorted[0];
     let mut prev = pages_sorted[0];
@@ -787,7 +790,8 @@ pub async fn resume_from_token(
         success: true,
         message: "resume session started".into(),
         session_id: Some(sid),
-        data: Some(serde_json::to_value(&exec_clone).unwrap()),
+        data: Some(serde_json::to_value(&exec_clone)
+            .map_err(|e| format!("failed to serialize execution plan: {}", e))?),
     })
 }
 
@@ -1248,19 +1252,25 @@ pub async fn start_manual_crawl_pages_actor(
             e
         })?;
 
-    // Health gate: if degradation note present, block unless MC_FORCE_CRAWL=1
-    let degraded = if let Some(state) = app.try_state::<crate::application::AppState>() {
-        // Use async read to avoid blocking within the runtime (previous blocking_read caused panic)
-        let cfg = state.config.read().await;
-        cfg.app_managed.last_degradation_note.clone()
-    } else { None };
-    if let Some(note) = degraded {
-        let force = std::env::var("MC_FORCE_CRAWL").ok().map(|v| v=="1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
-        if !force {
-            return Err(format!("Site anomaly detected: {} (set MC_FORCE_CRAWL=1 to override)", note));
-        } else {
-            tracing::warn!(target="site_health", note, "Proceeding with crawl under anomaly due to MC_FORCE_CRAWL");
+    // Health gate: if degradation note present, block unless MC_FORCE_CRAWL=1 or skipValidation=true
+    // Skip degradation check for manual crawls when validation is explicitly disabled
+    let skip_validation = _skip_validation.unwrap_or(false);
+    if !skip_validation {
+        let degraded = if let Some(state) = app.try_state::<crate::application::AppState>() {
+            // Use async read to avoid blocking within the runtime (previous blocking_read caused panic)
+            let cfg = state.config.read().await;
+            cfg.app_managed.last_degradation_note.clone()
+        } else { None };
+        if let Some(note) = degraded {
+            let force = std::env::var("MC_FORCE_CRAWL").ok().map(|v| v=="1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+            if !force {
+                return Err(format!("Site anomaly detected: {} (set MC_FORCE_CRAWL=1 to override)", note));
+            } else {
+                tracing::warn!(target="site_health", note, "Proceeding with crawl under anomaly due to MC_FORCE_CRAWL");
+            }
         }
+    } else {
+        tracing::info!(target="orchestration", "Skipping degradation check due to skipValidation=true");
     }
 
     info!(target: "kpi.plan", "{{\"event\":\"manual_actor_started\",\"session_id\":\"{}\",\"plan_id\":\"{}\",\"ranges\":{},\"hash\":\"{}\"}}",

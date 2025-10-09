@@ -804,15 +804,21 @@ impl IntegratedProductRepository {
             let normalized_existing_cert_date = Self::normalize_cert_date(&existing_detail.certification_date);
             if normalized_existing_cert_date.is_none() && normalized_new_cert_date.is_some() {
                 updates.push("certification_date = ?");
-                binds.push(BindValue::OwnedStr(normalized_new_cert_date.clone().unwrap()));
-                change_kinds.push("fill:certification_date".to_string());
+                // Safe: normalized_new_cert_date.is_some() was checked above
+                if let Some(date) = normalized_new_cert_date.clone() {
+                    binds.push(BindValue::OwnedStr(date));
+                    change_kinds.push("fill:certification_date".to_string());
+                }
             } else if normalized_existing_cert_date.is_some()
                 && normalized_new_cert_date.is_some()
                 && normalized_existing_cert_date != normalized_new_cert_date
             {
                 updates.push("certification_date = ?");
-                binds.push(BindValue::OwnedStr(normalized_new_cert_date.clone().unwrap()));
-                change_kinds.push("change:certification_date".to_string());
+                // Safe: normalized_new_cert_date.is_some() was checked above
+                if let Some(date) = normalized_new_cert_date.clone() {
+                    binds.push(BindValue::OwnedStr(date));
+                    change_kinds.push("change:certification_date".to_string());
+                }
             }
             
             fill_or_change_opt_str!(hardware_version, "hardware_version");
@@ -838,17 +844,23 @@ impl IntegratedProductRepository {
             
             if existing_ids_json.is_none() && new_ids_json.is_some() {
                 updates.push("primary_device_type_ids = ?");
-                binds.push(BindValue::OwnedStr(new_ids_json.clone().unwrap()));
-                change_kinds.push("fill:primary_device_type_ids".to_string());
-                tracing::info!(target="persist_detail_decision", url=%detail.url, "WILL_FILL_primary_device_type_ids");
+                // Safe: new_ids_json.is_some() was checked above
+                if let Some(ids) = new_ids_json.clone() {
+                    binds.push(BindValue::OwnedStr(ids));
+                    change_kinds.push("fill:primary_device_type_ids".to_string());
+                    tracing::info!(target="persist_detail_decision", url=%detail.url, "WILL_FILL_primary_device_type_ids");
+                }
             } else if existing_ids_json.is_some() 
                 && new_ids_json.is_some() 
                 && existing_ids_json != new_ids_json 
             {
                 updates.push("primary_device_type_ids = ?");
-                binds.push(BindValue::OwnedStr(new_ids_json.clone().unwrap()));
-                change_kinds.push("change:primary_device_type_ids".to_string());
-                tracing::info!(target="persist_detail_decision", url=%detail.url, "WILL_CHANGE_primary_device_type_ids");
+                // Safe: new_ids_json.is_some() was checked above
+                if let Some(ids) = new_ids_json.clone() {
+                    binds.push(BindValue::OwnedStr(ids));
+                    change_kinds.push("change:primary_device_type_ids".to_string());
+                    tracing::info!(target="persist_detail_decision", url=%detail.url, "WILL_CHANGE_primary_device_type_ids");
+                }
             }
             
             fill_or_change_opt_str!(certificate_id, "certificate_id");
@@ -2599,8 +2611,9 @@ impl IntegratedProductRepository {
             return Ok(Some((start_page, end_page)));
         }
 
-        let max_page_id = max_page_id.unwrap();
-        let max_index_in_page = max_index_in_page.unwrap();
+        // Safe: Both values checked above to be Some
+        let max_page_id = max_page_id.expect("max_page_id is Some after null check");
+        let max_index_in_page = max_index_in_page.expect("max_index_in_page is Some after null check");
 
         // Step 2: Calculate the last saved product's reverse absolute index
         // Formula: lastSavedIndex = (max_page_id * productsPerPage) + max_index_in_page
