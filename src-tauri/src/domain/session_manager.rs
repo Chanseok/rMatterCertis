@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Decode, Encode, Type};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 /// Current status of a crawling session
@@ -132,16 +132,6 @@ pub struct CrawlingSessionState {
 pub struct SessionManager {
     /// Active sessions in memory
     sessions: Arc<RwLock<HashMap<String, CrawlingSessionState>>>,
-
-    /// Performance metrics for estimation
-    metrics: Arc<Mutex<SessionMetrics>>,
-}
-
-#[derive(Debug, Default)]
-struct SessionMetrics {
-    avg_pages_per_second: f64,
-    avg_products_per_page: f64,
-    last_updated: Option<DateTime<Utc>>,
 }
 
 impl SessionManager {
@@ -150,7 +140,6 @@ impl SessionManager {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
-            metrics: Arc::new(Mutex::new(SessionMetrics::default())),
         }
     }
 
@@ -447,32 +436,6 @@ impl SessionManager {
             None
         }
     }
-
-    /// Update performance metrics for better ETA calculation
-    async fn update_metrics(&self, session: &CrawlingSessionState, execution_time: u32) {
-        let mut metrics = self.metrics.lock().await;
-
-        if session.current_page > 0 {
-            let pages_per_second = f64::from(session.current_page) / f64::from(execution_time);
-            metrics.avg_pages_per_second = if metrics.avg_pages_per_second == 0.0 {
-                pages_per_second
-            } else {
-                f64::midpoint(metrics.avg_pages_per_second, pages_per_second)
-            };
-        }
-
-        if session.current_page > 0 {
-            let products_per_page =
-                f64::from(session.products_found) / f64::from(session.current_page);
-            metrics.avg_products_per_page = if metrics.avg_products_per_page == 0.0 {
-                products_per_page
-            } else {
-                f64::midpoint(metrics.avg_products_per_page, products_per_page)
-            };
-        }
-
-        metrics.last_updated = Some(Utc::now());
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -519,12 +482,18 @@ mod tests {
         assert_eq!(session.products_found, 50);
 
         // Complete session
-        let result = manager
-            .complete_session(&session_id, SessionStatus::Completed)
+        manager
+            .complete_session_simple(&session_id)
             .await
             .unwrap();
-        assert_eq!(result.status, SessionStatus::Completed);
-        assert_eq!(result.products_found, 50);
+
+        // Check completed state
+        let session = manager.get_session(&session_id).await.unwrap();
+        assert_eq!(session.status, SessionStatus::Completed);
+        assert_eq!(session.products_found, 50);
+
+        // Clean up
+        manager.remove_session(&session_id).await;
 
         // Session should be removed from memory
         assert!(manager.get_session(&session_id).await.is_none());
@@ -559,7 +528,7 @@ mod tests {
 
         // Complete one session
         manager
-            .complete_session(&session1, SessionStatus::Completed)
+            .complete_session_simple(&session1)
             .await
             .unwrap();
 
