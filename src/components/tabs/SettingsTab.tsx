@@ -180,7 +180,7 @@ export const SettingsTab: Component = () => {
                       배치 크기
                     </div>
                     <div class="text-xs text-gray-500">
-                      한 번에 저장할 레코드 수 (0=배치 처리 비활성)
+                      목록 페이지를 몇 개씩 묶어서 처리 (예: 5이면 5페이지씩 묶음)
                     </div>
                   </div>
                   <div class="flex items-center gap-2">
@@ -190,8 +190,8 @@ export const SettingsTab: Component = () => {
                       value={settingsState.getNestedValue(
                         "user.batch.batch_size"
                       )}
-                      min={0}
-                      max={1000}
+                      min={1}
+                      max={100}
                       onInput={(e) =>
                         settingsState.updateNestedField(
                           "user.batch.batch_size",
@@ -199,7 +199,7 @@ export const SettingsTab: Component = () => {
                         )
                       }
                     />
-                    <span class="text-sm text-gray-500">개</span>
+                    <span class="text-sm text-gray-500">페이지</span>
                   </div>
                 </label>
               </div>
