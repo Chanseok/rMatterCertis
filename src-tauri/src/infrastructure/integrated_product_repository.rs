@@ -1169,7 +1169,8 @@ impl IntegratedProductRepository {
             }
 
             // 기본 제품 정보 삽입 (UPSERT 방식)
-            self.create_or_update_product(&basic_product)
+            // 반환값: (was_updated, was_created) - products 테이블에 새로 생성되었는지 추적
+            let (_, product_was_created) = self.create_or_update_product(&basic_product)
                 .await
                 .map_err(|e| {
                     anyhow::anyhow!("Failed to create/update basic product info: {}", e)
@@ -1260,22 +1261,26 @@ impl IntegratedProductRepository {
                 .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
             if verbose {
                 info!(
-                    "🆕 New ProductDetail created: {} url={} page_id={:?} idx={:?}",
+                    "🆕 New ProductDetail created: {} url={} page_id={:?} idx={:?} (products_also_created={})",
                     detail.model.as_deref().unwrap_or("Unknown"),
                     detail.url,
                     detail.page_id,
-                    detail.index_in_page
+                    detail.index_in_page,
+                    product_was_created
                 );
             } else {
                 info!(
-                    "🆕 New ProductDetail created: {}",
-                    detail.model.as_deref().unwrap_or("Unknown")
+                    "🆕 New ProductDetail created: {} (products_also_created={})",
+                    detail.model.as_deref().unwrap_or("Unknown"),
+                    product_was_created
                 );
             }
             info!(
-                "[Persist] product_details: url={} pid={:?} idx={:?} action=insert",
-                detail.url, detail.page_id, detail.index_in_page
+                "[Persist] product_details: url={} pid={:?} idx={:?} action=insert products_created={}",
+                detail.url, detail.page_id, detail.index_in_page, product_was_created
             );
+            // product_details가 새로 생성되면 created=true 반환
+            // (products도 새로 생성되었다면 이는 완전히 새로운 제품)
             Ok((false, true)) // updated=false, created=true
         }
     }

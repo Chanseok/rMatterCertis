@@ -963,7 +963,7 @@ pub async fn get_products_without_coordinates(
     })
 }
 
-/// NULL 좌표를 가진 제품들 삭제 (products와 product_details 테이블에서 모두 삭제)
+/// NULL 좌표를 가진 제품들 삭제 (products 테이블에서 삭제 → FK CASCADE로 product_details도 자동 삭제)
 #[tauri::command(async)]
 pub async fn delete_products_without_coordinates(
     app_state: State<'_, AppState>,
@@ -982,39 +982,189 @@ pub async fn delete_products_without_coordinates(
 
     let placeholders = urls.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     
-    // 트랜잭션 시작
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    
-    // 1. product_details 테이블에서 삭제
-    let details_query_str = format!("DELETE FROM product_details WHERE url IN ({})", placeholders);
-    let mut details_query = sqlx::query(&details_query_str);
+    // products 테이블에서 삭제 → FK CASCADE로 product_details도 자동 삭제됨
+    let query_str = format!("DELETE FROM products WHERE url IN ({})", placeholders);
+    let mut query = sqlx::query(&query_str);
     for url in &urls {
-        details_query = details_query.bind(url);
+        query = query.bind(url);
     }
-    let details_result = details_query.execute(&mut *tx).await.map_err(|e| e.to_string())?;
-    let details_deleted = details_result.rows_affected();
     
-    // 2. products 테이블에서 삭제
-    let products_query_str = format!("DELETE FROM products WHERE url IN ({})", placeholders);
-    let mut products_query = sqlx::query(&products_query_str);
-    for url in &urls {
-        products_query = products_query.bind(url);
-    }
-    let products_result = products_query.execute(&mut *tx).await.map_err(|e| e.to_string())?;
-    let products_deleted = products_result.rows_affected();
+    let result = query.execute(&pool).await.map_err(|e| e.to_string())?;
+    let deleted = result.rows_affected();
     
-    // 트랜잭션 커밋
-    tx.commit().await.map_err(|e| e.to_string())?;
-    
-    let total_deleted = u32::try_from(products_deleted).unwrap_or(u32::MAX);
+    let deleted_count = u32::try_from(deleted).unwrap_or(u32::MAX);
 
     info!(
         target: "db_diagnostics",
         requested = urls.len(),
-        products_deleted = products_deleted,
-        details_deleted = details_deleted,
-        "delete_products_without_coordinates: done"
+        products_deleted = deleted_count,
+        "delete_products_without_coordinates: done (product_details also deleted via FK CASCADE)"
     );
 
-    Ok(total_deleted)
+    Ok(deleted_count)
+}
+
+/// 테이블 일관성 체크: products와 product_details 간 불일치 감지
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TableInconsistencyReport {
+    pub products_count: i64,
+    pub details_count: i64,
+    pub only_in_products: Vec<OrphanProduct>,
+    pub only_in_details: Vec<OrphanProduct>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct OrphanProduct {
+    pub url: String,
+    pub manufacturer: Option<String>,
+    pub model: Option<String>,
+    pub page_id: Option<i32>,
+    pub index_in_page: Option<i32>,
+}
+
+#[tauri::command(async)]
+pub async fn check_table_consistency(
+    app_state: State<'_, AppState>,
+) -> Result<TableInconsistencyReport, String> {
+    info!(target: "db_diagnostics", "check_table_consistency: start");
+    
+    let pool = app_state
+        .get_database_pool()
+        .await
+        .map_err(|e| format!("DB pool unavailable: {e}"))?;
+
+    // 1. 전체 카운트 확인
+    let products_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let details_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_details")
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    info!(
+        target: "db_diagnostics",
+        products_count,
+        details_count,
+        "Table counts"
+    );
+
+    // 2. products에만 있는 제품 (고아 레코드 - product_details 없음)
+    let only_in_products_rows = sqlx::query(
+        r"
+        SELECT p.url, p.manufacturer, p.model, p.page_id, p.index_in_page
+        FROM products p
+        LEFT JOIN product_details pd ON p.url = pd.url
+        WHERE pd.url IS NULL
+        ORDER BY p.page_id DESC, p.index_in_page ASC
+        LIMIT 500
+        "
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let only_in_products: Vec<OrphanProduct> = only_in_products_rows
+        .into_iter()
+        .map(|row| OrphanProduct {
+            url: row.get("url"),
+            manufacturer: row.get("manufacturer"),
+            model: row.get("model"),
+            page_id: row.get("page_id"),
+            index_in_page: row.get("index_in_page"),
+        })
+        .collect();
+
+    // 3. product_details에만 있는 제품 (고아 레코드 - products 없음)
+    let only_in_details_rows = sqlx::query(
+        r"
+        SELECT pd.url, pd.manufacturer, pd.model, pd.page_id, pd.index_in_page
+        FROM product_details pd
+        LEFT JOIN products p ON pd.url = p.url
+        WHERE p.url IS NULL
+        ORDER BY pd.page_id DESC, pd.index_in_page ASC
+        LIMIT 500
+        "
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let only_in_details: Vec<OrphanProduct> = only_in_details_rows
+        .into_iter()
+        .map(|row| OrphanProduct {
+            url: row.get("url"),
+            manufacturer: row.get("manufacturer"),
+            model: row.get("model"),
+            page_id: row.get("page_id"),
+            index_in_page: row.get("index_in_page"),
+        })
+        .collect();
+
+    info!(
+        target: "db_diagnostics",
+        only_in_products_count = only_in_products.len(),
+        only_in_details_count = only_in_details.len(),
+        "check_table_consistency: done"
+    );
+
+    Ok(TableInconsistencyReport {
+        products_count,
+        details_count,
+        only_in_products,
+        only_in_details,
+    })
+}
+
+/// 고아 레코드 삭제 (한쪽 테이블에만 있는 레코드 정리)
+#[tauri::command(async)]
+pub async fn delete_orphan_records(
+    app_state: State<'_, AppState>,
+    urls: Vec<String>,
+    table: String, // "products" or "product_details"
+) -> Result<u32, String> {
+    info!(
+        target: "db_diagnostics",
+        count = urls.len(),
+        table = %table,
+        "delete_orphan_records: start"
+    );
+    
+    if urls.is_empty() {
+        return Ok(0);
+    }
+
+    if table != "products" && table != "product_details" {
+        return Err("Invalid table name. Must be 'products' or 'product_details'".to_string());
+    }
+
+    let pool = app_state
+        .get_database_pool()
+        .await
+        .map_err(|e| format!("DB pool unavailable: {e}"))?;
+
+    let placeholders = urls.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let query_str = format!("DELETE FROM {} WHERE url IN ({})", table, placeholders);
+    
+    let mut query = sqlx::query(&query_str);
+    for url in &urls {
+        query = query.bind(url);
+    }
+    
+    let result = query.execute(&pool).await.map_err(|e| e.to_string())?;
+    let deleted = result.rows_affected();
+    
+    let deleted_count = u32::try_from(deleted).unwrap_or(u32::MAX);
+
+    info!(
+        target: "db_diagnostics",
+        requested = urls.len(),
+        deleted = deleted_count,
+        table = %table,
+        "delete_orphan_records: done"
+    );
+
+    Ok(deleted_count)
 }

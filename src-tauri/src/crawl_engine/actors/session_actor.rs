@@ -1343,6 +1343,34 @@ impl SessionActor {
                 updated_products, updated_details, failed_updates, all_urls.len()
             );
             
+            // 좌표 업데이트 완료 이벤트 발행
+            let _ = self.emit(
+                context,
+                AppEvent::ListPageBatchCompleted {
+                    session_id: self.session_id.clone().unwrap_or_default(),
+                    batch_id: batch_id.to_string(),
+                    total_pages: total_pages as u32,
+                    successful_pages: successful_pages as u32,
+                    partial_pages: partial_pages as u32,
+                    failed_pages: failed_pages as u32,
+                    total_urls_collected: all_urls.len() as u32,
+                    duration_ms: batch_duration_ms,
+                    timestamp: Utc::now(),
+                },
+            );
+            
+            // 추가: coordinate update 통계를 포함한 커스텀 정보
+            // (UI에서 사용할 수 있도록)
+            if updated_products > 0 || updated_details > 0 {
+                info!(
+                    "[Shallow Batch] Session: {}, Products: {}, Details: {}, Failed: {}",
+                    self.session_id.as_deref().unwrap_or("unknown"),
+                    updated_products, 
+                    updated_details,
+                    failed_updates
+                );
+            }
+            
             return Ok(());
         }
 

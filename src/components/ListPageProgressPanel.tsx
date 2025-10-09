@@ -14,7 +14,7 @@ interface PageProgress {
 
 export default function ListPageProgressPanel() {
   const [isActive, setIsActive] = createSignal(false);
-  const [totalPages, setTotalPages] = createSignal(0);
+  const [_totalPages, setTotalPages] = createSignal(0);
   const [pages, setPages] = createSignal<Map<number, PageProgress>>(new Map());
   const [sessionActive, setSessionActive] = createSignal(false); // 전체 세션 활성 상태
   const [lastUpdatedPage, setLastUpdatedPage] = createSignal<number | null>(null);
@@ -224,8 +224,9 @@ export default function ListPageProgressPanel() {
 
   const progressPercentage = () => {
     const pagesArray = Array.from(pages().values());
+    const total = pagesArray.length; // Map의 실제 크기 사용
     const completed = pagesArray.filter(p => p.status !== 'pending' && p.status !== 'processing').length;
-    return totalPages() > 0 ? (completed / totalPages()) * 100 : 0;
+    return total > 0 ? (completed / total) * 100 : 0;
   };
 
   const getStatusIcon = (status: PageProgress['status']) => {

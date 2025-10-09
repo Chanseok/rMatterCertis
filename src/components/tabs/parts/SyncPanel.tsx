@@ -18,6 +18,63 @@ interface Props {
 }
 
 const SyncPanel: Component<Props> = (props) => {
+  // 시작 시간 추적
+  let startTime: number | null = null;
+  
+  // 시간 추정 계산
+  const getTimeEstimate = () => {
+    const processed = props.syncLive().pagesProcessed || 0;
+    const total = props.syncLive().planned || 0;
+    
+    if (!total || processed === 0) {
+      return { remaining: 0, eta: null, avgTime: 0 };
+    }
+    
+    // 시작 시간 설정 (첫 페이지 처리 시)
+    if (processed === 1 && !startTime) {
+      startTime = Date.now();
+    }
+    
+    if (!startTime || processed < 2) {
+      return { remaining: 0, eta: null, avgTime: 0 };
+    }
+    
+    const elapsed = Date.now() - startTime;
+    const avgTimePerPage = elapsed / processed; // ms per page
+    const remainingPages = total - processed;
+    const remainingMs = avgTimePerPage * remainingPages;
+    const eta = new Date(Date.now() + remainingMs);
+    
+    return {
+      remaining: remainingMs,
+      eta,
+      avgTime: avgTimePerPage,
+    };
+  };
+  
+  // 시간 포맷팅 헬퍼
+  const formatDuration = (ms: number) => {
+    if (ms < 1000) return `${Math.round(ms)}ms`;
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    
+    if (hours > 0) {
+      return `${hours}시간 ${minutes % 60}분`;
+    } else if (minutes > 0) {
+      return `${minutes}분 ${seconds % 60}초`;
+    } else {
+      return `${seconds}초`;
+    }
+  };
+  
+  const formatETA = (date: Date | null) => {
+    if (!date) return '-';
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
+  
   return (
     <Show when={props.syncLive().active || props.syncLive().pagesProcessed > 0}>
       <div class="bg-gradient-to-r from-teal-500 to-cyan-500 rounded-2xl p-6 mb-8 text-white shadow-2xl">
@@ -37,20 +94,34 @@ const SyncPanel: Component<Props> = (props) => {
               const processed = props.syncLive().pagesProcessed || 0;
               const total = props.syncLive().planned || processed || 1;
               const pct = Math.min(100, (processed / Math.max(1, total)) * 100);
+              const timeEst = getTimeEstimate();
+              
               return (
-                <div class="relative">
-                  <div class="h-3 bg-white/20 rounded-lg overflow-hidden">
-                    <div
-                      class="h-full bg-gradient-to-r from-white to-yellow-200 rounded-lg transition-all duration-500 ease-out"
-                      style={{ width: `${pct}%` }}
-                    />
+                <>
+                  <div class="relative">
+                    <div class="h-3 bg-white/20 rounded-lg overflow-hidden">
+                      <div
+                        class="h-full bg-gradient-to-r from-white to-yellow-200 rounded-lg transition-all duration-500 ease-out"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                      <span class="text-xs font-semibold text-white drop-shadow-lg">
+                        {pct.toFixed(1)}%
+                      </span>
+                    </div>
                   </div>
-                  <div class="absolute inset-0 flex items-center justify-center">
-                    <span class="text-xs font-semibold text-white drop-shadow-lg">
-                      {pct.toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
+                  {/* 시간 추정 표시 */}
+                  <Show when={timeEst.remaining > 0}>
+                    <div class="mt-2 flex items-center justify-between text-xs text-white/90">
+                      <div class="flex items-center gap-4">
+                        <span>⏱️ 남은 시간: <b>{formatDuration(timeEst.remaining)}</b></span>
+                        <span>📅 완료 예정: <b>{formatETA(timeEst.eta)}</b></span>
+                      </div>
+                      <span class="text-white/70">평균: {formatDuration(timeEst.avgTime)}/페이지</span>
+                    </div>
+                  </Show>
+                </>
               );
             })()}
           </div>

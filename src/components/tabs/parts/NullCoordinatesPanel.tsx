@@ -1,5 +1,6 @@
 import { Component, Show, For, createSignal, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
+import { ask } from '@tauri-apps/plugin-dialog';
 
 interface ProductWithoutCoordinates {
   url: string;
@@ -99,7 +100,12 @@ const NullCoordinatesPanel: Component<Props> = (p) => {
       return;
     }
 
-    if (!confirm(`선택한 ${urls.length}개 제품을 삭제하시겠습니까?\n\nproducts와 product_details 테이블에서 모두 삭제됩니다.\n이 작업은 되돌릴 수 없습니다.`)) {
+    const confirmed = await ask(`선택한 ${urls.length}개 제품을 삭제하시겠습니까?\n\nproducts 테이블에서 삭제되며, FK CASCADE로 product_details도 자동 삭제됩니다.\n이 작업은 되돌릴 수 없습니다.`, {
+      title: 'rMatterCertis',
+      kind: 'warning'
+    });
+    
+    if (!confirmed) {
       return;
     }
 
@@ -108,7 +114,7 @@ const NullCoordinatesPanel: Component<Props> = (p) => {
 
     try {
       const deletedCount: number = await invoke('delete_products_without_coordinates', { urls });
-      p.addLog(`✅ ${deletedCount}개 제품 삭제 완료 (products + product_details)`);
+      p.addLog(`✅ ${deletedCount}개 제품 삭제 완료 (products + FK CASCADE로 product_details도 삭제됨)`);
       
       // 선택 초기화 및 새로고침
       setSelectedUrls(new Set<string>());
@@ -141,7 +147,12 @@ const NullCoordinatesPanel: Component<Props> = (p) => {
                          category === 'missing' ? 'URL 없음' : 
                          '확인 실패';
 
-    if (!confirm(`"${categoryName}" 카테고리의 ${urls.length}개 제품을 모두 삭제하시겠습니까?\n\nproducts와 product_details 테이블에서 모두 삭제됩니다.\n이 작업은 되돌릴 수 없습니다.`)) {
+    const confirmed = await ask(`"${categoryName}" 카테고리의 ${urls.length}개 제품을 모두 삭제하시겠습니까?\n\nproducts 테이블에서 삭제되며, FK CASCADE로 product_details도 자동 삭제됩니다.\n이 작업은 되돌릴 수 없습니다.`, {
+      title: 'rMatterCertis',
+      kind: 'warning'
+    });
+    
+    if (!confirmed) {
       return;
     }
 
@@ -150,7 +161,7 @@ const NullCoordinatesPanel: Component<Props> = (p) => {
 
     try {
       const deletedCount: number = await invoke('delete_products_without_coordinates', { urls });
-      p.addLog(`✅ ${deletedCount}개 제품 삭제 완료 (products + product_details)`);
+      p.addLog(`✅ ${deletedCount}개 제품 삭제 완료 (products + FK CASCADE로 product_details도 삭제됨)`);
       
       // 선택 초기화 및 새로고침
       setSelectedUrls(new Set<string>());
@@ -251,7 +262,12 @@ const NullCoordinatesPanel: Component<Props> = (p) => {
                   <button
                     class="px-2 py-0.5 text-[10px] bg-red-600 text-white rounded hover:bg-red-700"
                     onClick={async () => {
-                      if (confirm(`"${product.model || product.url}"를 삭제하시겠습니까?`)) {
+                      const confirmed = await ask(`"${product.model || product.url}"를 삭제하시겠습니까?`, {
+                        title: 'rMatterCertis',
+                        kind: 'warning'
+                      });
+                      
+                      if (confirmed) {
                         setSelectedUrls(new Set([product.url]));
                         await deleteSelected();
                       }

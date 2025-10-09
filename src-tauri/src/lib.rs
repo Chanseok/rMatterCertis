@@ -982,6 +982,8 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             commands::devtools::db_diagnostics::diagnose_database_connection,
             commands::devtools::db_diagnostics::get_products_without_coordinates,
             commands::devtools::db_diagnostics::delete_products_without_coordinates,
+            commands::devtools::db_diagnostics::check_table_consistency,
+            commands::devtools::db_diagnostics::delete_orphan_records,
             commands::devtools::lock_detector::debug_active_writer_lock,
             #[cfg(feature = "dev-tools")]
             commands::devtools::debug_commands::ui_debug_log,

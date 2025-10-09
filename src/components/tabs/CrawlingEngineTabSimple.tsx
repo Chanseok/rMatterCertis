@@ -1,5 +1,4 @@
 import { createSignal, onMount, onCleanup, Show, For } from "solid-js";
-import SyncPanel from "./parts/SyncPanel";
 import SessionStatusCard from "./parts/SessionStatusCard";
 import ControlPanel from "./parts/ControlPanel";
 import StageStatsPanels from "./parts/StageStatsPanels";
@@ -119,7 +118,7 @@ export default function CrawlingEngineTabSimple() {
   } | null>(null);
   
   // Lightweight Sync runtime view
-  const [syncLive, setSyncLive] = createSignal<{
+  const [_syncLive, setSyncLive] = createSignal<{
     active: boolean;
     planned?: number | null;
     pagesProcessed: number;
@@ -554,9 +553,27 @@ export default function CrawlingEngineTabSimple() {
         console.log("📝 Shallow sync session ID saved:", result.sessionId);
       }
       
-      addLog(`✅ 좌표 갱신 시작: ${result.pages_scanned}페이지, 세션 ID: ${result.sessionId}`);
+      // syncLive 초기화 (planned 값 설정)
+      const pagesScanned = Number(result.pages_scanned || result.pagesScanned || 0);
+      if (pagesScanned > 0) {
+        setSyncLive({
+          active: true,
+          planned: pagesScanned,
+          pagesProcessed: 0,
+          inserted: 0,
+          updated: 0,
+          skipped: 0,
+          failed: 0,
+          lastPage: null,
+          lastWarn: null,
+          durationMs: undefined,
+        });
+        console.log(`🔍 [Shallow Sync] Initialized with planned=${pagesScanned} pages`);
+      }
+      
+      addLog(`✅ 좌표 갱신 시작: ${pagesScanned}페이지, 세션 ID: ${result.sessionId}`);
       addLog(`💡 백그라운드에서 크롤링 진행 중... (중지 버튼으로 중단 가능)`);
-      setStatusMessage(`📍 좌표 갱신 진행 중... (${result.pages_scanned}p)`);
+      setStatusMessage(`📍 좌표 갱신 진행 중... (${pagesScanned}p)`);
       
       // Note: 크롤링은 백그라운드에서 계속 진행되며 이벤트로 완료를 알림
     } catch (error) {
@@ -739,10 +756,20 @@ export default function CrawlingEngineTabSimple() {
             )
               ? payload.ranges
               : [];
-            const planned = ranges.reduce(
+            
+            // Calculate planned pages from ranges
+            let planned = ranges.reduce(
               (acc, [start, end]) => acc + Math.max(0, start - end + 1),
               0
             );
+            
+            // If no ranges or planned is 0, try to use total_pages or pages_scanned from payload
+            if (!planned && payload) {
+              planned = Number(payload.total_pages || payload.pages_scanned || 0);
+            }
+            
+            console.log(`🔍 [Sync Started] ranges:`, ranges, `planned:`, planned, `payload:`, payload);
+            
             setSyncLive({
               active: true,
               planned: planned || null,
@@ -756,7 +783,8 @@ export default function CrawlingEngineTabSimple() {
               durationMs: undefined,
             });
             setStatusMessage("🔄 Sync 실행 중");
-          } catch {
+          } catch (e) {
+            console.error('[Sync Started] Error processing payload:', e);
             setSyncLive({
               active: true,
               planned: null,
@@ -908,7 +936,27 @@ export default function CrawlingEngineTabSimple() {
           }
           
           // 크롤링 완료 처리
-          if (!isSyncing()) {
+          // isSyncing 모드(좌표 갱신, 제품 보완)는 세션 완료 시 종료
+          if (isSyncing()) {
+            setIsSyncing(false);
+            setIsRunning(false);
+            setStatusMessage("✅ 동기화 완료");
+            addLog("✅ 동기화 작업 완료");
+            
+            // syncLive 완전 리셋 (SyncPanel 숨기기)
+            setSyncLive({
+              active: false,
+              planned: null,
+              pagesProcessed: 0,
+              inserted: 0,
+              updated: 0,
+              skipped: 0,
+              failed: 0,
+              lastPage: null,
+              lastWarn: null,
+              durationMs: undefined,
+            });
+          } else if (!isSyncing()) {
             setIsRunning(false);
             setStatusMessage("크롤링 완료");
           }
@@ -936,16 +984,38 @@ export default function CrawlingEngineTabSimple() {
           // 🔥 Clear session ID when session fails
           setCurrentSessionId(null);
           
-          // isSyncing 중이면 isRunning을 유지
-          if (!isSyncing()) {
-            setIsRunning(false);
-            setStatusMessage("크롤링 실패");
-          }
           // Shallow Mode 리셋
           if (isShallowMode()) {
             setIsShallowMode(false);
             console.log('[ShallowMode] Turned off after session failure');
           }
+          
+          // 크롤링 실패 처리
+          // isSyncing 모드(좌표 갱신, 제품 보완)도 세션 실패 시 종료
+          if (isSyncing()) {
+            setIsSyncing(false);
+            setIsRunning(false);
+            setStatusMessage("❌ 동기화 실패");
+            addLog("❌ 동기화 작업 실패");
+            
+            // syncLive 완전 리셋
+            setSyncLive({
+              active: false,
+              planned: null,
+              pagesProcessed: 0,
+              inserted: 0,
+              updated: 0,
+              skipped: 0,
+              failed: 0,
+              lastPage: null,
+              lastWarn: null,
+              durationMs: undefined,
+            });
+          } else {
+            setIsRunning(false);
+            setStatusMessage("크롤링 실패");
+          }
+          
           addLog(`❌ 세션 실패: ${JSON.stringify(payload)}`);
           setBatchInfo((prev) => ({ ...prev }));
         }
@@ -956,16 +1026,38 @@ export default function CrawlingEngineTabSimple() {
           // 🔥 Clear session ID on timeout/shutdown
           setCurrentSessionId(null);
           
-          // isSyncing 중이면 isRunning을 유지
-          if (!isSyncing()) {
-            setIsRunning(false);
-            setStatusMessage("크롤링 종료");
-          }
           // Shallow Mode 리셋
           if (isShallowMode()) {
             setIsShallowMode(false);
             console.log('[ShallowMode] Turned off after session timeout/shutdown');
           }
+          
+          // 크롤링 종료 처리
+          // isSyncing 모드(좌표 갱신, 제품 보완)도 종료 시 리셋
+          if (isSyncing()) {
+            setIsSyncing(false);
+            setIsRunning(false);
+            setStatusMessage("🛑 동기화 중지됨");
+            addLog("🛑 동기화 작업 중지됨");
+            
+            // syncLive 완전 리셋
+            setSyncLive({
+              active: false,
+              planned: null,
+              pagesProcessed: 0,
+              inserted: 0,
+              updated: 0,
+              skipped: 0,
+              failed: 0,
+              lastPage: null,
+              lastWarn: null,
+              durationMs: undefined,
+            });
+          } else {
+            setIsRunning(false);
+            setStatusMessage("크롤링 종료");
+          }
+          
           addLog("🛑 세션 종료");
           setBatchInfo((prev) => ({ ...prev }));
           // Refresh planned range after abnormal end as well
@@ -1021,7 +1113,18 @@ export default function CrawlingEngineTabSimple() {
           });
         }
   if (name === "actor-batch-completed") {
-          // Keep current count; nothing to do for now.
+          // Extract coordinate update stats for shallow mode
+          const summary = (payload as any)?.summary;
+          if (summary) {
+            const productsUpdated = summary.products_updated ?? 0;
+            const detailsUpdated = summary.details_updated ?? 0;
+            const failed = summary.failed ?? 0;
+            const totalUrls = summary.total_urls ?? 0;
+            
+            if (productsUpdated > 0 || detailsUpdated > 0) {
+              addLog(`📊 좌표 갱신: ${productsUpdated}개 제품, ${detailsUpdated}개 상세 (실패: ${failed}, 총: ${totalUrls})`);
+            }
+          }
         }
         // === Fine-grained StageItem events (new) for real-time Stage 1/2 responsiveness ===
         if (name === "actor-stage-item-started" || name === "actor-stage-item-completed") {
@@ -1872,7 +1975,7 @@ export default function CrawlingEngineTabSimple() {
             events: {actorEventCount()} {lastActorEvent() ? `· last: ${lastActorEvent()}` : ""}
           </span>
         </div>
-    <SyncPanel syncLive={syncLive} />
+    
     <SessionStatusCard 
       isRunning={isRunning} 
       statusMessage={statusMessage} 
@@ -2003,6 +2106,7 @@ export default function CrawlingEngineTabSimple() {
             setEffectsOn={setEffectsOn}
             setIsSyncing={setIsSyncing}
             setCrawlingRange={setCrawlingRange}
+            setCurrentSessionId={setCurrentSessionId}
             addLog={addLog}
             tauriApi={tauriApi}
             handleShallowSync={handleShallowSync}

@@ -21,6 +21,7 @@ interface ControlPanelProps {
   setEffectsOn: (b: boolean) => void;
   setIsSyncing: (b: boolean) => void;
   setCrawlingRange: (updater: any) => void;
+  setCurrentSessionId: (id: string | null) => void;
   addLog: (msg: string) => void;
   tauriApi: any;
   // 좌표 갱신 및 제품 보완 handlers
@@ -147,6 +148,13 @@ const ControlPanel: Component<ControlPanelProps> = (p) => {
             try {
               const res = await p.tauriApi.startManualCrawlPagesActor(uniquePages, true);
               p.addLog(`✅ 수동 크롤링 세션 시작: ${JSON.stringify(res)}`);
+              
+              // session_id 저장 (중지 버튼 활성화)
+              if (res?.session_id) {
+                p.setCurrentSessionId(res.session_id);
+                p.addLog(`🆔 세션 ID 저장: ${res.session_id}`);
+              }
+              
               p.setCrawlingRange((prev: any) => {
                 const pagesCt = uniquePages.length;
                 const estimated_new_products = pagesCt * 12;
@@ -156,10 +164,8 @@ const ControlPanel: Component<ControlPanelProps> = (p) => {
                   range: [Math.max(...uniquePages), Math.min(...uniquePages)],
                 } as any;
               });
-              if (res?.session_id) p.addLog(`🆔 세션 ID: ${res.session_id}`);
             } catch (e) {
               p.addLog(`❌ 수동 크롤링(Actor) 실패: ${e}`);
-            } finally {
               p.setIsSyncing(false);
             }
           }}

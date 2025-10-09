@@ -393,18 +393,17 @@ class CrawlerStore {
         const stageType = this.mapStageTypeToCrawlingStage(normalizedStageType);
         console.log(`[CrawlerStore] StageStarted event received:`, payload);
         
-        // 세션 전체 통계 업데이트 - 첫 번째 Stage만 또는 누적
+        // 세션 전체 통계 업데이트 - 첫 번째 배치에서만 설정 (누적하지 않음)
         if (normalizedStageType.includes('listpage')) {
-          // 첫 StageStarted이거나 null이면 설정, 이후에는 누적
+          // totalListPagesInSession은 ListPageBatchStarted에서 설정하므로 여기서는 설정하지 않음
+          // 만약 ListPageBatchStarted가 오지 않았다면 (레거시 플로우) items_count 사용
           setCrawlerState('timeStats', 'totalListPagesInSession', (prev) => {
             if (prev === null) {
-              console.log(`[CrawlerStore] Setting initial totalListPagesInSession: ${payload.items_count}`);
+              console.log(`[CrawlerStore] Setting initial totalListPagesInSession from StageStarted: ${payload.items_count}`);
               return payload.items_count;
-            } else {
-              const newTotal = prev + payload.items_count;
-              console.log(`[CrawlerStore] Accumulating totalListPagesInSession: ${prev} + ${payload.items_count} = ${newTotal}`);
-              return newTotal;
             }
+            // 이미 설정되었으면 유지 (누적하지 않음)
+            return prev;
           });
           // completedListPagesInSession은 누적되므로 리셋하지 않음
         } else if (normalizedStageType.includes('productdetail')) {
@@ -714,7 +713,10 @@ class CrawlerStore {
     // ListPage 통계 - 세션 전체 기준으로 계산
     let listPageStats;
     if (stageType.includes('listpage') && stats.listPageDurations.length > 0) {
-      const avgTimePerPage = stats.listPageDurations.reduce((a, b) => a + b, 0) / stats.listPageDurations.length;
+      // 최근 20개 페이지의 평균을 사용 (더 정확한 예측)
+      const recentDurations = stats.listPageDurations.slice(-20);
+      const avgTimePerPage = recentDurations.reduce((a, b) => a + b, 0) / recentDurations.length;
+      
       const totalPages = stats.totalListPagesInSession || 0;
       const completedPages = stats.completedListPagesInSession;
       const remainingPages = totalPages - completedPages;
@@ -728,10 +730,11 @@ class CrawlerStore {
       };
     }
     
-    // Detail 통계 - 세션 전체 기준으로 계산
+    // Detail 통계 - 세션 전체 기준으로 계산 (최근 20개 이동 평균)
     let detailStats;
     if (stageType.includes('productdetail') && stats.detailDurations.length > 0) {
-      const avgTimePerItem = stats.detailDurations.reduce((a, b) => a + b, 0) / stats.detailDurations.length;
+      const recentDurations = stats.detailDurations.slice(-20);
+      const avgTimePerItem = recentDurations.reduce((a, b) => a + b, 0) / recentDurations.length;
       const avgTimePer10Items = avgTimePerItem * 10;
       const totalDetails = stats.totalDetailsInSession || 0;
       const completedDetails = stats.completedDetailsInSession;

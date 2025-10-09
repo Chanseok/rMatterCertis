@@ -1,5 +1,6 @@
 import { Component, Show, For } from 'solid-js';
 import NullCoordinatesPanel from './NullCoordinatesPanel.tsx';
+import TableConsistencyPanel from './TableConsistencyPanel.tsx';
 import type { DiagnosticsResult } from '../../../types/diagnostics';
 
 interface Props {
@@ -155,21 +156,27 @@ const DiagnosticsPanel: Component<Props> = (p) => {
             </ul>
           </div>
           <Show when={(p.diagResult()?.missing_pages ?? []).length > 0}>
-            <div class="bg-red-50 border border-red-200 rounded p-2">
-              <b class="text-red-800">🚨 누락된 페이지 시퀀스</b> (총 {p.diagResult()?.total_missing_pages ?? 0}개 페이지)
-              <ul class="list-disc ml-5 text-red-700">
+            <div class="bg-amber-50 border border-amber-300 rounded p-3">
+              <div class="text-amber-900 font-semibold mb-2">
+                � 좌표 정보 불일치 (총 {p.diagResult()?.total_missing_pages ?? 0}개 페이지)
+              </div>
+              <div class="text-amber-800 text-xs mb-2">
+                ℹ️ <b>제품은 DB에 있지만 좌표(page_id) 정보가 불일치</b>합니다. 
+                <span class="text-amber-700 font-semibold ml-1">→ 상단 "📍 좌표 갱신" 버튼을 클릭하여 해결</span>
+              </div>
+              <ul class="list-disc ml-5 text-amber-700 text-xs">
                 <For each={(p.diagResult()?.missing_pages ?? []).slice(0, 20)}>
                   {(gap) => (
                     <li>
                       {gap.gap_type === 'single' 
-                        ? `page_id ${gap.start_page}${gap.start_physical_page != null ? ` (물리 ${gap.start_physical_page})` : ''} 누락`
-                        : `page_id ${gap.start_page}~${gap.end_page}${gap.start_physical_page != null && gap.end_physical_page != null ? ` (물리 ${gap.end_physical_page}~${gap.start_physical_page})` : ''} 범위 누락 (${gap.missing_count}개 페이지)`
+                        ? `page_id ${gap.start_page}${gap.start_physical_page != null ? ` (물리 ${gap.start_physical_page})` : ''}`
+                        : `page_id ${gap.start_page}~${gap.end_page}${gap.start_physical_page != null && gap.end_physical_page != null ? ` (물리 ${gap.end_physical_page}~${gap.start_physical_page})` : ''} (${gap.missing_count}개)`
                       }
                     </li>
                   )}
                 </For>
                 <Show when={(p.diagResult()?.missing_pages ?? []).length > 20}>
-                  <li class="text-gray-600">... 추가 {(p.diagResult()?.missing_pages ?? []).length - 20}개 갭</li>
+                  <li class="text-amber-600">... 외 {(p.diagResult()?.missing_pages ?? []).length - 20}개</li>
                 </Show>
               </ul>
             </div>
@@ -196,6 +203,12 @@ const DiagnosticsPanel: Component<Props> = (p) => {
       {/* NULL 좌표 제품 관리 패널 */}
       <NullCoordinatesPanel 
         nullCoordsCount={() => p.diagResult()?.total_products_without_coords ?? 0}
+        addLog={p.addLog}
+        onRefresh={async () => { await p.runDiagnostics(); }}
+      />
+      
+      {/* 테이블 일관성 체크 패널 */}
+      <TableConsistencyPanel
         addLog={p.addLog}
         onRefresh={async () => { await p.runDiagnostics(); }}
       />
