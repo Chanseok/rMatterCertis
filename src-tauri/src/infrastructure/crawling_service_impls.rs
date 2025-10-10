@@ -111,7 +111,7 @@ impl StatusCheckerImpl {
         };
         self.data_extractor
             .set_pagination_context(pagination_context)?;
-        info!(
+        debug!(
             "📊 Updated pagination context: total_pages={}, items_on_last_page={}, products_per_page={}",
             total_pages, items_on_last_page, products_per_page
         );
@@ -1031,14 +1031,14 @@ impl StatusCheckerImpl {
             // 페이지당 평균 제품 수 업데이트
             app_managed.avg_products_per_page = Some(f64::from(DEFAULT_PRODUCTS_PER_PAGE));
 
-        info!("📝 Updated config: last_page={}, items_on_last_page={}, accurate_total_products={}, timestamp={}", 
+        debug!("📝 Updated config: last_page={}, items_on_last_page={}, accurate_total_products={}, timestamp={}", 
             last_page,
             last_partial,
             accurate_total,
             app_managed.last_successful_crawl.as_ref().unwrap_or(&"unknown".to_string()));
         }).await?;
 
-        info!(
+        debug!(
             "✅ Successfully updated last known page to {} in config file",
             last_page
         );
@@ -3561,7 +3561,7 @@ impl CrawlingRangeCalculator {
         total_pages: u32,
         products_on_last_page: u32,
     ) -> Result<Option<(u32, u32)>> {
-        info!(
+        debug!(
             "🎯 입력 파라미터: total_pages={}, products_on_last_page={}",
             total_pages, products_on_last_page
         );
@@ -3570,7 +3570,7 @@ impl CrawlingRangeCalculator {
         let user_page_limit = self.config.user.crawling.page_range_limit;
         let intelligent_mode = &self.config.user.crawling.intelligent_mode;
 
-        info!(
+        debug!(
             "⚙️ User settings: page_range_limit={}, intelligent_mode.enabled={}, max_range_limit={}",
             user_page_limit, intelligent_mode.enabled, intelligent_mode.max_range_limit
         );
@@ -3585,7 +3585,7 @@ impl CrawlingRangeCalculator {
                 user_page_limit
             };
 
-        info!(
+        debug!(
             "📊 Effective page limit for this crawling: {}",
             effective_page_limit
         );
@@ -3621,7 +3621,7 @@ impl CrawlingRangeCalculator {
             .max()
             .unwrap_or(0);
 
-        info!("🔍 Current max page_id in database: {}", max_page_id);
+        debug!("🔍 Current max page_id in database: {}", max_page_id);
 
         // ✅ Gap을 무시하고 absolute max_page_id를 사용
         // Gap이 있더라도 IntegratedProductRepository::calculate_next_crawling_range에서
@@ -3638,7 +3638,7 @@ impl CrawlingRangeCalculator {
             total_pages - max_page_id as u32
         };
         
-        info!(
+        debug!(
             "📍 Last crawled page: {} (page_id: {})",
             last_crawled_page, max_page_id
         );
@@ -3658,7 +3658,7 @@ impl CrawlingRangeCalculator {
             DEFAULT_PRODUCTS_PER_PAGE as usize
         };
 
-        info!(
+        debug!(
             "🔍 Current page {} has {}/{} products",
             last_crawled_page, current_page_products, expected_products_on_current_page
         );

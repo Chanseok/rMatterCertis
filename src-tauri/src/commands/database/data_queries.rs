@@ -1939,7 +1939,7 @@ pub async fn get_filtered_analytics_summary(
     
     debug!("📊 Generated WHERE clause: '{}' with {} binds", base_where, binds.len());
     for (i, bind) in binds.iter().enumerate() {
-        info!("   Bind[{}]: '{}'", i, bind);
+        debug!("   Bind[{}]: '{}'", i, bind);
     }
     
     // 🚀 OPTIMIZED: Single query using CTEs to get all stats at once
@@ -2150,7 +2150,7 @@ pub async fn get_certification_timeline(
     let pool = state.pool();
     let filter_dsl = filter.unwrap_or_default();
     
-    info!("📈 get_certification_timeline called with filter: {}, dates: {:?} ~ {:?}", 
+    debug!("📈 get_certification_timeline called with filter: {}, dates: {:?} ~ {:?}", 
           filter_dsl, start_date, end_date);
     
     // Determine date range for aggregation calculation
@@ -2195,7 +2195,7 @@ pub async fn get_certification_timeline(
         ("half-yearly", "%Y-H") // Will be calculated manually
     };
     
-    info!("📈 Date span: {} days, using {} aggregation", date_span_days, aggregation);
+    debug!("📈 Date span: {} days, using {} aggregation", date_span_days, aggregation);
     
     // Parse filter using the same smart tokenizer logic
     let mut where_clauses: Vec<String> = Vec::new();
@@ -2448,7 +2448,8 @@ pub async fn get_certification_timeline(
         })
         .collect();
     
-    info!("📈 Timeline data points: {} with {} aggregation", timeline.len(), aggregation);
+    info!("📈 Timeline: filter=[{}], {} days ({}) → {} points", 
+          filter_dsl, date_span_days, aggregation, timeline.len());
     
     Ok(CertificationTimelineResponse {
         data: timeline,

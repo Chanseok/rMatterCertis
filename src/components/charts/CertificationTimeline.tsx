@@ -1,4 +1,3 @@
-/* @jsxImportSource solid-js */
 import { Component, createSignal, createEffect, Show, onCleanup } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { Chart, registerables } from 'chart.js';
