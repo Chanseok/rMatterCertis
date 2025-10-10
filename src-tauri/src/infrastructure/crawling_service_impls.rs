@@ -123,12 +123,12 @@ impl StatusCheckerImpl {
 impl StatusChecker for StatusCheckerImpl {
     async fn check_site_status(&self) -> Result<SiteStatus> {
         let start_time = Instant::now();
-        info!("Starting comprehensive site status check with detailed page discovery");
+        info!("🔍 Site status check starting...");
 
         // 캐시 초기화
         self.clear_page_cache_internal().await;
 
-        info!("Checking site status and discovering pages...");
+        debug!("Checking site status and discovering pages...");
 
         // Step 1: 기본 사이트 접근성 확인
         let url = config_utils::matter_products_page_url_simple(1);
@@ -149,7 +149,7 @@ impl StatusChecker for StatusCheckerImpl {
         };
 
         if let Err(e) = accessibility_result {
-            error!("Failed to access site (treated as inaccessible): {}", e);
+            warn!("Site inaccessible: {}", e);
             return Ok(SiteStatus {
                 is_accessible: false,
                 response_time_ms: start_time.elapsed().as_millis() as u64,
@@ -165,9 +165,9 @@ impl StatusChecker for StatusCheckerImpl {
                 previous_max_pages: None,
                 page_decrease_ratio: None,
             });
-        } else {
-            info!("Site is accessible");
         }
+
+        debug!("Site is accessible");
 
         // Step 2: 페이지 수 탐지 및 마지막 페이지 제품 수 확인
         let (total_pages, products_on_last_page) = self.discover_total_pages().await?;
@@ -186,11 +186,6 @@ impl StatusChecker for StatusCheckerImpl {
         // Step 3: 사이트 건강도 점수 계산
         let health_score = calculate_health_score(response_time, total_pages);
 
-        info!(
-            "Site status check completed: {} pages found, {}ms total time, health score: {:.2}",
-            total_pages, response_time_ms, health_score
-        );
-
         // 정확한 제품 수 계산: (마지막 페이지 - 1) * 페이지당 제품 수 + 마지막 페이지 제품 수
         let products_per_page = DEFAULT_PRODUCTS_PER_PAGE;
 
@@ -198,11 +193,8 @@ impl StatusChecker for StatusCheckerImpl {
             total_pages.saturating_sub(1) * products_per_page + products_on_last_page;
 
         info!(
-            "Accurate product estimation: ({} full pages * {} products) + {} products on last page = {} total products",
-            total_pages.saturating_sub(1),
-            products_per_page,
-            products_on_last_page,
-            estimated_products
+            "  → {} pages, {} products, {}ms, health: {:.1}",
+            total_pages, estimated_products, response_time_ms, health_score
         );
 
         // Step 4: 데이터 변화 상태 분석
@@ -468,7 +460,7 @@ impl StatusChecker for StatusCheckerImpl {
 impl StatusCheckerImpl {
     /// 향상된 페이지 탐지 로직 - 사이트 정보 변화 감지 포함
     async fn discover_total_pages(&self) -> Result<(u32, u32)> {
-        info!("🔍 Starting enhanced page discovery algorithm with site change detection");
+        debug!("🔍 Starting page discovery algorithm");
 
         // 1. 시작 페이지 결정
         let start_page = self
@@ -477,11 +469,10 @@ impl StatusCheckerImpl {
             .last_known_max_page
             .unwrap_or(self.config.advanced.last_page_search_start);
 
-        info!(
-            "📍 Starting from page {} (last known: {:?}, default: {})",
+        debug!(
+            "  Starting from page {} (last known: {:?})",
             start_page,
-            self.config.app_managed.last_known_max_page,
-            self.config.advanced.last_page_search_start
+            self.config.app_managed.last_known_max_page
         );
 
         // 2. 시작 페이지 분석 (캐시 사용)
@@ -489,27 +480,26 @@ impl StatusCheckerImpl {
         let mut current_page = start_page;
 
         if !start_analysis.has_products {
-            warn!(
-                "⚠️  Starting page {} has no products - checking site status",
+            debug!(
+                "  Starting page {} has no products - checking site status",
                 current_page
             );
             // 첫 페이지 확인으로 사이트 접근성 검증
             let first_page_analysis = self.get_or_analyze_page(1).await?;
             if !first_page_analysis.has_products {
-                error!("❌ First page also has no products - site may be temporarily unavailable");
+                warn!("First page has no products - site may be temporarily unavailable");
                 return Err(anyhow::anyhow!(
                     "Site appears to be temporarily unavailable or experiencing issues. Please try again later."
                 ));
             }
 
-            info!(
-                "✅ First page has products - site is accessible, cached page info may be outdated"
+            debug!(
+                "  First page has products - site is accessible, performing full discovery"
             );
-            warn!("🔄 Site content may have decreased - will perform full discovery");
 
             // 하향 탐색으로 유효한 페이지 찾기 (5페이지 단위 + 안전성 체크)
             current_page = self.find_last_valid_page_with_safety_check(current_page).await?;
-            info!("✅ Found valid starting page: {}", current_page);
+            debug!("  Found valid starting page: {}", current_page);
         }
 
         // 3. 반복적 상향 탐색: 페이지네이션에서 더 큰 값을 찾을 때까지 계속
@@ -519,15 +509,15 @@ impl StatusCheckerImpl {
         loop {
             attempts += 1;
             if attempts > max_attempts {
-                warn!(
-                    "🔄 Reached maximum attempts ({}), stopping at page {}",
+                debug!(
+                    "  Reached max attempts ({}), stopping at page {}",
                     max_attempts, current_page
                 );
                 break;
             }
 
-            info!(
-                "🔍 Iteration {}/{}: Checking page {}",
+            debug!(
+                "  Iteration {}/{}: checking page {}",
                 attempts, max_attempts, current_page
             );
 
@@ -535,7 +525,7 @@ impl StatusCheckerImpl {
             let analysis = match self.get_or_analyze_page(current_page).await {
                 Ok(analysis) => analysis,
                 Err(e) => {
-                    warn!("❌ Failed to analyze page {}: {}", current_page, e);
+                    debug!("  Failed to analyze page {}: {}", current_page, e);
                     // 네트워크 오류 시 하향 탐색 (5페이지 단위 + 안전성 체크)
                     current_page = self.find_last_valid_page_with_safety_check(current_page).await?;
                     break;
@@ -544,8 +534,8 @@ impl StatusCheckerImpl {
 
             if !analysis.has_products {
                 // 제품이 없는 경우 안전성 검사가 포함된 하향 탐색
-                info!(
-                    "🔻 Page {} has no products, performing safe downward search",
+                debug!(
+                    "  Page {} has no products, performing safe downward search",
                     current_page
                 );
                 current_page = self
@@ -557,15 +547,15 @@ impl StatusCheckerImpl {
             // 페이지네이션에서 더 큰 페이지를 찾았는지 확인
             if analysis.max_page_in_pagination > current_page {
                 info!(
-                    "🔺 Found higher page {} in pagination, jumping there",
+                    "  Found higher page {} in pagination, jumping there",
                     analysis.max_page_in_pagination
                 );
                 current_page = analysis.max_page_in_pagination;
                 // 새 페이지로 이동하여 다시 탐색
                 continue;
             }
-            info!(
-                "🏁 No higher pages found in pagination, {} appears to be the last page",
+            debug!(
+                "  No higher pages found in pagination, {} appears to be the last page",
                 current_page
             );
             break;
@@ -580,11 +570,11 @@ impl StatusCheckerImpl {
             .update_last_known_page(verified_last_page, Some(products_on_last_page))
             .await
         {
-            warn!("⚠️  Failed to update last known page in config: {}", e);
+            debug!("  Failed to update last known page in config: {}", e);
         }
 
-        info!(
-            "🎉 Final verified last page: {} with {} products",
+        debug!(
+            "  Final verified last page: {} with {} products",
             verified_last_page, products_on_last_page
         );
         Ok((verified_last_page, products_on_last_page))
@@ -598,16 +588,16 @@ impl StatusCheckerImpl {
         const SEARCH_STEP: u32 = 5; // 5페이지 단위로 검색
         let min_page = 1;
 
-        info!(
-            "🔍 Starting safe downward search from page {} (step: {}, max consecutive empty checks: {})",
+        debug!(
+            "  Safe downward search from page {} (step: {}, max checks: {})",
             current_page, SEARCH_STEP, MAX_CONSECUTIVE_EMPTY_CHECKS
         );
 
         // 먼저 시작 페이지가 비어있는지 확인
         if !self.check_page_has_products(current_page).await? {
             consecutive_empty_checks += 1;
-            info!(
-                "⚠️  Starting page {} is empty (consecutive checks: {})",
+            debug!(
+                "  Starting page {} is empty (consecutive checks: {})",
                 current_page, consecutive_empty_checks
             );
         }
@@ -617,8 +607,8 @@ impl StatusCheckerImpl {
             current_page = current_page.saturating_sub(SEARCH_STEP).max(min_page);
 
             let test_url = config_utils::matter_products_page_url_simple(current_page);
-            info!(
-                "🔍 Checking page {} (consecutive empty checks: {})",
+            debug!(
+                "  Checking page {} (consecutive empty checks: {})",
                 current_page, consecutive_empty_checks
             );
 
@@ -629,22 +619,22 @@ impl StatusCheckerImpl {
                     Ok(html) => {
                         let doc = scraper::Html::parse_document(&html);
                         if self.has_products_on_page(&doc) {
-                            info!(
-                                "✅ Found valid page with products: {} (after {} consecutive empty checks)",
+                            debug!(
+                                "  Found valid page: {} (after {} empty checks)",
                                 current_page, consecutive_empty_checks
                             );
                             return Ok(current_page);
                         }
                         consecutive_empty_checks += 1;
-                        warn!(
-                            "⚠️  Page {} is empty (consecutive checks: {}/{})",
+                        debug!(
+                            "  Page {} is empty (checks: {}/{})",
                             current_page, consecutive_empty_checks, MAX_CONSECUTIVE_EMPTY_CHECKS
                         );
 
                         // 연속으로 빈 페이지가 12번 확인되면 fatal error
                         if consecutive_empty_checks >= MAX_CONSECUTIVE_EMPTY_CHECKS {
                             error!(
-                                "💥 FATAL ERROR: Found {} consecutive empty checks (step: {}) starting from page {}. This indicates a serious site issue or crawling problem.",
+                                "FATAL: {} consecutive empty checks (step: {}) from page {}",
                                 consecutive_empty_checks, SEARCH_STEP, start_page
                             );
 
@@ -658,14 +648,14 @@ impl StatusCheckerImpl {
                     }
                     Err(e) => {
                         consecutive_empty_checks += 1;
-                        warn!(
-                            "❌ Failed to get HTML for page {} during safe downward search: {} (consecutive checks: {}/{})",
-                            current_page, e, consecutive_empty_checks, MAX_CONSECUTIVE_EMPTY_CHECKS
+                        debug!(
+                            "  Failed to get HTML for page {} (checks: {}/{}): {}",
+                            current_page, consecutive_empty_checks, MAX_CONSECUTIVE_EMPTY_CHECKS, e
                         );
 
                         if consecutive_empty_checks >= MAX_CONSECUTIVE_EMPTY_CHECKS {
                             error!(
-                                "💥 FATAL ERROR: {} consecutive failures starting from page {}.",
+                                "FATAL: {} consecutive failures from page {}",
                                 consecutive_empty_checks, start_page
                             );
 
@@ -679,15 +669,15 @@ impl StatusCheckerImpl {
                 },
                 Err(e) => {
                     consecutive_empty_checks += 1;
-                    warn!(
-                        "❌ Failed to fetch page {} during safe downward search: {} (consecutive checks: {}/{})",
-                        current_page, e, consecutive_empty_checks, MAX_CONSECUTIVE_EMPTY_CHECKS
+                    debug!(
+                        "  Failed to fetch page {} (checks: {}/{}): {}",
+                        current_page, consecutive_empty_checks, MAX_CONSECUTIVE_EMPTY_CHECKS, e
                     );
 
                     // 네트워크 오류도 연속 실패로 카운트
                     if consecutive_empty_checks >= MAX_CONSECUTIVE_EMPTY_CHECKS {
                         error!(
-                            "💥 FATAL ERROR: {} consecutive failures (empty pages + network errors) starting from page {}.",
+                            "FATAL: {} consecutive failures (empty pages + network errors) from page {}",
                             consecutive_empty_checks, start_page
                         );
 

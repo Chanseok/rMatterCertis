@@ -368,16 +368,16 @@ impl HttpClient {
         // Include attempt info when provided by caller for better observability
         match (opts.attempt, opts.max_attempts) {
             (Some(a), Some(m)) if a > 1 => {
-                info!(
+                debug!(
                     "🌐 HTTP GET (HttpClient,opts, {}/{} retrying): {}",
                     a, m, url
                 );
             }
             (Some(a), Some(m)) if a == 1 => {
-                info!("🌐 HTTP GET (HttpClient,opts, {}/{}): {}", a, m, url);
+                debug!("🌐 HTTP GET (HttpClient,opts, {}/{}): {}", a, m, url);
             }
             _ => {
-                info!("🌐 HTTP GET (HttpClient,opts): {}", url);
+                debug!("🌐 HTTP GET (HttpClient,opts): {}", url);
             }
         }
         let response = self

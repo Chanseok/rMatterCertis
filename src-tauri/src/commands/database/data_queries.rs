@@ -438,10 +438,8 @@ pub async fn analytics_query(
     if limit > 200 { limit = 200; }
     let raw_filter = params.filter.unwrap_or_default().trim().to_string();
     
-    info!("📊 analytics_query called: offset={}, limit={}, filter_len={}", offset, limit, raw_filter.len());
-    if !raw_filter.is_empty() {
-        info!("🔍 Raw filter: {}", raw_filter);
-    }
+    debug!("📊 analytics_query called: offset={}, limit={}, filter_len={}", offset, limit, raw_filter.len());
+    debug!("🔍 Raw filter: {}", raw_filter);
 
     // ---------------------------------------------------------------------
     // Runtime Safety Net Backfill (defensive):
@@ -541,9 +539,9 @@ pub async fn analytics_query(
             tokens.push(current);
         }
         
-        info!("🔍 Total tokens parsed: {}", tokens.len());
+        debug!("🔍 Total tokens parsed: {}", tokens.len());
         for (idx, token) in tokens.iter().enumerate() {
-            info!("  Token[{}]: '{}'", idx, token);
+            debug!("  Token[{}]: '{}'", idx, token);
         }
         
         let field_pattern = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*").unwrap();
@@ -557,37 +555,37 @@ pub async fn analytics_query(
                 // (model LIKE '%AND%' OR vendor_name LIKE '%AND%') 조건이 암묵적으로 추가되는
                 // 예상치 못한 필터 누락/축소가 발생한다. 이를 방지하기 위해 AND/OR 토큰은 무시한다.
                 // 향후 정식 논리식 파서를 도입할 때 여기 로직을 대체/확장해야 한다.
-                info!("  Skipping logical operator: {}", upper_tok);
+                debug!("  Skipping logical operator: {}", upper_tok);
                 continue;
             }
             // Operators precedence: check for >= or <= first, then :in:
             let t_str = t.as_str();
-            info!("  Processing token: '{}'", t_str);
+            debug!("  Processing token: '{}'", t_str);
             
             let (field_part, op, value_part) = if let Some(pos) = t_str.find(">=") {
-                info!("    Found >= operator at pos {}", pos);
+                debug!("    Found >= operator at pos {}", pos);
                 (&t_str[..pos], Some(">="), &t_str[pos+2..])
             } else if let Some(pos) = t_str.find("<=") {
-                info!("    Found <= operator at pos {}", pos);
+                debug!("    Found <= operator at pos {}", pos);
                 (&t_str[..pos], Some("<="), &t_str[pos+2..])
             } else if let Some(pos) = t_str.find(":in:") {
-                info!("    Found :in: operator at pos {}", pos);
+                debug!("    Found :in: operator at pos {}", pos);
                 (&t_str[..pos], Some(":in:"), &t_str[pos+4..])
             } else if let Some(pos) = t_str.find('=') {
-                info!("    Found = operator at pos {}", pos);
+                debug!("    Found = operator at pos {}", pos);
                 (&t_str[..pos], Some("="), &t_str[pos+1..])
             } else if let Some(pos) = t_str.find('~') {
-                info!("    Found ~ operator at pos {}", pos);
+                debug!("    Found ~ operator at pos {}", pos);
                 (&t_str[..pos], Some("~"), &t_str[pos+1..])
             } else if let Some(pos) = t_str.find(':') {
-                info!("    Found : operator at pos {}", pos);
+                debug!("    Found : operator at pos {}", pos);
                 (&t_str[..pos], None, &t_str[pos+1..])
             } else {
-                info!("    No operator found, treating as bareword");
+                debug!("    No operator found, treating as bareword");
                 ("", None, t_str)
             };
 
-            info!("    Parsed: field='{}', op={:?}, value='{}'", field_part, op, value_part);
+            debug!("    Parsed: field='{}', op={:?}, value='{}'", field_part, op, value_part);
 
             let field = field_part.to_lowercase();
             let value = value_part.trim();
@@ -622,21 +620,21 @@ pub async fn analytics_query(
             
             match op_used {
                 ":in:" => {
-                    info!("    Starting :in: operator parsing...");
+                    debug!("    Starting :in: operator parsing...");
                     // Parse array: [value1,value2,...] or ["val1","val2",...]
                     if !value.starts_with('[') || !value.ends_with(']') {
                         filter_error = Some(format!("in: 연산자는 배열 형식 [...]이 필요합니다: {}", value));
                         break;
                     }
                     let inner = &value[1..value.len()-1];
-                    info!("    Inner content (after removing brackets): '{}'", inner);
+                    debug!("    Inner content (after removing brackets): '{}'", inner);
                     if inner.is_empty() {
                         filter_error = Some("in: 배열이 비어있습니다".into());
                         break;
                     }
                     
                     // Quote-aware CSV parsing: split by comma only if not inside quotes
-                    info!("    Starting quote-aware CSV parsing...");
+                    debug!("    Starting quote-aware CSV parsing...");
                     let mut items: Vec<String> = Vec::new();
                     let mut current = String::new();
                     let mut in_quotes = false;
@@ -671,7 +669,7 @@ pub async fn analytics_query(
                     }
                     
                     // Don't forget the last item
-                    info!("    Processing last item, current buffer: '{}'", current);
+                    debug!("    Processing last item, current buffer: '{}'", current);
                     let trimmed = current.trim();
                     if !trimmed.is_empty() {
                         let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"')) || 
@@ -683,18 +681,18 @@ pub async fn analytics_query(
                         items.push(unquoted);
                     }
                     
-                    info!("Parsed IN array for {}: {:?} (count: {})", column, items, items.len());
+                    debug!("Parsed IN array for {}: {:?} (count: {})", column, items, items.len());
                     
                     if items.is_empty() {
                         filter_error = Some("in: 배열에 유효한 값이 없습니다".into());
-                        info!("    ERROR: items is empty after parsing!");
+                        debug!("    ERROR: items is empty after parsing!");
                         break;
                     }
                     
                     // Generate LIKE clauses for GROUP_CONCAT compatibility
                     // GROUP_CONCAT creates comma-separated values like "Media, Lighting"
                     // So we need LIKE '%Media%' instead of IN ('Media')
-                    info!("    Generating LIKE clauses for GROUP_CONCAT compatibility...");
+                    debug!("    Generating LIKE clauses for GROUP_CONCAT compatibility...");
                     let like_clauses: Vec<String> = items.iter().map(|_| format!("{} LIKE ?", column)).collect();
                     where_clauses.push(format!("({})", like_clauses.join(" OR ")));
                     
@@ -702,7 +700,7 @@ pub async fn analytics_query(
                     for item in items {
                         binds.push(format!("%{}%", item));
                     }
-                    info!("    :in: operator processing completed (using LIKE for GROUP_CONCAT)");
+                    debug!("    :in: operator processing completed (using LIKE for GROUP_CONCAT)");
                 },
                 "~" => {
                     where_clauses.push(format!("{} LIKE ?", column));
@@ -774,15 +772,15 @@ pub async fn analytics_query(
                       certification_date, detail_created_at, transport_interface
                       FROM v_product_detail_analytics
                       {} {} LIMIT ? OFFSET ?"#, where_sql, order_by_sql);
-        info!("📊 Executing analytics query: {}", base_select);
-        info!("📊 Query binds: {:?}", binds);
-        info!("📊 Query params: limit={}, offset={}", limit, offset);
+        info!("📊 Analytics query: filter=[{}], offset={}, limit={}", applied_filter.as_deref().unwrap_or(""), offset, limit);
+        debug!("  SQL: {}", base_select);
+        debug!("  Binds: {:?}", binds);
         let mut q = sqlx::query(&base_select);
         for b in &binds { q = q.bind(b); }
         q = q.bind(limit).bind(offset);
         match q.fetch_all(pool).await {
             Ok(rs) => {
-                info!("📊 Query successful, fetched {} rows", rs.len());
+                info!("  → {} rows (total: {})", rs.len(), total);
                 rs.into_iter().map(|r| {
                     let product_detail_url = r.get::<Option<String>, _>("product_detail_url");
                     let model = r.get::<Option<String>, _>("model");
@@ -804,11 +802,11 @@ pub async fn analytics_query(
             }
         }
     } else { 
-        info!("📊 Filter error present, returning empty rows");
+        debug!("📊 Filter error present, returning empty rows");
         Vec::new() 
     };
 
-    info!("📊 Returning response: rows={}, total={}, offset={}, limit={}", rows.len(), total, offset, limit);
+    debug!("📊 Returning response: rows={}, total={}, offset={}, limit={}", rows.len(), total, offset, limit);
     Ok(AnalyticsPage { rows, total, offset, limit, applied_filter, filter_error })
 }
 
@@ -1999,7 +1997,7 @@ pub async fn get_filtered_analytics_summary(
     let total_device_types: i64 = stats_row.get("total_device_types");
     let total_transport_interfaces: i64 = stats_row.get("total_transport_interfaces");
     
-    info!("📊 Stats fetched: products={}, vendors={}, categories={}, types={}, transports={}", 
+    debug!("📊 Stats fetched: products={}, vendors={}, categories={}, types={}, transports={}", 
         total_products, total_vendors, total_categories, total_device_types, total_transport_interfaces);
     
     // 🚀 OPTIMIZED: Execute all top-N queries in parallel using tokio::join!

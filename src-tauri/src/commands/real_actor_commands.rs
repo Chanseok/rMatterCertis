@@ -444,7 +444,7 @@ async fn execute_real_stage_2_list_collection(
                 "https://csa-iot.org/csa-iot_products/page/{}/?p_keywords&p_type%5B0%5D=14&p_program_type%5B0%5D=1049&p_certificate&p_family&p_firmware_ver",
                 page
             );
-            info!("🌐 HTTP GET: {}", url);
+            debug!("🌐 HTTP GET: {}", url);
 
             let response = http_client_clone.fetch_response(&url).await.map_err(|e| {
                 ActorError::CommandProcessingFailed(format!("HTTP request failed: {}", e))
@@ -545,11 +545,11 @@ async fn execute_real_stage_3_detail_collection(
             })?;
 
             let task_id = format!("product-{}", url_clone);
-            info!("� Product task started: {} ({})", url_clone, task_id);
+            debug!("Product task started: {} ({})", url_clone, task_id);
 
             let start_time = std::time::Instant::now();
 
-            info!("🌐 HTTP GET (HttpClient): {}", url_clone);
+            debug!("🌐 HTTP GET (HttpClient): {}", url_clone);
             let response = http_client_clone
                 .fetch_response(&url_clone)
                 .await
