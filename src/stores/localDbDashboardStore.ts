@@ -166,19 +166,33 @@ async function loadSummary() {
 }
 
 async function loadAnalytics(offset = 0) {
+  console.log('[loadAnalytics] 시작:', { offset, limit: analytics.limit, filter: analytics.filterApplied });
   setAnalytics({ ...analytics, loading: true });
   try {
   const res = await tauriApi.analyticsQuery({ offset, limit: analytics.limit, filter: analytics.filterApplied || undefined, sort: analytics.sort.length ? analytics.sort : undefined });
+    console.log('[loadAnalytics] 응답 받음:', { 
+      rowsCount: res.rows?.length || 0, 
+      total: res.total, 
+      offset: res.offset,
+      limit: res.limit,
+      filterError: res.filter_error,
+      firstRow: res.rows?.[0]
+    });
     setAnalytics({ ...analytics, rows: res.rows || [], total: res.total || 0, offset: res.offset || offset, limit: res.limit || analytics.limit, filterError: res.filter_error || null, loading: false });
+    console.log('[loadAnalytics] analytics.rows 업데이트 완료:', { rowsCount: analytics.rows.length });
   } catch (e: any) {
+    console.error('[loadAnalytics] 에러:', e);
     setAnalytics({ ...analytics, rows: [], total: 0, filterError: String(e), loading: false });
   }
 }
 
 async function applyFilter(filter?: string) {
   const filterToApply = filter !== undefined ? filter : analytics.filterDraft;
+  console.log('[applyFilter] 필터 적용:', { filterToApply, currentFilter: analytics.filterApplied });
   setAnalytics({ ...analytics, filterApplied: filterToApply });
+  console.log('[applyFilter] analytics.filterApplied 업데이트 완료, loadAnalytics 호출');
   await loadAnalytics(0);
+  console.log('[applyFilter] loadAnalytics 완료');
 }
 
 async function resetFilter() {

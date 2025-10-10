@@ -414,11 +414,6 @@ pub struct AnalyticsRow {
     pub certification_date: Option<String>,
     pub detail_created_at: Option<String>,
     pub transport_interface: Option<String>,
-    // Diagnostic columns (added in migration 026)
-    pub raw_type_ids: Option<String>,
-    pub type_ids_status: Option<String>,
-    pub category_missing_reason: Option<String>,
-    pub type_match_count: Option<i64>,
 }
 
 #[derive(serde::Serialize)]
@@ -776,37 +771,44 @@ pub async fn analytics_query(
     let rows: Vec<AnalyticsRow> = if filter_error.is_none() {
         let base_select = format!(r#"SELECT 
                       product_detail_url, model, vendor_name, device_type_name, device_category, 
-                      certification_date, detail_created_at, transport_interface,
-                      raw_type_ids, type_ids_status, category_missing_reason, type_match_count
+                      certification_date, detail_created_at, transport_interface
                       FROM v_product_detail_analytics
                       {} {} LIMIT ? OFFSET ?"#, where_sql, order_by_sql);
+        info!("📊 Executing analytics query: {}", base_select);
+        info!("📊 Query binds: {:?}", binds);
+        info!("📊 Query params: limit={}, offset={}", limit, offset);
         let mut q = sqlx::query(&base_select);
         for b in &binds { q = q.bind(b); }
         q = q.bind(limit).bind(offset);
         match q.fetch_all(pool).await {
-            Ok(rs) => rs.into_iter().map(|r| {
-                let product_detail_url = r.get::<Option<String>, _>("product_detail_url");
-                let model = r.get::<Option<String>, _>("model");
-                let vendor_name = r.get::<Option<String>, _>("vendor_name");
-                let device_type_name = r.get::<Option<String>, _>("device_type_name");
-                let device_category = r.get::<Option<String>, _>("device_category");
-                let certification_date = r.get::<Option<String>, _>("certification_date");
-                let detail_created_at = r.get::<Option<String>, _>("detail_created_at");
-                let transport_interface = r.get::<Option<String>, _>("transport_interface");
-                let raw_type_ids = r.get::<Option<String>, _>("raw_type_ids");
-                let type_ids_status = r.get::<Option<String>, _>("type_ids_status");
-                let category_missing_reason = r.get::<Option<String>, _>("category_missing_reason");
-                let type_match_count = r.get::<Option<i64>, _>("type_match_count");
-                AnalyticsRow { 
-                    product_detail_url, model, vendor_name, device_type_name, device_category, 
-                    certification_date, detail_created_at, transport_interface,
-                    raw_type_ids, type_ids_status, category_missing_reason, type_match_count
-                }
-            }).collect(),
-            Err(_) => Vec::new()
+            Ok(rs) => {
+                info!("📊 Query successful, fetched {} rows", rs.len());
+                rs.into_iter().map(|r| {
+                    let product_detail_url = r.get::<Option<String>, _>("product_detail_url");
+                    let model = r.get::<Option<String>, _>("model");
+                    let vendor_name = r.get::<Option<String>, _>("vendor_name");
+                    let device_type_name = r.get::<Option<String>, _>("device_type_name");
+                    let device_category = r.get::<Option<String>, _>("device_category");
+                    let certification_date = r.get::<Option<String>, _>("certification_date");
+                    let detail_created_at = r.get::<Option<String>, _>("detail_created_at");
+                    let transport_interface = r.get::<Option<String>, _>("transport_interface");
+                    AnalyticsRow { 
+                        product_detail_url, model, vendor_name, device_type_name, device_category, 
+                        certification_date, detail_created_at, transport_interface
+                    }
+                }).collect()
+            },
+            Err(e) => {
+                error!("📊 Query failed: {:?}", e);
+                Vec::new()
+            }
         }
-    } else { Vec::new() };
+    } else { 
+        info!("📊 Filter error present, returning empty rows");
+        Vec::new() 
+    };
 
+    info!("📊 Returning response: rows={}, total={}, offset={}, limit={}", rows.len(), total, offset, limit);
     Ok(AnalyticsPage { rows, total, offset, limit, applied_filter, filter_error })
 }
 

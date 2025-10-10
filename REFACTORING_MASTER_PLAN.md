@@ -2,10 +2,40 @@
 
 > 생성일: 2025-10-09  
 > 최종 업데이트: 2025-10-10  
-> 진행 상태: **Phase 2, 3, 4, 5 완료** + **DB 정리 완료** (2025-10-10)  
+> 진행 상태: **Phase 2, 3, 4, 5 완료** + **DB 정리 완료** + **UI 개선 완료** (2025-10-10)  
 > 통합 문서: refactoring-todo.md + refactoring-todo-by-gemini.md + testing-strategy-before-refactoring.md
 
 ## 🆕 최신 업데이트 (2025-10-10)
+
+### ✅ 로컬DB 탭 UI 개선 완료
+
+**1. Analytics 데이터 표시 문제 해결**
+- `useFilteredInsights` 기본값을 `true`로 변경
+- 필터링된 인사이트 데이터가 기본적으로 표시되도록 개선
+- 사용자가 "전체 데이터"와 "필터 적용" 모드를 토글할 수 있음
+
+**2. Device Types JSON Editor를 테이블 뷰로 전환**
+- 새로운 `DeviceTypeTableEditor` 컴포넌트 생성
+- 기능:
+  - ✅ 레코드 추가/삭제 (다중 선택 지원)
+  - ✅ 인라인 편집 (각 레코드를 클릭하여 수정 가능)
+  - ✅ 정렬 (ID, Hex, Name, Category, Introduced In)
+  - ✅ 필터링 (검색어, 카테고리별)
+  - ✅ 체크박스를 통한 다중 선택 및 일괄 삭제
+  - ✅ 새 레코드 추가 다이얼로그
+- UI/UX 개선:
+  - 직관적인 테이블 레이아웃
+  - 정렬 가능한 컬럼 헤더 (클릭 시 오름차순/내림차순 토글)
+  - 카테고리별 색상 구분
+  - 실시간 검색 및 필터링
+  - 반응형 디자인
+
+**결과**:
+- 📝 **3개 파일 생성/수정**
+  - `src/components/DeviceTypeTableEditor.tsx` (신규)
+  - `src/components/tabs/LocalDBTab.tsx` (수정)
+- ✅ 모든 type-check 및 cargo check 통과
+- 🎨 사용자 경험 대폭 개선
 
 ### ✅ DB Schema 대정리 완료
 

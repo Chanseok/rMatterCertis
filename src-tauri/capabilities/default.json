@@ -21,6 +21,8 @@
     "dialog:allow-save",
     "dialog:default",
     "fs:allow-copy-file",
-    "fs:default"
+    "fs:default",
+    "opener:allow-open-url",
+    "opener:default"
   ]
 }

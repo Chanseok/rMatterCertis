@@ -4,12 +4,14 @@
 
 import { Component, createSignal, createMemo, For, onMount, Show, createEffect, onCleanup } from 'solid-js';
 import { tauriApi } from '../../services/tauri-api';
-import { localDbDashboardStore, initializeLocalDbDashboard } from '../../stores/localDbDashboardStore';
+import { localDbDashboardStore } from '../../stores/localDbDashboardStore';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import type { VendorSyncResult } from '../../types/domain';
 import { DateRangeSlider } from '../DateRangeSlider';
 import { CertificationTimeline } from '../charts/CertificationTimeline.tsx';
+import { DeviceTypeTableEditor } from '../DeviceTypeTableEditor';
 
 // TypeScript types for filter-aware APIs
 interface AvailableFilterOptions {
@@ -36,7 +38,7 @@ export const LocalDBTab: Component = () => {
   const [showTransportInterfaceDialog, setShowTransportInterfaceDialog] = createSignal(false);
   
   // 필터링된 인사이트 데이터
-  const [useFilteredInsights, setUseFilteredInsights] = createSignal(false);
+  const [useFilteredInsights, setUseFilteredInsights] = createSignal(true); // 기본값을 true로 변경
   const [filteredInsights, setFilteredInsights] = createSignal<any>(null);
   const [loadingFilteredInsights, setLoadingFilteredInsights] = createSignal(false);
   
@@ -280,8 +282,14 @@ export const LocalDBTab: Component = () => {
     }
   };
 
+  // 초기화 완료 플래그
+  const [isInitialized, setIsInitialized] = createSignal(false);
+
   // 필터 조합 변경 시 자동으로 유효 옵션 재계산 (카테고리 선택이 벤더/Transport에 반영되도록)
   createEffect(() => {
+    // 초기화가 완료된 후에만 실행
+    if (!isInitialized()) return;
+    
     // 의존성 읽기: Solid은 값 접근만으로 추적
     ui.selectedCategories.length;
     ui.selectedDeviceTypes.length;
@@ -318,19 +326,41 @@ export const LocalDBTab: Component = () => {
   onMount(async () => {
     console.log('[onMount] 시작');
     
-    // 1. 초기화 시작 (백그라운드에서 실행)
-    initializeLocalDbDashboard().catch(console.error);
-    
-    // 2. 초기 filteredInsights를 빠르게 로드 (기본 전체 날짜 범위로)
-    // summary가 로드되기를 기다리지 않고 먼저 filteredInsights를 표시
+    // 1. 초기 날짜 범위 설정
     const today = new Date().toISOString().split('T')[0];
     const defaultStartDate = "2020-01-01";
     const defaultEndDate = today;
+    const initialFilter = `date>=${defaultStartDate} AND date<=${defaultEndDate}`;
     
+    // 2. Summary 먼저 로드 (날짜 범위 설정을 위해)
+    console.log('[onMount] Summary 로드 시작');
+    try {
+      await localDbDashboardStore.loadSummary();
+      console.log('[onMount] ✅ Summary 로드 완료');
+    } catch (error) {
+      console.error('[onMount] ❌ Summary 로드 실패:', error);
+    }
+    
+    // 3. Analytics 필터 적용하고 데이터 로드
+    console.log('[onMount] Analytics 필터 적용:', initialFilter);
+    try {
+      await localDbDashboardStore.applyFilter(initialFilter);
+      console.log('[onMount] ✅ Analytics 데이터 로드 완료');
+    } catch (error) {
+      console.error('[onMount] ❌ Analytics 로드 실패:', error);
+    }
+    
+    // 4. Device Types 로드
+    try {
+      await localDbDashboardStore.initDeviceTypes();
+      console.log('[onMount] ✅ Device Types 로드 완료');
+    } catch (error) {
+      console.error('[onMount] ❌ Device Types 로드 실패:', error);
+    }
+    
+    // 5. filteredInsights 로드
     try {
       setLoadingFilteredInsights(true);
-      
-      const initialFilter = `date>=${defaultStartDate} AND date<=${defaultEndDate}`;
       console.log('[onMount] 초기 filteredInsights 로드:', { filter: initialFilter });
       
       const result = await invoke<any>('get_filtered_analytics_summary', {
@@ -340,18 +370,18 @@ export const LocalDBTab: Component = () => {
       setFilteredInsights(result);
       console.log('[onMount] 초기 filteredInsights 설정 완료:', result);
       
-      // analytics.filterApplied에도 날짜 필터 적용
-      localDbDashboardStore.applyFilter(initialFilter);
-      console.log('[onMount] analytics.filterApplied 설정:', initialFilter);
-      
       setLoadingFilteredInsights(false);
     } catch (error) {
       console.error('[onMount] 초기 filteredInsights 로드 실패:', error);
       setLoadingFilteredInsights(false);
     }
     
-    // 3. 유효한 필터 옵션 가져오기 (날짜 필터 적용 후)
+    // 6. 유효한 필터 옵션 가져오기
     updateAvailableOptions().catch(console.error);
+    
+    // 7. 초기화 완료 플래그 설정
+    setIsInitialized(true);
+    console.log('[onMount] ✅ 초기화 완료');
     
     // Vendor sync progress events (coarse-grained)
     listen<any>('vendor_sync_progress', (evt) => {
@@ -1569,12 +1599,19 @@ export const LocalDBTab: Component = () => {
                     <td class="p-2 whitespace-nowrap">{r.device_category}</td>
                     <td class="p-2 whitespace-nowrap" title={r.device_type_name}>{r.device_type_name}</td>
                     <td class="p-2 max-w-[220px] truncate" title={r.model || r.product_detail_url}>
-                      <a
-                        href={r.product_detail_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="text-indigo-600 hover:underline"
-                      >{r.model || '(no model)'}</a>
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation(); // 팝업 열리지 않도록 이벤트 전파 중단
+                          if (r.product_detail_url) {
+                            try {
+                              await openUrl(r.product_detail_url);
+                            } catch (err) {
+                              console.error('Failed to open URL:', err);
+                            }
+                          }
+                        }}
+                        class="text-indigo-600 hover:underline text-left w-full"
+                      >{r.model || '(no model)'}</button>
                     </td>
                     <td class="p-2 whitespace-nowrap" title={r.vendor_name}>{r.vendor_name}</td>
                     <td class="p-2 whitespace-nowrap">{r.certification_date}</td>
@@ -1803,36 +1840,57 @@ export const LocalDBTab: Component = () => {
           </div>
         </div>
 
-        {/* Device Types Editor - 개발자 모드 */}
-        <details class="bg-slate-50 border border-slate-300 rounded-2xl shadow-lg overflow-hidden">
-          <summary class="cursor-pointer p-4 hover:bg-slate-100 transition select-none">
+        {/* Device Types Table Editor - 개선된 테이블 뷰 */}
+        <details class="bg-white/90 backdrop-blur-sm border border-slate-200 rounded-2xl shadow-lg overflow-hidden">
+          <summary class="cursor-pointer p-4 hover:bg-slate-100 transition select-none bg-gradient-to-r from-slate-50 to-gray-100">
             <div class="flex items-center justify-between">
-              <h3 class="text-lg font-semibold text-slate-800">🔧 Device Types JSON Editor (개발자 모드)</h3>
+              <div>
+                <h3 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
+                  🔧 Device Types 관리
+                  <span class="text-xs px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full font-medium">테이블 뷰</span>
+                </h3>
+                <p class="text-xs text-gray-500 mt-1">Matter Device Types를 테이블 형식으로 추가/수정/삭제/정렬</p>
+              </div>
               <span class="text-xs text-slate-600">클릭하여 펼치기/접기</span>
             </div>
           </summary>
-          <div class="p-6 pt-2 space-y-3 bg-white border-t border-slate-200">
-            <div class="flex items-center gap-3 text-xs text-gray-500 mb-3">
-              <span>파일 개수: {localDbDashboardStore.ui.deviceTypesMeta?.count_in_file}</span>
-              <span>DB: {localDbDashboardStore.ui.deviceTypesMeta?.count_in_db}</span>
+          <div class="p-6 bg-white border-t border-slate-200">
+            <div class="flex items-center gap-3 text-xs text-gray-500 mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <span>📄 파일 개수: <b class="text-blue-700">{localDbDashboardStore.ui.deviceTypesMeta?.count_in_file || 0}</b></span>
+              <span>💾 DB 개수: <b class="text-blue-700">{localDbDashboardStore.ui.deviceTypesMeta?.count_in_db || 0}</b></span>
+              <Show when={localDbDashboardStore.ui.deviceTypesSaveResult}>
+                <span class="ml-auto text-emerald-600 font-medium">
+                  ✅ 마지막 저장: 
+                  ins {localDbDashboardStore.ui.deviceTypesSaveResult?.inserted || 0} / 
+                  upd {localDbDashboardStore.ui.deviceTypesSaveResult?.updated || 0} / 
+                  skip {localDbDashboardStore.ui.deviceTypesSaveResult?.skipped || 0}
+                </span>
+              </Show>
             </div>
-            <textarea class="w-full h-56 text-xs font-mono border rounded p-2" value={localDbDashboardStore.ui.deviceTypesJson} onInput={e => localDbDashboardStore.updateDeviceTypesJson(e.currentTarget.value)} />
-            <Show when={localDbDashboardStore.ui.deviceTypesDiff}>
-              <div class="text-xs text-gray-600 space-y-1">
-                <div>Diff: +{localDbDashboardStore.ui.deviceTypesDiff?.added} / upd {localDbDashboardStore.ui.deviceTypesDiff?.updated} / -{localDbDashboardStore.ui.deviceTypesDiff?.removed}</div>
-                <Show when={localDbDashboardStore.ui.deviceTypesDiff?.parseError}><div class="text-rose-600">Parse Error: {localDbDashboardStore.ui.deviceTypesDiff?.parseError}</div></Show>
+            
+            <DeviceTypeTableEditor
+              deviceTypes={(() => {
+                try {
+                  const parsed = JSON.parse(localDbDashboardStore.ui.deviceTypesJson || '[]');
+                  return Array.isArray(parsed) ? parsed : [];
+                } catch {
+                  return [];
+                }
+              })()}
+              onSave={(updatedTypes) => {
+                const jsonStr = JSON.stringify(updatedTypes, null, 2);
+                localDbDashboardStore.updateDeviceTypesJson(jsonStr);
+                localDbDashboardStore.saveDeviceTypes();
+              }}
+              onReload={() => localDbDashboardStore.initDeviceTypes()}
+            />
+
+            <Show when={localDbDashboardStore.ui.deviceTypesDiff?.parseError}>
+              <div class="mt-4 p-3 bg-rose-50 border border-rose-200 rounded-lg">
+                <div class="text-sm text-rose-600 font-medium">⚠️ Parse Error</div>
+                <div class="text-xs text-rose-700 mt-1">{localDbDashboardStore.ui.deviceTypesDiff?.parseError}</div>
               </div>
             </Show>
-            <label class="flex items-center gap-2 text-xs text-gray-600">
-              <input type="checkbox" checked={localDbDashboardStore.ui.reseedAfterSave} onChange={e => localDbDashboardStore.setUi({ ...localDbDashboardStore.ui, reseedAfterSave: e.currentTarget.checked })} />
-              Save 후 Reseed 수행
-            </label>
-            <div class="flex gap-2 flex-wrap">
-              <button class="px-3 py-1.5 rounded bg-gray-200 text-gray-800 text-xs" onClick={() => localDbDashboardStore.initDeviceTypes()}>Reload</button>
-              <button class="px-3 py-1.5 rounded bg-fuchsia-600 text-white text-xs" onClick={() => localDbDashboardStore.saveDeviceTypes()}>Save</button>
-              <span class="text-xs text-gray-500">{localDbDashboardStore.ui.deviceTypesSaveResult?.inserted != null && `ins ${localDbDashboardStore.ui.deviceTypesSaveResult.inserted} / upd ${localDbDashboardStore.ui.deviceTypesSaveResult.updated} / skip ${localDbDashboardStore.ui.deviceTypesSaveResult.skipped}`}</span>
-            </div>
-            <pre class="bg-gray-900 text-[10px] text-pink-300 p-2 rounded max-h-40 overflow-auto">{JSON.stringify(localDbDashboardStore.ui.deviceTypesSaveResult || {}, null, 2)}</pre>
           </div>
         </details>
 
@@ -1875,9 +1933,21 @@ export const LocalDBTab: Component = () => {
                         </div>
                         <div class="col-span-2">
                           <div class="text-xs text-gray-500 mb-1">Product URL</div>
-                          <a href={product().product_detail_url} target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:underline text-sm break-all">
+                          <button 
+                            onClick={async () => {
+                              const url = product().product_detail_url;
+                              if (url) {
+                                try {
+                                  await openUrl(url);
+                                } catch (err) {
+                                  console.error('Failed to open URL:', err);
+                                }
+                              }
+                            }}
+                            class="text-indigo-600 hover:underline text-sm break-all text-left cursor-pointer hover:bg-indigo-50 px-2 py-1 rounded transition"
+                          >
                             {product().product_detail_url}
-                          </a>
+                          </button>
                         </div>
                       </div>
                       <div class="pt-4 border-t">
