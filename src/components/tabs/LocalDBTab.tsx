@@ -1295,11 +1295,6 @@ export const LocalDBTab: Component = () => {
               </div>
             </button>
             <div class="flex items-center gap-3">
-              <Show when={analytics.filterApplied}>
-                <div class="text-xs text-gray-500 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200">
-                  <span class="font-semibold text-blue-700">필터 적용됨</span>
-                </div>
-              </Show>
               <button
                 class={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
                   useFilteredInsights()

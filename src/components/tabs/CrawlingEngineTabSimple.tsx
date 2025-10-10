@@ -1123,7 +1123,7 @@ export default function CrawlingEngineTabSimple() {
             };
           });
         }
-  if (name === "actor-batch-completed") {
+        if (name === "actor-batch-completed") {
           // Extract coordinate update stats for shallow mode
           const summary = (payload as any)?.summary;
           if (summary) {
@@ -1134,6 +1134,16 @@ export default function CrawlingEngineTabSimple() {
             
             if (productsUpdated > 0 || detailsUpdated > 0) {
               addLog(`📊 좌표 갱신: ${productsUpdated}개 제품, ${detailsUpdated}개 상세 (실패: ${failed}, 총: ${totalUrls})`);
+              
+              // Update Stage 4 (DB 저장) statistics during shallow mode
+              if (isShallowMode()) {
+                setDbSnapshot((prev) => ({
+                  ...prev,
+                  inserted: (prev.inserted || 0) + detailsUpdated,
+                  updated: (prev.updated || 0) + productsUpdated,
+                }));
+                console.log('[ShallowMode] Updated Stage 4 (DB 저장):', { productsUpdated, detailsUpdated, failed });
+              }
             }
           }
         }

@@ -1,6 +1,7 @@
 import { Component, createSignal, createEffect, Show, onCleanup } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { Chart, registerables } from 'chart.js';
+import { getRelativePosition } from 'chart.js/helpers';
 import 'chartjs-adapter-date-fns'; // time scale을 위한 어댑터
 
 // Register Chart.js components
@@ -29,6 +30,89 @@ export const CertificationTimeline: Component<CertificationTimelineProps> = (pro
   const [error, setError] = createSignal<string | null>(null);
   const [canvasElement, setCanvasElement] = createSignal<HTMLCanvasElement | undefined>(undefined);
   let chartInstance: any = null; // Chart.js with time scale uses different data structure
+
+  // Debug info signals
+  const [debugInfo, setDebugInfo] = createSignal<{
+    hoveredIndex: number | null;
+    hoveredDate: string | null;
+    hoveredValue: number | null;
+    tooltipDate: string | null;
+    tooltipValue: number | null;
+    mouseX: number | null;
+    mouseY: number | null;
+  }>({
+    hoveredIndex: null,
+    hoveredDate: null,
+    hoveredValue: null,
+    tooltipDate: null,
+    tooltipValue: null,
+    mouseX: null,
+    mouseY: null,
+  });
+
+  // Mouse position for debug visualization
+  const [mousePosition, setMousePosition] = createSignal<{ x: number; y: number } | null>(null);
+  
+  // Toggle for debug guide visibility
+  const [showDebugGuide, setShowDebugGuide] = createSignal(false);
+
+  // Chart.js plugin for debug visualization
+  const debugPlugin = {
+    id: 'debugVisualization',
+    afterDraw: (chart: any) => {
+      if (!showDebugGuide()) return; // Only draw if debug guide is enabled
+      
+      const ctx = chart.ctx;
+      const chartArea = chart.chartArea;
+      const mousePos = mousePosition();
+
+      // Draw pixel scale on top (using chart-area-relative coordinates for consistency)
+      ctx.save();
+      ctx.fillStyle = '#666';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'center';
+      
+      // Draw pixel markers every 100px (relative to chart area)
+      for (let x = 0; x <= (chartArea.right - chartArea.left); x += 100) {
+        const canvasX = chartArea.left + x;
+        if (canvasX >= chartArea.left && canvasX <= chartArea.right) {
+          ctx.fillText(x.toString(), canvasX, chartArea.top - 5);
+          ctx.strokeStyle = '#ddd';
+          ctx.setLineDash([2, 2]);
+          ctx.beginPath();
+          ctx.moveTo(canvasX, chartArea.top);
+          ctx.lineTo(canvasX, chartArea.bottom);
+          ctx.stroke();
+        }
+      }
+      ctx.setLineDash([]);
+
+      // Draw mouse tracking line (using calculated chart-area-relative coordinates)
+      if (mousePos) {
+        // mousePos.x is chart-area-relative X coordinate (matches 0, 100, 200... scale)
+        const canvasMouseX = chartArea.left + mousePos.x;
+        
+        if (canvasMouseX >= chartArea.left && canvasMouseX <= chartArea.right) {
+          ctx.strokeStyle = 'rgba(255, 0, 0, 0.6)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(canvasMouseX, chartArea.top);
+          ctx.lineTo(canvasMouseX, chartArea.bottom);
+          ctx.stroke();
+          
+          // Draw X coordinate label (show chart-area-relative position)
+          ctx.fillStyle = 'rgba(255, 0, 0, 0.9)';
+          ctx.fillRect(canvasMouseX - 20, chartArea.bottom + 2, 40, 14);
+          ctx.fillStyle = '#fff';
+          ctx.font = '10px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(mousePos.x.toFixed(0), canvasMouseX, chartArea.bottom + 13);
+        }
+      }
+
+      ctx.restore();
+    }
+  };
 
   // Load timeline data when props change
   createEffect(() => {
@@ -178,6 +262,7 @@ export const CertificationTimeline: Component<CertificationTimelineProps> = (pro
     try {
       chartInstance = new Chart(ctx, {
         type: 'bar',
+        plugins: [debugPlugin],
         data: {
           datasets: [
             {
@@ -218,6 +303,75 @@ export const CertificationTimeline: Component<CertificationTimelineProps> = (pro
         interaction: {
           mode: 'index',
           intersect: false,
+          axis: 'x',
+        },
+        onHover: (event, _activeElements, chart) => {
+          const chartArea = chart.chartArea;
+          
+          // Use Chart.js's built-in getRelativePosition which handles all coordinate transformations
+          // This is zoom-aware and works correctly in Tauri
+          const position = getRelativePosition(event, chart);
+          
+          // position.x and position.y are already in canvas pixels relative to canvas origin
+          const mouseX = position.x - chartArea.left;
+          const mouseY = position.y - chartArea.top;
+          
+          // Update mouse position for debug visualization
+          setMousePosition({ x: mouseX, y: mouseY });
+          
+          // Try to find which bar we're hovering over by checking the chart elements directly
+          let hoveredIndex = null;
+          let hoveredDate = null;
+          let hoveredValue = null;
+          
+          if (chart && chart.getDatasetMeta(0)) {
+            const meta = chart.getDatasetMeta(0); // Bar dataset
+            const bars = meta.data;
+            
+            // Use bar element properties directly
+            for (let i = 0; i < bars.length; i++) {
+              const bar = bars[i] as any;
+              const originalPeriod = data.data[i].date;
+              const originalValue = data.data[i].count;
+              
+              // Get bar position from element properties (relative to chart area)
+              const barCenterX = bar.x - chartArea.left;
+              const barY = bar.y - chartArea.top;
+              const barBase = bar.base - chartArea.top;
+              const barWidth = bar.width;
+              
+              if (barCenterX === undefined || barY === undefined || barBase === undefined || barWidth === undefined) {
+                continue;
+              }
+              
+              const barLeft = barCenterX - barWidth / 2;
+              const barRight = barCenterX + barWidth / 2;
+              
+              // Hit test: use X-range only to match Chart.js tooltip behavior (vertical bars)
+              // Accept if mouse is within chart area vertically to avoid out-of-chart hovers
+              const withinX = mouseX >= barLeft && mouseX <= barRight;
+              const withinChartY = mouseY >= 0 && mouseY <= (chartArea.bottom - chartArea.top);
+              if (withinX && withinChartY) {
+                hoveredIndex = i;
+                hoveredDate = originalPeriod;
+                hoveredValue = originalValue;
+                break;
+              }
+            }
+          }
+          
+          // Trigger chart redraw for debug visualization
+          chart?.draw();
+          
+          setDebugInfo({
+            hoveredIndex,
+            hoveredDate,
+            hoveredValue,
+            tooltipDate: hoveredDate,
+            tooltipValue: hoveredValue,
+            mouseX,
+            mouseY,
+          });
         },
         plugins: {
           legend: {
@@ -248,6 +402,32 @@ export const CertificationTimeline: Component<CertificationTimelineProps> = (pro
             displayColors: true,
             callbacks: {
               title: (context) => {
+                // Use the raw data point's original date instead of Chart.js label
+                // context[0] contains the tooltip item for the hovered point
+                const dataIndex = context[0].dataIndex;
+                
+                // Update debug info
+                const originalDate = dataIndex >= 0 && dataIndex < data.data.length 
+                  ? data.data[dataIndex].date 
+                  : null;
+                const value = context[0].parsed.y;
+                
+                setDebugInfo({
+                  hoveredIndex: dataIndex,
+                  hoveredDate: originalDate,
+                  hoveredValue: value,
+                  tooltipDate: originalDate,
+                  tooltipValue: value,
+                  mouseX: context[0].element?.x ?? null,
+                  mouseY: context[0].element?.y ?? null,
+                });
+                
+                console.log(`[Tooltip] idx=${dataIndex}, date=${originalDate}, val=${value}`);
+                
+                if (dataIndex >= 0 && dataIndex < data.data.length) {
+                  const originalDate = data.data[dataIndex].date;
+                  return originalDate;
+                }
                 return context[0].label;
               },
               label: (context) => {
@@ -415,6 +595,80 @@ export const CertificationTimeline: Component<CertificationTimelineProps> = (pro
         <div class="bg-white rounded-lg border border-blue-100 p-4">
           <div class="relative h-[400px]">
             <canvas ref={setCanvasElement}></canvas>
+            
+            {/* Debug Info Panel - only show when debug guide is enabled */}
+            <Show when={showDebugGuide()}>
+              <div class="absolute bottom-20 right-2 bg-black/90 text-white text-xs p-3 rounded-lg font-mono shadow-lg border border-yellow-500/50">
+                <div class="font-bold text-yellow-300 mb-2 flex items-center gap-1">
+                  🔍 디버그 정보
+                  <Show when={debugInfo().hoveredIndex !== null}>
+                    <span class="text-green-400 text-[10px] animate-pulse">● 활성</span>
+                  </Show>
+                </div>
+                <div class="space-y-1">
+                  <div class="flex justify-between gap-4">
+                    <span class="text-gray-400">마우스 위치:</span>
+                    <span class="text-cyan-300">
+                      {debugInfo().mouseX !== null 
+                        ? `(${Math.round(debugInfo().mouseX!)}, ${Math.round(debugInfo().mouseY!)})` 
+                        : 'N/A'}
+                    </span>
+                  </div>
+                  <div class="border-t border-gray-700 my-1"></div>
+                  <div class="flex justify-between gap-4">
+                    <span class="text-gray-400">호버 인덱스:</span>
+                    <span class="text-green-300 font-bold">
+                      {debugInfo().hoveredIndex !== null ? debugInfo().hoveredIndex : 'N/A'}
+                    </span>
+                  </div>
+                  <div class="flex justify-between gap-4">
+                    <span class="text-gray-400">호버 날짜:</span>
+                    <span class="text-blue-300 font-semibold">{debugInfo().hoveredDate ?? 'N/A'}</span>
+                  </div>
+                  <div class="flex justify-between gap-4">
+                    <span class="text-gray-400">호버 값:</span>
+                    <span class="text-purple-300">{debugInfo().hoveredValue?.toLocaleString() ?? 'N/A'}개</span>
+                  </div>
+                  <Show when={debugInfo().tooltipDate !== null}>
+                    <div class="border-t border-gray-700 my-1"></div>
+                    <div class="flex justify-between gap-4">
+                      <span class="text-orange-400">툴팁 날짜:</span>
+                      <span class="text-orange-300 font-semibold">{debugInfo().tooltipDate}</span>
+                    </div>
+                    <div class="flex justify-between gap-4">
+                      <span class="text-pink-400">툴팁 값:</span>
+                      <span class="text-pink-300">{debugInfo().tooltipValue?.toLocaleString()}개</span>
+                    </div>
+                    <Show when={debugInfo().hoveredDate !== debugInfo().tooltipDate}>
+                      <div class="text-red-400 text-[10px] mt-1 font-bold animate-pulse">
+                        ⚠️ 불일치 감지!
+                      </div>
+                    </Show>
+                  </Show>
+                  <div class="border-t border-gray-700 my-1"></div>
+                  <div class="text-[10px] text-gray-500">
+                    전체 {timelineData()!.data.length}개 데이터 포인트
+                  </div>
+                  <div class="text-[9px] text-gray-600">
+                    집계: {getAggregationLabel()}
+                  </div>
+                </div>
+              </div>
+            </Show>
+            
+            {/* Debug guide toggle button */}
+            <div class="absolute top-4 right-4 z-10">
+              <button
+                onClick={() => setShowDebugGuide(!showDebugGuide())}
+                class="px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-200 shadow-md"
+                classList={{
+                  'bg-yellow-500 text-gray-900 hover:bg-yellow-600': showDebugGuide(),
+                  'bg-gray-600 text-gray-200 hover:bg-gray-700': !showDebugGuide()
+                }}
+              >
+                {showDebugGuide() ? '🔍 가이드 숨기기' : '🔍 가이드 보기'}
+              </button>
+            </div>
           </div>
           
           {/* Stats summary */}
