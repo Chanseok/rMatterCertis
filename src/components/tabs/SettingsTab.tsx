@@ -2,10 +2,9 @@
  * SettingsTab - 설정 탭 컴포넌트
  * settingsStore를 기반으로 한 실제 백엔드 연동 설정 UI
  */
-import { Component, createSignal, onMount, For, Show } from "solid-js";
+import { Component, createSignal, onMount, Show } from "solid-js";
 import { emit } from "@tauri-apps/api/event";
 import { settingsState } from "../../stores/settingsStore";
-import { CONFIG_PRESETS } from "../../types/config";
 import { AdvancedSettingsSection } from "../settings/AdvancedSettingsSection";
 
 export const SettingsTab: Component = () => {
@@ -16,9 +15,9 @@ export const SettingsTab: Component = () => {
   
   // 각 섹션별 접기/펼치기 상태
   const [showRange, setShowRange] = createSignal(true);
-  const [showConcurrency, setShowConcurrency] = createSignal(true);
-  const [showTiming, setShowTiming] = createSignal(true);
-  const [showLogging, setShowLogging] = createSignal(true);
+  const [showConcurrency, setShowConcurrency] = createSignal(false); // 기본 접힌 상태
+  const [showTiming, setShowTiming] = createSignal(false); // 기본 접힌 상태
+  const [showLogging, setShowLogging] = createSignal(false); // 기본 접힌 상태
   const [showAdvanced, setShowAdvanced] = createSignal(false); // 고급 설정은 기본 접힌 상태
 
   onMount(async () => {
@@ -54,13 +53,6 @@ export const SettingsTab: Component = () => {
     }
   };
 
-  const applyPreset = (presetName: string) => {
-    settingsState.applyPreset(presetName);
-    setSaveMessage(`✅ 프리셋 "${presetName}" 적용됨`);
-    setShowMessage(true);
-    setTimeout(() => setShowMessage(false), 3000);
-  };
-
   return (
     <div class="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-blue-50 p-6">
       <div class="w-full max-w-7xl mx-auto space-y-6">
@@ -93,28 +85,6 @@ export const SettingsTab: Component = () => {
           </div>
         </div>
 
-        {/* Presets */}
-        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-4">
-          <h3 class="text-lg font-semibold text-gray-800 mb-2">프리셋</h3>
-          <div class="flex flex-wrap gap-2">
-            <For each={CONFIG_PRESETS}>
-              {(preset) => (
-                <button
-                  class={`px-3 py-1.5 rounded-lg border transition-all duration-200 text-sm ${
-                    settingsState.currentPreset === preset.name
-                      ? 'border-blue-500 bg-blue-50 text-blue-700 font-semibold shadow-sm'
-                      : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700'
-                  }`}
-                  onClick={() => applyPreset(preset.name)}
-                >
-                  {settingsState.currentPreset === preset.name && '✓ '}
-                  {preset.name}
-                </button>
-              )}
-            </For>
-          </div>
-        </div>
-
         {/* Settings Form (간소화된 핵심 설정 + 고급 설정 토글) */}
         <form
           class={`space-y-6 ${
@@ -125,10 +95,10 @@ export const SettingsTab: Component = () => {
             handleSave();
           }}
         >
-          {/* 핵심 설정 */}
+          {/* 크롤링 설정 */}
           <fieldset class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
-            <legend class="px-2 text-lg font-semibold text-gray-800">
-              핵심 설정
+            <legend class="px-2 text-lg font-semibold text-gray-800 mb-4">
+              크롤링 설정
             </legend>
             
             {/* 📊 범위 · 크기 - 최우선 설정 */}
@@ -216,7 +186,7 @@ export const SettingsTab: Component = () => {
               >
                 <span class="w-1.5 h-4 rounded bg-red-400"></span>
                 <div class="text-sm font-semibold text-gray-800">
-                  🔴 동시성 & 속도 제어
+                  동시성 & 속도 제어
                 </div>
                 <span class="text-xs text-gray-500 flex-1 text-left">서버 부하 제어 핵심 설정</span>
                 <span class="text-gray-400 text-sm">{showConcurrency() ? '▼' : '▶'}</span>
@@ -377,7 +347,7 @@ export const SettingsTab: Component = () => {
               </Show>
             </div>
 
-            {/* ⏱️ 타이밍 & 재시도 - 타임아웃, 지연, 재시도 통합 */}
+            {/* 타이밍 & 재시도 */}
             <div class="mt-6">
               <button
                 type="button"
@@ -386,9 +356,9 @@ export const SettingsTab: Component = () => {
               >
                 <span class="w-1.5 h-4 rounded bg-orange-400"></span>
                 <div class="text-sm font-semibold text-gray-800">
-                  ⏱️ 타이밍 & 재시도
+                  타이밍 & 재시도
                 </div>
-                <span class="text-xs text-gray-500 flex-1 text-left">시간 제한 및 요청 간격 설정</span>
+                <span class="text-xs text-gray-500 flex-1 text-left">시간 제한 및 실패 시 재시도 정책</span>
                 <span class="text-gray-400 text-sm">{showTiming() ? '▼' : '▶'}</span>
               </button>
               <Show when={showTiming()}>
@@ -479,18 +449,18 @@ export const SettingsTab: Component = () => {
               </Show>
             </div>
 
-            {/* 📝 로깅 */}
+            {/* 로깅 */}
             <div class="mt-6">
               <button
                 type="button"
                 class="flex items-center gap-2 mb-2 w-full hover:bg-gray-50 rounded-lg p-2 -ml-2 transition-colors"
                 onClick={() => setShowLogging(!showLogging())}
               >
-                <span class="w-1.5 h-4 rounded bg-cyan-400"></span>
+                <span class="w-1.5 h-4 rounded bg-blue-400"></span>
                 <div class="text-sm font-semibold text-gray-800">
-                  📝 로깅
+                  로깅
                 </div>
-                <span class="text-xs text-gray-500 flex-1 text-left">로그 출력 및 저장 설정</span>
+                <span class="text-xs text-gray-500 flex-1 text-left">로그 출력 수준 설정</span>
                 <span class="text-gray-400 text-sm">{showLogging() ? '▼' : '▶'}</span>
               </button>
               <Show when={showLogging()}>
@@ -576,45 +546,66 @@ export const SettingsTab: Component = () => {
             </div>
           </fieldset>
 
-          {/* 고급 설정 (카테고리별 그룹핑) */}
+          {/* 상세 설정 */}
           <fieldset class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
+            <legend class="px-2 text-lg font-semibold text-gray-800 mb-4">
+              상세 설정
+            </legend>
             <button
               type="button"
-              class="flex items-center gap-2 w-full hover:bg-gray-50 rounded-lg p-2 -ml-2 transition-colors"
+              class="flex items-center gap-2 mb-3 w-full hover:bg-gray-50 rounded-lg p-2 -ml-2 transition-colors"
               onClick={() => setShowAdvanced(!showAdvanced())}
             >
-              <legend class="px-2 text-lg font-semibold text-gray-800">
-                🔧 고급 설정
-              </legend>
-              <span class="text-xs text-gray-500 ml-2">
-                (검증된 40개 설정 • 6개 카테고리)
-              </span>
-              <span class="text-gray-400 text-sm ml-auto">{showAdvanced() ? '▼ 숨기기' : '▶ 펼치기'}</span>
+              <span class="text-sm text-gray-500 flex-1 text-left">검증된 40개 설정 · 6개 카테고리</span>
+              <span class="text-gray-400 text-sm">{showAdvanced() ? '▼ 숨기기' : '▶ 펼치기'}</span>
             </button>
             <Show when={showAdvanced()}>
-              <div class="mt-4">
+              <div class="mt-2">
                 <AdvancedSettingsSection />
               </div>
             </Show>
           </fieldset>
           
-          {/* 앱 관리 정보 (읽기 전용, 토글) */}
-          <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20">
-            <div class="p-4 flex items-center justify-between">
-              <legend class="px-2 text-lg font-semibold text-gray-800">
-                앱 관리 정보 (읽기 전용)
-              </legend>
-              <button
-                type="button"
-                class="text-sm text-blue-600 hover:text-blue-700 transition-colors duration-200"
-                onClick={() => setShowAppManaged((p) => !p)}
-              >
-                {showAppManaged() ? "▲ 숨기기" : "▼ 펼치기"}
-              </button>
+          {/* Actions */}
+          <div class="sticky bottom-6 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-white/40 p-4 flex items-center justify-end gap-3">
+            <button
+              type="button"
+              class="px-4 py-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-700"
+              onClick={() => setShowModal(true)}
+            >
+              미리보기
+            </button>
+            <button
+              type="submit"
+              class={`px-4 py-2 rounded-lg text-white shadow transition-all duration-200 ${
+                settingsState.isLoading
+                  ? "bg-gray-400 cursor-not-allowed"
+                  : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+              }`}
+              disabled={settingsState.isLoading}
+            >
+              {settingsState.isLoading ? "저장 중..." : "설정 저장"}
+            </button>
+          </div>
+        </form>
+        
+        {/* 앱 관리 정보 (읽기 전용) */}
+        <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-6">
+            <div class="mb-4">
+              <div class="text-lg font-semibold text-gray-800">앱 관리 정보</div>
             </div>
+            <button
+              type="button"
+              class="flex items-center gap-2 mb-3 w-full hover:bg-gray-50 rounded-lg p-2 -ml-2 transition-colors"
+              onClick={() => setShowAppManaged(!showAppManaged())}
+            >
+              <span class="text-sm text-gray-500 flex-1 text-left">읽기 전용 시스템 정보</span>
+              <span class="text-gray-400 text-sm">{showAppManaged() ? '▼ 숨기기' : '▶ 펼치기'}</span>
+            </button>
+
             <Show when={showAppManaged()}>
-              <div class="px-6 pb-6">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="p-5 bg-gradient-to-br from-blue-50/50 to-indigo-50/30 border border-blue-100 rounded-xl">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
                     <div class="text-xs text-gray-500">
                       마지막으로 확인된 최대 페이지
@@ -683,29 +674,6 @@ export const SettingsTab: Component = () => {
               </div>
             </Show>
           </div>
-
-          {/* Actions */}
-          <div class="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-4 flex items-center justify-end gap-2">
-            <button
-              type="button"
-              class="px-4 py-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-700"
-              onClick={() => setShowModal(true)}
-            >
-              미리보기
-            </button>
-            <button
-              type="submit"
-              class={`px-4 py-2 rounded-lg text-white shadow transition-all duration-200 ${
-                settingsState.isLoading
-                  ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
-              }`}
-              disabled={settingsState.isLoading}
-            >
-              {settingsState.isLoading ? "저장 중..." : "설정 저장"}
-            </button>
-          </div>
-        </form>
 
         {/* Toast */}
         <Show when={showMessage()}>

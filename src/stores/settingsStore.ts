@@ -158,7 +158,8 @@ const [settingsState, setSettingsState] = createStore<SettingsStore>({
   async saveSettings() {
     try {
       setSettingsState('isLoading', true);
-      await invoke('save_app_settings', { settings: settingsState.settings });
+      const result = await invoke<string>('save_app_settings', { settings: settingsState.settings });
+      console.log('✅ 설정 저장 성공:', result);
       
       // 로컬 스토리지에도 백업
       localStorage.setItem('app-settings', JSON.stringify(settingsState.settings));
@@ -166,7 +167,7 @@ const [settingsState, setSettingsState] = createStore<SettingsStore>({
       setSettingsState('isDirty', false);
       setSettingsState('lastSaved', new Date().toISOString());
     } catch (error) {
-      console.error('설정 저장 실패:', error);
+      console.error('❌ 설정 저장 실패:', error);
       throw error;
     } finally {
       setSettingsState('isLoading', false);
