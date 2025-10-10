@@ -28,12 +28,10 @@ use crate::domain::services::{
 use crate::infrastructure::config::utils as config_utils;
 use crate::infrastructure::config::{AppConfig, CrawlingConfig};
 use crate::infrastructure::{HttpClient, IntegratedProductRepository, MatterDataExtractor};
+use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
 use crate::crawl_engine::actors::types::AppEvent;
-// Canonical pagination calculator (legacy utils::PageIdCalculator via domain alias)
+// Canonical pagination calculator for page_id/index_in_page computation
 use crate::domain::pagination::CanonicalPageIdCalculator;
-
-// 상수 정의
-const DEFAULT_PRODUCTS_PER_PAGE: u32 = 12;
 
 // Reintroduced struct definitions (accidentally disrupted during method removal phase)
 pub struct StatusCheckerImpl {
@@ -79,7 +77,7 @@ impl StatusCheckerImpl {
 }
 
 impl StatusCheckerImpl {
-    /// Associate a product repository after initial creation (legacy helper)
+    /// Associate a product repository after initial creation using builder pattern
     #[must_use]
     pub fn with_product_repo(
         http_client: HttpClient,
@@ -133,10 +131,9 @@ impl StatusChecker for StatusCheckerImpl {
         // Step 1: 기본 사이트 접근성 확인
         let url = config_utils::matter_products_page_url_simple(1);
 
-        // 접근성 테스트 (네트워크/HTTP 오류를 사용자 친화적으로 처리)
-        // 이전 구현은 fetch_response() 뒤 '?'로 인해 네트워크 오류가 상위로 전파되어
-        // 프론트엔드에 즉시 실패로 표시되었습니다. 여기서는 재시도 정책을 가진
-        // fetch_response_with_policy()를 사용하고, 모든 오류를 "접근 불가"로 매핑합니다.
+        // Site accessibility check with user-friendly error handling
+        // Uses fetch_response_with_policy() for retry logic instead of immediate failure.
+        // Network errors are mapped to "site inaccessible" status rather than raw error propagation.
         let accessibility_result = {
             let _client = self.create_configured_http_client()?; // config 검증 목적
             match self.http_client.fetch_response_with_policy(&url).await {
@@ -582,10 +579,12 @@ impl StatusCheckerImpl {
 
     /// 안전성 검사가 포함된 하향 탐색 - 연속 빈 페이지 12개 step (5페이지 단위) 이상 시 fatal error
     async fn find_last_valid_page_with_safety_check(&self, start_page: u32) -> Result<u32> {
+        use crate::infrastructure::config::defaults::{MAX_CONSECUTIVE_EMPTY_PAGE_CHECKS, PAGE_SEARCH_STEP};
+        
         let mut current_page = start_page;
         let mut consecutive_empty_checks = 0;
-        const MAX_CONSECUTIVE_EMPTY_CHECKS: u32 = 12;
-        const SEARCH_STEP: u32 = 5; // 5페이지 단위로 검색
+        const MAX_CONSECUTIVE_EMPTY_CHECKS: u32 = MAX_CONSECUTIVE_EMPTY_PAGE_CHECKS;
+        const SEARCH_STEP: u32 = PAGE_SEARCH_STEP; // 5페이지 단위로 검색
         let min_page = 1;
 
         debug!(
@@ -612,8 +611,8 @@ impl StatusCheckerImpl {
                 current_page, consecutive_empty_checks
             );
 
-            // Use configured HttpClient
-            let _client = self.create_configured_http_client()?; // unused (legacy path)
+            // Note: create_configured_http_client() not needed here, using self.http_client directly
+            let _client = self.create_configured_http_client()?; // kept for potential future use
             match self.http_client.fetch_response(&test_url).await {
                 Ok(response) => match response.text().await {
                     Ok(html) => {
@@ -1770,7 +1769,7 @@ impl ProductListCollectorImpl {
         let last_page_number = total_pages;
         let products_in_last_page = products_on_last_page;
 
-        // CanonicalPageIdCalculator 초기화 (legacy 구현 alias)
+        // CanonicalPageIdCalculator 초기화
         let page_calculator =
             CanonicalPageIdCalculator::new(last_page_number, products_in_last_page as usize);
         let max_concurrent = self.config.max_concurrent as usize;
@@ -3535,7 +3534,7 @@ pub struct CrawlingRangeCalculator {
     config: AppConfig,
 }
 
-/// Simplified progress snapshot used by smart_crawling without legacy domain::events types
+/// Lightweight progress snapshot for smart_crawling without heavy domain event types
 #[derive(Debug, Clone)]
 pub struct RangeSimpleProgress {
     pub current: u32,

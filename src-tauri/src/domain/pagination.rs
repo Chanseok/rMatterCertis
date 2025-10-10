@@ -5,7 +5,12 @@
 //! - 역산(reverse) 기능
 //! - 향후 batch 계획에서 사용될 수 있는 보조 함수
 
-const PRODUCTS_PER_PAGE: usize = 12; // TODO: 설정 연동 필요 시 주입 고려
+use crate::infrastructure::config::defaults::DEFAULT_PRODUCTS_PER_PAGE;
+
+/// Products per page as usize for internal calculations
+/// Converts the u32 default value to usize for array indexing operations
+const PRODUCTS_PER_PAGE: usize = DEFAULT_PRODUCTS_PER_PAGE as usize;
+
 #[derive(Debug, Clone)]
 pub struct PageIdCalculator {
     last_page_number: u32,
@@ -157,12 +162,13 @@ impl PaginationCalculator {
     }
 }
 
-/// Transitional alias exposing the legacy `PageIdCalculator` implementation
-/// through the domain module so that all future references converge here
-/// before we physically migrate the logic (Phase1 -> Phase2).
+/// Canonical alias for `PageIdCalculator` implementation.
+/// Used by StatusCheckerImpl for consistent page_id/index_in_page calculation.
+///
+/// Provides reversed page_id numbering (page_id=0 is the last/oldest page).
 pub type CanonicalPageIdCalculator = PageIdCalculator;
 
-// 간단 테스트 (통합 이전 임시) - 향후 tests/pagination_tests.rs 로 이동
+/// Unit tests for pagination calculation logic
 #[cfg(test)]
 mod tests {
     use super::*;
