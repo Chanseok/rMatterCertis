@@ -63,6 +63,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Force clang linker on macOS to avoid lld issues
+          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: clang
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: clang
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'rMatterCertis v__VERSION__'
