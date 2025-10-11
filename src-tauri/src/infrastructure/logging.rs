@@ -75,7 +75,9 @@ fn get_events_log_directory() -> PathBuf {
 }
 
 /// Events logging disabled in release builds
+/// Note: This function is intentionally unused in release builds
 #[cfg(not(debug_assertions))]
+#[allow(dead_code)]
 fn get_events_log_directory() -> PathBuf {
     PathBuf::new() // Return empty path (unused)
 }
