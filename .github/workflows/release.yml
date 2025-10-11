@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install dependencies (macOS only)
+        if: matrix.platform == 'macos-latest'
+        run: |
+          rustup target add aarch64-apple-darwin
+          rustup target add x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build the app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'rMatterCertis v__VERSION__'
+          releaseBody: |
+            Release notes for this version.
+            
+            ## Installation
+            
+            ### macOS
+            Download the `.dmg` file for your architecture:
+            - **Apple Silicon (M1/M2/M3)**: Download the `aarch64` version
+            - **Intel**: Download the `x64` version
+            
+            ### Windows
+            Download the `.msi` installer and run it.
+            
+            ## Features
+            - E-commerce product crawling
+            - Matter device type database
+            - Excel backup/restore functionality
+            - Real-time crawling progress tracking
+            
+            See [User Guide](https://github.com/Chanseok/rMatterCertis#readme) for detailed usage instructions.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || '' }}

@@ -1,8 +1,39 @@
-# rMatterCertis v2 — Actor-Model Based Crawling Platform
+# rMatterCertis v0.8 — Actor-Model Based Crawling Platform
 
 **Tauri + Rust + SolidJS 기반의 고성능, 고확장성 E-commerce 제품 데이터 크롤링 플랫폼**
 
-이 프로젝트는 이전 크롤링 시스템 개발 경험을 바탕으로, Actor 모델과 최신 비동기 처리 기술을 적용하여 안정성과 유지보수성, 확장성을 극대화한 차세대 크롤링 엔진을 구현하는 것을 목표로 합니다.
+Matter 인증 제품 정보를 자동으로 수집하고 관리하는 데스크톱 애플리케이션입니다. Actor 모델과 최신 비동기 처리 기술을 적용하여 안정성과 유지보수성, 확장성을 극대화했습니다.
+
+[![Release](https://img.shields.io/github/v/release/Chanseok/rMatterCertis)](https://github.com/Chanseok/rMatterCertis/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+---
+
+## 📥 다운로드 및 설치
+
+### 최신 릴리즈 다운로드
+
+[**Releases 페이지**](https://github.com/Chanseok/rMatterCertis/releases)에서 사용 중인 운영체제에 맞는 설치 파일을 다운로드하세요:
+
+- **macOS**: 
+  - Apple Silicon (M1/M2/M3): `rMatterCertis_[version]_aarch64.dmg`
+  - Intel: `rMatterCertis_[version]_x64.dmg`
+- **Windows**: `rMatterCertis_[version]_x64_en-US.msi`
+
+### 사용자 가이드
+
+설치 방법과 사용법은 [**USER_GUIDE.md**](./USER_GUIDE.md) 문서를 참고하세요.
+
+---
+
+## ✨ 주요 기능
+
+- 🔍 **자동 크롤링**: Matter 인증 제품 정보 자동 수집
+- 📊 **로컬 데이터베이스**: SQLite 기반 고성능 데이터 관리
+- 📈 **실시간 모니터링**: 크롤링 진행 상황 실시간 추적
+- 💾 **Excel 백업/복원**: 데이터 백업 및 복원 기능
+- 🎯 **Device Type 관리**: Matter device type 정보 편집
+- 🔧 **진단 도구**: 데이터베이스 무결성 검사 및 복구
 
 ---
 
