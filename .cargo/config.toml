@@ -10,12 +10,14 @@ incremental = true
 # For clean builds from scratch, sccache is better
 # For iterative development, incremental compilation is better
 
-# Use faster linker on macOS (LLD is faster than default ld)
-[target.x86_64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-
-[target.aarch64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+# Linker configuration for macOS
+# Note: lld is not available by default on macOS GitHub Actions runners
+# Using default Apple linker for better compatibility
+# [target.x86_64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+# 
+# [target.aarch64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 # Global configuration for better performance
 [profile.dev]
