@@ -12,6 +12,10 @@ readme = "README.md"
 keywords = ["web-scraping", "crawling", "ecommerce", "automation", "rust"]
 categories = ["web-programming", "data-processing", "automation"]
 
+# Disable automatic binary discovery from src/bin/
+# Only build explicitly defined [[bin]] targets
+autobins = false
+
 [workspace]
 resolver = "2"
 
