@@ -30,6 +30,11 @@ resolver = "2"
 name = "matter_certis_v2_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Main binary - explicitly defined to prevent auto-discovery of other bins
+[[bin]]
+name = "matter-certis-v2"
+path = "src/main.rs"
+
 # 임시로 테스트 바이너리들 비활성화 (통합 스키마 기반 코드 완성 후 재활성화 예정)
 # [[bin]]
 # name = "test_minimal"
