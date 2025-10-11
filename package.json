@@ -1,6 +1,6 @@
 {
   "name": "r-matter-certis",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "rMatterCertis - E-commerce Product Crawling Application",
   "type": "module",
   "scripts": {
