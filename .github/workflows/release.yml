@@ -24,6 +24,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -36,8 +37,13 @@ jobs:
           rustup target add aarch64-apple-darwin
           rustup target add x86_64-apple-darwin
 
+      - name: Verify package.json
+        run: |
+          echo "Checking package.json version..."
+          node -e "console.log('Version:', require('./package.json').version)"
+          
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
