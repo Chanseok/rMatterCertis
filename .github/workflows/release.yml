@@ -20,8 +20,8 @@ jobs:
   preflight-macos:
     name: Preflight Validation (macOS)
     runs-on: macos-latest
-    if: |
-      github.event_name == 'push' || 
+    if: >-
+      github.event_name == 'push' ||
       github.event.inputs.platform == 'both' ||
       github.event.inputs.platform == 'macos'
     
@@ -77,8 +77,8 @@ jobs:
   preflight-windows:
     name: Preflight Validation (Windows)
     runs-on: windows-latest
-    if: |
-      github.event_name == 'push' || 
+    if: >-
+      github.event_name == 'push' ||
       github.event.inputs.platform == 'both' ||
       github.event.inputs.platform == 'windows'
     
@@ -129,8 +129,8 @@ jobs:
     name: Release Build (macOS)
     needs: preflight-macos
     runs-on: macos-latest
-    if: |
-      github.event_name == 'push' || 
+    if: >-
+      github.event_name == 'push' ||
       github.event.inputs.platform == 'both' ||
       github.event.inputs.platform == 'macos'
     permissions:
@@ -169,18 +169,18 @@ jobs:
           CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: clang
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'rMatterCertis v__VERSION__'
-          releaseBody: 'See assets below for platform-specific installers. Download the .dmg for macOS or .msi for Windows.'
+          releaseName: rMatterCertis v__VERSION__
+          releaseBody: See assets below for platform-specific installers. Download the .dmg for macOS or .msi for Windows.
           releaseDraft: true
           prerelease: false
-          args: '--target universal-apple-darwin'
+          args: --target universal-apple-darwin
 
   release-windows:
     name: Release Build (Windows)
     needs: preflight-windows
     runs-on: windows-latest
-    if: |
-      github.event_name == 'push' || 
+    if: >-
+      github.event_name == 'push' ||
       github.event.inputs.platform == 'both' ||
       github.event.inputs.platform == 'windows'
     permissions:
@@ -211,7 +211,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'rMatterCertis v__VERSION__'
-          releaseBody: 'See assets below for platform-specific installers. Download the .dmg for macOS or .msi for Windows.'
+          releaseName: rMatterCertis v__VERSION__
+          releaseBody: See assets below for platform-specific installers. Download the .dmg for macOS or .msi for Windows.
           releaseDraft: true
           prerelease: false

@@ -1866,18 +1866,42 @@ export const LocalDBTab: Component = () => {
             <DeviceTypeTableEditor
               deviceTypes={(() => {
                 try {
-                  const parsed = JSON.parse(localDbDashboardStore.ui.deviceTypesJson || '[]');
+                  const json = localDbDashboardStore.ui.deviceTypesJson;
+                  if (!json) return [];
+                  const parsed = JSON.parse(json);
                   return Array.isArray(parsed) ? parsed : [];
                 } catch {
                   return [];
                 }
               })()}
-              onSave={(updatedTypes) => {
-                const jsonStr = JSON.stringify(updatedTypes, null, 2);
-                localDbDashboardStore.updateDeviceTypesJson(jsonStr);
-                localDbDashboardStore.saveDeviceTypes();
-              }}
               onReload={() => localDbDashboardStore.initDeviceTypes()}
+              onExport={async () => {
+                try {
+                  const result = await tauriApi.exportDeviceTypesFromDb();
+                  alert(`✅ Export 완료!\n\n파일: ${result.path}\n레코드 수: ${result.count}`);
+                  await localDbDashboardStore.initDeviceTypes();
+                } catch (e: any) {
+                  alert(`❌ Export 실패: ${e}`);
+                }
+              }}
+              onImport={async (filePath: string, replaceAll: boolean) => {
+                try {
+                  const result = await tauriApi.importDeviceTypesToDb(filePath, replaceAll);
+                  alert(
+                    `✅ Import 완료!\n\n` +
+                    `파일: ${result.written_path}\n` +
+                    `전체: ${result.parsed_count}개\n` +
+                    `추가: ${result.inserted}개\n` +
+                    `업데이트: ${result.updated}개\n` +
+                    `건너뜀: ${result.skipped}개`
+                  );
+                  await localDbDashboardStore.initDeviceTypes();
+                  await localDbDashboardStore.loadSummary();
+                } catch (e: any) {
+                  alert(`❌ Import 실패: ${e}`);
+                }
+              }}
+              tauriApi={tauriApi}
             />
 
             <Show when={localDbDashboardStore.ui.deviceTypesDiff?.parseError}>

@@ -20,6 +20,15 @@ Matter 인증 제품 정보를 자동으로 수집하고 관리하는 데스크�
   - Intel: `rMatterCertis_[version]_x64.dmg`
 - **Windows**: `rMatterCertis_[version]_x64_en-US.msi`
 
+### 📊 데이터 파일 다운로드
+
+앱 설치와 별도로 최신 Matter Device Types 정의 파일을 다운로드할 수 있습니다:
+
+- **Device Types JSON**: [최신 버전](https://github.com/Chanseok/rMatterCertis/releases/latest/download/matter_device_types.json)
+- **데이터 릴리즈 목록**: [Data Releases](https://github.com/Chanseok/rMatterCertis/releases?q=data-v&expanded=true)
+
+> 📚 **참고**: 데이터 파일은 앱 버전과 독립적으로 업데이트됩니다. 자세한 내용은 [DATA_RELEASE_GUIDE.md](./docs/DATA_RELEASE_GUIDE.md)를 참조하세요.
+
 ### 사용자 가이드
 
 설치 방법과 사용법은 [**USER_GUIDE.md**](./USER_GUIDE.md) 문서를 참고하세요.

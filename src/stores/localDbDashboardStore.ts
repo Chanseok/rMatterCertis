@@ -74,7 +74,7 @@ export const DEFAULT_PAGE_SIZE = 50;
 const [summary, setSummary] = createSignal<SummaryData | null>(null);
 const [ui, setUi] = createStore<UiFlags>({ 
   loadingSummary: false, 
-  deviceTypesJson: '[]', 
+  deviceTypesJson: '[]',
   reseedAfterSave: true,
   selectedCategories: [],
   selectedVendors: [],
@@ -202,8 +202,20 @@ async function resetFilter() {
 
 async function initDeviceTypes() {
   try {
-    const res = await tauriApi.getDeviceTypesJson();
-  setUi({ ...ui, deviceTypesMeta: res, deviceTypesJson: res.json, deviceTypesOriginal: res.json, deviceTypesDiff: null });
+    // DB에서 직접 데이터 로드
+    const deviceTypes = await tauriApi.getAllDeviceTypesFromDb();
+    const jsonStr = JSON.stringify(deviceTypes, null, 2);
+    setUi({ 
+      ...ui, 
+      deviceTypesJson: jsonStr,
+      deviceTypesOriginal: jsonStr,
+      deviceTypesDiff: null,
+      deviceTypesMeta: { 
+        json: jsonStr, 
+        count_in_db: deviceTypes.length, 
+        count_in_file: deviceTypes.length 
+      }
+    });
   } catch (e: any) {
     setUi({ ...ui, deviceTypesMeta: { error: String(e) } });
   }
@@ -214,6 +226,7 @@ async function saveDeviceTypes() {
     const res = await tauriApi.saveDeviceTypesJson(ui.deviceTypesJson, ui.reseedAfterSave);
     setUi({ ...ui, deviceTypesSaveResult: res });
     await loadSummary();
+    await initDeviceTypes(); // Refresh UI after save
   } catch (e: any) {
     setUi({ ...ui, deviceTypesSaveResult: { error: String(e) } });
   }
@@ -307,6 +320,7 @@ async function importFullDatabaseExcel(filePath: string) {
     });
     await loadSummary();
     await loadAnalytics(0);
+    await initDeviceTypes(); // Device Types도 새로고침
   } catch (e: any) {
     setUi({ ...ui, importStatus: '실패', importLog: String(e), working: false });
   }

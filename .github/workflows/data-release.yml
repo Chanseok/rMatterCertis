@@ -1,0 +1,89 @@
+name: Data Release
+
+on:
+  push:
+    paths:
+      - 'data/matter_device_types.json'
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Data version (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  create-data-release:
+    name: Create Data Release
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate version tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            # 자동 버전: data-YYYYMMDD-HHMMSS
+            VERSION="$(date +%Y%m%d-%H%M%S)"
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "TAG=data-v${VERSION}" >> $GITHUB_OUTPUT
+          echo "📦 Data version: ${VERSION}"
+
+      - name: Count device types
+        id: count
+        run: |
+          COUNT=$(jq '. | length' data/matter_device_types.json)
+          echo "COUNT=${COUNT}" >> $GITHUB_OUTPUT
+          echo "📊 Device types count: ${COUNT}"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.TAG }}
+          name: Matter Device Types Data v${{ steps.version.outputs.VERSION }}
+          body: |
+            ## 📊 Matter Device Types Data Release
+
+            **Version:** ${{ steps.version.outputs.VERSION }}
+            **Device Types Count:** ${{ steps.count.outputs.COUNT }}
+            **Release Date:** ${{ github.event.head_commit.timestamp }}
+
+            ### 📥 Files
+
+            - `matter_device_types.json` - Matter device type definitions
+
+            ### 🔗 Usage
+
+            Download the JSON file directly:
+            ```bash
+            curl -L -o matter_device_types.json \
+              https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.TAG }}/matter_device_types.json
+            ```
+
+            Or use in your application:
+            ```
+            https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.TAG }}/matter_device_types.json
+            ```
+
+            ### 📝 Changelog
+
+            ${{ github.event.head_commit.message }}
+          files: |
+            data/matter_device_types.json
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create latest tag
+        run: |
+          git tag -f data-latest
+          git push origin data-latest --force
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

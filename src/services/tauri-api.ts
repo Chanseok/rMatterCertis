@@ -480,6 +480,37 @@ export class TauriApiService {
     return await invoke('save_device_types_json', { newJson: json, new_json: json, options: { reseed } });
   }
 
+  async exportDeviceTypesFromDb(): Promise<{ path: string; count: number; }> {
+    return await invoke('export_device_types_from_db');
+  }
+
+  async importDeviceTypesToDb(filePath: string, replaceAll: boolean): Promise<{ backup_path?: string | null; written_path?: string | null; parsed_count: number; reseed: boolean; inserted: number; updated: number; skipped: number; }> {
+    return await invoke('import_device_types_to_db', { 
+      options: { 
+        file_path: filePath, 
+        replace_all: replaceAll 
+      } 
+    });
+  }
+
+  async getAllDeviceTypesFromDb(): Promise<Array<{ id: number; hex: string; name: string; category: string; introduced_in: string | null; }>> {
+    return await invoke('get_all_device_types_from_db');
+  }
+
+  async deleteDeviceTypesFromDb(ids: number[]): Promise<{ deleted_count: number; }> {
+    return await invoke('delete_device_types_from_db', { ids });
+  }
+
+  async addDeviceTypeToDb(deviceType: { id: number; hex: string; name: string; category: string; introduced_in: string | null; }): Promise<{ id: number; }> {
+    return await invoke('add_device_type_to_db', { deviceType });
+  }
+
+  async updateDeviceTypeInDb(deviceType: { id: number; hex: string; name: string; category: string; introduced_in: string | null; }): Promise<{ updated: boolean; }> {
+    return await invoke('update_device_type_in_db', { deviceType });
+  }
+
+
+
   async vendorSyncDryRun(): Promise<{ api_total: number; local_count: number; will_sync: boolean; }> {
     return await this.dashboardVendorSync({ dry_run: true });
   }

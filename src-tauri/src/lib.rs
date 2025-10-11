@@ -892,6 +892,12 @@ WHERE pd.primary_device_type_ids IS NOT NULL
             // Phase 5 device types JSON editor
             commands::database::device_types_editor::get_device_types_json,
             commands::database::device_types_editor::save_device_types_json,
+            commands::database::device_types_editor::export_device_types_from_db,
+            commands::database::device_types_editor::import_device_types_to_db,
+            commands::database::device_types_editor::get_all_device_types_from_db,
+            commands::database::device_types_editor::delete_device_types_from_db,
+            commands::database::device_types_editor::add_device_type_to_db,
+            commands::database::device_types_editor::update_device_type_in_db,
             // Phase 2 export/import
             commands::database::export_import::export_data,
             commands::database::export_import::import_data,

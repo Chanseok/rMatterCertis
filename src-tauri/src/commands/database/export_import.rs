@@ -445,7 +445,7 @@ pub async fn export_full_database_excel(
         "certificate_id", "certification_date", "hardware_version",
         "firmware_version", "specification_version", "vid", "pid", "family_sku",
         "family_variant_sku", "family_id", "transport_interface",
-        "primary_device_type_ids", "application_categories", "created_at", "updated_at"
+        "primary_device_type_ids", "created_at", "updated_at"
     ];
     
     for (col, header) in detail_headers.iter().enumerate() {
@@ -460,7 +460,7 @@ pub async fn export_full_database_excel(
         r#"SELECT url, page_id, index_in_page, id, manufacturer, model, device_type, certificate_id,
            certification_date, hardware_version, firmware_version, specification_version,
            vid, pid, family_sku, family_variant_sku, family_id, transport_interface,
-           primary_device_type_ids, application_categories, created_at, updated_at 
+           primary_device_type_ids, created_at, updated_at 
            FROM product_details ORDER BY page_id, index_in_page"#
     )
     .fetch_all(pool)
@@ -514,9 +514,8 @@ pub async fn export_full_database_excel(
         write_str!(16, "family_id");
         write_str!(17, "transport_interface");
         write_str!(18, "primary_device_type_ids");
-        write_str!(19, "application_categories");
-        write_str!(20, "created_at");
-        write_str!(21, "updated_at");
+        write_str!(19, "created_at");
+        write_str!(20, "updated_at");
     }
     
     // ===== Device Types Sheet =====
@@ -785,8 +784,8 @@ pub async fn import_full_database_excel(
         let _headers = rows.next(); // Skip header row
         
         for (row_num, row) in rows.enumerate() {
-            if row.len() < 22 {
-                result.errors.push(format!("Product_details row {} has insufficient columns (expected 22, got {})", row_num + 2, row.len()));
+            if row.len() < 21 {
+                result.errors.push(format!("Product_details row {} has insufficient columns (expected 21, got {})", row_num + 2, row.len()));
                 continue;
             }
             
@@ -816,8 +815,8 @@ pub async fn import_full_database_excel(
             }
             
             // Get timestamps or use current time as default
-            let created_at = get_str!(20).unwrap_or_else(|| Utc::now().to_rfc3339());
-            let updated_at = get_str!(21).unwrap_or_else(|| Utc::now().to_rfc3339());
+            let created_at = get_str!(19).unwrap_or_else(|| Utc::now().to_rfc3339());
+            let updated_at = get_str!(20).unwrap_or_else(|| Utc::now().to_rfc3339());
             
             // Insert or update
             sqlx::query(
@@ -825,8 +824,8 @@ pub async fn import_full_database_excel(
                     url, page_id, index_in_page, id, manufacturer, model, device_type, certificate_id,
                     certification_date, hardware_version, firmware_version, specification_version,
                     vid, pid, family_sku, family_variant_sku, family_id, transport_interface,
-                    primary_device_type_ids, application_categories, created_at, updated_at
-                   ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+                    primary_device_type_ids, created_at, updated_at
+                   ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
                    ON CONFLICT(url) DO UPDATE SET
                    page_id=excluded.page_id, index_in_page=excluded.index_in_page, id=excluded.id,
                    manufacturer=excluded.manufacturer, model=excluded.model, device_type=excluded.device_type,
@@ -836,8 +835,7 @@ pub async fn import_full_database_excel(
                    vid=excluded.vid, pid=excluded.pid, family_sku=excluded.family_sku,
                    family_variant_sku=excluded.family_variant_sku, family_id=excluded.family_id,
                    transport_interface=excluded.transport_interface,
-                   primary_device_type_ids=excluded.primary_device_type_ids, 
-                   application_categories=excluded.application_categories,
+                   primary_device_type_ids=excluded.primary_device_type_ids,
                    updated_at=excluded.updated_at"#
             )
             .bind(&url)
@@ -859,7 +857,6 @@ pub async fn import_full_database_excel(
             .bind(&get_str!(16))
             .bind(&get_str!(17))
             .bind(&get_str!(18))
-            .bind(&get_str!(19))
             .bind(&created_at)
             .bind(&updated_at)
             .execute(&mut *tx)

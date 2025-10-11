@@ -4,6 +4,7 @@
  */
 
 import { Component, createSignal, For, Show, createMemo } from 'solid-js';
+import { Portal } from 'solid-js/web';
 
 interface DeviceType {
   id: number;
@@ -15,8 +16,10 @@ interface DeviceType {
 
 interface DeviceTypeTableEditorProps {
   deviceTypes: DeviceType[];
-  onSave: (deviceTypes: DeviceType[]) => void;
   onReload: () => void;
+  onExport?: () => void;
+  onImport?: (filePath: string, replaceAll: boolean) => void;
+  tauriApi: any; // Tauri API instance for DB operations
 }
 
 export const DeviceTypeTableEditor: Component<DeviceTypeTableEditorProps> = (props) => {
@@ -28,6 +31,9 @@ export const DeviceTypeTableEditor: Component<DeviceTypeTableEditorProps> = (pro
   const [editingId, setEditingId] = createSignal<number | null>(null);
   const [editForm, setEditForm] = createSignal<Partial<DeviceType>>({});
   const [showAddDialog, setShowAddDialog] = createSignal(false);
+  const [showImportDialog, setShowImportDialog] = createSignal(false);
+  const [importFilePath, setImportFilePath] = createSignal('');
+  const [importReplaceAll, setImportReplaceAll] = createSignal(false);
   const [newDeviceType, setNewDeviceType] = createSignal<Partial<DeviceType>>({
     id: 0,
     hex: '0x',
@@ -117,13 +123,18 @@ export const DeviceTypeTableEditor: Component<DeviceTypeTableEditorProps> = (pro
   };
 
   // 선택된 항목 삭제
-  const deleteSelected = () => {
+  const deleteSelected = async () => {
     if (selectedIds().size === 0) return;
     
     if (confirm(`${selectedIds().size}개 항목을 삭제하시겠습니까?`)) {
-      const remaining = props.deviceTypes.filter(dt => !selectedIds().has(dt.id));
-      props.onSave(remaining);
-      setSelectedIds(new Set<number>());
+      try {
+        const ids = Array.from(selectedIds());
+        await props.tauriApi.deleteDeviceTypesFromDb(ids);
+        setSelectedIds(new Set<number>());
+        await props.onReload(); // DB에서 다시 로드
+      } catch (e: any) {
+        alert(`삭제 실패: ${e}`);
+      }
     }
   };
 
@@ -134,16 +145,25 @@ export const DeviceTypeTableEditor: Component<DeviceTypeTableEditorProps> = (pro
   };
 
   // 편집 저장
-  const saveEdit = () => {
+  const saveEdit = async () => {
     const id = editingId();
     if (id === null) return;
 
-    const updated = props.deviceTypes.map(dt => 
-      dt.id === id ? { ...dt, ...editForm() } as DeviceType : dt
-    );
-    props.onSave(updated);
-    setEditingId(null);
-    setEditForm({});
+    try {
+      const formData = editForm();
+      await props.tauriApi.updateDeviceTypeInDb({
+        id,
+        hex: formData.hex!,
+        name: formData.name!,
+        category: formData.category || 'Other',
+        introduced_in: formData.introduced_in || null
+      });
+      setEditingId(null);
+      setEditForm({});
+      await props.onReload(); // DB에서 다시 로드
+    } catch (e: any) {
+      alert(`업데이트 실패: ${e}`);
+    }
   };
 
   // 편집 취소
@@ -153,38 +173,43 @@ export const DeviceTypeTableEditor: Component<DeviceTypeTableEditorProps> = (pro
   };
 
   // 새 항목 추가
-  const addNewDeviceType = () => {
+  const addNewDeviceType = async () => {
     const newDT = newDeviceType();
     
-    // 유효성 검사
-    if (!newDT.name || !newDT.hex || newDT.id === undefined) {
-      alert('모든 필수 항목을 입력해주세요 (ID, Hex, Name)');
+    // 유효성 검사 (ID 제거, Hex와 Name만 체크)
+    if (!newDT.name || !newDT.hex) {
+      alert('모든 필수 항목을 입력해주세요 (Hex, Name)');
       return;
     }
 
-    // ID 중복 체크
-    if (props.deviceTypes.some(dt => dt.id === newDT.id)) {
-      alert('이미 존재하는 ID입니다.');
+    // Hex 중복 체크 (프론트엔드 사전 체크)
+    if (props.deviceTypes.some(dt => dt.hex === newDT.hex)) {
+      alert('이미 존재하는 Hex Code입니다.');
       return;
     }
 
-    const fullDeviceType: DeviceType = {
-      id: newDT.id!,
-      hex: newDT.hex!,
-      name: newDT.name!,
-      category: newDT.category || 'Other',
-      introduced_in: newDT.introduced_in || null
-    };
-
-    props.onSave([...props.deviceTypes, fullDeviceType]);
-    setShowAddDialog(false);
-    setNewDeviceType({
-      id: 0,
-      hex: '0x',
-      name: '',
-      category: 'Other',
-      introduced_in: null
-    });
+    try {
+      // ID는 DB에서 자동 생성 (AUTOINCREMENT)
+      await props.tauriApi.addDeviceTypeToDb({
+        id: 0, // DB에서 무시됨
+        hex: newDT.hex!,
+        name: newDT.name!,
+        category: newDT.category || 'Other',
+        introduced_in: newDT.introduced_in || null
+      });
+      
+      setShowAddDialog(false);
+      setNewDeviceType({
+        id: 0,
+        hex: '0x',
+        name: '',
+        category: 'Other',
+        introduced_in: null
+      });
+      await props.onReload(); // DB에서 다시 로드
+    } catch (e: any) {
+      alert(`추가 실패: ${e}`);
+    }
   };
 
   // 정렬 표시 화살표
@@ -202,7 +227,7 @@ export const DeviceTypeTableEditor: Component<DeviceTypeTableEditorProps> = (pro
       <div class="flex flex-wrap gap-3 items-center bg-slate-100 p-4 rounded-lg">
         <input
           type="text"
-          placeholder="🔍 검색 (ID, Name, Hex, Category)"
+          placeholder="🔍 검색 (Name, Hex, Category)"
           value={searchTerm()}
           onInput={(e) => setSearchTerm(e.currentTarget.value)}
           class="flex-1 min-w-[200px] px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 focus:outline-none"
@@ -244,6 +269,24 @@ export const DeviceTypeTableEditor: Component<DeviceTypeTableEditorProps> = (pro
           🔄 새로고침
         </button>
 
+        <Show when={props.onExport}>
+          <button
+            onClick={props.onExport}
+            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium transition-colors"
+          >
+            📤 Export JSON
+          </button>
+        </Show>
+
+        <Show when={props.onImport}>
+          <button
+            onClick={() => setShowImportDialog(true)}
+            class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md font-medium transition-colors"
+          >
+            📥 Import JSON
+          </button>
+        </Show>
+
         <div class="text-sm text-gray-600">
           총 {filteredAndSorted().length} / {props.deviceTypes.length}개
         </div>
@@ -262,12 +305,6 @@ export const DeviceTypeTableEditor: Component<DeviceTypeTableEditorProps> = (pro
                     onChange={toggleSelectAll}
                     class="w-4 h-4 cursor-pointer"
                   />
-                </th>
-                <th 
-                  class="px-4 py-3 text-left font-semibold text-gray-700 cursor-pointer hover:bg-slate-100 transition-colors"
-                  onClick={() => toggleSort('id')}
-                >
-                  ID <SortArrow field="id" />
                 </th>
                 <th 
                   class="px-4 py-3 text-left font-semibold text-gray-700 cursor-pointer hover:bg-slate-100 transition-colors"
@@ -315,7 +352,6 @@ export const DeviceTypeTableEditor: Component<DeviceTypeTableEditorProps> = (pro
                       when={editingId() === dt.id}
                       fallback={
                         <>
-                          <td class="px-4 py-2 font-mono text-sm text-gray-800">{dt.id}</td>
                           <td class="px-4 py-2 font-mono text-xs text-indigo-600">{dt.hex}</td>
                           <td class="px-4 py-2 font-medium text-gray-900">{dt.name}</td>
                           <td class="px-4 py-2">
@@ -336,14 +372,6 @@ export const DeviceTypeTableEditor: Component<DeviceTypeTableEditorProps> = (pro
                       }
                     >
                       {/* 편집 모드 */}
-                      <td class="px-4 py-2">
-                        <input
-                          type="number"
-                          value={editForm().id || dt.id}
-                          onInput={(e) => setEditForm({ ...editForm(), id: parseInt(e.currentTarget.value) })}
-                          class="w-20 px-2 py-1 border rounded text-sm"
-                        />
-                      </td>
                       <td class="px-4 py-2">
                         <input
                           type="text"
@@ -408,24 +436,14 @@ export const DeviceTypeTableEditor: Component<DeviceTypeTableEditorProps> = (pro
 
       {/* 추가 다이얼로그 */}
       <Show when={showAddDialog()}>
-        <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowAddDialog(false)}>
-          <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+        <Portal>
+          <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4" onClick={() => setShowAddDialog(false)}>
+            <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
             <div class="bg-gradient-to-r from-emerald-500 to-teal-600 px-6 py-4 rounded-t-2xl">
               <h3 class="text-xl font-bold text-white">➕ 새 Device Type 추가</h3>
             </div>
             
             <div class="p-6 space-y-4">
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">ID *</label>
-                <input
-                  type="number"
-                  value={newDeviceType().id}
-                  onInput={(e) => setNewDeviceType({ ...newDeviceType(), id: parseInt(e.currentTarget.value) })}
-                  class="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  placeholder="예: 256"
-                />
-              </div>
-
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Hex Code *</label>
                 <input
@@ -489,6 +507,103 @@ export const DeviceTypeTableEditor: Component<DeviceTypeTableEditorProps> = (pro
             </div>
           </div>
         </div>
+        </Portal>
+      </Show>
+
+      {/* Import Dialog */}
+      <Show when={showImportDialog()}>
+        <Portal>
+          <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999] p-4">
+            <div class="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
+            <h3 class="text-xl font-bold mb-4">Device Types JSON Import</h3>
+            
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">파일 선택</label>
+                <button
+                  onClick={async () => {
+                    try {
+                      const defaultDir = await props.tauriApi.getExportsDirectory();
+                      const { open } = await import('@tauri-apps/plugin-dialog');
+                      const selected = await open({
+                        multiple: false,
+                        filters: [{ name: 'JSON Files', extensions: ['json'] }],
+                        title: 'Device Types JSON 파일 선택',
+                        defaultPath: defaultDir
+                      });
+                      
+                      if (selected && typeof selected === 'string') {
+                        setImportFilePath(selected);
+                      }
+                    } catch (e: any) {
+                      console.error('파일 선택 실패:', e);
+                    }
+                  }}
+                  class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium transition-colors"
+                >
+                  📁 JSON 파일 선택
+                </button>
+                <Show when={importFilePath()}>
+                  <p class="text-xs text-gray-600 mt-2 break-all">
+                    <strong>선택된 파일:</strong> {importFilePath()}
+                  </p>
+                </Show>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="replace-all"
+                  checked={importReplaceAll()}
+                  onChange={(e) => setImportReplaceAll(e.currentTarget.checked)}
+                  class="w-4 h-4 cursor-pointer"
+                />
+                <label for="replace-all" class="text-sm text-gray-700 cursor-pointer">
+                  모든 기존 데이터 삭제 후 Import (체크 해제 시 Upsert)
+                </label>
+              </div>
+
+              <div class="bg-amber-50 border border-amber-200 rounded p-3 text-sm">
+                <p class="text-amber-800">
+                  <strong>⚠️ 주의:</strong> Import는 DB의 device_types 테이블을 직접 수정합니다.
+                  {importReplaceAll() && ' 기존 데이터가 모두 삭제됩니다!'}
+                </p>
+              </div>
+            </div>
+
+            <div class="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  if (importFilePath() && props.onImport) {
+                    props.onImport(importFilePath(), importReplaceAll());
+                    setShowImportDialog(false);
+                    setImportFilePath('');
+                    setImportReplaceAll(false);
+                  }
+                }}
+                disabled={!importFilePath()}
+                class={`flex-1 px-4 py-2 rounded-md font-medium transition-colors ${
+                  importFilePath()
+                    ? 'bg-purple-600 hover:bg-purple-700 text-white'
+                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                }`}
+              >
+                Import 실행
+              </button>
+              <button
+                onClick={() => {
+                  setShowImportDialog(false);
+                  setImportFilePath('');
+                  setImportReplaceAll(false);
+                }}
+                class="flex-1 px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-md font-medium transition-colors"
+              >
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+        </Portal>
       </Show>
     </div>
   );
