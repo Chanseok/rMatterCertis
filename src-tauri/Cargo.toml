@@ -1,6 +1,6 @@
 [package]
 name = "matter-certis-v2"
-version = "0.2.0"
+version = "0.8.0"
 description = "Matter Certis v2 - Modern Event-Driven E-commerce Product Crawling Application"
 authors = ["Chanseok <hi007chans@gmail.com>"]
 edition = "2024"
