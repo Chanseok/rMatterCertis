@@ -3,25 +3,11 @@
  * SolidJS-UI-Implementation-Guide.md를 기반으로 구현
  */
 
-import { For, Component, createSignal, onMount, onCleanup } from "solid-js";
+import { For, Component } from "solid-js";
 import { tabState, setActiveTab } from "../../stores/tabStore";
 import { windowState } from "../../stores/windowStore";
 
 export const TabNavigation: Component = () => {
-  // Live clock (updates every 30s)
-  const formatTime = () =>
-    new Date().toLocaleTimeString("ko-KR", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  const [clock, setClock] = createSignal<string>(formatTime());
-
-  onMount(() => {
-    const id = setInterval(() => setClock(formatTime()), 30_000);
-    // Initialize immediately to avoid hydration mismatch / stale time
-    setClock(formatTime());
-    onCleanup(() => clearInterval(id));
-  });
 
   const handleTabClick = (tabId: string) => {
     setActiveTab(tabId);
@@ -34,9 +20,8 @@ export const TabNavigation: Component = () => {
       <div class="px-6 pt-4">
         <div class="flex items-center justify-between">
           {/* 탭 버튼들 */}
-          <div class="flex items-center space-x-4">
-            <div class="flex space-x-1">
-              <For each={tabState.tabs}>
+          <div class="flex space-x-1">
+            <For each={tabState.tabs}>
               {(tab, index) => (
                 <button
                   data-tab={tab.id}
@@ -76,18 +61,6 @@ export const TabNavigation: Component = () => {
                 </button>
               )}
             </For>
-            </div>
-
-            {/* 현재 시간 표시 - 탭 옆에 친근하게 배치 */}
-            <div class="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-full border border-blue-200 dark:border-blue-700 shadow-sm">
-              <span class="text-xl" aria-hidden>�</span>
-              <div class="flex flex-col">
-                <span class="text-xs text-gray-500 dark:text-gray-400 font-medium leading-none">오늘</span>
-                <span class="text-base font-semibold text-blue-700 dark:text-blue-300 tabular-nums leading-tight">
-                  {clock()}
-                </span>
-              </div>
-            </div>
           </div>
 
           {/* 빠른 액세스 버튼 영역 (현재 비어있음) */}
