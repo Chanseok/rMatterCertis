@@ -39,11 +39,25 @@ jobs:
 
       - name: Verify package.json
         run: |
-          echo "Checking package.json version..."
-          node -e "console.log('Version:', require('./package.json').version)"
+          echo "=== Package.json contents ==="
+          cat package.json
+          echo ""
+          echo "=== Checking version field ==="
+          node -e "const pkg = require('./package.json'); console.log('Version:', pkg.version); if (!pkg.version || !/^\d+\.\d+\.\d+/.test(pkg.version)) { console.error('Invalid version!'); process.exit(1); }"
+          echo ""
+          echo "=== Checking all dependency versions ==="
+          node -e "const pkg = require('./package.json'); const checkVersions = (deps, type) => { if (!deps) return; Object.entries(deps).forEach(([name, ver]) => { if (!ver || ver === '' || ver === '0.0') { console.error(\`Invalid version in \${type}: \${name}@\${ver}\`); process.exit(1); } console.log(\`\${type}: \${name}@\${ver}\`); }); }; checkVersions(pkg.dependencies, 'dependencies'); checkVersions(pkg.devDependencies, 'devDependencies');"
+          
+      - name: Clean npm cache
+        run: npm cache clean --force
           
       - name: Install frontend dependencies
-        run: npm ci --legacy-peer-deps
+        run: |
+          echo "=== Removing package-lock.json and node_modules ==="
+          rm -rf package-lock.json node_modules
+          echo "=== Running npm install ==="
+          npm install --legacy-peer-deps
+          echo "=== Installation complete ==="
 
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
