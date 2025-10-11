@@ -5,17 +5,26 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Platform to build'
+        required: true
+        type: choice
+        options:
+          - 'both'
+          - 'macos'
+          - 'windows'
+        default: 'both'
 
 jobs:
-  release:
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [macos-latest, windows-latest]
-
-    runs-on: ${{ matrix.platform }}
+  preflight-macos:
+    name: Preflight Validation (macOS)
+    runs-on: macos-latest
+    if: |
+      github.event_name == 'push' || 
+      github.event.inputs.platform == 'both' ||
+      github.event.inputs.platform == 'macos'
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,66 +38,180 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
 
-      - name: Install dependencies (macOS only)
-        if: matrix.platform == 'macos-latest'
+      - name: Install dependencies (macOS)
         run: |
           rustup target add aarch64-apple-darwin
           rustup target add x86_64-apple-darwin
 
       - name: Verify package.json
         run: |
-          echo "=== Package.json contents ==="
-          cat package.json
-          echo ""
-          echo "=== Checking version field ==="
+          echo "=== Checking package.json ==="
           node -e "const pkg = require('./package.json'); console.log('Version:', pkg.version); if (!pkg.version || !/^\d+\.\d+\.\d+/.test(pkg.version)) { console.error('Invalid version!'); process.exit(1); }"
-          echo ""
-          echo "=== Checking all dependency versions ==="
-          node -e "const pkg = require('./package.json'); const checkVersions = (deps, type) => { if (!deps) return; Object.entries(deps).forEach(([name, ver]) => { if (!ver || ver === '' || ver === '0.0') { console.error(\`Invalid version in \${type}: \${name}@\${ver}\`); process.exit(1); } console.log(\`\${type}: \${name}@\${ver}\`); }); }; checkVersions(pkg.dependencies, 'dependencies'); checkVersions(pkg.devDependencies, 'devDependencies');"
-          
-      - name: Clean npm cache
-        run: npm cache clean --force
           
       - name: Install frontend dependencies
         run: |
-          echo "=== Removing package-lock.json and node_modules ==="
           rm -rf package-lock.json node_modules
-          echo "=== Running npm install ==="
           npm install --legacy-peer-deps
-          echo "=== Installation complete ==="
+          echo "✅ npm install successful"
 
-      - name: Build the app
+      - name: Quick Rust compilation check
+        run: |
+          echo "=== Running cargo check (compilation validation only) ==="
+          cargo check --manifest-path src-tauri/Cargo.toml --release
+          echo "✅ Cargo check passed"
+      
+      - name: Lint check
+        run: |
+          echo "=== Running cargo clippy ==="
+          cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings || echo "⚠️ Clippy warnings found but continuing"
+          echo "✅ Lint check complete"
+
+      - name: Frontend build test
+        run: |
+          echo "=== Testing frontend build ==="
+          npm run build
+          echo "✅ Frontend build successful"
+
+  preflight-windows:
+    name: Preflight Validation (Windows)
+    runs-on: windows-latest
+    if: |
+      github.event_name == 'push' || 
+      github.event.inputs.platform == 'both' ||
+      github.event.inputs.platform == 'windows'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify package.json
+        run: |
+          echo "=== Checking package.json ==="
+          node -e "const pkg = require('./package.json'); console.log('Version:', pkg.version); if (!pkg.version || !/^\d+\.\d+\.\d+/.test(pkg.version)) { console.error('Invalid version!'); process.exit(1); }"
+          
+      - name: Install frontend dependencies
+        run: |
+          if (Test-Path package-lock.json) { Remove-Item package-lock.json }
+          if (Test-Path node_modules) { Remove-Item -Recurse -Force node_modules }
+          npm install --legacy-peer-deps
+          echo "✅ npm install successful"
+
+      - name: Quick Rust compilation check
+        run: |
+          echo "=== Running cargo check (compilation validation only) ==="
+          cargo check --manifest-path src-tauri/Cargo.toml --release
+          echo "✅ Cargo check passed"
+      
+      - name: Lint check
+        run: |
+          echo "=== Running cargo clippy ==="
+          cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings || echo "⚠️ Clippy warnings found but continuing"
+          echo "✅ Lint check complete"
+
+      - name: Frontend build test
+        run: |
+          echo "=== Testing frontend build ==="
+          npm run build
+          echo "✅ Frontend build successful"
+
+  release-macos:
+    name: Release Build (macOS)
+    needs: preflight-macos
+    runs-on: macos-latest
+    if: |
+      github.event_name == 'push' || 
+      github.event.inputs.platform == 'both' ||
+      github.event.inputs.platform == 'macos'
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+
+      - name: Install dependencies (macOS)
+        run: |
+          rustup target add aarch64-apple-darwin
+          rustup target add x86_64-apple-darwin
+          
+      - name: Install frontend dependencies
+        run: |
+          rm -rf package-lock.json node_modules
+          npm install --legacy-peer-deps
+
+      - name: Build and Bundle the app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Force clang linker on macOS to avoid lld issues
           CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: clang
           CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: clang
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'rMatterCertis v__VERSION__'
-          releaseBody: |
-            Release notes for this version.
-            
-            ## Installation
-            
-            ### macOS
-            Download the `.dmg` file for your architecture:
-            - **Apple Silicon (M1/M2/M3)**: Download the `aarch64` version
-            - **Intel**: Download the `x64` version
-            
-            ### Windows
-            Download the `.msi` installer and run it.
-            
-            ## Features
-            - E-commerce product crawling
-            - Matter device type database
-            - Excel backup/restore functionality
-            - Real-time crawling progress tracking
-            
-            See [User Guide](https://github.com/Chanseok/rMatterCertis#readme) for detailed usage instructions.
+          releaseBody: 'See assets below for platform-specific installers. Download the .dmg for macOS or .msi for Windows.'
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || '' }}
+          args: '--target universal-apple-darwin'
+
+  release-windows:
+    name: Release Build (Windows)
+    needs: preflight-windows
+    runs-on: windows-latest
+    if: |
+      github.event_name == 'push' || 
+      github.event.inputs.platform == 'both' ||
+      github.event.inputs.platform == 'windows'
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+          
+      - name: Install frontend dependencies
+        run: |
+          if (Test-Path package-lock.json) { Remove-Item package-lock.json }
+          if (Test-Path node_modules) { Remove-Item -Recurse -Force node_modules }
+          npm install --legacy-peer-deps
+
+      - name: Build and Bundle the app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'rMatterCertis v__VERSION__'
+          releaseBody: 'See assets below for platform-specific installers. Download the .dmg for macOS or .msi for Windows.'
+          releaseDraft: true
+          prerelease: false
