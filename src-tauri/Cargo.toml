@@ -110,7 +110,8 @@ regex = "1.10"
 url = "2.5"
 
 # 🗄️ Database & Storage
-sqlx = { version = "0.8", features = ["sqlite", "postgres", "runtime-tokio-rustls", "chrono", "migrate", "uuid"] }
+# Using native-tls instead of rustls to avoid ring crate issues with newer Rust versions
+sqlx = { version = "0.8", features = ["sqlite", "postgres", "runtime-tokio-native-tls", "chrono", "migrate", "uuid"] }
 
 # 🔄 Rate Limiting & Control
 governor = "0.6"
