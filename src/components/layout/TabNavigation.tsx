@@ -34,8 +34,9 @@ export const TabNavigation: Component = () => {
       <div class="px-6 pt-4">
         <div class="flex items-center justify-between">
           {/* 탭 버튼들 */}
-          <div class="flex space-x-1">
-            <For each={tabState.tabs}>
+          <div class="flex items-center space-x-4">
+            <div class="flex space-x-1">
+              <For each={tabState.tabs}>
               {(tab, index) => (
                 <button
                   data-tab={tab.id}
@@ -75,17 +76,21 @@ export const TabNavigation: Component = () => {
                 </button>
               )}
             </For>
+            </div>
+
+            {/* 현재 시간 표시 - 탭 옆에 친근하게 배치 */}
+            <div class="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-full border border-blue-200 dark:border-blue-700 shadow-sm">
+              <span class="text-xl" aria-hidden>�</span>
+              <div class="flex flex-col">
+                <span class="text-xs text-gray-500 dark:text-gray-400 font-medium leading-none">오늘</span>
+                <span class="text-base font-semibold text-blue-700 dark:text-blue-300 tabular-nums leading-tight">
+                  {clock()}
+                </span>
+              </div>
+            </div>
           </div>
 
-          {/* 현재 시간 표시 (live) */}
-          
-          <div class="text-lg flex items-center gap-1 text-xs text-gray-600 dark:text-gray-300 select-none">
-            <span aria-hidden>🕑</span>
-            <span class="tabular-nums font-medium text-gray-700 dark:text-gray-200">
-              {clock()}
-            </span>
-          </div>
-          {/* 빠른 액세스 버튼들 */}
+          {/* 빠른 액세스 버튼 영역 (현재 비어있음) */}
           <div class="flex items-center gap-2"></div>
         </div>
       </div>
